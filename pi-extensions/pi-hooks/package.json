@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "First-class Pi port of the vstack safety hooks: bare-cd blocking, pre-commit fmt+clippy, post-edit clippy, end-of-turn lint. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [

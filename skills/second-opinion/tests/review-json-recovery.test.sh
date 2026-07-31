@@ -72,6 +72,17 @@ assert_file_contains() {
   fi
 }
 
+assert_jq() {
+  local file="$1" expr="$2" name="$3"
+  if [[ -f "$file" ]] && jq -e "$expr" "$file" >/dev/null 2>&1; then
+    pass "$name"
+  else
+    fail "$name"
+    printf '        expected jq expression to hold on %s: %s\n' "$file" "$expr" >&2
+    [[ -f "$file" ]] && sed -n '1,10p' "$file" >&2
+  fi
+}
+
 # --- Fake target CLI ----------------------------------------------------------
 # Consumes the prompt on stdin, increments an on-disk counter, and emits the
 # canned response for that call number. Named `claude` and placed on PATH so the
@@ -145,6 +156,17 @@ assert_eq "$rc1" "0" "scenario 1 exits 0 after retry"
 assert_file_exists "$s1_out" "scenario 1 writes the --output artifact"
 assert_file_contains "$s1_out" "Null deref in parser" "scenario 1 artifact contains the retry's findings"
 assert_eq "$(cat "$COUNTER")" "2" "scenario 1 invoked the CLI twice (retry ran)"
+# vstack#940: a successful reformat retry must not discard the raw first
+# response — it is the only evidence of what the model actually said.
+assert_file_exists "$s1_out.raw.txt" "scenario 1 preserves the raw first response on retry success"
+assert_file_contains "$s1_out.raw.txt" "already delivered above" "scenario 1 raw sidecar holds the original raw bytes"
+assert_file_contains "$s1_err" "raw first response preserved: $s1_out.raw.txt" "scenario 1 stderr names the raw sidecar path"
+# Byte counts land in qa_metadata: raw = first response minus the trailing
+# newline the sidecar's printf adds; retry = stub response 2 minus its own.
+s1_raw_bytes=$(( $(wc -c < "$s1_out.raw.txt") - 1 ))
+s1_retry_bytes=$(( $(wc -c < "$s1_r2") - 1 ))
+assert_jq "$s1_out" ".qa_metadata.raw_response_bytes == $s1_raw_bytes" "scenario 1 qa_metadata records raw_response_bytes"
+assert_jq "$s1_out" ".qa_metadata.retry_response_bytes == $s1_retry_bytes" "scenario 1 qa_metadata records retry_response_bytes"
 
 # --- Scenario 2: clean first response, no retry ------------------------------
 echo "=== scenario 2: clean first response, no retry ==="
@@ -167,6 +189,8 @@ assert_file_exists "$s2_out" "scenario 2 writes the --output artifact"
 assert_file_contains "$s2_out" "Clean, no issues found" "scenario 2 artifact contains the first response's findings"
 assert_eq "$(cat "$COUNTER")" "1" "scenario 2 invoked the CLI once (no retry)"
 assert_file_absent "$s2_out.raw.txt" "scenario 2 writes no raw sidecar"
+assert_jq "$s2_out" '.qa_metadata.raw_response_bytes | type == "number"' "scenario 2 qa_metadata records raw_response_bytes"
+assert_jq "$s2_out" '.qa_metadata | has("retry_response_bytes") | not' "scenario 2 qa_metadata has no retry_response_bytes (no retry ran)"
 
 # --- Scenario 3: total failure preserves raw ---------------------------------
 echo "=== scenario 3: total failure preserves raw response ==="
@@ -187,6 +211,8 @@ assert_file_exists "$s3_out.raw.txt" "scenario 3 writes the <output>.raw.txt sid
 assert_file_contains "$s3_out.raw.txt" "critical SQL injection in login()" "scenario 3 sidecar preserves the raw findings"
 assert_file_contains "$s3_err" "raw_response" "scenario 3 error JSON references the raw sidecar path"
 assert_file_absent "$s3_out" "scenario 3 writes no JSON artifact on failure"
+assert_file_exists "$s3_out.retry.txt" "scenario 3 writes the <output>.retry.txt sidecar"
+assert_file_contains "$s3_out.retry.txt" "provided previously" "scenario 3 retry sidecar preserves the retry response"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

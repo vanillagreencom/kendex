@@ -602,7 +602,16 @@ main() {
                 "$CACHE_DIR/.delta_issues_raw.json" > "$CACHE_DIR/.delta_issues.json"
             delta_count=$(jq 'length' "$CACHE_DIR/.delta_issues.json")
             extract_comments "$CACHE_DIR/.delta_issues.json"
-            cache_merge "issues.json" "$CACHE_DIR/.delta_issues.json"
+            # An aborted merge means the issues query returned less than the
+            # cache holds — likely a transient/partial API result. Refusing
+            # the overwrite is correct, but it must fail the sync loudly, not
+            # end as "no changes" (#930).
+            if ! cache_merge "issues.json" "$CACHE_DIR/.delta_issues.json"; then
+                rm -f "$CACHE_DIR/.delta_issues.json" "$CACHE_DIR/.delta_issues_raw.json"
+                cache_unlock
+                echo "Sync error: issues cache merge aborted — the merge result was smaller than the existing cache, which usually means the issues query returned an incomplete or empty result (transient API failure). Cache left unchanged; retry sync." >&2
+                return 1
+            fi
             # Patch stale embedded relation snapshots for delta issues
             jq -c '.[]' "$CACHE_DIR/.delta_issues.json" 2>/dev/null | while IFS= read -r issue; do
                 cache_patch_relation_snapshots "$issue"
@@ -618,7 +627,12 @@ main() {
         delta_proj_count=$(echo "$delta_projects" | jq 'length')
         if (( delta_proj_count > 0 )); then
             echo "$delta_projects" > "$CACHE_DIR/.delta_projects.json"
-            cache_merge "projects.json" "$CACHE_DIR/.delta_projects.json"
+            if ! cache_merge "projects.json" "$CACHE_DIR/.delta_projects.json"; then
+                rm -f "$CACHE_DIR/.delta_projects.json"
+                cache_unlock
+                echo "Sync error: projects cache merge aborted — the merge result was smaller than the existing cache, which usually means the projects query returned an incomplete or empty result (transient API failure). Cache left unchanged; retry sync." >&2
+                return 1
+            fi
             rm -f "$CACHE_DIR/.delta_projects.json"
             summary_parts+=("$delta_proj_count projects updated")
         fi

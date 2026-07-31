@@ -7,9 +7,16 @@
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { dirname, join, resolve } from "path";
+import { dirname, join, resolve, sep } from "path";
 
 export const PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
+
+/**
+ * Registry the vstack extension manager reads to display the value an
+ * extension actually resolves for a manifest key, for extensions whose config
+ * has channels the manager does not own. Keyed by package id.
+ */
+const EXTERNAL_CONFIG_RESOLVER_SYMBOL = Symbol.for("vstack.pi.extension-config-resolver");
 
 export type BridgeEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -312,17 +319,121 @@ function managerToConfig(raw: SettingsRecord): Partial<Config> {
 	};
 }
 
-export function loadConfig(cwd: string): Config {
-	const global = tryParseJson(join(piUserDir(), "claude-bridge.json"));
-	const isolated = isolatedFromEnv();
-	const projectSettings = isolated ? undefined : projectSettingsPath(cwd);
-	const trustedProject = projectSettings !== undefined && projectSettingsTrusted(projectSettings);
-	const project = trustedProject ? tryParseJson(join(dirname(projectSettings), "claude-bridge.json")) : {};
-	const manager: Partial<Config> = isolated ? {} : managerToConfig(readManagerConfig(cwd));
-	const provider = normalizeProviderConfig({ ...global.provider, ...project.provider, ...manager.provider });
+/**
+ * A `claude-bridge.json` file. Legacy files nest provider options under
+ * `provider` and prompt-context flags under `promptContext`; the manifest's flat
+ * key shape is accepted too, so a file written either way resolves the same.
+ * Nested wins when a file carries both shapes for one key.
+ */
+function legacyFileConfig(path: string): Partial<Config> {
+	const raw = asRecord(tryParseJson(path)) ?? {};
+	const flat = managerToConfig(raw);
+	const provider = { ...flat.provider, ...asRecord(raw.provider) } as Config["provider"];
+	const promptContext = { ...flat.promptContext, ...asRecord(raw.promptContext) } as Config["promptContext"];
 	return {
-		enabled: manager.enabled ?? project.enabled ?? global.enabled ?? true,
-		provider,
-		promptContext: { ...global.promptContext, ...project.promptContext, ...manager.promptContext },
+		...(flat.enabled !== undefined ? { enabled: flat.enabled } : {}),
+		...(Object.keys(provider ?? {}).length ? { provider } : {}),
+		...(Object.keys(promptContext ?? {}).length ? { promptContext } : {}),
 	};
+}
+
+interface LegacyLayer {
+	path: string;
+	config: Partial<Config>;
+}
+
+/** Legacy config layers, lowest precedence first. */
+function legacyLayers(cwd: string): LegacyLayer[] {
+	const globalPath = join(piUserDir(), "claude-bridge.json");
+	const layers: LegacyLayer[] = [{ path: globalPath, config: legacyFileConfig(globalPath) }];
+	if (isolatedFromEnv()) return layers;
+	const projectSettings = projectSettingsPath(cwd);
+	if (!projectSettingsTrusted(projectSettings)) return layers;
+	const projectPath = join(dirname(projectSettings), "claude-bridge.json");
+	return [...layers, { path: projectPath, config: legacyFileConfig(projectPath) }];
+}
+
+function mergeLayers(layers: LegacyLayer[]): Partial<Config> {
+	const merged: Partial<Config> = { provider: {}, promptContext: {} };
+	for (const layer of layers) {
+		if (layer.config.enabled !== undefined) merged.enabled = layer.config.enabled;
+		merged.provider = { ...merged.provider, ...layer.config.provider };
+		merged.promptContext = { ...merged.promptContext, ...layer.config.promptContext };
+	}
+	return merged;
+}
+
+export function loadConfig(cwd: string): Config {
+	const legacy = mergeLayers(legacyLayers(cwd));
+	const manager: Partial<Config> = isolatedFromEnv() ? {} : managerToConfig(readManagerConfig(cwd));
+	const provider = normalizeProviderConfig({ ...legacy.provider, ...manager.provider });
+	return {
+		enabled: manager.enabled ?? legacy.enabled ?? true,
+		provider,
+		promptContext: { ...legacy.promptContext, ...manager.promptContext },
+	};
+}
+
+const PROVIDER_KEYS = new Set([
+	"allowExtraUsage",
+	"appendSystemPrompt",
+	"connectorWriteMode",
+	"enableConnectors",
+	"fastMode",
+	"forceEffort",
+	"modelEffortOverrides",
+	"pathToClaudeCodeExecutable",
+	"strictMcpConfig",
+]);
+
+const PROMPT_CONTEXT_KEYS = new Set([
+	"includeAppendSystemPromptMd",
+	"includeCavemanHook",
+	"includeProjectAgentsHook",
+	"includeTaskPanelHook",
+]);
+
+function configValueForKey(config: Partial<Config>, key: string): unknown {
+	if (key === "enabled") return config.enabled;
+	if (PROVIDER_KEYS.has(key)) return normalizeProviderConfig(config.provider)?.[key as keyof NonNullable<Config["provider"]>];
+	if (PROMPT_CONTEXT_KEYS.has(key)) return config.promptContext?.[key as keyof NonNullable<Config["promptContext"]>];
+	return undefined;
+}
+
+/** Home-relative when possible, because the point is telling a user what to edit. */
+function displayPath(path: string): string {
+	const home = homedir();
+	return home && path.startsWith(home + sep) ? `~${path.slice(home.length)}` : path;
+}
+
+export interface ExternalConfigResolution {
+	explicit: boolean;
+	value: unknown;
+	source?: string;
+}
+
+/**
+ * The effective value of a manifest key from the config channels the extension
+ * manager does not own — the legacy `claude-bridge.json` files. Manager config
+ * outranks these, so the manager consults this only when neither of its own
+ * scopes holds the key.
+ */
+export function resolveExternalConfigValue(key: string, cwd: string): ExternalConfigResolution {
+	const layers = legacyLayers(cwd);
+	const value = configValueForKey(mergeLayers(layers), key);
+	if (value === undefined) return { explicit: false, value: undefined };
+	const source = [...layers].reverse().find((layer) => configValueForKey(layer.config, key) !== undefined)?.path;
+	return { explicit: true, value, ...(source ? { source: displayPath(source) } : {}) };
+}
+
+/**
+ * Publish the resolver before any early return, so a bridge disabled by a
+ * legacy file still explains itself in the settings editor.
+ */
+export function registerExternalConfigResolver(): void {
+	const host = globalThis as unknown as Record<PropertyKey, unknown>;
+	const existing = asRecord(host[EXTERNAL_CONFIG_RESOLVER_SYMBOL]);
+	const registry = existing ?? {};
+	if (!existing) host[EXTERNAL_CONFIG_RESOLVER_SYMBOL] = registry;
+	registry[PACKAGE_ID] = (key: string, cwd: string) => resolveExternalConfigValue(key, cwd);
 }

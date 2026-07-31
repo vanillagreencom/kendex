@@ -2,7 +2,7 @@
 
 Template for creating `[DECISION_ID]-[DESCRIPTOR].md` files in the project decision documents directory.
 
-## Minimal Entry (D001-style)
+## Minimal Entry
 
 For focused, single-topic decisions with clear rationale.
 
@@ -30,7 +30,7 @@ For focused, single-topic decisions with clear rationale.
 **References**: [Related decision IDs, research IDs, external links]
 ```
 
-## Standard Entry (D010-style)
+## Standard Entry
 
 For decisions with alternatives considered, code patterns, and structured rationale.
 
@@ -93,7 +93,7 @@ For decisions with alternatives considered, code patterns, and structured ration
 - [Condition 2]
 ```
 
-## Comprehensive Entry (D033-style)
+## Comprehensive Entry
 
 For large architectural decisions spanning multiple concerns (design, API, schema, deployment).
 
@@ -106,7 +106,7 @@ For large architectural decisions spanning multiple concerns (design, API, schem
 **Status**: Active
 **Research**: [RESEARCH_REF or —]
 **Applies to**: [Context string — optional]
-**Refines**: [DXXX, DYYY — optional, for refinements of prior decisions]
+**Refines**: [DECISION_ID], [DECISION_ID] — optional, for refinements of prior decisions
 **API Contract**: [path — optional]
 
 ## Summary
@@ -143,7 +143,7 @@ For large architectural decisions spanning multiple concerns (design, API, schem
 
 | Decision | Change | Rationale |
 |----------|--------|-----------|
-| [DXXX] | [what changes] | [why] |
+| [DECISION_ID] | [what changes] | [why] |
 
 ## Resolved Decisions
 
@@ -161,16 +161,16 @@ For large architectural decisions spanning multiple concerns (design, API, schem
 
 ## Formatting Rules
 
-1. **Title**: `# [DECISION_ID]: [TITLE]` — H1, uppercase D + zero-padded number
+1. **Title**: `# [DECISION_ID]: [TITLE]` — H1 using the project's decision ID scheme
 2. **Back-link**: Always include `[← Decision Index](INDEX.md)` after title
 3. **Metadata bold labels**: `**Date**:`, `**Status**:`, `**Research**:` — bold key, colon, space, value
-4. **Status values**: `Active`, `Superseded by DXXX`, `Revisited`, `Active ([COMPONENTS] → DXXX)`
+4. **Status values**: `Active`, `Superseded by [DECISION_ID]`, `Revisited`, `Active ([COMPONENTS] → [DECISION_ID])`
 5. **Research refs**: `[RESEARCH-ID](../research/RESEARCH-ID/findings.md)` or `—` if no research
 6. **H2 for sections** (`##`), H3 for subsections (`###`), H4 for sub-subsections (`####`)
 7. **Tables**: Standard markdown pipe-and-dash format
 8. **Code blocks**: Always specify language (e.g., `rust`, `sql`, `json`, `bash`)
-9. **Cross-references**: Always use markdown links `[DXXX](DXXX-descriptor.md)`
-10. **Code comments**: Use `// REVISIT(DXXX):` in source code to mark implementation points
+9. **Cross-references**: Always use markdown links `[DECISION_ID](DECISION_ID-descriptor.md)`
+10. **Code comments**: Use `// REVISIT([DECISION_ID]):` in source code to mark implementation points
 
 ## Size Guidelines
 

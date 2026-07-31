@@ -15,6 +15,7 @@ import {
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
+import { shouldAdoptActiveContext } from "./active-context.js";
 import {
 	autoBackgroundDecision,
 	bashBackgroundAck,
@@ -936,7 +937,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 	pi.on("user_bash", (event: any, ctx: ExtensionContext) => {
 		recordProjectTrust(ctx);
-		activeCtx = ctx;
+		// Pi 0.83.0 also routes direct RPC bash through this handler, so ctx is no
+		// longer guaranteed to be the interactive session's UI context.
+		if (shouldAdoptActiveContext(activeCtx, ctx)) activeCtx = ctx;
 		const command = typeof event?.command === "string" ? event.command : "";
 		const decision = decisionForBashCommand(command, event?.cwd ?? ctx.cwd);
 		if (!decision) return undefined;

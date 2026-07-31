@@ -60,7 +60,19 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 
    </output_format>
 
-4. **Ask user**: `Fix all` | Multi-select: `#N: [TITLE]` | `Cancel`
+4. **Resolve the decision mode**, then ask:
+
+   ```bash
+   .agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
+   ```
+
+   **If the output is `auto-recommended`**: do not present the ask — take the recommended option (`Fix all`), log it in the round record, and → § 2. Decision-record revisits, scope expansion beyond the issue, anything touching benchmark-host protocol, and merge ALWAYS ask, in every mode.
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] auto_decisions '"auto-selected: Fix all — [REASON]"'
+   ```
+
+   Otherwise **ask user**: `Fix all` | Multi-select: `#N: [TITLE]` | `Cancel`
 
    | Choice | Action |
    |--------|--------|
@@ -92,7 +104,7 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 
      GitHub items: use `gh issue view ${ISSUE_ID#issue-} --json labels`, or infer from component paths.
 
-2. **Group items by agent domain** if multi-domain. Order per [agent-sequencing.md](agent-sequencing.md).
+2. **Group items by agent domain** if multi-domain. Order per [agent-sequencing.md](agent-sequencing.md). Prefer 2 scoped rounds over 1 broad round when the item count exceeds ~8 — absorbing more into a single round injects new blockers instead of clearing them (an observed 24-item round introduced 8 new blockers, 2 of them P1 — vstack#944).
 
 3. **Detect team context**:
    ```bash
@@ -181,6 +193,8 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    | `ok==true` | fail | Artifact claims done but the worktree is dirty / the commit is missing. **Re-read git ONCE after a brief pause** (transient lag) before classifying B failed; if still failing → re-delegate only the specific missing step (commit or revert leftover work). |
    | `ok==false` | pass | Fix code appears landed but the round did **not** finish (its per-item decisions are unproven — B shows a clean tree, not that THIS round's tail ran). Do NOT re-run the fix and do NOT accept on git alone. Send ONE **report-only tail-reconciliation** nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item) and re-report your item decisions; do NOT re-run the fix."* Accept only once a valid artifact for THIS `dev_round_id` appears (→ the `ok==true` row). |
    | `ok==false` | fail | **Not done** — no completion evidence. Wait to the per-delegation deadline, then escalate (ping → respawn) per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting). |
+
+   **Analysis round (read-only delegation).** If this cycle was explicitly delegated as investigate-and-recommend instead of applying items (e.g. the items' premise needed re-deriving first), the honest receipt is `kind: analysis` — no `commit`, no `validate`, no `items`, recommendation in `summary` (schema: [`../schemas/dev-return.md`](../schemas/dev-return.md) § Analysis rounds). Run Check A **without** `--expect-items` (there is no delegated item set), and B expects no new commit and a clean worktree; there is no exact-commit binding and no validate gate for the round. On A `ok==true` (artifact `kind` is `analysis`) + B pass: accept the round, read the `summary` recommendation, and decide — delegate the actual fixes as a fresh round, or close/re-scope the items with reasoning. A `kind` that does not match what was delegated is a mis-filed round: treat as the `ok==false` row.
 
    Do not import the reviewer's re-delegate-on-`ok==false` rule here — the asymmetry is intentional ([SKILL § Wait for Agent Return Before Acting](../SKILL.md#wait-for-agent-return-before-acting)).
 

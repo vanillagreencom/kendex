@@ -31,7 +31,16 @@ test("Pi package manifests follow the Pi 0.75 package policy", () => {
 		assert.ok(pkg.keywords?.includes("pi-package"), `${dir}: keywords include pi-package`);
 		for (const name of Object.keys(pkg.peerDependencies ?? {})) {
 			if (!name.startsWith("@earendil-works/pi-")) continue;
-			assert.equal(pkg.peerDependencies[name], "*", `${dir}: Pi peer ${name} stays host-provided`);
+			// `*` means "whatever Pi the host already provides". A package that genuinely
+			// requires a newer Pi API may instead declare an explicit `>=X.Y.Z` floor so npm
+			// warns when the host Pi is too old (pi-claude-bridge 2.x needs the native
+			// provider API from Pi 0.81). `optional: true` is what actually keeps npm from
+			// installing a second Pi core, so it is required either way.
+			const range = pkg.peerDependencies[name];
+			assert.ok(
+				range === "*" || /^>=\d+\.\d+\.\d+$/.test(range),
+				`${dir}: Pi peer ${name} is host-provided ("*") or an explicit >=X.Y.Z floor, got ${range}`,
+			);
 			assert.equal(pkg.peerDependenciesMeta?.[name]?.optional, true, `${dir}: Pi peer ${name} is optional to avoid auto-installing a second Pi core`);
 		}
 		if (pkg.pi?.appendSystem) {

@@ -15,7 +15,7 @@ metadata:
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-Manages Architecture Decision Records (ADRs) — represented in this skill as numbered `DXXX` architectural decision documents indexed in `INDEX.md` (by default under `docs/decisions/`) — with canonical templates, creation/update workflows, and a search CLI. Provides the single source of truth for decision entry format and lifecycle.
+Manages Architecture Decision Records (ADRs) — represented in this skill as numbered decision documents indexed in `INDEX.md` (by default under `docs/decisions/`) — with canonical templates, creation/update workflows, and a search CLI. Provides the single source of truth for decision entry format and lifecycle.
 
 ```bash
 .agents/skills/decider/scripts/decisions <command> [options]
@@ -29,8 +29,8 @@ Manages Architecture Decision Records (ADRs) — represented in this skill as nu
 | `search "[KEYWORDS]"` | Ranked keyword search (AND, scored) over INDEX summaries **and** decision bodies | JSON `[{id, decision, path, score}]` |
 | `search "a\|b"` | Regex OR search | JSON `[{id, decision, path}]` |
 | `list` | List all active decisions | JSON `[{id, decision, path}]` |
-| `next-id` | Get next available DXXX | Single `DXXX` line |
-| `get [DXXX]` | Get decision details | JSON `{id, decision, status, date, path}` |
+| `next-id` | Get next available decision ID from the INDEX ID column | Single decision ID line |
+| `get [DECISION_ID]` | Get decision details | JSON `{id, decision, status, date, path}` |
 
 Options: `--limit N` (default: 5) for search results.
 
@@ -62,6 +62,8 @@ Project-level configuration:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `$DECISIONS_DIR` | Path to decision documents directory | Auto-discovers `docs/decisions/`, `decisions/`, `doc/decisions/`, or `adr/` with `INDEX.md` |
+| `$DECISION_ID_PREFIX` | Optional prefix used by `next-id` | Inferred from the last populated ID-column value, or `D` |
+| `$DECISION_ID_WIDTH` | Optional zero-padding width used by `next-id` | Inferred from the selected ID-column scheme, or `3` |
 
 Set `DECISIONS_DIR` in committed `vstack.settings.toml` under `[env]` when it is shared project policy. `.env.local` remains supported for local overrides.
 
@@ -86,7 +88,7 @@ If the decisions directory does not exist (never initialized), read-only lookups
 
 ### Decision Entry Format
 
-All entries require: title (`# DXXX: Title`), date, status, research ref (or `—`), decision statement, rationale, revisit conditions. See `schemas/decision-format.md` for full constraints.
+All entries require: title (`# [DECISION_ID]: Title`), date, status, research ref (or `—`), decision statement, rationale, revisit conditions. The default examples use `DXXX`; projects with an existing numeric-suffix scheme such as `ADR-0001` should preserve that scheme consistently. See `schemas/decision-format.md` for full constraints.
 
 ## Decision Approval
 

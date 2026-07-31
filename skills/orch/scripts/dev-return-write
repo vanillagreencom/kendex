@@ -22,6 +22,8 @@
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
 #     [--qa-label LABEL]... [--bundled] [--no-summary] [--summary-file PATH] \
 #     [--item N DECISION REASONING]...
+#   dev-return-write --worktree PATH --kind analysis --issue ID --round-id RID \
+#     --branch BRANCH --summary-file PATH [--qa-label LABEL]... [--no-summary]
 #
 # --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
 # machine-checkable. --validate-note is the additive channel for a QUALIFIED
@@ -30,21 +32,31 @@
 # Without it the caveat is lost from the record orch treats as authoritative,
 # surviving only if the agent happens to mention it conversationally.
 #
+# --kind analysis (vstack#952) is the truthful spelling for a READ-ONLY round —
+# investigate and recommend, explicitly no implementation. It REJECTS --commit,
+# --validate, and --validate-note (an analysis round produces no commit and runs
+# no validation, so supplying one would assert an outcome that did not occur),
+# and it rejects --item/--bundled (nothing was applied). The recommendation and
+# evidence travel in the existing free-form summary field: --summary-file is
+# REQUIRED, so the round's outcome is durably recorded, not just conversational.
+# The artifact OMITS the commit/validate/validate_note keys entirely;
+# dev-artifact-check treats their presence on an analysis artifact as invalid.
+#
 # Writes PATH/tmp/dev-return-ID-RID.json and prints its absolute path (one line).
 #
 # Artifact schema — canonical source of truth: skills/orch/schemas/dev-return.md
 #   {
 #     "schema_version": 1,                    // required, number
 #     "round_id": "[ROUND_ID]",               // required, matches the filename token
-#     "kind": "implement" | "fix",            // required
+#     "kind": "implement" | "fix" | "analysis", // required
 #     "issue": "[ISSUE_ID]",                  // required, normalized state key
 #     "branch": "[BRANCH]",                   // required
-#     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // required
-#     "validate": "pass" | "FAILING: c1,c2",  // required, "pass" or "FAILING:…"
-#     "validate_note": "…" | null,            // --validate-note, free text
+#     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // implement/fix only; OMITTED for analysis
+#     "validate": "pass" | "FAILING: c1,c2",  // implement/fix only; OMITTED for analysis
+#     "validate_note": "…" | null,            // --validate-note; OMITTED for analysis
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
 #     "summary_posted": true,                 // false with --no-summary
-#     "summary": "…" | null,                  // --summary-file content (GitHub/ad-hoc recovery)
+#     "summary": "…" | null,                  // --summary-file content (required content for analysis)
 #     "bundled": false,                       // true with --bundled
 #     "items": [{"n": 1, "decision": "Applied", "reasoning": "…"}]
 #   }
@@ -53,6 +65,8 @@
 #   --kind fix OR --bundled  → REQUIRES >=1 --item (a fix/bundled artifact with no
 #                              items is incomplete).
 #   --kind implement (single, no --bundled) → zero items allowed → writes "items": [].
+#   --kind analysis → REQUIRES --summary-file; REJECTS --commit/--validate/
+#                     --validate-note/--item/--bundled; writes "items": [].
 #   DECISION ∈ {Applied, Skipped, Blocked}; N is a non-negative integer; REASONING
 #   must be non-empty.
 #
@@ -79,12 +93,18 @@ Usage:
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
     [--qa-label LABEL]... [--bundled] [--no-summary] [--summary-file PATH] \
     [--item N DECISION REASONING]...
+  dev-return-write --worktree PATH --kind analysis --issue ID --round-id RID \
+    --branch BRANCH --summary-file PATH [--qa-label LABEL]... [--no-summary]
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
 REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
 --validate-note carries a qualified result the enumeration cannot express (a lane
 that passed only on re-run, a flake worth recording); it never relaxes --validate.
+--kind analysis is a read-only round (investigate + recommend, no implementation):
+it requires --summary-file (the recommendation/evidence) and rejects --commit,
+--validate, --validate-note, --item, and --bundled — an analysis round has no
+commit and runs no validation, so those keys are omitted from the artifact.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 EOF
@@ -119,6 +139,11 @@ qa_labels=()
 item_n=()
 item_decision=()
 item_reasoning=()
+# Presence tracking so --kind analysis can reject a supplied flag even when its
+# value is empty ("--commit ''" is still a commit claim).
+commit_given=false
+validate_given=false
+validate_note_given=false
 
 while (( $# > 0 )); do
   case "$1" in
@@ -127,9 +152,9 @@ while (( $# > 0 )); do
     --issue)        need "$1" $#; issue="$2"; shift 2 ;;
     --round-id)     need "$1" $#; round_id="$2"; shift 2 ;;
     --branch)       need "$1" $#; branch="$2"; shift 2 ;;
-    --commit)       need "$1" $#; commit="$2"; shift 2 ;;
-    --validate)     need "$1" $#; validate="$2"; shift 2 ;;
-    --validate-note) need "$1" $#; validate_note="$2"; shift 2 ;;
+    --commit)       need "$1" $#; commit="$2"; commit_given=true; shift 2 ;;
+    --validate)     need "$1" $#; validate="$2"; validate_given=true; shift 2 ;;
+    --validate-note) need "$1" $#; validate_note="$2"; validate_note_given=true; shift 2 ;;
     --summary-file) need "$1" $#; summary_file="$2"; shift 2 ;;
     --qa-label)     need "$1" $#; qa_labels+=("$2"); shift 2 ;;
     --bundled)      bundled=true; shift ;;
@@ -164,22 +189,42 @@ done
 [[ -n "$worktree" ]] || die "--worktree is required"
 [[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
 case "$kind" in
-  implement|fix) ;;
-  "") die "--kind is required (implement|fix)" ;;
-  *)  die "--kind must be implement or fix, got '$kind'" ;;
+  implement|fix|analysis) ;;
+  "") die "--kind is required (implement|fix|analysis)" ;;
+  *)  die "--kind must be implement, fix, or analysis, got '$kind'" ;;
 esac
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
 [[ -n "$branch" ]]   || die "--branch is required (non-empty)"
-[[ -n "$commit" ]]   || die "--commit is required (non-empty)"
-[[ -n "$validate" ]] || die "--validate is required (non-empty)"
-[[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
-  || die "--validate must be 'pass' or begin with 'FAILING:', got '$validate'"
-# An empty or whitespace-only note is worse than none: it looks like a recorded
-# caveat while carrying nothing. Reject it rather than storing "".
-if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
-  [[ -n "${validate_note//[[:space:]]/}" ]] \
-    || die "--validate-note must contain non-whitespace text"
+if [[ "$kind" == "analysis" ]]; then
+  # A read-only analysis round has no commit and runs no validation — accepting
+  # either flag would let the artifact assert an outcome that did not occur
+  # (vstack#952). Reject loudly instead of silently ignoring.
+  [[ "$commit_given" == "false" ]] \
+    || die "--commit is not allowed with --kind analysis: an analysis round produces no commit"
+  [[ "$validate_given" == "false" ]] \
+    || die "--validate is not allowed with --kind analysis: an analysis round runs no validation"
+  [[ "$validate_note_given" == "false" ]] \
+    || die "--validate-note is not allowed with --kind analysis: there is no validation outcome to qualify"
+  [[ "$bundled" == "false" ]] \
+    || die "--bundled is not allowed with --kind analysis: a bundle is an implementation shape"
+  (( ${#item_n[@]} == 0 )) \
+    || die "--item is not allowed with --kind analysis: an analysis round applies no review items"
+  # The recommendation/evidence IS the round's deliverable — without it the
+  # artifact proves only that the round ended, not what it concluded.
+  [[ -n "$summary_file" ]] \
+    || die "--summary-file is required with --kind analysis: the artifact must carry the recommendation/evidence"
+else
+  [[ -n "$commit" ]]   || die "--commit is required (non-empty)"
+  [[ -n "$validate" ]] || die "--validate is required (non-empty)"
+  [[ "$validate" == "pass" || "$validate" == FAILING:* ]] \
+    || die "--validate must be 'pass' or begin with 'FAILING:', got '$validate'"
+  # An empty or whitespace-only note is worse than none: it looks like a recorded
+  # caveat while carrying nothing. Reject it rather than storing "".
+  if [[ -n "${validate_note+set}" && -n "$validate_note" ]]; then
+    [[ -n "${validate_note//[[:space:]]/}" ]] \
+      || die "--validate-note must contain non-whitespace text"
+  fi
 fi
 if [[ -n "$summary_file" ]]; then
   [[ -f "$summary_file" ]] || die "--summary-file path '$summary_file' does not exist"
@@ -233,35 +278,64 @@ else
   summary_arg=(--argjson summary null)
 fi
 
-jq -n \
-  --argjson schema_version 1 \
-  --arg round_id "$round_id" \
-  --arg kind "$kind" \
-  --arg issue "$issue" \
-  --arg branch "$branch" \
-  --arg commit "$commit" \
-  --arg validate "$validate" \
-  --arg validate_note "$validate_note" \
-  --argjson qa_labels "$qa_json" \
-  --argjson summary_posted "$summary_posted" \
-  "${summary_arg[@]}" \
-  --argjson bundled "$bundled" \
-  --argjson items "$items_json" \
-  '{
-     schema_version: $schema_version,
-     round_id: $round_id,
-     kind: $kind,
-     issue: $issue,
-     branch: $branch,
-     commit: $commit,
-     validate: $validate,
-     validate_note: (if $validate_note == "" then null else $validate_note end),
-     qa_labels: $qa_labels,
-     summary_posted: $summary_posted,
-     summary: $summary,
-     bundled: $bundled,
-     items: $items
-   }' > "$tmp"
+# An analysis artifact OMITS commit/validate/validate_note entirely — the keys'
+# absence is what dev-artifact-check verifies (their presence would be a
+# validation claim on a round that ran none, vstack#952).
+if [[ "$kind" == "analysis" ]]; then
+  jq -n \
+    --argjson schema_version 1 \
+    --arg round_id "$round_id" \
+    --arg kind "$kind" \
+    --arg issue "$issue" \
+    --arg branch "$branch" \
+    --argjson qa_labels "$qa_json" \
+    --argjson summary_posted "$summary_posted" \
+    "${summary_arg[@]}" \
+    --argjson bundled "$bundled" \
+    --argjson items "$items_json" \
+    '{
+       schema_version: $schema_version,
+       round_id: $round_id,
+       kind: $kind,
+       issue: $issue,
+       branch: $branch,
+       qa_labels: $qa_labels,
+       summary_posted: $summary_posted,
+       summary: $summary,
+       bundled: $bundled,
+       items: $items
+     }' > "$tmp"
+else
+  jq -n \
+    --argjson schema_version 1 \
+    --arg round_id "$round_id" \
+    --arg kind "$kind" \
+    --arg issue "$issue" \
+    --arg branch "$branch" \
+    --arg commit "$commit" \
+    --arg validate "$validate" \
+    --arg validate_note "$validate_note" \
+    --argjson qa_labels "$qa_json" \
+    --argjson summary_posted "$summary_posted" \
+    "${summary_arg[@]}" \
+    --argjson bundled "$bundled" \
+    --argjson items "$items_json" \
+    '{
+       schema_version: $schema_version,
+       round_id: $round_id,
+       kind: $kind,
+       issue: $issue,
+       branch: $branch,
+       commit: $commit,
+       validate: $validate,
+       validate_note: (if $validate_note == "" then null else $validate_note end),
+       qa_labels: $qa_labels,
+       summary_posted: $summary_posted,
+       summary: $summary,
+       bundled: $bundled,
+       items: $items
+     }' > "$tmp"
+fi
 
 mv "$tmp" "$out"
 trap - EXIT

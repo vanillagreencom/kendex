@@ -213,6 +213,7 @@ pub(super) fn perform_move_plans(
 
     let source_dir = source_dir_for_items(items);
     let mapping = source_dir
+        .as_deref()
         .map(crate::mapping::MappingConfig::load)
         .unwrap_or_default();
     project_config.overlay_source_frontmatter(&mapping);
@@ -521,9 +522,11 @@ pub(super) fn perform_inline_update(
     let project_root = config::project_root();
     let source_dir = source_dir_for_items(items);
     let mapping = source_dir
+        .as_deref()
         .map(crate::mapping::MappingConfig::load)
         .unwrap_or_default();
     let refresh_sources: Vec<crate::refresh_sources::RefreshSource> = source_dir
+        .as_deref()
         .map(|root| crate::refresh_sources::RefreshSource {
             root: root.to_path_buf(),
             aliases: vec![root.to_string_lossy().into_owned()],
@@ -660,24 +663,54 @@ pub(super) fn perform_inline_update(
     report
 }
 
-fn source_dir_for_items(items: &DiscoveredItems) -> Option<&std::path::Path> {
-    items
+fn source_dir_for_items(items: &DiscoveredItems) -> Option<std::path::PathBuf> {
+    fn item_path(items: &DiscoveredItems) -> Option<&std::path::Path> {
+        items
+            .agents
+            .first()
+            .map(|agent| agent.source_path.as_path())
+            .or_else(|| items.skills.first().map(|skill| skill.source_dir.as_path()))
+            .or_else(|| items.hooks.first().map(|hook| hook.source_path.as_path()))
+            .or_else(|| {
+                items
+                    .pi_extensions
+                    .first()
+                    .map(|extension| extension.source_dir.as_path())
+            })
+            .or_else(|| items.extras.first().map(|extra| extra.source_dir.as_path()))
+    }
+
+    if let Some(path) = item_path(items)
+        && let Some(root) = crate::catalog::find_source_root_for_item_path(path)
+    {
+        return Some(root);
+    }
+
+    if let Some(path) = items
         .agents
         .first()
         .and_then(|a| a.source_path.parent().and_then(|p| p.parent()))
-        .or_else(|| items.skills.first().and_then(|s| s.source_dir.parent()))
-        .or_else(|| {
-            items
-                .hooks
-                .first()
-                .and_then(|h| h.source_path.parent().and_then(|p| p.parent()))
-        })
-        .or_else(|| {
-            items
-                .pi_extensions
-                .first()
-                .and_then(|e| e.source_dir.parent())
-        })
+    {
+        return Some(path.to_path_buf());
+    }
+    if let Some(path) = items.skills.first().and_then(|s| s.source_dir.parent()) {
+        return Some(path.to_path_buf());
+    }
+    if let Some(path) = items
+        .hooks
+        .first()
+        .and_then(|h| h.source_path.parent().and_then(|p| p.parent()))
+    {
+        return Some(path.to_path_buf());
+    }
+    if let Some(path) = items
+        .pi_extensions
+        .first()
+        .and_then(|e| e.source_dir.parent())
+    {
+        return Some(path.to_path_buf());
+    }
+    None
 }
 
 #[cfg(test)]

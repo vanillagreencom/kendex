@@ -91,14 +91,20 @@ jq -c \
   (.scope // "support")            as $scope |
   ($ins + $del)                    as $lines |
 
+  # test_panic_path_added is informational (vstack#944): a panic pattern whose
+  # enclosing context is a test surface is not a production panic path, so it
+  # never makes the round `risk` on its own — the round falls through to the
+  # blockers/size/small handling below. It stays visible in risk_flags.
+  ($flags | map(select(. != "test_panic_path_added"))) as $risk_relevant |
+
   # Ordered so the reported reason is the FIRST thing that made it risky, which
   # is what an operator reading the log wants to know.
   (if $files == 0 then
      {decision: "skip",     class: "none",
       reason: "no files changed"}
-   elif ($flags | length) > 0 then
+   elif ($risk_relevant | length) > 0 then
      {decision: "rereview", class: "risk",
-      reason: ("risk flags present: " + ($flags | join(", ")))}
+      reason: ("risk flags present: " + ($risk_relevant | join(", ")))}
    elif $scope == "production" then
      {decision: "rereview", class: "production",
       reason: "production scope"}

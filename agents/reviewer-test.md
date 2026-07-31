@@ -31,6 +31,7 @@ Read architecture docs relevant to your role: coverage targets (per-path or per-
 
 - **Report-only** — returns findings; does NOT modify code
 - Focus on tests that catch real bugs
+- Any test you mutation-validate also gets repeat runs at elevated parallelism (reviewer skill's Mutation-Stability Pairing); report both numbers — mutation-pass + stability-fail is a finding, not a pass
 - Derive coverage targets and test type requirements from architecture docs. Do not invent project-specific coverage percentages; when docs are silent, use the reviewer skill's fallback standards and focus on meaningful untested behavior.
 
 ## Output

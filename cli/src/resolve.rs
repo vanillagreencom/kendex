@@ -202,6 +202,9 @@ pub fn is_vstack_source(dir: &Path) -> bool {
     {
         return false;
     }
+    if crate::catalog::has_catalog_table(dir) {
+        return true;
+    }
     let count = [
         dir.join("agents").is_dir(),
         dir.join("skills").is_dir(),
@@ -440,5 +443,19 @@ mod tests {
 
         assert_eq!(fallback.len(), 1);
         assert_eq!(fallback[0].name, "fallback");
+    }
+
+    #[test]
+    fn is_vstack_source_accepts_catalog_table_without_default_dirs() {
+        let root = tmpdir("catalog-source");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("vstack.toml"),
+            "[catalog]\nskills = [\"pkgs/skills/*\"]\n",
+        )
+        .unwrap();
+
+        assert!(is_vstack_source(&root));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

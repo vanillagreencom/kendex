@@ -39,38 +39,16 @@ describe("QueryContext class", () => {
 		assert.ok(ctx().deliveredToolResultIds.has("id1"));
 	});
 
-	it("resetToolTracking clears tool-call matching state for a fresh query", () => {
+	it("resetToolTracking clears tool-call matching state for a new assistant message", () => {
 		ctx().recordToolCall("id1", "read", { path: "a" });
-		ctx().markToolCallEmitted("id1");
 		ctx().markToolResultDelivered("id1");
 		ctx().markToolResultResolved("id1");
 		ctx().resetToolTracking();
 
 		assert.deepStrictEqual(ctx().turnToolCallIds, []);
 		assert.deepStrictEqual(ctx().turnToolCalls, []);
-		assert.strictEqual(ctx().emittedToolCallIds.size, 0);
 		assert.strictEqual(ctx().deliveredToolResultIds.size, 0);
 		assert.strictEqual(ctx().resolvedToolResultIds.size, 0);
-	});
-
-	it("advanceToolTracking keeps an unresolved prior call until its late MCP handler claims it", () => {
-		ctx().recordToolCall("prior", "read", { path: "README.md" });
-		ctx().markToolCallEmitted("prior");
-		ctx().markToolResultDelivered("prior");
-		ctx().pendingResults.set("prior", { toolCallId: "prior", content: [{ type: "text", text: "ready" }] });
-		ctx().recordToolCall("resolved", "bash", { command: "true" });
-		ctx().markToolCallEmitted("resolved");
-		ctx().markToolResultDelivered("resolved");
-		ctx().markToolResultResolved("resolved");
-
-		ctx().advanceToolTracking();
-		ctx().recordToolCall("next", "read", { path: "tsconfig.json" });
-
-		assert.deepStrictEqual(ctx().turnToolCallIds, ["prior", "next"]);
-		assert.equal(ctx().wasToolCallEmitted("prior"), true);
-		assert.equal(ctx().wasToolCallEmitted("resolved"), false);
-		assert.equal(ctx().claimToolCall("read", { path: "README.md" }).toolCallId, "prior");
-		assert.equal(ctx().claimToolCall("read", { path: "tsconfig.json" }).toolCallId, "next");
 	});
 
 	it("claimToolCall matches handler invocation by tool name and args, not stream position", () => {
@@ -128,31 +106,43 @@ describe("QueryContext class", () => {
 		assert.equal(claim.ambiguous, false);
 	});
 
-	it("claimToolCall allows a sole same-name call after schema normalization changes arguments", () => {
-		ctx().recordToolCall("edit-normalized", "edit", {
-			path: "src/app.tsx",
-			edits: [{ oldText: "old", newText: "new", $comment: "compat" }],
-		});
+	it("claimToolCall claims the sole same-name call even when recorded args diverge", () => {
+		// Recorded args = raw streamed input; handler args = zod-validated copy.
+		// A stripped/extra key must not strand the only call this handler can be.
+		ctx().recordToolCall("edit-1", "edit", { path: "a.ts", edits: [{ oldText: "x", newText: "y", stray: true }] });
 
-		const claim = ctx().claimToolCall("edit", {
-			path: "src/app.tsx",
-			edits: [{ oldText: "old", newText: "new" }],
-		});
+		const claim = ctx().claimToolCall("edit", { path: "a.ts", edits: [{ oldText: "x", newText: "y" }] });
 
-		assert.equal(claim.toolCallId, "edit-normalized");
+		assert.equal(claim.toolCallId, "edit-1");
 		assert.equal(claim.match, "tool-name");
-		assert.equal(claim.ambiguous, false);
+		assert.equal(claim.argsMismatch, true);
+		assert.equal(ctx().claimedToolCallIds.has("edit-1"), true);
 	});
 
-	it("claimToolCall keeps parallel same-name calls strict when normalized arguments are ambiguous", () => {
-		ctx().recordToolCall("edit-a", "edit", { path: "a.ts", legacy: true });
-		ctx().recordToolCall("edit-b", "edit", { path: "b.ts", legacy: true });
+	it("claimToolCall still refuses when several same-name calls all mismatch", () => {
+		ctx().recordToolCall("edit-a", "edit", { path: "a.ts", edits: [] });
+		ctx().recordToolCall("edit-b", "edit", { path: "b.ts", edits: [] });
 
-		const claim = ctx().claimToolCall("edit", { legacy: false });
+		const claim = ctx().claimToolCall("edit", { path: "c.ts", edits: [] });
 
 		assert.equal(claim.toolCallId, undefined);
 		assert.equal(claim.match, "none");
 		assert.equal(claim.available, 2);
+	});
+
+	it("takeStaleQueuedResults drains the queue and names tools across message resets", () => {
+		ctx().recordToolCall("bash-lost", "bash", { command: "echo hi", timeout: 120 });
+		ctx().pendingResults.set("bash-lost", { content: [{ type: "text", text: "hi" }] });
+		ctx().resetToolTracking(); // new child message: per-message records cleared
+
+		const progress = ctx().toolResultProgress();
+		assert.equal(progress.queuedCount, 1);
+		assert.deepEqual(progress.toolNames, [{ name: "bash", count: 1 }], "query-scoped names survive the reset");
+
+		const stale = ctx().takeStaleQueuedResults();
+		assert.deepEqual(stale, [{ id: "bash-lost", toolName: "bash" }]);
+		assert.equal(ctx().pendingResults.size, 0);
+		assert.deepEqual(ctx().takeStaleQueuedResults(), [], "second drain is empty");
 	});
 
 	it("toolResultProgress reports teardown mismatch counts", () => {

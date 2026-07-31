@@ -54,6 +54,14 @@ All reviewer agents share this baseline stance, then narrow it through their own
 
 Return `pass` only when your review domain has no verified blocker in scope. Put a finding in `blockers[]` when the scoped code introduces or contains a domain regression, an unjustified fallback-standard violation, or unresolved high-risk uncertainty that can be verified only by the author. Put a finding in `suggestions[]` only when it is actionable but non-blocking.
 
+## Mutation-Stability Pairing
+
+Mutation-validating a test (temporarily breaking the code under test to confirm the test fails, then reverting) proves the test can fail for the right reason — not that it only fails for the right reason. Every test you mutation-validate therefore also gets a stability check: run the validated test(s) N times (default N=10) at elevated parallelism — an explicit thread count around double the runner's default, e.g. for a Rust suite pass `--test-threads` at twice the logical-CPU count cargo defaults to, or the equivalent concurrency flag for other runners.
+
+Report both numbers wherever the validation is cited — in the finding's `description`, or in the artifact `summary` when the validation supports a pass — in this fixed format: `mutation: killed X/X; stability: Y/N at T threads` (mutants killed/introduced, passing runs/total runs, thread count).
+
+A test that passes mutation but fails any stability run is a finding (concurrency-sensitive test), never a pass.
+
 ## Output Contract
 
 Your review artifact is validated deterministically by orch's `review-artifact-check`. A single malformed item rejects the **whole** artifact and costs a re-delegation round-trip, so get the item shape right the first time.

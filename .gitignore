@@ -54,3 +54,7 @@ Thumbs.db
 # Local vstack install state (per-checkout absolute paths; do not commit)
 .vstack-lock.json
 vstack-local.toml
+
+# Cross-repo mailbox log — machine-local session coordination, never committed
+# (docs/cross-repo.md, the curated contract, IS tracked on purpose)
+docs/cross-repo-notes.md

@@ -7,9 +7,11 @@ import { PROVIDER_ID, messageContentToText } from "./convert.js";
 import { buildModels, fallbackModelForPrimaryModel, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
-import { QueryContext, ctx, drainPendingToolCalls, stackDepth, pushContext, popContext, toolCallDrainCause } from "./query-state.js";
-import { loadConfig, normalizeEffortLevel, recordProjectTrust, type Config } from "./config.js";
-import { decideRegistration, hasClaudeCredentials } from "./auth-presence.js";
+import { QueryContext, ctx, drainPendingToolCalls, popContext, stackDepth, pushContext, toolCallDrainCause } from "./query-state.js";
+import { teardownQuery } from "./query-teardown.js";
+import { loadConfig, normalizeEffortLevel, recordProjectTrust, registerExternalConfigResolver, type Config } from "./config.js";
+import { hasClaudeCredentials } from "./auth-presence.js";
+import { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, supportsNativeProvider } from "./native-provider.js";
 import { extractAgentsAppend } from "./agents-md.js";
 import { buildPromptContextAppend } from "./prompt-context.js";
 import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
@@ -39,14 +41,14 @@ export {
 export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
-import { argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
-import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor } from "./connectors.js";
+import { appendIntegrityEntry, argKeys, extensionApi, piUI, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession } from "./bridge-state.js";
+import { connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
 import { readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
 import { cancelScheduledSessionPersistence, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
-import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, uniqueNonEmptyLines } from "./rate-limit.js";
+import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, isUsageLimitMessage, uniqueNonEmptyLines } from "./rate-limit.js";
 import { mapToolArgs } from "./tool-mapping.js";
-import { ensureTurnStarted, finalizeCurrentStream, parsePartialJson, processAssistantMessage, processStreamEvent, updateTurnOutputModel } from "./assistant-stream.js";
+import { ensureTurnStarted, finalizeCurrentStream, finalizeToolUseTurnFromMcpInvocation, noteChildExecutedToolResults, processAssistantMessage, processStreamEvent, scheduleToolUseTurnEnd, updateTurnOutputModel } from "./assistant-stream.js";
 import {
 	accountSessionScope,
 	classifyClaudeFailure,
@@ -67,13 +69,15 @@ import {
 // public surface — unit tests and downstream consumers import these from
 // bundle/index.js.
 export { classifyClaudeExecutableBytes, preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics, wrapClaudeSpawnErrorForSdk, type ClaudeExecutableFileType, type ClaudeExecutablePreflightResult } from "./claude-executable.js";
-export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, reportToolResultMismatch } from "./bridge-state.js";
-export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
+export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, INTEGRITY_CUSTOM_TYPE, appendIntegrityEntry, reportToolResultMismatch } from "./bridge-state.js";
+export { CONNECTOR_CALL_CUSTOM_TYPE, connectorResultByteSize, flushConnectorCallAudit, recordConnectorCallResult, setConnectorCallAuditSink, type ConnectorCallAuditData, type ConnectorCallAuditSink, type ConnectorCallOutcome } from "./connector-audit.js";
+export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isChildExecutedTool, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
 export { cancelScheduledSessionPersistence, restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
+export { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, claudeAuthSourceLabel, supportsNativeProvider } from "./native-provider.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
-export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, normalizeRateLimitUtilization, uniqueNonEmptyLines } from "./rate-limit.js";
+export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, isUsageLimitMessage, normalizeRateLimitUtilization, resetTimestampMs, uniqueNonEmptyLines } from "./rate-limit.js";
 export { mapToolName } from "./tool-mapping.js";
-export { processAssistantMessage, processStreamEvent } from "./assistant-stream.js";
+export { cancelScheduledToolUseEnd, endToolUseTurn, finalizeToolUseTurnFromMcpInvocation, noteChildExecutedToolResults, processAssistantMessage, processStreamEvent, reapStaleQueuedResults, scheduleToolUseTurnEnd } from "./assistant-stream.js";
 export {
 	classifyClaudeFailure,
 	commitsVisibleOutput,
@@ -117,7 +121,7 @@ const newAssistantMessageEventStream: () => AssistantMessageEventStream =
 //
 // Both are released on session_shutdown (incl. /reload) by releaseProviderTokens
 // so the next module load starts clean. See applyProviderRegistration for the
-// state machine and auth-presence.ts/decideRegistration for the pure decision.
+// native (pi >=0.81) upsert flow.
 const PRIMARY_INSTANCE_KEY = Symbol.for("claude-bridge:primaryInstance");
 const ACTIVE_STREAM_SIMPLE_KEY = Symbol.for("claude-bridge:activeStreamSimple");
 const COMMANDS_REGISTERED_KEY = Symbol.for("claude-bridge:commandsRegistered");
@@ -156,6 +160,35 @@ function emitRateLimitEvent(payload: Record<string, unknown>): void {
 
 function extraUsageAllowed(config: Config): boolean {
 	return config.provider?.allowExtraUsage === true;
+}
+
+// The fastMode setting silently no-ops when Claude Code declines fast mode.
+// Surface the typed fast_mode_disabled_reason (SDK 0.3.219+) once per distinct
+// reason so an enabled-but-inert setting explains itself instead of looking
+// broken. Module-level dedup: the same reason repeats on every init message.
+let lastFastModeDisabledNoticeReason: string | null = null;
+
+const FAST_MODE_DISABLED_REASON_TEXT: Record<string, string> = {
+	disabled_by_env: "disabled by an environment variable",
+	extra_usage_disabled: "extra usage is disabled for this account",
+	free: "not available on the free plan",
+	model_not_allowed: "not available for this model",
+	network_error: "the eligibility check hit a network error",
+	not_first_party: "not available for this account type",
+	preference: "disabled by a Claude Code preference",
+	sdk_opt_in_required: "the SDK opt-in is missing",
+	unknown: "unavailable for an unknown reason",
+};
+
+function noteFastModeDisabledReason(message: unknown, bridgeConfig: Config): void {
+	if (bridgeConfig.provider?.fastMode !== true) return;
+	const reason = (message as { fast_mode_disabled_reason?: unknown }).fast_mode_disabled_reason;
+	// "pending" means the CLI is still deciding — not a verdict worth announcing.
+	if (typeof reason !== "string" || reason === "pending") return;
+	if (reason === lastFastModeDisabledNoticeReason) return;
+	lastFastModeDisabledNoticeReason = reason;
+	const text = FAST_MODE_DISABLED_REASON_TEXT[reason] ?? `unavailable (${reason})`;
+	safeNotify(`Claude bridge: fast mode is enabled in settings but Claude Code declined it — ${text}.`, "warning");
 }
 
 function sdkTextFromMessage(message: SDKMessage): string | undefined {
@@ -355,7 +388,7 @@ async function* wrapPromptStream(blocks: ContentBlockParam[]): AsyncIterable<SDK
 // them without activating the extension. `ctx()`, `pushContext()`, `popContext()`
 // are imported at the top of this file.
 
-function resolveMcpTools(context: Context, excludeToolName?: string): {
+export function resolveMcpTools(context: Context, excludeToolName?: string): {
 	mcpTools: Tool[];
 	customToolNameToSdk: Map<string, string>;
 	customToolNameToPi: Map<string, string>;
@@ -368,10 +401,29 @@ function resolveMcpTools(context: Context, excludeToolName?: string): {
 
 	for (const tool of context.tools) {
 		if (tool.name === excludeToolName) continue;
+		// Never re-offer a tool the child owns natively. The claude.ai connector
+		// namespace belongs to the child's own MCP servers, so a Pi tool sitting
+		// on it would be advertised a SECOND time under our prefix — two names
+		// for one capability, and the model picking the wrong one gets a real
+		// `Tool ... not found` from the dispatcher (memsira#320). It would also
+		// be uncallable in any case: a `tool_use` under that namespace is treated
+		// as child-executed and never handed to Pi (isChildExecutedTool), so
+		// filtering here is what makes the two halves agree end to end.
+		if (isChildExecutedTool(tool.name)) {
+			debug(`resolveMcpTools: not re-offering child-native tool ${tool.name}`);
+			continue;
+		}
 		const sdkName = `${MCP_TOOL_PREFIX}${tool.name}`;
 		mcpTools.push(tool);
+		// Case-insensitive aliases mean two tools differing only by case would
+		// silently overwrite each other's mapping — surface it if it ever happens.
+		const lowerName = tool.name.toLowerCase();
+		const collision = customToolNameToSdk.get(lowerName);
+		if (collision !== undefined && collision !== sdkName) {
+			debug(`WARNING: resolveMcpTools lowercase alias collision: ${tool.name} overwrites mapping previously held by ${collision}`);
+		}
 		customToolNameToSdk.set(tool.name, sdkName);
-		customToolNameToSdk.set(tool.name.toLowerCase(), sdkName);
+		customToolNameToSdk.set(lowerName, sdkName);
 		customToolNameToPi.set(sdkName, tool.name);
 		customToolNameToPi.set(sdkName.toLowerCase(), tool.name);
 	}
@@ -379,91 +431,12 @@ function resolveMcpTools(context: Context, excludeToolName?: string): {
 	return { mcpTools, customToolNameToSdk, customToolNameToPi };
 }
 
-/** Finalizes the current pi turn when the SDK invokes an MCP tool handler
- *  before emitting `message_stop` or the completed assistant message.
- *
- *  Observed with Claude Code under pi 0.80's steer draining (tool result and
- *  drained steer arrive in one provider call): the NEXT tool turn's tool_use
- *  streams in, the SDK invokes the MCP handler — and neither terminal event
- *  ever arrives. The invocation itself proves the assistant turn is committed,
- *  so end the pi stream here exactly like the `message_stop` path; otherwise
- *  the handler blocks on a result pi will never deliver (deadlock). No-op when
- *  the turn already ended (stream null) or the tool call isn't part of the
- *  currently streamed turn. */
-export const MCP_TOOL_USE_FINALIZE_GRACE_MS = 25;
-
-const pendingMcpToolUseFinalizers = new WeakMap<QueryContext, ReturnType<typeof setTimeout>>();
-
-function stageToolUseFromMcpInvocation(
-	queryCtx: QueryContext,
-	toolCallId: string,
-	toolName: string,
-	mappedArgs: Record<string, unknown>,
-): void {
-	if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
-	let idx = queryCtx.turnBlocks.findIndex((b: any) => b.type === "toolCall" && b.id === toolCallId);
-	if (idx >= 0) {
-		const block = queryCtx.turnBlocks[idx] as any;
-		if ("partialJson" in block) {
-			// Stream ended before content_block_stop — settle the args from the
-			// partial JSON the same way content_block_stop would have.
-			block.arguments = mapToolArgs(block.name, parsePartialJson(block.partialJson, block.arguments));
-			queryCtx.updateToolCallArgs(block.id, block.arguments);
-			delete block.partialJson;
-			delete block.index;
-			queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
-		}
-	} else {
-		// The invocation can arrive before the tool_use is streamed at all
-		// (observed after a tool-result+steer provider call reset the turn):
-		// synthesize the toolCall from the claim — the MCP call carries the
-		// authoritative id, name, and arguments.
-		queryCtx.turnBlocks.push({ type: "toolCall", id: toolCallId, name: toolName, arguments: mappedArgs });
-		idx = queryCtx.turnBlocks.length - 1;
-		const block = queryCtx.turnBlocks[idx] as any;
-		queryCtx.currentPiStream.push({ type: "toolcall_start", contentIndex: idx, partial: queryCtx.turnOutput });
-		queryCtx.currentPiStream.push({ type: "toolcall_end", contentIndex: idx, toolCall: block, partial: queryCtx.turnOutput });
-	}
-	queryCtx.markToolCallEmitted(toolCallId);
-	queryCtx.turnSawToolCall = true;
-}
-
-export function cancelMcpToolUseFinalization(queryCtx: QueryContext): void {
-	const timer = pendingMcpToolUseFinalizers.get(queryCtx);
-	if (!timer) return;
-	clearTimeout(timer);
-	pendingMcpToolUseFinalizers.delete(queryCtx);
-}
-
-/**
- * Finish a Pi tool-use turn when Claude invokes an MCP handler before emitting
- * its normal assistant boundary. MCP handlers from one parallel batch can
- * arrive a few milliseconds apart; ending the stream synchronously on the
- * first handler drops every later sibling from Pi, so their results can never
- * be delivered. Stage each invocation immediately, then give the rest of the
- * batch one short grace window to join before closing the turn.
- */
-export function finalizeToolUseTurnFromMcpInvocation(
-	queryCtx: QueryContext,
-	toolCallId: string,
-	toolName: string,
-	mappedArgs: Record<string, unknown>,
-): void {
-	if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
-	stageToolUseFromMcpInvocation(queryCtx, toolCallId, toolName, mappedArgs);
-	if (pendingMcpToolUseFinalizers.has(queryCtx)) return;
-
-	const timer = setTimeout(() => {
-		pendingMcpToolUseFinalizers.delete(queryCtx);
-		if (!queryCtx.currentPiStream || !queryCtx.turnOutput) return;
-		queryCtx.turnOutput.stopReason = "toolUse";
-		debug(`mcp handler: finalizing tool_use turn after ${MCP_TOOL_USE_FINALIZE_GRACE_MS}ms grace (${queryCtx.claimedToolCallIds.size} handler(s)) — SDK invoked tools before message_stop/assistant message`);
-		queryCtx.currentPiStream.push({ type: "done", reason: "toolUse", message: queryCtx.turnOutput });
-		queryCtx.currentPiStream.end();
-		queryCtx.currentPiStream = null;
-	}, MCP_TOOL_USE_FINALIZE_GRACE_MS);
-	pendingMcpToolUseFinalizers.set(queryCtx, timer);
-}
+// finalizeToolUseTurnFromMcpInvocation moved to assistant-stream.ts: it is now
+// the grace-timer ACTION armed by scheduleToolUseTurnEnd rather than an
+// immediate end. The CLI invokes MCP handlers before message_delta arrives on
+// every tool-use turn, and message_delta is what carries the real output-token
+// count — ending the pi stream at handler invocation is what froze pi's
+// per-turn output figures at the message_start placeholders (1–7 tokens).
 
 // Creates an MCP server that bridges pi tools to the SDK. Each tool handler
 // blocks on a Promise until pi delivers the tool result via streamSimple.
@@ -490,9 +463,25 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 					turnToolCallIds: queryCtx.turnToolCallIds,
 					turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls),
 				});
+				appendIntegrityEntry("tool_handler_unmatched", {
+					toolName: tool.name,
+					argKeys: argKeys(mappedArgs),
+					available: claim.available,
+					turnToolCallIds: queryCtx.turnToolCallIds,
+				});
 				return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true } satisfies McpResult;
 			}
-			if (claim.match !== "tool-args" || claim.ambiguous) {
+			if (claim.argsMismatch) {
+				// Claimed anyway (sole same-name candidate) — record the divergence so
+				// a schema/validator drift stays visible without stranding the call.
+				debug(`mcp handler: ${tool.name} [${toolCallId}] claimed sole same-name call despite args mismatch`);
+				diagDump("tool_claim_args_mismatch", {
+					toolName: tool.name,
+					toolCallId,
+					handlerArgKeys: argKeys(mappedArgs),
+					recordedArgKeys: argKeys(queryCtx.turnToolCalls.find((call) => call.id === toolCallId)?.arguments),
+				});
+			} else if (claim.match !== "tool-args" || claim.ambiguous) {
 				debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
 			}
 			if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
@@ -503,11 +492,14 @@ function buildMcpServers(tools: Tool[], queryCtx: QueryContext): Record<string, 
 				return result;
 			}
 			debug(`mcp handler: ${tool.name} [${toolCallId}] → waiting`);
-			if (queryCtx.wasToolCallEmitted(toolCallId)) {
-				debug(`mcp handler: ${tool.name} [${toolCallId}] already emitted to Pi; waiting for its in-flight result without opening a duplicate turn`);
-			} else {
-				finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs);
-			}
+			// Don't end the pi turn here — message_delta (real output tokens) and
+			// message_stop are normally milliseconds behind this invocation. Arm the
+			// grace timer instead; it force-finalizes only if they never arrive.
+			scheduleToolUseTurnEnd(
+				queryCtx,
+				() => finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs),
+				`mcp-invocation:${tool.name}`,
+			);
 			return new Promise<McpResult>((resolve) => {
 				queryCtx.pendingToolCalls.set(toolCallId, {
 					toolName: tool.name,
@@ -637,9 +629,15 @@ async function consumeQuery(
 				// error metadata, not assistant output.
 				if (account && failure) break;
 				if (!ctx().turnSawStreamEvent && message.subtype === "success") {
-					ensureTurnStarted();
 					const text = message.result || "";
-					if (text) ctx().markOutputCommitted();
+					// The no-stream-events assistant fallback may have already rendered
+					// this exact text (it does not set turnSawStreamEvent) — re-pushing
+					// it here is the other half of the duplicated-output bug.
+					if (ctx().turnBlocks.some((b: any) => b.type === "text" && b.text === text)) {
+						debug("consumeQuery: result text already rendered by assistant fallback; skipping duplicate");
+						break;
+					}
+					ensureTurnStarted();
 					ctx().turnBlocks.push({ type: "text", text });
 					const idx = ctx().turnBlocks.length - 1;
 					ctx().currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: ctx().turnOutput });
@@ -648,14 +646,23 @@ async function consumeQuery(
 				} else if (message.subtype !== "success") {
 					const errorLines = Array.isArray((message as any).errors) ? uniqueNonEmptyLines((message as any).errors) : [];
 					const errors = errorLines.length > 0 ? errorLines.join("\n") : String((message as any).result || message.subtype || "Claude Code request failed");
+					const extraUsage = isExtraUsageRequiredMessage(message);
 					if (!failure || !failure.rateLimitInfo) {
-						failure = { kind: classifyClaudeFailure(isExtraUsageRequiredMessage(message) ? `extra usage ${errors}` : errors), message: errors };
+						failure = { kind: classifyClaudeFailure(extraUsage ? `extra usage ${errors}` : errors), message: errors };
 					}
-					if (!account && isExtraUsageRequiredMessage(message)) {
-						const openedExtraUsage = launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
+					// Managed attempts keep terminal error copy buffered as metadata so a
+					// pre-output failure can move to another subscription profile.
+					if (account) break;
+					if (extraUsage || isUsageLimitMessage(message)) {
+						const openedExtraUsage = extraUsage && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
 						ctx().handledTerminalError = true;
 						ctx().turnOutput.stopReason = "error";
-						ctx().turnOutput.errorMessage = `${errors}${openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings."}`;
+						const extraUsageHint = openedExtraUsage
+							? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt."
+							: extraUsage
+								? "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings."
+								: "";
+						ctx().turnOutput.errorMessage = `${errors}${extraUsageHint}`;
 						ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
 						ctx().currentPiStream?.end();
 						ctx().currentPiStream = null;
@@ -665,6 +672,11 @@ async function consumeQuery(
 			case "system":
 				if ((message as any).subtype === "init" && (message as any).session_id) {
 					capturedSessionId = (message as any).session_id;
+					// Also on this message's query context, so the connector-call audit
+					// trail can name the child session that executed a call — including
+					// from the teardown flush, which runs outside this function's scope.
+					queryCtx.childSessionId = capturedSessionId;
+					noteFastModeDisabledReason(message, bridgeConfig);
 					if (account && router && !accountProbe) {
 						accountProbe = Promise.allSettled([
 							sdkQuery.accountInfo().then((info) => router.recordIdentity(account.profileId, {
@@ -690,6 +702,10 @@ async function consumeQuery(
 				}
 				break;
 			case "user":
+				// Mostly the SDK echoing the prompt back — nothing to render. The one
+				// thing worth reading is a child-executed tool's real result, which
+				// arrives here and nowhere else.
+				noteChildExecutedToolResults(message);
 				break;
 			case "rate_limit_event": {
 				const info = (message as any).rate_limit_info as Record<string, unknown> | undefined;
@@ -697,19 +713,23 @@ async function consumeQuery(
 				if (info?.status === "rejected") {
 					const rateLimitType = rateLimitTypeFromInfo(info);
 					const resetAt = rateLimitResetFromInfo(info);
+					const resetAtMs = rateLimitResetMs(info);
 					const reason = `${rateLimitType ?? "unknown"} rate limit`;
 					failure = { kind: "rate-limit", message: reason, rateLimitInfo: info };
 					if (account && router) {
 						router.recordRateLimit(account.profileId, info, model.id);
 					} else {
-						const resetAtMs = rateLimitResetMs(info);
 						const resetsAt = formatResetTimestamp(resetAtMs ?? resetAt);
 						const launchedExtraUsage = isExtraUsageRequiredMessage(info) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, reason);
 						emitRateLimitEvent({
-							model: model.id, provider: PROVIDER_ID, rateLimitType,
-							reason, resetAt,
+							model: model.id,
+							provider: PROVIDER_ID,
+							rateLimitType,
+							reason,
+							resetAt,
 							...(Number.isFinite(resetAtMs) ? { resetAtMs } : {}),
-							source: "claude-bridge", status: "rejected",
+							source: "claude-bridge",
+							status: "rejected",
 						});
 						piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${reason} hit — resets ${resetsAt}${launchedExtraUsage ? "; opened /extra-usage helper" : ""}`, "warning");
 					}
@@ -748,10 +768,10 @@ function claimPrimaryInstance(): boolean {
 
 // Release both process-global tokens this instance owns. Called on
 // session_shutdown (incl. /reload) so the freshly loaded instance starts clean.
-// NOTE: this does NOT unregister the provider — the ModelRegistry's
-// registeredProviders is a process-lifetime Map that survives module reload, so
-// retraction on logout is handled by applyProviderRegistration's defensive
-// unregister on the next load/session_start, not here.
+// NOTE: this does NOT unregister the provider — pi's provider registry is
+// process-lifetime state that survives module reload; the next loaded instance
+// simply upserts its own provider object over ours (registerNativeProvider is
+// replace-by-id), and logout-hiding is the provider's own auth check.
 function releaseProviderTokens(event: string): void {
 	const g = globalThis as Record<symbol, any>;
 	if (g[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] === BRIDGE_ACCOUNT_HOST) {
@@ -767,66 +787,69 @@ function releaseProviderTokens(event: string): void {
 	}
 }
 
-// Conditional (un)registration driven by real credential presence + instance
-// primacy. Run at extension load, on every session_start, and at pre-spawn
-// (fail-fast) so a `claude login` / logout is reflected without a /reload.
+// Native (pi >=0.81) provider registration. Run at extension load, on every
+// session_start, and at pre-spawn.
 //
-// decideRegistration encodes the pure state machine; this wrapper performs the
-// matching token mutations so tokens and registration never diverge:
-//   - register:   claim the stream guard, THEN registerProvider. If register
-//     throws/queue-fails, release the stream guard (but keep primacy) so a
-//     later re-check can retry cleanly (self-healing); errors are swallowed so
-//     a session_start handler can't crash the dispatch.
-//   - unregister: pi.unregisterProvider (idempotent), THEN release the stream
-//     guard if we own it. Defensive even when we never registered — this is the
-//     only retraction path for a stale registration surviving /reload. At LOAD
-//     the SDK's unregister only filters the pending-registration queue and can't
-//     mutate the persistent registry (loader.js), so the effective retraction
-//     lands on the post-load session_start re-check; the load-time call is a
-//     harmless idempotent no-op that also cancels any same-pass queued register.
-// Non-primary instances (subagents) always decide noop and touch nothing.
+// 2.x registers UNCONDITIONALLY (once primary): credential-driven availability
+// is the provider's own auth.check/resolve reporting configured-ness, so pi
+// hides/shows claude-bridge models itself — the 1.x register/unregister state
+// machine (decideRegistration) is gone. What each trigger does now:
+//   - load: build + register the provider (queued by the loader until bindCore).
+//   - session_start: re-upsert the SAME provider object. registerNativeProvider
+//     is upsert-by-id and kicks pi's model-snapshot/availability refresh, so a
+//     `claude login`/logout since the last session boundary is reflected
+//     deterministically — the same guarantee the 1.x re-check gave — without
+//     depending on pi's own refresh cadence.
+//   - pre-spawn: same re-upsert, from the fail-fast path, so a mid-session
+//     logout also flips availability at first use.
+// Non-primary instances (subagents) never touch registration: pi's native
+// registry REPLACES by id, so an unguarded subagent re-register would swap in
+// its own streamSimple — the exact split-brain the tokens exist to prevent.
+// On a pre-0.81 host the extension declines loudly (once) instead of
+// registering wrongly through the legacy overload.
+let nativeProviderInstance: unknown;
+let notifiedNativeUnsupported = false;
+
 function applyProviderRegistration(trigger: string): void {
 	const pi = extensionApi;
 	if (!pi) { debug(`${trigger}: applyProviderRegistration skipped — no extensionApi`); return; }
 	const g = globalThis as Record<symbol, any>;
 	const isPrimary = claimPrimaryInstance();
+	if (!isPrimary) {
+		debug(`${trigger}: registration noop — non-primary instance (module=${moduleInstanceId})`);
+		return;
+	}
+	if (!supportsNativeProvider(_piAi)) {
+		debug(`${trigger}: host pi-ai lacks createProvider; refusing to register (module=${moduleInstanceId})`);
+		if (!notifiedNativeUnsupported) {
+			notifiedNativeUnsupported = true;
+			safeNotify(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, "error");
+		}
+		return;
+	}
 	const credentialed = hasClaudeCredentials() || Boolean(resolveClaudeAccountRouter());
-	const registered = g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk;
-	const decision = decideRegistration({ credentialed, isPrimary, registered });
-	debug(`${trigger}: registration decision=${decision} credentialed=${credentialed} isPrimary=${isPrimary} registered=${registered} (module=${moduleInstanceId})`);
-	if (decision === "register") {
-		// Start the connector inventory now, not on the first turn: the query path
-		// can only read a synchronous snapshot, so priming here is what gets the
-		// declarations in place before turn 1 (vstack#832). Fire and forget —
-		// registration must not wait on the network.
-		if (connectorsEnabledFor(loadConfig(process.cwd()))) primeConnectorServers();
-		// Claim ordering: stream guard BEFORE registerProvider so a concurrent
-		// subagent can never observe a registered provider without an owner.
-		g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
-		try {
-			pi.registerProvider(PROVIDER_ID, {
-				baseUrl: "claude-bridge",
-				apiKey: "not-used",
-				api: "claude-bridge",
-				models: MODELS,
-				// Cast: pi-ai AssistantMessageEventStream diamond dep between pi-coding-agent and pi-agent-core
-				streamSimple: streamClaudeAgentSdk as any,
-			});
-		} catch (err) {
-			// Self-heal: release ONLY the stream guard we just claimed so a later
-			// re-check (primary + credentialed + not-registered → register) retries.
-			// Keep PRIMARY_INSTANCE_KEY: releasing it would reopen the subagent
-			// ownership-steal window, and retry does not need it released.
-			if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;
-			debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
-		}
-	} else if (decision === "unregister") {
-		try {
-			pi.unregisterProvider(PROVIDER_ID);
-		} catch (err) {
-			debug(`${trigger}: unregisterProvider threw (ignored):`, err);
-		}
+	debug(`${trigger}: native registration upsert, credentialed=${credentialed} (module=${moduleInstanceId})`);
+	// Prime the default account's connector inventory when it exists. Explicit
+	// managed profiles are primed in their selected child environment per request.
+	if (hasClaudeCredentials() && connectorsEnabledFor(loadConfig(process.cwd()))) primeConnectorServers();
+	// Claim ordering: stream guard BEFORE registerProvider so a concurrent
+	// subagent can never observe a registered provider without an owner.
+	g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
+	try {
+		nativeProviderInstance ??= buildNativeProvider(
+			_piAi,
+			MODELS,
+			streamClaudeAgentSdk as (...args: unknown[]) => unknown,
+			process.env,
+			() => hasClaudeCredentials() || Boolean(resolveClaudeAccountRouter()),
+		);
+		(pi.registerProvider as (provider: unknown) => void)(nativeProviderInstance);
+	} catch (err) {
+		// Self-heal: release ONLY the stream guard we just claimed so a later
+		// re-check retries cleanly. Keep PRIMARY_INSTANCE_KEY: releasing it would
+		// reopen the subagent ownership-steal window.
 		if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;
+		debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
 	}
 }
 
@@ -932,12 +955,9 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	// Fail-fast credential re-check (only for a fresh query — NEVER for
 	// tool-result delivery of an in-flight query, handled above, where creds were
 	// valid at start and failing mid-turn would break tool pairing). This bounds
-	// the retraction-latency window from "next session boundary" to "first use":
-	// if credentials vanished since the last session_start, (a) trigger the same
-	// re-evaluation applyProviderRegistration does (primary-only; retracts the
-	// stale registration), and (b) fail this request with a clear, actionable
-	// message instead of letting the SDK spawn die with a generic error. The
-	// check is cheap (existsSync + env reads only, no credential contents).
+	// the logout-visibility window from "next session boundary" to "first use":
+	// if neither a direct Claude login nor the companion account pool exists,
+	// re-upsert provider availability and fail with an actionable message.
 	if (!hasClaudeCredentials() && !resolveClaudeAccountRouter()) {
 		try { applyProviderRegistration("pre-spawn"); } catch { /* best effort */ }
 		const message = "Claude account not connected — connect an account (or run `claude login`) and retry.";
@@ -1106,9 +1126,12 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	const effort = resolveConfiguredEffort(model.id, requestedEffort, providerSettings);
 
 	const extraArgs: Record<string, string | null> = {};
-	if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
 	// Opus 4.7 defaults thinking.display to "omitted" (empty thinking text in stream).
 	// Force summarized so thinking_delta events arrive. See anthropics/claude-agent-sdk-python#830.
+	// Deliberately the raw flag, NOT the typed `thinking` option: every non-disabled
+	// ThinkingConfig also emits `--thinking adaptive` or `--max-thinking-tokens`
+	// (verified in sdk.mjs flag mapping), so the typed form cannot set display
+	// without overriding the model's thinking mode alongside our `--effort`.
 	if (effort) extraArgs["thinking-display"] = "summarized";
 	const fallbackModel = fallbackModelForPrimaryModel(model.id);
 
@@ -1143,6 +1166,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			append: systemPromptAppend ? systemPromptAppend : undefined,
 		},
 		extraArgs,
+		...(strictMcpConfigEnabled ? { strictMcpConfig: true } : {}),
 		...(effort ? { effort } : {}),
 		...(settingSources ? { settingSources } : {}),
 		...(mcpServers || Object.keys(connectorServers).length > 0
@@ -1192,7 +1216,6 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			onTimeout: ({ idleMs, timeoutMs }) => {
 				if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || abortCtx.activeQuery !== sdkQuery) return;
 				streamIdleTimedOut = true;
-				cancelMcpToolUseFinalization(abortCtx);
 				abortCtx.deferredUserMessages = [];
 				if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
 				const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
@@ -1243,7 +1266,6 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	}
 	const onAbort = () => {
 		wasAborted = true;
-		cancelMcpToolUseFinalization(abortCtx);
 		// Prevent stale deferred messages from being replayed by parent on pop
 		abortCtx.deferredUserMessages = [];
 		reportToolResultMismatch(abortCtx, "abort", cwd, {
@@ -1297,21 +1319,23 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			});
 			piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${failure.message} — resets ${formatResetTimestamp(resetAtMs ?? resetAt)}`, "warning");
 		}
-		if (ctx().turnOutput) {
-			ctx().turnOutput.stopReason = aborted ? "aborted" : "error";
-			ctx().turnOutput.errorMessage = `${failure.message}${launchedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : ""}`;
+		if (abortCtx.turnOutput) {
+			abortCtx.turnOutput.stopReason = aborted ? "aborted" : "error";
+			abortCtx.turnOutput.errorMessage = `${failure.message}${launchedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : ""}`;
 		}
-		ctx().currentPiStream?.push({ type: "error", reason: aborted ? "aborted" : "error", error: ctx().turnOutput! });
-		ctx().currentPiStream?.end();
-		ctx().currentPiStream = null;
+		abortCtx.currentPiStream?.push({ type: "error", reason: aborted ? "aborted" : "error", error: abortCtx.turnOutput! });
+		abortCtx.currentPiStream?.end();
+		abortCtx.currentPiStream = null;
 	};
 
 	// Background consumer — runs until this account attempt ends. Before any
 	// visible output, a classified failure is replayed once on each remaining
 	// profile. After output/tool use, replay is forbidden.
+	// The handlers below use the captured abortCtx, never the live ctx(): a
+	// parent query can finish while a reentrant child context is pushed.
 	consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted, account, router)
 		.then(async ({ capturedSessionId, failure }) => {
-			debug(`provider: consumeQuery completed, stopReason=${ctx().turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
+			debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
 			if (streamIdleTimedOut) {
 				abortCtx.deferredUserMessages = [];
 				debug(`provider: stream idle timeout ${retryRequested ? "queued account rotation" : "already surfaced"}`);
@@ -1320,7 +1344,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 
 			if (wasAborted || options?.signal?.aborted) {
 				if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
-				ctx().deferredUserMessages = [];
+				abortCtx.deferredUserMessages = [];
 				debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
 				surfaceFailure({ message: "Operation aborted" }, true);
 				return;
@@ -1334,7 +1358,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 
 			const completedSessionId = capturedSessionId ?? sharedSession?.sessionId;
 			if (completedSessionId) {
-				const cursor = Math.max(context.messages.length, ctx().latestCursor, sharedSession?.cursor ?? 0);
+				const cursor = Math.max(context.messages.length, abortCtx.latestCursor, sharedSession?.cursor ?? 0);
 				debug(`provider: query done, session=${completedSessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}`);
 				setSharedSession({
 					...(sharedSession ?? {} as any),
@@ -1347,11 +1371,11 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			if (account && router) router.recordSuccess(account.profileId, options?.sessionId);
 
 			try {
-				while (ctx().deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
-					const steerPrompt = ctx().deferredUserMessages.shift()!;
+				while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
+					const steerPrompt = abortCtx.deferredUserMessages.shift()!;
 					debug(`provider: replaying deferred user message: ${steerPrompt.slice(0, 60)}`);
-					ctx().resetTurnState(model);
-					ctx().resetToolTracking();
+					abortCtx.resetTurnState(model);
+					abortCtx.resetToolTracking();
 
 					const resumeId = sharedSession?.sessionId;
 					if (!resumeId) {
@@ -1361,7 +1385,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 
 					const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
 					const contQuery = sdkQueryFactory({ prompt: steerPrompt, options: contOptions });
-					ctx().activeQuery = contQuery;
+					abortCtx.activeQuery = contQuery;
 					debug(`provider: continuation query, model=${model.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPrompt.slice(0, 60)}`);
 
 					try {
@@ -1381,18 +1405,19 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 					}
 				}
 			} finally {
-				ctx().activeQuery = sdkQuery;
+				// Guarantees restoration even if contQuery() throws synchronously.
+				abortCtx.activeQuery = sdkQuery;
 			}
 
-			finalizeCurrentStream(ctx().turnOutput?.stopReason);
+			finalizeCurrentStream(abortCtx.turnOutput?.stopReason, abortCtx);
 		})
 		.catch((error) => {
 			debug(`provider: query error, model=${model.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
-			const suppressDuplicateError = ctx().handledTerminalError || (streamIdleTimedOut && !retryRequested);
+			const suppressDuplicateError = abortCtx.handledTerminalError || (streamIdleTimedOut && !retryRequested);
 			if ((wasAborted || options?.signal?.aborted) && sharedSession) {
 				setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
 			}
-			ctx().deferredUserMessages = [];
+			abortCtx.deferredUserMessages = [];
 			if (suppressDuplicateError || retryRequested) {
 				debug("provider: suppressing duplicate query error after terminal handling");
 				return;
@@ -1406,22 +1431,11 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			surfaceFailure(failure, Boolean(options?.signal?.aborted));
 		})
 		.finally(() => {
-			cancelMcpToolUseFinalization(abortCtx);
 			streamIdleWatchdog?.dispose();
 			activeStreamIdleWatchdogs.delete(abortCtx);
 			if (options?.signal) options.signal.removeEventListener("abort", onAbort);
-			if (ctx().activeQuery === sdkQuery) {
-				const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
-				reportToolResultMismatch(ctx(), "query teardown", cwd, {
-					expectedInterruption: cause === "abort",
-					forceRotate: cause !== "query-end",
-				});
-				const drained = drainPendingToolCalls(ctx(), cause);
-				if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
-				ctx().pendingResults.clear();
-				if (isReentrant) popContext();
-				else ctx().activeQuery = null;
-			}
+			const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
+			teardownQuery(abortCtx, sdkQuery, cause, cwd, isReentrant);
 			sdkQuery.close();
 		})
 		.then(async () => {
@@ -1439,11 +1453,11 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		})
 		.catch((error) => {
 			debug("provider: account retry pipeline failed:", error);
-			if (ctx().turnOutput) {
-				ctx().turnOutput.stopReason = "error";
-				ctx().turnOutput.errorMessage = error instanceof Error ? error.message : String(error);
+			if (abortCtx.turnOutput) {
+				abortCtx.turnOutput.stopReason = "error";
+				abortCtx.turnOutput.errorMessage = error instanceof Error ? error.message : String(error);
 			}
-			stream.push({ type: "error", reason: "error", error: ctx().turnOutput! });
+			stream.push({ type: "error", reason: "error", error: abortCtx.turnOutput! });
 			stream.end();
 		});
 
@@ -1655,6 +1669,10 @@ export default function (pi: ExtensionAPI) {
 
 	const config = loadConfig(process.cwd());
 	debug("loadConfig:", JSON.stringify(config));
+	// Registered before the disabled early return: a bridge switched off by
+	// claude-bridge.json is exactly when the settings editor has to show where
+	// that value came from.
+	registerExternalConfigResolver();
 	registerBridgeCommands(pi);
 	if (config.enabled === false) {
 		debug("provider: disabled by configuration");
@@ -1720,10 +1738,11 @@ export default function (pi: ExtensionAPI) {
 
 	// --- Provider ---
 	//
-	// Register the provider ONLY when real Claude credentials are present, so
-	// claude-bridge models are never advertised as available/selectable when a
-	// request would fail at spawn time (pi's ModelRegistry.hasConfiguredAuth()
-	// treats the dummy apiKey as "configured", so the gate must live here).
+	// Native registration (pi >=0.81): register unconditionally; the provider's
+	// own auth check/resolve report whether Claude credentials exist, so pi
+	// hides claude-bridge models while no account is connected and shows them
+	// when one appears. session_start and pre-spawn re-upsert the provider to
+	// force pi's availability recompute at those boundaries.
 	//
 	// applyProviderRegistration also claims the primary-instance token (first
 	// load wins) and enforces the multi-instance guard: a non-primary subagent

@@ -208,13 +208,27 @@ cache_merge() {
         return
     fi
 
+    # A malformed delta means the query failed or returned partial data —
+    # never something to merge over a healthy cache
+    local delta_count
+    delta_count=$(jq 'if type == "array" then length else -1 end' "$delta_file" 2>/dev/null || echo -1)
+    if (( delta_count < 0 )); then
+        echo "cache_merge: delta for $file is not a valid JSON array, aborting merge" >&2
+        return 1
+    fi
+
     # Merge by .id — delta overwrites existing entries
-    jq -s '(.[0] + .[1]) | group_by(.id) | map(.[-1])' \
-        "$existing" "$delta_file" > "$existing.tmp"
+    if ! jq -s '(.[0] + .[1]) | group_by(.id) | map(.[-1])' \
+        "$existing" "$delta_file" > "$existing.tmp"; then
+        echo "cache_merge: merge of $file failed, aborting merge" >&2
+        rm -f "$existing.tmp"
+        return 1
+    fi
 
     # Safety: verify merge didn't lose entries (result >= existing count unless reconciliation ran)
     local result_count
     result_count=$(jq 'length' "$existing.tmp" 2>/dev/null || echo 0)
+    [[ -n "$result_count" ]] || result_count=0
     if (( result_count < existing_count )); then
         echo "cache_merge: result ($result_count) < existing ($existing_count), aborting merge" >&2
         rm -f "$existing.tmp"

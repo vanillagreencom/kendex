@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveClaudeConfigDir, hasClaudeCredentials, decideRegistration } from "../src/auth-presence.ts";
+import { resolveClaudeConfigDir, hasClaudeCredentials } from "../src/auth-presence.ts";
 
 function withTempHome(fn) {
 	const root = mkdtempSync(join(tmpdir(), "claude-bridge-auth-"));
@@ -123,48 +123,4 @@ describe("hasClaudeCredentials", () => {
 		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir }, "linux"), false);
 		assert.equal(hasClaudeCredentials({ CLAUDE_CONFIG_DIR: dir }, "win32"), false);
 	}));
-});
-
-describe("decideRegistration", () => {
-	// Primacy gate ------------------------------------------------------------
-	it("non-primary instance → always noop, regardless of credentials/registration", () => {
-		assert.equal(decideRegistration({ credentialed: true, isPrimary: false, registered: false }), "noop");
-		assert.equal(decideRegistration({ credentialed: true, isPrimary: false, registered: true }), "noop");
-		assert.equal(decideRegistration({ credentialed: false, isPrimary: false, registered: true }), "noop");
-	});
-
-	// Primary transitions -----------------------------------------------------
-	it("primary + credentialed + not registered → register", () => {
-		assert.equal(decideRegistration({ credentialed: true, isPrimary: true, registered: false }), "register");
-	});
-
-	it("primary + credentialed + already registered → noop", () => {
-		assert.equal(decideRegistration({ credentialed: true, isPrimary: true, registered: true }), "noop");
-	});
-
-	it("primary + uncredentialed + registered → unregister (retract)", () => {
-		assert.equal(decideRegistration({ credentialed: false, isPrimary: true, registered: true }), "unregister");
-	});
-
-	it("primary + uncredentialed + not registered → unregister (DEFENSIVE, idempotent)", () => {
-		assert.equal(decideRegistration({ credentialed: false, isPrimary: true, registered: false }), "unregister");
-	});
-});
-
-describe("decideRegistration — logout → /reload sequence", () => {
-	it("walks register → noop → unregister → defensive-unregister across a reload", () => {
-		// 1. Fresh load, credentialed: claim + register.
-		assert.equal(decideRegistration({ credentialed: true, isPrimary: true, registered: false }), "register");
-		// 2. Later session_start, still credentialed and registered: nothing to do.
-		assert.equal(decideRegistration({ credentialed: true, isPrimary: true, registered: true }), "noop");
-		// 3. User logs out; session_start re-check retracts.
-		assert.equal(decideRegistration({ credentialed: false, isPrimary: true, registered: true }), "unregister");
-		// 4. /reload: shutdown released tokens; the reloaded primary instance is
-		//    uncredentialed and "not registered" from its own token's POV, yet the
-		//    ModelRegistry entry survives the reload — so it must STILL unregister
-		//    defensively to retract the stale registration.
-		assert.equal(decideRegistration({ credentialed: false, isPrimary: true, registered: false }), "unregister");
-		// 5. Subsequent session_start, still logged out: remains unregister (idempotent).
-		assert.equal(decideRegistration({ credentialed: false, isPrimary: true, registered: false }), "unregister");
-	});
 });

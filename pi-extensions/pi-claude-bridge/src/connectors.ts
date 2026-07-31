@@ -215,6 +215,45 @@ export const CONNECTOR_WRITE_TOOLS = [
 	`${CONNECTOR_NS_ATLASSIAN}createCompassCustomFieldDefinition`,
 ];
 
+/**
+ * True for a tool that the `claude` CHILD executes itself, so Pi must never be
+ * asked to dispatch it.
+ *
+ * WHY THIS EXISTS. Every other tool the model calls in a bridge turn is a PI
+ * tool: Pi hands its tool set to the bridge, the bridge re-offers it to the
+ * child through the in-process MCP server, and a `tool_use` coming back is the
+ * child asking PI to run something. The bridge is built around that direction —
+ * it mirrors the call into the Pi stream, ends the Pi turn with `toolUse`, and
+ * the MCP handler blocks until Pi delivers the result.
+ *
+ * claude.ai connectors run the other way. They are the CHILD's own MCP servers,
+ * attached to the authenticated account and reachable only from inside that
+ * process. Pi has never heard of them. Mirroring one into the Pi stream anyway
+ * made Pi's agent loop look the name up in `context.tools`, miss, and write a
+ * synthetic `Tool <name> not found` error result into the transcript — while the
+ * child went on and executed the real call. The Pi transcript then RECORDED A
+ * FAILURE FOR A CALL THAT SUCCEEDED, next to an answer built from the real
+ * payload, so the model's correct answer read as a fabrication (drovr#311,
+ * memsira#320). The false result is also projected back into the child's session
+ * on a rebuild (`syncSharedSession`), which is how a lie in a mirror becomes a
+ * lie in the conversation of record.
+ *
+ * The test is the NAMESPACE, deliberately, not "does this name resolve to a Pi
+ * tool". Every claude.ai connector server lives under `mcp__claude_ai_`, and
+ * that is the only tool class the bridge knowingly delegates. A broader
+ * "unresolvable ⇒ delegated" rule would also swallow a genuine tool-name
+ * mismatch between Pi and the child, which SHOULD still surface as a loud
+ * dispatcher error.
+ *
+ * Takes the RAW SDK tool name, before `mapToolName` — connector names have no
+ * Pi-side counterpart, so mapping them is meaningless. Accepts a missing name
+ * rather than asserting one: this decides whether Pi is allowed to dispatch a
+ * block, and a nameless block is not a connector, so it answers `false`.
+ */
+export function isChildExecutedTool(name: string | undefined): boolean {
+	return typeof name === "string" && name.startsWith(CONNECTOR_NS_PREFIX);
+}
+
 // Classify a connector tool name as a WRITE (mutating) tool. FAIL CLOSED, twice:
 //
 //  1. Namespace: the whole `mcp__claude_ai_<Server>__` space counts, not just the

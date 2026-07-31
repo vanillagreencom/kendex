@@ -207,23 +207,24 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
     // Global installs: use the absolute path under the global config dir.
     let command = claude_hook_command(global, &hook.name, &dest);
     let hook_entry = {
-        let mut entry = serde_json::json!({
-            "hooks": [{
-                "type": "command",
-                "command": command,
-            }]
+        // Claude Code reads `timeout` from the command handler object, not the
+        // matcher group, so it must live beside `command`.
+        let mut handler = serde_json::json!({
+            "type": "command",
+            "command": command,
         });
+        if let Some(timeout) = hook.timeout {
+            handler
+                .as_object_mut()
+                .unwrap()
+                .insert("timeout".into(), serde_json::Value::Number(timeout.into()));
+        }
+        let mut entry = serde_json::json!({ "hooks": [handler] });
         if let Some(ref matcher) = hook.matcher {
             entry
                 .as_object_mut()
                 .unwrap()
                 .insert("matcher".into(), serde_json::Value::String(matcher.clone()));
-        }
-        if let Some(timeout) = hook.timeout {
-            entry
-                .as_object_mut()
-                .unwrap()
-                .insert("timeout".into(), serde_json::Value::Number(timeout.into()));
         }
         entry
     };

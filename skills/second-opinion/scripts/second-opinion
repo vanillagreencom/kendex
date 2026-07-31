@@ -408,8 +408,9 @@ printf '%s\n' "$PROMPT" > "$PROMPT_TMP"
 
 STDERR_TMP=$(mktemp)
 # RETRY_PROMPT_TMP is created only when extraction fails and a retry runs; keep
-# it in the cleanup trap. Sidecar files written by preserve_raw_and_fail are
-# deliberately NOT tracked here — they are the durable record of a lost response.
+# it in the cleanup trap. Sidecar files written by preserve_raw_response and
+# preserve_raw_and_fail are deliberately NOT tracked here — they are the durable
+# record of a lost or reformatted response.
 RETRY_PROMPT_TMP=""
 trap 'rm -f "$PROMPT_TMP" "$STDERR_TMP" "$RETRY_PROMPT_TMP"' EXIT
 
@@ -610,6 +611,25 @@ ${schema}
 RETRY
 }
 
+# vstack#940: persist the raw first response the moment a retry is attempted —
+# BEFORE the retry outcome is known. A successful reformat retry replaces
+# RESULT wholesale, so without this sidecar the only record of what the model
+# actually said is discarded exactly when the retry "succeeds", making a
+# dropped/softened/merged finding unauditable. Sets RAW_PRESERVED_PATH;
+# preserve_raw_and_fail reuses it so the both-failed path never duplicates the
+# content.
+RAW_PRESERVED_PATH=""
+preserve_raw_response() {
+  local raw="$1"
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    RAW_PRESERVED_PATH="${OUTPUT_PATH}.raw.txt"
+  else
+    RAW_PRESERVED_PATH=$(mktemp)
+  fi
+  printf '%s\n' "$raw" > "$RAW_PRESERVED_PATH"
+}
+
 # Persist the raw (and optional retry) response so a lost review is auditable,
 # emit an error JSON that carries the sidecar path(s), then exit 1.
 preserve_raw_and_fail() {
@@ -617,21 +637,25 @@ preserve_raw_and_fail() {
   local retry="${2:-}"
   local raw_path retry_path=""
 
-  if [[ -n "$OUTPUT_PATH" ]]; then
+  # The raw first response was already written when the retry was attempted
+  # (vstack#940) — reuse that sidecar instead of writing it a second time.
+  if [[ -n "$RAW_PRESERVED_PATH" ]]; then
+    raw_path="$RAW_PRESERVED_PATH"
+  elif [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p "$(dirname "$OUTPUT_PATH")"
     raw_path="${OUTPUT_PATH}.raw.txt"
     printf '%s\n' "$raw" > "$raw_path"
-    if [[ -n "$retry" ]]; then
-      retry_path="${OUTPUT_PATH}.retry.txt"
-      printf '%s\n' "$retry" > "$retry_path"
-    fi
   else
     raw_path=$(mktemp)
     printf '%s\n' "$raw" > "$raw_path"
-    if [[ -n "$retry" ]]; then
+  fi
+  if [[ -n "$retry" ]]; then
+    if [[ -n "$OUTPUT_PATH" ]]; then
+      retry_path="${OUTPUT_PATH}.retry.txt"
+    else
       retry_path=$(mktemp)
-      printf '%s\n' "$retry" > "$retry_path"
     fi
+    printf '%s\n' "$retry" > "$retry_path"
   fi
 
   if [[ -n "$retry_path" ]]; then
@@ -732,6 +756,11 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   # of being written as a findings-less artifact.
   RETRY_WHY=""
   RETRY_PROBLEM=""
+  # Byte counts of the raw responses, recorded into the artifact's qa_metadata
+  # (vstack#940) so a reformat that shrank the review is visible in the
+  # artifact itself. Measured on the untouched CLI output, before extraction.
+  RAW_RESPONSE_BYTES=${#RESULT}
+  RETRY_RESPONSE_BYTES=""
   if JSON=$(extract_json "$RESULT"); then
     if response_incomplete_schema "$JSON"; then
       RETRY_WHY="first response JSON is structurally incomplete"
@@ -745,6 +774,9 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
 
   if [[ -n "$RETRY_WHY" ]]; then
     echo "→ $RETRY_WHY; retrying once with captured response" >&2
+    # Persist the raw first response now, before the retry outcome is known
+    # (vstack#940) — a successful reformat must not erase the original.
+    preserve_raw_response "$RESULT"
     RETRY_PROMPT_TMP=$(mktemp)
     if [[ -n "$RETRY_PROBLEM" ]]; then
       build_retry_prompt "$RESULT" "$RETRY_PROBLEM" > "$RETRY_PROMPT_TMP"
@@ -755,6 +787,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     RETRY_RESULT=""
     RETRY_EXIT=0
     RETRY_RESULT=$(run_target_cli "$RETRY_PROMPT_TMP") || RETRY_EXIT=$?
+    RETRY_RESPONSE_BYTES=${#RETRY_RESULT}
 
     if [[ $RETRY_EXIT -eq 124 ]]; then
       echo "→ retry timed out after ${TIMEOUT}s" >&2
@@ -776,6 +809,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
           incomplete
       fi
       echo "→ retry recovered valid JSON (${#JSON} bytes)" >&2
+      echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
       RESULT="$JSON"
     else
       echo "→ retry response still not parseable" >&2
@@ -801,8 +835,17 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   # its filesystem mtime. The schema keeps ISO_8601 as a hint; this is the
   # authoritative value. RESULT is already jq-validated JSON here, so the rewrite
   # succeeds; if jq unexpectedly fails, keep the extracted JSON unchanged.
+  # Also record the raw response byte counts in qa_metadata (vstack#940) —
+  # retry_response_bytes only when a retry actually ran — so a reformat that
+  # shrank the review is visible in the artifact, next to the .raw.txt sidecar.
   STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" '.timestamp = $ts' 2>/dev/null); then
+  if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" \
+      --argjson raw_bytes "$RAW_RESPONSE_BYTES" \
+      --argjson retry_bytes "${RETRY_RESPONSE_BYTES:-null}" \
+      '.timestamp = $ts
+       | .qa_metadata.raw_response_bytes = $raw_bytes
+       | if $retry_bytes == null then .
+         else .qa_metadata.retry_response_bytes = $retry_bytes end' 2>/dev/null); then
     RESULT="$STAMPED"
   fi
 fi

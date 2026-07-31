@@ -5,6 +5,7 @@ use std::path::Path;
 #[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 pub struct MappingConfig {
+    pub catalog: CatalogConfig,
     #[serde(rename = "agent-skills")]
     pub agent_skills: HashMap<String, Vec<String>>,
     #[serde(rename = "role-skills")]
@@ -19,6 +20,35 @@ pub struct MappingConfig {
     #[serde(skip)]
     pub agent_frontmatter_by_harness:
         HashMap<String, HashMap<String, crate::agent::AgentFrontmatterOverrides>>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct CatalogConfig {
+    pub agents: Option<Vec<String>>,
+    pub skills: Option<Vec<String>>,
+    pub hooks: Option<Vec<String>>,
+    #[serde(alias = "pi-extensions")]
+    pub pi_extensions: Option<Vec<String>>,
+    pub extras: Option<Vec<String>>,
+}
+
+impl CatalogConfig {
+    pub fn paths_for(&self, kind: crate::catalog::CatalogKind) -> Vec<String> {
+        let configured = match kind {
+            crate::catalog::CatalogKind::Agents => &self.agents,
+            crate::catalog::CatalogKind::Skills => &self.skills,
+            crate::catalog::CatalogKind::Hooks => &self.hooks,
+            crate::catalog::CatalogKind::PiExtensions => &self.pi_extensions,
+            crate::catalog::CatalogKind::Extras => &self.extras,
+        };
+        configured.clone().unwrap_or_else(|| {
+            kind.default_paths()
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect()
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

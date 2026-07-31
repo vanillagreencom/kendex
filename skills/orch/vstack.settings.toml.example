@@ -85,3 +85,13 @@ PR_REVIEW_REFIX_MAX_LINES = "200"
 # completed session to release its slot. Codex collaboration runtime: four
 # total threads -> set "4".
 REVIEWER_SLOT_BUDGET = "0"
+
+# Used by: orch (`review-pr` § 4/§ 7, `dev-fix` § 1). How workflow decision
+# points behave. "ask" (default) presents every decision to the user.
+# "auto-recommended" executes the workflow's recommended option and logs
+# "auto-selected: [option] — [reason]" in the round record (workflow-state
+# auto_decisions) — for fleet launchers whose workers would otherwise
+# serialize on one supervisor. Decision-record revisits, scope expansion
+# beyond the issue, anything touching benchmark-host protocol, and merge
+# ALWAYS ask, in every mode.
+ORCH_DECISION_MODE = "ask"

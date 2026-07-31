@@ -956,7 +956,7 @@ echo "=== approval-wait reviewer-outage marker (PR_REVIEW_OUTAGE_CONTEXT) ==="
 
 # marker1: a proceed with PR_REVIEW_OUTAGE_CONTEXT set posts that context as a
 # success status on the proceeded head, so a repo-side CI gate can accept it and
-# its status re-fire bridge can re-run the gate.
+# its status convergence can converge the gate green.
 stderr="$TMP_ROOT/marker1.err"
 marker_log="$TMP_ROOT/marker1.log"; : > "$marker_log"
 set +e

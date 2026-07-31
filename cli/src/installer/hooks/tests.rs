@@ -134,6 +134,113 @@ fn merge_codex_hooks_json_replaces_existing_hook_registration() {
 }
 
 #[test]
+fn install_hook_claude_places_timeout_on_handler_not_group() {
+    let dir = tmpdir("claude_timeout_handler");
+    let mut hook = hook_fixture("probe", "SessionStart", None);
+    hook.timeout = Some(15);
+    crate::test_util::with_project_root(&dir, || {
+        install_hook_claude(&hook, false).unwrap();
+    });
+
+    let settings_path = dir.join(".claude").join("settings.json");
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    let arr = doc
+        .pointer("/hooks/SessionStart")
+        .and_then(|v| v.as_array())
+        .expect("SessionStart array present");
+    assert_eq!(arr.len(), 1);
+    assert!(
+        arr[0].pointer("/timeout").is_none(),
+        "timeout must not sit on the matcher group, got: {doc}"
+    );
+    assert_eq!(
+        arr[0].pointer("/hooks/0/timeout").and_then(|v| v.as_u64()),
+        Some(15)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn install_hook_claude_migrates_legacy_group_level_timeout() {
+    let dir = tmpdir("claude_timeout_migrate");
+    let claude_dir = dir.join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    // Legacy install put timeout on the matcher group; a user-authored entry
+    // with the same shape must survive untouched.
+    std::fs::write(
+        claude_dir.join("settings.json"),
+        r#"{
+  "hooks": {
+    "SessionStart": [
+      {
+        "timeout": 15,
+        "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/probe.sh\""}]
+      },
+      {
+        "timeout": 99,
+        "hooks": [{"type": "command", "command": "bash /usr/local/bin/user-own.sh"}]
+      }
+    ]
+  }
+}"#,
+    )
+    .unwrap();
+
+    let mut hook = hook_fixture("probe", "SessionStart", None);
+    hook.timeout = Some(15);
+    crate::test_util::with_project_root(&dir, || {
+        install_hook_claude(&hook, false).unwrap();
+    });
+
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+            .unwrap();
+    let arr = doc
+        .pointer("/hooks/SessionStart")
+        .and_then(|v| v.as_array())
+        .expect("SessionStart array present");
+    assert_eq!(arr.len(), 2);
+    let user = &arr[0];
+    assert_eq!(
+        user.pointer("/hooks/0/command").and_then(|v| v.as_str()),
+        Some("bash /usr/local/bin/user-own.sh")
+    );
+    assert_eq!(
+        user.pointer("/timeout").and_then(|v| v.as_u64()),
+        Some(99),
+        "user-authored entry must not be rewritten"
+    );
+    let owned = &arr[1];
+    assert!(
+        owned.pointer("/timeout").is_none(),
+        "stale group-level timeout must be removed on reinstall, got: {doc}"
+    );
+    assert_eq!(
+        owned.pointer("/hooks/0/timeout").and_then(|v| v.as_u64()),
+        Some(15)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn install_hook_claude_without_timeout_emits_no_timeout_key() {
+    let dir = tmpdir("claude_timeout_absent");
+    let mut hook = hook_fixture("probe", "SessionStart", None);
+    hook.timeout = None;
+    crate::test_util::with_project_root(&dir, || {
+        install_hook_claude(&hook, false).unwrap();
+    });
+
+    let body = std::fs::read_to_string(dir.join(".claude").join("settings.json")).unwrap();
+    assert!(
+        !body.contains("timeout"),
+        "no timeout key should be emitted, got: {body}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn hook_prune_preserves_user_handlers_with_same_basename() {
     let mut hooks_obj = serde_json::json!({
             "PreToolUse": [

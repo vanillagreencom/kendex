@@ -1516,6 +1516,31 @@ update_issue() {
     esac
 }
 
+# IssueArchivePayload.success reports the request was processed, not that the
+# entity mutated — Linear answers success=true even when the archive/trash
+# no-ops server-side (#930). Trust only the returned entity: require the
+# marker field on it, touch the cache only after confirmation, and fail with
+# a nonzero exit otherwise so a silent no-op can never look like success.
+confirm_archive_mutation() {
+    local result="$1"
+    local operation="$2"
+    local marker_filter="$3"
+    local action="$4"
+    local issue_ref="$5"
+    local issue_id="$6"
+
+    if ! echo "$result" | jq -e --arg op "$operation" \
+        '.[$op].success == true and .[$op].entity != null and (.[$op].entity | '"$marker_filter"')' >/dev/null 2>&1; then
+        echo "$result" | jq -c --arg op "$operation" --arg action "$action" --arg ref "$issue_ref" --arg id "$issue_id" \
+            '{error: ($action + " not confirmed for " + $ref + " (resolved id: " + $id + "): " + $op + " returned success=\(.[$op].success // false) but the response entity does not confirm it — treat the issue as still active"), data: (.[$op] // {})}' >&2
+        return 1
+    fi
+
+    # Write-through: remove the issue from cache now that the server confirmed
+    cache_remove_issue "$issue_id" 2>/dev/null || true
+    normalize_mutation_response "$result" "$operation" "entity"
+}
+
 archive_issue() {
     local issue_ref="$1"
     shift || true
@@ -1532,13 +1557,12 @@ archive_issue() {
     mutation ArchiveIssue($id: String!) {
         issueArchive(id: $id) {
             success
+            entity { id identifier url archivedAt trashed }
         }
     }'
     local result
     result=$(graphql_query "$mutation" "{\"id\": \"$issue_id\"}")
-    # Write-through: remove archived issue from cache
-    cache_remove_issue "$issue_id" 2>/dev/null || true
-    normalize_mutation_response "$result" "issueArchive" "issue"
+    confirm_archive_mutation "$result" "issueArchive" '.archivedAt != null' "archive" "$issue_ref" "$issue_id"
 }
 
 trash_issue() {
@@ -1558,13 +1582,12 @@ trash_issue() {
     mutation TrashIssue($id: String!) {
         issueDelete(id: $id) {
             success
+            entity { id identifier url archivedAt trashed }
         }
     }'
     local result
     result=$(graphql_query "$mutation" "{\"id\": \"$issue_id\"}")
-    # Write-through: remove trashed issue from cache
-    cache_remove_issue "$issue_id" 2>/dev/null || true
-    normalize_mutation_response "$result" "issueDelete" "issue"
+    confirm_archive_mutation "$result" "issueDelete" '.trashed == true' "trash" "$issue_ref" "$issue_id"
 }
 
 list_children() {

@@ -7,7 +7,11 @@ import { extensionApi, piUI, reportSyntheticToolResultRepair, setSharedSession, 
 import { convertPiMessages } from "./convert.js";
 import { DEBUG, DEBUG_LOG_PATH, debug, diagDump } from "./debug.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
-import { findUnpairedToolUses, recoverLaterToolResults } from "./tool-pairing-audit.js";
+import {
+	findUnpairedToolUses,
+	insertLostToolResultPlaceholders,
+	recoverLaterToolResults,
+} from "./tool-pairing-audit.js";
 
 // --- Session persistence ---
 
@@ -196,8 +200,10 @@ function convertAndImportMessages(
 			recoveredToolResults.map((item) => item.id).join(", "),
 		);
 	}
-	// Pre-repair for debug logging; importMessages also repairs internally (idempotent).
+	// Pair every remaining orphaned tool_use with an explicit bridge-authored
+	// error result before cc-session-io can insert a bare placeholder.
 	const missingToolResults = findUnpairedToolUses(anthropicMessages);
+	if (missingToolResults.length > 0) insertLostToolResultPlaceholders(anthropicMessages, missingToolResults);
 	const repaired = repairToolPairing(anthropicMessages);
 	if (missingToolResults.length > 0) {
 		reportSyntheticToolResultRepair(missingToolResults, {

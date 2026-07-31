@@ -5,13 +5,48 @@ Implementation details for contributors. End-user setup, settings, and troublesh
 ## Stream and tool-result handling
 
 - The bridge runs Claude Code through the Claude Agent SDK while Pi remains the owner of the visible TUI and tool execution.
-- If the SDK stream yields a completed assistant tool-use message before `message_stop`, the bridge treats that assistant message as the tool-turn boundary. Pi executes the tool calls immediately, and the matching tool results are delivered back before the turn continues.
-- If the SDK invokes an MCP handler before either normal boundary arrives, the bridge stages the invocation immediately and keeps the Pi stream open for a short grace window. This lets sibling handlers from the same parallel batch join the visible tool-use turn instead of being dropped behind the first invocation.
-- Handler claims prefer exact tool-name/argument matches. A sole same-name call may still claim after schema validation normalizes its arguments; multiple parallel calls with the same name remain strict and require exact arguments.
+- A tool-use turn ends at the stream's `message_stop`, not at the first early signal. The SDK yields the completed assistant message AND invokes the MCP tool handlers before `message_delta` arrives — and `message_delta` is what carries the message's real output-token count, so ending the pi stream at either early signal froze pi's per-turn output figures at the `message_start` placeholders (1–7 tokens; 2026-07-28 token test). The early signals now only arm a ~1.5s grace timer (`scheduleToolUseTurnEnd`) that force-finalizes the turn if the terminal events never arrive (the pi 0.80 steer-draining case), so the MCP handlers can never deadlock waiting on a stream pi will not end.
+- An MCP handler claims its tool-call id by tool name + arguments; when no exact match exists but exactly ONE unclaimed call of that tool type does, it is claimed anyway (`argsMismatch` diag) — the handler receives the schema-VALIDATED input while the record holds the raw streamed input, and a stripped key must not strand the call. Nested schema objects also validate permissively (`.passthrough()`) unless the schema says `additionalProperties: false`, matching JSON Schema's default.
 - Tool results whose IDs were never registered in the active assistant tool-use turn are refused instead of being queued against another pending call. Remaining handlers receive an internal-error result so the turn cannot report false success.
-- Tool calls already emitted to Pi stay tracked until their MCP handlers resolve, even when Claude Code starts the next assistant message first. Late handlers wait for the in-flight Pi result instead of opening a duplicate tool turn.
-- A steer can split one parallel Claude batch into multiple visible Pi tool turns. Session rebuild collects the real later sibling results back into the original batch before generic pairing repair, avoiding false `[no tool result recorded]` placeholders.
-- If a query tears down unexpectedly while parallel tool results are still queued or unresolved, the bridge writes diagnostics, marks the Claude session for rebuild, and re-imports delivered results from Pi history on the next turn. An explicit Pi abort still rebuilds safely but is treated as an expected interruption rather than an integrity error.
+- Queued results that can no longer be consumed (their handler already gave up) are reaped at the next child message boundary with a `stale_queued_tool_results_dropped` diagnostic, instead of poisoning every later mismatch report for the query.
+- If a query tears down while parallel tool results are still queued or unresolved, the bridge writes diagnostics, marks the Claude session for rebuild, and re-imports delivered results from Pi history on the next turn.
+- Integrity events (mismatch, synthetic-result repair, stale-result reap, unmatched handler) are also appended to the pi session as `claude-bridge-integrity` custom entries — compact metadata only — so a post-mortem works from the session file alone.
+- Unpaired tool_uses in a session rebuild are paired with an explicit `is_error` result telling the model the output was lost and to re-run the tool if needed, instead of cc-session-io's bare `[no tool result recorded]` placeholder that models read as real output.
+
+## Child-executed tools (claude.ai connectors)
+
+Tool calls in a bridge turn normally run in one direction: Pi hands its tool set to the bridge, the bridge re-offers it to the `claude` child over the in-process MCP server, and a `tool_use` coming back is the child asking **Pi** to execute something. claude.ai connectors run the other way — they are the child's own MCP servers, attached to the authenticated account and reachable only from inside that process.
+
+So a `tool_use` under `mcp__claude_ai_` is **never mirrored into the Pi stream**: no `toolCall` block, no `toolUse` turn boundary, no entry in the turn's expected-result tracking (`isChildExecutedTool` in `src/connectors.ts`; the three emission sites in `src/assistant-stream.ts`). The child executes the call itself and keeps streaming, so the whole exchange lands in one Pi assistant message.
+
+Mirroring one used to make Pi's agent loop look the name up in `context.tools`, miss, and write a synthetic `Tool <name> not found` error result into the transcript — for a call that had **succeeded**, next to an answer built from its real payload. That reads as a fabricating model, and a rebuild (`syncSharedSession`) projected the false result back into the child's session, turning a wrong mirror into a wrong conversation of record. Found in two host apps at once (drovr#311, memsira#320).
+
+Two places used to hand the model a SECOND name for a connector tool, and a second name is a name that can be wrong:
+
+- `mapPiToolNameToSdk` PascalCased anything it could not map, so a connector call projected back into the child's session became `McpClaudeAiSlackSlackSearchChannels`. The model imitated that alias on the next turn and got a real `Tool ... not found` from the MCP dispatcher before retrying the canonical name — one wasted round-trip per affected call. Connector names now pass through unchanged; the fix above stops them reaching this path at all, but LEGACY Pi history recorded before it still carries them.
+- `resolveMcpTools` re-offered every `context.tools` entry under the bridge's own MCP prefix, including one sitting on the connector namespace. Such a tool is uncallable anyway (a `tool_use` there is treated as child-executed and never handed to Pi), so it is now filtered out and the two halves agree end to end.
+
+The classifier is namespace-based on purpose. "Any name Pi cannot resolve" would also swallow a genuine Pi↔child tool-name mismatch, which should stay a loud dispatcher error.
+
+Two consequences worth knowing:
+
+- The child's real result is **observed, never re-delivered** (`noteChildExecutedToolResults`, fed from the SDK's `user` message). It already reached the model inside the child. The debug line records the tool name, error flag, and payload byte size — never the payload, which is live account data and the bridge's debug log sits outside a host app's redaction boundary.
+- A connector call still produces **no tool card**. Pi's assistant content is `text | thinking | toolCall`, and any `toolCall` block is dispatched by its agent loop, so there is no way to say "a call happened, someone else ran it" as content — the honest options were "absent" or "present and wrong". Rendering one needs a Pi-side representation for delegated calls, which is an upstream ask.
+
+### The audit trail
+
+What the transcript *can* carry is a record that is not content. Each child-executed call appends a session `CustomEntry` of type `claude-bridge-connector-call` (`src/connector-audit.ts`), which pi documents as *"Does NOT participate in LLM context (ignored by `buildSessionContext`)"*: it is never a content block, so the agent loop cannot dispatch it, and `convertPiMessages` reads messages rather than entries, so it is never projected back into the child's session. **Never use `CustomMessageEntry`** for this — the sibling type DOES enter context, which is the whole bug again.
+
+Each record is `{ name, toolUseId, outcome, byteSize?, childSessionId?, reason? }` — enough to pair it to the child's own transcript by `tool_use_id`, and no payload.
+
+Two things the shape is deliberate about:
+
+- `outcome` is `ok | error | **unobserved**`. A call whose result never came back (abort, stream-idle timeout, a query that just ended) is recorded at teardown naming the cause, beside the Pi-side `drainPendingToolCalls`. Silence there would leave an answer in the transcript as the only evidence a call was ever made — the same "can I trust this?" question the mirrored `Tool ... not found` answered wrongly.
+- Recording is keyed on the `tool_use` id, not on the call site. The SDK can re-yield a `user` message, and either path (result or teardown) can reach a call first; one call is one record, whichever gets there.
+
+The audit map is query-scoped and is NOT cleared by `resetToolTracking` — that runs at every child message boundary, and clearing it there would make a call abandoned in an earlier child message unrecordable at teardown, which is the one case the trail exists for.
+
+Note that pi/core's `createBranchedSession` copies every non-label entry root→leaf, so a fork inherits the parent's connector-call records. Harmless for an audit trail, unlike the `claude-bridge-session` marker it sits beside, which needed a `piSessionId` guard for exactly that reason.
 
 ## Optional account-router contract
 
@@ -29,6 +64,44 @@ A failed pre-output attempt is buffered so protocol setup frames do not leak int
 
 The reciprocal `vstack.pi.claude-bridge.account-host.v1` service exposes a local `/usage` probe for account-management commands. Both symbols carry `version: 1`; incompatible future shapes must use a new symbol/version instead of mutating this contract in place.
 
+## Provider registration — native pi ≥0.81 provider API (adopted in 2.0)
+
+Since 2.0 the bridge registers a native `Provider` object (`native-provider.ts`) via
+`pi.registerProvider(provider)`: registration is UNCONDITIONAL (once primary), and the provider's
+own `auth.apiKey.check()/resolve()` report configured-ness from the same existence-only credential
+probes as before (`auth-presence.ts`), so pi itself hides claude-bridge models while no Claude
+account is connected and shows them when one appears. The 1.x credential-gated
+register/unregister state machine (`decideRegistration`) is gone. **Hosts must embed pi ≥0.81**
+(peer range `>=0.81.0`); on an older host the extension declines loudly once
+(`NATIVE_PROVIDER_UNSUPPORTED_MESSAGE`) instead of registering wrongly through the legacy overload.
+
+This was first evaluated on 2026-07-28 and NOT adopted, then adopted the same day after the owner
+lifted the pre-0.81 host-compat constraint (memsira/drovr upgrade their embedded pi in lockstep —
+they are the only consumers). What the original evaluation flagged, and how each point resolved:
+
+- **The symbol guards stay — by design, not oversight.** pi's `registerNativeProvider` is
+  upsert-by-id that *replaces* the stored provider object; an unguarded subagent module reload
+  re-registering the same id would swap in ITS `streamSimple` closure and split-brain the shared
+  session. `PRIMARY_INSTANCE_KEY`/`ACTIVE_STREAM_SIMPLE_KEY` therefore survive into 2.x. If pi
+  ever grows owner-aware provider dedupe, the guards can go.
+- **The two-parallel-paths objection dissolved** with the host floor at 0.81: there is exactly one
+  registration path in 2.x.
+- **Mid-session credential timing is kept deterministic** rather than left to pi's refresh
+  cadence: session_start and pre-spawn re-UPSERT the same provider object, which triggers pi's
+  model-snapshot/availability recompute at exactly the boundaries 1.x re-checked — and the
+  pre-spawn `hasClaudeCredentials()` fail-fast in `streamSimple` remains, so a logout is a clear
+  actionable error at first use even if a picker snapshot is stale.
+- The subscription-billing constraint is untouched: BOTH native stream entry points
+  (`stream`/`streamSimple`) are the same Claude Code subprocess router — there is no raw-API path.
+
+## Config channels
+
+`loadConfig` layers three sources, lowest precedence first: `<piUserDir>/claude-bridge.json`, a trusted project's `.pi/claude-bridge.json`, then extension-manager config in `settings.json`. Isolated mode (`CLAUDE_BRIDGE_ISOLATED=1`) keeps only the first.
+
+Each `claude-bridge.json` is read by `legacyFileConfig`, which accepts both the nested legacy shape (`provider.*`, `promptContext.*`) and the manager's flat manifest keys; nested wins when a file carries both for one key. Provider values are normalized once over the merged result, so an invalid `forceEffort` in a higher layer still clears a valid one below it.
+
+`resolveExternalConfigValue(key, cwd)` reports what those files — and only those files — resolve for one manifest key, plus the concrete file that supplied it. It shares `legacyLayers`/`mergeLayers` with `loadConfig` and applies the same normalization, so the two cannot drift. `registerExternalConfigResolver` publishes it under `Symbol.for("vstack.pi.extension-config-resolver")` keyed by `PACKAGE_ID`; the vstack extension manager calls it when neither of its own scopes holds a key, and renders the value with its source file. Registration happens before the `config.enabled === false` early return, because a bridge disabled by `claude-bridge.json` is precisely the case the settings editor has to explain. The contract itself is documented in [`pi-extension-manager/DEVELOPMENT.md`](../pi-extension-manager/DEVELOPMENT.md).
+
 ## Connector write enforcement
 
 Write denial with `connectorWriteMode: "deny"` is two-layered:
@@ -44,6 +117,7 @@ The `./connector-inventory` entry point is a separate build output. It cannot co
 
 - Rate-limit errors are deduplicated before user notification. The bridge emits `vstack:rate-limit` so `pi-qol` can opt into reset-time auto-resume.
 - Stream-idle stalls close the stalled Claude Code subprocess and return a retryable assistant error. `CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT` accepts bare seconds or `ms`, `s`, and `m` suffixes.
+- The watchdog deliberately monitors only PRE-first-output silence (`shouldMonitor` requires `!turnStarted && !turnSawStreamEvent`). Every observed stall class — spawn hang, rate-limit stall, steer-drain — happens before the first stream event, and those are covered. Once output has started, 90s SDK-message gaps have legitimate causes that must not be killed: a child-executed connector call blocks the SDK message flow while the Pi turn stays open (`currentPiStream` non-null, unlike Pi-executed tool waits), and a long extended-thinking stretch can be delta-sparse. A child that dies mid-message is not silent either — the SDK generator throws and the query `.catch` surfaces it — so mid-turn coverage would mostly convert slow-but-alive turns into spurious aborts. Revisit only with evidence of a mid-turn stall the generator did not turn into an error.
 - Integrity diagnostics are written to `<piUserDir>/claude-bridge-diag.log` (`PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`) with counts, affected tool names, and sampled tool-call IDs.
 - `CLAUDE_BRIDGE_ISOLATED=1` (embedding hosts) disables all `AGENTS.md` discovery and all extension-manager/project config overlays, so bridge settings come only from `<piUserDir>/claude-bridge.json`. It also disables project `APPEND_SYSTEM.md` and the `$PATH` Claude executable search. This matters when an in-process host must share `PI_CODING_AGENT_DIR` with Pi but still needs an authoritative executable/connector policy. See `isolatedFromEnv` in `src/config.ts`.
 - Startup preflight failures preserve the underlying `code`, `errno`, `syscall`, `path`, `cwd`, and detected executable file type before handing the error back to the SDK.

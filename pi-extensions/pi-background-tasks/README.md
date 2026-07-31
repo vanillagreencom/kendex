@@ -58,6 +58,8 @@ Bash commands matching obvious monitor patterns are intercepted before they star
 
 Built-in matches: `watch ...`, `tail -f`, `journalctl -f`, Pi-bridge/tmux polling loops, and shell loops with `sleep` that monitor session state.
 
+Interception covers the agent's `bash` tool, interactive `!`/`!!` commands, and — since Pi 0.83.0 — bash issued directly over RPC. An RPC caller gets the same acknowledgement text in place of the command output, and the interactive task widget keeps tracking the session that owns it.
+
 Use the arm-next-bash shortcut or `/bg:next` to force the next bash command into the background even if it doesn't match the built-in patterns. Only applies to commands not yet started.
 
 ## Settings

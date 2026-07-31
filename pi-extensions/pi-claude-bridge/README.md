@@ -24,6 +24,10 @@ Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi
 
 ## Install
 
+Requires pi ≥ 0.81 (bridge 2.x registers through pi's native provider API, so pi shows the
+Claude models only while a Claude account is actually connected). On older pi, install
+`@vanillagreen/pi-claude-bridge@1.x` instead.
+
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-claude-bridge):
 
 ```bash
@@ -50,6 +54,8 @@ Extra Pi context is off by default. Enable per item in the extension manager whe
 Open `/extensions:settings`; settings appear under the **Claude Bridge** tab.
 
 Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, vstack Pi extensions read user/global settings only.
+
+The bridge also reads `claude-bridge.json` (`~/.pi/agent/claude-bridge.json`, and `.pi/claude-bridge.json` in a trusted project). Settings the bridge takes from one of those files are shown with the file that supplies them, so the editor reports the value the bridge resolves rather than the default. Changing the setting in the editor writes Pi settings, which take precedence over `claude-bridge.json`.
 
 ### General
 
@@ -109,6 +115,20 @@ Turn this on and the model can use whatever your Claude account already has conn
 
 Sessions are **read-only** by default: the model can look things up, but cannot send, post, or change anything unless you explicitly turn writes on below.
 
+Connector tools run inside Claude Code rather than in Pi, so Pi shows the model's answer but no tool card for the lookup itself. (Before this was handled, Pi showed a card claiming `Tool … not found` for calls that had actually succeeded — so an answer built on real data looked invented.)
+
+Each of those lookups is still recorded in the session file as a `claude-bridge-connector-call` entry — the tool name, whether it succeeded, and how many bytes came back, never the contents. So "did it really look that up?" has an answer even though nothing is drawn in the transcript.
+
+That entry needs a pi session to be written into. A host that embeds the bridge **without** one — loading it through a bare resource loader, so `extensionApi` is undefined — gets no record at all, and nothing in the bridge can tell. Such a host can install its own destination:
+
+```ts
+import { setConnectorCallAuditSink } from "@vanillagreen/pi-claude-bridge";
+
+setConnectorCallAuditSink((record) => myOwnAuditTrail(record));  // pass undefined to clear
+```
+
+The sink **adds** a destination; it never replaces the session entry. A session-backed host that installs one gets both, so turning it on can never cost you the record you already had. Same payload-free shape as the entry (`name`, `toolUseId`, `outcome`, and where known `byteSize` / `childSessionId` / `reason`), and the same never-fails-a-turn rule: a sink that throws is caught and dropped. It is process-global, like the bridge's other host handles, so a host running several conversations in one process must route by `childSessionId` itself.
+
 Extension-manager settings use flat package-scoped keys:
 
 ```json
@@ -126,7 +146,7 @@ Extension-manager settings use flat package-scoped keys:
 }
 ```
 
-Legacy `.pi/claude-bridge.json` configuration keeps these options nested under `provider`. Environment variables work with either format. Connectors remain off by default so Pi owns tool execution.
+Legacy `claude-bridge.json` configuration nests these options under `provider` (prompt-context flags under `promptContext`); the flat keys above are accepted there too. Environment variables work with either format. Connectors remain off by default so Pi owns tool execution.
 
 | Extension-manager key | Env var | Values | Default | What it does |
 | --- | --- | --- | --- | --- |
@@ -199,7 +219,7 @@ If Claude Code accepts a turn but produces no visible output, the bridge returns
 
 Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `<agent dir>/claude-bridge.log` and per-query Claude Code CLI logs under `<agent dir>/cc-cli-logs/`, where `<agent dir>` is `PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`. Override the exact files with `CLAUDE_BRIDGE_DEBUG_PATH` / `CLAUDE_BRIDGE_DIAG_PATH`.
 
-Tool-result integrity problems are surfaced even when debug logging is off. Pi shows an error notification and writes a diagnostic file to `<agent dir>/claude-bridge-diag.log` so lost or mismatched tool output is visible.
+Tool-result integrity problems are surfaced even when debug logging is off. Pi shows an error notification, writes a diagnostic file to `<agent dir>/claude-bridge-diag.log`, and appends a `claude-bridge-integrity` custom entry to the pi session transcript (compact metadata only — never tool output), so lost or mismatched tool output stays analyzable from the session file alone.
 
 Startup failures include the resolved Claude executable and working directory, which makes missing binaries and wrong launch directories easier to fix.
 

@@ -164,8 +164,15 @@ if echo "$STAGED" | grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc)$'; then
         [ -f "$REPO_ROOT/$path" ] && echo "$path"
       done || true)
       if [ -n "$FILES" ]; then
+        # --no-errors-on-unmatched: biome EXITS NON-ZERO when every path it was
+        # given is excluded by biome.json ("No files were processed"). A commit
+        # touching only ignored paths — re-vendoring a bundled dependency is the
+        # canonical case — is then unblockable: the files are ignored precisely
+        # because they must not be linted, and no amount of `biome check --write`
+        # makes them processable. Without this flag the hook reports a lint
+        # failure for a commit that has nothing to lint.
         # shellcheck disable=SC2086 -- intentional word splitting of file list
-        if ! OUTPUT=$(cd "$REPO_ROOT" && "$BIOME" check $FILES 2>&1); then
+        if ! OUTPUT=$(cd "$REPO_ROOT" && "$BIOME" check --no-errors-on-unmatched $FILES 2>&1); then
           echo "biome check failed on staged files. Run 'biome check --write' first." >&2
           echo "$OUTPUT" | head -20 >&2
           exit 2

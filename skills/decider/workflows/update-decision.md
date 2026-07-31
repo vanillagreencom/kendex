@@ -6,7 +6,7 @@ Update the status or content of existing decision entries — supersession, part
 
 | Input | Source | Required |
 |-------|--------|----------|
-| `decision_id` | Caller (DXXX to update) | Yes |
+| `decision_id` | Caller (decision ID to update) | Yes |
 | `update_type` | Caller | Yes |
 | `new_decision_id` | Caller (for supersession) | Conditional |
 | `components` | Caller (for partial supersession) | Conditional |

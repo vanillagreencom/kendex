@@ -367,7 +367,7 @@ export function buildInventory(_pi: ExtensionAPI, ctx: ExtensionContext): Invent
 
 	applyDisableState(items, managerState);
 	items.sort(compareInventoryItems);
-	return { auditLines, items, managerState, packages: items.filter((item) => item.kind === "package"), settingsFiles };
+	return { auditLines, cwd: ctx.cwd ?? process.cwd(), items, managerState, packages: items.filter((item) => item.kind === "package"), settingsFiles };
 }
 
 export function npmCandidatesFromInventory(inventory: Inventory): { name: string; npmName: string }[] {

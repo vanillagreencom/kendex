@@ -351,6 +351,20 @@ Read agent JSONs, check for items where `category == "fix"`.
 
 **Omit empty categories.**
 
+**Resolve the decision mode** before asking:
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
+```
+
+Use the output as `DECISION_MODE`. **If `auto-recommended`**: do not present the ask — execute the workflow's recommended option (Blockers: `Fix now`; Fix suggestions: `All`) and log the auto-decision in the round record so the audit trail keeps every auto-decision visible:
+
+```bash
+.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] auto_decisions '"auto-selected: [OPTION] — [REASON]"'
+```
+
+Report the same `auto-selected: [option] — [reason]` line to the user with the round output. `auto-recommended` never auto-decides these — they ALWAYS ask, in every mode: decision-record revisits, scope expansion beyond the issue being fixed, anything touching benchmark-host protocol, and merge (stays supervisor-owned). Any other `DECISION_MODE` value (including the `ask` default) presents the ask below unchanged.
+
 Ask user (omit categories with no items):
 
 | Category | Question | Type |
@@ -400,8 +414,8 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
    | `none` | no files changed | § 5 |
    | `risk` | risk flags present | → § 2 (full re-review, all agents) |
    | `production` | production scope | Selective shutdown (below) → § 2 |
-   | `blockers` | this round cleared blockers | → § 2 (full re-review, all agents) |
-   | `size` | support scope, but past the size threshold | → § 2 (full re-review, all agents) |
+   | `blockers` | this round cleared blockers | Targeted panel (below) → § 2 |
+   | `size` | support scope, but past the size threshold | Targeted panel (below) → § 2 |
    | `small` | support scope, no blockers, under threshold | Record the skip (below) → § 5 |
 
    Do not infer the route from `scope` alone. `scope` answers *what kind of files changed*, not *how risky the change is* — a `support` diff is build and validation tooling, which is exactly where a silent false-green does the most damage because every other gate reads its signal (vstack#875).
@@ -410,6 +424,22 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
    ```bash
    .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_skipped '[REASON]'
    ```
+
+   **Targeted panel** (`blockers`, `size`): re-review with a scoped panel instead of the full set — cycle-2+ full panels over unchanged domains converge toward zero yield on narrowing diffs (vstack#944). `risk` and `production` keep full re-review: a risk flag or production scope means the round may have changed behavior outside the domains it visibly touched. Compose the panel as the union of:
+
+   a. Reviewers whose domains the fix-round diff touched — derive from the paths/`domains`/`scope` of the round's diff summary:
+   ```bash
+   .agents/skills/github/scripts/git-diff-summary -C [WORKTREE_PATH] $PRE_SHA
+   ```
+   b. Reviewers who found the blockers cleared in this round (from the items delegated in step 2).
+   c. External review when available (§ 2.1 detection unchanged).
+
+   Record the panel composition and reason before re-entering — scoping must be visible after the fact, mirroring how `small` skips are recorded:
+   ```bash
+   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[CLASS]: [DOMAINS_TOUCHED] + blocker finders + external"}'
+   ```
+
+   Then → § 2 with caller context `agents` = the panel (the § 2 "agents provided" path uses exactly those reviewers). **Wave mode**: the panel replaces `[AGENTS]` for the cycle; wave mechanics apply to the panel unchanged.
 
    **Selective shutdown** (`production`):
    a. Read review JSONs. Reporting agents = agents whose JSON contained items.
@@ -522,7 +552,7 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
 
 **Never fix as main agent.**
 
-Follow § 4 pattern (collect → present → ask user → delegate via `workflows/dev-fix.md` → update state) with these overrides:
+Follow § 4 pattern (collect → present → ask user per the § 4 `ORCH_DECISION_MODE` resolution → delegate via `workflows/dev-fix.md` → update state) with these overrides:
 
 - **Items**: from QA agent JSONs. Exclude items already in `fixed_items` or `escalated_items`.
 - **Table header**: `QA Agent` instead of `Agent`. Title: `QA Review Items — [ISSUE_ID]`.

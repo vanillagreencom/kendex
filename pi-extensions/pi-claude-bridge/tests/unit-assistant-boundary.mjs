@@ -1,12 +1,6 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import {
-	MCP_TOOL_USE_FINALIZE_GRACE_MS,
-	cancelMcpToolUseFinalization,
-	finalizeToolUseTurnFromMcpInvocation,
-	processAssistantMessage,
-	processStreamEvent,
-} from "../src/index.ts";
+import { processAssistantMessage, processStreamEvent } from "../src/index.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
 
 const model = {
@@ -29,7 +23,7 @@ function installFakeStream() {
 describe("assistant tool-use boundary fallback", () => {
 	beforeEach(() => resetStack());
 
-	it("ends a streamed tool-use turn when the SDK assistant message arrives before message_stop", () => {
+	it("defers the streamed tool-use turn end to message_stop so message_delta usage lands", () => {
 		const c = ctx();
 		c.resetTurnState(model);
 		const events = installFakeStream();
@@ -57,14 +51,29 @@ describe("assistant tool-use boundary fallback", () => {
 			},
 		}, model, new Map([["mcp__custom-tools__bash", "bash"]]));
 
-		assert.equal(c.currentPiStream, null);
-		assert.equal(c.turnOutput.stopReason, "toolUse");
+		// Boundary arms the deferred end instead of closing the stream: the SDK
+		// yields this assistant message BEFORE message_delta, and message_delta is
+		// what carries the message's real output-token count.
+		assert.ok(c.currentPiStream, "boundary must not end the stream directly");
+		assert.ok(c.scheduledToolUseEnd, "boundary arms the grace timer");
 		assert.deepEqual(c.turnToolCallIds, ["toolu_1"]);
 		assert.equal(c.turnBlocks.length, 1, "must not duplicate streamed tool call block");
 		assert.equal(c.turnBlocks[0].arguments.command, "echo hi");
 		assert.ok(!("partialJson" in c.turnBlocks[0]), "partial JSON should be finalized");
+
+		// message_delta then message_stop — the normal terminal events.
+		processStreamEvent({ type: "stream_event", event: {
+			type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 187 },
+		} }, new Map(), model);
+		processStreamEvent({ type: "stream_event", event: { type: "message_stop" } }, new Map(), model);
+
+		assert.equal(c.currentPiStream, null);
+		assert.equal(c.scheduledToolUseEnd, null, "grace timer disarmed at turn end");
+		assert.equal(c.turnOutput.stopReason, "toolUse");
+		assert.equal(c.turnOutput.usage.output, 187, "message_delta usage must reach the delivered message");
 		assert.equal(events.at(-2).type, "done");
 		assert.equal(events.at(-2).reason, "toolUse");
+		assert.equal(events.at(-2).message.usage.output, 187, "done event carries the real output count");
 		assert.equal(events.at(-1).type, "stream_end");
 	});
 
@@ -86,48 +95,46 @@ describe("assistant tool-use boundary fallback", () => {
 			},
 		}, model, new Map([["mcp__custom-tools__read", "read"]]));
 
-		assert.equal(c.currentPiStream, null);
+		assert.ok(c.currentPiStream, "boundary defers the end to message_stop");
+		assert.ok(c.scheduledToolUseEnd, "boundary arms the grace timer");
 		assert.deepEqual(c.turnToolCallIds, ["toolu_missing"]);
 		assert.equal(c.turnBlocks.length, 1);
 		assert.equal(c.turnBlocks[0].name, "read");
 		assert.equal(c.turnBlocks[0].arguments.path, "README.md");
+		processStreamEvent({ type: "stream_event", event: { type: "message_stop" } }, new Map([["mcp__custom-tools__read", "read"]]), model);
+		assert.equal(c.currentPiStream, null);
 		assert.deepEqual(events.map((event) => event.type), ["start", "toolcall_start", "toolcall_end", "done", "stream_end"]);
 	});
 
-	it("keeps the stream open long enough to include sibling MCP invocations", async () => {
+	it("grace timer force-ends the tool-use turn when terminal events never arrive", (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
 		const c = ctx();
 		c.resetTurnState(model);
 		const events = installFakeStream();
+		c.turnSawStreamEvent = true;
 
-		finalizeToolUseTurnFromMcpInvocation(c, "toolu_parallel_a", "read", { path: "a.txt" });
-		assert.notEqual(c.currentPiStream, null, "first handler must not close the turn synchronously");
-		finalizeToolUseTurnFromMcpInvocation(c, "toolu_parallel_b", "bash", { command: "echo b" });
-		assert.notEqual(c.currentPiStream, null, "sibling handler must join the same open turn");
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				content: [{
+					type: "tool_use",
+					id: "toolu_silent",
+					name: "mcp__custom-tools__bash",
+					input: { command: "echo hi" },
+				}],
+			},
+		}, model, new Map([["mcp__custom-tools__bash", "bash"]]));
 
-		await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_USE_FINALIZE_GRACE_MS + 15));
+		assert.ok(c.currentPiStream, "turn stays open awaiting message_stop");
+		assert.ok(c.scheduledToolUseEnd, "grace timer armed");
 
-		assert.equal(c.currentPiStream, null);
-		assert.deepEqual(c.turnBlocks.map((block) => block.id), ["toolu_parallel_a", "toolu_parallel_b"]);
-		assert.deepEqual(
-			events.filter((event) => event.type === "toolcall_end").map((event) => event.toolCall.id),
-			["toolu_parallel_a", "toolu_parallel_b"],
-		);
+		t.mock.timers.tick(1500);
+
+		assert.equal(c.currentPiStream, null, "grace elapsed — turn force-ended");
+		assert.equal(c.scheduledToolUseEnd, null);
 		assert.equal(events.at(-2).type, "done");
 		assert.equal(events.at(-2).reason, "toolUse");
 		assert.equal(events.at(-1).type, "stream_end");
-	});
-
-	it("cancels a pending MCP fallback boundary during abort teardown", async () => {
-		const c = ctx();
-		c.resetTurnState(model);
-		const events = installFakeStream();
-
-		finalizeToolUseTurnFromMcpInvocation(c, "toolu_abort", "bash", { command: "sleep 1" });
-		cancelMcpToolUseFinalization(c);
-		await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_USE_FINALIZE_GRACE_MS + 15));
-
-		assert.notEqual(c.currentPiStream, null);
-		assert.equal(events.some((event) => event.type === "done"), false);
 	});
 
 	it("records assistant tool-use ids even after the stream already ended", () => {
@@ -172,13 +179,6 @@ describe("assistant tool-use boundary fallback", () => {
 		assert.equal(c.turnBlocks.length, 2);
 		assert.equal(c.turnBlocks[1].name, "write");
 		assert.equal(c.turnBlocks[1].arguments.path, "out.txt");
-		assert.equal(c.wasToolCallEmitted("toolu_streamed"), false);
-		assert.equal(c.wasToolCallEmitted("toolu_missing_after_stop"), false);
-		assert.equal(
-			c.claimToolCall("write", { file_path: "out.txt", content: "ok" }).toolCallId,
-			"toolu_missing_after_stop",
-			"a late handler must be able to open the next Pi tool turn",
-		);
 	});
 
 	it("ignores a late bare message_stop so the next assistant fallback still renders text", () => {
@@ -264,5 +264,86 @@ describe("assistant tool-use boundary fallback", () => {
 
 		assert.equal(c.turnOutput.model, "claude-opus-4-8");
 		assert.equal(c.turnBlocks.length, 0);
+	});
+});
+
+describe("no-stream-events fallback: same-message re-yields", () => {
+	beforeEach(() => resetStack());
+
+	it("renders a re-yielded identical text block only once", () => {
+		// The SDK yields the SAME assistant message more than once (partial +
+		// completed copies share one id). A rate-limited turn used to print
+		// "You've hit your weekly limit" twice through this path.
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		const msg = {
+			type: "assistant",
+			message: {
+				id: "msg_dup",
+				content: [{ type: "text", text: "You've hit your weekly limit · resets Jul 30, 4am" }],
+				usage: { input_tokens: 1, output_tokens: 2 },
+			},
+		};
+
+		processAssistantMessage(msg, model, new Map());
+		processAssistantMessage(msg, model, new Map());
+
+		assert.equal(c.turnBlocks.filter((b) => b.type === "text").length, 1);
+		assert.equal(events.filter((e) => e.type === "text_start").length, 1);
+	});
+
+	it("a distinct new message still renders", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		const mk = (id, text) => ({ type: "assistant", message: { id, content: [{ type: "text", text }] } });
+
+		processAssistantMessage(mk("msg_a", "first"), model, new Map());
+		processAssistantMessage(mk("msg_b", "second"), model, new Map());
+
+		assert.deepEqual(c.turnBlocks.filter((b) => b.type === "text").map((b) => b.text), ["first", "second"]);
+		assert.equal(events.filter((e) => e.type === "text_start").length, 2);
+	});
+
+	it("renders identical text only once even when the yields carry different ids", () => {
+		// A rejected turn's synthesized error message arrives as multiple yields
+		// whose ids differ or are absent — measured 2026-07-28: one pi message
+		// carried two byte-identical "You've hit your weekly limit" blocks.
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		const text = "You've hit your weekly limit · resets Jul 30, 4am (America/Los_Angeles)";
+		const mk = (id) => ({ type: "assistant", message: { ...(id ? { id } : {}), content: [{ type: "text", text }] } });
+
+		processAssistantMessage(mk("msg_attempt_1"), model, new Map());
+		processAssistantMessage(mk("msg_attempt_2"), model, new Map());
+		processAssistantMessage(mk(undefined), model, new Map());
+
+		assert.equal(c.turnBlocks.filter((b) => b.type === "text").length, 1);
+		assert.equal(events.filter((e) => e.type === "text_start").length, 1);
+	});
+
+	it("does not duplicate a re-yielded tool call block and keeps claim state", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+		const msg = {
+			type: "assistant",
+			message: {
+				id: "msg_tool",
+				content: [{ type: "tool_use", id: "toolu_dup", name: "mcp__custom-tools__bash", input: { command: "echo hi" } }],
+			},
+		};
+
+		processAssistantMessage(msg, model, new Map([["mcp__custom-tools__bash", "bash"]]));
+		const claim = c.claimToolCall("bash", { command: "echo hi", timeout: 120 });
+		assert.equal(claim.toolCallId, "toolu_dup");
+
+		processAssistantMessage(msg, model, new Map([["mcp__custom-tools__bash", "bash"]]));
+
+		assert.equal(c.turnBlocks.filter((b) => b.type === "toolCall").length, 1, "no duplicate toolCall block");
+		assert.equal(events.filter((e) => e.type === "toolcall_start").length, 1);
+		assert.equal(c.claimedToolCallIds.has("toolu_dup"), true, "same-message re-yield must not wipe claim state");
 	});
 });

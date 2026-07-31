@@ -1,3 +1,76 @@
+# Pi package update audit: 0.83.0
+
+Marker `0.82.1` → `0.83.0`. Run-start HEAD `6d125be0`. Sources fetched: `agent`, `ai`, `coding-agent`, `server`, `storage`, `tui`, plus the curated release notes. `Unreleased` blocks scanned for heads-up only and excluded from the marker.
+
+Only one released version is newer than the marker. `agent`, `server`, and `storage` published a `0.83.0` header with no entries; `tui` published one entry; `coding-agent` carries the superset and `ai` the inherited provider/SDK detail. 26 unique items after deduping curated "New Features" against their `Added` counterparts and inherited duplicates across packages.
+
+## Counts
+
+| Bucket | Count |
+|---|---:|
+| Required parity fix | 1 |
+| Optional improvement (all deferred) | 5 |
+| Non-impact | 20 |
+
+## Shipped
+
+- `d0d99f81` — `fix(pi-background-tasks): keep the UI context when RPC bash hits user_bash`
+- Affected extension: `pi-background-tasks`.
+- Trigger: coding-agent 0.83.0 "Fixed direct RPC bash commands bypassing extension `user_bash` handlers" ([#7214](https://github.com/earendil-works/pi/pull/7214)).
+- Defect: `pi-background-tasks/extensions/background-tasks.ts:939` cached every incoming `user_bash` context as `activeCtx`. That reference drives the mini-dashboard widget (`syncWidget` at `extensions/background-tasks.ts:295`, which branches on `ctx.hasUI`), notification delivery (`extensions/background-tasks.ts:160`), and project-scoped settings lookups keyed on `activeCtx?.cwd`. Before 0.83.0 `user_bash` only fired for interactive `!`/`!!`, so every context carried the session's UI and cwd. With RPC bash now routed through the same handler, a non-UI context could be adopted, and the next `refreshUi()` evaluated `shouldRenderBackgroundWidget({ hasUi: false, … })` and tore the widget down until an unrelated UI-bearing event restored it.
+- Fix: new `extensions/active-context.ts` exporting `shouldAdoptActiveContext`; a UI-bearing context is never replaced by a non-UI one, while headless runs (no context has a UI) still adopt normally. The handler keeps using the incoming ctx locally for cwd and notify, so RPC bash still auto-backgrounds and still returns its acknowledgement.
+- Docs: `pi-background-tasks/README.md` now states that interception covers the agent `bash` tool, interactive `!`/`!!`, and — since Pi 0.83.0 — direct RPC bash.
+- Tests: `pi-background-tasks/tests/active-context.test.ts` (5 new cases, including the widget-survival regression). Package suite `bun test` — 173 pass, 0 fail, 18 files (baseline before the change: 168 pass).
+
+## Deferred (Optional)
+
+| Item | Reasoning |
+|---|---|
+| `"pending"` stop reason for partial streaming messages | Pi's documented pattern seeds `stopReason: "pending"` and throws if a stream ends still pending. Our two custom providers seed `"stop"` (`pi-codex-minimal-tools/src/provider-shim.ts:1682`, `pi-claude-bridge/src/query-state.ts:265`) but already reach the same outcome through explicit terminal-event guards — `sawTerminalResponseEvent` (`pi-codex-minimal-tools/src/providers/openai-responses-shared.ts:478,810`) and the WebSocket/SSE `closed before response.completed` throws (`provider-shim.ts:1212,1306`). Adopting the sentinel is a readability change on a heavily vendored hot path, not a correctness gain. |
+| `AssistantMessage.rawStopReason`; unmapped terminal reasons surface as provider errors | Our `mapStopReason` already throws on unhandled statuses (`pi-codex-minimal-tools/src/providers/openai-responses-shared.ts:815-830`), matching the new core behavior. `rawStopReason` is diagnostic only and nothing in our extensions consumes it. |
+| `ctx.scopedModels` | We only need the parent's single active model to seed subagent panes (`pi-agents-tmux/extensions/subagent/index.ts:1561,1758,1886`), which `ctx.model` already provides. The resolved scope set would enable child-side model validation — a feature, not a correctness gap. |
+| Per-request `fetch` injection for provider transports | `pi-codex-minimal-tools` owns its transport end to end (SSE and WebSocket). Injection would let Pi supply the fetch impl, but the shim needs WebSocket handling that the hook does not cover, so there is no net simplification. |
+| `pi auth print-api-key` / `print-bearer-token` (+ `AuthResolutionOverrides.minOAuthValidityMs`) | These export *Pi's* configured credentials to external clients. `pi-claude-bridge` runs the opposite direction — it detects and consumes *Claude Code* credentials (`pi-claude-bridge/src/auth-presence.ts:99`, `src/native-provider.ts:41`). No consumer on our side. |
+
+## Non-impact
+
+- **TypeBox 1.3.7 upgrade; removed `Type.Base`/`Awaited`/`Promise`/`AsyncIterator`/`Iterator`/`Options` and `Value.Mutate`** — grep across `pi-extensions/**/*.ts` returns zero uses of any removed API. The companion "nullable array tool arguments" validation fix does not reach us either: every array in our tool schemas is `Type.Optional(Type.Array(...))`, never a null union, and `Type.Null` appears nowhere.
+- **OpenAI-compatible tool-call deltas with a valid `function` payload and an empty `custom` object (#7288)** — that bug is in the chat-completions delta merger. Our shim implements the Responses API grammar-tool path (`customInput`/`grammarToolInputProperties`, `openai-responses-shared.ts:456-752`), a different wire shape with no `function`+`custom` collision.
+- **Skills/prompts/themes losing package source metadata after resource reload (#6968)** — `pi-skills-manager/extensions/skills-manager/registry.ts:50-53` reads `resource.metadata.{scope,origin,source,baseDir}` straight from Pi. We carried no workaround, and the one consumer that could misbehave on a lost source fails loudly rather than corrupting settings (`extensions/skills-manager/toggle.ts:46` throws on `packageIndex === -1`). Core fix removes the failure mode.
+- **Duplicate messages when extensions switch sessions during interactive startup (#7110)** — our only `switchSession` call is command-driven and idle-gated (`pi-session-manager/extensions/session-manager.ts:23-33`, guarded by `waitForIdle` at `:52`), so it never runs during interactive startup.
+- **Session replacement and committed tree navigation during an active response (#7022)** — same idle gate; we do not replace sessions mid-turn.
+- **Cancellation of concurrently running user bash commands (#7103)** — our `user_bash` handler spawns a detached background task and returns immediately, so it has no in-flight foreground command to cancel.
+- **Status line when tool output expansion is toggled (#7180)** — no extension calls `setToolsExpanded`; grep returns zero hits. (The `Unreleased` follow-up #7292 that suppresses redundant startup notices from extensions is likewise not about us.)
+- **Image fallback paths overflowing narrow terminals; shortened home paths; clickable absolute paths (#7262, also `tui`)** — `pi-tool-renderer` already implements exactly this for the renderers it owns: `shortenPath` plus OSC-8 `hyperlink()` in `extensions/tool-renderer/text.ts:292-302`, covered by `extensions/__tests__/file-hyperlinks.test.ts`. Per the renderer-ownership rule, core UX changes to tools we override are not an automatic mirror.
+- **File-backed `SYSTEM.md`/`APPEND_SYSTEM.md` omitted from the interactive startup context listing (#7096)** — display-only fix to Pi's startup listing. We ship `APPEND_SYSTEM.md` payloads but do not read or render that listing.
+- **Context files loading twice when a linked Git worktree is nested under its main repository (#7221)** — vstack worktrees live outside the repo root at `~/dev/.worktrees/<repo>/<id>`, so the nested-worktree shape does not occur here; core fix regardless.
+- **Failed Git package installs leaving partial directories (#7210)** — vstack installs extensions as path packages (`./packages/<name>`); Pi's `git:`/`npm:` install and reconcile paths are out of scope for us.
+- **`/model` selector retaining a stale selection while filtering (#7211)** — Pi core popup; we do not override the model selector.
+- **Headless OpenRouter sign-in / manual redirect URL and authorization-code entry (#7114)** — no OpenRouter provider override in any extension.
+- **Claude Opus 5 on GitHub Copilot with adaptive thinking and 1M context (#7158)** — no Copilot provider override; grep for `github-copilot` returns nothing in extension source.
+- **OAuth credential resolution refreshing below five minutes of validity (#7168)** — Pi-side credential store; our extensions never resolve Pi OAuth credentials.
+- **Qwen Token Plan reasoning models sending service-specific thinking controls (#6951, #6998)** — no Qwen provider override; the only `qwen` hits are fixture strings in `pi-web-tools/tests/free-providers.test.ts`.
+- **Z.AI providers sending output limits through `max_tokens` (#7174)** — no Z.AI provider override.
+- **Explicitly configured Amazon Bedrock profiles overridden by ambient AWS access keys (#7176)** — no Pi Bedrock override. `pi-claude-bridge/src/auth-presence.ts:100` reads `CLAUDE_CODE_USE_BEDROCK`, which is a Claude Code routing flag, not Pi's Bedrock provider config.
+- **llama.cpp streamed responses reporting zero token usage (#7258)** — no llama.cpp provider override.
+- **`agent` 0.83.0** — version header published with no entries.
+- **`server` 0.83.0** — version header published with no entries.
+- **`storage` 0.83.0** — version header published with no entries.
+
+## Heads-up from `Unreleased` (not processed, marker not advanced)
+
+- `pi.registerMarkdownTransformer()` — chainable display-only Markdown transformation. Likely relevant to `pi-tool-renderer` and `pi-caveman` when it ships.
+- `--alt` alternate-screen TUI plus interface-compatible main/alt-screen renderers with application-owned scrolling (`tui`) — worth re-checking widget placement (`aboveEditor`/`belowEditor`) in `pi-background-tasks` and `pi-tool-renderer` once released.
+- `setToolsExpanded(false)` becomes a no-op when output is already collapsed (#7292).
+- Malformed resource arrays in package manifests crashing session startup (#7187).
+
+## Validation
+
+- `bun test` in `pi-extensions/pi-background-tasks` — 173 pass, 0 fail, 553 assertions, 18 files.
+- `vstack refresh -g` — `pi-package updated: @vanillagreen/pi-background-tasks`; 17 Pi packages processed, 1 updated.
+- `vstack verify -g` — `src:✓ install:✓` for all 17 Pi packages.
+- Not live-tested inside a Pi session: the RPC-bash path needs a real RPC client issuing bash against a live interactive session. The fix is covered by unit tests over the same predicate the widget path consumes, not by an end-to-end run.
+
 # Pi package update audit: 0.80.1 through 0.82.1
 
 Baseline: `0.80.0`. Sources: `agent`, `ai`, `coding-agent`, `server`, `storage`, `tui`, and curated release notes. `Unreleased` entries excluded. This report preserves each authoritative package-changelog occurrence, including inherited duplicates, so every published bullet remains auditable.

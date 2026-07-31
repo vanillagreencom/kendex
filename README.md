@@ -70,6 +70,19 @@ source repo
 Claude Code · Cursor · OpenCode · Codex · Pi
 ```
 
+By default, vstack scans `agents/`, `skills/`, `hooks/`, `pi-extensions/`, and `extras/`. Source repos with a different layout can declare catalog roots in their source `vstack.toml`:
+
+```toml
+[catalog]
+agents = ["pkgs/agents"]
+skills = ["pkgs/skills/*", "one-offs/specific-skill"]
+hooks = ["automation/vstack-hooks"]
+pi_extensions = ["pkgs/plugins/pi-*", "pkgs/plugins/a-specific-extension"]
+extras = ["theme-packs"]
+```
+
+Each path is relative to the source repo. A path may point at a container directory; skills, Pi extensions, and extras may name one specific item directory, while agents and hooks may also name one specific `.md` or `.sh` file. `*` is supported on the final path segment only. Omitted keys keep the default directory for that item kind.
+
 ### Customizing With `vstack.toml`
 
 `vstack add` writes a `vstack.toml` at your project root. Edit it to customize per-agent behavior, then run `vstack refresh` to apply. Generated agent files are overwritten on refresh — `vstack.toml` is the stable home for overrides.

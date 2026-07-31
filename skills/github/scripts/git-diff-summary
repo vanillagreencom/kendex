@@ -105,17 +105,95 @@ main() {
     if echo "$rust_diff_added" | grep -qE '^\+.*extern "C"'; then flags+=("extern_c_changed"); fi
     if echo "$rust_diff_added" | grep -qE '^\+.*(Atomic|atomic::)'; then flags+=("atomics_modified"); fi
 
-    # panic/unwrap only flagged in production source (not tests/benches)
+    # panic/unwrap in production source is the `panic_path_added` risk flag.
+    # The same patterns whose enclosing context is a test surface — tests/
+    # dirs, *_tests.rs files, or #[cfg(test)] modules inside production files —
+    # are the distinct informational `test_panic_path_added` flag instead: a
+    # test assertion is not a production panic path (vstack#944).
     local prod_paths
     prod_paths=$(echo "$files" | awk -F'\t' '{print $NF}' \
         | grep -E '(^|/)src/|(^|/)lib/' \
         | grep -vE '(/tests/|/benches/|/test/|/fixtures/|_tests?\.rs$|\.test\.[jt]sx?$|\.spec\.[jt]sx?$)' || true)
+    local prod_panic=0 test_panic=0
     if [ -n "$prod_paths" ]; then
-        local prod_diff
+        # path<TAB>new-side line number of each added panic-pattern line
+        local panic_lines
         # shellcheck disable=SC2086
-        prod_diff=$(git diff $diff_ref -- $prod_paths 2>/dev/null | grep -E '^\+' || true)
-        if echo "$prod_diff" | grep -qE '^\+.*(panic!|unwrap\(\))'; then flags+=("panic_path_added"); fi
+        panic_lines=$(git diff $diff_ref -- $prod_paths 2>/dev/null | awk '
+            /^diff --git / { path = ""; inhunk = 0 }
+            /^\+\+\+ b\//  { path = substr($0, 7); next }
+            /^@@/ {
+                split($0, parts, "+"); split(parts[2], nums, /[, ]/)
+                lineno = nums[1] + 0; inhunk = 1; next
+            }
+            !inhunk || path == "" { next }
+            /^-/ { next }
+            /^\+/ {
+                if ($0 ~ /panic!|unwrap\(\)/) print path "\t" lineno
+                lineno++; next
+            }
+            { lineno++ }
+        ')
+        local panic_file file_lines file_content counts pcount tcount
+        for panic_file in $(echo "$panic_lines" | cut -f1 | sort -u); do
+            file_lines=$(echo "$panic_lines" | awk -F'\t' -v f="$panic_file" '$1 == f {print $2}' | paste -sd, -)
+            # New-side content of the file: HEAD for a base...HEAD diff, the
+            # index for --staged, the worktree for --head.
+            case "$diff_ref" in
+                --staged) file_content=$(git show ":$panic_file" 2>/dev/null || true) ;;
+                HEAD)     file_content=$(cat "$panic_file" 2>/dev/null || true) ;;
+                *)        file_content=$(git show "HEAD:$panic_file" 2>/dev/null || true) ;;
+            esac
+            # Split the panic lines into production vs #[cfg(test)] context by
+            # brace-tracking the block a #[cfg(test)] attribute opens.
+            counts=$(printf '%s\n' "$file_content" | awk -v targets="$file_lines" '
+                BEGIN { n = split(targets, t, ","); for (i = 1; i <= n; i++) want[t[i] + 0] = 1 }
+                {
+                    opens = gsub(/{/, "{"); closes = gsub(/}/, "}")
+                    intest = 0
+                    if (depth > 0) {
+                        intest = 1
+                        depth += opens - closes
+                        if (depth < 0) depth = 0
+                    } else if (pending) {
+                        if (opens > 0) {
+                            pending = 0; intest = 1
+                            depth = opens - closes
+                            if (depth < 0) depth = 0
+                        } else if ($0 !~ /^[[:space:]]*(#\[|\/\/)/ && $0 !~ /^[[:space:]]*$/) {
+                            # braceless item (e.g. a use) consumed the attribute
+                            pending = 0; intest = 1
+                        }
+                    } else if ($0 ~ /#\[cfg\(test\)\]/) {
+                        intest = 1
+                        if (opens > 0) {
+                            depth = opens - closes
+                            if (depth < 0) depth = 0
+                        } else { pending = 1 }
+                    }
+                    if (want[NR]) { if (intest) tcount++; else pcount++ }
+                }
+                END { printf "%d %d\n", pcount + 0, tcount + 0 }
+            ')
+            read -r pcount tcount <<< "$counts"
+            if [ "$pcount" -gt 0 ]; then prod_panic=1; fi
+            if [ "$tcount" -gt 0 ]; then test_panic=1; fi
+        done
     fi
+    if [ "$prod_panic" -eq 1 ]; then flags+=("panic_path_added"); fi
+
+    # Whole-file test surfaces (tests/ dirs, *_tests.rs) carry the same
+    # informational flag so the addition stays visible without routing as risk.
+    local test_paths
+    test_paths=$(echo "$files" | awk -F'\t' '{print $NF}' \
+        | grep -E '(^|/)tests?/|_tests?\.rs$' || true)
+    if [ -n "$test_paths" ]; then
+        local test_diff
+        # shellcheck disable=SC2086
+        test_diff=$(git diff $diff_ref -- $test_paths 2>/dev/null | grep -E '^\+' || true)
+        if echo "$test_diff" | grep -qE '^\+.*(panic!|unwrap\(\))'; then test_panic=1; fi
+    fi
+    if [ "$test_panic" -eq 1 ]; then flags+=("test_panic_path_added"); fi
 
     if [ ${#flags[@]} -gt 0 ]; then
         risk_flags=$(printf '"%s"\n' "${flags[@]}" | jq -s '.')

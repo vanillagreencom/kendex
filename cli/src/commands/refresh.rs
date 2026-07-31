@@ -133,7 +133,7 @@ fn observed_source_repo_for_lock_entry(
             &entry.source,
         ));
     }
-    config::parse_github_slug(&entry.source).map(|source_repo| Some(source_repo))
+    config::parse_github_slug(&entry.source).map(Some)
 }
 
 fn sync_lock_entry_source_repo(source_records: &[ResolvedSource], entry: &mut config::LockEntry) {

@@ -111,6 +111,14 @@ repository's configured `remote.origin.fetch` refspec.
 docs, and config can mention `unsafe`, `#[repr(C)]`, `extern "C"`, or
 `Atomic` without triggering Rust risk flags.
 
+Panic patterns (`panic!`/`unwrap()`) added in production source emit
+`panic_path_added`. The same patterns whose enclosing context is a test
+surface — `#[cfg(test)]` modules (found by brace-tracking the block the
+attribute opens), `tests/` dirs, or `*_tests.rs` files — emit the distinct
+informational `test_panic_path_added` flag instead: a test assertion is not a
+production panic path, so `refix-route` treats that flag as non-risk and the
+round falls through to blockers/size/small handling (vstack#944).
+
 ## Verification (pr-cross-check --verify)
 
 `verify-lib.sh` auto-detects the build system. Override order:

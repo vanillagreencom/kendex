@@ -46,6 +46,8 @@ Open `/extensions:settings`; settings appear under the **Extension Manager** tab
 
 Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, vstack Pi extensions read user/global settings only.
 
+Some packages also keep a config file of their own. A row whose value comes from one of those files shows the value the package actually resolves, and names the file under the setting. Editing the row writes Pi settings, which override that file; `delete` reports the file instead of resetting, because the value is not stored in Pi settings.
+
 | Setting | What it does |
 | --- | --- |
 | Enable manager UI | Expose `/extensions` and the manager UI. `/extensions:enable` is always available as recovery. |

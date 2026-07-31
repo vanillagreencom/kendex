@@ -73,4 +73,40 @@ describe("jsonSchemaToZodShape", () => {
 		assert.deepEqual(json.properties.item.required, ["requiredName"]);
 		assert.ok(json.properties.item.properties.optionalNote);
 	});
+
+	it("keeps unknown keys on objects without additionalProperties:false (JSON Schema default)", () => {
+		// zod's default is to silently STRIP unknown keys; JSON Schema's default is
+		// to allow them. Stripping made the handler's validated input diverge from
+		// the raw streamed tool_use input, which broke tool-call id claiming.
+		const shape = jsonSchemaToZodShape({
+			type: "object",
+			properties: {
+				edits: {
+					type: "array",
+					items: { type: "object", properties: { oldText: { type: "string" } }, required: ["oldText"] },
+				},
+			},
+			required: ["edits"],
+		});
+
+		const parsed = z.object(shape).parse({ edits: [{ oldText: "a", stray: 1 }] });
+		assert.equal(parsed.edits[0].stray, 1, "unknown nested key must survive validation");
+	});
+
+	it("still rejects unknown keys when additionalProperties is explicitly false", () => {
+		const shape = jsonSchemaToZodShape({
+			type: "object",
+			properties: {
+				item: {
+					type: "object",
+					additionalProperties: false,
+					properties: { name: { type: "string" } },
+					required: ["name"],
+				},
+			},
+			required: ["item"],
+		});
+
+		assert.throws(() => z.object(shape).parse({ item: { name: "a", stray: 1 } }));
+	});
 });

@@ -843,10 +843,8 @@ pub fn parse_github_slug(url: &str) -> Option<String> {
             return None;
         }
         path
-    } else if let Some(after) = url.strip_prefix("ssh://git@github.com/") {
-        after
     } else {
-        return None;
+        url.strip_prefix("ssh://git@github.com/")?
     };
     let after = after
         .trim_end_matches('/')
@@ -904,9 +902,11 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
 
     match entry.kind {
         ItemKind::Skill => {
-            let dir = source_root.join("skills").join(&entry.name);
-            if dir.exists() {
-                state = fnv1a_chain(state, &hash_dir_bytes(&dir).to_le_bytes());
+            let dir = crate::catalog::find_item_path(&source_root, entry.kind, &entry.name);
+            if let Some(dir) = dir.as_deref()
+                && dir.exists()
+            {
+                state = fnv1a_chain(state, &hash_dir_bytes(dir).to_le_bytes());
             }
             // Only hash this skill's section from project vstack.toml
             let project_config = proj_root.join("vstack.toml");
@@ -916,11 +916,11 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
             }
         }
         ItemKind::Agent => {
-            let file = source_root
-                .join("agents")
-                .join(format!("{}.md", entry.name));
-            if file.exists() {
-                state = fnv1a_chain(state, &hash_file_bytes(&file).to_le_bytes());
+            let file = crate::catalog::find_item_path(&source_root, entry.kind, &entry.name);
+            if let Some(file) = file.as_deref()
+                && file.exists()
+            {
+                state = fnv1a_chain(state, &hash_file_bytes(file).to_le_bytes());
             }
             // Hash this agent's sections from both configs
             let source_config = source_root.join("vstack.toml");
@@ -932,9 +932,11 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
             }
         }
         ItemKind::Hook => {
-            let file = source_root.join("hooks").join(format!("{}.sh", entry.name));
-            if file.exists() {
-                state = fnv1a_chain(state, &hash_file_bytes(&file).to_le_bytes());
+            let file = crate::catalog::find_item_path(&source_root, entry.kind, &entry.name);
+            if let Some(file) = file.as_deref()
+                && file.exists()
+            {
+                state = fnv1a_chain(state, &hash_file_bytes(file).to_le_bytes());
             }
             // Hook attribution lives in source vstack.toml [hook-events]
             // (keyed by event:matcher, not hook name). Re-targeting a hook —
@@ -949,14 +951,18 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
             }
         }
         ItemKind::PiExtension => {
-            if let Some(dir) = resolve_pi_extension_dir(&source_root, &entry.name) {
+            if let Some(dir) = crate::catalog::find_item_path(&source_root, entry.kind, &entry.name)
+                .or_else(|| resolve_pi_extension_dir(&source_root, &entry.name))
+            {
                 state = fnv1a_chain(state, &hash_dir_bytes(&dir).to_le_bytes());
             }
         }
         ItemKind::Extra => {
-            let dir = source_root.join("extras").join(&entry.name);
-            if dir.exists() {
-                state = fnv1a_chain(state, &hash_dir_bytes(&dir).to_le_bytes());
+            let dir = crate::catalog::find_item_path(&source_root, entry.kind, &entry.name);
+            if let Some(dir) = dir.as_deref()
+                && dir.exists()
+            {
+                state = fnv1a_chain(state, &hash_dir_bytes(dir).to_le_bytes());
             }
         }
     }
@@ -1060,7 +1066,7 @@ fn scan_installed_hooks_on_disk_at_with_cursor_global_rules(
         return Vec::new();
     };
 
-    let Ok(source_hooks) = crate::hook::discover_hooks(&source_root.join("hooks")) else {
+    let Ok(source_hooks) = crate::catalog::discover_hooks(&source_root) else {
         return Vec::new();
     };
 
@@ -1969,6 +1975,46 @@ mod source_registry_tests {
         );
         // Must not collapse to the bare FNV offset constant.
         assert_ne!(h1, format!("{:016x}", FNV_OFFSET));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_hash_uses_custom_catalog_skill_path() {
+        let dir = sandbox("catalog_hash_skill");
+        let skill_dir = dir.join("pkgs").join("skills").join("demo");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            dir.join("vstack.toml"),
+            "[catalog]\nskills = [\"pkgs/skills/*\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n# Before\n",
+        )
+        .unwrap();
+
+        let entry = LockEntry {
+            name: "demo".to_string(),
+            kind: ItemKind::Skill,
+            source: dir.display().to_string(),
+            source_repo: None,
+            harnesses: vec!["codex".to_string()],
+            method: InstallMethod::Symlink,
+            installed_at: "2026-07-29T00:00:00Z".to_string(),
+            source_hash: String::new(),
+        };
+
+        let h1 = compute_source_hash(&entry);
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n# After\n",
+        )
+        .unwrap();
+        let h2 = compute_source_hash(&entry);
+
+        assert!(!h1.is_empty());
+        assert_ne!(h1, h2);
         let _ = fs::remove_dir_all(&dir);
     }
 

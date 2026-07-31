@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-background-tasks",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Pi extension for explicit non-blocking background shell tasks, log tails, and completion wakeups.",
   "license": "MIT",
   "keywords": [

@@ -53,6 +53,30 @@ exit 0
 EOF
 chmod +x "$BIN_DIR/cargo"
 
+# --- biome PATH shim ---------------------------------------------------------
+# Mimics the real binary's exit-non-zero-when-every-path-is-ignored behavior, so
+# the suite needs no Node install. It fails exactly as biome does UNLESS
+# --no-errors-on-unmatched is passed, which is the whole point of the flag.
+cat >"$BIN_DIR/biome" <<'EOF'
+#!/usr/bin/env bash
+echo "biome $*" >>"$CARGO_LOG"
+unmatched_ok=0
+for arg in "$@"; do
+  [ "$arg" = "--no-errors-on-unmatched" ] && unmatched_ok=1
+done
+# The flag suppresses ONLY the every-path-ignored exit, never a real finding.
+if [ "${BIOME_ALL_PATHS_IGNORED:-0}" != "0" ]; then
+  [ "$unmatched_ok" = "1" ] && exit 0
+  echo "No files were processed in the specified paths." >&2
+  exit 1
+fi
+if [ "${BIOME_EXIT:-0}" != "0" ]; then
+  echo "lint error: noUnusedVariables at vendor/bundle.js:1:1" >&2
+fi
+exit "${BIOME_EXIT:-0}"
+EOF
+chmod +x "$BIN_DIR/biome"
+
 # Run the hook from inside a fixture repo with a git-commit tool command on
 # stdin. Extra env assignments come as VAR=value args; the override var is
 # scrubbed from the parent environment first so only explicit settings apply.
@@ -269,6 +293,28 @@ run_hook "$REPO_A" CARGO_FMT_EXIT=1
 assert_eq "$rc" "2" "fmt failure exits 2"
 assert_contains "$err" "Diff in src/lib.rs" "fmt diagnostics are no longer swallowed"
 assert_contains "$err" "cargo fmt --check failed" "fmt guidance line still present"
+
+# --- Biome: a commit touching only IGNORED paths is not blocked ---------------
+# Real biome exits non-zero when every path it was handed is excluded by
+# biome.json ("No files were processed"). Re-vendoring a bundled dependency
+# stages exactly that shape, and the files are ignored precisely because they
+# must not be linted — so no `biome check --write` can ever clear it.
+REPO_E="$TMP_ROOT/biome-repo"
+make_repo "$REPO_E"
+REPO_E_PHYS="$(cd "$REPO_E" && pwd -P)"
+printf '{}\n' >"$REPO_E/biome.json"
+mkdir -p "$REPO_E/vendor"
+printf 'export const x = 1\n' >"$REPO_E/vendor/bundle.js"
+git -C "$REPO_E" add -A
+run_hook "$REPO_E" BIOME_ALL_PATHS_IGNORED=1
+assert_eq "$rc" "0" "vendor-only commit is not blocked when every staged path is biome-ignored"
+assert_contains "$log" "--no-errors-on-unmatched" "biome is invoked with --no-errors-on-unmatched"
+
+# The flag must not turn biome into a rubber stamp: a real finding still blocks.
+run_hook "$REPO_E" BIOME_EXIT=1
+assert_eq "$rc" "2" "a real biome finding still blocks the commit"
+assert_contains "$err" "biome check failed on staged files" "biome guidance line still present"
+assert_contains "$err" "noUnusedVariables" "biome diagnostics reach stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
