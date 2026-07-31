@@ -27,7 +27,7 @@ cat >"$body_file" <<'MD'
 MD
 
 export CURL_CONFIG_CAPTURE="$TMP_ROOT/curl-config.txt"
-out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 --body-file "$body_file")"
+out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token LINEAR_TEAM=TestTeam bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 --body-file "$body_file")"
 
 if ! jq -e '.success == true and .data.comment.id == "comment-1"' >/dev/null <<<"$out"; then
   echo "FAIL comments create --body-file returned unexpected output: $out"
@@ -42,7 +42,7 @@ if [[ "$body" != *"Completion Summary"* || "$body" != *'`code` and multi-line ma
 fi
 
 set +e
-PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 --body inline --body-file "$body_file" >"$TMP_ROOT/conflict.out" 2>&1
+PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token LINEAR_TEAM=TestTeam bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 --body inline --body-file "$body_file" >"$TMP_ROOT/conflict.out" 2>&1
 rc=$?
 set -e
 if [[ "$rc" -eq 0 ]]; then

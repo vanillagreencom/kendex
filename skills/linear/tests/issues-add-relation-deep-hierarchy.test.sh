@@ -116,7 +116,7 @@ run_add_relation() {
   shift
   : >"$payload_log"
   PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY=test-token \
+    LINEAR_API_KEY=test-token LINEAR_TEAM=TestTeam \
     CURL_PAYLOAD_LOG="$payload_log" \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues add-relation "$@"
 }

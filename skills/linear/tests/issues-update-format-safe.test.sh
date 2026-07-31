@@ -47,7 +47,7 @@ chmod +x "$TMP_ROOT/bin/curl"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
 run_update() {
-  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token \
+  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token LINEAR_TEAM=TestTeam \
     bash "$LINEAR" issues update "$@"
 }
 
