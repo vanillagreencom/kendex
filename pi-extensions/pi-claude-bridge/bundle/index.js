@@ -43742,7 +43742,7 @@ function spawnClaudeCodeWithDiagnostics(options) {
   };
 }
 
-// node_modules/cc-session-io/dist/chunk-D6EZBJOC.js
+// node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
 import { randomUUID } from "crypto";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync6, rmSync as rmSync2 } from "fs";
 import { dirname as dirname6 } from "path";
@@ -44000,13 +44000,16 @@ var Session = class {
     this._lastUuid = uuid3;
     return record2;
   }
-  /** Add a user text message. Returns its uuid. */
-  addUserMessage(text) {
+  /** Add a user message, as plain text or content blocks. Returns its uuid. */
+  addUserMessage(content) {
+    if (Array.isArray(content) && content.length === 0) {
+      throw new Error("addUserMessage: content array is empty; Anthropic rejects empty message content");
+    }
     const base = this.baseFields();
     const record2 = {
       type: "user",
       ...base,
-      message: { role: "user", content: text }
+      message: { role: "user", content }
     };
     this._pendingRecords.push(record2);
     return base.uuid;
@@ -44094,16 +44097,17 @@ var Session = class {
           const toolResults = msg.content.filter(
             (b) => b.type === "tool_result"
           );
+          const rest = msg.content.filter(
+            (b) => b.type !== "tool_result"
+          );
           if (toolResults.length > 0) {
             this.addToolResults(toolResults.map((r) => ({
               toolUseId: r.tool_use_id,
               content: r.content,
               isError: r.is_error
             })));
-          } else {
-            const text = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
-            this.addUserMessage(text || JSON.stringify(msg.content));
           }
+          if (rest.length > 0) this.addUserMessage(rest);
         }
       }
     }
@@ -44402,6 +44406,22 @@ function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
   }
   if (repaired.length) session.importMessages(repaired);
 }
+function planIncrementalPromptBatch(messages, cursor) {
+  const lastIndex = messages.length - 1;
+  if (lastIndex < 0 || messages[lastIndex].role !== "user") return void 0;
+  const boundedCursor = Math.max(0, Math.min(cursor, lastIndex));
+  let promptStart = boundedCursor;
+  if (messages[promptStart]?.role === "assistant") promptStart++;
+  const pendingPrompts = messages.slice(promptStart);
+  if (pendingPrompts.length === 0 || pendingPrompts.some((message) => message.role !== "user")) {
+    return void 0;
+  }
+  return {
+    cursorBeforeQuery: promptStart,
+    promptStart,
+    userMessageCount: pendingPrompts.length
+  };
+}
 function verifyWrittenSession2(jsonlPath, expectedSessionId, expectedRecordCount, cwd) {
   const warnings = verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount);
   for (const msg of warnings) {
@@ -44441,21 +44461,22 @@ function debugSessionPaths(label, cwd, jsonlPath) {
 function syncSharedSession(messages, cwd, customToolNameToSdk, modelId) {
   const priorMessages = messages.slice(0, -1);
   if (sharedSession && !sharedSession.needsRebuild) {
-    const missed = priorMessages.slice(sharedSession.cursor);
-    const trailingAssistantOnly = missed.length === 1 && missed[0].role === "assistant";
-    if (missed.length === 0 || trailingAssistantOnly) {
-      if (trailingAssistantOnly) {
-        setSharedSession({ ...sharedSession, cursor: priorMessages.length, cwd });
-      }
-      debug(`Case 3: ${trailingAssistantOnly ? "advanced cursor past trailing assistant, " : ""}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${sharedSession.cursor}`);
-      debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${sharedSession.cursor}`);
-      return { sessionId: sharedSession.sessionId };
+    const batch = planIncrementalPromptBatch(messages, sharedSession.cursor);
+    if (batch) {
+      setSharedSession({ ...sharedSession, cursor: batch.cursorBeforeQuery, cwd });
+      const batching = batch.userMessageCount > 1 ? `batched ${batch.userMessageCount} consecutive user messages, ` : batch.cursorBeforeQuery > sharedSession.cursor ? "advanced cursor past trailing assistant, " : "";
+      debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.cursorBeforeQuery}`);
+      debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${batch.cursorBeforeQuery} promptUsers=${batch.userMessageCount}`);
+      return {
+        sessionId: sharedSession.sessionId,
+        promptMessages: messages.slice(batch.promptStart)
+      };
     }
   }
   if (priorMessages.length === 0) {
     debug(`Case 1: clean start, ${messages.length} total messages`);
     debug(`syncResult: path=clean-start`);
-    return { sessionId: null };
+    return { sessionId: null, promptMessages: messages.slice(-1) };
   }
   const previousSessionId = sharedSession?.sessionId;
   const previousCursor = sharedSession?.cursor ?? 0;
@@ -44483,7 +44504,7 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId) {
   }
   debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath);
   debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === void 0 ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`);
-  return { sessionId: session.sessionId };
+  return { sessionId: session.sessionId, promptMessages: messages.slice(-1) };
 }
 
 // src/stream-idle-watchdog.ts
@@ -45167,39 +45188,42 @@ function extractAllToolResults2(context) {
   return results;
 }
 function extractUserPrompt(messages) {
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== "user") return null;
-  if (typeof last.content === "string") return last.content;
-  return messageContentToText(last.content) || "";
+  if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
+  return messages.map(
+    (message) => typeof message.content === "string" ? message.content : messageContentToText(message.content) || ""
+  ).join("\n\n");
 }
 function extractUserPromptBlocks(messages) {
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== "user") return null;
-  if (typeof last.content === "string") {
-    debug(`extractUserPromptBlocks: content is string (length=${last.content.length})`);
-    return null;
-  }
-  if (!Array.isArray(last.content)) {
-    debug(`extractUserPromptBlocks: content is ${typeof last.content}`);
-    return null;
-  }
-  debug(`extractUserPromptBlocks: ${last.content.length} blocks, types=${last.content.map((b) => b.type).join(",")}`);
+  if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
   let hasImage = false;
   const blocks = [];
-  for (const block of last.content) {
-    if (block.type === "text" && block.text) {
-      blocks.push({ type: "text", text: block.text });
-    } else if (block.type === "image") {
-      debug(`image block: mimeType=${block.mimeType}, data length=${(block.data ?? "").length}, keys=${Object.keys(block).join(",")}`);
-      if (!block.data || !block.mimeType) {
-        debug(`image block missing data or mimeType, skipping`);
-        continue;
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const content = messages[messageIndex].content;
+    if (messageIndex > 0) blocks.push({ type: "text", text: "\n\n" });
+    if (typeof content === "string") {
+      if (content) blocks.push({ type: "text", text: content });
+      continue;
+    }
+    if (!Array.isArray(content)) {
+      debug(`extractUserPromptBlocks: content is ${typeof content}`);
+      continue;
+    }
+    debug(`extractUserPromptBlocks: ${content.length} blocks, types=${content.map((b) => b.type).join(",")}`);
+    for (const block of content) {
+      if (block.type === "text" && block.text) {
+        blocks.push({ type: "text", text: block.text });
+      } else if (block.type === "image") {
+        debug(`image block: mimeType=${block.mimeType}, data length=${(block.data ?? "").length}, keys=${Object.keys(block).join(",")}`);
+        if (!block.data || !block.mimeType) {
+          debug(`image block missing data or mimeType, skipping`);
+          continue;
+        }
+        hasImage = true;
+        blocks.push({
+          type: "image",
+          source: { type: "base64", media_type: block.mimeType, data: block.data }
+        });
       }
-      hasImage = true;
-      blocks.push({
-        type: "image",
-        source: { type: "base64", media_type: block.mimeType, data: block.data }
-      });
     }
   }
   return hasImage ? blocks : null;
@@ -45521,7 +45545,7 @@ function streamClaudeAgentSdk(model, context, options) {
       piUI?.notify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting \u2014 provider may be stuck`, "warning");
     }
     if (lastMsgRole === "user") {
-      const userPrompt = extractUserPrompt(context.messages);
+      const userPrompt = extractUserPrompt(context.messages.slice(-1));
       if (userPrompt) {
         ctx().deferredUserMessages.push(userPrompt);
         debug(`provider: deferred user message for replay after query: ${userPrompt.slice(0, 60)}`);
@@ -45585,8 +45609,9 @@ function streamClaudeAgentSdk(model, context, options) {
   ctx().resetToolTracking();
   ctx().latestCursor = 0;
   const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
-  const promptBlocks = extractUserPromptBlocks(context.messages);
-  let promptText = extractUserPrompt(context.messages) ?? "";
+  const { sessionId: resumeSessionId, promptMessages } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
+  const promptBlocks = extractUserPromptBlocks(promptMessages);
+  let promptText = extractUserPrompt(promptMessages) ?? "";
   if (!promptText && !promptBlocks) {
     diagDump("empty_prompt", {
       contextLength: context.messages.length,
@@ -45616,7 +45641,6 @@ function streamClaudeAgentSdk(model, context, options) {
   const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
   const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
   const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
-  const { sessionId: resumeSessionId } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
   const requestedEffort = options?.reasoning ? model.thinkingLevelMap?.[options.reasoning] ?? REASONING_TO_EFFORT[options.reasoning] : void 0;
   const effort = resolveConfiguredEffort(model.id, requestedEffort, providerSettings);
   const extraArgs = {};
@@ -46059,6 +46083,7 @@ export {
   mapToolName,
   normalizeRateLimitUtilization,
   noteChildExecutedToolResults,
+  planIncrementalPromptBatch,
   preflightClaudeExecutable,
   primeConnectorServers,
   processAssistantMessage,

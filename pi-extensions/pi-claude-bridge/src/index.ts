@@ -57,7 +57,7 @@ export { classifyClaudeExecutableBytes, preflightClaudeExecutable, resolveClaude
 export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, INTEGRITY_CUSTOM_TYPE, appendIntegrityEntry, reportToolResultMismatch } from "./bridge-state.js";
 export { CONNECTOR_CALL_CUSTOM_TYPE, connectorResultByteSize, flushConnectorCallAudit, recordConnectorCallResult, setConnectorCallAuditSink, type ConnectorCallAuditData, type ConnectorCallAuditSink, type ConnectorCallOutcome } from "./connector-audit.js";
 export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, isChildExecutedTool, isChildInternalTool, isConnectorTool, isConnectorWriteTool, toolIsolationForQuery } from "./connectors.js";
-export { restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
+export { planIncrementalPromptBatch, restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
 export { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, claudeAuthSourceLabel, supportsNativeProvider } from "./native-provider.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
 export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isExtraUsageRequiredMessage, isUsageLimitMessage, normalizeRateLimitUtilization, resetTimestampMs, uniqueNonEmptyLines } from "./rate-limit.js";
@@ -220,44 +220,48 @@ function extractAllToolResults(context: Context): McpResult[] {
 	return results;
 }
 
-/** Extract the last user message from context as a prompt string. Returns null if last message is not a user message. */
+/** Combine one or more consecutive user messages into a single SDK prompt. */
 function extractUserPrompt(messages: Context["messages"]): string | null {
-	const last = messages[messages.length - 1];
-	if (!last || last.role !== "user") return null;
-	if (typeof last.content === "string") return last.content;
-	return messageContentToText(last.content) || "";
+	if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
+	return messages.map((message) =>
+		typeof message.content === "string" ? message.content : messageContentToText(message.content) || "",
+	).join("\n\n");
 }
 
-/** Extract the last user message as ContentBlockParam[] (preserving images).
- *  Returns null if no images — caller should fall back to string prompt. */
+/** Combine consecutive user messages as ContentBlockParam[] while preserving images.
+ *  Returns null if no images — caller should fall back to the string prompt. */
 function extractUserPromptBlocks(messages: Context["messages"]): ContentBlockParam[] | null {
-	const last = messages[messages.length - 1];
-	if (!last || last.role !== "user") return null;
-	if (typeof last.content === "string") {
-		debug(`extractUserPromptBlocks: content is string (length=${last.content.length})`);
-		return null;
-	}
-	if (!Array.isArray(last.content)) {
-		debug(`extractUserPromptBlocks: content is ${typeof last.content}`);
-		return null;
-	}
-	debug(`extractUserPromptBlocks: ${last.content.length} blocks, types=${last.content.map((b: any) => b.type).join(",")}`);
+	if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
+
 	let hasImage = false;
 	const blocks: ContentBlockParam[] = [];
-	for (const block of last.content) {
-		if (block.type === "text" && block.text) {
-			blocks.push({ type: "text", text: block.text });
-		} else if (block.type === "image") {
-			debug(`image block: mimeType=${(block as any).mimeType}, data length=${((block as any).data ?? "").length}, keys=${Object.keys(block).join(",")}`);
-			if (!(block as any).data || !(block as any).mimeType) {
-				debug(`image block missing data or mimeType, skipping`);
-				continue;
+	for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+		const content = messages[messageIndex].content;
+		if (messageIndex > 0) blocks.push({ type: "text", text: "\n\n" });
+		if (typeof content === "string") {
+			if (content) blocks.push({ type: "text", text: content });
+			continue;
+		}
+		if (!Array.isArray(content)) {
+			debug(`extractUserPromptBlocks: content is ${typeof content}`);
+			continue;
+		}
+		debug(`extractUserPromptBlocks: ${content.length} blocks, types=${content.map((b: any) => b.type).join(",")}`);
+		for (const block of content) {
+			if (block.type === "text" && block.text) {
+				blocks.push({ type: "text", text: block.text });
+			} else if (block.type === "image") {
+				debug(`image block: mimeType=${(block as any).mimeType}, data length=${((block as any).data ?? "").length}, keys=${Object.keys(block).join(",")}`);
+				if (!(block as any).data || !(block as any).mimeType) {
+					debug(`image block missing data or mimeType, skipping`);
+					continue;
+				}
+				hasImage = true;
+				blocks.push({
+					type: "image",
+					source: { type: "base64", media_type: block.mimeType as Base64ImageSource["media_type"], data: block.data },
+				});
 			}
-			hasImage = true;
-			blocks.push({
-				type: "image",
-				source: { type: "base64", media_type: block.mimeType as Base64ImageSource["media_type"], data: block.data },
-			});
 		}
 	}
 	return hasImage ? blocks : null;
@@ -744,7 +748,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		// The bridge can't forward these mid-query (the SDK query is in progress),
 		// so we save them for replay as continuation queries after consumeQuery ends.
 		if (lastMsgRole === "user") {
-			const userPrompt = extractUserPrompt(context.messages);
+			const userPrompt = extractUserPrompt(context.messages.slice(-1));
 			if (userPrompt) {
 				ctx().deferredUserMessages.push(userPrompt);
 				debug(`provider: deferred user message for replay after query: ${userPrompt.slice(0, 60)}`);
@@ -818,8 +822,9 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	ctx().latestCursor = 0;
 
 	const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
-	const promptBlocks = extractUserPromptBlocks(context.messages);
-	let promptText = extractUserPrompt(context.messages) ?? "";
+	const { sessionId: resumeSessionId, promptMessages } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
+	const promptBlocks = extractUserPromptBlocks(promptMessages);
+	let promptText = extractUserPrompt(promptMessages) ?? "";
 
 	// Guard: empty prompt means the last context message isn't a user message.
 	// This should never happen with the state stack fix — dump diagnostics if it does.
@@ -878,8 +883,6 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
 	const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
 	const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : undefined;
-	const { sessionId: resumeSessionId } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
-
 	// Prefer the model's own thinkingLevelMap when present (pi-ai 0.72+ ships
 	// per-model overrides — e.g. opus-4-7 wants xhigh→xhigh, not xhigh→max).
 	// Fall back to our generic table for older pi-ai or unmapped levels.
