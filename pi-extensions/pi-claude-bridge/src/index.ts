@@ -1042,6 +1042,18 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			return stream;
 		}
 	}
+	const queryModel = account?.modelId && account.modelId !== model.id
+		? { ...model, id: account.modelId, name: modelDisplayName(account.modelId) }
+		: model;
+	if (queryModel.id !== model.id) {
+		updateTurnOutputModel(queryModel.id);
+		safeNotify(
+			account?.fallbackReason === "fable-quota"
+				? `Claude Fable subscription allowance is spent across every ready account; using ${modelDisplayName(queryModel.id)} without Extra Usage.`
+				: `Claude bridge switched to ${modelDisplayName(queryModel.id)}.`,
+			"info",
+		);
+	}
 	const attemptBuffer = account
 		? new RetryEventBuffer(stream, () => ctx().markOutputCommitted())
 		: undefined;
@@ -1112,7 +1124,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		context.messages,
 		cwd,
 		customToolNameToSdk,
-		model.id,
+		queryModel.id,
 		accountSessionScope(account),
 	);
 
@@ -1120,10 +1132,10 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	// per-model overrides — e.g. opus-4-7 wants xhigh→xhigh, not xhigh→max).
 	// Fall back to our generic table for older pi-ai or unmapped levels.
 	const requestedEffort = options?.reasoning
-		? ((model as any).thinkingLevelMap?.[options.reasoning] as EffortLevel | undefined)
+		? ((queryModel as any).thinkingLevelMap?.[options.reasoning] as EffortLevel | undefined)
 			?? REASONING_TO_EFFORT[options.reasoning]
 		: undefined;
-	const effort = resolveConfiguredEffort(model.id, requestedEffort, providerSettings);
+	const effort = resolveConfiguredEffort(queryModel.id, requestedEffort, providerSettings);
 
 	const extraArgs: Record<string, string | null> = {};
 	// Opus 4.7 defaults thinking.display to "omitted" (empty thinking text in stream).
@@ -1133,7 +1145,12 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	// (verified in sdk.mjs flag mapping), so the typed form cannot set display
 	// without overriding the model's thinking mode alongside our `--effort`.
 	if (effort) extraArgs["thinking-display"] = "summarized";
-	const fallbackModel = fallbackModelForPrimaryModel(model.id);
+	// With a managed Fable pool, let every account's model-scoped allowance run
+	// out before changing models. Once the router explicitly selects Opus, its
+	// normal Opus→4.8 safety fallback remains enabled.
+	const fallbackModel = account && model.id === "claude-fable-5" && queryModel.id === model.id
+		? undefined
+		: fallbackModelForPrimaryModel(queryModel.id);
 
 	// Suppress claude.ai cloud MCP servers (Figma/Canva/etc. auto-discovered via OAuth
 	// when the user is logged into Anthropic). These are a separate code path from
@@ -1154,7 +1171,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	};
 	const queryOptions: NonNullable<Parameters<typeof query>[0]["options"]> = {
 		cwd,
-		model: model.id,
+		model: queryModel.id,
 		env: childEnv,
 		...connectorQueryOptions(enableCloudMcp, connectorWriteMode),
 		permissionMode: "bypassPermissions",
@@ -1179,7 +1196,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	};
 
 	debug("provider: fresh query",
-		`model=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
+		`model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
 		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"} account=${account?.label ?? "legacy"}`,
 		`fallback=${fallbackModel ?? "none"}`,
 		`appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${enableCloudMcp}`,
@@ -1219,9 +1236,9 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 				abortCtx.deferredUserMessages = [];
 				if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
 				const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
-				debug("provider: stream idle timeout", `model=${model.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
+				debug("provider: stream idle timeout", `model=${queryModel.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
 				if (account && router && !abortCtx.committedOutput) {
-					router.recordFailure(account.profileId, "network", model.id);
+					router.recordFailure(account.profileId, "network", queryModel.id);
 					rotationState.excludedProfileIds.add(account.profileId);
 					retryRequested = true;
 					retryFailure = { kind: "network", message: errorMessage };
@@ -1233,7 +1250,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 				abortCtx.handledTerminalError = true;
 				emitRateLimitEvent({
 					idleMs,
-					model: model.id,
+					model: queryModel.id,
 					provider: PROVIDER_ID,
 					rateLimitType: "stream_idle",
 					reason: "Claude Code stream idle timeout",
@@ -1294,7 +1311,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			attempts: rotationState.attempts,
 		}));
 		if (!eligible || !account || !router || !failure.kind) return false;
-		if (!failure.rateLimitInfo) router.recordFailure(account.profileId, failure.kind, model.id);
+		if (!failure.rateLimitInfo) router.recordFailure(account.profileId, failure.kind, queryModel.id);
 		rotationState.excludedProfileIds.add(account.profileId);
 		retryRequested = true;
 		retryFailure = failure;
@@ -1312,7 +1329,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			const resetAt = rateLimitResetFromInfo(info);
 			const resetAtMs = rateLimitResetMs(info);
 			emitRateLimitEvent({
-				model: model.id, provider: PROVIDER_ID, rateLimitType: rateLimitTypeFromInfo(info),
+				model: queryModel.id, provider: PROVIDER_ID, rateLimitType: rateLimitTypeFromInfo(info),
 				reason: failure.message, resetAt,
 				...(Number.isFinite(resetAtMs) ? { resetAtMs } : {}),
 				source: "claude-bridge", status: "rejected",
@@ -1333,7 +1350,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	// profile. After output/tool use, replay is forbidden.
 	// The handlers below use the captured abortCtx, never the live ctx(): a
 	// parent query can finish while a reentrant child context is pushed.
-	consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted, account, router)
+	consumeQuery(sdkQuery, customToolNameToPi, queryModel, cwd, bridgeConfig, () => wasAborted, account, router)
 		.then(async ({ capturedSessionId, failure }) => {
 			debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
 			if (streamIdleTimedOut) {
@@ -1386,10 +1403,10 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 					const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
 					const contQuery = sdkQueryFactory({ prompt: steerPrompt, options: contOptions });
 					abortCtx.activeQuery = contQuery;
-					debug(`provider: continuation query, model=${model.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPrompt.slice(0, 60)}`);
+					debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPrompt.slice(0, 60)}`);
 
 					try {
-						const continuation = await consumeQuery(contQuery, customToolNameToPi, model, cwd, bridgeConfig, () => wasAborted, account, router);
+						const continuation = await consumeQuery(contQuery, customToolNameToPi, queryModel, cwd, bridgeConfig, () => wasAborted, account, router);
 						if (continuation.failure) {
 							surfaceFailure(continuation.failure);
 							break;
@@ -1412,7 +1429,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			finalizeCurrentStream(abortCtx.turnOutput?.stopReason, abortCtx);
 		})
 		.catch((error) => {
-			debug(`provider: query error, model=${model.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
+			debug(`provider: query error, model=${queryModel.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
 			const suppressDuplicateError = abortCtx.handledTerminalError || (streamIdleTimedOut && !retryRequested);
 			if ((wasAborted || options?.signal?.aborted) && sharedSession) {
 				setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
