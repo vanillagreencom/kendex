@@ -109,9 +109,13 @@ fi
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
+# The scenarios below assert on the safe-format result objects, so the
+# invocation names the format it asserts on instead of inheriting the host
+# project's setting.
 run_validate() {
   PATH="$TMP_ROOT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
+    LINEAR_FORMAT=safe \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
     issues validate-completion "$@"
 }

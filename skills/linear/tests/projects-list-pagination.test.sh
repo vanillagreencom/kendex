@@ -77,12 +77,15 @@ esac
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
+# The assertions below read safe-format list objects, so the invocation names
+# the format it asserts on instead of inheriting the host project's setting.
 run_list() {
   local payload_log="$1"
   shift
   : >"$payload_log"
   PATH="$TMP_ROOT/bin:$PATH" \
     LINEAR_API_KEY=test-token \
+    LINEAR_FORMAT=safe \
     LINEAR_TOTAL="${LINEAR_TOTAL:-100}" \
     CURL_PAYLOAD_LOG="$payload_log" \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" projects list "$@"
