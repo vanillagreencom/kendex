@@ -36,10 +36,12 @@ User-facing wrappers and TPM-execution workflows for project-level planning, aud
 
 ### User-facing wrappers
 
+Wrappers run in the primary session — they own the user dialog and approval gates, which require the interactive question tool. Delegate only the TPM analysis steps a wrapper itself spawns, never the wrapper end-to-end.
+
 | Workflow | Purpose |
 |----------|---------|
 | [cycle-plan](workflows/cycle-plan.md) | User dialog + Linear actions for cycle planning; delegates analysis to `tpm-cycle-plan` |
-| [audit-issues](workflows/audit-issues.md) | User dialog + tracker actions (Linear or GitHub) for issue audits; project/project-order audits are Linear-only; delegates to `tpm-audit` / `tpm-audit-project-order` |
+| [audit-issues](workflows/audit-issues.md) | User dialog + tracker actions (Linear or GitHub) for issue audits; project/project-order audits are Linear-only; primary-session only — delegates only the `tpm-audit` / `tpm-audit-project-order` analysis, never the wrapper itself (its § 6 approval gate must run in-session) |
 | [roadmap-plan](workflows/roadmap-plan.md) | Specialist consultation + research gating; delegates to `tpm-roadmap-plan` |
 | [roadmap-create](workflows/roadmap-create.md) | Execute a roadmap plan: project + issue creation via audit |
 | [research-spike](workflows/research-spike.md) | User-initiated research with consultation, asset prep, and researcher delegation |

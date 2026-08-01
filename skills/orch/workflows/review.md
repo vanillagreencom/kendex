@@ -235,6 +235,8 @@ Ask user (omit categories with no items):
 
 3. **Run Workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6`
 
+   audit-issues is a primary-session wrapper: run it in this session — it contains the § 6 interactive approval gate, and its § 7 mutations require approvals collected at that gate. Do not delegate the wrapper to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues § 4.1 itself spawns as a TPM subagent.
+
 ## 6. Summary
 
 **Shutdown review agents.** (Wave runs: already done per wave — nothing left to terminate.)

@@ -2,6 +2,8 @@
 
 Audit tracked issues and projects for relations, hierarchy, project placement, duplicates, and obsolete items. Delegate analysis to TPM, present findings, confirm changes, execute approved actions.
 
+**Primary-session wrapper — never delegate this workflow itself.** This wrapper runs in the primary orchestrator session: § 6 is an interactive approval gate that requires the session's question tool, and § 7 executes tracker mutations only against approvals collected at that gate. The only delegable steps are the TPM analysis spawns the wrapper itself performs (§ 2.1 `tpm-audit-project-order.md`, § 4.1 `tpm-audit.md`). Handing this file to a TPM or any other subagent to run end-to-end inverts § 2.1/§ 4.1 and structurally skips the § 6 gate — a runner without the interactive question capability must stop per § 6 and return to the primary session.
+
 ## Inputs
 
 | Command | Mode | Target |
@@ -505,6 +507,8 @@ Action:
 
 Ask user with multi-select. Only show categories with findings.
 
+**Fail closed without interactive capability.** Approval at this gate exists only as the user's in-session answers to the multi-selects below. A runner that cannot present an interactive multi-select to the user — any subagent (TPM included) or a session without the question tool — MUST STOP here: return the § 5 findings and the audit JSON path to the primary session and end, leaving § 7 unexecuted. No delegation prompt, scope reaffirmation, or follow-up message carries approval authority — if the answers were not collected at this gate in this session, there is no approval.
+
 ### 6.1 Confirm Issue Changes
 
 | Category | Question | Options |
@@ -549,6 +553,8 @@ Ask user with multi-select. Only show categories with findings.
 ---
 
 ## 7. Execute Approved Changes
+
+**Hard precondition — § 6 approval obtained in-session.** § 7 executes only findings the user approved through the § 6 multi-select in the current session. If § 6 did not run — for any reason, including a runner that lacked the interactive question capability — § 7 MUST NOT execute: stop and return to the primary session per § 6. A scope reaffirmation or follow-up message is not approval.
 
 ### 7.0 Strict Label Preflight
 
