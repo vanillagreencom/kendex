@@ -32,6 +32,11 @@ describe("subscriberProfileEnv", () => {
 				ANTHROPIC_AUTH_TOKEN: "secret",
 				ANTHROPIC_OAUTH_TOKEN: "secret",
 				CLAUDE_CODE_OAUTH_TOKEN: "secret",
+				ANTHROPIC_BASE_URL: "https://gateway.invalid",
+				ANTHROPIC_CUSTOM_HEADERS: "Authorization: secret",
+				ANTHROPIC_AWS_API_KEY: "secret",
+				ANTHROPIC_FOUNDRY_AUTH_TOKEN: "secret",
+				AWS_BEARER_TOKEN_BEDROCK: "secret",
 				CLAUDE_CODE_USE_BEDROCK: "1",
 			},
 		);
@@ -41,7 +46,13 @@ describe("subscriberProfileEnv", () => {
 		assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined);
 		assert.equal(env.ANTHROPIC_OAUTH_TOKEN, undefined);
 		assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+		assert.equal(env.ANTHROPIC_BASE_URL, undefined);
+		assert.equal(env.ANTHROPIC_CUSTOM_HEADERS, undefined);
+		assert.equal(env.ANTHROPIC_AWS_API_KEY, undefined);
+		assert.equal(env.ANTHROPIC_FOUNDRY_AUTH_TOKEN, undefined);
+		assert.equal(env.AWS_BEARER_TOKEN_BEDROCK, undefined);
 		assert.equal(env.CLAUDE_CODE_USE_BEDROCK, undefined);
+		assert.equal(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST, undefined);
 	});
 
 	it("uses the real default profile by unsetting CLAUDE_CONFIG_DIR", () => {

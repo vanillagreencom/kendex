@@ -46,10 +46,10 @@ describe("loadConfig", () => {
 		recordProjectTrust({ cwd: nested, isProjectTrusted: () => true });
 
 		const config = loadConfig(nested);
-		assert.equal(config.provider?.fastMode, true);
+		assert.equal(config.provider?.fastMode, false);
 	}));
 
-	it("maps extension-manager allowExtraUsage into provider config", () => withTempDirs(({ user, project }) => {
+	it("does not let a project relax the user Extra Usage hard-off", () => withTempDirs(({ user, project }) => {
 		writeFileSync(join(user, "settings.json"), JSON.stringify({
 			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { allowExtraUsage: false } } } },
 		}));
@@ -59,12 +59,14 @@ describe("loadConfig", () => {
 		recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
 
 		const config = loadConfig(project);
-		assert.equal(config.provider?.allowExtraUsage, true);
+		assert.equal(config.provider?.allowExtraUsage, false);
+		assert.equal(config.provider?.fastMode, undefined);
 	}));
 
 	it("maps extension-manager effort overrides into provider config", () => withTempDirs(({ user, project }) => {
 		writeFileSync(join(user, "settings.json"), JSON.stringify({
 			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": {
+				allowExtraUsage: true,
 				fastMode: false,
 				forceEffort: "high",
 				modelEffortOverrides: JSON.stringify({ "claude-opus-4-8": "xhigh", ignored: "bogus" }),

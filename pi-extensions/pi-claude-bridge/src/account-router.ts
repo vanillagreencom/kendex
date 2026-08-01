@@ -26,6 +26,7 @@ export interface ClaudeAccountRouterV1 {
 	recordIdentity(profileId: string, identity: {
 		email?: string;
 		organization?: string;
+		organizationId?: string;
 		subscriptionType?: string;
 		authMethod?: string;
 	}): void;
@@ -65,12 +66,17 @@ export function subscriberProfileEnv(
 ): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...base };
 	// Managed profiles are subscription identities. Inherited API/provider
-	// credentials would silently bypass the profile and create separate billing.
-	for (const key of [
+	// credentials and endpoint overrides would silently bypass the profile and
+	// create separate billing or route its OAuth token through a gateway.
+	const directOverrides = new Set([
 		"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
-		"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
-		"CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_MANTLE",
-	]) delete env[key];
+		"ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_AWS_API_KEY",
+		"ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_BEDROCK_BASE_URL",
+		"ANTHROPIC_VERTEX_BASE_URL", "ANTHROPIC_FOUNDRY_BASE_URL", "AWS_BEARER_TOKEN_BEDROCK",
+	]);
+	for (const key of Object.keys(env)) {
+		if (directOverrides.has(key) || key.startsWith("CLAUDE_CODE_USE_")) delete env[key];
+	}
 	if (profile.configDir) env.CLAUDE_CONFIG_DIR = profile.configDir;
 	else delete env.CLAUDE_CONFIG_DIR;
 	return env;

@@ -153,6 +153,8 @@ describe("managed account stream rotation", () => {
 		assert.deepEqual(observed.queryEnvs.map((env) => env.CLAUDE_CONFIG_DIR), [
 			"/profiles/a", "/profiles/b",
 		]);
+		assert.ok(observed.queryEnvs.every((env) => env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST === undefined));
+		assert.ok(observed.queryEnvs.every((env) => env.DISABLE_EXTRA_USAGE_COMMAND === "1"));
 		assert.deepEqual(
 			events.filter((event) => event.type === "text_delta").map((event) => event.delta),
 			["ok-from-b"],

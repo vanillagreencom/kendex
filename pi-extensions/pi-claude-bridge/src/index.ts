@@ -232,6 +232,7 @@ async function probeClaudeAccountProfile(input: {
 				...subscriberProfileEnv(input.profile),
 				ENABLE_CLAUDEAI_MCP_SERVERS: "0",
 				DISABLE_AUTO_COMPACT: "1",
+				DISABLE_EXTRA_USAGE_COMMAND: "1",
 			},
 			maxTurns: 1,
 			permissionMode: "bypassPermissions",
@@ -1251,6 +1252,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		...(account ? subscriberProfileEnv(account) : process.env),
 		ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0",
 		DISABLE_AUTO_COMPACT: "1",
+		...(!extraUsageAllowed(bridgeConfig) ? { DISABLE_EXTRA_USAGE_COMMAND: "1" } : {}),
 	};
 	const queryOptions: NonNullable<Parameters<typeof query>[0]["options"]> = {
 		cwd,

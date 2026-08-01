@@ -192,9 +192,9 @@ export function tryParseJson(path: string): Partial<Config> {
 	}
 }
 
-function readManagerConfig(cwd: string): SettingsRecord {
+function readManagerConfigPaths(paths: string[]): SettingsRecord {
 	const merged: SettingsRecord = {};
-	for (const path of settingsPaths(cwd)) {
+	for (const path of paths) {
 		if (!existsSync(path)) continue;
 		try {
 			const parsed = JSON.parse(readFileSync(path, "utf8"));
@@ -206,6 +206,10 @@ function readManagerConfig(cwd: string): SettingsRecord {
 		}
 	}
 	return merged;
+}
+
+function readManagerConfig(cwd: string): SettingsRecord {
+	return readManagerConfigPaths(settingsPaths(cwd));
 }
 
 function boolFrom(raw: SettingsRecord, key: string): boolean | undefined {
@@ -366,7 +370,19 @@ function mergeLayers(layers: LegacyLayer[]): Partial<Config> {
 export function loadConfig(cwd: string): Config {
 	const legacy = mergeLayers(legacyLayers(cwd));
 	const manager: Partial<Config> = isolatedFromEnv() ? {} : managerToConfig(readManagerConfig(cwd));
+	const userLegacy = legacyFileConfig(join(piUserDir(), "claude-bridge.json"));
+	const userManager = isolatedFromEnv()
+		? {}
+		: managerToConfig(readManagerConfigPaths([join(piUserDir(), "settings.json")]));
+	const userHardOff = userLegacy.provider?.allowExtraUsage === false ||
+		userManager.provider?.allowExtraUsage === false;
 	const provider = normalizeProviderConfig({ ...legacy.provider, ...manager.provider });
+	if (userHardOff) provider.allowExtraUsage = false;
+	// Claude fast mode can consume paid Extra Usage. It must not be re-enabled by
+	// a project when the effective billing policy is fail-closed.
+	if (provider.fastMode === true && provider.allowExtraUsage !== true) {
+		provider.fastMode = false;
+	}
 	return {
 		enabled: manager.enabled ?? legacy.enabled ?? true,
 		provider,
@@ -420,7 +436,11 @@ export interface ExternalConfigResolution {
  */
 export function resolveExternalConfigValue(key: string, cwd: string): ExternalConfigResolution {
 	const layers = legacyLayers(cwd);
-	const value = configValueForKey(mergeLayers(layers), key);
+	const merged = mergeLayers(layers);
+	const value = key === "fastMode" && merged.provider?.fastMode === true &&
+		merged.provider?.allowExtraUsage !== true
+		? false
+		: configValueForKey(merged, key);
 	if (value === undefined) return { explicit: false, value: undefined };
 	const source = [...layers].reverse().find((layer) => configValueForKey(layer.config, key) !== undefined)?.path;
 	return { explicit: true, value, ...(source ? { source: displayPath(source) } : {}) };

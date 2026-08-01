@@ -88,7 +88,7 @@ The bridge also reads `claude-bridge.json` (`~/.pi/agent/claude-bridge.json`, an
 | Setting | What it does |
 | --- | --- |
 | Strict MCP config | Block filesystem MCP auto-loads; Pi owns tools. |
-| Allow extra usage helper | Permit both automatic and manual Claude Code `/extra-usage` flows. When off, `/pi-claude:extra` is blocked. Managed flows use the currently selected account profile. Billing/admin approval still happens in Claude's browser page. |
+| Allow extra usage helper | Permit both automatic and manual Claude Code `/extra-usage` flows. When off, `/pi-claude:extra` and Claude Code's native Extra Usage command are blocked. A user-level `false` is a hard ceiling that project config cannot relax. Managed flows use the currently selected account profile. Billing/admin approval still happens in Claude's browser page. |
 | Fast mode | Enable Claude Code fast mode for bridge requests when the selected model supports it. |
 | Force Claude effort | Override Pi's thinking-level mapping for every claude-bridge request. `none` keeps Pi's selected level; `max` sends Claude Code `--effort max`. |
 | Model effort overrides | JSON object mapping model IDs to Claude Code efforts, e.g. `{"claude-opus-4-8":"max"}`. Per-model entries beat the global force setting. |
@@ -207,7 +207,7 @@ Retries are deliberately limited to failures before visible output or any tool d
 
 ## Extra usage and rate limits
 
-Claude Code's `/extra-usage` local command works through the Claude Agent SDK. When **Allow extra usage helper** is enabled in `/extensions:settings`, use `/pi-claude:extra` to run that flow for the selected managed account; `/claude-bridge:extra` remains a legacy alias. The setting gates automatic and manual launch alike, so leaving it off prevents the bridge from opening any Extra Usage billing flow.
+Claude Code's `/extra-usage` local command works through the Claude Agent SDK. When **Allow extra usage helper** is enabled at user scope in `/extensions:settings`, use `/pi-claude:extra` to run that flow for the selected managed account; `/claude-bridge:extra` remains a legacy alias. The setting gates automatic and manual launch alike. A user-level `false` cannot be overridden by a trusted project, disables fast mode, and sets Claude Code's native command guard on every bridge request.
 
 When Claude Code reports a rate-limit reset time, the bridge shows one clear `[rate-limit]` warning with timezone context and avoids repeating the same error line. If `pi-qol` is installed, it can use the reset time to resume later.
 

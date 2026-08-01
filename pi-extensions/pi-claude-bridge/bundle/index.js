@@ -27019,9 +27019,9 @@ function tryParseJson(path) {
     return {};
   }
 }
-function readManagerConfig(cwd) {
+function readManagerConfigPaths(paths) {
   const merged = {};
-  for (const path of settingsPaths(cwd)) {
+  for (const path of paths) {
     if (!existsSync2(path)) continue;
     try {
       const parsed = JSON.parse(readFileSync2(path, "utf8"));
@@ -27032,6 +27032,9 @@ function readManagerConfig(cwd) {
     }
   }
   return merged;
+}
+function readManagerConfig(cwd) {
+  return readManagerConfigPaths(settingsPaths(cwd));
 }
 function boolFrom(raw, key) {
   return typeof raw[key] === "boolean" ? raw[key] : void 0;
@@ -27160,7 +27163,14 @@ function mergeLayers(layers) {
 function loadConfig(cwd) {
   const legacy = mergeLayers(legacyLayers(cwd));
   const manager = isolatedFromEnv() ? {} : managerToConfig(readManagerConfig(cwd));
+  const userLegacy = legacyFileConfig(join2(piUserDir(), "claude-bridge.json"));
+  const userManager = isolatedFromEnv() ? {} : managerToConfig(readManagerConfigPaths([join2(piUserDir(), "settings.json")]));
+  const userHardOff = userLegacy.provider?.allowExtraUsage === false || userManager.provider?.allowExtraUsage === false;
   const provider = normalizeProviderConfig({ ...legacy.provider, ...manager.provider });
+  if (userHardOff) provider.allowExtraUsage = false;
+  if (provider.fastMode === true && provider.allowExtraUsage !== true) {
+    provider.fastMode = false;
+  }
   return {
     enabled: manager.enabled ?? legacy.enabled ?? true,
     provider,
@@ -27196,7 +27206,8 @@ function displayPath(path) {
 }
 function resolveExternalConfigValue(key, cwd) {
   const layers = legacyLayers(cwd);
-  const value = configValueForKey(mergeLayers(layers), key);
+  const merged = mergeLayers(layers);
+  const value = key === "fastMode" && merged.provider?.fastMode === true && merged.provider?.allowExtraUsage !== true ? false : configValueForKey(merged, key);
   if (value === void 0) return { explicit: false, value: void 0 };
   const source = [...layers].reverse().find((layer) => configValueForKey(layer.config, key) !== void 0)?.path;
   return { explicit: true, value, ...source ? { source: displayPath(source) } : {} };
@@ -45151,17 +45162,23 @@ function resolveClaudeAccountRouter() {
 }
 function subscriberProfileEnv(profile, base = process.env) {
   const env = { ...base };
-  for (const key of [
+  const directOverrides = /* @__PURE__ */ new Set([
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_OAUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "CLAUDE_CODE_USE_FOUNDRY",
-    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
-    "CLAUDE_CODE_USE_MANTLE"
-  ]) delete env[key];
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "ANTHROPIC_AWS_API_KEY",
+    "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+    "ANTHROPIC_BEDROCK_BASE_URL",
+    "ANTHROPIC_VERTEX_BASE_URL",
+    "ANTHROPIC_FOUNDRY_BASE_URL",
+    "AWS_BEARER_TOKEN_BEDROCK"
+  ]);
+  for (const key of Object.keys(env)) {
+    if (directOverrides.has(key) || key.startsWith("CLAUDE_CODE_USE_")) delete env[key];
+  }
   if (profile.configDir) env.CLAUDE_CONFIG_DIR = profile.configDir;
   else delete env.CLAUDE_CONFIG_DIR;
   return env;
@@ -45324,7 +45341,8 @@ async function probeClaudeAccountProfile(input) {
       env: {
         ...subscriberProfileEnv(input.profile),
         ENABLE_CLAUDEAI_MCP_SERVERS: "0",
-        DISABLE_AUTO_COMPACT: "1"
+        DISABLE_AUTO_COMPACT: "1",
+        DISABLE_EXTRA_USAGE_COMMAND: "1"
       },
       maxTurns: 1,
       permissionMode: "bypassPermissions",
@@ -46068,7 +46086,8 @@ function streamClaudeAgentSdk(model, context, options) {
   const childEnv = {
     ...account ? subscriberProfileEnv(account) : process.env,
     ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0",
-    DISABLE_AUTO_COMPACT: "1"
+    DISABLE_AUTO_COMPACT: "1",
+    ...!extraUsageAllowed(bridgeConfig) ? { DISABLE_EXTRA_USAGE_COMMAND: "1" } : {}
   };
   const queryOptions = {
     cwd,
