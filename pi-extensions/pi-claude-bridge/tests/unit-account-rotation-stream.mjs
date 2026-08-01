@@ -232,6 +232,56 @@ describe("managed account stream rotation", () => {
 		assert.equal(events.filter((event) => event.type === "error").length, 1);
 	});
 
+	it("records a post-output transport failure without replaying the request", async () => {
+		const observed = observedState();
+		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
+		let calls = 0;
+		__testSetSdkQueryFactory(() => {
+			calls += 1;
+			return fakeSdkQuery([
+				{ type: "system", subtype: "init", session_id: "session-a" },
+				{ type: "stream_event", event: { type: "message_start", message: { model: model.id, usage: { input_tokens: 1 } } } },
+				{ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
+				{ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "committed" } } },
+				new Error("socket timeout after output"),
+			], "a", observed);
+		});
+
+		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "post-output-network" }));
+		assert.equal(calls, 1);
+		assert.deepEqual(observed.failures, [{ profileId: "a", kind: "network" }]);
+		assert.ok(events.some((event) => event.type === "text_delta" && event.delta === "committed"));
+		assert.equal(events.filter((event) => event.type === "error").length, 1);
+	});
+
+	it("never replays after a child-executed connector call starts", async () => {
+		const observed = observedState();
+		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
+		let calls = 0;
+		__testSetSdkQueryFactory(() => {
+			calls += 1;
+			return fakeSdkQuery([
+				{ type: "system", subtype: "init", session_id: "connector-session" },
+				{ type: "stream_event", event: { type: "message_start", message: { model: model.id, usage: { input_tokens: 1 } } } },
+				{
+					type: "stream_event",
+					event: {
+						type: "content_block_start",
+						index: 0,
+						content_block: { type: "tool_use", id: "connector-1", name: "mcp__claude_ai_Gmail__search_threads", input: {} },
+					},
+				},
+				new Error("socket timeout after connector dispatch"),
+			], "a", observed);
+		});
+
+		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "connector-replay-boundary" }));
+		assert.equal(calls, 1);
+		assert.equal(observed.acquires.length, 1);
+		assert.deepEqual(observed.failures, [{ profileId: "a", kind: "network" }]);
+		assert.equal(events.filter((event) => event.type === "error").length, 1);
+	});
+
 	it("uses Opus only after the account router reports every Fable allowance spent", async () => {
 		const observed = observedState();
 		const fableModel = { ...model, id: "claude-fable-5", name: "Claude Fable 5" };

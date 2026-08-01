@@ -278,7 +278,11 @@ const BRIDGE_ACCOUNT_HOST: ClaudeBridgeAccountHostV1 = {
 	probeProfile: probeClaudeAccountProfile,
 };
 
-async function runExtraUsageHelper(cwd: string, config = loadConfig(cwd)): Promise<string> {
+async function runExtraUsageHelper(
+	cwd: string,
+	config = loadConfig(cwd),
+	account?: ClaudeAccountRoute,
+): Promise<string> {
 	const providerSettings = config.provider ?? {};
 	const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
 	if (claudeExecutable) preflightClaudeExecutable(claudeExecutable, cwd);
@@ -287,7 +291,11 @@ async function runExtraUsageHelper(cwd: string, config = loadConfig(cwd)): Promi
 		prompt: "/extra-usage",
 		options: {
 			cwd,
-			env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" },
+			env: {
+				...(account ? subscriberProfileEnv(account) : process.env),
+				ENABLE_CLAUDEAI_MCP_SERVERS: "0",
+				DISABLE_AUTO_COMPACT: "1",
+			},
 			maxTurns: 1,
 			...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
 			spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
@@ -322,6 +330,44 @@ function launchExtraUsageHelperIfAllowed(cwd: string, config: Config, reason: st
 		.finally(() => { extraUsageHelperInFlight = null; });
 	void extraUsageHelperInFlight.catch(() => {});
 	return true;
+}
+
+/** Testable command boundary: the setting gate runs before account selection or
+ * SDK process creation, and managed execution is pinned to that selected route. */
+export async function runExtraUsageCommand(ctx: ExtensionCommandContext): Promise<void> {
+	const cwd = commandCwd(ctx);
+	const config = loadConfig(cwd);
+	if (!extraUsageAllowed(config)) {
+		ctx.ui.notify("Claude Extra Usage is blocked by Pi Claude settings.", "warning");
+		return;
+	}
+	let account: ClaudeAccountRoute | undefined;
+	const router = resolveClaudeAccountRouter();
+	if (router) {
+		const modelId = ctx.model?.id ?? "claude-opus-5";
+		const sessionId = ctx.sessionManager?.getSessionId?.();
+		try {
+			account = router.current(modelId, sessionId) ?? router.acquire({ modelId, sessionId });
+		} catch (error) {
+			ctx.ui.notify(`Claude extra usage helper cannot select an account: ${error instanceof Error ? error.message : String(error)}`, "error");
+			return;
+		}
+	}
+	if (extraUsageHelperInFlight) {
+		ctx.ui.notify("Claude extra usage helper already running.", "info");
+		await extraUsageHelperInFlight.catch(() => undefined);
+		return;
+	}
+	try {
+		ctx.ui.notify("Claude extra usage helper starting…", "info");
+		extraUsageHelperInFlight = runExtraUsageHelper(cwd, config, account)
+			.finally(() => { extraUsageHelperInFlight = null; });
+		const message = await extraUsageHelperInFlight;
+		ctx.ui.notify(`Claude extra usage helper: ${message}`, "info");
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		ctx.ui.notify(`Claude extra usage helper failed: ${message}`, "error");
+	}
 }
 
 // Pi doesn't pass tool results directly — it appends them to the context and calls
@@ -674,7 +720,9 @@ async function consumeQuery(
 						const extraUsageHint = openedExtraUsage
 							? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt."
 							: extraUsage
-								? "\n\nRun /pi-claude:extra, or enable Allow extra usage helper in settings."
+								? extraUsageAllowed(bridgeConfig)
+									? "\n\nRun /pi-claude:extra to open the selected account's billing flow."
+									: "\n\nExtra Usage is blocked by Pi Claude settings."
 								: "";
 						ctx().turnOutput.errorMessage = `${errors}${extraUsageHint}`;
 						ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
@@ -1248,6 +1296,15 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 
 	// 4. Capture context for abort handling (must be AFTER pushContext)
 	const abortCtx = ctx();
+	let accountFailureRecorded = false;
+	const recordAttemptFailure = (failure: ClaudeAttemptFailure): void => {
+		if (
+			accountFailureRecorded || !account || !router || !failure.kind ||
+			failure.rateLimitInfo || wasAborted || options?.signal?.aborted
+		) return;
+		router.recordFailure(account.profileId, failure.kind, queryModel.id);
+		accountFailureRecorded = true;
+	};
 
 	const requestAbort = () => {
 		// interrupt() asks the CLI to stop gracefully; close() kills it immediately.
@@ -1272,8 +1329,9 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 				if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
 				const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
 				debug("provider: stream idle timeout", `model=${queryModel.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
+				const idleFailure = { kind: "network" as const, message: errorMessage };
+				recordAttemptFailure(idleFailure);
 				if (account && router && !abortCtx.committedOutput) {
-					router.recordFailure(account.profileId, "network", queryModel.id);
 					rotationState.excludedProfileIds.add(account.profileId);
 					retryRequested = true;
 					retryFailure = { kind: "network", message: errorMessage };
@@ -1335,6 +1393,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	}
 
 	const requestRotation = (failure: ClaudeAttemptFailure): boolean => {
+		recordAttemptFailure(failure);
 		const eligible = Boolean(account && router && failure.kind && !abortCtx.committedOutput && !wasAborted && !options?.signal?.aborted && rotationState.attempts < 16);
 		debug("provider: account rotation decision", JSON.stringify({
 			eligible,
@@ -1346,7 +1405,6 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			attempts: rotationState.attempts,
 		}));
 		if (!eligible || !account || !router || !failure.kind) return false;
-		if (!failure.rateLimitInfo) router.recordFailure(account.profileId, failure.kind, queryModel.id);
 		rotationState.excludedProfileIds.add(account.profileId);
 		retryRequested = true;
 		retryFailure = failure;
@@ -1443,6 +1501,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 					try {
 						const continuation = await consumeQuery(contQuery, customToolNameToPi, queryModel, cwd, bridgeConfig, () => wasAborted, account, router);
 						if (continuation.failure) {
+							recordAttemptFailure(continuation.failure);
 							surfaceFailure(continuation.failure);
 							break;
 						}
@@ -1450,7 +1509,9 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 						if (sid) setSharedSession({ ...(sharedSession ?? {} as any), sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd, ...accountSessionScope(account) });
 					} catch (contError) {
 						debug(`provider: continuation query error:`, contError);
-						surfaceFailure({ kind: classifyClaudeFailure(contError), message: contError instanceof Error ? contError.message : String(contError) });
+						const continuationFailure = { kind: classifyClaudeFailure(contError), message: contError instanceof Error ? contError.message : String(contError) };
+						recordAttemptFailure(continuationFailure);
+						surfaceFailure(continuationFailure);
 						break;
 					} finally {
 						contQuery.close();
@@ -1537,8 +1598,10 @@ function showBridgeStatus(ctx: { ui: ExtensionUIContext; cwd?: string }): void {
 	const config = loadConfig(commandCwd(ctx));
 	ctx.ui.notify([
 		`Pi Claude: ${config.enabled === false ? "disabled" : "enabled"}`,
-		`Extra usage auto-helper: ${extraUsageAllowed(config) ? "on" : "off"} (settings)`,
-		`Use /pi-claude:extra to run Claude Code /extra-usage now.`,
+		`Extra usage helper: ${extraUsageAllowed(config) ? "on" : "blocked"} (settings)`,
+		extraUsageAllowed(config)
+			? `Use /pi-claude:extra to run Claude Code /extra-usage for the selected account.`
+			: `The /pi-claude:extra command is blocked while Allow extra usage helper is off.`,
 	].join("\n"), "info");
 }
 
@@ -1675,29 +1738,10 @@ function registerBridgeCommands(pi: ExtensionAPI): void {
 	if (guard[COMMANDS_REGISTERED_KEY]) return;
 	guard[COMMANDS_REGISTERED_KEY] = true;
 
-	const runExtraUsage = async (ctx: { ui: ExtensionUIContext; cwd?: string }) => {
-		const cwd = commandCwd(ctx);
-		if (extraUsageHelperInFlight) {
-			ctx.ui.notify("Claude extra usage helper already running.", "info");
-			await extraUsageHelperInFlight.catch(() => undefined);
-			return;
-		}
-		try {
-			ctx.ui.notify("Claude extra usage helper starting…", "info");
-			extraUsageHelperInFlight = runExtraUsageHelper(cwd)
-				.finally(() => { extraUsageHelperInFlight = null; });
-			const message = await extraUsageHelperInFlight;
-			ctx.ui.notify(`Claude extra usage helper: ${message}`, "info");
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			ctx.ui.notify(`Claude extra usage helper failed: ${message}`, "error");
-		}
-	};
-
 	const openSettings = async (args: string, ctx: ExtensionCommandContext) => {
 		if (args.trim()) {
 			ctx.ui.notify(
-				"Unknown /pi-claude argument. Use /pi-claude:extra to run Claude Code /extra-usage.",
+				"Unknown /pi-claude argument. Extra Usage commands follow the Allow extra usage helper setting.",
 				"warning",
 			);
 		}
@@ -1717,7 +1761,7 @@ function registerBridgeCommands(pi: ExtensionAPI): void {
 			description: name === "pi-claude"
 				? "Run Claude Code /extra-usage through Pi Claude"
 				: "Legacy alias for /pi-claude:extra",
-			handler: async (_args: string, ctx) => runExtraUsage(ctx),
+			handler: async (_args: string, ctx) => runExtraUsageCommand(ctx),
 		});
 		pi.registerCommand(`${name}:connectors`, {
 			description: name === "pi-claude"

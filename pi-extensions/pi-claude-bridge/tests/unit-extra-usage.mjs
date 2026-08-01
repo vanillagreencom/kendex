@@ -3,7 +3,18 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatResetTimestamp, isExtraUsageRequiredMessage, isUsageLimitMessage, uniqueNonEmptyLines } from "../src/index.ts";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+	__testSetSdkQueryFactory,
+	formatResetTimestamp,
+	isExtraUsageRequiredMessage,
+	isUsageLimitMessage,
+	runExtraUsageCommand,
+	uniqueNonEmptyLines,
+} from "../src/index.ts";
+import { CLAUDE_ACCOUNT_ROUTER_SYMBOL } from "../src/account-router.ts";
 
 describe("isExtraUsageRequiredMessage", () => {
 	it("detects Claude Code extra-usage rate-limit text", () => {
@@ -27,6 +38,68 @@ describe("isExtraUsageRequiredMessage", () => {
 		const formatted = formatResetTimestamp("2026-05-23T13:19:55Z");
 		assert.match(formatted, /2026|May|23|13|1|UTC|GMT|AM|PM/i);
 		assert.equal(formatResetTimestamp("not a date"), "unknown");
+	});
+});
+
+describe("Extra Usage command boundary", () => {
+	it("blocks execution when disabled and targets the selected managed profile when enabled", async () => {
+		const root = mkdtempSync(path.join(tmpdir(), "claude-extra-command-"));
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const previousIsolated = process.env.CLAUDE_BRIDGE_ISOLATED;
+		const previousApiKey = process.env.ANTHROPIC_API_KEY;
+		const notifications = [];
+		const ctx = {
+			cwd: root,
+			model: { id: "claude-opus-5", provider: "pi-claude" },
+			sessionManager: { getSessionId: () => "extra-session" },
+			ui: { notify(message, level) { notifications.push({ message, level }); } },
+		};
+		try {
+			process.env.PI_CODING_AGENT_DIR = root;
+			process.env.CLAUDE_BRIDGE_ISOLATED = "1";
+			process.env.ANTHROPIC_API_KEY = "must-not-leak";
+			writeFileSync(path.join(root, "claude-bridge.json"), JSON.stringify({ provider: { allowExtraUsage: false } }));
+			let calls = 0;
+			__testSetSdkQueryFactory(() => {
+				calls += 1;
+				throw new Error("disabled command must not spawn");
+			});
+			await runExtraUsageCommand(ctx);
+			assert.equal(calls, 0);
+			assert.ok(notifications.some((entry) => /blocked/.test(entry.message)));
+
+			writeFileSync(path.join(root, "claude-bridge.json"), JSON.stringify({ provider: { allowExtraUsage: true } }));
+			globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = {
+				version: 1,
+				current() { return { profileId: "selected", label: "selected", configDir: "/profiles/selected" }; },
+				acquire() { throw new Error("current route should win"); },
+			};
+			let helperEnv;
+			__testSetSdkQueryFactory((input) => {
+				calls += 1;
+				helperEnv = input.options.env;
+				return {
+					async *[Symbol.asyncIterator]() {
+						yield { type: "result", subtype: "success", result: "done" };
+					},
+					close() {},
+				};
+			});
+			await runExtraUsageCommand(ctx);
+			assert.equal(calls, 1);
+			assert.equal(helperEnv.CLAUDE_CONFIG_DIR, "/profiles/selected");
+			assert.equal(helperEnv.ANTHROPIC_API_KEY, undefined);
+		} finally {
+			__testSetSdkQueryFactory();
+			delete globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL];
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			if (previousIsolated === undefined) delete process.env.CLAUDE_BRIDGE_ISOLATED;
+			else process.env.CLAUDE_BRIDGE_ISOLATED = previousIsolated;
+			if (previousApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+			else process.env.ANTHROPIC_API_KEY = previousApiKey;
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
 

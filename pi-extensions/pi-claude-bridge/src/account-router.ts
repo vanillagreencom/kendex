@@ -160,13 +160,19 @@ export function rateLimitResetMs(info: Record<string, unknown> | undefined): num
 }
 
 export function classifyClaudeFailure(value: unknown): ClaudeAccountFailureKind | undefined {
-	const text = typeof value === "string" ? value : value instanceof Error ? value.message : (() => {
-		try { return JSON.stringify(value ?? ""); } catch { return String(value); }
-	})();
+	const details: unknown[] = [value];
+	if (value && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		details.push(record.name, record.message, record.code, record.status, record.statusCode, record.body, record.error);
+	}
+	const text = details.map((detail) => {
+		if (typeof detail === "string" || typeof detail === "number") return String(detail);
+		try { return JSON.stringify(detail ?? ""); } catch { return String(detail); }
+	}).join(" ");
 	const normalized = text.toLowerCase().replace(/[_-]+/g, " ");
-	if (/authentication failed|oauth org not allowed|unauthorized|invalid token|login required/.test(normalized)) return "auth";
-	if (/billing error|payment|required.*billing|extra usage|overage/.test(normalized)) return "billing";
-	if (/rate limit|usage limit|session limit|weekly limit|monthly limit|limit reached|you(?:'|’)ve hit your .* limit|quota|too many requests|resets? (?:at )?\d/.test(normalized)) return "rate-limit";
+	if (/\b401\b|authentication (?:failed|error)|oauth org not allowed|oauth token.*expired|token.*expired|unauthorized|invalid token|login required|please run .*login|not logged in/.test(normalized)) return "auth";
+	if (/billing error|payment|required.*billing|extra usage|overage|credit balance.*(?:low|insufficient|empty)|insufficient credits/.test(normalized)) return "billing";
+	if (/\b429\b|rate limit|usage limit|session limit|weekly limit|monthly limit|limit reached|you(?:'|’)ve hit your .* limit|quota|too many requests|resets? (?:at )?\d/.test(normalized)) return "rate-limit";
 	if (/overloaded|capacity/.test(normalized)) return "overloaded";
 	if (/server error|internal server|\b5\d\d\b/.test(normalized)) return "server";
 	if (/network|timeout|timed out|socket|econn|connection closed|fetch failed|unexpected end|\beof\b/.test(normalized)) return "network";

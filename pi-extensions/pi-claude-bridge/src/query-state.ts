@@ -302,6 +302,10 @@ export class QueryContext {
 	/** Note a tool_use the child runs itself. `streamIndex` is present only on the
 	 *  streamed path, where later deltas/stops for that block must be skipped. */
 	noteChildExecutedToolCall(id: string | undefined, rawName: string, streamIndex?: number): void {
+		// The child may execute this call before any Pi-visible event is emitted.
+		// Crossing that side-effect boundary permanently forbids account replay,
+		// even when the connector result or a later text delta never arrives.
+		this.markOutputCommitted();
 		if (id) {
 			this.childExecutedToolCalls.set(id, rawName);
 			// Both emission paths can see the same call (streamed block, then the

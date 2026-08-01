@@ -88,7 +88,7 @@ The bridge also reads `claude-bridge.json` (`~/.pi/agent/claude-bridge.json`, an
 | Setting | What it does |
 | --- | --- |
 | Strict MCP config | Block filesystem MCP auto-loads; Pi owns tools. |
-| Allow extra usage helper | Let the bridge launch Claude Code's `/extra-usage` flow when extra usage is required. Billing/admin approval still happens in Claude's browser page. |
+| Allow extra usage helper | Permit both automatic and manual Claude Code `/extra-usage` flows. When off, `/pi-claude:extra` is blocked. Managed flows use the currently selected account profile. Billing/admin approval still happens in Claude's browser page. |
 | Fast mode | Enable Claude Code fast mode for bridge requests when the selected model supports it. |
 | Force Claude effort | Override Pi's thinking-level mapping for every claude-bridge request. `none` keeps Pi's selected level; `max` sends Claude Code `--effort max`. |
 | Model effort overrides | JSON object mapping model IDs to Claude Code efforts, e.g. `{"claude-opus-4-8":"max"}`. Per-model entries beat the global force setting. |
@@ -201,13 +201,13 @@ The optional `pi-claude` companion can provide account profiles through the brid
 
 For each fresh Claude request, the bridge launches the Agent SDK subprocess with the selected profile's `CLAUDE_CONFIG_DIR`. Claude session files, connector inventory, and resume IDs remain account-scoped. When an account reports a rejected rate limit, the bridge can rebuild the Claude session from Pi history under the next profile and retry the prompt.
 
-Retries are deliberately limited to failures before visible output. Once text, thinking, or a complete tool call has reached Pi, the bridge never replays that request on another account, preventing duplicate tool side effects. Managed subscription subprocesses also drop inherited Anthropic API credentials and third-party provider flags so the selected Claude CLI profile remains the request's billing identity.
+Retries are deliberately limited to failures before visible output or any tool dispatch. Once text, thinking, a Pi tool call, or a child-executed connector call has begun, the bridge never replays that request on another account, preventing duplicate tool side effects. Post-output failures are still recorded so the next prompt can avoid the unhealthy account. Managed subscription subprocesses also drop inherited Anthropic API credentials and third-party provider flags so the selected Claude CLI profile remains the request's billing identity.
 
 `pi-claude` owns `/claude-auth`, profile metadata, utilization ranking, and cooldown persistence. The bridge remains the SDK/stream/session engine and can continue updating independently through the small versioned adapter.
 
 ## Extra usage and rate limits
 
-Claude Code's `/extra-usage` local command works through the Claude Agent SDK. In Pi, use `/pi-claude:extra` to run that flow; `/claude-bridge:extra` remains a legacy alias. Persist automatic launch on extra-usage errors with **Allow extra usage helper** in `/extensions:settings`.
+Claude Code's `/extra-usage` local command works through the Claude Agent SDK. When **Allow extra usage helper** is enabled in `/extensions:settings`, use `/pi-claude:extra` to run that flow for the selected managed account; `/claude-bridge:extra` remains a legacy alias. The setting gates automatic and manual launch alike, so leaving it off prevents the bridge from opening any Extra Usage billing flow.
 
 When Claude Code reports a rate-limit reset time, the bridge shows one clear `[rate-limit]` warning with timezone context and avoids repeating the same error line. If `pi-qol` is installed, it can use the reset time to resume later.
 

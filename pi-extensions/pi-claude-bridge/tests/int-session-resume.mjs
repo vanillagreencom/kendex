@@ -150,9 +150,12 @@ try {
   const debugLog = readFileSync(DEBUG_LOG, "utf8");
   const sessionIds = new Set();
   const rotatedPostAbort = [];
-  for (const match of debugLog.matchAll(/syncResult: path=(reuse|rebuild) sessionId=([a-f0-9-]+)(?: priors=\d+ (\S+))?/g)) {
+  // Account-scoped sessions include `account=…` before the rebuild flavor;
+  // legacy sessions may omit it. The current persistence log names the
+  // post-abort branch `rotated`.
+  for (const match of debugLog.matchAll(/syncResult: path=(reuse|rebuild) sessionId=([a-f0-9-]+)(?: priors=\d+(?: account=\S+)? (\S+))?/g)) {
     sessionIds.add(match[2]);
-    if (match[3] === "rotated-post-abort") rotatedPostAbort.push(match[2]);
+    if (match[3] === "rotated") rotatedPostAbort.push(match[2]);
   }
   if (sessionIds.size === 0) finish(1, "FAIL: no syncResult markers found in debug log");
   if (sessionIds.size > 2) finish(1, `FAIL: expected ≤2 distinct sessionIds (one pre-abort, one post-abort rotation), got ${sessionIds.size}: ${[...sessionIds].join(", ")}`);

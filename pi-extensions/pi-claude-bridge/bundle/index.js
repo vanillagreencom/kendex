@@ -28150,6 +28150,7 @@ var QueryContext = class {
   /** Note a tool_use the child runs itself. `streamIndex` is present only on the
    *  streamed path, where later deltas/stops for that block must be skipped. */
   noteChildExecutedToolCall(id, rawName, streamIndex) {
+    this.markOutputCommitted();
     if (id) {
       this.childExecutedToolCalls.set(id, rawName);
       if (!this.connectorCallAudit.has(id)) {
@@ -45236,17 +45237,23 @@ function rateLimitResetMs(info) {
   return Number.isFinite(parsed) ? parsed : void 0;
 }
 function classifyClaudeFailure(value) {
-  const text = typeof value === "string" ? value : value instanceof Error ? value.message : (() => {
+  const details = [value];
+  if (value && typeof value === "object") {
+    const record2 = value;
+    details.push(record2.name, record2.message, record2.code, record2.status, record2.statusCode, record2.body, record2.error);
+  }
+  const text = details.map((detail) => {
+    if (typeof detail === "string" || typeof detail === "number") return String(detail);
     try {
-      return JSON.stringify(value ?? "");
+      return JSON.stringify(detail ?? "");
     } catch {
-      return String(value);
+      return String(detail);
     }
-  })();
+  }).join(" ");
   const normalized = text.toLowerCase().replace(/[_-]+/g, " ");
-  if (/authentication failed|oauth org not allowed|unauthorized|invalid token|login required/.test(normalized)) return "auth";
-  if (/billing error|payment|required.*billing|extra usage|overage/.test(normalized)) return "billing";
-  if (/rate limit|usage limit|session limit|weekly limit|monthly limit|limit reached|you(?:'|’)ve hit your .* limit|quota|too many requests|resets? (?:at )?\d/.test(normalized)) return "rate-limit";
+  if (/\b401\b|authentication (?:failed|error)|oauth org not allowed|oauth token.*expired|token.*expired|unauthorized|invalid token|login required|please run .*login|not logged in/.test(normalized)) return "auth";
+  if (/billing error|payment|required.*billing|extra usage|overage|credit balance.*(?:low|insufficient|empty)|insufficient credits/.test(normalized)) return "billing";
+  if (/\b429\b|rate limit|usage limit|session limit|weekly limit|monthly limit|limit reached|you(?:'|’)ve hit your .* limit|quota|too many requests|resets? (?:at )?\d/.test(normalized)) return "rate-limit";
   if (/overloaded|capacity/.test(normalized)) return "overloaded";
   if (/server error|internal server|\b5\d\d\b/.test(normalized)) return "server";
   if (/network|timeout|timed out|socket|econn|connection closed|fetch failed|unexpected end|\beof\b/.test(normalized)) return "network";
@@ -45363,7 +45370,7 @@ var BRIDGE_ACCOUNT_HOST = {
   version: 1,
   probeProfile: probeClaudeAccountProfile
 };
-async function runExtraUsageHelper(cwd, config2 = loadConfig(cwd)) {
+async function runExtraUsageHelper(cwd, config2 = loadConfig(cwd), account) {
   const providerSettings = config2.provider ?? {};
   const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
   if (claudeExecutable) preflightClaudeExecutable(claudeExecutable, cwd);
@@ -45371,7 +45378,11 @@ async function runExtraUsageHelper(cwd, config2 = loadConfig(cwd)) {
     prompt: "/extra-usage",
     options: {
       cwd,
-      env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" },
+      env: {
+        ...account ? subscriberProfileEnv(account) : process.env,
+        ENABLE_CLAUDEAI_MCP_SERVERS: "0",
+        DISABLE_AUTO_COMPACT: "1"
+      },
       maxTurns: 1,
       ...claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
       spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
@@ -45405,6 +45416,42 @@ function launchExtraUsageHelperIfAllowed(cwd, config2, reason) {
   void extraUsageHelperInFlight.catch(() => {
   });
   return true;
+}
+async function runExtraUsageCommand(ctx2) {
+  const cwd = commandCwd(ctx2);
+  const config2 = loadConfig(cwd);
+  if (!extraUsageAllowed(config2)) {
+    ctx2.ui.notify("Claude Extra Usage is blocked by Pi Claude settings.", "warning");
+    return;
+  }
+  let account;
+  const router = resolveClaudeAccountRouter();
+  if (router) {
+    const modelId = ctx2.model?.id ?? "claude-opus-5";
+    const sessionId = ctx2.sessionManager?.getSessionId?.();
+    try {
+      account = router.current(modelId, sessionId) ?? router.acquire({ modelId, sessionId });
+    } catch (error51) {
+      ctx2.ui.notify(`Claude extra usage helper cannot select an account: ${error51 instanceof Error ? error51.message : String(error51)}`, "error");
+      return;
+    }
+  }
+  if (extraUsageHelperInFlight) {
+    ctx2.ui.notify("Claude extra usage helper already running.", "info");
+    await extraUsageHelperInFlight.catch(() => void 0);
+    return;
+  }
+  try {
+    ctx2.ui.notify("Claude extra usage helper starting\u2026", "info");
+    extraUsageHelperInFlight = runExtraUsageHelper(cwd, config2, account).finally(() => {
+      extraUsageHelperInFlight = null;
+    });
+    const message = await extraUsageHelperInFlight;
+    ctx2.ui.notify(`Claude extra usage helper: ${message}`, "info");
+  } catch (error51) {
+    const message = error51 instanceof Error ? error51.message : String(error51);
+    ctx2.ui.notify(`Claude extra usage helper failed: ${message}`, "error");
+  }
 }
 function extractAllToolResults2(context) {
   const { results, stopIdx } = extractAllToolResults(context.messages);
@@ -45636,7 +45683,7 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
             const openedExtraUsage = extraUsage && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
             ctx().handledTerminalError = true;
             ctx().turnOutput.stopReason = "error";
-            const extraUsageHint = openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : extraUsage ? "\n\nRun /pi-claude:extra, or enable Allow extra usage helper in settings." : "";
+            const extraUsageHint = openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : extraUsage ? extraUsageAllowed(bridgeConfig) ? "\n\nRun /pi-claude:extra to open the selected account's billing flow." : "\n\nExtra Usage is blocked by Pi Claude settings." : "";
             ctx().turnOutput.errorMessage = `${errors}${extraUsageHint}`;
             ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
             ctx().currentPiStream?.end();
@@ -46063,6 +46110,12 @@ function streamClaudeAgentSdk(model, context, options) {
   const sdkQuery = sdkQueryFactory({ prompt, options: queryOptions });
   ctx().activeQuery = sdkQuery;
   const abortCtx = ctx();
+  let accountFailureRecorded = false;
+  const recordAttemptFailure = (failure) => {
+    if (accountFailureRecorded || !account || !router || !failure.kind || failure.rateLimitInfo || wasAborted || options?.signal?.aborted) return;
+    router.recordFailure(account.profileId, failure.kind, queryModel.id);
+    accountFailureRecorded = true;
+  };
   const requestAbort = () => {
     void sdkQuery.interrupt().catch(() => {
     });
@@ -46087,8 +46140,9 @@ function streamClaudeAgentSdk(model, context, options) {
       if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
       const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
       debug("provider: stream idle timeout", `model=${queryModel.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
+      const idleFailure = { kind: "network", message: errorMessage };
+      recordAttemptFailure(idleFailure);
       if (account && router && !abortCtx.committedOutput) {
-        router.recordFailure(account.profileId, "network", queryModel.id);
         rotationState.excludedProfileIds.add(account.profileId);
         retryRequested = true;
         retryFailure = { kind: "network", message: errorMessage };
@@ -46147,6 +46201,7 @@ function streamClaudeAgentSdk(model, context, options) {
     else options.signal.addEventListener("abort", onAbort, { once: true });
   }
   const requestRotation = (failure) => {
+    recordAttemptFailure(failure);
     const eligible = Boolean(account && router && failure.kind && !abortCtx.committedOutput && !wasAborted && !options?.signal?.aborted && rotationState.attempts < 16);
     debug("provider: account rotation decision", JSON.stringify({
       eligible,
@@ -46158,7 +46213,6 @@ function streamClaudeAgentSdk(model, context, options) {
       attempts: rotationState.attempts
     }));
     if (!eligible || !account || !router || !failure.kind) return false;
-    if (!failure.rateLimitInfo) router.recordFailure(account.profileId, failure.kind, queryModel.id);
     rotationState.excludedProfileIds.add(account.profileId);
     retryRequested = true;
     retryFailure = failure;
@@ -46244,6 +46298,7 @@ function streamClaudeAgentSdk(model, context, options) {
         try {
           const continuation = await consumeQuery(contQuery, customToolNameToPi, queryModel, cwd, bridgeConfig, () => wasAborted, account, router);
           if (continuation.failure) {
+            recordAttemptFailure(continuation.failure);
             surfaceFailure(continuation.failure);
             break;
           }
@@ -46251,7 +46306,9 @@ function streamClaudeAgentSdk(model, context, options) {
           if (sid) setSharedSession({ ...sharedSession ?? {}, sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd, ...accountSessionScope(account) });
         } catch (contError) {
           debug(`provider: continuation query error:`, contError);
-          surfaceFailure({ kind: classifyClaudeFailure(contError), message: contError instanceof Error ? contError.message : String(contError) });
+          const continuationFailure = { kind: classifyClaudeFailure(contError), message: contError instanceof Error ? contError.message : String(contError) };
+          recordAttemptFailure(continuationFailure);
+          surfaceFailure(continuationFailure);
           break;
         } finally {
           contQuery.close();
@@ -46328,8 +46385,8 @@ function showBridgeStatus(ctx2) {
   const config2 = loadConfig(commandCwd(ctx2));
   ctx2.ui.notify([
     `Pi Claude: ${config2.enabled === false ? "disabled" : "enabled"}`,
-    `Extra usage auto-helper: ${extraUsageAllowed(config2) ? "on" : "off"} (settings)`,
-    `Use /pi-claude:extra to run Claude Code /extra-usage now.`
+    `Extra usage helper: ${extraUsageAllowed(config2) ? "on" : "blocked"} (settings)`,
+    extraUsageAllowed(config2) ? `Use /pi-claude:extra to run Claude Code /extra-usage for the selected account.` : `The /pi-claude:extra command is blocked while Allow extra usage helper is off.`
   ].join("\n"), "info");
 }
 function readCredentialFile(path) {
@@ -46420,29 +46477,10 @@ function registerBridgeCommands(pi) {
   const guard = pi;
   if (guard[COMMANDS_REGISTERED_KEY]) return;
   guard[COMMANDS_REGISTERED_KEY] = true;
-  const runExtraUsage = async (ctx2) => {
-    const cwd = commandCwd(ctx2);
-    if (extraUsageHelperInFlight) {
-      ctx2.ui.notify("Claude extra usage helper already running.", "info");
-      await extraUsageHelperInFlight.catch(() => void 0);
-      return;
-    }
-    try {
-      ctx2.ui.notify("Claude extra usage helper starting\u2026", "info");
-      extraUsageHelperInFlight = runExtraUsageHelper(cwd).finally(() => {
-        extraUsageHelperInFlight = null;
-      });
-      const message = await extraUsageHelperInFlight;
-      ctx2.ui.notify(`Claude extra usage helper: ${message}`, "info");
-    } catch (error51) {
-      const message = error51 instanceof Error ? error51.message : String(error51);
-      ctx2.ui.notify(`Claude extra usage helper failed: ${message}`, "error");
-    }
-  };
   const openSettings = async (args, ctx2) => {
     if (args.trim()) {
       ctx2.ui.notify(
-        "Unknown /pi-claude argument. Use /pi-claude:extra to run Claude Code /extra-usage.",
+        "Unknown /pi-claude argument. Extra Usage commands follow the Allow extra usage helper setting.",
         "warning"
       );
     }
@@ -46457,7 +46495,7 @@ function registerBridgeCommands(pi) {
     });
     pi.registerCommand(`${name}:extra`, {
       description: name === "pi-claude" ? "Run Claude Code /extra-usage through Pi Claude" : "Legacy alias for /pi-claude:extra",
-      handler: async (_args, ctx2) => runExtraUsage(ctx2)
+      handler: async (_args, ctx2) => runExtraUsageCommand(ctx2)
     });
     pi.registerCommand(`${name}:connectors`, {
       description: name === "pi-claude" ? "List the Claude account's installed claude.ai connectors" : "Legacy alias for /pi-claude:connectors",
@@ -46589,6 +46627,7 @@ export {
   resolveConfiguredEffort,
   resolveMcpTools,
   restoreSharedSessionFromPi,
+  runExtraUsageCommand,
   scheduleToolUseTurnEnd,
   setConnectorCallAuditSink,
   shouldRestorePersistedBridgeEntry,

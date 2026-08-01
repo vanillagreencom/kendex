@@ -60,7 +60,7 @@ Account selection affects every account-scoped surface together:
 - connector inventory/cache scope;
 - structured `accountInfo()` and experimental `/usage` feedback.
 
-A failed pre-output attempt is buffered so protocol setup frames do not leak into Pi, then retried with the failed profile excluded. Text/thinking deltas and completed tool calls commit the request permanently; failures after that point are surfaced and never replayed. `rate_limit_event` reset timestamps are sent back to the router before reranking.
+A failed pre-output attempt is buffered so protocol setup frames do not leak into Pi, then retried with the failed profile excluded. Text/thinking deltas, Pi tool calls, and child-executed connector dispatches commit the request permanently; failures after that point are surfaced and never replayed, but are still recorded for the next request's routing decision. `rate_limit_event` reset timestamps are sent back to the router before reranking.
 
 The reciprocal `vstack.pi.claude-bridge.account-host.v1` service exposes a local `/usage` probe for account-management commands. Both symbols carry `version: 1`; incompatible future shapes must use a new symbol/version instead of mutating this contract in place.
 
