@@ -35,7 +35,7 @@ Input file for issue audit workflows — transforms review agent findings into t
       "labels": ["agent:[TYPE]", "[DOMAIN_LABEL]", "[WORKFLOW_LABEL]"],
       "category": "issue",
       "found_by": "agent-name",
-      "origin": "suggestion|escalated|planned|discovered",
+      "origin": "suggestion|escalated|skipped|planned|discovered",
       "blocks_items": [2],
       "blocked_by_items": [],
       "blocks_issues": ["PROJ-301"],
@@ -73,7 +73,7 @@ Input file for issue audit workflows — transforms review agent findings into t
 | `labels` | No for legacy callers; required before create | Full issue-label set. Callers/workflows must complete and validate this against live issue-label inventory + project taxonomy before issue creation. |
 | `category` | Yes | Always `issue` (fix items don't reach audit) |
 | `found_by` | Yes | Agent that identified the item |
-| `origin` | Yes | `suggestion`, `escalated`, `planned`, or `discovered` |
+| `origin` | Yes | `suggestion`, `escalated` (blockers dev couldn't fix), `skipped` (items dev deliberately skipped, e.g. low-priority residue), `planned`, or `discovered` |
 | `blocks_items` | No | Indexes of items in this batch that this item blocks |
 | `blocked_by_items` | No | Indexes of items that block this item |
 | `blocks_issues` | No | Existing issue IDs this item blocks |
@@ -130,13 +130,14 @@ found_by: agent (from parent JSON)
 origin: "suggestion"
 ```
 
-### Escalated Blockers
+### Escalated and Skipped Items
 
-Blockers that dev couldn't fix:
+From orch workflow-state `escalated_items` — the entry's `outcome` field decides the origin:
 
 ```
 Same field mapping as suggestions
-origin: "escalated"
+outcome "blocked" (or no outcome field — legacy state) → origin: "escalated"   # blockers dev couldn't fix
+outcome "skipped" → origin: "skipped"                                          # items dev deliberately skipped (e.g. low-priority residue)
 ```
 
 ### Discovered Work

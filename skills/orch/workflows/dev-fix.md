@@ -204,8 +204,10 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] fixed_items '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
    ```
    ```bash
-   # For each escalated/skipped item:
-   .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items '{"description":"[DESC]","location":"[LOC]","reason":"[REASON]","source":"[SOURCE]"}'
+   # For each Blocked or Skipped item — [OUTCOME] carries the item's accepted decision
+   # from step 6 (return table / artifact items[].decision): Blocked → "blocked",
+   # Skipped → "skipped". Downstream audit maps it to origin (review-pr.md § 9).
+   .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items '{"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}'
    ```
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles

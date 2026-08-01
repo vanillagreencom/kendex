@@ -226,6 +226,7 @@ Ask user (omit categories with no items):
 **Skip if** no issue suggestions selected AND no escalated items from § 4.1. → § 6
 
 1. **Build audit-input file** from selected issue suggestions and escalated items per `.agents/skills/project-management/schemas/audit-issues-input.md`.
+   - Escalated items: set `origin` from each entry's `outcome` — `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field (legacy state) → `origin: "escalated"`
    - `source`: `"review"`
    - `parent_issue`: [ISSUE_ID] if available, else null
    - `worktree`: [WT_PATH]

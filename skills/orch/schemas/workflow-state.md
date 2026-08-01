@@ -56,6 +56,7 @@ Persistent state file for orch workflows. Survives context compaction.
       "description": "Auth token refresh not implemented",
       "location": "src/auth/mod.rs",
       "reason": "Requires API design decision",
+      "outcome": "blocked",
       "source": "qa-review"
     }
   ],
@@ -114,7 +115,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `auto_decisions` | string[] | Audit trail of decisions taken without a user prompt under `ORCH_DECISION_MODE=auto-recommended` (vstack#944): one `auto-selected: [option] — [reason]` line per auto-executed ask-user step (`review-pr.md` § 4/§ 7, `dev-fix.md` § 1). Absent under the default `ask` mode |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed |
-| `escalated_items` | object[] | Blockers that couldn't be fixed |
+| `escalated_items` | object[] | Items dev did not apply. `outcome` records the dev round's per-item decision: `"blocked"` (couldn't fix) or `"skipped"` (deliberately skipped); legacy entries without `outcome` are treated as blocked (`review-pr.md` § 9 maps outcome → audit `origin`) |
 | `audit_issues_created` | string[] | Issue IDs created by audit |
 | `rebase_map` | object | Old→new commit SHA map accumulated from `worktree push` auto-rebase output (`rebase-map:` lines — vstack#728). Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. SHAs stored elsewhere in state are rewritten at push time (`submit-pr.md` § 2 step 1); the map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches, since a later rebase maps new → newer |
 | `pr_review_baseline` | object | Baseline for PR comment loop detection |

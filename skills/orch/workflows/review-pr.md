@@ -671,7 +671,7 @@ Issue suggestions: [N] items → § 9 audit
 3. **Skip if** no issue suggestions AND escalated_items empty AND no discovered work items. → § 10
 
 4. **Build audit-input file** from:
-   - Escalated items from state file
+   - Escalated items from state file — set each item's `origin` from the entry's `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field (legacy state) → `origin: "escalated"`
    - Issue suggestions (`category: "issue"` from review JSONs in state `json_paths`)
    - Discovered work items (from step 2, `origin: "discovered"`)
 
