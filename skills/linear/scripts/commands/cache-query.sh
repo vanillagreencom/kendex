@@ -22,7 +22,7 @@ Linear Cache Query - Read from local cache
 Usage: cache-query.sh <resource> <action> [options]
 
 Issues:
-  issues list [--project X | --all-projects] [--state Y] [--label Z]
+  issues list [--project X | --all-projects | --no-project] [--state Y] [--label Z]
               [--cycle N|UUID|current|previous|next]
               [--updated-since Nd] [--search REGEX] [--max] [--include-archived]
               [--format=safe|compact|ids|table]
@@ -30,6 +30,11 @@ Issues:
               carries its project name; rows without a project carry ""). Use it
               instead of looping per project — restricted harnesses reject loop
               shapes. Mutually exclusive with --project.
+              --no-project returns only issues with no project assigned, read
+              from the same per-row project field `issues get` reports. Mutually
+              exclusive with --project/--all-projects. Unknown filter flags are
+              rejected rather than ignored, so a filter the cache cannot honor
+              fails instead of silently returning every issue.
   issues get <ID> [--with-bundle] [--format=safe|compact|raw]
   issues children <ID> [--recursive] [--pending] [--format=safe|ids]
   issues list-relations <ID>
@@ -76,7 +81,7 @@ EOF
 cache_list_issues() {
     local project="" state="" label="" updated_since="" search="" cycle=""
     local include_archived="false" paginate_all="false" limit="75"
-    local all_projects="false"
+    local all_projects="false" no_project="false"
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
@@ -94,6 +99,12 @@ cache_list_issues() {
             # Harness approval classifiers reject per-project shell loops, so
             # audit workflows load the full comparison set through this flag.
             all_projects="true"
+            shift
+            ;;
+        --no-project)
+            # Only issues with no project assigned. The counterpart to --project;
+            # audits use it to enumerate genuinely unassigned triage debt.
+            no_project="true"
             shift
             ;;
         --state | --status)
@@ -145,17 +156,33 @@ cache_list_issues() {
             shift
             ;;
         --team | --assignee | --created-since | --with-relations) shift 2 ;; # consume but ignore for cache
+        --help | -h)
+            show_help
+            return 0
+            ;;
         --)
             shift
             break
             ;;
-        -*) shift ;; # ignore unknown flags gracefully
+        # Fail closed on an unrecognized flag. Silently ignoring one (the old
+        # behavior) turned an unimplemented filter such as --no-project into a
+        # full unfiltered listing that looked like assigned issues leaking past
+        # the filter, inflating every audit worklist that trusted it.
+        -*)
+            echo "{\"error\": \"Unknown flag for cache issues list: $1. A filter the cache cannot honor must fail, not silently return every issue. Run 'cache issues list --help'.\"}" >&2
+            return 1
+            ;;
         *) shift ;;
         esac
     done
 
     if [[ "$all_projects" == "true" && -n "$project" ]]; then
         echo '{"error": "--all-projects cannot be combined with --project/--project-id: it already enumerates every project"}' >&2
+        return 1
+    fi
+
+    if [[ "$no_project" == "true" && ( "$all_projects" == "true" || -n "$project" ) ]]; then
+        echo '{"error": "--no-project cannot be combined with --project/--project-id/--all-projects: it selects only issues with no project"}' >&2
         return 1
     fi
 
@@ -177,6 +204,13 @@ cache_list_issues() {
     # Filter by project name or ID
     if [[ -n "$project" ]]; then
         jq_filter="$jq_filter | [.[] | select(.project.name == $(echo "$project" | jq -R '.') or .project.id == $(echo "$project" | jq -R '.'))]"
+    fi
+
+    # Only issues with no project assigned. Reads the same .project.name each row
+    # carries and that `cache issues get` reports, so the list cannot disagree
+    # with a per-issue record.
+    if [[ "$no_project" == "true" ]]; then
+        jq_filter="$jq_filter | [.[] | select((.project.name // \"\") == \"\")]"
     fi
 
     # Filter by label
