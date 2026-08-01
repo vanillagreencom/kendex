@@ -117,12 +117,26 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 
+print_usage() {
+  cat <<'USAGE'
+Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]
+
+  <PR#>          pull request number (required)
+  poll_interval  seconds between polls (default 30)
+  max_wait       total budget in seconds, an upper bound (default 600)
+                 poll_interval must be <= max_wait
+  --json         emit the machine-readable result object on stdout
+  --no-check-probe  skip the failed-required-check ci-wait delegation
+USAGE
+}
+
 # --- arg parse (before auth so error paths can honor --json) ---
 JSON_OUTPUT=false
 CHECK_PROBE=true
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -h|--help) print_usage; exit 0 ;;
     --json) JSON_OUTPUT=true; shift ;;
     --no-check-probe) CHECK_PROBE=false; shift ;;
     --check-probe) CHECK_PROBE=true; shift ;;
@@ -141,6 +155,24 @@ if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
+if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [ "$POLL_INTERVAL" -lt 1 ]; then
+  echo "queue-wait: poll_interval must be a positive integer (got '$POLL_INTERVAL')" >&2
+  exit 2
+fi
+
+if ! [[ "$MAX_WAIT" =~ ^[0-9]+$ ]] || [ "$MAX_WAIT" -lt 1 ]; then
+  echo "queue-wait: max_wait must be a positive integer (got '$MAX_WAIT')" >&2
+  exit 2
+fi
+
+# poll_interval > max_wait can only ever poll once and then sleep past the
+# stated budget. There is no legitimate use, and the two-argument form reads
+# as "wait up to <max_wait>", so catch the swapped-argument shape here.
+if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
+  echo "queue-wait: poll_interval (${POLL_INTERVAL}s) exceeds max_wait (${MAX_WAIT}s) — that polls once and overshoots the budget. Arg order is: queue-wait <PR#> [poll_interval] [max_wait]." >&2
+  exit 2
+fi
+
 ARM_GRACE="$("$SCRIPT_DIR/orch-env" QUEUE_WAIT_ARM_GRACE 120)"
 CONFIRM_POLLS="$("$SCRIPT_DIR/orch-env" QUEUE_WAIT_CONFIRM_POLLS 2)"
 PROBE_INTERVAL="$("$SCRIPT_DIR/orch-env" QUEUE_WAIT_PROBE_INTERVAL 120)"
@@ -152,9 +184,26 @@ update_elapsed() {
   elapsed=$((now - START_TIME))
 }
 
+# Sleep up to $1 seconds, but never past the remaining budget, so max_wait is a
+# real upper bound instead of "budget plus one poll interval". Refreshes elapsed.
+sleep_within_budget() {
+  local want="$1" remaining
+  update_elapsed
+  remaining=$((MAX_WAIT - elapsed))
+  if [ "$remaining" -le 0 ]; then
+    return 0
+  fi
+  [ "$want" -gt "$remaining" ] && want="$remaining"
+  sleep "$want"
+  update_elapsed
+}
+
 # Last observation seen by the poll loop, so timeout/error results still
 # report the queue state that was outstanding.
 polls=0
+# Wall-clock of the most recent complete poll, so a verdict can report how old
+# its observation is — a one-poll "still queued" is low-confidence, not live.
+last_poll_time=""
 last_pr_state=""
 last_merged_at=""
 last_in_queue="false"
@@ -185,6 +234,8 @@ RETRY_INTERVAL_CAP=$((POLL_INTERVAL * 8))
 emit_result() {
   local status="$1" verdict="$2" error_msg="${3:-}"
   update_elapsed
+  local poll_age=""
+  [ -n "$last_poll_time" ] && poll_age=$(( $(date +%s) - last_poll_time ))
   if $JSON_OUTPUT; then
     jq -n \
       --arg s "$status" \
@@ -200,6 +251,7 @@ emit_result() {
       --argjson was_in_queue "$was_in_queue" \
       --arg cause "$last_cause" \
       --argjson transient "$transient_api_errors" \
+      --arg poll_age "$poll_age" \
       --arg error "$error_msg" \
       '{
         status: $s,
@@ -215,6 +267,7 @@ emit_result() {
         was_in_merge_queue: $was_in_queue
       } + (if $cause == "" then {} else {cause: $cause} end)
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
+        + (if $poll_age == "" then {} else {last_poll_age_seconds: ($poll_age|tonumber)} end)
         + (if $error == "" then {} else {error: $error} end)'
     return 0
   fi
@@ -232,7 +285,11 @@ emit_result() {
       echo "Merge queue: closed — PR #$PR_NUM was closed without merging"
       ;;
     queued)
-      echo "Merge queue: still queued after ${elapsed}s (${polls} polls) — the merge stays armed and fires when checks and protection clear"
+      if [ "${polls:-0}" -le 1 ]; then
+        echo "Merge queue: still queued after ${elapsed}s — LOW CONFIDENCE: a single poll${poll_age:+, last observed ${poll_age}s ago}. Widen max_wait or shorten poll_interval for a live read. The merge stays armed and fires when checks and protection clear"
+      else
+        echo "Merge queue: still queued after ${elapsed}s (${polls} polls${poll_age:+, last polled ${poll_age}s ago}) — the merge stays armed and fires when checks and protection clear"
+      fi
       ;;
     not_queued)
       echo "Merge queue: not queued after ${elapsed}s — no poll ever saw PR #$PR_NUM queued or armed; the merge is not armed and will not fire"
@@ -364,7 +421,7 @@ transient_retry() {
     exit 1
   fi
   echo "queue-wait: retrying in ${retry_interval}s" >&2
-  sleep "$retry_interval"
+  sleep_within_budget "$retry_interval"
   retry_interval=$((retry_interval * 2))
   if [ "$retry_interval" -gt "$RETRY_INTERVAL_CAP" ]; then
     retry_interval="$RETRY_INTERVAL_CAP"
@@ -413,7 +470,11 @@ malformed_polls=0
 MAX_MALFORMED_POLLS=3
 
 update_elapsed
-while [ "$elapsed" -lt "$MAX_WAIT" ]; do
+# Always poll at least once: if startup (auth, repo lookup) already spent the
+# budget, a plain `elapsed < MAX_WAIT` guard would exit having never looked and
+# report not_queued/0 polls for a PR it never checked. After the first poll the
+# deadline governs normally.
+while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   polls=$((polls + 1))
 
   # --- Signal 1: PR state. Read first, so a merge that landed between polls
@@ -479,12 +540,12 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       exit 1
     fi
     echo "queue-wait: unreadable merge-queue response (#$malformed_polls); retrying" >&2
-    sleep "$POLL_INTERVAL"
-    update_elapsed
+    sleep_within_budget "$POLL_INTERVAL"
     continue
   fi
   malformed_polls=0
   retry_interval="$POLL_INTERVAL"
+  last_poll_time="$(date +%s)"
 
   last_in_queue=$(jq -r '.data.repository.pullRequest.isInMergeQueue == true' <<<"$queue_json")
   last_queue_state=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.state // ""' <<<"$queue_json")
@@ -552,8 +613,7 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     fi
   fi
 
-  sleep "$POLL_INTERVAL"
-  update_elapsed
+  sleep_within_budget "$POLL_INTERVAL"
 done
 
 # Deadline reached. A candidate ejection/disarm seen at least once outranks

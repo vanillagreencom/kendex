@@ -425,6 +425,62 @@ assert_eq "$rc" "0" "transient error absorbed, wait completes" "$err"
 assert_eq "$(jq -r .verdict <<<"$out")" "merged" "transient error does not change the verdict" "$err"
 assert_eq "$(jq -r '.transient_api_errors // 0' <<<"$out")" "1" "transient error counted in JSON" "$err"
 
+
+# --- 15. argument validation: poll_interval > max_wait (vstack#972) ---------
+# The reported invocation shape: `queue-wait 481 1800` reads as poll=1800,
+# max=600 and can only ever poll once while overshooting the budget.
+new_case argval_swapped
+err="$TMP_ROOT/e15"
+run_queue_wait -- 1 1800 600 --json --no-check-probe >/dev/null 2>"$err" && rc=0 || rc=$?
+assert_eq "$rc" "2" "poll_interval > max_wait exits 2" "$err"
+assert_contains "$(cat "$err")" "exceeds max_wait" "swapped-arg error names the cause" "$err"
+
+# --- 16. argument validation: non-numeric interval --------------------------
+new_case argval_nonnumeric
+err="$TMP_ROOT/e16"
+run_queue_wait -- 1 abc 600 --json --no-check-probe >/dev/null 2>"$err" && rc=0 || rc=$?
+assert_eq "$rc" "2" "non-numeric poll_interval exits 2" "$err"
+assert_contains "$(cat "$err")" "positive integer" "non-numeric error is explicit" "$err"
+
+# --- 17. --help prints usage and exits 0 ------------------------------------
+new_case help
+err="$TMP_ROOT/e17"
+out="$(run_queue_wait -- --help 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "--help exits 0" "$err"
+assert_contains "$out" "Usage: queue-wait" "--help prints usage" "$err"
+
+# --- 18. a one-poll queued verdict is flagged low-confidence -----------------
+# With poll_interval == max_wait the loop polls exactly once. The "still queued"
+# observation is then a single sample; the verdict must say so, in both the
+# human line and the JSON (last_poll_age_seconds), so a routing caller does not
+# read a stale one-poll observation as live.
+new_case one_poll_queued
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+err="$TMP_ROOT/e18"
+out="$(run_queue_wait -- 1 1 1 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "one-poll still-queued verdict" "$err"
+assert_eq "$(jq -r .polls <<<"$out")" "1" "exactly one poll happened" "$err"
+assert_eq "$(jq -r 'has("last_poll_age_seconds")' <<<"$out")" "true" "JSON exposes last_poll_age_seconds" "$err"
+herr="$TMP_ROOT/e18h"
+hout="$(run_queue_wait -- 1 1 1 --no-check-probe 2>"$herr")" && rc=0 || rc=$?
+assert_contains "$hout" "LOW CONFIDENCE" "one-poll human verdict is flagged low-confidence" "$herr"
+
+# --- 19. max_wait is a real upper bound (sleep clamped to remaining) ---------
+# poll_interval 3 with max_wait 4: the second poll's full interval would push
+# elapsed to ~6 unless the final sleep is clamped to the ~1s of remaining budget.
+new_case budget_upper_bound
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+err="$TMP_ROOT/e19"
+out="$(run_queue_wait -- 1 3 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+elapsed_seconds="$(jq -r .elapsed_seconds <<<"$out")"
+if [[ "$elapsed_seconds" =~ ^[0-9]+$ ]] && [ "$elapsed_seconds" -le 5 ]; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "elapsed ($elapsed_seconds s) stays within max_wait+1 (clamped sleep)"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        elapsed_seconds=%s (want <= 5)\n' "budget upper bound" "$elapsed_seconds"; dump_stderr "$err"
+fi
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
