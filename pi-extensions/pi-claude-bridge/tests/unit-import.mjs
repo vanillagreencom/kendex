@@ -121,9 +121,9 @@ describe("thinking block filtering", () => {
 		assert.equal(result[0].content[0].type, "text");
 	});
 
-	it("Anthropic provider thinking with signature preserved", () => {
+	it("canonical Pi Claude thinking with signature is preserved", () => {
 		const msgs = [
-			{ role: "assistant", provider: "claude-bridge", content: [
+			{ role: "assistant", provider: "pi-claude", content: [
 				{ type: "thinking", thinking: "reasoning...", thinkingSignature: "sig123" },
 				{ type: "text", text: "answer" },
 			]},

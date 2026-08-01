@@ -27663,7 +27663,11 @@ function connectorDeclarationsDisabled(env = process.env) {
 }
 
 // src/convert.ts
-var PROVIDER_ID = "claude-bridge";
+var PROVIDER_ID = "pi-claude";
+var LEGACY_PROVIDER_ID = "claude-bridge";
+function isClaudeProvider(provider) {
+  return provider === PROVIDER_ID || provider === LEGACY_PROVIDER_ID;
+}
 var PI_TO_SDK_TOOL_NAME = {
   read: "Read",
   write: "Write",
@@ -27731,7 +27735,7 @@ function assistantProvenancePrefix(msg) {
   const model = typeof msg.model === "string" ? msg.model : void 0;
   const api = typeof msg.api === "string" ? msg.api : void 0;
   if (!provider && !model && !api) return void 0;
-  if (provider === PROVIDER_ID || api === "anthropic") return void 0;
+  if (isClaudeProvider(provider) || api === "anthropic") return void 0;
   return `[Prior Pi assistant response from ${provider ?? api ?? "unknown-provider"}${model ? `/${model}` : ""}]
 `;
 }
@@ -27792,7 +27796,7 @@ function convertPiMessages(messages, customToolNameToSdk) {
           blocks.push({ type: "text", text: block.text });
         } else if (block.type === "thinking") {
           const sig = block.thinkingSignature;
-          const isAnthropicProvider = msg.provider === PROVIDER_ID || msg.api === "anthropic";
+          const isAnthropicProvider = isClaudeProvider(msg.provider) || msg.api === "anthropic";
           if (isAnthropicProvider && sig) {
             blocks.push({ type: "thinking", thinking: block.thinking ?? "", signature: sig });
           }
@@ -28737,16 +28741,16 @@ function claudeAuthSourceLabel(env = process.env) {
   if (env.ANTHROPIC_AUTH_TOKEN?.trim()) return "ANTHROPIC_AUTH_TOKEN";
   return "Claude Code login";
 }
-function buildNativeProvider(piAi2, models, streamSimple, env = process.env, hasCredentials = () => hasClaudeCredentials(env)) {
+function buildNativeProvider(piAi2, models, streamSimple, env = process.env, hasCredentials = () => hasClaudeCredentials(env), providerId = PROVIDER_ID, providerName = "Pi Claude") {
   if (!supportsNativeProvider(piAi2)) throw new Error(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE);
-  const stamped = models.map((model) => ({ api: "claude-bridge", baseUrl: "claude-bridge", provider: PROVIDER_ID, ...model }));
+  const stamped = models.map((model) => ({ ...model, api: "claude-bridge", baseUrl: "claude-bridge", provider: providerId }));
   const streams = {
     stream: streamSimple,
     streamSimple
   };
   return piAi2.createProvider({
-    id: PROVIDER_ID,
-    name: "Claude (Claude Code)",
+    id: providerId,
+    name: providerName,
     baseUrl: "claude-bridge",
     auth: {
       apiKey: {
@@ -45291,7 +45295,7 @@ function noteFastModeDisabledReason(message, bridgeConfig) {
   if (reason === lastFastModeDisabledNoticeReason) return;
   lastFastModeDisabledNoticeReason = reason;
   const text = FAST_MODE_DISABLED_REASON_TEXT[reason] ?? `unavailable (${reason})`;
-  safeNotify(`Claude bridge: fast mode is enabled in settings but Claude Code declined it \u2014 ${text}.`, "warning");
+  safeNotify(`Pi Claude: fast mode is enabled in settings but Claude Code declined it \u2014 ${text}.`, "warning");
 }
 function sdkTextFromMessage(message) {
   if (message.type === "result") return message.result;
@@ -45556,7 +45560,12 @@ var REASONING_TO_EFFORT = {
 };
 function normalizeEffortOverrideModelKey(value) {
   const key = value.trim().toLowerCase();
-  return key.startsWith(`${PROVIDER_ID}/`) ? key.slice(PROVIDER_ID.length + 1) : key;
+  for (const providerId of [PROVIDER_ID, LEGACY_PROVIDER_ID]) {
+    if (key.startsWith(`${providerId}/`)) {
+      return key.slice(providerId.length + 1);
+    }
+  }
+  return key;
 }
 function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
   const target = normalizeEffortOverrideModelKey(modelId);
@@ -45627,7 +45636,7 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
             const openedExtraUsage = extraUsage && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, "result error");
             ctx().handledTerminalError = true;
             ctx().turnOutput.stopReason = "error";
-            const extraUsageHint = openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : extraUsage ? "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings." : "";
+            const extraUsageHint = openedExtraUsage ? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt." : extraUsage ? "\n\nRun /pi-claude:extra, or enable Allow extra usage helper in settings." : "";
             ctx().turnOutput.errorMessage = `${errors}${extraUsageHint}`;
             ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
             ctx().currentPiStream?.end();
@@ -45657,7 +45666,7 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
           debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
           if (typeof fallbackModel === "string" && typeof originalModel === "string" && fallbackModelForPrimaryModel(originalModel) === fallbackModel) {
             safeNotify(
-              `Claude bridge switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
+              `Pi Claude switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
               "info"
             );
           }
@@ -45682,7 +45691,7 @@ async function consumeQuery(sdkQuery, customToolNameToPi, model, cwd, bridgeConf
             const launchedExtraUsage = isExtraUsageRequiredMessage(info) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, reason);
             emitRateLimitEvent({
               model: model.id,
-              provider: PROVIDER_ID,
+              provider: model.provider,
               rateLimitType,
               reason,
               resetAt,
@@ -45732,7 +45741,7 @@ function releaseProviderTokens(event) {
     g[PRIMARY_INSTANCE_KEY] = void 0;
   }
 }
-var nativeProviderInstance;
+var nativeProviderInstances = /* @__PURE__ */ new Map();
 var notifiedNativeUnsupported = false;
 function applyProviderRegistration(trigger) {
   const pi = extensionApi;
@@ -45759,14 +45768,33 @@ function applyProviderRegistration(trigger) {
   if (hasClaudeCredentials() && connectorsEnabledFor(loadConfig(process.cwd()))) primeConnectorServers();
   g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
   try {
-    nativeProviderInstance ??= buildNativeProvider(
-      _piAi,
-      MODELS,
-      streamClaudeAgentSdk,
-      process.env,
-      () => hasClaudeCredentials() || Boolean(resolveClaudeAccountRouter())
+    const authProbe = () => hasClaudeCredentials() || Boolean(resolveClaudeAccountRouter());
+    const providerFor = (providerId, providerName) => {
+      let provider = nativeProviderInstances.get(providerId);
+      if (!provider) {
+        provider = buildNativeProvider(
+          _piAi,
+          MODELS,
+          streamClaudeAgentSdk,
+          process.env,
+          authProbe,
+          providerId,
+          providerName
+        );
+        nativeProviderInstances.set(providerId, provider);
+      }
+      return provider;
+    };
+    pi.registerProvider(
+      providerFor(PROVIDER_ID, "Pi Claude")
     );
-    pi.registerProvider(nativeProviderInstance);
+    try {
+      pi.registerProvider(
+        providerFor(LEGACY_PROVIDER_ID, "Pi Claude (legacy alias)")
+      );
+    } catch (legacyError) {
+      debug(`${trigger}: legacy provider alias registration failed:`, legacyError);
+    }
   } catch (err) {
     if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) g[ACTIVE_STREAM_SIMPLE_KEY] = void 0;
     debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
@@ -45918,7 +45946,7 @@ function streamClaudeAgentSdk(model, context, options) {
       if (Number.isFinite(resetAtMs)) {
         emitRateLimitEvent({
           model: model.id,
-          provider: PROVIDER_ID,
+          provider: model.provider,
           rateLimitType: rateLimitType ?? "all_accounts",
           reason: message,
           resetAt: new Date(resetAtMs).toISOString(),
@@ -45940,7 +45968,7 @@ function streamClaudeAgentSdk(model, context, options) {
   if (queryModel.id !== model.id) {
     updateTurnOutputModel(queryModel.id);
     safeNotify(
-      account?.fallbackReason === "fable-quota" ? `Claude Fable subscription allowance is spent across every ready account; using ${modelDisplayName(queryModel.id)} without Extra Usage.` : `Claude bridge switched to ${modelDisplayName(queryModel.id)}.`,
+      account?.fallbackReason === "fable-quota" ? `Claude Fable subscription allowance is spent across every ready account; using ${modelDisplayName(queryModel.id)} without Extra Usage.` : `Pi Claude switched to ${modelDisplayName(queryModel.id)}.`,
       "info"
     );
   }
@@ -46073,7 +46101,7 @@ function streamClaudeAgentSdk(model, context, options) {
       emitRateLimitEvent({
         idleMs,
         model: queryModel.id,
-        provider: PROVIDER_ID,
+        provider: queryModel.provider,
         rateLimitType: "stream_idle",
         reason: "Claude Code stream idle timeout",
         retryAfterMs: STREAM_IDLE_BACKOFF_HINT_MS,
@@ -46148,7 +46176,7 @@ function streamClaudeAgentSdk(model, context, options) {
       const resetAtMs = rateLimitResetMs(info);
       emitRateLimitEvent({
         model: queryModel.id,
-        provider: PROVIDER_ID,
+        provider: queryModel.provider,
         rateLimitType: rateLimitTypeFromInfo(info),
         reason: failure.message,
         resetAt,
@@ -46299,9 +46327,9 @@ async function tryOpenExtensionManagerSettings(ctx2) {
 function showBridgeStatus(ctx2) {
   const config2 = loadConfig(commandCwd(ctx2));
   ctx2.ui.notify([
-    `Claude bridge: ${config2.enabled === false ? "disabled" : "enabled"}`,
+    `Pi Claude: ${config2.enabled === false ? "disabled" : "enabled"}`,
     `Extra usage auto-helper: ${extraUsageAllowed(config2) ? "on" : "off"} (settings)`,
-    `Use /claude-bridge:extra to run Claude Code /extra-usage now.`
+    `Use /pi-claude:extra to run Claude Code /extra-usage now.`
   ].join("\n"), "info");
 }
 function readCredentialFile(path) {
@@ -46373,20 +46401,20 @@ async function reportConnectorInventory(ctx2) {
   const account = ctx2.model ? resolveClaudeAccountRouter()?.current(ctx2.model.id, ctx2.sessionManager?.getSessionId?.()) : void 0;
   const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(account?.configDir));
   if (!credentials) {
-    ctx2.ui.notify("Claude bridge: no Claude OAuth credentials found \u2014 cannot enumerate connectors.", "error");
+    ctx2.ui.notify("Pi Claude: no Claude OAuth credentials found \u2014 cannot enumerate connectors.", "error");
     return;
   }
   const inventory = await listAccountConnectors({ credentials });
   if (!inventory.ok) {
-    ctx2.ui.notify(`Claude bridge: connector enumeration failed \u2014 ${inventory.reason}`, "error");
+    ctx2.ui.notify(`Pi Claude: connector enumeration failed \u2014 ${inventory.reason}`, "error");
     return;
   }
   if (inventory.connectors.length === 0) {
-    ctx2.ui.notify("Claude bridge: this account has no connectors installed.", "info");
+    ctx2.ui.notify("Pi Claude: this account has no connectors installed.", "info");
     return;
   }
   const names = inventory.connectors.map((c) => c.name).join(", ");
-  ctx2.ui.notify(`Claude bridge: ${inventory.connectors.length} connector(s) installed \u2014 ${names}`, "info");
+  ctx2.ui.notify(`Pi Claude: ${inventory.connectors.length} connector(s) installed \u2014 ${names}`, "info");
 }
 function registerBridgeCommands(pi) {
   const guard = pi;
@@ -46411,22 +46439,31 @@ function registerBridgeCommands(pi) {
       ctx2.ui.notify(`Claude extra usage helper failed: ${message}`, "error");
     }
   };
-  pi.registerCommand("claude-bridge", {
-    description: "Open Claude bridge settings/status",
-    handler: async (args, ctx2) => {
-      if (args.trim()) ctx2.ui.notify("Unknown /claude-bridge argument. Use /claude-bridge:extra to run Claude Code /extra-usage.", "warning");
-      if (await tryOpenExtensionManagerSettings(ctx2)) return;
-      showBridgeStatus(ctx2);
+  const openSettings = async (args, ctx2) => {
+    if (args.trim()) {
+      ctx2.ui.notify(
+        "Unknown /pi-claude argument. Use /pi-claude:extra to run Claude Code /extra-usage.",
+        "warning"
+      );
     }
-  });
-  pi.registerCommand("claude-bridge:extra", {
-    description: "Run Claude Code /extra-usage through claude-bridge",
-    handler: async (_args, ctx2) => runExtraUsage(ctx2)
-  });
-  pi.registerCommand("claude-bridge:connectors", {
-    description: "List the Claude account's installed claude.ai connectors",
-    handler: async (_args, ctx2) => reportConnectorInventory(ctx2)
-  });
+    if (await tryOpenExtensionManagerSettings(ctx2)) return;
+    showBridgeStatus(ctx2);
+  };
+  const reportConnectors = async (_args, ctx2) => reportConnectorInventory(ctx2);
+  for (const name of ["pi-claude", "claude-bridge"]) {
+    pi.registerCommand(name, {
+      description: name === "pi-claude" ? "Open Pi Claude settings/status" : "Legacy alias for /pi-claude",
+      handler: openSettings
+    });
+    pi.registerCommand(`${name}:extra`, {
+      description: name === "pi-claude" ? "Run Claude Code /extra-usage through Pi Claude" : "Legacy alias for /pi-claude:extra",
+      handler: async (_args, ctx2) => runExtraUsage(ctx2)
+    });
+    pi.registerCommand(`${name}:connectors`, {
+      description: name === "pi-claude" ? "List the Claude account's installed claude.ai connectors" : "Legacy alias for /pi-claude:connectors",
+      handler: reportConnectors
+    });
+  }
 }
 function index_default(pi) {
   setExtensionApi(pi);
@@ -46463,7 +46500,7 @@ function index_default(pi) {
   });
   pi.on("message_end", (event, ctx2) => {
     const message = event.message;
-    if (message?.role === "assistant" && message.provider === PROVIDER_ID) schedulePersistSharedSession(ctx2);
+    if (message?.role === "assistant" && isClaudeProvider(message.provider)) schedulePersistSharedSession(ctx2);
   });
   const markRebuild = (event) => {
     if (ctx().activeQuery) {

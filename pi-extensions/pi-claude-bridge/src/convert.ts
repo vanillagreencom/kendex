@@ -6,7 +6,12 @@ import type { ContentBlock, Message as SessionMessage } from "cc-session-io";
 import { pascalCase } from "change-case";
 import { isChildExecutedTool } from "./connectors.js";
 
-export const PROVIDER_ID = "claude-bridge";
+export const PROVIDER_ID = "pi-claude";
+export const LEGACY_PROVIDER_ID = "claude-bridge";
+
+export function isClaudeProvider(provider: unknown): boolean {
+	return provider === PROVIDER_ID || provider === LEGACY_PROVIDER_ID;
+}
 
 export const PI_TO_SDK_TOOL_NAME: Record<string, string> = {
 	read: "Read", write: "Write", edit: "Edit", bash: "Bash",
@@ -90,7 +95,7 @@ function assistantProvenancePrefix(msg: PiMessage): string | undefined {
 	const model = typeof (msg as any).model === "string" ? (msg as any).model : undefined;
 	const api = typeof (msg as any).api === "string" ? (msg as any).api : undefined;
 	if (!provider && !model && !api) return undefined;
-	if (provider === PROVIDER_ID || api === "anthropic") return undefined;
+	if (isClaudeProvider(provider) || api === "anthropic") return undefined;
 	return `[Prior Pi assistant response from ${provider ?? api ?? "unknown-provider"}${model ? `/${model}` : ""}]\n`;
 }
 
@@ -160,7 +165,7 @@ export function convertPiMessages(
 					blocks.push({ type: "text", text: block.text });
 				} else if (block.type === "thinking") {
 					const sig = block.thinkingSignature;
-					const isAnthropicProvider = msg.provider === PROVIDER_ID || msg.api === "anthropic";
+					const isAnthropicProvider = isClaudeProvider(msg.provider) || msg.api === "anthropic";
 					if (isAnthropicProvider && sig) {
 						blocks.push({ type: "thinking", thinking: block.thinking ?? "", signature: sig });
 					}

@@ -1,9 +1,18 @@
 import { type AssistantMessage, type AssistantMessageEventStream, type Context, type Model, type SimpleStreamOptions, type Tool } from "@earendil-works/pi-ai";
 import * as piAi from "@earendil-works/pi-ai";
-import { type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import {
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type ExtensionUIContext,
+} from "@earendil-works/pi-coding-agent";
 import { createSdkMcpServer, query, type EffortLevel, type SDKMessage, type SDKUserMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources";
-import { PROVIDER_ID, messageContentToText } from "./convert.js";
+import {
+	LEGACY_PROVIDER_ID,
+	PROVIDER_ID,
+	isClaudeProvider,
+	messageContentToText,
+} from "./convert.js";
 import { buildModels, fallbackModelForPrimaryModel, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
@@ -188,7 +197,7 @@ function noteFastModeDisabledReason(message: unknown, bridgeConfig: Config): voi
 	if (reason === lastFastModeDisabledNoticeReason) return;
 	lastFastModeDisabledNoticeReason = reason;
 	const text = FAST_MODE_DISABLED_REASON_TEXT[reason] ?? `unavailable (${reason})`;
-	safeNotify(`Claude bridge: fast mode is enabled in settings but Claude Code declined it — ${text}.`, "warning");
+	safeNotify(`Pi Claude: fast mode is enabled in settings but Claude Code declined it — ${text}.`, "warning");
 }
 
 function sdkTextFromMessage(message: SDKMessage): string | undefined {
@@ -524,7 +533,12 @@ const REASONING_TO_EFFORT: Record<string, EffortLevel> = {
 
 function normalizeEffortOverrideModelKey(value: string): string {
 	const key = value.trim().toLowerCase();
-	return key.startsWith(`${PROVIDER_ID}/`) ? key.slice(PROVIDER_ID.length + 1) : key;
+	for (const providerId of [PROVIDER_ID, LEGACY_PROVIDER_ID]) {
+		if (key.startsWith(`${providerId}/`)) {
+			return key.slice(providerId.length + 1);
+		}
+	}
+	return key;
 }
 
 export function resolveConfiguredEffort(
@@ -660,7 +674,7 @@ async function consumeQuery(
 						const extraUsageHint = openedExtraUsage
 							? "\n\nOpened Claude Code /extra-usage helper. Complete billing/admin flow in the browser, then retry the prompt."
 							: extraUsage
-								? "\n\nRun /claude-bridge:extra, or enable Allow extra usage helper in settings."
+								? "\n\nRun /pi-claude:extra, or enable Allow extra usage helper in settings."
 								: "";
 						ctx().turnOutput.errorMessage = `${errors}${extraUsageHint}`;
 						ctx().currentPiStream?.push({ type: "error", reason: "error", error: ctx().turnOutput });
@@ -695,7 +709,7 @@ async function consumeQuery(
 					debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
 					if (typeof fallbackModel === "string" && typeof originalModel === "string" && fallbackModelForPrimaryModel(originalModel) === fallbackModel) {
 						safeNotify(
-							`Claude bridge switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
+							`Pi Claude switched ${modelDisplayName(originalModel)} to ${modelDisplayName(fallbackModel)} after Claude Code safety fallback.`,
 							"info",
 						);
 					}
@@ -723,7 +737,7 @@ async function consumeQuery(
 						const launchedExtraUsage = isExtraUsageRequiredMessage(info) && launchExtraUsageHelperIfAllowed(cwd, bridgeConfig, reason);
 						emitRateLimitEvent({
 							model: model.id,
-							provider: PROVIDER_ID,
+							provider: model.provider,
 							rateLimitType,
 							reason,
 							resetAt,
@@ -807,7 +821,7 @@ function releaseProviderTokens(event: string): void {
 // its own streamSimple — the exact split-brain the tokens exist to prevent.
 // On a pre-0.81 host the extension declines loudly (once) instead of
 // registering wrongly through the legacy overload.
-let nativeProviderInstance: unknown;
+const nativeProviderInstances = new Map<string, unknown>();
 let notifiedNativeUnsupported = false;
 
 function applyProviderRegistration(trigger: string): void {
@@ -836,14 +850,35 @@ function applyProviderRegistration(trigger: string): void {
 	// subagent can never observe a registered provider without an owner.
 	g[ACTIVE_STREAM_SIMPLE_KEY] = streamClaudeAgentSdk;
 	try {
-		nativeProviderInstance ??= buildNativeProvider(
-			_piAi,
-			MODELS,
-			streamClaudeAgentSdk as (...args: unknown[]) => unknown,
-			process.env,
-			() => hasClaudeCredentials() || Boolean(resolveClaudeAccountRouter()),
+		const authProbe = () => hasClaudeCredentials() || Boolean(resolveClaudeAccountRouter());
+		const providerFor = (providerId: string, providerName: string): unknown => {
+			let provider = nativeProviderInstances.get(providerId);
+			if (!provider) {
+				provider = buildNativeProvider(
+					_piAi,
+					MODELS,
+					streamClaudeAgentSdk as (...args: unknown[]) => unknown,
+					process.env,
+					authProbe,
+					providerId,
+					providerName,
+				);
+				nativeProviderInstances.set(providerId, provider);
+			}
+			return provider;
+		};
+		// pi-claude is canonical. Keep the old id registered as a compatibility
+		// alias so saved sessions can resume while Ctrl+P/settings move cleanly.
+		(pi.registerProvider as (provider: unknown) => void)(
+			providerFor(PROVIDER_ID, "Pi Claude"),
 		);
-		(pi.registerProvider as (provider: unknown) => void)(nativeProviderInstance);
+		try {
+			(pi.registerProvider as (provider: unknown) => void)(
+				providerFor(LEGACY_PROVIDER_ID, "Pi Claude (legacy alias)"),
+			);
+		} catch (legacyError) {
+			debug(`${trigger}: legacy provider alias registration failed:`, legacyError);
+		}
 	} catch (err) {
 		// Self-heal: release ONLY the stream guard we just claimed so a later
 		// re-check retries cleanly. Keep PRIMARY_INSTANCE_KEY: releasing it would
@@ -1024,7 +1059,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			if (Number.isFinite(resetAtMs)) {
 				emitRateLimitEvent({
 					model: model.id,
-					provider: PROVIDER_ID,
+					provider: model.provider,
 					rateLimitType: rateLimitType ?? "all_accounts",
 					reason: message,
 					resetAt: new Date(resetAtMs).toISOString(),
@@ -1050,7 +1085,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		safeNotify(
 			account?.fallbackReason === "fable-quota"
 				? `Claude Fable subscription allowance is spent across every ready account; using ${modelDisplayName(queryModel.id)} without Extra Usage.`
-				: `Claude bridge switched to ${modelDisplayName(queryModel.id)}.`,
+				: `Pi Claude switched to ${modelDisplayName(queryModel.id)}.`,
 			"info",
 		);
 	}
@@ -1251,7 +1286,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 				emitRateLimitEvent({
 					idleMs,
 					model: queryModel.id,
-					provider: PROVIDER_ID,
+					provider: queryModel.provider,
 					rateLimitType: "stream_idle",
 					reason: "Claude Code stream idle timeout",
 					retryAfterMs: STREAM_IDLE_BACKOFF_HINT_MS,
@@ -1329,7 +1364,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			const resetAt = rateLimitResetFromInfo(info);
 			const resetAtMs = rateLimitResetMs(info);
 			emitRateLimitEvent({
-				model: queryModel.id, provider: PROVIDER_ID, rateLimitType: rateLimitTypeFromInfo(info),
+				model: queryModel.id, provider: queryModel.provider, rateLimitType: rateLimitTypeFromInfo(info),
 				reason: failure.message, resetAt,
 				...(Number.isFinite(resetAtMs) ? { resetAtMs } : {}),
 				source: "claude-bridge", status: "rejected",
@@ -1501,9 +1536,9 @@ async function tryOpenExtensionManagerSettings(ctx: { ui: ExtensionUIContext }):
 function showBridgeStatus(ctx: { ui: ExtensionUIContext; cwd?: string }): void {
 	const config = loadConfig(commandCwd(ctx));
 	ctx.ui.notify([
-		`Claude bridge: ${config.enabled === false ? "disabled" : "enabled"}`,
+		`Pi Claude: ${config.enabled === false ? "disabled" : "enabled"}`,
 		`Extra usage auto-helper: ${extraUsageAllowed(config) ? "on" : "off"} (settings)`,
-		`Use /claude-bridge:extra to run Claude Code /extra-usage now.`,
+		`Use /pi-claude:extra to run Claude Code /extra-usage now.`,
 	].join("\n"), "info");
 }
 
@@ -1619,20 +1654,20 @@ async function reportConnectorInventory(ctx: { ui: ExtensionUIContext; model?: M
 		: undefined;
 	const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(account?.configDir));
 	if (!credentials) {
-		ctx.ui.notify("Claude bridge: no Claude OAuth credentials found — cannot enumerate connectors.", "error");
+		ctx.ui.notify("Pi Claude: no Claude OAuth credentials found — cannot enumerate connectors.", "error");
 		return;
 	}
 	const inventory = await listAccountConnectors({ credentials });
 	if (!inventory.ok) {
-		ctx.ui.notify(`Claude bridge: connector enumeration failed — ${inventory.reason}`, "error");
+		ctx.ui.notify(`Pi Claude: connector enumeration failed — ${inventory.reason}`, "error");
 		return;
 	}
 	if (inventory.connectors.length === 0) {
-		ctx.ui.notify("Claude bridge: this account has no connectors installed.", "info");
+		ctx.ui.notify("Pi Claude: this account has no connectors installed.", "info");
 		return;
 	}
 	const names = inventory.connectors.map((c) => c.name).join(", ");
-	ctx.ui.notify(`Claude bridge: ${inventory.connectors.length} connector(s) installed — ${names}`, "info");
+	ctx.ui.notify(`Pi Claude: ${inventory.connectors.length} connector(s) installed — ${names}`, "info");
 }
 
 function registerBridgeCommands(pi: ExtensionAPI): void {
@@ -1659,22 +1694,38 @@ function registerBridgeCommands(pi: ExtensionAPI): void {
 		}
 	};
 
-	pi.registerCommand("claude-bridge", {
-		description: "Open Claude bridge settings/status",
-		handler: async (args: string, ctx) => {
-			if (args.trim()) ctx.ui.notify("Unknown /claude-bridge argument. Use /claude-bridge:extra to run Claude Code /extra-usage.", "warning");
-			if (await tryOpenExtensionManagerSettings(ctx)) return;
-			showBridgeStatus(ctx);
-		},
-	});
-	pi.registerCommand("claude-bridge:extra", {
-		description: "Run Claude Code /extra-usage through claude-bridge",
-		handler: async (_args: string, ctx) => runExtraUsage(ctx),
-	});
-	pi.registerCommand("claude-bridge:connectors", {
-		description: "List the Claude account's installed claude.ai connectors",
-		handler: async (_args: string, ctx) => reportConnectorInventory(ctx),
-	});
+	const openSettings = async (args: string, ctx: ExtensionCommandContext) => {
+		if (args.trim()) {
+			ctx.ui.notify(
+				"Unknown /pi-claude argument. Use /pi-claude:extra to run Claude Code /extra-usage.",
+				"warning",
+			);
+		}
+		if (await tryOpenExtensionManagerSettings(ctx)) return;
+		showBridgeStatus(ctx);
+	};
+	const reportConnectors = async (_args: string, ctx: ExtensionCommandContext) =>
+		reportConnectorInventory(ctx);
+	for (const name of ["pi-claude", "claude-bridge"]) {
+		pi.registerCommand(name, {
+			description: name === "pi-claude"
+				? "Open Pi Claude settings/status"
+				: "Legacy alias for /pi-claude",
+			handler: openSettings,
+		});
+		pi.registerCommand(`${name}:extra`, {
+			description: name === "pi-claude"
+				? "Run Claude Code /extra-usage through Pi Claude"
+				: "Legacy alias for /pi-claude:extra",
+			handler: async (_args: string, ctx) => runExtraUsage(ctx),
+		});
+		pi.registerCommand(`${name}:connectors`, {
+			description: name === "pi-claude"
+				? "List the Claude account's installed claude.ai connectors"
+				: "Legacy alias for /pi-claude:connectors",
+			handler: reportConnectors,
+		});
+	}
 }
 
 // --- Extension registration ---
@@ -1731,7 +1782,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("message_end", (event, ctx) => {
 		const message = (event as { message?: AssistantMessage }).message;
-		if (message?.role === "assistant" && message.provider === PROVIDER_ID) schedulePersistSharedSession(ctx);
+		if (message?.role === "assistant" && isClaudeProvider(message.provider)) schedulePersistSharedSession(ctx);
 	});
 
 	// pi /compact and session-tree navigation (rewind / fork-at-point /

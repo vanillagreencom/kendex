@@ -3,7 +3,7 @@
  * replacement for the credential-gated register/unregister state machine.
  * The provider registers unconditionally; these tests pin that its auth
  * check/resolve report configured-ness truthfully (that is what makes pi hide
- * unconfigured claude-bridge models), that credential probes run at CALL time
+ * unconfigured Pi Claude models), that credential probes run at CALL time
  * (login/logout between calls is seen), and that both stream entry points are
  * the Claude Code subprocess router.
  * Uses the real modules — no API calls, no extension activation.
@@ -67,14 +67,30 @@ describe("buildNativeProvider", () => {
 
 	it("builds a provider whose id, models, and stamped fields match the bridge contract", () => {
 		const provider = buildNativeProvider(piAi, MODELS, () => {}, {});
-		assert.equal(provider.id, "claude-bridge");
+		assert.equal(provider.id, "pi-claude");
 		const models = provider.getModels();
 		assert.equal(models.length, 1);
 		assert.equal(models[0].id, "claude-haiku-4-5");
 		// The legacy config path stamped these during composition; the native
 		// path must stamp them itself or downstream provider routing breaks.
-		assert.equal(models[0].provider, "claude-bridge");
+		assert.equal(models[0].provider, "pi-claude");
 		assert.equal(models[0].api, "claude-bridge");
+	});
+
+	it("can build the legacy provider alias without changing the internal bridge API", () => {
+		const provider = buildNativeProvider(
+			piAi,
+			[{ ...MODELS[0], provider: "anthropic" }],
+			() => {},
+			{},
+			() => true,
+			"claude-bridge",
+			"Pi Claude (legacy alias)",
+		);
+		assert.equal(provider.id, "claude-bridge");
+		assert.equal(provider.name, "Pi Claude (legacy alias)");
+		assert.equal(provider.getModels()[0].provider, "claude-bridge");
+		assert.equal(provider.getModels()[0].api, "claude-bridge");
 	});
 
 	it("reports unconfigured when no credential signal exists", { skip: onDarwin }, () => withTempConfigDir(async (dir) => {

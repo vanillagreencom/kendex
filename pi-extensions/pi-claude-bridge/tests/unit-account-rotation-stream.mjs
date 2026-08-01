@@ -13,7 +13,7 @@ const model = {
 	id: "claude-haiku-4-5",
 	name: "Claude Haiku",
 	api: "claude-bridge",
-	provider: "claude-bridge",
+	provider: "pi-claude",
 	baseUrl: "claude-bridge",
 	reasoning: true,
 	input: ["text", "image"],

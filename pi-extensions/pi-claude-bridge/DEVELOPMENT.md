@@ -67,9 +67,9 @@ The reciprocal `vstack.pi.claude-bridge.account-host.v1` service exposes a local
 ## Provider registration — native pi ≥0.81 provider API (adopted in 2.0)
 
 Since 2.0 the bridge registers a native `Provider` object (`native-provider.ts`) via
-`pi.registerProvider(provider)`: registration is UNCONDITIONAL (once primary), and the provider's
+`pi.registerProvider(provider)`: registration is UNCONDITIONAL (once primary) for canonical `pi-claude` and the saved-session compatibility alias `claude-bridge`; the provider's
 own `auth.apiKey.check()/resolve()` report configured-ness from the same existence-only credential
-probes as before (`auth-presence.ts`), so pi itself hides claude-bridge models while no Claude
+probes as before (`auth-presence.ts`), so pi itself hides both provider aliases while no Claude
 account is connected and shows them when one appears. The 1.x credential-gated
 register/unregister state machine (`decideRegistration`) is gone. **Hosts must embed pi ≥0.81**
 (peer range `>=0.81.0`); on an older host the extension declines loudly once
