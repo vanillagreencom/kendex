@@ -389,7 +389,7 @@ impl ProjectConfig {
 
         out = dedupe_agent_frontmatter_sections(&out);
 
-        if out != existing {
+        if !same_ignoring_trailing_newline(&out, &existing) {
             let _ = std::fs::write(&path, out);
         }
     }
@@ -788,7 +788,7 @@ pub fn merge_upstream_agent_skills(project_root: &Path, updates: &HashMap<String
     }
 
     out = ensure_value_section_entry_spacing(&out);
-    if out != content {
+    if !same_ignoring_trailing_newline(&out, &content) {
         let _ = std::fs::write(&path, out);
     }
 }
@@ -902,7 +902,7 @@ pub fn write_agent_skills(project_root: &Path, agent_skill_map: &HashMap<String,
         "[agent-skills]",
         &new_entries,
     ));
-    if out != existing {
+    if !same_ignoring_trailing_newline(&out, &existing) {
         let _ = std::fs::write(&path, out);
     }
 }
@@ -974,7 +974,7 @@ pub fn write_agent_frontmatter_defaults(
     }
 
     content = ensure_value_section_entry_spacing(&dedupe_agent_frontmatter_sections(&content));
-    if content != existing {
+    if !same_ignoring_trailing_newline(&content, &existing) {
         let _ = std::fs::write(path, content);
     }
 }
@@ -1598,7 +1598,7 @@ fn repair_project_config_structure(path: &Path) {
     out = sync_project_config_header(&out);
     out = ensure_launch_instructions_heading(&out);
     out = ensure_agent_frontmatter_scaffold(&out);
-    if out != existing {
+    if !same_ignoring_trailing_newline(&out, &existing) {
         let _ = std::fs::write(path, out);
     }
 }
@@ -2418,9 +2418,19 @@ fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
 
     // Only write if content actually changed to avoid bumping mtime,
     // which would make staleness checks flag everything as outdated.
-    if out != existing {
+    if !same_ignoring_trailing_newline(&out, &existing) {
         let _ = std::fs::write(path, out);
     }
+}
+
+/// True when the two contents differ at most by the presence of a single
+/// trailing newline. Refresh writers must skip the write in that case:
+/// consumers commit `vstack.toml` without a final newline, and a write whose
+/// only effect is normalizing that newline dirties their working tree on
+/// every refresh (vstack#987). A real content change still writes — and may
+/// normalize the newline along the way.
+fn same_ignoring_trailing_newline(a: &str, b: &str) -> bool {
+    a.strip_suffix('\n').unwrap_or(a) == b.strip_suffix('\n').unwrap_or(b)
 }
 
 /// Returns true if a name does NOT appear as a TOML key in the file.
@@ -3864,6 +3874,99 @@ command = \"./scripts/x.sh\"\n";
         assert!(!updated.contains("Installed skills (reference)"));
         assert!(!updated.contains("#   rust-tooling"));
         assert!(updated.contains("rust = \"\""));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refresh_skips_write_when_only_trailing_newline_differs() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_newline_only_skip_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+
+        let agents = vec!["rust".to_string()];
+        let skills = vec!["rust-tooling".to_string()];
+        create_project_config(&path, &agents, &skills);
+        // Stabilize through one full ensure pass so the only remaining
+        // difference we introduce is the missing final newline.
+        ensure_project_config(&dir, &agents, &skills);
+        let stable = std::fs::read_to_string(&path).unwrap();
+
+        let no_newline = stable.strip_suffix('\n').unwrap().to_string();
+        std::fs::write(&path, &no_newline).unwrap();
+        let mtime_before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        ensure_project_config(&dir, &agents, &skills);
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            after, no_newline,
+            "newline-only normalization must not touch the file"
+        );
+        let mtime_after = std::fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(mtime_before, mtime_after, "no write should have occurred");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refresh_skips_write_when_identical_with_trailing_newline() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_identical_skip_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+
+        let agents = vec!["rust".to_string()];
+        let skills = vec!["rust-tooling".to_string()];
+        create_project_config(&path, &agents, &skills);
+        ensure_project_config(&dir, &agents, &skills);
+        let stable = std::fs::read_to_string(&path).unwrap();
+        assert!(stable.ends_with('\n'));
+        let mtime_before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        ensure_project_config(&dir, &agents, &skills);
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after, stable, "identical content must not be rewritten");
+        let mtime_after = std::fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(mtime_before, mtime_after, "no write should have occurred");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refresh_still_writes_real_changes_to_no_newline_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_real_change_writes_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+
+        let agents = vec!["rust".to_string()];
+        let skills = vec!["rust-tooling".to_string()];
+        create_project_config(&path, &agents, &skills);
+        ensure_project_config(&dir, &agents, &skills);
+        let stable = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, stable.strip_suffix('\n').unwrap()).unwrap();
+
+        // A new skill is a real payload: the write must happen.
+        let skills_plus = vec!["rust-tooling".to_string(), "extra-skill".to_string()];
+        ensure_project_config(&dir, &agents, &skills_plus);
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("extra-skill"),
+            "new skill entry missing: {after}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
