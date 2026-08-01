@@ -16,6 +16,7 @@
 #   0 - CI complete and passing
 #   1 - CI failed, timed out with checks still pending, or a non-auth error
 #       (no checks registered, merge conflicts, repo/API failure)
+#   2 - usage error: unknown flag or non-integer argument (matches queue-wait)
 #   3 - GitHub auth/CLI error (matches approval-wait)
 #
 # JSON output (always when --json):
@@ -59,19 +60,65 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 
+print_usage() {
+  cat <<'USAGE'
+Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]
+
+  <PR#>          pull request number (required)
+  poll_interval  seconds between polls (default 15)
+  max_wait       total budget in seconds (default 600)
+  --json         emit the machine-readable result object on stdout
+USAGE
+}
+
 # --- arg parse (before auth so error paths can honor --json) ---
 JSON_OUTPUT=false
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -h|--help) print_usage; exit 0 ;;
     --json) JSON_OUTPUT=true; shift ;;
+    -*)
+      # An unrecognized flag must never fall through into a positional slot:
+      # under `set -u` it dies later as an unbound-variable abort naming a
+      # variable the caller never typed, and a backgrounded wrapper then exits
+      # 0 while the wait silently never happened (vstack#981).
+      echo "ci-wait: unknown option '$1'" >&2
+      print_usage >&2
+      exit 2
+      ;;
     *) POSITIONAL+=("$1"); shift ;;
   esac
 done
 
-PR_NUM="${POSITIONAL[0]:?Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]}"
+if [ "${#POSITIONAL[@]}" -lt 1 ]; then
+  echo "ci-wait: missing required <PR#> argument" >&2
+  print_usage >&2
+  exit 2
+fi
+
+PR_NUM="${POSITIONAL[0]}"
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
 MAX_WAIT="${POSITIONAL[2]:-600}"
+
+if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]] || [ "$PR_NUM" -lt 1 ]; then
+  echo "ci-wait: PR number must be a positive integer (got '$PR_NUM')" >&2
+  print_usage >&2
+  exit 2
+fi
+
+if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [ "$POLL_INTERVAL" -lt 1 ]; then
+  echo "ci-wait: poll_interval must be a positive integer (got '$POLL_INTERVAL')" >&2
+  print_usage >&2
+  exit 2
+fi
+
+if ! [[ "$MAX_WAIT" =~ ^[0-9]+$ ]] || [ "$MAX_WAIT" -lt 1 ]; then
+  echo "ci-wait: max_wait must be a positive integer (got '$MAX_WAIT')" >&2
+  print_usage >&2
+  exit 2
+fi
+
 START_TIME="$(date +%s)"
 elapsed=0
 
