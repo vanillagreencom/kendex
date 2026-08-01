@@ -19,6 +19,8 @@ Tool calls in a bridge turn normally run in one direction: Pi hands its tool set
 
 So a `tool_use` under `mcp__claude_ai_` is **never mirrored into the Pi stream**: no `toolCall` block, no `toolUse` turn boundary, no entry in the turn's expected-result tracking (`isChildExecutedTool` in `src/connectors.ts`; the three emission sites in `src/assistant-stream.ts`). The child executes the call itself and keeps streaming, so the whole exchange lands in one Pi assistant message.
 
+The same never-mirror rule covers a second, smaller class: Claude Code's own in-process meta-tools (`ToolSearch`, `ListMcpResources`, `ReadMcpResource`, `ScheduleWakeup` — `isChildInternalTool`, matched by **exact name**, never by prefix). They surface when connectors are enabled, because connector tools are deferred behind `ToolSearch`. Mirroring one made Pi dispatch a tool it does not have and deliver an error result for an id no MCP handler ever claimed; the result queued in `pendingResults` until the reaper dropped it — a "dropped 1 tool result(s) whose handler never matched (ToolSearch)" warning and a phantom failed tool call per discovery, plus a spurious pi-turn boundary (vstack#980). Unlike connectors, these calls are tool plumbing rather than account-data access, so they are also excluded from the connector-call audit below; connector-only concerns key on the narrow `isConnectorTool`.
+
 Mirroring one used to make Pi's agent loop look the name up in `context.tools`, miss, and write a synthetic `Tool <name> not found` error result into the transcript — for a call that had **succeeded**, next to an answer built from its real payload. That reads as a fabricating model, and a rebuild (`syncSharedSession`) projected the false result back into the child's session, turning a wrong mirror into a wrong conversation of record. Found in two host apps at once (drovr#311, memsira#320).
 
 Two places used to hand the model a SECOND name for a connector tool, and a second name is a name that can be wrong:
@@ -26,7 +28,7 @@ Two places used to hand the model a SECOND name for a connector tool, and a seco
 - `mapPiToolNameToSdk` PascalCased anything it could not map, so a connector call projected back into the child's session became `McpClaudeAiSlackSlackSearchChannels`. The model imitated that alias on the next turn and got a real `Tool ... not found` from the MCP dispatcher before retrying the canonical name — one wasted round-trip per affected call. Connector names now pass through unchanged; the fix above stops them reaching this path at all, but LEGACY Pi history recorded before it still carries them.
 - `resolveMcpTools` re-offered every `context.tools` entry under the bridge's own MCP prefix, including one sitting on the connector namespace. Such a tool is uncallable anyway (a `tool_use` there is treated as child-executed and never handed to Pi), so it is now filtered out and the two halves agree end to end.
 
-The classifier is namespace-based on purpose. "Any name Pi cannot resolve" would also swallow a genuine Pi↔child tool-name mismatch, which should stay a loud dispatcher error.
+The classifier is namespace-based (connectors) plus an exact-name set (child built-ins) on purpose. "Any name Pi cannot resolve" would also swallow a genuine Pi↔child tool-name mismatch, which should stay a loud dispatcher error.
 
 Two consequences worth knowing:
 
@@ -35,7 +37,7 @@ Two consequences worth knowing:
 
 ### The audit trail
 
-What the transcript *can* carry is a record that is not content. Each child-executed call appends a session `CustomEntry` of type `claude-bridge-connector-call` (`src/connector-audit.ts`), which pi documents as *"Does NOT participate in LLM context (ignored by `buildSessionContext`)"*: it is never a content block, so the agent loop cannot dispatch it, and `convertPiMessages` reads messages rather than entries, so it is never projected back into the child's session. **Never use `CustomMessageEntry`** for this — the sibling type DOES enter context, which is the whole bug again.
+What the transcript *can* carry is a record that is not content. Each child-executed **connector** call (never a child-internal built-in) appends a session `CustomEntry` of type `claude-bridge-connector-call` (`src/connector-audit.ts`), which pi documents as *"Does NOT participate in LLM context (ignored by `buildSessionContext`)"*: it is never a content block, so the agent loop cannot dispatch it, and `convertPiMessages` reads messages rather than entries, so it is never projected back into the child's session. **Never use `CustomMessageEntry`** for this — the sibling type DOES enter context, which is the whole bug again.
 
 Each record is `{ name, toolUseId, outcome, byteSize?, childSessionId?, reason? }` — enough to pair it to the child's own transcript by `tool_use_id`, and no payload.
 

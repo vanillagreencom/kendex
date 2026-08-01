@@ -6,7 +6,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { noteChildExecutedToolResults, processAssistantMessage, processStreamEvent } from "../src/index.ts";
-import { isChildExecutedTool } from "../src/connectors.ts";
+import { isChildExecutedTool, isChildInternalTool, isConnectorTool } from "../src/connectors.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
 
 const model = {
@@ -39,12 +39,31 @@ describe("child-executed tool classification", () => {
 		assert.equal(isChildExecutedTool("mcp__claude_ai_Some_Org_Thing__whatever"), true);
 	});
 
+	it("claims Claude Code's in-process meta-tools by exact name (vstack#980)", () => {
+		for (const name of ["ToolSearch", "ListMcpResources", "ReadMcpResource", "ScheduleWakeup"]) {
+			assert.equal(isChildExecutedTool(name), true, name);
+			assert.equal(isChildInternalTool(name), true, name);
+			// A child built-in is NOT a connector: it must stay out of every
+			// connector-only path (audit trail, write classification).
+			assert.equal(isConnectorTool(name), false, name);
+		}
+		assert.equal(isConnectorTool(CONNECTOR_TOOL), true);
+		assert.equal(isChildInternalTool(CONNECTOR_TOOL), false);
+	});
+
 	it("claims nothing else — a Pi tool mismatch must still surface as a dispatcher error", () => {
 		assert.equal(isChildExecutedTool("bash"), false);
 		assert.equal(isChildExecutedTool("mcp__custom-tools__read"), false);
 		// A different MCP server is not a claude.ai connector.
 		assert.equal(isChildExecutedTool("mcp__claude_code_docs__search"), false);
 		assert.equal(isChildExecutedTool(undefined), false);
+	});
+
+	it("matches child-internal names exactly, never as a prefix, suffix, or case variant", () => {
+		for (const name of ["ToolSearchX", "mytoolsearch", "toolsearch", "XToolSearch", "ToolSearch2", "listmcpresources"]) {
+			assert.equal(isChildExecutedTool(name), false, name);
+			assert.equal(isChildInternalTool(name), false, name);
+		}
 	});
 });
 
@@ -186,6 +205,125 @@ describe("child-executed tools are never mirrored as Pi tool calls", () => {
 		processStreamEvent(streamEvent({ type: "message_stop" }), new Map(), model);
 		assert.equal(c.currentPiStream, null, "message_stop ends the tool-use turn");
 		assert.equal(c.scheduledToolUseEnd, null, "grace timer disarmed at turn end");
+	});
+
+	it("still enters a streamed connector call into the connector-call audit", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processStreamEvent(streamEvent({
+			type: "content_block_start",
+			index: 0,
+			content_block: { type: "tool_use", id: "toolu_conn", name: CONNECTOR_TOOL, input: {} },
+		}), new Map(), model);
+
+		assert.equal(c.connectorCallAudit.has("toolu_conn"), true, "a connector call is auditable");
+		assert.equal(c.connectorCallAudit.get("toolu_conn").name, CONNECTOR_TOOL);
+	});
+
+	it("skips a streamed ToolSearch without mirroring, queuing, or auditing it (vstack#980)", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		const events = installFakeStream();
+
+		processStreamEvent(streamEvent({
+			type: "content_block_start",
+			index: 0,
+			content_block: { type: "tool_use", id: "toolu_ts", name: "ToolSearch", input: {} },
+		}), new Map(), model);
+		processStreamEvent(streamEvent({
+			type: "content_block_delta",
+			index: 0,
+			delta: { type: "input_json_delta", partial_json: "{\"query\":\"select:WebFetch\"}" },
+		}), new Map(), model);
+		processStreamEvent(streamEvent({ type: "content_block_stop", index: 0 }), new Map(), model);
+
+		assert.equal(c.turnBlocks.length, 0, "ToolSearch must not become a Pi content block");
+		assert.equal(c.turnSawToolCall, false, "ToolSearch is not a Pi turn boundary");
+		assert.deepEqual(c.turnToolCallIds, [], "Pi owes no result, so nothing can queue in pendingResults");
+		assert.equal(c.pendingResults.size, 0);
+		assert.equal(c.currentPiStream !== null, true, "the Pi turn must stay open");
+		assert.deepEqual(events.map((e) => e.type), ["start"], "the deltas were skipped, not streamed");
+		assert.equal(c.childExecutedStreamIndexes.has(0), true, "the block's stream index is claimed for skipping");
+		// A built-in is tool plumbing, not account-data access: no audit entry,
+		// and no result recognition needed.
+		assert.equal(c.connectorCallAudit.size, 0);
+		assert.equal(c.childExecutedToolCalls.size, 0);
+	});
+
+	it("does not end the turn on a message_stop that only saw a ToolSearch call", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processStreamEvent(streamEvent({
+			type: "content_block_start",
+			index: 0,
+			content_block: { type: "tool_use", id: "toolu_ts", name: "ToolSearch", input: {} },
+		}), new Map(), model);
+		processStreamEvent(streamEvent({ type: "message_stop" }), new Map(), model);
+
+		assert.equal(c.currentPiStream !== null, true, "ending here would be a spurious pi-turn boundary");
+	});
+
+	it("skips a ToolSearch tool_use on the assistant-boundary path without ending the turn", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+		c.turnSawStreamEvent = true;
+
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				content: [{ type: "tool_use", id: "toolu_ts", name: "ToolSearch", input: { query: "select:WebFetch" } }],
+			},
+		}, model, new Map());
+
+		assert.equal(c.turnBlocks.length, 0);
+		assert.equal(c.turnSawToolCall, false);
+		assert.equal(c.currentPiStream !== null, true, "no Pi tool call means no turn boundary");
+		assert.equal(c.connectorCallAudit.size, 0);
+		assert.equal(c.childExecutedToolCalls.size, 0);
+	});
+
+	it("skips a ToolSearch tool_use on the no-stream-events fallback path", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				content: [
+					{ type: "text", text: "loading a tool" },
+					{ type: "tool_use", id: "toolu_ts", name: "ToolSearch", input: { query: "select:WebFetch" } },
+				],
+			},
+		}, model, new Map());
+
+		assert.deepEqual(c.turnBlocks.map((b) => b.type), ["text"]);
+		assert.equal(c.turnSawToolCall, false);
+		assert.equal(c.currentPiStream !== null, true);
+		assert.equal(c.connectorCallAudit.size, 0);
+	});
+
+	it("still mirrors a Pi tool coincidentally named like a child built-in", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+		c.turnSawStreamEvent = true;
+
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				content: [{ type: "tool_use", id: "toolu_x", name: "mcp__custom-tools__ToolSearchX", input: {} }],
+			},
+		}, model, new Map([["mcp__custom-tools__ToolSearchX", "ToolSearchX"]]));
+
+		assert.equal(c.turnBlocks.length, 1, "an exact-name miss stays a real Pi tool call");
+		assert.equal(c.turnBlocks[0].name, "ToolSearchX");
+		assert.equal(c.turnSawToolCall, true);
 	});
 });
 
@@ -351,6 +489,25 @@ describe("child-executed tool results", () => {
 		});
 
 		assert.equal(c.pendingResults.size, 0);
+	});
+
+	it("ignores a ToolSearch result even when a connector call is in flight", () => {
+		// The connector call keeps result recognition armed, but the built-in's
+		// own result must not be recognized or audited — its id was never noted.
+		const c = ctx();
+		c.resetTurnState(model);
+		c.noteChildExecutedToolCall("toolu_conn", CONNECTOR_TOOL, 0);
+		c.noteChildExecutedToolCall("toolu_ts", "ToolSearch", 1);
+
+		noteChildExecutedToolResults({
+			type: "user",
+			message: { content: [{ type: "tool_result", tool_use_id: "toolu_ts", content: "loaded 1 tool" }] },
+		});
+
+		assert.equal(c.childExecutedToolCalls.has("toolu_ts"), false);
+		assert.equal(c.connectorCallAudit.has("toolu_ts"), false);
+		assert.equal(c.connectorCallAudit.has("toolu_conn"), true, "the connector call stays auditable");
+		assert.equal(c.childExecutedStreamIndexes.has(1), true, "the built-in's stream index is still skipped");
 	});
 
 	it("tolerates a plain user echo with no tool results", () => {

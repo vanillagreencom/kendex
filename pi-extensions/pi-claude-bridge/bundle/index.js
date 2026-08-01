@@ -27579,11 +27579,18 @@ var CONNECTOR_WRITE_TOOLS = [
   `${CONNECTOR_NS_ATLASSIAN}createCompassComponentRelationship`,
   `${CONNECTOR_NS_ATLASSIAN}createCompassCustomFieldDefinition`
 ];
-function isChildExecutedTool(name) {
+function isConnectorTool(name) {
   return typeof name === "string" && name.startsWith(CONNECTOR_NS_PREFIX2);
 }
+var CHILD_INTERNAL_TOOLS = /* @__PURE__ */ new Set(["ToolSearch", "ListMcpResources", "ReadMcpResource", "ScheduleWakeup"]);
+function isChildInternalTool(name) {
+  return typeof name === "string" && CHILD_INTERNAL_TOOLS.has(name);
+}
+function isChildExecutedTool(name) {
+  return isConnectorTool(name) || isChildInternalTool(name);
+}
 function isConnectorWriteTool(name) {
-  if (!name.startsWith(CONNECTOR_NS_PREFIX2)) return false;
+  if (!isConnectorTool(name)) return false;
   const sep3 = name.indexOf("__", CONNECTOR_NS_PREFIX2.length);
   if (sep3 <= CONNECTOR_NS_PREFIX2.length) return true;
   const server = name.slice(CONNECTOR_NS_PREFIX2.length, sep3);
@@ -27610,8 +27617,9 @@ function connectorWriteDenyHook() {
   return async (input) => {
     try {
       if (input.hook_event_name !== "PreToolUse") return { continue: true };
+      if (typeof input.tool_name !== "string") return connectorWriteDenyOutput("<unknown>");
       if (!isConnectorWriteTool(input.tool_name)) return { continue: true };
-      return connectorWriteDenyOutput(String(input.tool_name));
+      return connectorWriteDenyOutput(input.tool_name);
     } catch {
       const toolName = typeof input?.tool_name === "string" ? input.tool_name : "<unknown>";
       return connectorWriteDenyOutput(toolName);
@@ -28022,12 +28030,13 @@ var QueryContext = class {
    *  this is the deadlock backstop for streams that go silent instead. Managed
    *  by schedule/cancelToolUseTurnEnd in assistant-stream.ts. */
   scheduledToolUseEnd = null;
-  // Tool calls the CHILD executes itself (claude.ai connectors — see
-  // isChildExecutedTool). Deliberately NOT in turnToolCalls/turnToolCallIds:
-  // those track calls Pi owes a result for, and Pi owes nothing here. Kept only
-  // so the child's real result can be recognized when it comes back on the SDK's
-  // `user` message, and so the streamed block's deltas can be skipped silently
-  // instead of logging as "unmatched" (which reads like a bug).
+  // Tool calls the CHILD executes itself (see isChildExecutedTool).
+  // Deliberately NOT in turnToolCalls/turnToolCallIds: those track calls Pi
+  // owes a result for, and Pi owes nothing here. CONNECTORS ONLY — kept so the
+  // child's real result can be recognized when it comes back on the SDK's
+  // `user` message and audited. A child-internal built-in (ToolSearch et al.)
+  // never enters this map: its result needs no recognition and no audit, only
+  // its streamed deltas need skipping (childExecutedStreamIndexes below).
   /** tool_use id → raw SDK tool name. */
   childExecutedToolCalls = /* @__PURE__ */ new Map();
   /**
@@ -28141,9 +28150,13 @@ var QueryContext = class {
     this.childExecutedStreamIndexes.clear();
   }
   /** Note a tool_use the child runs itself. `streamIndex` is present only on the
-   *  streamed path, where later deltas/stops for that block must be skipped. */
+   *  streamed path, where later deltas/stops for that block must be skipped —
+   *  that skip applies to every child-executed call. Result recognition and the
+   *  connector-call audit apply to CONNECTORS only: a child-internal built-in
+   *  (ToolSearch et al.) is tool plumbing, not account-data access, so nothing
+   *  about it belongs in the audit trail and no result needs matching. */
   noteChildExecutedToolCall(id, rawName, streamIndex) {
-    if (id) {
+    if (id && isConnectorTool(rawName)) {
       this.childExecutedToolCalls.set(id, rawName);
       if (!this.connectorCallAudit.has(id)) {
         this.connectorCallAudit.set(id, {
@@ -46037,6 +46050,8 @@ export {
   formatAllowedRateLimitWarning,
   formatResetTimestamp,
   isChildExecutedTool,
+  isChildInternalTool,
+  isConnectorTool,
   isConnectorWriteTool,
   isExtraUsageRequiredMessage,
   isUsageLimitMessage,

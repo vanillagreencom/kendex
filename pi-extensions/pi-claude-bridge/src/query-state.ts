@@ -7,6 +7,7 @@
 // Extracted from index.ts so tests can import without activating the extension.
 
 import type { AssistantMessage, AssistantMessageEventStream, Model } from "@earendil-works/pi-ai";
+import { isConnectorTool } from "./connectors.js";
 import type { McpResult } from "./extract-tool-results.js";
 
 export interface PendingToolCall {
@@ -174,12 +175,13 @@ export class QueryContext {
 	 *  by schedule/cancelToolUseTurnEnd in assistant-stream.ts. */
 	scheduledToolUseEnd: { stream: unknown; timer: ReturnType<typeof setTimeout> } | null = null;
 
-	// Tool calls the CHILD executes itself (claude.ai connectors — see
-	// isChildExecutedTool). Deliberately NOT in turnToolCalls/turnToolCallIds:
-	// those track calls Pi owes a result for, and Pi owes nothing here. Kept only
-	// so the child's real result can be recognized when it comes back on the SDK's
-	// `user` message, and so the streamed block's deltas can be skipped silently
-	// instead of logging as "unmatched" (which reads like a bug).
+	// Tool calls the CHILD executes itself (see isChildExecutedTool).
+	// Deliberately NOT in turnToolCalls/turnToolCallIds: those track calls Pi
+	// owes a result for, and Pi owes nothing here. CONNECTORS ONLY — kept so the
+	// child's real result can be recognized when it comes back on the SDK's
+	// `user` message and audited. A child-internal built-in (ToolSearch et al.)
+	// never enters this map: its result needs no recognition and no audit, only
+	// its streamed deltas need skipping (childExecutedStreamIndexes below).
 	/** tool_use id → raw SDK tool name. */
 	childExecutedToolCalls = new Map<string, string>();
 	/**
@@ -297,9 +299,13 @@ export class QueryContext {
 	}
 
 	/** Note a tool_use the child runs itself. `streamIndex` is present only on the
-	 *  streamed path, where later deltas/stops for that block must be skipped. */
+	 *  streamed path, where later deltas/stops for that block must be skipped —
+	 *  that skip applies to every child-executed call. Result recognition and the
+	 *  connector-call audit apply to CONNECTORS only: a child-internal built-in
+	 *  (ToolSearch et al.) is tool plumbing, not account-data access, so nothing
+	 *  about it belongs in the audit trail and no result needs matching. */
 	noteChildExecutedToolCall(id: string | undefined, rawName: string, streamIndex?: number): void {
-		if (id) {
+		if (id && isConnectorTool(rawName)) {
 			this.childExecutedToolCalls.set(id, rawName);
 			// Both emission paths can see the same call (streamed block, then the
 			// SDK's completed copy), so never overwrite an existing audit state —

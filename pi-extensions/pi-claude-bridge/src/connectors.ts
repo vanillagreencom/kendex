@@ -216,6 +216,50 @@ export const CONNECTOR_WRITE_TOOLS = [
 ];
 
 /**
+ * True for a claude.ai connector tool — the CHILD's own cloud MCP servers,
+ * attached to the authenticated account and reachable only from inside that
+ * process (`mcp__claude_ai_<Server>__<tool>`).
+ *
+ * The test is the NAMESPACE, deliberately, not "does this name resolve to a Pi
+ * tool". Every claude.ai connector server lives under `mcp__claude_ai_`, and
+ * that is the only tool class the bridge knowingly delegates. A broader
+ * "unresolvable ⇒ delegated" rule would also swallow a genuine tool-name
+ * mismatch between Pi and the child, which SHOULD still surface as a loud
+ * dispatcher error.
+ *
+ * This is the CONNECTOR test: it gates connector-only concerns (the
+ * connector-call audit, write classification). For the broader "the child runs
+ * this itself, never mirror it" question, use `isChildExecutedTool`.
+ */
+export function isConnectorTool(name: string | undefined): boolean {
+	return typeof name === "string" && name.startsWith(CONNECTOR_NS_PREFIX);
+}
+
+// Claude Code built-in meta-tools the child resolves ENTIRELY in-process:
+// deferred-tool discovery and MCP-resource enumeration. They surface in a
+// bridge stream when connectors are enabled (CONNECTOR_DISCOVERY_TOOLS
+// un-blocks the first three so deferred connector tools are discoverable), but
+// they are not connector calls and Pi cannot run them. Matched EXACTLY, never
+// by prefix or substring: a Pi tool that merely resembles one of these names
+// is a Pi tool, and a mismatch on it must still surface as a dispatcher error.
+const CHILD_INTERNAL_TOOLS = new Set(["ToolSearch", "ListMcpResources", "ReadMcpResource", "ScheduleWakeup"]);
+
+/**
+ * True for a Claude Code built-in meta-tool the child resolves in-process.
+ *
+ * Mirroring one into the Pi stream (vstack#980) made Pi's agent loop dispatch a
+ * tool it does not have and deliver an error result for an id no MCP handler
+ * ever claimed. The result queued in `pendingResults` until the reaper dropped
+ * it — one "dropped 1 tool result(s) whose handler never matched (ToolSearch)"
+ * warning and one phantom failed tool call per discovery, plus a spurious
+ * pi-turn boundary. These calls also never enter the connector-call audit:
+ * that trail records account-data access, and tool discovery is not that.
+ */
+export function isChildInternalTool(name: string | undefined): boolean {
+	return typeof name === "string" && CHILD_INTERNAL_TOOLS.has(name);
+}
+
+/**
  * True for a tool that the `claude` CHILD executes itself, so Pi must never be
  * asked to dispatch it.
  *
@@ -226,32 +270,29 @@ export const CONNECTOR_WRITE_TOOLS = [
  * it mirrors the call into the Pi stream, ends the Pi turn with `toolUse`, and
  * the MCP handler blocks until Pi delivers the result.
  *
- * claude.ai connectors run the other way. They are the CHILD's own MCP servers,
- * attached to the authenticated account and reachable only from inside that
- * process. Pi has never heard of them. Mirroring one into the Pi stream anyway
- * made Pi's agent loop look the name up in `context.tools`, miss, and write a
- * synthetic `Tool <name> not found` error result into the transcript — while the
- * child went on and executed the real call. The Pi transcript then RECORDED A
- * FAILURE FOR A CALL THAT SUCCEEDED, next to an answer built from the real
- * payload, so the model's correct answer read as a fabrication (drovr#311,
- * memsira#320). The false result is also projected back into the child's session
- * on a rebuild (`syncSharedSession`), which is how a lie in a mirror becomes a
- * lie in the conversation of record.
+ * Two tool classes run the other way, and both must stay un-mirrored:
  *
- * The test is the NAMESPACE, deliberately, not "does this name resolve to a Pi
- * tool". Every claude.ai connector server lives under `mcp__claude_ai_`, and
- * that is the only tool class the bridge knowingly delegates. A broader
- * "unresolvable ⇒ delegated" rule would also swallow a genuine tool-name
- * mismatch between Pi and the child, which SHOULD still surface as a loud
- * dispatcher error.
+ * 1. claude.ai connectors (`isConnectorTool`). Pi has never heard of them.
+ *    Mirroring one made Pi's agent loop look the name up in `context.tools`,
+ *    miss, and write a synthetic `Tool <name> not found` error result into the
+ *    transcript — while the child went on and executed the real call. The Pi
+ *    transcript then RECORDED A FAILURE FOR A CALL THAT SUCCEEDED, next to an
+ *    answer built from the real payload, so the model's correct answer read as
+ *    a fabrication (drovr#311, memsira#320). The false result is also projected
+ *    back into the child's session on a rebuild (`syncSharedSession`), which is
+ *    how a lie in a mirror becomes a lie in the conversation of record.
  *
- * Takes the RAW SDK tool name, before `mapToolName` — connector names have no
- * Pi-side counterpart, so mapping them is meaningless. Accepts a missing name
- * rather than asserting one: this decides whether Pi is allowed to dispatch a
- * block, and a nameless block is not a connector, so it answers `false`.
+ * 2. Claude Code's own in-process meta-tools (`isChildInternalTool`), which the
+ *    child resolves without any dispatcher at all (vstack#980).
+ *
+ * Takes the RAW SDK tool name, before `mapToolName` — child-executed names have
+ * no Pi-side counterpart, so mapping them is meaningless. Accepts a missing
+ * name rather than asserting one: this decides whether Pi is allowed to
+ * dispatch a block, and a nameless block is neither a connector nor a child
+ * built-in, so it answers `false`.
  */
 export function isChildExecutedTool(name: string | undefined): boolean {
-	return typeof name === "string" && name.startsWith(CONNECTOR_NS_PREFIX);
+	return isConnectorTool(name) || isChildInternalTool(name);
 }
 
 // Classify a connector tool name as a WRITE (mutating) tool. FAIL CLOSED, twice:
@@ -277,7 +318,7 @@ export function isChildExecutedTool(name: string | undefined): boolean {
 // servers) are never connector writes → false. Used by connectorWriteDenyHook and
 // by callers (e.g. the one-shot write executor) that enumerate live connector tools.
 export function isConnectorWriteTool(name: string): boolean {
-	if (!name.startsWith(CONNECTOR_NS_PREFIX)) return false;
+	if (!isConnectorTool(name)) return false;
 	// First `__` after the prefix ends the server segment. First (not last) so a
 	// server name containing `__` leaves the extra segment in `tool`, which then
 	// fails the read-prefix test — ambiguity resolves to write.
@@ -351,8 +392,13 @@ export function connectorWriteDenyHook(): HookCallback {
 		// whatever gets added here later.
 		try {
 			if (input.hook_event_name !== "PreToolUse") return { continue: true };
+			// A non-string tool name cannot be classified, and this hook fails
+			// CLOSED: deny it rather than let an unclassifiable call proceed.
+			// (Before isConnectorTool tolerated non-strings, `startsWith` threw
+			// here and the catch denied — this keeps that contract explicit.)
+			if (typeof input.tool_name !== "string") return connectorWriteDenyOutput("<unknown>");
 			if (!isConnectorWriteTool(input.tool_name)) return { continue: true };
-			return connectorWriteDenyOutput(String(input.tool_name));
+			return connectorWriteDenyOutput(input.tool_name);
 		} catch {
 			const toolName = typeof (input as { tool_name?: unknown })?.tool_name === "string"
 				? (input as { tool_name: string }).tool_name
