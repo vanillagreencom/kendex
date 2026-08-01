@@ -463,10 +463,20 @@ run_target_cli() {
 preserve_cli_failure_and_fail() {
   local reason="$1"          # human-readable cause (e.g. "exited with code 2")
   local partial="${2:-}"     # captured stdout, may be empty
-  local sidecar cause=""
+  local sidecar cause="" cause_source=""
 
   # The CLI's own stderr is the authoritative cause (e.g. the quota message).
-  [[ -s "$STDERR_TMP" ]] && cause=$(head -20 "$STDERR_TMP")
+  # Some CLIs report the failure on stdout with an empty stderr — the Claude
+  # quota-limit message is the concrete case — which left the cause block empty
+  # and made a capped lane read as broken. Fall back to the tail of captured
+  # stdout so the reason surfaces whichever stream carried it.
+  if [[ -s "$STDERR_TMP" ]]; then
+    cause=$(head -20 "$STDERR_TMP")
+    cause_source="${TARGET_CLI} stderr"
+  elif [[ -n "$partial" ]]; then
+    cause=$(printf '%s\n' "$partial" | tail -20)
+    cause_source="${TARGET_CLI} stdout"
+  fi
 
   if [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p "$(dirname "$OUTPUT_PATH")"
@@ -475,15 +485,15 @@ preserve_cli_failure_and_fail() {
     sidecar=$(mktemp)
   fi
   jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
-        --arg cause "$cause" --arg stdout "$partial" \
-    '{error: "external CLI failed before producing a review", target: $target, reason: $reason, cause: $cause, partial_stdout: $stdout}' \
+        --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
+    '{error: "external CLI failed before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout}' \
     > "$sidecar"
 
   jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
     '{error: "\($target) \($reason) — refusing to write a review artifact", response: $sidecar}' >&2
   echo "→ external CLI failed: $TARGET_CLI $reason" >&2
   if [[ -n "$cause" ]]; then
-    echo "--- cause (${TARGET_CLI} stderr) ---" >&2
+    echo "--- cause (${cause_source}) ---" >&2
     printf '%s\n' "$cause" >&2
   fi
   echo "→ failed invocation preserved: $sidecar" >&2

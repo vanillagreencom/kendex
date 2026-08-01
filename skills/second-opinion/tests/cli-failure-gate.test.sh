@@ -221,5 +221,23 @@ assert_eq "$rc5" "1" "quick-mode CLI failure keeps the generic exit 1"
 assert_file_absent "$s5_out.failed.json" "quick mode writes no .failed.json (review/audit-only contract)"
 
 echo
+
+# --- Scenario 6: failure reported on stdout with empty stderr ------------------
+# The Claude CLI prints its quota-limit message to stdout and exits non-zero with
+# an empty stderr. The cause block used to read only stderr, so it came out empty
+# and a capped lane was indistinguishable from a broken one. The cause now falls
+# back to the stdout tail, tagged as the stdout source.
+echo "=== scenario 6: non-zero exit, cause on stdout, empty stderr names the stdout cause ==="
+s6_out="$TMP_ROOT/out/review6.json"
+s6_err="$TMP_ROOT/s6.stderr"
+rc6=0
+STUB_RC=1 STUB_STDOUT="$QUOTA_ERR" STUB_STDERR="" run_review "$s6_out" "$s6_err" || rc6=$?
+assert_eq "$rc6" "5" "stdout-reported failure yields EXIT_CLI_FAILED (5)"
+assert_file_exists "$s6_out.failed.json" "stdout-reported failure preserves <output>.failed.json"
+assert_eq "$(jq -r '.cause_source' "$s6_out.failed.json")" "claude stdout" "sidecar tags the cause as the stdout source"
+assert_file_contains "$s6_out.failed.json" "hit your usage limit" "sidecar cause is populated from stdout, not empty"
+assert_file_contains "$s6_err" "hit your usage limit" "stderr surfaces the stdout-reported cause, not a bare code"
+assert_file_contains "$s6_err" "cause (claude stdout)" "printed cause block names the stdout source"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

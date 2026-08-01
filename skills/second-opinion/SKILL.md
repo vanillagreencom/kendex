@@ -107,7 +107,7 @@ On script failure (non-zero exit), stderr contains a JSON error object:
 | 1 | CLI not found, missing prompt, invalid JSON response | Report error to user, suggest checking CLI installation |
 | 3 | `review`: derived diff scope is empty or invalid — nothing to review | Report; verify the worktree has committed/pending changes or pass an explicit `--range` |
 | 4 | `review`/`audit`: model self-reported no review was performed (`qa_metadata.review_performed: false`), omitted the required `qa_metadata` object, or stayed structurally incomplete after the one-shot retry (missing `verdict` or the `blockers`/`suggestions`/`questions` arrays) | Report; the response is preserved as `<output>.noreview.json` / `<output>.incomplete.json` — never treat it as a pass |
-| 5 | `review`/`audit`: the external CLI never produced a review — non-zero exit (quota, auth, network) or empty response on a zero exit. Distinct from 4: 4 is a model that answered unusably, 5 is a lane that never answered | Report; partial output is preserved as `<output>.failed.json` and the CLI's own error text is echoed on stderr |
+| 5 | `review`/`audit`: the external CLI never produced a review — non-zero exit (quota, auth, network) or empty response on a zero exit. Distinct from 4: 4 is a model that answered unusably, 5 is a lane that never answered | Report; partial output is preserved as `<output>.failed.json` and the CLI's own error text — from whichever stream it used, stderr or stdout — is echoed on stderr |
 | 124 | Timeout (default 300s) | Report timeout, suggest `--timeout` increase or narrower `--range` |
 
 If the script fails during the orch `review-pr` or `submit-pr` (local pre-PR review) workflows, **continue** — external review is advisory.
