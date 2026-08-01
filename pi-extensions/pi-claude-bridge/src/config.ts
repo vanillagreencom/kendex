@@ -35,7 +35,6 @@ export interface Config {
 	/** Low-level Claude Agent SDK plumbing. Most users won't need these. */
 	provider?: {
 		appendSystemPrompt?: boolean;
-		allowExtraUsage?: boolean;
 		/** Enable Claude Code fast mode for bridge requests. */
 		fastMode?: boolean;
 		/** Force this Claude Code effort level for every bridge request. */
@@ -288,8 +287,6 @@ function managerToConfig(raw: SettingsRecord): Partial<Config> {
 
 	const appendSystemPrompt = boolFrom(raw, "appendSystemPrompt");
 	if (appendSystemPrompt !== undefined) provider.appendSystemPrompt = appendSystemPrompt;
-	const allowExtraUsage = boolFrom(raw, "allowExtraUsage");
-	if (allowExtraUsage !== undefined) provider.allowExtraUsage = allowExtraUsage;
 	const fastMode = boolFrom(raw, "fastMode");
 	if (fastMode !== undefined) provider.fastMode = fastMode;
 	if (hasOwn(raw, "forceEffort")) {
@@ -370,19 +367,7 @@ function mergeLayers(layers: LegacyLayer[]): Partial<Config> {
 export function loadConfig(cwd: string): Config {
 	const legacy = mergeLayers(legacyLayers(cwd));
 	const manager: Partial<Config> = isolatedFromEnv() ? {} : managerToConfig(readManagerConfig(cwd));
-	const userLegacy = legacyFileConfig(join(piUserDir(), "claude-bridge.json"));
-	const userManager = isolatedFromEnv()
-		? {}
-		: managerToConfig(readManagerConfigPaths([join(piUserDir(), "settings.json")]));
-	const userHardOff = userLegacy.provider?.allowExtraUsage === false ||
-		userManager.provider?.allowExtraUsage === false;
 	const provider = normalizeProviderConfig({ ...legacy.provider, ...manager.provider });
-	if (userHardOff) provider.allowExtraUsage = false;
-	// Claude fast mode can consume paid Extra Usage. It must not be re-enabled by
-	// a project when the effective billing policy is fail-closed.
-	if (provider.fastMode === true && provider.allowExtraUsage !== true) {
-		provider.fastMode = false;
-	}
 	return {
 		enabled: manager.enabled ?? legacy.enabled ?? true,
 		provider,
@@ -391,7 +376,6 @@ export function loadConfig(cwd: string): Config {
 }
 
 const PROVIDER_KEYS = new Set([
-	"allowExtraUsage",
 	"appendSystemPrompt",
 	"connectorWriteMode",
 	"enableConnectors",
@@ -437,10 +421,7 @@ export interface ExternalConfigResolution {
 export function resolveExternalConfigValue(key: string, cwd: string): ExternalConfigResolution {
 	const layers = legacyLayers(cwd);
 	const merged = mergeLayers(layers);
-	const value = key === "fastMode" && merged.provider?.fastMode === true &&
-		merged.provider?.allowExtraUsage !== true
-		? false
-		: configValueForKey(merged, key);
+	const value = configValueForKey(merged, key);
 	if (value === undefined) return { explicit: false, value: undefined };
 	const source = [...layers].reverse().find((layer) => configValueForKey(layer.config, key) !== undefined)?.path;
 	return { explicit: true, value, ...(source ? { source: displayPath(source) } : {}) };

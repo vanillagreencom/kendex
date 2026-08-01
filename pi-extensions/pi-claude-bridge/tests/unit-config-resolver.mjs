@@ -67,7 +67,7 @@ describe("resolveExternalConfigValue", () => {
 		assert.equal(enabled.source, join(project, ".pi", "claude-bridge.json"));
 
 		const fastMode = resolveExternalConfigValue("fastMode", project);
-		assert.equal(fastMode.value, false);
+		assert.equal(fastMode.value, true);
 		assert.equal(fastMode.source, join(project, ".pi", "claude-bridge.json"));
 
 		// A key only the global file sets still reports the global file.
@@ -102,12 +102,12 @@ describe("resolveExternalConfigValue", () => {
 			strictMcpConfig: false,
 		}));
 
-		assert.equal(resolveExternalConfigValue("fastMode", project).value, false);
+		assert.equal(resolveExternalConfigValue("fastMode", project).value, true);
 		assert.equal(resolveExternalConfigValue("strictMcpConfig", project).value, false);
 		assert.equal(resolveExternalConfigValue("includeCavemanHook", project).value, true);
 
 		const config = loadConfig(project);
-		assert.equal(config.provider?.fastMode, false);
+		assert.equal(config.provider?.fastMode, true);
 		assert.equal(config.provider?.strictMcpConfig, false);
 		assert.equal(config.promptContext?.includeCavemanHook, true);
 	}));

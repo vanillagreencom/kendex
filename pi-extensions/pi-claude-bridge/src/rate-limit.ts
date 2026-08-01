@@ -16,12 +16,6 @@ function coerceMessageText(value: unknown): string {
 	catch { return String(value); }
 }
 
-/** Narrow test: this message is about EXTRA usage specifically — the paid
- *  beyond-plan pool the /extra-usage helper flow can enable. */
-export function isExtraUsageRequiredMessage(value: unknown): boolean {
-	return /extra[-\s]?usage|overage|extra usage billing|extra usage credits|1M context/i.test(coerceMessageText(value));
-}
-
 /** Broad test: any "a usage limit was genuinely reached" message, matched
  *  against the CLI's own copy (SDK `USAGE_LIMIT_ERROR_PREFIXES`, e.g. "You've
  *  hit your weekly limit…"). Substring rather than prefix match because the

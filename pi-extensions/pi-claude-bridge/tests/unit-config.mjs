@@ -28,14 +28,14 @@ function withTempDirs(fn) {
 describe("loadConfig", () => {
 	it("ignores project settings until project trust is recorded", () => withTempDirs(({ user, project }) => {
 		writeFileSync(join(user, "settings.json"), JSON.stringify({
-			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { allowExtraUsage: false } } } },
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { fastMode: false } } } },
 		}));
 		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
-			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { allowExtraUsage: true } } } },
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { fastMode: true } } } },
 		}));
 
 		const config = loadConfig(project);
-		assert.equal(config.provider?.allowExtraUsage, false);
+		assert.equal(config.provider?.fastMode, false);
 	}));
 
 	it("reads trusted legacy project config from project root when cwd is nested", () => withTempDirs(({ project }) => {
@@ -46,27 +46,25 @@ describe("loadConfig", () => {
 		recordProjectTrust({ cwd: nested, isProjectTrusted: () => true });
 
 		const config = loadConfig(nested);
-		assert.equal(config.provider?.fastMode, false);
+		assert.equal(config.provider?.fastMode, true);
 	}));
 
-	it("does not let a project relax the user Extra Usage hard-off", () => withTempDirs(({ user, project }) => {
+	it("lets trusted project settings override user settings", () => withTempDirs(({ user, project }) => {
 		writeFileSync(join(user, "settings.json"), JSON.stringify({
-			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { allowExtraUsage: false } } } },
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { fastMode: false } } } },
 		}));
 		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
-			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { allowExtraUsage: true } } } },
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { fastMode: true } } } },
 		}));
 		recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
 
 		const config = loadConfig(project);
-		assert.equal(config.provider?.allowExtraUsage, false);
-		assert.equal(config.provider?.fastMode, undefined);
+		assert.equal(config.provider?.fastMode, true);
 	}));
 
 	it("maps extension-manager effort overrides into provider config", () => withTempDirs(({ user, project }) => {
 		writeFileSync(join(user, "settings.json"), JSON.stringify({
 			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": {
-				allowExtraUsage: true,
 				fastMode: false,
 				forceEffort: "high",
 				modelEffortOverrides: JSON.stringify({ "claude-opus-4-8": "xhigh", ignored: "bogus" }),

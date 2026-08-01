@@ -168,10 +168,10 @@ describe("loadConfig isolation", () => {
 		}));
 		withEnv({ PI_CODING_AGENT_DIR: agentDir }, () => {
 			recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
-			// Trusted project settings win except for the Extra Usage billing ceiling.
+			// Trusted project settings win in normal mode.
 			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined }, () => {
 				const config = loadConfig(project);
-				assert.equal(config.provider?.fastMode, false);
+				assert.equal(config.provider?.fastMode, true);
 				assert.equal(config.provider?.pathToClaudeCodeExecutable, "/opt/project/manager-claude");
 				assert.equal(config.provider?.enableConnectors, true);
 				assert.equal(config.provider?.connectorWriteMode, "allow");

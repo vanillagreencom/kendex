@@ -154,7 +154,7 @@ describe("managed account stream rotation", () => {
 			"/profiles/a", "/profiles/b",
 		]);
 		assert.ok(observed.queryEnvs.every((env) => env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST === undefined));
-		assert.ok(observed.queryEnvs.every((env) => env.DISABLE_EXTRA_USAGE_COMMAND === "1"));
+		assert.ok(observed.queryEnvs.every((env) => env.DISABLE_EXTRA_USAGE_COMMAND === undefined));
 		assert.deepEqual(
 			events.filter((event) => event.type === "text_delta").map((event) => event.delta),
 			["ok-from-b"],
@@ -187,6 +187,31 @@ describe("managed account stream rotation", () => {
 		assert.equal(calls, 2);
 		assert.deepEqual(observed.failures, [{ profileId: "a", kind: "network" }]);
 		assert.ok(events.some((event) => event.type === "text_delta" && event.delta === "network-recovered"));
+		assert.equal(events.some((event) => event.type === "error"), false);
+	});
+
+	it("treats an Extra Usage rejection as a model limit and rotates accounts", async () => {
+		const observed = observedState();
+		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
+		let calls = 0;
+		__testSetSdkQueryFactory(() => {
+			calls += 1;
+			return calls === 1
+				? fakeSdkQuery([
+					{ type: "system", subtype: "init", session_id: "session-a" },
+					{ type: "assistant", error: "extra_usage_disabled" },
+					{ type: "result", subtype: "success", result: "Extra usage is disabled" },
+				], "a", observed)
+				: fakeSdkQuery([
+					{ type: "system", subtype: "init", session_id: "session-b" },
+					{ type: "result", subtype: "success", result: "recovered-without-local-billing-policy" },
+				], "b", observed);
+		});
+
+		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "extra-usage-session" }));
+		assert.equal(calls, 2);
+		assert.deepEqual(observed.failures, [{ profileId: "a", kind: "rate-limit" }]);
+		assert.ok(events.some((event) => event.type === "text_delta" && event.delta === "recovered-without-local-billing-policy"));
 		assert.equal(events.some((event) => event.type === "error"), false);
 	});
 

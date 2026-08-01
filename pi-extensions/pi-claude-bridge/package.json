@@ -86,18 +86,9 @@
           "apply": "live"
         },
         {
-          "key": "allowExtraUsage",
-          "label": "Allow extra usage helper",
-          "description": "Allow Pi Claude to launch Claude Code's /extra-usage flow when rate limits require extra usage. A user-level off cannot be relaxed by project config. Billing/admin approval still happens in Claude's browser page.",
-          "type": "boolean",
-          "default": false,
-          "category": "Claude Code",
-          "apply": "live"
-        },
-        {
           "key": "fastMode",
           "label": "Fast mode",
-          "description": "Enable Claude Code fast mode for bridge requests when the selected model supports it and Extra Usage is allowed. Off by default.",
+          "description": "Enable Claude Code fast mode for bridge requests when the selected model and account support it. Off by default.",
           "type": "boolean",
           "default": false,
           "category": "Claude Code",

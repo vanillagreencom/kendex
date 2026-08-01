@@ -109,6 +109,7 @@ describe("account routing helpers", () => {
 		assert.equal(classifyClaudeFailure("authentication_failed"), "auth");
 		assert.equal(classifyClaudeFailure("401 authentication_error"), "auth");
 		assert.equal(classifyClaudeFailure("OAuth token has expired; please run /login"), "auth");
+		assert.equal(classifyClaudeFailure("Extra usage is disabled for this account"), "rate-limit");
 		assert.equal(classifyClaudeFailure("Credit balance is too low"), "billing");
 		assert.equal(classifyClaudeFailure({ status: 429, message: "request rejected" }), "rate-limit");
 		assert.equal(classifyClaudeFailure("API overloaded"), "overloaded");

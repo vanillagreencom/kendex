@@ -177,7 +177,11 @@ export function classifyClaudeFailure(value: unknown): ClaudeAccountFailureKind 
 	}).join(" ");
 	const normalized = text.toLowerCase().replace(/[_-]+/g, " ");
 	if (/\b401\b|authentication (?:failed|error)|oauth org not allowed|oauth token.*expired|token.*expired|unauthorized|invalid token|login required|please run .*login|not logged in/.test(normalized)) return "auth";
-	if (/billing error|payment|required.*billing|extra usage|overage|credit balance.*(?:low|insufficient|empty)|insufficient credits/.test(normalized)) return "billing";
+	// Extra Usage is controlled by Claude account settings. A request asking for
+	// it means the current model allowance was rejected, not that Pi should make
+	// a billing-policy decision or globally disable the profile.
+	if (/extra usage|overage/.test(normalized)) return "rate-limit";
+	if (/billing error|payment|required.*billing|credit balance.*(?:low|insufficient|empty)|insufficient credits/.test(normalized)) return "billing";
 	if (/\b429\b|rate limit|usage limit|session limit|weekly limit|monthly limit|limit reached|you(?:'|’)ve hit your .* limit|quota|too many requests|resets? (?:at )?\d/.test(normalized)) return "rate-limit";
 	if (/overloaded|capacity/.test(normalized)) return "overloaded";
 	if (/server error|internal server|\b5\d\d\b/.test(normalized)) return "server";
