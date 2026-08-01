@@ -131,13 +131,19 @@ start_cmd() {
     printf '%s\n' "$out"
     return
   fi
+  # The codex arms must stay plain prose built from shell-inert characters
+  # (letters, digits, space, ./#-): codex has no /orch slash command, and the
+  # composed line crosses at least one more quoting layer (e.g. an agent-confine
+  # wrapper) before the spawned window's shell runs it, so a `$` that has lost
+  # its single quotes gets expanded there and codex launches with no prompt at
+  # all (vstack#976).
   case "$TRACKER:$HARNESS" in
     linear:claude)   printf "claude -n %q --model 'opus[1m]' --effort max '/orch start %s'\n" "$item" "$item" ;;
-    linear:codex)    printf "codex '\$orch start %s'\n" "$item" ;;
+    linear:codex)    printf "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$item" ;;
     linear:opencode) printf "opencode --prompt '/orch start %s'\n" "$item" ;;
     linear:pi)       printf "pi '/skill:orch start %s'\n" "$item" ;;
     github:claude)   printf "claude -n github-%q --model 'opus[1m]' --effort max '/orch start github %s#%s'\n" "$item" "$repo" "$item" ;;
-    github:codex)    printf "codex '\$orch start github %s#%s'\n" "$repo" "$item" ;;
+    github:codex)    printf "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$repo" "$item" ;;
     github:opencode) printf "opencode --prompt '/orch start github %s#%s'\n" "$repo" "$item" ;;
     github:pi)       printf "pi '/skill:orch start github %s#%s'\n" "$repo" "$item" ;;
     *) echo "Error: unsupported harness: $HARNESS" >&2; exit 1 ;;
