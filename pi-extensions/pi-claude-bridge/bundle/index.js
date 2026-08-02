@@ -28849,179 +28849,6 @@ function buildNativeProvider(piAi2, models, streamSimple, env = process.env, has
   });
 }
 
-// src/agents-md.ts
-import { existsSync as existsSync4, readFileSync as readFileSync4 } from "fs";
-import { dirname as dirname3, join as join5, resolve as resolve3 } from "path";
-function globalAgentsPath() {
-  return join5(piUserDir(), "AGENTS.md");
-}
-function resolveAgentsMdPath() {
-  if (isolatedFromEnv()) return void 0;
-  const fromCwd = findAgentsMdInParents(process.cwd());
-  if (fromCwd) return fromCwd;
-  const globalPath = globalAgentsPath();
-  if (existsSync4(globalPath)) return globalPath;
-  return void 0;
-}
-function findAgentsMdInParents(startDir) {
-  let current = resolve3(startDir);
-  while (true) {
-    const candidate = join5(current, "AGENTS.md");
-    if (existsSync4(candidate)) return candidate;
-    const parent = dirname3(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return void 0;
-}
-function extractAgentsAppend() {
-  const agentsPath = resolveAgentsMdPath();
-  if (!agentsPath) return void 0;
-  try {
-    const content = readFileSync4(agentsPath, "utf-8").trim();
-    if (!content) return void 0;
-    const sanitized = sanitizeAgentsContent(content);
-    return sanitized.length > 0 ? `# CLAUDE.md
-
-${sanitized}` : void 0;
-  } catch (error51) {
-    debug(`agents-md: failed to read ${agentsPath}:`, error51 instanceof Error ? error51.message : String(error51));
-    return void 0;
-  }
-}
-function sanitizeAgentsContent(content) {
-  let sanitized = content;
-  sanitized = sanitized.replace(/~\/\.pi\b/gi, "~/.claude");
-  sanitized = sanitized.replace(/(^|[\s'"`])\.pi\//g, "$1.claude/");
-  sanitized = sanitized.replace(/\b\.pi\b/gi, ".claude");
-  sanitized = sanitized.replace(/\bpi\b/gi, "environment");
-  return sanitized;
-}
-
-// src/prompt-context.ts
-import { existsSync as existsSync5, readFileSync as readFileSync5 } from "fs";
-import { dirname as dirname4, join as join6, resolve as resolve4 } from "path";
-function readTrimmed(path) {
-  try {
-    if (!existsSync5(path)) return void 0;
-    const content = readFileSync5(path, "utf8").trim();
-    return content.length > 0 ? content : void 0;
-  } catch (error51) {
-    debug(`prompt-context: failed to read ${path}:`, error51 instanceof Error ? error51.message : String(error51));
-    return void 0;
-  }
-}
-function findProjectAppendSystem(startDir) {
-  let current = resolve4(startDir);
-  while (true) {
-    const candidate = join6(current, ".pi", "APPEND_SYSTEM.md");
-    if (existsSync5(candidate)) return candidate;
-    const parent = dirname4(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return void 0;
-}
-function readAppendSystemPromptFiles(cwd) {
-  const files = [
-    { label: "global APPEND_SYSTEM.md", path: join6(piUserDir(), "APPEND_SYSTEM.md") }
-  ];
-  const projectPath = isolatedFromEnv() ? void 0 : findProjectAppendSystem(cwd);
-  if (projectPath) files.push({ label: "project .pi/APPEND_SYSTEM.md", path: projectPath });
-  const seen = /* @__PURE__ */ new Set();
-  const output = [];
-  for (const file2 of files) {
-    if (seen.has(file2.path)) continue;
-    seen.add(file2.path);
-    const content = readTrimmed(file2.path);
-    if (content) output.push({ label: file2.label, content });
-  }
-  return output;
-}
-function splitPromptBlocks(systemPrompt) {
-  return (systemPrompt ?? "").split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
-}
-function extractHeadingSection(systemPrompt, headings) {
-  if (!systemPrompt) return void 0;
-  let start = -1;
-  for (const heading of headings) {
-    const index = systemPrompt.indexOf(heading);
-    if (index >= 0 && (start < 0 || index < start)) start = index;
-  }
-  if (start < 0) return void 0;
-  const rest = systemPrompt.slice(start).trim();
-  const endCandidates = [
-    rest.slice(1).search(/\n##\s+/),
-    rest.search(/\n<\/project_instructions>/),
-    rest.search(/\n<\/project_context>/)
-  ].map((index, offset) => index >= 0 && offset === 0 ? index + 1 : index).filter((index) => index >= 0);
-  const end = endCandidates.length > 0 ? Math.min(...endCandidates) : -1;
-  return (end >= 0 ? rest.slice(0, end) : rest).trim();
-}
-function extractBlockByMarkers(systemPrompt, markers) {
-  for (const block of splitPromptBlocks(systemPrompt)) {
-    if (markers.some((marker) => marker.test(block))) return block;
-  }
-  return void 0;
-}
-function buildPromptContextAppend(systemPrompt, cwd, settings) {
-  const parts = [];
-  const labels = [];
-  if (settings.includeAppendSystemPromptMd) {
-    for (const file2 of readAppendSystemPromptFiles(cwd)) {
-      parts.push(xmlBlock("append_system_prompt", { label: file2.label }, file2.content));
-      labels.push(file2.label);
-    }
-  }
-  if (settings.includeProjectAgentsHook) {
-    const projectAgents = extractHeadingSection(systemPrompt, ["## Project Agents", "## Project Subagents"]);
-    if (projectAgents) {
-      parts.push(xmlBlock("before_agent_start", { source: "project-agents" }, projectAgents));
-      labels.push("project agents hook");
-    }
-  }
-  if (settings.includeTaskPanelHook) {
-    const taskReminder = extractBlockByMarkers(systemPrompt, [/^Task workflow reminder:/]);
-    if (taskReminder) {
-      parts.push(xmlBlock("before_agent_start", { source: "task-panel" }, taskReminder));
-      labels.push("task panel hook");
-    }
-  }
-  if (settings.includeCavemanHook) {
-    const caveman = extractBlockByMarkers(systemPrompt, [/^You MUST respond in caveman /m]);
-    if (caveman) {
-      parts.push(xmlBlock("before_agent_start", { source: "caveman" }, caveman));
-      labels.push("caveman hook");
-    }
-  }
-  if (parts.length === 0) return { labels };
-  return {
-    labels,
-    text: xmlBlock(
-      "forwarded_pi_context",
-      {},
-      [
-        "The following content was explicitly enabled in pi-claude-bridge settings and comes from Pi prompt files or before_agent_start prompt hooks.",
-        ...parts
-      ].join("\n\n"),
-      false
-    )
-  };
-}
-function escapeXmlAttr(value) {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function escapeXmlText(value) {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function xmlBlock(tag, attrs, content, escapeContent = true) {
-  const attrText = Object.entries(attrs).map(([key, value]) => ` ${key}="${escapeXmlAttr(value)}"`).join("");
-  const body = escapeContent ? escapeXmlText(content.trim()) : content.trim();
-  return `<${tag}${attrText}>
-${body}
-</${tag}>`;
-}
-
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
@@ -43596,8 +43423,8 @@ async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendi
 
 // src/connector-cache.ts
 import { createHash } from "node:crypto";
-import { mkdirSync as mkdirSync3, readFileSync as readFileSync6, writeFileSync } from "node:fs";
-import { dirname as dirname5, join as join7 } from "node:path";
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, writeFileSync } from "node:fs";
+import { dirname as dirname3, join as join5 } from "node:path";
 var CACHE_VERSION = 2;
 var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 function scopeKeyFor(claudeConfigDir) {
@@ -43611,12 +43438,12 @@ function connectorCacheScopeDigest(scopeKey) {
 }
 function connectorCachePath(scopeKey = connectorCacheScopeKey()) {
   const digest = connectorCacheScopeDigest(scopeKey).slice(0, 16);
-  return join7(piUserDir(), "connector-cache", `${digest}.json`);
+  return join5(piUserDir(), "connector-cache", `${digest}.json`);
 }
 function readCachedConnectors(scopeKey = connectorCacheScopeKey(), now = Date.now()) {
   let raw;
   try {
-    raw = readFileSync6(connectorCachePath(scopeKey), "utf8");
+    raw = readFileSync4(connectorCachePath(scopeKey), "utf8");
   } catch {
     return void 0;
   }
@@ -43641,7 +43468,7 @@ function writeCachedConnectors(connectors, scopeKey = connectorCacheScopeKey(), 
   if (!Array.isArray(connectors) || connectors.length === 0) return false;
   const path = connectorCachePath(scopeKey);
   try {
-    mkdirSync3(dirname5(path), { recursive: true, mode: 448 });
+    mkdirSync3(dirname3(path), { recursive: true, mode: 448 });
     writeFileSync(
       path,
       JSON.stringify({ version: CACHE_VERSION, scope: connectorCacheScopeDigest(scopeKey), savedAt: now, connectors }),
@@ -43721,12 +43548,12 @@ function connectorServersSnapshot(claudeConfigDir) {
 
 // src/claude-executable.ts
 import { spawn as spawnProcess } from "child_process";
-import { accessSync, constants as fsConstants, readFileSync as readFileSync7, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
-import { delimiter, join as join8 } from "path";
+import { accessSync, constants as fsConstants, readFileSync as readFileSync5, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
+import { delimiter, join as join6 } from "path";
 function executableFromPath(name) {
   const paths = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
   for (const dir of paths) {
-    const candidate = join8(dir, name);
+    const candidate = join6(dir, name);
     try {
       accessSync(candidate, fsConstants.X_OK);
       return candidate;
@@ -43842,7 +43669,7 @@ function preflightClaudeExecutable(path, cwd) {
   }
   let fileType;
   try {
-    fileType = classifyClaudeExecutableBytes(readFileSync7(realPath).subarray(0, 16));
+    fileType = classifyClaudeExecutableBytes(readFileSync5(realPath).subarray(0, 16));
   } catch (err) {
     throw makeClaudePreflightError("Claude Code executable preflight failed: cannot read executable header before spawning Claude Code.", {
       code: codeValue(err, "EACCES"),
@@ -43937,17 +43764,17 @@ function spawnClaudeCodeWithDiagnostics(options) {
 
 // node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
 import { randomUUID } from "crypto";
-import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync6, rmSync as rmSync2 } from "fs";
-import { dirname as dirname6 } from "path";
-import { readFileSync as readFileSync8 } from "fs";
+import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync4, rmSync as rmSync2 } from "fs";
+import { dirname as dirname4 } from "path";
+import { readFileSync as readFileSync6 } from "fs";
 import { realpathSync as realpathSync3 } from "fs";
 import { homedir as homedir3 } from "os";
-import { join as join9 } from "path";
+import { join as join7 } from "path";
 function parseJsonl(content) {
   return content.split("\n").filter((line) => line.trim()).map(parseRecord);
 }
 function parseJsonlFile(path) {
-  return parseJsonl(readFileSync8(path, "utf-8"));
+  return parseJsonl(readFileSync6(path, "utf-8"));
 }
 function parseRecord(line) {
   const raw = JSON.parse(line);
@@ -43960,7 +43787,7 @@ function serializeRecord(record2) {
 }
 var MAX_SANITIZED_LENGTH = 200;
 function getClaudeDir(claudeDir) {
-  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join9(homedir3(), ".claude");
+  return claudeDir ?? process.env.CLAUDE_CONFIG_DIR ?? join7(homedir3(), ".claude");
 }
 function normalizeProjectPath(projectPath) {
   try {
@@ -43978,10 +43805,10 @@ function projectPathToHash(projectPath) {
   return `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-${Math.abs(h).toString(36)}`;
 }
 function getProjectDir(projectPath, claudeDir) {
-  return join9(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
+  return join7(getClaudeDir(claudeDir), "projects", projectPathToHash(normalizeProjectPath(projectPath)));
 }
 function getSessionPath(sessionId, projectPath, claudeDir) {
-  return join9(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
+  return join7(getProjectDir(projectPath, claudeDir), `${sessionId}.jsonl`);
 }
 function repairToolPairing(messages) {
   const result = [];
@@ -44320,8 +44147,8 @@ var Session = class {
   /** Write pending records to disk. Creates the file/directory if needed. */
   save() {
     if (this._pendingRecords.length === 0) return;
-    const dir = dirname6(this.jsonlPath);
-    if (!existsSync6(dir)) {
+    const dir = dirname4(this.jsonlPath);
+    if (!existsSync4(dir)) {
       mkdirSync4(dir, { recursive: true });
     }
     const data = this._pendingRecords.map((r) => serializeRecord(r) + "\n").join("");
@@ -44462,7 +44289,7 @@ function verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount)
 
 // src/account-router.ts
 import { homedir as homedir4 } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join8 } from "node:path";
 
 // src/rate-limit.ts
 var RATE_LIMIT_AUTO_RESUME_EVENT = "vstack:rate-limit";
@@ -44573,7 +44400,7 @@ function subscriberProfileEnv(profile, base = process.env) {
   return env;
 }
 function claudeDirForProfile(profile) {
-  return profile.configDir?.trim() || join10(homedir4(), ".claude");
+  return profile.configDir?.trim() || join8(homedir4(), ".claude");
 }
 function accountSessionScope(profile) {
   return profile ? { accountProfileId: profile.profileId, claudeConfigDir: claudeDirForProfile(profile) } : {};
@@ -45475,47 +45302,13 @@ function processAssistantMessage(message, model, customToolNameToPi, c = ctx()) 
   }
 }
 
-// src/index.ts
-var _piAi = piAi;
-var getModels = await resolveGetModels(_piAi);
-var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
-var PRIMARY_INSTANCE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:primaryInstance");
-var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
-var COMMANDS_REGISTERED_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:commandsRegistered");
-var ROTATION_STATE_KEY = /* @__PURE__ */ Symbol("claude-bridge:rotationState");
-var MAX_ROTATION_ATTEMPTS = 16;
-var MODELS = buildModels(getModels("anthropic"));
+// src/sdk-query.ts
 var sdkQueryFactory = Okt;
 function __testSetSdkQueryFactory(factory) {
   sdkQueryFactory = factory ?? Okt;
 }
-function emitRateLimitEvent(payload) {
-  try {
-    extensionApi?.events?.emit?.(RATE_LIMIT_AUTO_RESUME_EVENT, payload);
-  } catch {
-  }
-}
-var lastFastModeDisabledNoticeReason = null;
-var FAST_MODE_DISABLED_REASON_TEXT = {
-  disabled_by_env: "disabled by an environment variable",
-  extra_usage_disabled: "extra usage is disabled for this account",
-  free: "not available on the free plan",
-  model_not_allowed: "not available for this model",
-  network_error: "the eligibility check hit a network error",
-  not_first_party: "not available for this account type",
-  preference: "disabled by a Claude Code preference",
-  sdk_opt_in_required: "the SDK opt-in is missing",
-  unknown: "unavailable for an unknown reason"
-};
-function noteFastModeDisabledReason(message, bridgeConfig) {
-  if (bridgeConfig.provider?.fastMode !== true) return;
-  const reason = message.fast_mode_disabled_reason;
-  if (typeof reason !== "string" || reason === "pending") return;
-  if (reason === lastFastModeDisabledNoticeReason) return;
-  lastFastModeDisabledNoticeReason = reason;
-  const text = FAST_MODE_DISABLED_REASON_TEXT[reason] ?? `unavailable (${reason})`;
-  safeNotify(`Pi Claude: fast mode is enabled in settings but Claude Code declined it \u2014 ${text}.`, "warning");
-}
+
+// src/account-host.ts
 var ACCOUNT_PROBE_DEADLINE_MS = 1e4;
 async function probeClaudeAccountProfile(input) {
   const config2 = loadConfig(input.cwd);
@@ -45595,185 +45388,95 @@ var BRIDGE_ACCOUNT_HOST = {
   version: 1,
   probeProfile: probeClaudeAccountProfile
 };
-function extractAllToolResults2(context) {
-  const { results, stopIdx } = extractAllToolResults(context.messages);
-  debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
-  debug(`extractAllToolResults: all msg roles:`, context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
-  for (let r = 0; r < results.length; r++) {
-    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, JSON.stringify(results[r].content).slice(0, 150));
+
+// src/bridge-commands.ts
+var COMMANDS_REGISTERED_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:commandsRegistered");
+function commandCwd(ctx2) {
+  const value = ctx2?.cwd;
+  return typeof value === "string" && value.length > 0 ? value : process.cwd();
+}
+async function tryOpenExtensionManagerSettings(ctx2) {
+  const host = globalThis;
+  const openQuickSettings = host[/* @__PURE__ */ Symbol.for("vstack.pi.extension-manager.open-quick-settings")];
+  if (typeof openQuickSettings !== "function") return false;
+  try {
+    await openQuickSettings(ctx2, "@vanillagreen/pi-claude-bridge");
+    return true;
+  } catch {
+    return false;
   }
-  return results;
 }
-function extractUserPrompt(messages) {
-  if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
-  return messages.map(
-    (message) => typeof message.content === "string" ? message.content : messageContentToText(message.content) || ""
-  ).join("\n\n");
+function showBridgeStatus(ctx2) {
+  const config2 = loadConfig(commandCwd(ctx2));
+  ctx2.ui.notify([
+    `Pi Claude: ${config2.enabled === false ? "disabled" : "enabled"}`,
+    "Claude account billing settings (including Extra Usage) are managed in Claude."
+  ].join("\n"), "info");
 }
-function extractUserPromptBlocks(messages) {
-  if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
-  let hasImage = false;
-  const blocks = [];
-  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-    const content = messages[messageIndex].content;
-    if (messageIndex > 0) blocks.push({ type: "text", text: "\n\n" });
-    if (typeof content === "string") {
-      if (content) blocks.push({ type: "text", text: content });
-      continue;
-    }
-    if (!Array.isArray(content)) {
-      debug(`extractUserPromptBlocks: content is ${typeof content}`);
-      continue;
-    }
-    debug(`extractUserPromptBlocks: ${content.length} blocks, types=${content.map((b) => b.type).join(",")}`);
-    for (const block of content) {
-      if (block.type === "text" && block.text) {
-        blocks.push({ type: "text", text: block.text });
-      } else if (block.type === "image") {
-        debug(`image block: mimeType=${block.mimeType}, data length=${(block.data ?? "").length}, keys=${Object.keys(block).join(",")}`);
-        if (!block.data || !block.mimeType) {
-          debug(`image block missing data or mimeType, skipping`);
-          continue;
-        }
-        hasImage = true;
-        blocks.push({
-          type: "image",
-          source: { type: "base64", media_type: block.mimeType, data: block.data }
-        });
-      }
-    }
+async function reportConnectorInventory(ctx2) {
+  const account = ctx2.model ? resolveClaudeAccountRouter()?.current(ctx2.model.id, ctx2.sessionManager?.getSessionId?.()) : void 0;
+  const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(account ? accountSessionScope(account).claudeConfigDir : void 0));
+  if (!credentials) {
+    ctx2.ui.notify("Pi Claude: no Claude OAuth credentials found \u2014 cannot enumerate connectors.", "error");
+    return;
   }
-  return hasImage ? blocks : null;
-}
-function planDeferredUserReplay(messages) {
-  let runStart = messages.length;
-  while (runStart > 0 && messages[runStart - 1]?.role === "user") runStart--;
-  const trailingUsers = messages.slice(runStart);
-  const prompt = trailingUsers.length > 0 ? extractUserPrompt(trailingUsers) : null;
-  return {
-    runStart,
-    userMessageCount: trailingUsers.length,
-    prompt: prompt?.trim() ? prompt : null
-  };
-}
-async function* wrapPromptStream(blocks) {
-  yield {
-    type: "user",
-    message: { role: "user", content: blocks },
-    parent_tool_use_id: null
-  };
-}
-function resolveMcpTools(context, excludeToolName) {
-  const mcpTools = [];
-  const customToolNameToSdk = /* @__PURE__ */ new Map();
-  const customToolNameToPi = /* @__PURE__ */ new Map();
-  if (!context.tools) return { mcpTools, customToolNameToSdk, customToolNameToPi };
-  for (const tool of context.tools) {
-    if (tool.name === excludeToolName) continue;
-    if (isChildExecutedTool(tool.name)) {
-      debug(`resolveMcpTools: not re-offering child-native tool ${tool.name}`);
-      continue;
-    }
-    const sdkName = `${MCP_TOOL_PREFIX}${tool.name}`;
-    mcpTools.push(tool);
-    const lowerName = tool.name.toLowerCase();
-    const collision = customToolNameToSdk.get(lowerName);
-    if (collision !== void 0 && collision !== sdkName) {
-      debug(`WARNING: resolveMcpTools lowercase alias collision: ${tool.name} overwrites mapping previously held by ${collision}`);
-    }
-    customToolNameToSdk.set(tool.name, sdkName);
-    customToolNameToSdk.set(lowerName, sdkName);
-    customToolNameToPi.set(sdkName, tool.name);
-    customToolNameToPi.set(sdkName.toLowerCase(), tool.name);
+  const inventory = await listAccountConnectors({ credentials });
+  if (!inventory.ok) {
+    ctx2.ui.notify(`Pi Claude: connector enumeration failed \u2014 ${inventory.reason}`, "error");
+    return;
   }
-  return { mcpTools, customToolNameToSdk, customToolNameToPi };
+  if (inventory.connectors.length === 0) {
+    ctx2.ui.notify("Pi Claude: this account has no connectors installed.", "info");
+    return;
+  }
+  const names = inventory.connectors.map((c) => c.name).join(", ");
+  ctx2.ui.notify(`Pi Claude: ${inventory.connectors.length} connector(s) installed \u2014 ${names}`, "info");
 }
-function buildMcpServers(tools, queryCtx) {
-  if (!tools.length) return void 0;
-  const mcpTools = tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: jsonSchemaToZodShape(tool.parameters),
-    handler: async (args) => {
-      const mappedArgs = mapToolArgs(tool.name, args);
-      const claim = queryCtx.claimToolCall(tool.name, mappedArgs);
-      const toolCallId = claim.toolCallId;
-      if (!toolCallId) {
-        debug(`WARNING: mcp handler ${tool.name} has no toolCallId (available=${claim.available})`);
-        diagDump("tool_handler_unmatched", {
-          toolName: tool.name,
-          argKeys: argKeys(mappedArgs),
-          available: claim.available,
-          turnToolCallIds: queryCtx.turnToolCallIds,
-          turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls)
-        });
-        appendIntegrityEntry("tool_handler_unmatched", {
-          toolName: tool.name,
-          argKeys: argKeys(mappedArgs),
-          available: claim.available,
-          turnToolCallIds: queryCtx.turnToolCallIds
-        });
-        return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true };
-      }
-      if (claim.argsMismatch) {
-        debug(`mcp handler: ${tool.name} [${toolCallId}] claimed sole same-name call despite args mismatch`);
-        diagDump("tool_claim_args_mismatch", {
-          toolName: tool.name,
-          toolCallId,
-          handlerArgKeys: argKeys(mappedArgs),
-          recordedArgKeys: argKeys(queryCtx.turnToolCalls.find((call) => call.id === toolCallId)?.arguments)
-        });
-      } else if (claim.match !== "tool-args" || claim.ambiguous) {
-        debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
-      }
-      if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
-        const result = queryCtx.pendingResults.get(toolCallId);
-        queryCtx.pendingResults.delete(toolCallId);
-        queryCtx.markToolResultResolved(toolCallId);
-        debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 resolved from queue (${queryCtx.pendingResults.size} remaining)`);
-        return result;
-      }
-      debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 waiting`);
-      scheduleToolUseTurnEnd(
-        queryCtx,
-        () => finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs),
-        `mcp-invocation:${tool.name}`
-      );
-      return new Promise((resolve5) => {
-        queryCtx.pendingToolCalls.set(toolCallId, {
-          toolName: tool.name,
-          resolve: (result) => {
-            queryCtx.markToolResultResolved(toolCallId);
-            resolve5(result);
-          }
-        });
-      });
+function registerBridgeCommands(pi) {
+  const guard = pi;
+  if (guard[COMMANDS_REGISTERED_KEY]) return;
+  guard[COMMANDS_REGISTERED_KEY] = true;
+  pi.registerCommand("pi-claude", {
+    description: "Open Pi Claude settings/status",
+    handler: async (args, ctx2) => {
+      if (args.trim()) ctx2.ui.notify("Unknown /pi-claude argument.", "warning");
+      if (await tryOpenExtensionManagerSettings(ctx2)) return;
+      showBridgeStatus(ctx2);
     }
-  }));
-  const server = f0e({ name: MCP_SERVER_NAME, version: "1.0.0", tools: mcpTools });
-  return { [MCP_SERVER_NAME]: server };
+  });
+  pi.registerCommand("pi-claude:connectors", {
+    description: "List the Claude account's installed claude.ai connectors",
+    handler: async (_args, ctx2) => reportConnectorInventory(ctx2)
+  });
 }
-var REASONING_TO_EFFORT = {
-  minimal: "low",
-  low: "low",
-  medium: "medium",
-  high: "high",
-  xhigh: "max",
-  max: "max"
+
+// src/consume-query.ts
+function emitRateLimitEvent(payload) {
+  try {
+    extensionApi?.events?.emit?.(RATE_LIMIT_AUTO_RESUME_EVENT, payload);
+  } catch {
+  }
+}
+var lastFastModeDisabledNoticeReason = null;
+var FAST_MODE_DISABLED_REASON_TEXT = {
+  disabled_by_env: "disabled by an environment variable",
+  extra_usage_disabled: "extra usage is disabled for this account",
+  free: "not available on the free plan",
+  model_not_allowed: "not available for this model",
+  network_error: "the eligibility check hit a network error",
+  not_first_party: "not available for this account type",
+  preference: "disabled by a Claude Code preference",
+  sdk_opt_in_required: "the SDK opt-in is missing",
+  unknown: "unavailable for an unknown reason"
 };
-function normalizeEffortOverrideModelKey(value) {
-  const key = value.trim().toLowerCase();
-  return key.startsWith(`${PROVIDER_ID}/`) ? key.slice(PROVIDER_ID.length + 1) : key;
-}
-function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
-  const target = normalizeEffortOverrideModelKey(modelId);
-  for (const [key, rawEffort] of Object.entries(providerConfig?.modelEffortOverrides ?? {})) {
-    const normalizedKey = normalizeEffortOverrideModelKey(key);
-    if (normalizedKey !== "*" && normalizedKey !== target) continue;
-    const effort = normalizeEffortLevel(rawEffort);
-    if (effort) return effort;
-  }
-  return normalizeEffortLevel(providerConfig?.forceEffort) ?? reasoningEffort;
+function noteFastModeDisabledReason(message, bridgeConfig) {
+  if (bridgeConfig.provider?.fastMode !== true) return;
+  const reason = message.fast_mode_disabled_reason;
+  if (typeof reason !== "string" || reason === "pending") return;
+  if (reason === lastFastModeDisabledNoticeReason) return;
+  lastFastModeDisabledNoticeReason = reason;
+  const text = FAST_MODE_DISABLED_REASON_TEXT[reason] ?? `unavailable (${reason})`;
+  safeNotify(`Pi Claude: fast mode is enabled in settings but Claude Code declined it \u2014 ${text}.`, "warning");
 }
 async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridgeConfig, wasAborted, account, router, attemptFailureBox) {
   let capturedSessionId;
@@ -45933,6 +45636,434 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
   }
   debug(`consumeQuery: for-await loop exited, wasAborted=${wasAborted()}, capturedSessionId=${capturedSessionId?.slice(0, 8) ?? "none"}, failure=${failure?.kind ?? "none"}`);
   return { capturedSessionId, failure };
+}
+
+// src/agents-md.ts
+import { existsSync as existsSync5, readFileSync as readFileSync7 } from "fs";
+import { dirname as dirname5, join as join9, resolve as resolve3 } from "path";
+function globalAgentsPath() {
+  return join9(piUserDir(), "AGENTS.md");
+}
+function resolveAgentsMdPath() {
+  if (isolatedFromEnv()) return void 0;
+  const fromCwd = findAgentsMdInParents(process.cwd());
+  if (fromCwd) return fromCwd;
+  const globalPath = globalAgentsPath();
+  if (existsSync5(globalPath)) return globalPath;
+  return void 0;
+}
+function findAgentsMdInParents(startDir) {
+  let current = resolve3(startDir);
+  while (true) {
+    const candidate = join9(current, "AGENTS.md");
+    if (existsSync5(candidate)) return candidate;
+    const parent = dirname5(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return void 0;
+}
+function extractAgentsAppend() {
+  const agentsPath = resolveAgentsMdPath();
+  if (!agentsPath) return void 0;
+  try {
+    const content = readFileSync7(agentsPath, "utf-8").trim();
+    if (!content) return void 0;
+    const sanitized = sanitizeAgentsContent(content);
+    return sanitized.length > 0 ? `# CLAUDE.md
+
+${sanitized}` : void 0;
+  } catch (error51) {
+    debug(`agents-md: failed to read ${agentsPath}:`, error51 instanceof Error ? error51.message : String(error51));
+    return void 0;
+  }
+}
+function sanitizeAgentsContent(content) {
+  let sanitized = content;
+  sanitized = sanitized.replace(/~\/\.pi\b/gi, "~/.claude");
+  sanitized = sanitized.replace(/(^|[\s'"`])\.pi\//g, "$1.claude/");
+  sanitized = sanitized.replace(/\b\.pi\b/gi, ".claude");
+  sanitized = sanitized.replace(/\bpi\b/gi, "environment");
+  return sanitized;
+}
+
+// src/prompt-context.ts
+import { existsSync as existsSync6, readFileSync as readFileSync8 } from "fs";
+import { dirname as dirname6, join as join10, resolve as resolve4 } from "path";
+function readTrimmed(path) {
+  try {
+    if (!existsSync6(path)) return void 0;
+    const content = readFileSync8(path, "utf8").trim();
+    return content.length > 0 ? content : void 0;
+  } catch (error51) {
+    debug(`prompt-context: failed to read ${path}:`, error51 instanceof Error ? error51.message : String(error51));
+    return void 0;
+  }
+}
+function findProjectAppendSystem(startDir) {
+  let current = resolve4(startDir);
+  while (true) {
+    const candidate = join10(current, ".pi", "APPEND_SYSTEM.md");
+    if (existsSync6(candidate)) return candidate;
+    const parent = dirname6(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return void 0;
+}
+function readAppendSystemPromptFiles(cwd) {
+  const files = [
+    { label: "global APPEND_SYSTEM.md", path: join10(piUserDir(), "APPEND_SYSTEM.md") }
+  ];
+  const projectPath = isolatedFromEnv() ? void 0 : findProjectAppendSystem(cwd);
+  if (projectPath) files.push({ label: "project .pi/APPEND_SYSTEM.md", path: projectPath });
+  const seen = /* @__PURE__ */ new Set();
+  const output = [];
+  for (const file2 of files) {
+    if (seen.has(file2.path)) continue;
+    seen.add(file2.path);
+    const content = readTrimmed(file2.path);
+    if (content) output.push({ label: file2.label, content });
+  }
+  return output;
+}
+function splitPromptBlocks(systemPrompt) {
+  return (systemPrompt ?? "").split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+}
+function extractHeadingSection(systemPrompt, headings) {
+  if (!systemPrompt) return void 0;
+  let start = -1;
+  for (const heading of headings) {
+    const index = systemPrompt.indexOf(heading);
+    if (index >= 0 && (start < 0 || index < start)) start = index;
+  }
+  if (start < 0) return void 0;
+  const rest = systemPrompt.slice(start).trim();
+  const endCandidates = [
+    rest.slice(1).search(/\n##\s+/),
+    rest.search(/\n<\/project_instructions>/),
+    rest.search(/\n<\/project_context>/)
+  ].map((index, offset) => index >= 0 && offset === 0 ? index + 1 : index).filter((index) => index >= 0);
+  const end = endCandidates.length > 0 ? Math.min(...endCandidates) : -1;
+  return (end >= 0 ? rest.slice(0, end) : rest).trim();
+}
+function extractBlockByMarkers(systemPrompt, markers) {
+  for (const block of splitPromptBlocks(systemPrompt)) {
+    if (markers.some((marker) => marker.test(block))) return block;
+  }
+  return void 0;
+}
+function buildPromptContextAppend(systemPrompt, cwd, settings) {
+  const parts = [];
+  const labels = [];
+  if (settings.includeAppendSystemPromptMd) {
+    for (const file2 of readAppendSystemPromptFiles(cwd)) {
+      parts.push(xmlBlock("append_system_prompt", { label: file2.label }, file2.content));
+      labels.push(file2.label);
+    }
+  }
+  if (settings.includeProjectAgentsHook) {
+    const projectAgents = extractHeadingSection(systemPrompt, ["## Project Agents", "## Project Subagents"]);
+    if (projectAgents) {
+      parts.push(xmlBlock("before_agent_start", { source: "project-agents" }, projectAgents));
+      labels.push("project agents hook");
+    }
+  }
+  if (settings.includeTaskPanelHook) {
+    const taskReminder = extractBlockByMarkers(systemPrompt, [/^Task workflow reminder:/]);
+    if (taskReminder) {
+      parts.push(xmlBlock("before_agent_start", { source: "task-panel" }, taskReminder));
+      labels.push("task panel hook");
+    }
+  }
+  if (settings.includeCavemanHook) {
+    const caveman = extractBlockByMarkers(systemPrompt, [/^You MUST respond in caveman /m]);
+    if (caveman) {
+      parts.push(xmlBlock("before_agent_start", { source: "caveman" }, caveman));
+      labels.push("caveman hook");
+    }
+  }
+  if (parts.length === 0) return { labels };
+  return {
+    labels,
+    text: xmlBlock(
+      "forwarded_pi_context",
+      {},
+      [
+        "The following content was explicitly enabled in pi-claude-bridge settings and comes from Pi prompt files or before_agent_start prompt hooks.",
+        ...parts
+      ].join("\n\n"),
+      false
+    )
+  };
+}
+function escapeXmlAttr(value) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function escapeXmlText(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function xmlBlock(tag, attrs, content, escapeContent = true) {
+  const attrText = Object.entries(attrs).map(([key, value]) => ` ${key}="${escapeXmlAttr(value)}"`).join("");
+  const body = escapeContent ? escapeXmlText(content.trim()) : content.trim();
+  return `<${tag}${attrText}>
+${body}
+</${tag}>`;
+}
+
+// src/query-options.ts
+var REASONING_TO_EFFORT = {
+  minimal: "low",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "max",
+  max: "max"
+};
+function normalizeEffortOverrideModelKey(value) {
+  const key = value.trim().toLowerCase();
+  return key.startsWith(`${PROVIDER_ID}/`) ? key.slice(PROVIDER_ID.length + 1) : key;
+}
+function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
+  const target = normalizeEffortOverrideModelKey(modelId);
+  for (const [key, rawEffort] of Object.entries(providerConfig?.modelEffortOverrides ?? {})) {
+    const normalizedKey = normalizeEffortOverrideModelKey(key);
+    if (normalizedKey !== "*" && normalizedKey !== target) continue;
+    const effort = normalizeEffortLevel(rawEffort);
+    if (effort) return effort;
+  }
+  return normalizeEffortLevel(providerConfig?.forceEffort) ?? reasoningEffort;
+}
+function buildClaudeQueryOptions(input) {
+  const { cwd, requestedModel, queryModel, account, bridgeConfig, systemPrompt, reasoning, resumeSessionId, mcpServers, claudeExecutable } = input;
+  const providerSettings = bridgeConfig.provider ?? {};
+  const accountScope = accountSessionScope(account);
+  const enableCloudMcp = connectorsEnabledFor(bridgeConfig);
+  const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
+  const connectorServers = enableCloudMcp ? connectorServersSnapshot(accountScope.claudeConfigDir) : {};
+  const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
+  const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : void 0;
+  const skillsAppend = appendSystemPrompt ? extractSkillsBlock(systemPrompt) : void 0;
+  const promptContextAppend = buildPromptContextAppend(systemPrompt, cwd, bridgeConfig.promptContext ?? {});
+  const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part) => Boolean(part));
+  const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : void 0;
+  const settingSources = settingSourcesForQuery(
+    enableCloudMcp,
+    appendSystemPrompt,
+    providerSettings.settingSources
+  );
+  const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
+  const requestedEffort = reasoning ? queryModel.thinkingLevelMap?.[reasoning] ?? REASONING_TO_EFFORT[reasoning] : void 0;
+  const effort = resolveConfiguredEffort(queryModel.id, requestedEffort, providerSettings);
+  const extraArgs = {};
+  if (effort) extraArgs["thinking-display"] = "summarized";
+  const fallbackModel = account && requestedModel.id === FABLE_MODEL_ID && queryModel.id === requestedModel.id ? void 0 : fallbackModelForPrimaryModel(queryModel.id);
+  const childEnv = {
+    ...account ? subscriberProfileEnv(account) : process.env,
+    ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0",
+    DISABLE_AUTO_COMPACT: "1"
+  };
+  const queryOptions = {
+    cwd,
+    model: queryModel.id,
+    env: childEnv,
+    ...connectorQueryOptions(enableCloudMcp, connectorWriteMode),
+    permissionMode: "bypassPermissions",
+    includePartialMessages: true,
+    ...fallbackModel ? { fallbackModel } : {},
+    ...providerSettings.fastMode ? { settings: { fastMode: true } } : {},
+    systemPrompt: {
+      type: "preset",
+      preset: "claude_code",
+      append: systemPromptAppend ? systemPromptAppend : void 0
+    },
+    extraArgs,
+    ...strictMcpConfigEnabled ? { strictMcpConfig: true } : {},
+    ...effort ? { effort } : {},
+    ...settingSources ? { settingSources } : {},
+    ...mcpServers || Object.keys(connectorServers).length > 0 ? { mcpServers: { ...mcpServers ?? {}, ...connectorServers } } : {},
+    ...resumeSessionId ? { resume: resumeSessionId } : {},
+    ...claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
+    spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
+    ...makeCliDebugOptions("provider")
+  };
+  return {
+    queryOptions,
+    enableCloudMcp,
+    appendSystemPrompt,
+    promptContextLabels: promptContextAppend.labels,
+    strictMcpConfigEnabled,
+    ...effort ? { effort } : {},
+    ...fallbackModel ? { fallbackModel } : {}
+  };
+}
+
+// src/index.ts
+var _piAi = piAi;
+var getModels = await resolveGetModels(_piAi);
+var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStream === "function" ? _piAi.createAssistantMessageEventStream : () => new _piAi.AssistantMessageEventStream();
+var PRIMARY_INSTANCE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:primaryInstance");
+var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
+var ROTATION_STATE_KEY = /* @__PURE__ */ Symbol("claude-bridge:rotationState");
+var MAX_ROTATION_ATTEMPTS = 16;
+var MODELS = buildModels(getModels("anthropic"));
+function extractAllToolResults2(context) {
+  const { results, stopIdx } = extractAllToolResults(context.messages);
+  debug(`extractAllToolResults: ${results.length} results from ${context.messages.length} msgs, stopped at index ${stopIdx}`);
+  debug(`extractAllToolResults: all msg roles:`, context.messages.map((m, i) => `[${i}]${m.role}`).join(" "));
+  for (let r = 0; r < results.length; r++) {
+    debug(`extractAllToolResults: result[${r}] id=${results[r].toolCallId}${results[r].isError ? " ERROR" : ""} preview:`, JSON.stringify(results[r].content).slice(0, 150));
+  }
+  return results;
+}
+function extractUserPrompt(messages) {
+  if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
+  return messages.map(
+    (message) => typeof message.content === "string" ? message.content : messageContentToText(message.content) || ""
+  ).join("\n\n");
+}
+function extractUserPromptBlocks(messages) {
+  if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
+  let hasImage = false;
+  const blocks = [];
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const content = messages[messageIndex].content;
+    if (messageIndex > 0) blocks.push({ type: "text", text: "\n\n" });
+    if (typeof content === "string") {
+      if (content) blocks.push({ type: "text", text: content });
+      continue;
+    }
+    if (!Array.isArray(content)) {
+      debug(`extractUserPromptBlocks: content is ${typeof content}`);
+      continue;
+    }
+    debug(`extractUserPromptBlocks: ${content.length} blocks, types=${content.map((b) => b.type).join(",")}`);
+    for (const block of content) {
+      if (block.type === "text" && block.text) {
+        blocks.push({ type: "text", text: block.text });
+      } else if (block.type === "image") {
+        debug(`image block: mimeType=${block.mimeType}, data length=${(block.data ?? "").length}, keys=${Object.keys(block).join(",")}`);
+        if (!block.data || !block.mimeType) {
+          debug(`image block missing data or mimeType, skipping`);
+          continue;
+        }
+        hasImage = true;
+        blocks.push({
+          type: "image",
+          source: { type: "base64", media_type: block.mimeType, data: block.data }
+        });
+      }
+    }
+  }
+  return hasImage ? blocks : null;
+}
+function planDeferredUserReplay(messages) {
+  let runStart = messages.length;
+  while (runStart > 0 && messages[runStart - 1]?.role === "user") runStart--;
+  const trailingUsers = messages.slice(runStart);
+  const prompt = trailingUsers.length > 0 ? extractUserPrompt(trailingUsers) : null;
+  return {
+    runStart,
+    userMessageCount: trailingUsers.length,
+    prompt: prompt?.trim() ? prompt : null
+  };
+}
+async function* wrapPromptStream(blocks) {
+  yield {
+    type: "user",
+    message: { role: "user", content: blocks },
+    parent_tool_use_id: null
+  };
+}
+function resolveMcpTools(context, excludeToolName) {
+  const mcpTools = [];
+  const customToolNameToSdk = /* @__PURE__ */ new Map();
+  const customToolNameToPi = /* @__PURE__ */ new Map();
+  if (!context.tools) return { mcpTools, customToolNameToSdk, customToolNameToPi };
+  for (const tool of context.tools) {
+    if (tool.name === excludeToolName) continue;
+    if (isChildExecutedTool(tool.name)) {
+      debug(`resolveMcpTools: not re-offering child-native tool ${tool.name}`);
+      continue;
+    }
+    const sdkName = `${MCP_TOOL_PREFIX}${tool.name}`;
+    mcpTools.push(tool);
+    const lowerName = tool.name.toLowerCase();
+    const collision = customToolNameToSdk.get(lowerName);
+    if (collision !== void 0 && collision !== sdkName) {
+      debug(`WARNING: resolveMcpTools lowercase alias collision: ${tool.name} overwrites mapping previously held by ${collision}`);
+    }
+    customToolNameToSdk.set(tool.name, sdkName);
+    customToolNameToSdk.set(lowerName, sdkName);
+    customToolNameToPi.set(sdkName, tool.name);
+    customToolNameToPi.set(sdkName.toLowerCase(), tool.name);
+  }
+  return { mcpTools, customToolNameToSdk, customToolNameToPi };
+}
+function buildMcpServers(tools, queryCtx) {
+  if (!tools.length) return void 0;
+  const mcpTools = tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: jsonSchemaToZodShape(tool.parameters),
+    handler: async (args) => {
+      const mappedArgs = mapToolArgs(tool.name, args);
+      const claim = queryCtx.claimToolCall(tool.name, mappedArgs);
+      const toolCallId = claim.toolCallId;
+      if (!toolCallId) {
+        debug(`WARNING: mcp handler ${tool.name} has no toolCallId (available=${claim.available})`);
+        diagDump("tool_handler_unmatched", {
+          toolName: tool.name,
+          argKeys: argKeys(mappedArgs),
+          available: claim.available,
+          turnToolCallIds: queryCtx.turnToolCallIds,
+          turnToolCalls: safeToolCallSummary(queryCtx.turnToolCalls)
+        });
+        appendIntegrityEntry("tool_handler_unmatched", {
+          toolName: tool.name,
+          argKeys: argKeys(mappedArgs),
+          available: claim.available,
+          turnToolCallIds: queryCtx.turnToolCallIds
+        });
+        return { content: [{ type: "text", text: `Claude bridge internal error: no matching tool_call id for ${tool.name}` }], isError: true };
+      }
+      if (claim.argsMismatch) {
+        debug(`mcp handler: ${tool.name} [${toolCallId}] claimed sole same-name call despite args mismatch`);
+        diagDump("tool_claim_args_mismatch", {
+          toolName: tool.name,
+          toolCallId,
+          handlerArgKeys: argKeys(mappedArgs),
+          recordedArgKeys: argKeys(queryCtx.turnToolCalls.find((call) => call.id === toolCallId)?.arguments)
+        });
+      } else if (claim.match !== "tool-args" || claim.ambiguous) {
+        debug(`mcp handler: ${tool.name} [${toolCallId}] claimed by ${claim.match}${claim.ambiguous ? " (ambiguous)" : ""}`);
+      }
+      if (toolCallId && queryCtx.pendingResults.has(toolCallId)) {
+        const result = queryCtx.pendingResults.get(toolCallId);
+        queryCtx.pendingResults.delete(toolCallId);
+        queryCtx.markToolResultResolved(toolCallId);
+        debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 resolved from queue (${queryCtx.pendingResults.size} remaining)`);
+        return result;
+      }
+      debug(`mcp handler: ${tool.name} [${toolCallId}] \u2192 waiting`);
+      scheduleToolUseTurnEnd(
+        queryCtx,
+        () => finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, tool.name, mappedArgs),
+        `mcp-invocation:${tool.name}`
+      );
+      return new Promise((resolve5) => {
+        queryCtx.pendingToolCalls.set(toolCallId, {
+          toolName: tool.name,
+          resolve: (result) => {
+            queryCtx.markToolResultResolved(toolCallId);
+            resolve5(result);
+          }
+        });
+      });
+    }
+  }));
+  const server = f0e({ name: MCP_SERVER_NAME, version: "1.0.0", tools: mcpTools });
+  return { [MCP_SERVER_NAME]: server };
 }
 function claimPrimaryInstance() {
   const g = globalThis;
@@ -46212,61 +46343,25 @@ function streamClaudeAgentSdk(model, context, options) {
   }
   const prompt = promptBlocks ? wrapPromptStream(promptBlocks) : promptText;
   const mcpServers = buildMcpServers(mcpTools, ctx());
-  const enableCloudMcp = connectorsEnabledFor(bridgeConfig);
-  const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
-  const connectorServers = enableCloudMcp ? connectorServersSnapshot(accountScope.claudeConfigDir) : {};
-  const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
-  const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : void 0;
-  const skillsAppend = appendSystemPrompt ? extractSkillsBlock(context.systemPrompt) : void 0;
-  const promptContextAppend = buildPromptContextAppend(context.systemPrompt, cwd, bridgeConfig.promptContext ?? {});
-  const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part) => Boolean(part));
-  const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : void 0;
-  const settingSources = settingSourcesForQuery(
-    enableCloudMcp,
-    appendSystemPrompt,
-    providerSettings.settingSources
-  );
-  const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
-  const requestedEffort = options?.reasoning ? queryModel.thinkingLevelMap?.[options.reasoning] ?? REASONING_TO_EFFORT[options.reasoning] : void 0;
-  const effort = resolveConfiguredEffort(queryModel.id, requestedEffort, providerSettings);
-  const extraArgs = {};
-  if (effort) extraArgs["thinking-display"] = "summarized";
-  const fallbackModel = account && model.id === FABLE_MODEL_ID && queryModel.id === model.id ? void 0 : fallbackModelForPrimaryModel(queryModel.id);
-  const childEnv = {
-    ...account ? subscriberProfileEnv(account) : process.env,
-    ENABLE_CLAUDEAI_MCP_SERVERS: enableCloudMcp ? "1" : "0",
-    DISABLE_AUTO_COMPACT: "1"
-  };
-  const queryOptions = {
+  const built = buildClaudeQueryOptions({
     cwd,
-    model: queryModel.id,
-    env: childEnv,
-    ...connectorQueryOptions(enableCloudMcp, connectorWriteMode),
-    permissionMode: "bypassPermissions",
-    includePartialMessages: true,
-    ...fallbackModel ? { fallbackModel } : {},
-    ...providerSettings.fastMode ? { settings: { fastMode: true } } : {},
-    systemPrompt: {
-      type: "preset",
-      preset: "claude_code",
-      append: systemPromptAppend ? systemPromptAppend : void 0
-    },
-    extraArgs,
-    ...strictMcpConfigEnabled ? { strictMcpConfig: true } : {},
-    ...effort ? { effort } : {},
-    ...settingSources ? { settingSources } : {},
-    ...mcpServers || Object.keys(connectorServers).length > 0 ? { mcpServers: { ...mcpServers ?? {}, ...connectorServers } } : {},
-    ...resumeSessionId ? { resume: resumeSessionId } : {},
-    ...claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
-    spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
-    ...makeCliDebugOptions("provider")
-  };
+    requestedModel: model,
+    queryModel,
+    account,
+    bridgeConfig,
+    systemPrompt: context.systemPrompt,
+    reasoning: options?.reasoning,
+    resumeSessionId,
+    mcpServers,
+    claudeExecutable
+  });
+  const { queryOptions } = built;
   debug(
     "provider: fresh query",
     `model=${queryModel.id} requested=${model.id} msgs=${context.messages.length} tools=${mcpTools.length}`,
-    `resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"} account=${account?.label ?? "legacy"}`,
-    `fallback=${fallbackModel ?? "none"}`,
-    `appendSys=${appendSystemPrompt} promptCtx=${promptContextAppend.labels.join(",") || "none"} strictMcp=${strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${enableCloudMcp}`,
+    `resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${built.effort ?? "default"} account=${account?.label ?? "legacy"}`,
+    `fallback=${built.fallbackModel ?? "none"}`,
+    `appendSys=${built.appendSystemPrompt} promptCtx=${built.promptContextLabels.join(",") || "none"} strictMcp=${built.strictMcpConfigEnabled} fastMode=${providerSettings.fastMode === true} connectors=${built.enableCloudMcp}`,
     `claudeExec=${claudeExecutablePreflight ? `${claudeExecutablePreflight.fileType}:${claudeExecutablePreflight.path}` : "sdk-default"}`,
     `prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`
   );
@@ -46572,64 +46667,6 @@ function streamClaudeAgentSdk(model, context, options) {
     stream.end();
   });
   return stream;
-}
-function commandCwd(ctx2) {
-  const value = ctx2?.cwd;
-  return typeof value === "string" && value.length > 0 ? value : process.cwd();
-}
-async function tryOpenExtensionManagerSettings(ctx2) {
-  const host = globalThis;
-  const openQuickSettings = host[/* @__PURE__ */ Symbol.for("vstack.pi.extension-manager.open-quick-settings")];
-  if (typeof openQuickSettings !== "function") return false;
-  try {
-    await openQuickSettings(ctx2, "@vanillagreen/pi-claude-bridge");
-    return true;
-  } catch {
-    return false;
-  }
-}
-function showBridgeStatus(ctx2) {
-  const config2 = loadConfig(commandCwd(ctx2));
-  ctx2.ui.notify([
-    `Pi Claude: ${config2.enabled === false ? "disabled" : "enabled"}`,
-    "Claude account billing settings (including Extra Usage) are managed in Claude."
-  ].join("\n"), "info");
-}
-async function reportConnectorInventory(ctx2) {
-  const account = ctx2.model ? resolveClaudeAccountRouter()?.current(ctx2.model.id, ctx2.sessionManager?.getSessionId?.()) : void 0;
-  const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(account ? accountSessionScope(account).claudeConfigDir : void 0));
-  if (!credentials) {
-    ctx2.ui.notify("Pi Claude: no Claude OAuth credentials found \u2014 cannot enumerate connectors.", "error");
-    return;
-  }
-  const inventory = await listAccountConnectors({ credentials });
-  if (!inventory.ok) {
-    ctx2.ui.notify(`Pi Claude: connector enumeration failed \u2014 ${inventory.reason}`, "error");
-    return;
-  }
-  if (inventory.connectors.length === 0) {
-    ctx2.ui.notify("Pi Claude: this account has no connectors installed.", "info");
-    return;
-  }
-  const names = inventory.connectors.map((c) => c.name).join(", ");
-  ctx2.ui.notify(`Pi Claude: ${inventory.connectors.length} connector(s) installed \u2014 ${names}`, "info");
-}
-function registerBridgeCommands(pi) {
-  const guard = pi;
-  if (guard[COMMANDS_REGISTERED_KEY]) return;
-  guard[COMMANDS_REGISTERED_KEY] = true;
-  pi.registerCommand("pi-claude", {
-    description: "Open Pi Claude settings/status",
-    handler: async (args, ctx2) => {
-      if (args.trim()) ctx2.ui.notify("Unknown /pi-claude argument.", "warning");
-      if (await tryOpenExtensionManagerSettings(ctx2)) return;
-      showBridgeStatus(ctx2);
-    }
-  });
-  pi.registerCommand("pi-claude:connectors", {
-    description: "List the Claude account's installed claude.ai connectors",
-    handler: async (_args, ctx2) => reportConnectorInventory(ctx2)
-  });
 }
 function index_default(pi) {
   setExtensionApi(pi);

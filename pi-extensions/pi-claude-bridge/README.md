@@ -154,6 +154,10 @@ Legacy `claude-bridge.json` configuration nests these options under `provider` (
 
 For both, the env var wins over config. `connectorWriteMode` only matters when connectors are enabled. Any value other than exactly `allow` is treated as `deny` (fail-closed).
 
+> **User scope + env only.** These two keys are resolved from user-scope configuration (`<PI_CODING_AGENT_DIR>/settings.json`, `<PI_CODING_AGENT_DIR>/claude-bridge.json`) and the env vars — never from a project's checked-in `.pi/settings.json` or `.pi/claude-bridge.json`, even when the project is trusted for ordinary options. Connectors expose live account data (mail, calendar, files), so a repo you clone must not be able to switch them on or un-gate their writes just by being the cwd.
+
+Beyond the read-only write gate, every connectors-mode child also runs under a fail-closed **tool allowlist**: a runtime PreToolUse hook permits only Pi's bridged custom tools (`mcp__custom-tools__*`), claude.ai connector tools (`mcp__claude_ai_*`, writes still subject to the write gate), and the tool-discovery built-ins — and denies anything else, including Claude Code built-ins that don't exist yet. Connector sessions ingest untrusted third-party content (mail bodies, tickets, documents); a denylist of today's built-ins would fail open on tomorrow's.
+
 With `connectorWriteMode: "deny"` (the default), connector sessions are **read-only**: search/read/fetch/list tools stay available, while mutating tools are denied twice — the known write tools are removed from the model's tool list, and a runtime hook blocks any connector tool classified as a write at call time, regardless of permission mode. Classification is fail-closed across every connector on the account: a connector tool counts as a write unless its name begins with a known read verb, so not-yet-known write tools and future connectors are denied by the same rule.
 
 Set `allow` only for a one-shot write-executor session that has already obtained explicit user approval — never for an interactive connector chat.
