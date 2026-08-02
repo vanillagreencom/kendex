@@ -184,6 +184,15 @@ export class QueryContext {
 	// another account (duplicate side effects). Query-scoped, not per-turn:
 	// resetTurnState must not clear it.
 	committedOutput = false;
+	/** True when this query holds NO claim on the module-level shared session
+	 *  record: a reentrant (subagent) query, or a foreign-conversation one-shot
+	 *  (vstack#1001). Every shared-record mutation reachable from this context —
+	 *  reportToolResultMismatch's needsRebuild/forceRotate mark, the cursor
+	 *  advances on the tool-result-delivery and orphaned-result paths — must
+	 *  no-op so the PARENT's record stays untouched. Assigned at fresh-query
+	 *  setup; deliberately NOT cleared at query end, so a late orphaned tool
+	 *  result arriving after this query settled is still attributed to it. */
+	detachedFromSharedSession = false;
 	/** Armed grace timer for ending a tool_use turn whose terminal stream events
 	 *  (message_delta/message_stop) never arrive. The normal path ends the turn at
 	 *  message_stop, AFTER message_delta delivered the real output-token count;

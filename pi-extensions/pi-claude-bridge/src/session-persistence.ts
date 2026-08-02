@@ -29,6 +29,81 @@ interface PersistedBridgeSessionState extends Omit<SessionState, "claudeConfigDi
 	updatedAt: string;
 }
 
+function normalizedMessageText(message: unknown): string {
+	const content = (message as { content?: unknown }).content;
+	const text = typeof content === "string"
+		? content
+		: Array.isArray(content)
+			? content
+				.map((block) => (block as { type?: string; text?: string }).type === "text" ? (block as { text?: string }).text ?? "" : "")
+				.join("\n")
+			: "";
+	return text.trim();
+}
+
+function shortHash(text: string): string {
+	return createHash("sha256").update(text).digest("hex").slice(0, 12);
+}
+
+/** Identity anchor for a pi conversation, encoded component-wise as
+ *  `u:<12hex>` (short sha256 of the FIRST user message's normalized text) or
+ *  `u:<12hex>|a:<12hex>` (plus the FIRST assistant message's normalized text
+ *  once the conversation has one with any text). The opening messages are the
+ *  stable elements of a pi history — later messages get appended, compacted,
+ *  or tree-navigated (all of which set needsRebuild), but the first user/
+ *  assistant pair survives for the session's lifetime. The two-component form
+ *  exists because a first USER message alone is a weak anchor: unrelated
+ *  conversations routinely open with identical text ("continue"), and a
+ *  same-opener foreign context shaped to align with the cursor would REUSE
+ *  across genuinely different histories. Returns undefined when the context
+ *  has no user message or its text normalizes to empty (image-only) —
+ *  identity unknown, callers must fail open to the pre-fingerprint behavior,
+ *  never treat it as a mismatch. Distinct from fingerprintMessages below,
+ *  which hashes a cursor slice for restore integrity. */
+export function conversationFingerprint(messages: Context["messages"]): string | undefined {
+	const firstUser = messages.find((message) => (message as { role?: string }).role === "user");
+	if (!firstUser) return undefined;
+	const userText = normalizedMessageText(firstUser);
+	if (!userText) return undefined;
+	const firstAssistant = messages.find((message) => (message as { role?: string }).role === "assistant");
+	const assistantText = firstAssistant ? normalizedMessageText(firstAssistant) : "";
+	return assistantText ? `u:${shortHash(userText)}|a:${shortHash(assistantText)}` : `u:${shortHash(userText)}`;
+}
+
+function parseConversationFingerprint(fp: string): { user: string; assistant?: string } | undefined {
+	const match = /^u:([0-9a-f]+)(?:\|a:([0-9a-f]+))?$/.exec(fp);
+	if (!match) return undefined;
+	return { user: match[1], ...(match[2] ? { assistant: match[2] } : {}) };
+}
+
+/** Component-wise anchor comparison. The user component must always match; the
+ *  assistant component is compared only when BOTH sides carry one — a record
+ *  stamped on turn 1 has no assistant yet, and its own conversation grown past
+ *  turn 1 is an upgrade, not a mismatch (see conversationFingerprintUpgrade).
+ *  An unparseable side means identity unknown: fail open (match), consistent
+ *  with the guard's treatment of absent fingerprints. */
+export function conversationFingerprintsMatch(recorded: string, incoming: string): boolean {
+	const rec = parseConversationFingerprint(recorded);
+	const inc = parseConversationFingerprint(incoming);
+	if (!rec || !inc) return true;
+	if (rec.user !== inc.user) return false;
+	return !(rec.assistant && inc.assistant && rec.assistant !== inc.assistant);
+}
+
+/** Whether a REUSE-matched context's anchor should replace the recorded one:
+ *  a legacy record with none adopts it outright (the planner accepting this
+ *  context as the recorded conversation's continuation is the identity proof),
+ *  and a turn-1 user-only record upgrades to the two-component form the
+ *  moment its own conversation carries a first assistant message. A recorded
+ *  two-component anchor is never rewritten. */
+function conversationFingerprintUpgrade(recorded: string | undefined, incoming: string | undefined): string | undefined {
+	if (!incoming) return undefined;
+	if (!recorded) return incoming;
+	const rec = parseConversationFingerprint(recorded);
+	const inc = parseConversationFingerprint(incoming);
+	return rec && inc && !rec.assistant && inc.assistant && rec.user === inc.user ? incoming : undefined;
+}
+
 function fingerprintMessages(messages: Context["messages"]): string {
 	const normalized = messages.map((message) => {
 		if (message.role === "assistant") {
@@ -136,6 +211,9 @@ export function restoreSharedSessionFromPi(ctx: { sessionManager?: unknown; cwd?
 		sessionId: persisted.sessionId,
 		cursor,
 		cwd: persisted.cwd,
+		// Absent on pre-3.1.1 markers: restore as identity-unknown (the foreign
+		// guard fails open) rather than rejecting the entry.
+		...(typeof persisted.conversationFingerprint === "string" ? { conversationFingerprint: persisted.conversationFingerprint } : {}),
 		...(accountProfileId ? { accountProfileId, claudeConfigDir } : {}),
 	});
 	debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}, account=${accountProfileId ?? "default"}`);
@@ -250,6 +328,11 @@ interface SyncResult {
 	// Everything from promptStart to the end is user input Claude has not seen;
 	// the caller slices it out itself (single owner of the messages array).
 	promptStart: number;
+	// True when the incoming context's conversation fingerprint contradicts the
+	// shared record's (Case 6): the query runs as a clean one-shot and its
+	// completion must NOT persist over the module-level record — the caller
+	// gates its persistSession/markRebuild exactly like the reentrant path.
+	foreignContext?: boolean;
 }
 
 export interface IncrementalPromptBatchPlan {
@@ -403,6 +486,44 @@ export function syncSharedSession(
 		sharedSession.accountProfileId === accountProfileId &&
 		sharedSession.claudeConfigDir === scopeConfigDir,
 	);
+	const incomingFingerprint = conversationFingerprint(messages);
+
+	// FOREIGN-CONVERSATION guard (Case 6, vstack#1001). A subagent-shaped query
+	// arriving while the parent is IDLE is not reentrant, so it lands here as an
+	// outermost query. Without an identity check its short foreign context takes
+	// the REBUILD path — rewriting the PARENT's session file from foreign
+	// history — and its completion swaps the parent's record for the child's.
+	// A conversation-fingerprint mismatch is that identity signal: run the query
+	// as a clean one-shot (same semantics as the reentrant path) and leave the
+	// record completely alone. Two deliberate limits keep misclassification
+	// self-healing instead of sticky:
+	//   - needsRebuild is a carve-out: pi just mutated its history out from
+	//     under us (compact, tree-nav, abort recovery), so the next outermost
+	//     context is authoritative for THIS conversation even if its anchor
+	//     moved — it must reach REBUILD, not be shunted into a one-shot.
+	//   - Length monotonicity (the issue's second signal): a real conversation
+	//     only grows, so a context LONGER than what the record's cursor covers
+	//     can be the recorded conversation while a mismatching shorter one
+	//     cannot. Should a foreign fingerprint ever capture the record (legacy
+	//     no-fingerprint records still rebuild, below), the parent's longer
+	//     context falls through to REBUILD and reclaims it in one turn — a
+	//     mismatch-always-one-shot rule would instead degrade every subsequent
+	//     parent turn to a historyless one-shot with no recovery.
+	// Either fingerprint being unknown (no user message, image-only opener,
+	// pre-3.1.1 record) fails open to the pre-fingerprint behavior.
+	if (
+		sharedSession && !sharedSession.needsRebuild &&
+		sharedSession.conversationFingerprint && incomingFingerprint &&
+		!conversationFingerprintsMatch(sharedSession.conversationFingerprint, incomingFingerprint) &&
+		priorMessages.length <= sharedSession.cursor
+	) {
+		debug(
+			`Case 6 foreign-conversation: fingerprint ${incomingFingerprint.slice(0, 8)} != record ${sharedSession.conversationFingerprint.slice(0, 8)} ` +
+			`(cursor=${sharedSession.cursor}, priors=${priorMessages.length}) — clean one-shot, record untouched`,
+		);
+		debug(`syncResult: path=foreign-one-shot`);
+		return { sessionId: null, promptStart: messages.length - 1, foreignContext: true };
+	}
 
 	// REUSE path. A Claude session can only be resumed under the credential
 	// profile that created its JSONL and prompt cache.
@@ -414,7 +535,17 @@ export function syncSharedSession(
 			// always be equal and the "advanced past trailing assistant" debug
 			// branch could never print (vstack#993).
 			const cursorBeforeUpdate = sharedSession.cursor;
-			setSharedSession({ ...sharedSession, cursor: batch.promptStart, cwd });
+			// A REUSE match proves identity, so the anchor may only strengthen here:
+			// a pre-3.1.1 record adopts it outright, and a turn-1 user-only anchor
+			// upgrades to the two-component form once the conversation has its
+			// first assistant message (see conversationFingerprintUpgrade).
+			const upgradedFingerprint = conversationFingerprintUpgrade(sharedSession.conversationFingerprint, incomingFingerprint);
+			setSharedSession({
+				...sharedSession,
+				cursor: batch.promptStart,
+				cwd,
+				...(upgradedFingerprint ? { conversationFingerprint: upgradedFingerprint } : {}),
+			});
 			const batching = batch.userMessageCount > 1
 				? `batched ${batch.userMessageCount} consecutive user messages, `
 				: batch.promptStart > cursorBeforeUpdate ? "advanced cursor past trailing assistant, " : "";
@@ -461,6 +592,9 @@ export function syncSharedSession(
 		sessionId: session.sessionId,
 		cursor: priorMessages.length,
 		cwd,
+		// The rebuilt file's content IS this context, so its anchor is the
+		// record's identity — including after a compact/tree-nav that moved it.
+		...(incomingFingerprint ? { conversationFingerprint: incomingFingerprint } : {}),
 		...(accountProfileId ? { accountProfileId } : {}),
 		...(scopeConfigDir ? { claudeConfigDir: scopeConfigDir } : {}),
 	});

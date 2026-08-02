@@ -41,7 +41,7 @@ import { preflightClaudeExecutable, resolveClaudeExecutable } from "./claude-exe
 import { appendIntegrityEntry, argKeys, extensionApi, markSessionForRebuild, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession, type SessionState } from "./bridge-state.js";
 import { connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
 import { primeConnectorServers } from "./connector-runtime.js";
-import { cancelScheduledSessionPersistence, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
+import { cancelScheduledSessionPersistence, conversationFingerprint, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
 import { RATE_LIMIT_TOKEN, formatResetTimestamp } from "./rate-limit.js";
 import { mapToolArgs } from "./tool-mapping.js";
@@ -74,7 +74,7 @@ export { classifyClaudeExecutableBytes, preflightClaudeExecutable, resolveClaude
 export { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState, INTEGRITY_CUSTOM_TYPE, appendIntegrityEntry, reportToolResultMismatch } from "./bridge-state.js";
 export { CONNECTOR_CALL_CUSTOM_TYPE, connectorResultByteSize, flushConnectorCallAudit, recordConnectorCallResult, setConnectorCallAuditSink, type ConnectorCallAuditData, type ConnectorCallAuditSink, type ConnectorCallOutcome } from "./connector-audit.js";
 export { CLAUDE_AI_CONNECTOR_TOOL_PATTERNS, connectorMcpServers, connectorDeclarationsDisabled, CLAUDE_BRIDGE_TOOL_ISOLATION, CONNECTOR_DISCOVERY_TOOLS, CONNECTOR_WRITE_TOOLS, DISALLOWED_BUILTIN_TOOLS, connectorBuiltinAllowlistHook, connectorQueryOptions, connectorWriteDenyHook, connectorWriteModeFor, connectorWriteModeFromEnv, connectorsEnabledFor, connectorsEnabledFromEnv, denyAllToolsHook, isAllowlistedConnectorSessionTool, isChildExecutedTool, isChildInternalTool, isConnectorTool, isConnectorWriteTool, settingSourcesForQuery, toolIsolationForQuery } from "./connectors.js";
-export { cancelScheduledSessionPersistence, planIncrementalPromptBatch, restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
+export { cancelScheduledSessionPersistence, conversationFingerprint, conversationFingerprintsMatch, planIncrementalPromptBatch, restoreSharedSessionFromPi, shouldRestorePersistedBridgeEntry } from "./session-persistence.js";
 export { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, claudeAuthSourceLabel, supportsNativeProvider } from "./native-provider.js";
 export { DEFAULT_STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_BACKOFF_HINT_MS, STREAM_IDLE_TIMEOUT_ENV, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, streamIdleTimeoutMsFromEnv, type StreamIdleTimeoutInfo, type StreamIdleWatchdog, type StreamIdleWatchdogState } from "./stream-idle-watchdog.js";
 export { ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD, formatAllowedRateLimitWarning, formatResetTimestamp, isUsageLimitMessage, normalizeRateLimitUtilization, resetTimestampMs, uniqueNonEmptyLines } from "./rate-limit.js";
@@ -613,14 +613,18 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			}
 		}
 
-		// Cursor may only ADVANCE, and only for the outermost query. A reentrant
-		// subagent call routed through this instance arrives here with a SHORT
-		// foreign context (its own [user…] conversation, not the one the cursor
-		// indexes) — writing its length used to shrink the parent cursor and make
-		// the next REUSE replay already-owned history. The stackDepth guard covers
-		// a pushed subagent context; Math.max covers a foreign context arriving on
-		// the top-level ctx, where the two conversations are indistinguishable.
-		if (sharedSession && stackDepth() === 0) {
+		// Cursor may only ADVANCE, and only for a query that holds the record's
+		// claim. A reentrant subagent call routed through this instance arrives
+		// here with a SHORT foreign context (its own [user…] conversation, not
+		// the one the cursor indexes) — writing its length used to shrink the
+		// parent cursor and make the next REUSE replay already-owned history.
+		// The stackDepth guard covers a pushed subagent context; the detached
+		// flag covers a foreign one-shot on the top-level ctx, whose GROWN
+		// mid-query context could otherwise out-length the parent's cursor and
+		// advance it past history Claude never saw (vstack#1001); Math.max
+		// remains the backstop for a legacy-record foreign context the
+		// fingerprint guard could not classify.
+		if (sharedSession && stackDepth() === 0 && !queryCtx.detachedFromSharedSession) {
 			setSharedSession({ ...sharedSession, cursor: Math.max(sharedSession.cursor, capturedThrough) });
 		}
 		queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
@@ -633,7 +637,10 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	const lastMsg = context.messages[context.messages.length - 1];
 	if (lastMsg?.role === "toolResult") {
 		debug(`provider: orphaned tool result after abort, emitting end_turn`);
-		if (sharedSession && stackDepth() === 0) setSharedSession({ ...sharedSession, cursor: context.messages.length });
+		// The detached flag deliberately survives query end: an orphaned result
+		// from a foreign one-shot indexes ITS conversation, and writing that
+		// length here would move (even shrink) the parent's cursor (vstack#1001).
+		if (sharedSession && stackDepth() === 0 && !ctx().detachedFromSharedSession) setSharedSession({ ...sharedSession, cursor: context.messages.length });
 		const c = ctx();  // capture current context for the microtask
 		queueMicrotask(() => {
 			c.resetTurnState(model);
@@ -688,6 +695,9 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	ctx().resetToolTracking();
 	ctx().latestCursor = 0;
 	ctx().committedOutput = false;
+	// A reentrant query never claims the shared record; a foreign-conversation
+	// one-shot joins it below once syncSharedSession has ruled.
+	ctx().detachedFromSharedSession = isReentrant;
 
 	// --- Account routing (optional) ---
 	// A companion router selects the subscription profile for this attempt.
@@ -796,9 +806,24 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	// subagent's turn into the parent's conversation of record. It runs as a
 	// clean one-shot instead (Case-1 semantics — no resume, prompt is the
 	// trailing message; the child session id lives in the QueryContext only).
-	const { sessionId: resumeSessionId, promptStart } = isReentrant
+	const syncResult = isReentrant
 		? { sessionId: null, promptStart: context.messages.length - 1 }
 		: syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope);
+	const { sessionId: resumeSessionId, promptStart } = syncResult;
+	// A FOREIGN-conversation query (conversation-fingerprint mismatch against
+	// the shared record — a subagent-shaped request arriving while the parent
+	// is IDLE, vstack#1001) also runs as a clean one-shot and gets the same
+	// hands-off treatment as a reentrant one below: never persist over the
+	// module-level record, never mark it for rebuild. The flag also rides the
+	// QueryContext so the mismatch/abort/teardown paths that mutate the record
+	// OUTSIDE this closure (reportToolResultMismatch, the cursor advances in
+	// the delivery paths above) observe the same non-claim.
+	const foreignContext = syncResult.foreignContext === true;
+	if (foreignContext) ctx().detachedFromSharedSession = true;
+	// Identity anchor stamped onto every record this outermost query persists,
+	// so the record created by a Case-1 clean start is protected from the very
+	// next idle-window foreign query.
+	const conversationFp = isReentrant || foreignContext ? undefined : conversationFingerprint(context.messages);
 	const promptMessages = context.messages.slice(promptStart);
 	const promptBlocks = extractUserPromptBlocks(promptMessages);
 	let promptText = extractUserPrompt(promptMessages) ?? "";
@@ -867,13 +892,14 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	const attemptFailure: { failure?: ClaudeAttemptFailure } = {};
 	// A reentrant (subagent) query must never write the module-level shared
 	// session: its completion/failure handlers would overwrite the PARENT's
-	// record with the child's session id and cursor.
+	// record with the child's session id and cursor. A foreign-conversation
+	// one-shot (vstack#1001) has exactly the same non-claim on the record.
 	const persistSession = (next: SessionState | null): void => {
-		if (isReentrant) return;
-		setSharedSession(next);
+		if (isReentrant || foreignContext) return;
+		setSharedSession(next && conversationFp ? { conversationFingerprint: conversationFp, ...next } : next);
 	};
 	const markRebuildForThisQuery = (opts: { forceRotate?: boolean } = {}): void => {
-		if (isReentrant) return;
+		if (isReentrant || foreignContext) return;
 		markSessionForRebuild(opts);
 	};
 	// #967 invariant: a deferred (mid-query) user message may be dropped only
@@ -1121,7 +1147,9 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 					abortCtx.resetTurnState(queryModel);
 					abortCtx.resetToolTracking();
 
-					const resumeId = sharedSession?.sessionId;
+					// A foreign one-shot has no claim on the shared record: its steers
+					// continue ITS OWN child session, never --resume the parent's.
+					const resumeId = foreignContext ? capturedSessionId : sharedSession?.sessionId;
 					if (!resumeId) {
 						debug(`WARNING: no session to resume for deferred message, dropping`);
 						// No record survives here (no session id), so the next turn

@@ -14,6 +14,21 @@ export interface SessionState {
 	// id, re-deriving the dir through the router on restore.
 	accountProfileId?: string;
 	claudeConfigDir?: string;
+	// Identity anchor of the pi conversation this record belongs to, encoded
+	// component-wise as `u:<12hex>` or `u:<12hex>|a:<12hex>` (see
+	// conversationFingerprint in session-persistence.ts): a short sha256 of the
+	// FIRST user message's normalized text, plus — once the conversation has
+	// one — of the FIRST assistant message's normalized text. Pi histories
+	// never rewrite those opening messages — compact/tree-nav mutations set
+	// needsRebuild instead — so a component mismatch marks a FOREIGN
+	// conversation (a subagent-shaped query arriving while the parent is idle,
+	// vstack#1001) that must run as a clean one-shot without touching this
+	// record. The user component must always match; the assistant component is
+	// compared only when BOTH sides carry one, so a record stamped on turn 1
+	// (no assistant yet) still matches its own grown conversation and upgrades
+	// to the two-component form on the next REUSE. Absent on records restored
+	// from pre-3.1.1 markers → identity unknown, pre-fingerprint behavior.
+	conversationFingerprint?: string;
 	// Force the next syncSharedSession call down the REBUILD path. Set when
 	// pi has mutated its messages array out from under us (compact, tree
 	// navigation) or after an abort left the JSONL in an indeterminate state.
@@ -148,7 +163,14 @@ export function reportToolResultMismatch(
 			: progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0;
 		if (!hasMismatch) return false;
 		queryCtx.reportedToolResultMismatch = true;
-		markSessionForRebuild(opts);
+		// The single choke point every mismatch path funnels through (abort,
+		// unmatched result, stream-idle, teardown). A context with no claim on
+		// the shared record (reentrant subagent or foreign one-shot, vstack#1001)
+		// still gets the full diagnostics below, but its unresolved tool state is
+		// its own — marking the PARENT's record needsRebuild/forceRotate here
+		// would flush the parent's prompt cache for a query that never touched
+		// its session.
+		if (!queryCtx.detachedFromSharedSession) markSessionForRebuild(opts);
 		// A user abort interrupting in-flight tool calls is expected teardown, not
 		// an integrity fault: mark the rebuild but skip the diag dump and toast.
 		if (opts.expectedInterruption) {
@@ -166,6 +188,7 @@ export function reportToolResultMismatch(
 			cwd,
 			progress,
 			activeQueryExists: queryCtx.activeQuery !== null,
+			detachedFromSharedSession: queryCtx.detachedFromSharedSession,
 			sharedSession: sharedSession ? {
 				sessionId: sharedSession.sessionId.slice(0, 8),
 				cursor: sharedSession.cursor,
@@ -188,7 +211,9 @@ export function reportToolResultMismatch(
 			`delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, ` +
 			`waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}` +
 			`${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` +
-			`Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
+			(queryCtx.detachedFromSharedSession
+				? `Detached one-shot query — shared Claude session record left untouched; see ${diagLogPath()}.`
+				: `Claude session will rebuild before the next turn; see ${diagLogPath()}.`),
 			"error",
 		);
 		return true;

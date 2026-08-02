@@ -28169,6 +28169,15 @@ var QueryContext = class {
   // another account (duplicate side effects). Query-scoped, not per-turn:
   // resetTurnState must not clear it.
   committedOutput = false;
+  /** True when this query holds NO claim on the module-level shared session
+   *  record: a reentrant (subagent) query, or a foreign-conversation one-shot
+   *  (vstack#1001). Every shared-record mutation reachable from this context —
+   *  reportToolResultMismatch's needsRebuild/forceRotate mark, the cursor
+   *  advances on the tool-result-delivery and orphaned-result paths — must
+   *  no-op so the PARENT's record stays untouched. Assigned at fresh-query
+   *  setup; deliberately NOT cleared at query end, so a late orphaned tool
+   *  result arriving after this query settled is still attributed to it. */
+  detachedFromSharedSession = false;
   /** Armed grace timer for ending a tool_use turn whose terminal stream events
    *  (message_delta/message_stop) never arrive. The normal path ends the turn at
    *  message_stop, AFTER message_delta delivered the real output-token count;
@@ -28642,7 +28651,7 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
     const hasMismatch = progress.expectedCount > 0 ? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0 : progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0;
     if (!hasMismatch) return false;
     queryCtx.reportedToolResultMismatch = true;
-    markSessionForRebuild(opts);
+    if (!queryCtx.detachedFromSharedSession) markSessionForRebuild(opts);
     if (opts.expectedInterruption) {
       debug(
         `tool result delivery interrupted as expected during ${reason}; delivered=${progress.deliveredCount}/${progress.expectedCount} resolved=${progress.resolvedCount}/${progress.expectedCount} waiting=${progress.waitingCount} queued=${progress.queuedCount}`
@@ -28655,6 +28664,7 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
       cwd,
       progress,
       activeQueryExists: queryCtx.activeQuery !== null,
+      detachedFromSharedSession: queryCtx.detachedFromSharedSession,
       sharedSession: sharedSession ? {
         sessionId: sharedSession.sessionId.slice(0, 8),
         cursor: sharedSession.cursor,
@@ -28673,7 +28683,7 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
       unmatchedResultIds: progress.unmatchedResultIds
     });
     safeNotify(
-      `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. Claude session will rebuild before the next turn; see ${diagLogPath()}.`,
+      `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` + (queryCtx.detachedFromSharedSession ? `Detached one-shot query \u2014 shared Claude session record left untouched; see ${diagLogPath()}.` : `Claude session will rebuild before the next turn; see ${diagLogPath()}.`),
       "error"
     );
     return true;
@@ -44517,6 +44527,42 @@ function classifyClaudeFailure(value) {
 
 // src/session-persistence.ts
 var BRIDGE_SESSION_CUSTOM_TYPE = "claude-bridge-session";
+function normalizedMessageText(message) {
+  const content = message.content;
+  const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((block) => block.type === "text" ? block.text ?? "" : "").join("\n") : "";
+  return text.trim();
+}
+function shortHash(text) {
+  return createHash2("sha256").update(text).digest("hex").slice(0, 12);
+}
+function conversationFingerprint(messages) {
+  const firstUser = messages.find((message) => message.role === "user");
+  if (!firstUser) return void 0;
+  const userText = normalizedMessageText(firstUser);
+  if (!userText) return void 0;
+  const firstAssistant = messages.find((message) => message.role === "assistant");
+  const assistantText = firstAssistant ? normalizedMessageText(firstAssistant) : "";
+  return assistantText ? `u:${shortHash(userText)}|a:${shortHash(assistantText)}` : `u:${shortHash(userText)}`;
+}
+function parseConversationFingerprint(fp2) {
+  const match = /^u:([0-9a-f]+)(?:\|a:([0-9a-f]+))?$/.exec(fp2);
+  if (!match) return void 0;
+  return { user: match[1], ...match[2] ? { assistant: match[2] } : {} };
+}
+function conversationFingerprintsMatch(recorded, incoming) {
+  const rec = parseConversationFingerprint(recorded);
+  const inc = parseConversationFingerprint(incoming);
+  if (!rec || !inc) return true;
+  if (rec.user !== inc.user) return false;
+  return !(rec.assistant && inc.assistant && rec.assistant !== inc.assistant);
+}
+function conversationFingerprintUpgrade(recorded, incoming) {
+  if (!incoming) return void 0;
+  if (!recorded) return incoming;
+  const rec = parseConversationFingerprint(recorded);
+  const inc = parseConversationFingerprint(incoming);
+  return rec && inc && !rec.assistant && inc.assistant && rec.user === inc.user ? incoming : void 0;
+}
 function fingerprintMessages(messages) {
   const normalized = messages.map((message) => {
     if (message.role === "assistant") {
@@ -44602,6 +44648,9 @@ function restoreSharedSessionFromPi(ctx2) {
     sessionId: persisted.sessionId,
     cursor,
     cwd: persisted.cwd,
+    // Absent on pre-3.1.1 markers: restore as identity-unknown (the foreign
+    // guard fails open) rather than rejecting the entry.
+    ...typeof persisted.conversationFingerprint === "string" ? { conversationFingerprint: persisted.conversationFingerprint } : {},
     ...accountProfileId ? { accountProfileId, claudeConfigDir } : {}
   });
   debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}, account=${accountProfileId ?? "default"}`);
@@ -44744,11 +44793,25 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account)
   const sameAccount = Boolean(
     sharedSession && sharedSession.accountProfileId === accountProfileId && sharedSession.claudeConfigDir === scopeConfigDir
   );
+  const incomingFingerprint = conversationFingerprint(messages);
+  if (sharedSession && !sharedSession.needsRebuild && sharedSession.conversationFingerprint && incomingFingerprint && !conversationFingerprintsMatch(sharedSession.conversationFingerprint, incomingFingerprint) && priorMessages.length <= sharedSession.cursor) {
+    debug(
+      `Case 6 foreign-conversation: fingerprint ${incomingFingerprint.slice(0, 8)} != record ${sharedSession.conversationFingerprint.slice(0, 8)} (cursor=${sharedSession.cursor}, priors=${priorMessages.length}) \u2014 clean one-shot, record untouched`
+    );
+    debug(`syncResult: path=foreign-one-shot`);
+    return { sessionId: null, promptStart: messages.length - 1, foreignContext: true };
+  }
   if (sharedSession && sameAccount && !sharedSession.needsRebuild) {
     const batch = planIncrementalPromptBatch(messages, sharedSession.cursor);
     if (batch) {
       const cursorBeforeUpdate = sharedSession.cursor;
-      setSharedSession({ ...sharedSession, cursor: batch.promptStart, cwd });
+      const upgradedFingerprint = conversationFingerprintUpgrade(sharedSession.conversationFingerprint, incomingFingerprint);
+      setSharedSession({
+        ...sharedSession,
+        cursor: batch.promptStart,
+        cwd,
+        ...upgradedFingerprint ? { conversationFingerprint: upgradedFingerprint } : {}
+      });
       const batching = batch.userMessageCount > 1 ? `batched ${batch.userMessageCount} consecutive user messages, ` : batch.promptStart > cursorBeforeUpdate ? "advanced cursor past trailing assistant, " : "";
       debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.promptStart}, account=${accountProfileId ?? "default"}`);
       debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${batch.promptStart} promptUsers=${batch.userMessageCount}`);
@@ -44783,6 +44846,9 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account)
     sessionId: session.sessionId,
     cursor: priorMessages.length,
     cwd,
+    // The rebuilt file's content IS this context, so its anchor is the
+    // record's identity — including after a compact/tree-nav that moved it.
+    ...incomingFingerprint ? { conversationFingerprint: incomingFingerprint } : {},
     ...accountProfileId ? { accountProfileId } : {},
     ...scopeConfigDir ? { claudeConfigDir: scopeConfigDir } : {}
   });
@@ -46198,7 +46264,7 @@ function streamClaudeAgentSdk(model, context, options) {
         });
       }
     }
-    if (sharedSession && stackDepth() === 0) {
+    if (sharedSession && stackDepth() === 0 && !queryCtx.detachedFromSharedSession) {
       setSharedSession({ ...sharedSession, cursor: Math.max(sharedSession.cursor, capturedThrough) });
     }
     queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
@@ -46207,7 +46273,7 @@ function streamClaudeAgentSdk(model, context, options) {
   const lastMsg = context.messages[context.messages.length - 1];
   if (lastMsg?.role === "toolResult") {
     debug(`provider: orphaned tool result after abort, emitting end_turn`);
-    if (sharedSession && stackDepth() === 0) setSharedSession({ ...sharedSession, cursor: context.messages.length });
+    if (sharedSession && stackDepth() === 0 && !ctx().detachedFromSharedSession) setSharedSession({ ...sharedSession, cursor: context.messages.length });
     const c = ctx();
     queueMicrotask(() => {
       c.resetTurnState(model);
@@ -46258,6 +46324,7 @@ function streamClaudeAgentSdk(model, context, options) {
   ctx().resetToolTracking();
   ctx().latestCursor = 0;
   ctx().committedOutput = false;
+  ctx().detachedFromSharedSession = isReentrant;
   const router = resolveClaudeAccountRouter();
   const rotationOptions = options;
   const rotationState = rotationOptions?.[ROTATION_STATE_KEY] ?? {
@@ -46328,7 +46395,11 @@ function streamClaudeAgentSdk(model, context, options) {
   const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
   const accountScope = accountSessionScope(account);
   const cursorBeforeSync = sharedSession?.cursor ?? null;
-  const { sessionId: resumeSessionId, promptStart } = isReentrant ? { sessionId: null, promptStart: context.messages.length - 1 } : syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope);
+  const syncResult = isReentrant ? { sessionId: null, promptStart: context.messages.length - 1 } : syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope);
+  const { sessionId: resumeSessionId, promptStart } = syncResult;
+  const foreignContext = syncResult.foreignContext === true;
+  if (foreignContext) ctx().detachedFromSharedSession = true;
+  const conversationFp = isReentrant || foreignContext ? void 0 : conversationFingerprint(context.messages);
   const promptMessages = context.messages.slice(promptStart);
   const promptBlocks = extractUserPromptBlocks(promptMessages);
   let promptText = extractUserPrompt(promptMessages) ?? "";
@@ -46380,11 +46451,11 @@ function streamClaudeAgentSdk(model, context, options) {
   const abortCtx = ctx();
   const attemptFailure = {};
   const persistSession = (next) => {
-    if (isReentrant) return;
-    setSharedSession(next);
+    if (isReentrant || foreignContext) return;
+    setSharedSession(next && conversationFp ? { conversationFingerprint: conversationFp, ...next } : next);
   };
   const markRebuildForThisQuery = (opts = {}) => {
-    if (isReentrant) return;
+    if (isReentrant || foreignContext) return;
     markSessionForRebuild(opts);
   };
   const dropDeferredUserMessages = (site, undelivered) => {
@@ -46571,7 +46642,7 @@ function streamClaudeAgentSdk(model, context, options) {
         debug(`provider: replaying deferred user message: ${steerPreview}`);
         abortCtx.resetTurnState(queryModel);
         abortCtx.resetToolTracking();
-        const resumeId = sharedSession?.sessionId;
+        const resumeId = foreignContext ? capturedSessionId : sharedSession?.sessionId;
         if (!resumeId) {
           debug(`WARNING: no session to resume for deferred message, dropping`);
           dropDeferredUserMessages("continuation-no-resume-id", steer);
@@ -46772,6 +46843,8 @@ export {
   connectorsEnabledFor,
   connectorsEnabledFromEnv,
   connectorsListUrl,
+  conversationFingerprint,
+  conversationFingerprintsMatch,
   createStreamIdleWatchdog,
   credentialCandidatePaths,
   index_default as default,

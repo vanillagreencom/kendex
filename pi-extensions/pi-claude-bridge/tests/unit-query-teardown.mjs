@@ -19,8 +19,9 @@ process.env.PI_CODING_AGENT_DIR = scratch;
 
 const { ctx, popContext, popContextFor, pushContext, resetStack, stackDepth } = await import("../src/query-state.js");
 const { teardownQuery } = await import("../src/query-teardown.js");
+const { __testGetBridgeIntegrityState, __testSetBridgeIntegrityState } = await import("../src/bridge-state.js");
 
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
 function registerWaitingCall(queryCtx, toolCallId, toolName = "read") {
@@ -189,5 +190,60 @@ describe("teardownQuery", () => {
 		assert.equal(ctx(), parent);
 		assert.equal(stackDepth(), 0);
 		assert.deepEqual(parent.deferredUserMessages, ["child-steer"]);
+	});
+});
+
+describe("teardownQuery shared-record gating (#1001)", () => {
+	const parentRecord = () => ({
+		sessionId: "parent-session",
+		cursor: 40,
+		cwd: "/repo",
+		conversationFingerprint: "u:aaaaaaaaaaaa|a:bbbbbbbbbbbb",
+	});
+
+	beforeEach(() => {
+		resetStack();
+		__testSetBridgeIntegrityState({ sharedSession: null, ui: null });
+	});
+
+	afterEach(() => __testSetBridgeIntegrityState({ sharedSession: null, ui: null }));
+
+	// Simulates a query dying with an unresolved tool call: recorded, a handler
+	// still waiting, teardown drains it. This is the exact path that used to
+	// mark the PARENT's record needsRebuild/forceRotate from a detached query.
+	const teardownWithUnresolvedCall = async (queryCtx, cause) => {
+		const sdkQuery = { id: "sdk-query" };
+		queryCtx.activeQuery = sdkQuery;
+		queryCtx.recordToolCall("call-1", "bash", { cmd: "ls" });
+		const waiting = registerWaitingCall(queryCtx, "call-1", "bash");
+		assert.equal(teardownQuery(queryCtx, sdkQuery, cause, "/tmp", false), true);
+		const result = await waiting;
+		assert.equal(result.isError, true);
+	};
+
+	it("a detached (foreign one-shot) query's unresolved tool call leaves the parent record untouched", async () => {
+		const record = parentRecord();
+		__testSetBridgeIntegrityState({ sharedSession: { ...record } });
+		const queryCtx = ctx();
+		queryCtx.detachedFromSharedSession = true;
+
+		await teardownWithUnresolvedCall(queryCtx, "abort");
+
+		assert.equal(queryCtx.reportedToolResultMismatch, true, "the mismatch is still reported (diagnostics keep flowing)");
+		assert.deepEqual(
+			__testGetBridgeIntegrityState().sharedSession,
+			record,
+			"a detached query must never mark the parent record needsRebuild/forceRotate",
+		);
+	});
+
+	it("an outermost claiming query's unresolved tool call still marks the record for rebuild", async () => {
+		__testSetBridgeIntegrityState({ sharedSession: parentRecord() });
+
+		await teardownWithUnresolvedCall(ctx(), "abort");
+
+		const record = __testGetBridgeIntegrityState().sharedSession;
+		assert.equal(record.needsRebuild, true);
+		assert.equal(record.forceRotate, true, "an abnormal teardown still rotates the claiming query's session id");
 	});
 });
