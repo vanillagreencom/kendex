@@ -129,6 +129,51 @@ test("allowlist hook permits bridged custom tools, connector tools, and discover
 	}
 });
 
+// --- vstack#1011: hooks see the CLI's canonical (aliased) tool names ---
+
+test("allowlist hook permits the discovery built-ins under BOTH spellings (vstack#1011)", async () => {
+	// Literal names, deliberately NOT derived from CONNECTOR_DISCOVERY_TOOLS: a
+	// hook's tool_name carries the CLI's canonical (aliased) spelling, and a
+	// test written from the request-side constant passes either way. 3.1.0
+	// denied ListMcpResourcesTool/ReadMcpResourceTool — the exact tools the
+	// allowlist documents as permitted (verified live on claude 2.1.220).
+	const spellings = [
+		"ToolSearch",
+		"ListMcpResources", "ListMcpResourcesTool",
+		"ReadMcpResource", "ReadMcpResourceTool",
+	];
+	for (const name of spellings) {
+		assert.equal((await runAllowlistHook(name)).continue, true, `${name} must pass`);
+	}
+});
+
+test("allowlist hook still denies near-misses of the discovery names", async () => {
+	const denied = [
+		"ReadMcpResourceToolX", "XListMcpResourcesTool", "ToolSearchTool",
+		"readmcpresourcetool", "ListMcpResourcesToo", "McpResourceTool",
+	];
+	for (const name of denied) {
+		const out = await runAllowlistHook(name);
+		assert.equal(out.hookSpecificOutput?.permissionDecision, "deny", `${name} must be denied`);
+	}
+});
+
+test("CONTRACT: the request-side option surface still carries request-side spellings only (vstack#1011)", () => {
+	// The SDK's rule parser alias-normalizes option strings, so the request-side
+	// spellings are correct THERE and must not be "fixed" to the canonical ones.
+	// Pinned with literal names for the same reason as the hook test above.
+	assert.deepEqual(CONNECTOR_DISCOVERY_TOOLS, ["ToolSearch", "ListMcpResources", "ReadMcpResource"]);
+	const expected = DISALLOWED_BUILTIN_TOOLS.filter((t) => !["ToolSearch", "ListMcpResources", "ReadMcpResource"].includes(t));
+	assert.deepEqual(toolIsolationForQuery(true, "allow").disallowedTools, expected);
+	assert.deepEqual(toolIsolationForQuery(true, "deny").disallowedTools, [...expected, ...CONNECTOR_WRITE_TOOLS]);
+	for (const iso of [toolIsolationForQuery(true, "allow"), toolIsolationForQuery(true, "deny")]) {
+		for (const name of ["ListMcpResourcesTool", "ReadMcpResourceTool"]) {
+			assert.ok(!iso.disallowedTools.includes(name), `${name} must not leak into SDK options`);
+			assert.ok(!iso.allowedTools.includes(name), `${name} must not leak into SDK options`);
+		}
+	}
+});
+
 test("allowlist hook denies denylisted AND future/unknown builtins (fail closed)", async () => {
 	const denied = [
 		"Bash", // already denylisted — belt

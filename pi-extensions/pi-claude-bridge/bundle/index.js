@@ -27519,7 +27519,16 @@ var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
   "mcp__claude_ai_Slack__*",
   "mcp__claude_ai_Atlassian__*"
 ];
+var SDK_TOOL_ALIASES = {
+  ListMcpResources: "ListMcpResourcesTool",
+  ReadMcpResource: "ReadMcpResourceTool"
+};
+function deliveredSpellings(name) {
+  const canonical = SDK_TOOL_ALIASES[name];
+  return canonical ? [name, canonical] : [name];
+}
 var CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
+var CONNECTOR_DISCOVERY_TOOL_NAMES = new Set(CONNECTOR_DISCOVERY_TOOLS.flatMap(deliveredSpellings));
 var CONNECTOR_NS_PREFIX2 = "mcp__claude_ai_";
 var CONNECTOR_NS_GMAIL = `${CONNECTOR_NS_PREFIX2}Gmail__`;
 var CONNECTOR_NS_CALENDAR = `${CONNECTOR_NS_PREFIX2}Google_Calendar__`;
@@ -27732,7 +27741,7 @@ function connectorWriteDenyOutput(toolName) {
   };
 }
 function isAllowlistedConnectorSessionTool(name) {
-  return name.startsWith(MCP_TOOL_PREFIX) || name.startsWith(CONNECTOR_NS_PREFIX2) || CONNECTOR_DISCOVERY_TOOLS.includes(name);
+  return name.startsWith(MCP_TOOL_PREFIX) || name.startsWith(CONNECTOR_NS_PREFIX2) || CONNECTOR_DISCOVERY_TOOL_NAMES.has(name);
 }
 function connectorBuiltinAllowlistHook() {
   return async (input) => {
@@ -27790,7 +27799,7 @@ function connectorQueryOptions(connectorsEnabled, writeMode = "deny") {
 }
 function toolIsolationForQuery(connectorsEnabled, writeMode = "deny") {
   if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
-  const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t) => !CONNECTOR_DISCOVERY_TOOLS.includes(t));
+  const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t) => !CONNECTOR_DISCOVERY_TOOL_NAMES.has(t));
   if (writeMode !== "allow") disallowedTools.push(...CONNECTOR_WRITE_TOOLS);
   return {
     disallowedTools,

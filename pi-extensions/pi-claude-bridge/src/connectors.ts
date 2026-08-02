@@ -98,13 +98,60 @@ export const CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
 	"mcp__claude_ai_Atlassian__*",
 ];
 
+// --- The SDK's two-name trap for built-in tools (vstack#1007, vstack#1011) ---
+//
+// The CLI gives some built-ins TWO spellings, and which one you see depends on
+// which SURFACE the name crosses:
+//
+//   REQUEST side — anything passed INTO the SDK query options (`tools`,
+//   `allowedTools`, `disallowedTools`, permission rules). These strings go
+//   through the SDK's rule parser, which normalizes a request-side spelling
+//   (`ListMcpResources`) through its alias map before matching. Constants that
+//   feed only this surface keep the request-side spelling.
+//
+//   DELIVERED side — any name the CLI hands BACK to us at runtime: a PreToolUse
+//   hook's `input.tool_name`, the stream's `content_block_start.name`,
+//   assistant-message tool_use blocks. These carry the CANONICAL (aliased)
+//   name (`ListMcpResourcesTool`), and nothing normalizes them for us — a raw
+//   membership test against a request-side spelling silently never matches.
+//
+// This map declares each alias pair ONCE; every delivered-side membership set
+// derives its spellings from it instead of hand-copying names. Both prior
+// instances of the trap were exactly that hand-copy: CHILD_INTERNAL_TOOLS held
+// request-side spellings that no stream name ever matched (vstack#1007), and
+// the connectors allowlist hook DENIED the two discovery tools it exists to
+// permit (vstack#1011). Delivered-side sets accept BOTH spellings, so a CLI
+// version that drops the aliasing cannot reintroduce the bug in either
+// direction.
+const SDK_TOOL_ALIASES: Record<string, string> = {
+	ListMcpResources: "ListMcpResourcesTool",
+	ReadMcpResource: "ReadMcpResourceTool",
+};
+
+// Every spelling a DELIVERED tool name may carry for a request-side name.
+function deliveredSpellings(name: string): string[] {
+	const canonical = SDK_TOOL_ALIASES[name];
+	return canonical ? [name, canonical] : [name];
+}
+
 // Claude Code registers a Claude account's cloud connectors as DEFERRED tools
 // that the model must load via ToolSearch (and enumerate via the MCP-resource
 // tools). The default bridge isolation disallows all three so Pi owns tool
 // discovery — but that hides the connectors from the model entirely. When
 // connectors are enabled we must let these through so Gmail/Calendar/Drive are
 // discoverable. Verified: disallowing ToolSearch reliably yields NO_CONNECTORS.
+//
+// REQUEST-side spellings: this list feeds the SDK option surface (the
+// disallowedTools filter in toolIsolationForQuery) and is the exported public
+// name. Delivered-side checks use CONNECTOR_DISCOVERY_TOOL_NAMES below.
 export const CONNECTOR_DISCOVERY_TOOLS = ["ToolSearch", "ListMcpResources", "ReadMcpResource"];
+
+// Delivered-side membership set for the discovery tools: both spellings of
+// each entry, derived from SDK_TOOL_ALIASES. A PreToolUse hook's `tool_name`
+// carries the canonical spelling (`ListMcpResourcesTool`), so testing the
+// request-side list directly made the fail-closed allowlist hook DENY the two
+// resource tools it exists to permit (vstack#1011).
+const CONNECTOR_DISCOVERY_TOOL_NAMES = new Set(CONNECTOR_DISCOVERY_TOOLS.flatMap(deliveredSpellings));
 
 // --- Connector WRITE tool control (read-inline / write-by-approval) ---
 //
@@ -280,18 +327,19 @@ export function isConnectorTool(name: string | undefined): boolean {
 //
 // Membership is tested against the STREAM-side spelling — the `name` on
 // `content_block_start` / assistant-message blocks, the exact fields
-// processStreamEvent/processAssistantMessage read. That distinction matters
-// because the SDK RENAMES the two MCP-resource built-ins between the request
-// side and the stream side (`ListMcpResources` → `ListMcpResourcesTool`,
-// `ReadMcpResource` → `ReadMcpResourceTool`); their request-side spellings
-// used to sit in this set and never matched anything (vstack#1007).
+// processStreamEvent/processAssistantMessage read. Stream names are a
+// DELIVERED surface (see SDK_TOOL_ALIASES): the two MCP-resource built-ins'
+// request-side spellings used to sit in this set and never matched anything
+// (vstack#1007). If an aliased name is ever added here, derive its spellings
+// via deliveredSpellings rather than hand-copying them.
 //
 // The MCP-resource tools are now EXCLUDED deliberately, under BOTH spellings:
 // a resource read is a real account-surface access, and both consumer hosts
 // audit it through the Pi mirror (an out-of-process sidecar has no view of the
 // bridge's own connector-call entries or the child transcript), so it stays
 // mirrored into Pi. Do not re-add either spelling without revisiting that
-// decision in vstack#1007.
+// decision in vstack#1007. The allowlist hook is what lets those calls run at
+// all — see isAllowlistedConnectorSessionTool (vstack#1011).
 const CHILD_INTERNAL_TOOLS = new Set(["ToolSearch", "ScheduleWakeup"]);
 
 /**
@@ -482,10 +530,20 @@ function connectorWriteDenyOutput(toolName: string) {
 // session: Pi's bridged custom tools, the claude.ai connector namespace (whose
 // writes the write-deny hook still catches), and the discovery built-ins that
 // make deferred connector tools reachable.
+//
+// This is a DELIVERED-side check — `name` is a hook's `input.tool_name`, which
+// carries the canonical spelling — so membership is tested against
+// CONNECTOR_DISCOVERY_TOOL_NAMES (both spellings), not the request-side list
+// (vstack#1011). That also carries vstack#1007's mirroring decision: the
+// MCP-resource tools are deliberately NOT child-internal so every resource
+// read mirrors into Pi as the consumers' audit surface — a mirror that can
+// only exist if this allowlist lets the call execute. Denying the canonical
+// spellings didn't just remove discovery; it silently emptied that audit
+// trail too.
 export function isAllowlistedConnectorSessionTool(name: string): boolean {
 	return name.startsWith(MCP_TOOL_PREFIX)
 		|| name.startsWith(CONNECTOR_NS_PREFIX)
-		|| CONNECTOR_DISCOVERY_TOOLS.includes(name);
+		|| CONNECTOR_DISCOVERY_TOOL_NAMES.has(name);
 }
 
 // PreToolUse ALLOWLIST hook for connectors mode. Same fail-closed shape as
@@ -587,7 +645,13 @@ export function toolIsolationForQuery(connectorsEnabled: boolean, writeMode: Con
 	if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
 	// Keep ToolSearch + MCP-resource tools available so the model can discover the
 	// deferred cloud connector tools; still block file/shell/web built-ins.
-	const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t) => !CONNECTOR_DISCOVERY_TOOLS.includes(t));
+	//
+	// REQUEST-side surface: the surviving list goes into the SDK options, where
+	// the rule parser alias-normalizes it, so DISALLOWED_BUILTIN_TOOLS correctly
+	// holds request-side spellings and this filter's OUTPUT stays request-side.
+	// Filtering through the both-spellings set only makes the un-block
+	// spelling-proof should a canonical name ever land in the denylist.
+	const disallowedTools = DISALLOWED_BUILTIN_TOOLS.filter((t) => !CONNECTOR_DISCOVERY_TOOL_NAMES.has(t));
 	// Deny connector WRITE tools unless writes are explicitly allowed (fail
 	// closed: any mode but exact "allow" is treated as read-only). This removes
 	// today's KNOWN writes from the model's context by exact id; deny rules take

@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 3.1.3
+
+Found by drovr while re-vendoring 3.1.1 (drovr DRO-39), verified live against claude 2.1.220.
+
+- **The connectors-mode allowlist hook no longer denies `ListMcpResources`/`ReadMcpResource` (vstack#1011).** Same alias mismatch as vstack#1007, but functional: a PreToolUse hook's `tool_name` carries the CLI's canonical (aliased) spellings `ListMcpResourcesTool`/`ReadMcpResourceTool`, while the fail-closed allowlist tested membership against the request-side spellings — so 3.1.0 silently removed the MCP-resource discovery capability it documented as preserved (and with it the mirrored resource-read audit trail vstack#1007 chose to keep). The hook now accepts both spellings of each discovery tool, derived from a single `SDK_TOOL_ALIASES` map that request-side and delivered-side surfaces share, so the pairs are declared once. The SDK option surface (`disallowedTools` un-blocking) is unchanged — it correctly uses request-side spellings, which the SDK's rule parser alias-normalizes. `ToolSearch` was never affected.
+
 ### 3.1.2
 
 Both fixes found by memsira and drovr while re-vendoring the bridge.
