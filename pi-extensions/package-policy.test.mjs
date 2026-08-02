@@ -85,3 +85,14 @@ test("Pi extension TypeScript stays compatible with Node strip-only parsing", ()
 	}
 	assert.deepEqual(violations, []);
 });
+
+test("every Pi extension carries a consumer-facing CHANGELOG.md", () => {
+	for (const { dir } of packages()) {
+		const changelogPath = join(root, dir, "CHANGELOG.md");
+		assert.ok(existsSync(changelogPath), `${dir}: CHANGELOG.md is the channel for critical developer information to consumers and vendoring repos — create it (AGENTS.md § Rules)`);
+		const changelog = readFileSync(changelogPath, "utf8");
+		assert.ok(/^## Consumer-impacting changes$/m.test(changelog), `${dir}: CHANGELOG.md leads with a "## Consumer-impacting changes" section`);
+		const version = JSON.parse(readFileSync(join(root, dir, "package.json"), "utf8")).version;
+		assert.ok(changelog.split("\n").some((line) => line.trimEnd() === `### ${version}`), `${dir}: CHANGELOG.md has a "### ${version}" entry for the current package.json version — record consumer-impacting changes with the version bump that ships them`);
+	}
+});
