@@ -462,6 +462,37 @@ describe("managed account stream rotation", () => {
 		assert.equal(events.filter((event) => event.type === "error").length, 1);
 	});
 
+	it("uses the attempt buffer as a replay guard if context commit state is disturbed", async () => {
+		const observed = observedState();
+		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
+		let calls = 0;
+		__testSetSdkQueryFactory(() => {
+			calls += 1;
+			return {
+				async *[Symbol.asyncIterator]() {
+					yield { type: "system", subtype: "init", session_id: "buffer-guard-session" };
+					for (const message of STREAMED_TEXT("committed-by-buffer")) yield message;
+					// Model the reentrancy race: a different live context received the
+					// commit stamp, leaving this attempt context falsely replayable.
+					// The buffer's own committed flag must still block the replay.
+					ctx().committedOutput = false;
+					throw new Error("socket timeout after buffered output");
+				},
+				close() {},
+				async interrupt() {},
+				async accountInfo() { return {}; },
+				async usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET() { return {}; },
+			};
+		});
+
+		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "buffer-replay-guard" }));
+		assert.equal(calls, 1);
+		assert.equal(observed.acquires.length, 1);
+		assert.deepEqual(observed.failures, [{ profileId: "a", kind: "network" }]);
+		assert.ok(textEvents(events).includes("committed-by-buffer"));
+		assert.equal(events.filter((event) => event.type === "error").length, 1);
+	});
+
 	it("records a post-output transport failure without replaying the request", async () => {
 		const observed = observedState();
 		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
@@ -652,6 +683,47 @@ describe("managed account stream rotation", () => {
 		assert.equal(calls, 1);
 		assert.equal(observed.acquires.length, 1);
 		assert.equal(events.filter((event) => event.type === "error").length, 1);
+	});
+
+	it("clears mid-turn rebuild flags after a successful managed completion", async () => {
+		// A transient needsRebuild/forceRotate set mid-turn must not survive a
+		// completed managed query: success persists a fresh record on purpose.
+		const observed = observedState();
+		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
+		__testSetBridgeIntegrityState({
+			sharedSession: {
+				sessionId: "existing-session",
+				cursor: 0,
+				cwd: process.cwd(),
+				accountProfileId: "a",
+				claudeConfigDir: "/profiles/a",
+			},
+		});
+		__testSetSdkQueryFactory(() => ({
+			async *[Symbol.asyncIterator]() {
+				yield { type: "system", subtype: "init", session_id: "successful-session" };
+				const state = __testGetBridgeIntegrityState().sharedSession;
+				if (state) {
+					__testSetBridgeIntegrityState({
+						sharedSession: { ...state, needsRebuild: true, forceRotate: true },
+					});
+				}
+				yield { type: "result", subtype: "success", result: "success-clears-flags" };
+			},
+			close() {},
+			async interrupt() {},
+			async accountInfo() { return { email: "a@example.com", subscriptionType: "max" }; },
+			async usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET() { return {}; },
+		}));
+
+		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "clear-flags" }));
+		assert.ok(textEvents(events).includes("success-clears-flags"));
+		const state = __testGetBridgeIntegrityState().sharedSession;
+		assert.equal(state?.sessionId, "successful-session");
+		assert.equal(state?.accountProfileId, "a");
+		assert.equal(state?.claudeConfigDir, "/profiles/a");
+		assert.equal(state?.needsRebuild, undefined);
+		assert.equal(state?.forceRotate, undefined);
 	});
 });
 
