@@ -22,8 +22,11 @@
 // bundle to its sidecar process, so rather than calling `listAccountConnectors`
 // in-process it re-implements the reader half — path
 // `<piUserDir()>/connector-cache/<sha256(CLAUDE_CONFIG_DIR).hex[0..16]>.json`,
-// payload `{version, scope, savedAt, connectors}`, 7-day max age — as the
-// "is this connector installed" half of its write gate.
+// payload `{version, scope, savedAt, connectors}` where `scope` is the FULL
+// sha256 hex of the scope key (version 2; version 1 stored the raw
+// CLAUDE_CONFIG_DIR path, which is account-identifying and does not belong in
+// a state file), 7-day max age — as the "is this connector installed" half of
+// its write gate.
 //
 // That coupling fails OPEN on drift by design, so a format change degrades them
 // from two gates to one rather than breaking them. It is still worth making the
@@ -36,7 +39,7 @@ import { dirname, join } from "node:path";
 import { piUserDir } from "./config.js";
 import type { ConnectorEntry } from "./connector-inventory.js";
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 /** Long enough to be useful across a machine's lifetime, short enough that a
  *  removed connector stops being declared without needing a manual purge. A
  *  stale entry is not dangerous — a connector that no longer resolves simply
@@ -48,6 +51,13 @@ export function connectorCacheScopeKey(env: NodeJS.ProcessEnv = process.env): st
 	return env.CLAUDE_CONFIG_DIR?.trim() || "<default>";
 }
 
+// Full sha256 hex of a scope key. The filename keeps only the first 16 chars;
+// the payload stores the whole digest so a truncated-hash collision (or a
+// hand-copied file) is still caught by the scope check in readCachedConnectors.
+function connectorCacheScopeDigest(scopeKey: string): string {
+	return createHash("sha256").update(scopeKey).digest("hex");
+}
+
 /**
  * Our own state directory, not the Claude config dir. The credential directory
  * belongs to the CLI; the scope is encoded in the filename instead so we never
@@ -55,7 +65,7 @@ export function connectorCacheScopeKey(env: NodeJS.ProcessEnv = process.env): st
  * dir is an arbitrary absolute path.
  */
 export function connectorCachePath(scopeKey: string = connectorCacheScopeKey()): string {
-	const digest = createHash("sha256").update(scopeKey).digest("hex").slice(0, 16);
+	const digest = connectorCacheScopeDigest(scopeKey).slice(0, 16);
 	return join(piUserDir(), "connector-cache", `${digest}.json`);
 }
 
@@ -82,11 +92,13 @@ export function readCachedConnectors(
 		return undefined;
 	}
 	if (parsed?.version !== CACHE_VERSION) return undefined;
-	// Scope is stored as well as hashed into the path: a hash collision or a
-	// hand-copied file would otherwise hand one account another's connectors,
-	// which is the exact failure the token-scoping note in connector-inventory.ts
-	// warns about.
-	if (parsed?.scope !== scopeKey) return undefined;
+	// The scope digest is stored as well as hashed into the path: a truncated-
+	// hash collision or a hand-copied file would otherwise hand one account
+	// another's connectors, which is the exact failure the token-scoping note in
+	// connector-inventory.ts warns about. The payload carries the digest, never
+	// the raw scope key — a config-dir path is account-identifying and the
+	// filename is already hashed for the same reason.
+	if (parsed?.scope !== connectorCacheScopeDigest(scopeKey)) return undefined;
 	const savedAt = typeof parsed?.savedAt === "number" ? parsed.savedAt : 0;
 	if (!savedAt || now - savedAt > MAX_AGE_MS || savedAt > now) return undefined;
 	if (!Array.isArray(parsed?.connectors)) return undefined;
@@ -108,7 +120,7 @@ export function writeCachedConnectors(
 		mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 		writeFileSync(
 			path,
-			JSON.stringify({ version: CACHE_VERSION, scope: scopeKey, savedAt: now, connectors }),
+			JSON.stringify({ version: CACHE_VERSION, scope: connectorCacheScopeDigest(scopeKey), savedAt: now, connectors }),
 			{ mode: 0o600 },
 		);
 		return true;

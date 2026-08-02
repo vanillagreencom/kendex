@@ -6,7 +6,7 @@ import type { ContentBlock, Message as SessionMessage } from "cc-session-io";
 import { pascalCase } from "change-case";
 import { isChildExecutedTool } from "./connectors.js";
 
-export const PROVIDER_ID = "claude-bridge";
+export const PROVIDER_ID = "pi-claude";
 
 export const PI_TO_SDK_TOOL_NAME: Record<string, string> = {
 	read: "Read", write: "Write", edit: "Edit", bash: "Bash",

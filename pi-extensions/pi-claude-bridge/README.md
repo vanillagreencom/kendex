@@ -3,18 +3,19 @@
 Works with OAuth subscription, no API key, no errors.
 
 ![Claude bridge demo response](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-claude-bridge/assets/bridge-demo.png)
-![Claude Bridge settings panel](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-claude-bridge/assets/settings-panel.png)
+![Pi Claude settings panel](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-claude-bridge/assets/settings-panel.png)
 
-Run Claude Code as a Pi provider. Adds `claude-bridge/*` models to `/model` while keeping Pi's tools and TUI.
+Run Claude Code as the `pi-claude` Pi provider while keeping Pi's tools and TUI.
 
 Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi-claude-bridge). This fork removes the AskClaude tool and adds opt-in forwarding for Pi prompt context.
 
 ## Highlights
 
-- `claude-bridge/claude-fable-5`, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku in `/model`. `/model opus` selects Opus 5; older Opus releases stay selectable by full ID.
+- `pi-claude/claude-fable-5`, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku in `/model`. `/model opus` selects Opus 5; older Opus releases stay selectable by full ID.
 - Pi tool calls run on Pi; Claude Code handles reasoning.
 - Tool-use turns block until Pi-delivered tool results reach Claude Code, including persistent subagent panes.
-- Session continuity across normal turns, `/compact`, tree navigation, and abort recovery.
+- Session continuity across normal turns, `/compact`, tree navigation, abort recovery, and account-profile changes.
+- Optional companion integration for usage-aware subscription account rotation without copying the bridge engine.
 - Thinking-level forwarding with summarized Opus thinking display.
 - Optional Claude effort overrides (`xhigh` → `max` for Opus 4.8).
 - MCP isolation and Claude cloud-MCP suppression to keep tokens lean.
@@ -50,7 +51,7 @@ Extra Pi context is off by default. Enable per item in the extension manager whe
 
 ## Settings
 
-Open `/extensions:settings`; settings appear under the **Claude Bridge** tab.
+Open `/extensions:settings`; settings appear under the **Pi Claude** tab.
 
 Project settings in `.pi/settings.json` apply only after Pi marks the workspace trusted; before trust, vstack Pi extensions read user/global settings only.
 
@@ -60,7 +61,7 @@ The bridge also reads `claude-bridge.json` (`~/.pi/agent/claude-bridge.json`, an
 
 | Setting | What it does |
 | --- | --- |
-| Enable Claude bridge provider | Register `claude-bridge/*` models. Reload required. |
+| Enable Pi Claude provider | Register `pi-claude/*` models. Reload required. |
 
 ### Base prompt
 
@@ -87,9 +88,8 @@ The bridge also reads `claude-bridge.json` (`~/.pi/agent/claude-bridge.json`, an
 | Setting | What it does |
 | --- | --- |
 | Strict MCP config | Block filesystem MCP auto-loads; Pi owns tools. |
-| Allow extra usage helper | Let the bridge launch Claude Code's `/extra-usage` flow when extra usage is required. Billing/admin approval still happens in Claude's browser page. |
-| Fast mode | Enable Claude Code fast mode for bridge requests when the selected model supports it. |
-| Force Claude effort | Override Pi's thinking-level mapping for every claude-bridge request. `none` keeps Pi's selected level; `max` sends Claude Code `--effort max`. |
+| Fast mode | Enable Claude Code fast mode for bridge requests when the selected model and account support it. |
+| Force Claude effort | Override Pi's thinking-level mapping for every Pi Claude request. `none` keeps Pi's selected level; `max` sends Claude Code `--effort max`. |
 | Model effort overrides | JSON object mapping model IDs to Claude Code efforts, e.g. `{"claude-opus-4-8":"max"}`. Per-model entries beat the global force setting. |
 | Claude executable path | Explicit `claude` binary path; empty auto-detects. |
 
@@ -99,7 +99,7 @@ Pi 0.80.6 and newer expose native `max` thinking. Fable 5, Opus 5, and Sonnet 5 
 {"claude-opus-4-8":"max"}
 ```
 
-Keys may be bare model IDs (`claude-opus-4-8`), `claude-bridge/<id>`, or `*` for all bridge models. Values are `low`, `medium`, `high`, `xhigh`, or `max`.
+Keys may be bare model IDs (`claude-opus-4-8`), `pi-claude/<id>`, or `*` for all bridge models. Values are `low`, `medium`, `high`, `xhigh`, or `max`.
 
 ### Connectors
 
@@ -174,11 +174,11 @@ Bridge settings come only from the authoritative `<PI_CODING_AGENT_DIR>/claude-b
 
 ### Fable 5 and Opus 5 caveat
 
-The bridge registers `claude-bridge/claude-fable-5`, `claude-bridge/claude-opus-5`, `claude-bridge/claude-sonnet-5`, and `claude-bridge/claude-opus-4-8` even when Pi's Anthropic model registry has not shipped those entries yet. Fable 5 and Opus 5 both run classifiers that can decline a turn, so for each of them the bridge asks Claude Code to use Opus 4.8 as the availability fallback and preserves Claude Code's content-safety fallback events so Pi labels rerouted turns as Opus 4.8. Content-safety fallback still depends on Claude Code's own Fable 5 support; use Claude Code 2.1.170 or newer, and set `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` yourself when routing provider-specific model IDs through Bedrock, Vertex, or Foundry.
+The bridge registers `pi-claude/claude-fable-5`, `pi-claude/claude-opus-5`, `pi-claude/claude-sonnet-5`, and `pi-claude/claude-opus-4-8` even when Pi's Anthropic model registry has not shipped those entries yet. Fable 5 and Opus 5 both run classifiers that can decline a turn, so for each of them the bridge asks Claude Code to use Opus 4.8 as the availability fallback and preserves Claude Code's content-safety fallback events so Pi labels rerouted turns as Opus 4.8. Content-safety fallback still depends on Claude Code's own Fable 5 support; use Claude Code 2.1.170 or newer, and set `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` yourself when routing provider-specific model IDs through Bedrock, Vertex, or Foundry.
 
 ## Connector inventory
 
-`/claude-bridge:connectors` lists the Claude account's installed claude.ai connectors by asking the account, not the model, so the answer is complete by construction.
+`/pi-claude:connectors` lists the Claude account's installed claude.ai connectors by asking the account, not the model, so the answer is complete by construction.
 
 `listAccountConnectors()` is the programmatic form for host apps. Import it from the package's `./connector-inventory` entry point:
 
@@ -194,9 +194,19 @@ import { listAccountConnectors } from "@vanillagreen/pi-claude-bridge";
 
 It returns a discriminated result: on success `{ ok: true, complete: true, connectors }`, and on any transport or protocol failure `{ ok: false, reason }`. An account with no connectors is a successful empty list; a failure is never reported as an empty inventory. Credentials resolve from `CLAUDE_CONFIG_DIR` before `$HOME`, so a host running one sidecar per Claude account reads the right account.
 
-## Extra usage and rate limits
+## Multiple subscription profiles
 
-Claude Code's `/extra-usage` local command works through the Claude Agent SDK. In Pi, use `/claude-bridge:extra` to run that flow from claude-bridge. Persist automatic launch on extra-usage errors with **Allow extra usage helper** in `/extensions:settings`.
+An optional companion extension can provide account profiles through the bridge's versioned account-router integration (`vstack.pi.claude-account-router.v1` on `globalThis`).
+
+For each fresh Claude request, the bridge launches the Agent SDK subprocess with the selected profile's `CLAUDE_CONFIG_DIR`. Claude session files, connector inventory, and resume IDs remain account-scoped. When an account reports a rejected rate limit (or another classified pre-output failure), the bridge rebuilds the Claude session from Pi history under the next profile and retries the prompt.
+
+Retries are deliberately limited to failures before visible output or any tool dispatch. Once text, thinking, a Pi tool call, or a child-executed connector call has begun, the bridge never replays that request on another account, preventing duplicate tool side effects. Post-output failures are still recorded so the next prompt can avoid the unhealthy account. Managed subscription subprocesses also drop inherited Anthropic API credentials and third-party provider flags so the selected Claude CLI profile remains the request's billing identity.
+
+The companion owns profile metadata, utilization ranking, and cooldown persistence. The bridge remains the SDK/stream/session engine and can continue updating independently through the small versioned adapter.
+
+## Account usage and rate limits
+
+Extra Usage is owned by Claude's account settings. The bridge neither changes that setting nor blocks Claude Code's native account behavior — if the account has Extra Usage enabled on claude.ai, the child Claude Code uses it normally. If Claude rejects a request because the current allowance is exhausted, a managed account router treats it as a model-scoped limit and can try another account.
 
 When Claude Code reports a rate-limit reset time, the bridge shows one clear `[rate-limit]` warning with timezone context and avoids repeating the same error line. If `pi-qol` is installed, it can use the reset time to resume later.
 

@@ -7,6 +7,13 @@ export interface SessionState {
 	sessionId: string;
 	cursor: number;
 	cwd: string;
+	// Claude Code session files and resume IDs are credential-profile scoped.
+	// Missing values mean the legacy/default Claude profile (process env rules).
+	// `claudeConfigDir` is the RESOLVED dir (see claudeDirForProfile) and is
+	// in-memory only — persistence strips it and keeps just the opaque profile
+	// id, re-deriving the dir through the router on restore.
+	accountProfileId?: string;
+	claudeConfigDir?: string;
 	// Force the next syncSharedSession call down the REBUILD path. Set when
 	// pi has mutated its messages array out from under us (compact, tree
 	// navigation) or after an abort left the JSONL in an indeterminate state.
@@ -118,7 +125,12 @@ export function reportSyntheticToolResultRepair(missing: MissingToolResult[], co
 	}
 }
 
-export function reportToolResultMismatch(queryCtx: QueryContext, reason: string, cwd: string | undefined, opts: { forceRotate?: boolean } = {}): boolean {
+export function reportToolResultMismatch(
+	queryCtx: QueryContext,
+	reason: string,
+	cwd: string | undefined,
+	opts: { expectedInterruption?: boolean; forceRotate?: boolean } = {},
+): boolean {
 	try {
 		if (queryCtx.reportedToolResultMismatch) return false;
 		const progress = queryCtx.toolResultProgress();
@@ -129,6 +141,17 @@ export function reportToolResultMismatch(queryCtx: QueryContext, reason: string,
 		queryCtx.reportedToolResultMismatch = true;
 		if (sharedSession) {
 			sharedSession = { ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) };
+		}
+		// A user abort interrupting in-flight tool calls is expected teardown, not
+		// an integrity fault: mark the rebuild but skip the diag dump and toast.
+		if (opts.expectedInterruption) {
+			debug(
+				`tool result delivery interrupted as expected during ${reason}; ` +
+				`delivered=${progress.deliveredCount}/${progress.expectedCount} ` +
+				`resolved=${progress.resolvedCount}/${progress.expectedCount} ` +
+				`waiting=${progress.waitingCount} queued=${progress.queuedCount}`,
+			);
+			return true;
 		}
 		const toolNameSummary = compactToolNameSummary(progress.toolNames);
 		diagDump("tool_result_delivery_mismatch", {

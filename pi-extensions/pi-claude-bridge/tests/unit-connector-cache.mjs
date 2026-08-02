@@ -1,12 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import {
 	connectorCachePath, connectorCacheScopeKey, readCachedConnectors, writeCachedConnectors,
 	connectorMcpServers,
 } from "../bundle/index.js";
+
+// The payload stores the FULL sha256 hex of the scope key (the filename keeps
+// only the first 16 chars), never the raw CLAUDE_CONFIG_DIR path — a config-dir
+// path is account-identifying and does not belong in a state file.
+const scopeDigest = (scopeKey) => createHash("sha256").update(scopeKey).digest("hex");
 
 // piUserDir() reads PI_CODING_AGENT_DIR, so each test gets its own state dir.
 function withStateDir(fn) {
@@ -45,12 +51,30 @@ test("scopes are isolated — one account never reads another's connectors", () 
 	});
 });
 
+test("the raw scope path is never persisted — the payload stores its digest", () => {
+	withStateDir(() => {
+		assert.equal(writeCachedConnectors([SLACK], "/scope/secret-account-dir"), true);
+		const raw = readFileSync(connectorCachePath("/scope/secret-account-dir"), "utf8");
+		assert.equal(raw.includes("/scope/secret-account-dir"), false, "config-dir path must not be written to disk");
+		assert.equal(JSON.parse(raw).scope, scopeDigest("/scope/secret-account-dir"));
+	});
+});
+
 test("a file whose recorded scope disagrees with the requested one is rejected", () => {
-	// Guards a hash collision or a hand-copied cache file.
+	// Guards a truncated-hash collision or a hand-copied cache file.
 	withStateDir(() => {
 		const path = connectorCachePath("/scope/a");
 		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, JSON.stringify({ version: 1, scope: "/scope/OTHER", savedAt: Date.now(), connectors: [SLACK] }));
+		writeFileSync(path, JSON.stringify({ version: 2, scope: scopeDigest("/scope/OTHER"), savedAt: Date.now(), connectors: [SLACK] }));
+		assert.equal(readCachedConnectors("/scope/a"), undefined);
+	});
+});
+
+test("a version-1 file (raw scope path) is rejected wholesale", () => {
+	withStateDir(() => {
+		const path = connectorCachePath("/scope/a");
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ version: 1, scope: "/scope/a", savedAt: Date.now(), connectors: [SLACK] }));
 		assert.equal(readCachedConnectors("/scope/a"), undefined);
 	});
 });
@@ -59,7 +83,7 @@ test("stale, future-dated, wrong-version, corrupt and missing all fail open", ()
 	withStateDir(() => {
 		const path = connectorCachePath("/scope/a");
 		mkdirSync(dirname(path), { recursive: true });
-		const base = { version: 1, scope: "/scope/a", connectors: [SLACK] };
+		const base = { version: 2, scope: scopeDigest("/scope/a"), connectors: [SLACK] };
 
 		writeFileSync(path, JSON.stringify({ ...base, savedAt: Date.now() - 8 * 24 * 3600 * 1000 }));
 		assert.equal(readCachedConnectors("/scope/a"), undefined, "8 days old must expire");
@@ -82,7 +106,7 @@ test("within the freshness window it is used", () => {
 	withStateDir(() => {
 		const path = connectorCachePath("/scope/a");
 		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, JSON.stringify({ version: 1, scope: "/scope/a", savedAt: Date.now() - 6 * 24 * 3600 * 1000, connectors: [SLACK] }));
+		writeFileSync(path, JSON.stringify({ version: 2, scope: scopeDigest("/scope/a"), savedAt: Date.now() - 6 * 24 * 3600 * 1000, connectors: [SLACK] }));
 		assert.deepEqual(readCachedConnectors("/scope/a"), [SLACK]);
 	});
 });

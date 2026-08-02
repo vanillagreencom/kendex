@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { createRpcHarness } from "./lib/rpc-harness.mjs";
 
 const TIMEOUT = 180_000;
-const BRIDGE_MODEL = "claude-bridge/claude-haiku-4-5";
+const BRIDGE_MODEL = "pi-claude/claude-haiku-4-5";
 
 // pi >=0.80 refuses to compact a session smaller than compaction.keepRecentTokens
 // (default 20000) — far larger than this test's three tiny turns. Run against an

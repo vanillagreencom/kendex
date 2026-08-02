@@ -46,16 +46,16 @@ run() {
 
 run "provider: print mode responds" \
   pi --no-session -ne -e "$DIR" \
-  --model "claude-bridge/claude-sonnet-5" \
+  --model "pi-claude/claude-sonnet-5" \
   -p "Reply with just the word 'yes'"
 
 run "provider: --provider flag works" \
   pi --no-session -ne -e "$DIR" \
-  --provider claude-bridge \
+  --provider pi-claude \
   -p "Reply with just the word 'yes'"
 
 run "provider: model list includes provider" \
-  bash -c "pi --no-session -ne -e '$DIR' --list-models 2>&1 | grep claude-bridge"
+  bash -c "pi --no-session -ne -e '$DIR' --list-models 2>&1 | grep pi-claude"
 
 # --- Summary ---
 

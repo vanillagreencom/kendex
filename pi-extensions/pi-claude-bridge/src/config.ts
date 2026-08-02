@@ -35,7 +35,6 @@ export interface Config {
 	/** Low-level Claude Agent SDK plumbing. Most users won't need these. */
 	provider?: {
 		appendSystemPrompt?: boolean;
-		allowExtraUsage?: boolean;
 		/** Enable Claude Code fast mode for bridge requests. */
 		fastMode?: boolean;
 		/** Force this Claude Code effort level for every bridge request. */
@@ -284,8 +283,6 @@ function managerToConfig(raw: SettingsRecord): Partial<Config> {
 
 	const appendSystemPrompt = boolFrom(raw, "appendSystemPrompt");
 	if (appendSystemPrompt !== undefined) provider.appendSystemPrompt = appendSystemPrompt;
-	const allowExtraUsage = boolFrom(raw, "allowExtraUsage");
-	if (allowExtraUsage !== undefined) provider.allowExtraUsage = allowExtraUsage;
 	const fastMode = boolFrom(raw, "fastMode");
 	if (fastMode !== undefined) provider.fastMode = fastMode;
 	if (hasOwn(raw, "forceEffort")) {
@@ -375,7 +372,6 @@ export function loadConfig(cwd: string): Config {
 }
 
 const PROVIDER_KEYS = new Set([
-	"allowExtraUsage",
 	"appendSystemPrompt",
 	"connectorWriteMode",
 	"enableConnectors",

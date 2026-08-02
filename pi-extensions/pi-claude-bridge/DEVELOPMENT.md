@@ -50,12 +50,30 @@ The audit map is query-scoped and is NOT cleared by `resetToolTracking` — that
 
 Note that pi/core's `createBranchedSession` copies every non-label entry root→leaf, so a fork inherits the parent's connector-call records. Harmless for an audit trail, unlike the `claude-bridge-session` marker it sits beside, which needed a `piSessionId` guard for exactly that reason.
 
+## Optional account-router contract
+
+The bridge remains usable by itself. A companion may publish `vstack.pi.claude-account-router.v1` on `globalThis` to supply a subscription profile for each fresh request. The bridge passes only an opaque profile id, display label, and optional `CLAUDE_CONFIG_DIR`; credentials remain owned by the official Claude CLI.
+
+Account selection affects every account-scoped surface together:
+
+- the Agent SDK child environment (with inherited API/provider-override env scrubbed);
+- `cc-session-io` create/open/delete paths, resolved through the SAME rule as the child env (profile `configDir`, else the real `~/.claude` default — never the parent's `CLAUDE_CONFIG_DIR`);
+- Claude session resume IDs;
+- connector inventory/cache scope;
+- structured `accountInfo()` and experimental `/usage` feedback.
+
+A failed pre-output attempt is buffered (`RetryEventBuffer`) so protocol setup frames do not leak into Pi, then retried with the failed profile excluded (16-attempt cap per request). Text/thinking deltas, Pi tool calls, and child-executed connector dispatches commit the request permanently; failures after that point are surfaced and never replayed, but are still recorded for the next request's routing decision. `rate_limit_event` reset timestamps are sent back to the router before reranking. The commit flag is stamped on the query context CAPTURED at buffer creation — never the live `ctx()`, which can be a pushed reentrant subagent context at commit time — and rotation additionally checks the buffer's own committed flag.
+
+Pi session persistence stores only the opaque `accountProfileId`; the config dir is re-derived through the router's `resolveProfile` on restore (router absent → default rule), so account-identifying paths never travel with shared session archives.
+
+The reciprocal `vstack.pi.claude-bridge.account-host.v1` service exposes a local `/usage` probe for account-management commands. Both symbols carry `version: 1`; incompatible future shapes must use a new symbol/version instead of mutating this contract in place.
+
 ## Provider registration — native pi ≥0.81 provider API (adopted in 2.0)
 
 Since 2.0 the bridge registers a native `Provider` object (`native-provider.ts`) via
 `pi.registerProvider(provider)`: registration is UNCONDITIONAL (once primary), and the provider's
 own `auth.apiKey.check()/resolve()` report configured-ness from the same existence-only credential
-probes as before (`auth-presence.ts`), so pi itself hides claude-bridge models while no Claude
+probes as before (`auth-presence.ts`), so pi itself hides pi-claude models while no Claude
 account is connected and shows them when one appears. The 1.x credential-gated
 register/unregister state machine (`decideRegistration`) is gone. **Hosts must embed pi ≥0.81**
 (peer range `>=0.81.0`); on an older host the extension declines loudly once

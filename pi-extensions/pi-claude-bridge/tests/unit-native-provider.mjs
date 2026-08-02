@@ -67,14 +67,32 @@ describe("buildNativeProvider", () => {
 
 	it("builds a provider whose id, models, and stamped fields match the bridge contract", () => {
 		const provider = buildNativeProvider(piAi, MODELS, () => {}, {});
-		assert.equal(provider.id, "claude-bridge");
+		assert.equal(provider.id, "pi-claude");
 		const models = provider.getModels();
 		assert.equal(models.length, 1);
 		assert.equal(models[0].id, "claude-haiku-4-5");
 		// The legacy config path stamped these during composition; the native
 		// path must stamp them itself or downstream provider routing breaks.
-		assert.equal(models[0].provider, "claude-bridge");
+		assert.equal(models[0].provider, "pi-claude");
 		assert.equal(models[0].api, "claude-bridge");
+	});
+
+	it("re-homes source models under pi-claude even when they carry a provider field", () => {
+		const provider = buildNativeProvider(piAi, [{ ...MODELS[0], provider: "anthropic" }], () => {}, {});
+		assert.equal(provider.getModels()[0].provider, "pi-claude");
+		assert.equal(provider.getModels()[0].api, "claude-bridge");
+	});
+
+	it("accepts a dynamic companion account-pool credential probe", async () => {
+		let available = false;
+		const provider = buildNativeProvider(piAi, MODELS, () => {}, {}, () => available);
+		assert.equal(await provider.auth.apiKey.check({ ctx: {} }), undefined);
+		available = true;
+		assert.deepEqual(
+			await provider.auth.apiKey.check({ ctx: {} }),
+			{ type: "api_key", source: "Claude Code login" },
+		);
+		assert.equal((await provider.auth.apiKey.resolve({ ctx: {} })).auth.apiKey, "not-used");
 	});
 
 	it("reports unconfigured when no credential signal exists", { skip: onDarwin }, () => withTempConfigDir(async (dir) => {

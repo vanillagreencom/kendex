@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-claude-bridge",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "Pi provider bridge that runs Claude Code through the Claude Agent SDK, with opt-in forwarding for Pi prompt context.",
   "type": "module",
   "keywords": [
@@ -19,12 +19,12 @@
   },
   "vstack": {
     "extensionManager": {
-      "displayName": "Claude Bridge",
+      "displayName": "Pi Claude",
       "settings": [
         {
           "key": "enabled",
-          "label": "Enable Claude bridge provider",
-          "description": "Register claude-bridge models that route Pi turns through Claude Code via the Claude Agent SDK.",
+          "label": "Enable Pi Claude provider",
+          "description": "Register pi-claude models that route Pi turns through Claude Code via the Claude Agent SDK.",
           "type": "boolean",
           "default": true,
           "category": "General",
@@ -86,18 +86,9 @@
           "apply": "live"
         },
         {
-          "key": "allowExtraUsage",
-          "label": "Allow extra usage helper",
-          "description": "Allow claude-bridge to launch Claude Code's /extra-usage flow when rate limits require extra usage. Billing/admin approval still happens in Claude's browser page.",
-          "type": "boolean",
-          "default": false,
-          "category": "Claude Code",
-          "apply": "live"
-        },
-        {
           "key": "fastMode",
           "label": "Fast mode",
-          "description": "Enable Claude Code fast mode for bridge requests when the selected model supports it. Off by default.",
+          "description": "Enable Claude Code fast mode for bridge requests when the selected model and account support it. Off by default.",
           "type": "boolean",
           "default": false,
           "category": "Claude Code",
@@ -106,7 +97,7 @@
         {
           "key": "forceEffort",
           "label": "Force Claude effort",
-          "description": "Override Pi's thinking-level mapping for all claude-bridge requests. Pi 0.80.6 and newer can select max natively; none keeps Pi's selected level.",
+          "description": "Override Pi's thinking-level mapping for all Pi Claude requests. Pi 0.80.6 and newer can select max natively; none keeps Pi's selected level.",
           "type": "enum",
           "enumValues": [
             "none",
@@ -123,7 +114,7 @@
         {
           "key": "modelEffortOverrides",
           "label": "Model effort overrides",
-          "description": "Optional JSON object mapping claude-bridge model ids to Claude Code effort levels, e.g. {\"claude-opus-4-8\":\"max\"}. Keys may also use claude-bridge/<id> or *.",
+          "description": "Optional JSON object mapping Pi Claude model ids to Claude Code effort levels, e.g. {\"claude-opus-4-8\":\"max\"}. Keys may also use pi-claude/<id> or *.",
           "type": "string",
           "default": "{}",
           "category": "Claude Code",

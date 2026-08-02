@@ -7,13 +7,22 @@ import { extensionApi, piUI, reportSyntheticToolResultRepair, setSharedSession, 
 import { convertPiMessages } from "./convert.js";
 import { DEBUG, DEBUG_LOG_PATH, debug, diagDump } from "./debug.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
-import { findUnpairedToolUses, insertLostToolResultPlaceholders } from "./tool-pairing-audit.js";
+import {
+	findUnpairedToolUses,
+	insertLostToolResultPlaceholders,
+	recoverLaterToolResults,
+} from "./tool-pairing-audit.js";
+import { claudeDirForProfile, resolveClaudeAccountRouter, type AccountSessionScope } from "./account-router.js";
 
 // --- Session persistence ---
 
 const BRIDGE_SESSION_CUSTOM_TYPE = "claude-bridge-session";
 
-interface PersistedBridgeSessionState extends SessionState {
+// Persisted shape: SessionState MINUS claudeConfigDir. Config-dir paths are
+// account-identifying and travel with shared session archives, so only the
+// opaque accountProfileId is written; the dir is re-derived via the router on
+// restore (no back-compat reader for older shapes — see CHANGELOG 3.0.0).
+interface PersistedBridgeSessionState extends Omit<SessionState, "claudeConfigDir"> {
 	fingerprint: string;
 	piSessionId?: string;
 	updatedAt: string;
@@ -52,9 +61,9 @@ function latestPersistedBridgeSession(sessionManager: unknown): PersistedBridgeS
 	return undefined;
 }
 
-function claudeSessionExists(sessionId: string, cwd: string): boolean {
+function claudeSessionExists(sessionId: string, cwd: string, claudeDir: string | undefined): boolean {
 	try {
-		const session = openSession({ sessionId, projectPath: cwd, claudeDir: process.env.CLAUDE_CONFIG_DIR });
+		const session = openSession({ sessionId, projectPath: cwd, claudeDir });
 		statSync(session.jsonlPath);
 		return true;
 	} catch {
@@ -111,27 +120,53 @@ export function restoreSharedSessionFromPi(ctx: { sessionManager?: unknown; cwd?
 		debug(`restoreSharedSession: fingerprint mismatch for ${persisted.sessionId.slice(0, 8)}`);
 		return;
 	}
-	if (!claudeSessionExists(persisted.sessionId, persisted.cwd)) {
+	// Only the opaque profile id is persisted; a managed session re-derives its
+	// claude dir through the live router (router absent or id unknown → the
+	// default-profile rule, which may fail the existence check and rebuild).
+	const accountProfileId = typeof persisted.accountProfileId === "string" ? persisted.accountProfileId : undefined;
+	const claudeConfigDir = accountProfileId
+		? claudeDirForProfile(resolveClaudeAccountRouter()?.resolveProfile?.(accountProfileId) ?? {})
+		: undefined;
+	if (!claudeSessionExists(persisted.sessionId, persisted.cwd, claudeConfigDir ?? process.env.CLAUDE_CONFIG_DIR)) {
 		debug(`restoreSharedSession: Claude session missing for ${persisted.sessionId.slice(0, 8)}`);
 		return;
 	}
-	setSharedSession({ sessionId: persisted.sessionId, cursor, cwd: persisted.cwd });
-	debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}`);
+	setSharedSession({
+		sessionId: persisted.sessionId,
+		cursor,
+		cwd: persisted.cwd,
+		...(accountProfileId ? { accountProfileId, claudeConfigDir } : {}),
+	});
+	debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}, account=${accountProfileId ?? "default"}`);
+}
+
+const scheduledPersistenceTimers = new Set<ReturnType<typeof setTimeout>>();
+
+export function cancelScheduledSessionPersistence(): void {
+	for (const timer of scheduledPersistenceTimers) clearTimeout(timer);
+	scheduledPersistenceTimers.clear();
 }
 
 export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknown }): void {
 	if (!extensionApi || !sharedSession || !ctxLike?.sessionManager) return;
-	const snapshot = { ...sharedSession };
+	// Extension contexts become guarded/stale as soon as shutdown or replacement
+	// starts. Capture the plain SessionManager reference now and cancel the timer
+	// on shutdown rather than dereferencing the ctx proxy from the next tick.
+	const sessionManager = ctxLike.sessionManager;
+	// Persist only the opaque profile id — the resolved config dir is an
+	// account-identifying path and stays in memory (see PersistedBridgeSessionState).
+	const { claudeConfigDir: _omitted, ...snapshot } = sharedSession;
 	const timer = setTimeout(() => {
+		scheduledPersistenceTimers.delete(timer);
 		try {
-			const built = readBuiltSessionContext(ctxLike.sessionManager);
+			const built = readBuiltSessionContext(sessionManager);
 			if (!built) return;
 			const cursor = Math.max(0, Math.min(snapshot.cursor, built.messages.length));
 			const data: PersistedBridgeSessionState = {
 				...snapshot,
 				cursor,
 				fingerprint: fingerprintMessages(built.messages.slice(0, cursor)),
-				piSessionId: typeof (ctxLike.sessionManager as any)?.getSessionId === "function" ? (ctxLike.sessionManager as any).getSessionId() : undefined,
+				piSessionId: typeof (sessionManager as any)?.getSessionId === "function" ? (sessionManager as any).getSessionId() : undefined,
 				updatedAt: new Date().toISOString(),
 			};
 			extensionApi?.appendEntry(BRIDGE_SESSION_CUSTOM_TYPE, data);
@@ -140,6 +175,7 @@ export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknow
 			debug("persistSharedSession failed:", error);
 		}
 	}, 0);
+	scheduledPersistenceTimers.add(timer);
 	timer.unref?.();
 }
 
@@ -167,11 +203,21 @@ function convertAndImportMessages(
 		debug(`convertAndImportMessages: sanitized ${sanitizedIds.size} tool IDs:`,
 			[...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}→${clean}`).join(", "));
 	}
-	// Pre-repair: pair every orphaned tool_use with an EXPLICIT bridge-authored
-	// error result before cc-session-io's repairToolPairing can backfill its bare
-	// "[no tool result recorded]" placeholder — which the model reads as tool
-	// output and silently reasons on. Ours is is_error and says what to do.
-	// repairToolPairing still runs after (idempotent; finds nothing left).
+	// A steer can make Pi split one parallel Claude batch across several visible
+	// assistant/tool-result pairs. Recover those real later results before the
+	// generic repair layer mistakes them for lost output.
+	const recoveredToolResults = recoverLaterToolResults(anthropicMessages);
+	if (recoveredToolResults.length > 0) {
+		debug(
+			`convertAndImportMessages: recovered ${recoveredToolResults.length} later tool result(s) for original parallel batch`,
+			recoveredToolResults.map((item) => item.id).join(", "),
+		);
+	}
+	// Pre-repair: pair every REMAINING orphaned tool_use with an EXPLICIT
+	// bridge-authored error result before cc-session-io's repairToolPairing can
+	// backfill its bare "[no tool result recorded]" placeholder — which the model
+	// reads as tool output and silently reasons on. Ours is is_error and says
+	// what to do. repairToolPairing still runs after (idempotent; finds nothing left).
 	const missingToolResults = findUnpairedToolUses(anthropicMessages);
 	if (missingToolResults.length > 0) insertLostToolResultPlaceholders(anthropicMessages, missingToolResults);
 	const repaired = repairToolPairing(anthropicMessages);
@@ -245,18 +291,23 @@ function verifyWrittenSession(
 	expectedSessionId: string,
 	expectedRecordCount: number,
 	cwd: string,
+	claudeDir: string | undefined,
 ): void {
 	const warnings = _verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount);
 	for (const msg of warnings) {
 		debug(`WARNING session verify: ${msg}`);
+		// No CLAUDE_CONFIG_DIR value here: this text asks to be pasted into a
+		// public issue and config-dir paths are account-identifying (see the
+		// persisted-shape note at the top of this file). The diagDump below
+		// records it locally instead.
 		piUI?.notify(
 			`Session file issue: ${msg}\n` +
-			`cwd=${cwd} realpath=${safeRealpath(cwd)} CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"}\n` +
-			`Please copy and paste this message into a new issue at https://github.com/elidickinson/pi-claude-bridge/issues/new` +
+			`cwd=${cwd} realpath=${safeRealpath(cwd)}\n` +
+			`Please copy and paste this message into a new issue at https://github.com/vanillagreencom/vstack/issues/new` +
 			(DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
 			"warning",
 		);
-		diagDump("session_verify_fail", { msg, jsonlPath, cwd, realpath: safeRealpath(cwd), claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null });
+		diagDump("session_verify_fail", { msg, jsonlPath, cwd, realpath: safeRealpath(cwd), claudeConfigDir: claudeDir ?? null });
 	}
 }
 
@@ -267,7 +318,7 @@ function safeRealpath(p: string): string {
 // Diagnostic snapshot of where a session file was just written. Catches the
 // class of bugs where pi writes to ~/.claude/projects/<X> but CC SDK reads
 // from ~/.claude/projects/<Y> (symlinks, CLAUDE_CONFIG_DIR, hash mismatch).
-function debugSessionPaths(label: string, cwd: string, jsonlPath: string): void {
+function debugSessionPaths(label: string, cwd: string, jsonlPath: string, claudeDir: string | undefined): void {
 	const realCwd = safeRealpath(cwd);
 	let fileSize: number | null = null;
 	let fileExists = false;
@@ -280,7 +331,7 @@ function debugSessionPaths(label: string, cwd: string, jsonlPath: string): void 
 	if (realCwd !== cwd) debug(`${label}: realpath(cwd)=${realCwd} (DIFFERS — symlink-resolved path is what CC SDK uses)`);
 	debug(`${label}: jsonlPath=${jsonlPath}`);
 	debug(`${label}: fileExists=${fileExists}${fileSize != null ? ` size=${fileSize}` : ""}`);
-	debug(`${label}: env.CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"} HOME=${process.env.HOME ?? "(unset)"}`);
+	debug(`${label}: selected.CLAUDE_CONFIG_DIR=${claudeDir ?? "(unset)"} HOME=${process.env.HOME ?? "(unset)"}`);
 }
 
 // Two semantic paths:
@@ -320,18 +371,31 @@ export function syncSharedSession(
 	cwd: string,
 	customToolNameToSdk?: Map<string, string>,
 	modelId?: string,
+	account?: AccountSessionScope,
 ): SyncResult {
 	const priorMessages = messages.slice(0, -1); // everything before the new user prompt
+	const accountProfileId = account?.accountProfileId;
+	const scopeConfigDir = account?.claudeConfigDir; // resolved dir for managed, undefined for legacy
+	// What cc-session-io reads/writes. Managed requests always carry a resolved
+	// dir (accountSessionScope) so this never falls back to the process env the
+	// child no longer sees; legacy keeps the env rule unchanged.
+	const claudeDir = scopeConfigDir ?? process.env.CLAUDE_CONFIG_DIR;
+	const sameAccount = Boolean(
+		sharedSession &&
+		sharedSession.accountProfileId === accountProfileId &&
+		sharedSession.claudeConfigDir === scopeConfigDir,
+	);
 
-	// REUSE path
-	if (sharedSession && !sharedSession.needsRebuild) {
+	// REUSE path. A Claude session can only be resumed under the credential
+	// profile that created its JSONL and prompt cache.
+	if (sharedSession && sameAccount && !sharedSession.needsRebuild) {
 		const batch = planIncrementalPromptBatch(messages, sharedSession.cursor);
 		if (batch) {
 			setSharedSession({ ...sharedSession, cursor: batch.promptStart, cwd });
 			const batching = batch.userMessageCount > 1
 				? `batched ${batch.userMessageCount} consecutive user messages, `
 				: batch.promptStart > sharedSession.cursor ? "advanced cursor past trailing assistant, " : "";
-			debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.promptStart}`);
+			debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.promptStart}, account=${accountProfileId ?? "default"}`);
 			debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${batch.promptStart} promptUsers=${batch.userMessageCount}`);
 			return {
 				sessionId: sharedSession.sessionId,
@@ -342,12 +406,16 @@ export function syncSharedSession(
 
 	// REBUILD path
 	if (priorMessages.length === 0) {
-		debug(`Case 1: clean start, ${messages.length} total messages`);
+		debug(`Case 1: clean start, ${messages.length} total messages, account=${accountProfileId ?? "default"}`);
 		debug(`syncResult: path=clean-start`);
 		return { sessionId: null, promptStart: messages.length - 1 };
 	}
-	const previousSessionId = sharedSession?.sessionId;
-	const previousCursor = sharedSession?.cursor ?? 0;
+	const replacedSessionId = sharedSession?.sessionId;
+	// Preserve a UUID only within the same credential profile: reusing account
+	// A's session id under B could resume the wrong transcript, and deleting A's
+	// JSONL from B's rebuild would destroy A's still-valid history.
+	const previousSessionId = sameAccount ? sharedSession?.sessionId : undefined;
+	const previousCursor = sameAccount ? sharedSession?.cursor ?? 0 : 0;
 	// preserveId: rebuild in place (deleteSession + createSession with the
 	// existing UUID), so prompt-cache UUIDs stay stable for log correlation
 	// and for any tools that key off them. Skipped only when there's a
@@ -355,27 +423,35 @@ export function syncSharedSession(
 	const preserveId = previousSessionId !== undefined && !sharedSession?.forceRotate;
 	if (preserveId) {
 		// Wipe prior jsonl + companion dir (no-op if nothing to wipe).
-		deleteSession(previousSessionId!, cwd, process.env.CLAUDE_CONFIG_DIR);
+		deleteSession(previousSessionId!, cwd, claudeDir);
 	}
 	const session = createSession({
 		projectPath: cwd,
-		claudeDir: process.env.CLAUDE_CONFIG_DIR,
+		claudeDir,
 		...(preserveId ? { sessionId: previousSessionId } : {}),
 		...(modelId ? { model: modelId } : {}),
 	});
 	convertAndImportMessages(session, priorMessages, customToolNameToSdk, cwd);
 	session.save();
-	verifyWrittenSession(session.jsonlPath, session.sessionId, session.messages.length, cwd);
-	setSharedSession({ sessionId: session.sessionId, cursor: priorMessages.length, cwd });
-	if (previousSessionId === undefined) {
+	verifyWrittenSession(session.jsonlPath, session.sessionId, session.messages.length, cwd, claudeDir);
+	setSharedSession({
+		sessionId: session.sessionId,
+		cursor: priorMessages.length,
+		cwd,
+		...(accountProfileId ? { accountProfileId } : {}),
+		...(scopeConfigDir ? { claudeConfigDir: scopeConfigDir } : {}),
+	});
+	if (replacedSessionId === undefined) {
 		debug(`Case 2: first turn with ${priorMessages.length} prior messages → session ${session.sessionId.slice(0, 8)}, ${session.messages.length} records`);
+	} else if (!sameAccount) {
+		debug(`Case 5 account-rotation: ${priorMessages.length} prior messages → new session ${session.sessionId.slice(0, 8)} for account ${accountProfileId ?? "default"} (replaced ${replacedSessionId.slice(0, 8)})`);
 	} else if (preserveId) {
 		const missedCount = priorMessages.length - previousCursor;
 		debug(`Case 4: ${missedCount} missed messages, ${priorMessages.length} total → rewrote session ${session.sessionId.slice(0, 8)} (same id), ${session.messages.length} records`);
 	} else {
-		debug(`Case 4 post-abort: ${priorMessages.length} total → new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId.slice(0, 8)}, rotated to avoid race with orphan writer), ${session.messages.length} records`);
+		debug(`Case 4 post-abort: ${priorMessages.length} total → new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId!.slice(0, 8)}, rotated to avoid race with orphan writer), ${session.messages.length} records`);
 	}
-	debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath);
-	debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === undefined ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`);
+	debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath, claudeDir);
+	debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${replacedSessionId === undefined ? "first" : !sameAccount ? "account-rotated" : preserveId ? "preserved" : "rotated-post-abort"}`);
 	return { sessionId: session.sessionId, promptStart: messages.length - 1 };
 }

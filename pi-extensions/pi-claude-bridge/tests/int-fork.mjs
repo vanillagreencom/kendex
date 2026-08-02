@@ -15,13 +15,13 @@
  * words it knows. word_A must appear; word_B and word_C must NOT.
  *
  * Run with:
- *   FORK_TEST_MODEL=claude-bridge/claude-haiku-4-5 node --import tsx --test tests/int-fork.mjs
+ *   FORK_TEST_MODEL=pi-claude/claude-haiku-4-5 node --import tsx --test tests/int-fork.mjs
  *   FORK_TEST_MODEL=openai-codex/gpt-5.6-sol:medium    node --import tsx --test tests/int-fork.mjs
  */
 
 import { createRpcHarness } from "./lib/rpc-harness.mjs";
 
-const MODEL = process.env.FORK_TEST_MODEL || "claude-bridge/claude-haiku-4-5";
+const MODEL = process.env.FORK_TEST_MODEL || "pi-claude/claude-haiku-4-5";
 const [PROVIDER, MODEL_ID] = MODEL.split("/");
 if (!PROVIDER || !MODEL_ID) {
 	console.error(`ERROR: FORK_TEST_MODEL must be 'provider/modelId[:thinking]', got ${MODEL}`);

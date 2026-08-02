@@ -14,7 +14,7 @@ import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { createRpcHarness } from "./lib/rpc-harness.mjs";
 
-const BRIDGE_MODEL = "claude-bridge/claude-haiku-4-5";
+const BRIDGE_MODEL = "pi-claude/claude-haiku-4-5";
 
 test("turn 2 reuses session after tool-using turn 1 (no spurious rebuild)", { timeout: 120_000 }, async () => {
 	const harness = createRpcHarness({

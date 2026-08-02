@@ -7,11 +7,11 @@ import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { noteChildExecutedToolResults, processAssistantMessage, processStreamEvent } from "../src/index.ts";
 import { isChildExecutedTool, isChildInternalTool, isConnectorTool } from "../src/connectors.ts";
-import { ctx, resetStack } from "../src/query-state.ts";
+import { QueryContext, ctx, resetStack } from "../src/query-state.ts";
 
 const model = {
 	api: "claude-bridge",
-	provider: "claude-bridge",
+	provider: "pi-claude",
 	id: "claude-haiku-4-5",
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
@@ -515,5 +515,35 @@ describe("child-executed tool results", () => {
 		ctx().noteChildExecutedToolCall("toolu_conn", CONNECTOR_TOOL, 0);
 		noteChildExecutedToolResults({ type: "user", message: { content: "just a prompt echo" } });
 		noteChildExecutedToolResults({ type: "user", message: {} });
+	});
+});
+
+describe("account-replay commit boundary (committedOutput)", () => {
+	// Rotation to another account must be forbidden the moment an
+	// account-visible side effect starts — a connector dispatch — but a
+	// child-internal built-in (ToolSearch et al.) is pure plumbing and must
+	// leave the turn rotatable.
+	it("a child-internal built-in before visible output does NOT commit", () => {
+		const queryCtx = new QueryContext();
+		queryCtx.noteChildExecutedToolCall("t1", "ToolSearch", 0);
+		queryCtx.noteChildExecutedToolCall("t2", "ListMcpResources");
+		assert.equal(queryCtx.committedOutput, false);
+	});
+
+	it("a connector dispatch commits, even without a stream index or id", () => {
+		const withId = new QueryContext();
+		withId.noteChildExecutedToolCall("c1", CONNECTOR_TOOL, 0);
+		assert.equal(withId.committedOutput, true);
+
+		const withoutId = new QueryContext();
+		withoutId.noteChildExecutedToolCall(undefined, CONNECTOR_TOOL);
+		assert.equal(withoutId.committedOutput, true);
+	});
+
+	it("resetTurnState does not clear the query-scoped commit flag", () => {
+		const queryCtx = new QueryContext();
+		queryCtx.noteChildExecutedToolCall("c1", CONNECTOR_TOOL, 0);
+		queryCtx.resetTurnState({ api: "claude-bridge", provider: "pi-claude", id: "claude-haiku-4-5" });
+		assert.equal(queryCtx.committedOutput, true);
 	});
 });

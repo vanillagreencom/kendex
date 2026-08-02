@@ -2,6 +2,13 @@
 // repairs them with synthetic "[no tool result recorded]" blocks.
 // Kept pure so tests can exercise the exact audit without activating Pi.
 
+export interface RecoveredToolResult {
+	id: string;
+	assistantIndex: number;
+	sourceUserIndex: number;
+	targetUserIndex: number;
+}
+
 export interface MissingToolResult {
 	id: string;
 	toolName: string;
@@ -25,6 +32,68 @@ function toolResultIds(content: unknown): Set<string> {
 		if (block.type === "tool_result" && typeof block.tool_use_id === "string") ids.add(block.tool_use_id);
 	}
 	return ids;
+}
+
+/**
+ * Pi can split a parallel Claude tool batch into several visible turns when a
+ * steer is drained after the first tool result. The first assistant message
+ * still contains every tool_use, while later sibling results sit behind small
+ * duplicate assistant/tool-result pairs. Anthropic history requires every
+ * result immediately after the original batch, so copy those already-recorded
+ * later results into that first user result message before generic repair adds
+ * a false "[no tool result recorded]" placeholder.
+ *
+ * The later pair stays intact because Pi also recorded its duplicate tool_use;
+ * copying is therefore required to keep both assistant messages valid.
+ */
+export function recoverLaterToolResults(
+	messages: Array<{ role?: string; content?: unknown }>,
+): RecoveredToolResult[] {
+	const recovered: RecoveredToolResult[] = [];
+	for (let i = 0; i < messages.length; i++) {
+		const assistant = messages[i];
+		if (assistant?.role !== "assistant") continue;
+		const uses = toolUses(assistant.content);
+		if (uses.length === 0) continue;
+
+		const target = messages[i + 1];
+		if (target?.role !== "user") continue;
+		const present = toolResultIds(target.content);
+		const missing = uses.filter((use) => !present.has(use.id));
+		if (missing.length === 0) continue;
+
+		for (const use of missing) {
+			let sourceBlock: Record<string, any> | undefined;
+			let sourceUserIndex = -1;
+			for (let j = i + 2; j < messages.length; j++) {
+				const candidate = messages[j];
+				if (candidate?.role !== "user") continue;
+				sourceBlock = contentBlocks(candidate.content).find(
+					(block) => block.type === "tool_result" && block.tool_use_id === use.id,
+				);
+				if (sourceBlock) {
+					sourceUserIndex = j;
+					break;
+				}
+			}
+			if (!sourceBlock) continue;
+
+			const targetBlocks = Array.isArray(target.content)
+				? target.content as Array<Record<string, any>>
+				: typeof target.content === "string" && target.content
+					? [{ type: "text", text: target.content }]
+					: [];
+			// tool_result blocks must lead the user message; insert the recovered
+			// result after the existing tool_results, never after trailing text.
+			let insertAt = 0;
+			while (insertAt < targetBlocks.length && targetBlocks[insertAt]?.type === "tool_result") insertAt++;
+			targetBlocks.splice(insertAt, 0, { ...sourceBlock });
+			target.content = targetBlocks;
+			present.add(use.id);
+			recovered.push({ id: use.id, assistantIndex: i, sourceUserIndex, targetUserIndex: i + 1 });
+		}
+	}
+	return recovered;
 }
 
 /**

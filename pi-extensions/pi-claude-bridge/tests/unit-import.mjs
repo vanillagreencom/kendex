@@ -4,7 +4,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { sanitizeToolId, convertPiMessages } from "../src/convert.js";
-import { findUnpairedToolUses } from "../src/tool-pairing-audit.js";
+import { findUnpairedToolUses, recoverLaterToolResults } from "../src/tool-pairing-audit.js";
 
 /** Shorthand: convert pi messages and return just the anthropic messages. */
 function convert(messages, customToolNameToSdk) {
@@ -121,9 +121,9 @@ describe("thinking block filtering", () => {
 		assert.equal(result[0].content[0].type, "text");
 	});
 
-	it("Anthropic provider thinking with signature preserved", () => {
+	it("canonical pi-claude thinking with signature is preserved", () => {
 		const msgs = [
-			{ role: "assistant", provider: "claude-bridge", content: [
+			{ role: "assistant", provider: "pi-claude", content: [
 				{ type: "thinking", thinking: "reasoning...", thinkingSignature: "sig123" },
 				{ type: "text", text: "answer" },
 			]},
@@ -148,7 +148,7 @@ describe("thinking block filtering", () => {
 
 	it("Anthropic provider thinking WITHOUT signature → dropped", () => {
 		const msgs = [
-			{ role: "assistant", provider: "claude-bridge", content: [
+			{ role: "assistant", provider: "pi-claude", content: [
 				{ type: "thinking", thinking: "no sig" },
 				{ type: "text", text: "answer" },
 			]},
@@ -248,6 +248,77 @@ describe("message structure", () => {
 		assert.equal(result[2].role, "user");
 		assert.equal(result[2].content, "please continue after tools");
 		assert.deepEqual(findUnpairedToolUses(result), []);
+	});
+
+	it("recovers real sibling results when a steer splits one parallel batch across later turns", () => {
+		const msgs = [
+			{ role: "assistant", content: [
+				{ type: "toolCall", id: "t1", name: "SlowTool", arguments: { seconds: 3 } },
+				{ type: "toolCall", id: "t2", name: "SlowTool", arguments: { seconds: 4 } },
+				{ type: "toolCall", id: "t3", name: "SlowTool", arguments: { seconds: 5 } },
+			] },
+			{ role: "toolResult", toolCallId: "t1", content: "first" },
+			{ role: "user", content: "steer" },
+			{ role: "assistant", content: [{ type: "toolCall", id: "t2", name: "SlowTool", arguments: { seconds: 4 } }] },
+			{ role: "toolResult", toolCallId: "t2", content: "second" },
+			{ role: "assistant", content: [{ type: "toolCall", id: "t3", name: "SlowTool", arguments: { seconds: 5 } }] },
+			{ role: "toolResult", toolCallId: "t3", content: "third" },
+		];
+
+		const result = convert(msgs);
+		assert.deepEqual(findUnpairedToolUses(result).map((item) => item.id), ["t2", "t3"]);
+		assert.deepEqual(
+			recoverLaterToolResults(result).map((item) => item.id),
+			["t2", "t3"],
+		);
+		assert.deepEqual(findUnpairedToolUses(result), []);
+		assert.deepEqual(
+			result[1].content.map((block) => block.tool_use_id),
+			["t1", "t2", "t3"],
+		);
+		assert.equal(result[1].content[1].content, "second");
+		assert.equal(result[1].content[2].content, "third");
+	});
+
+	it("inserts recovered tool_results BEFORE text blocks in the target user message", () => {
+		// The target user message already mixes a delivered tool_result with
+		// interleaved steer text. The recovered sibling result must land in the
+		// leading tool_result run, not after the text (Anthropic convention).
+		const messages = [
+			{ role: "assistant", content: [
+				{ type: "tool_use", id: "t1", name: "SlowTool", input: {} },
+				{ type: "tool_use", id: "t2", name: "SlowTool", input: {} },
+			] },
+			{ role: "user", content: [
+				{ type: "tool_result", tool_use_id: "t1", content: "first" },
+				{ type: "text", text: "steer text" },
+			] },
+			{ role: "assistant", content: [{ type: "tool_use", id: "t2", name: "SlowTool", input: {} }] },
+			{ role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: "second" }] },
+		];
+
+		assert.deepEqual(recoverLaterToolResults(messages).map((item) => item.id), ["t2"]);
+		assert.deepEqual(
+			messages[1].content.map((block) => block.type),
+			["tool_result", "tool_result", "text"],
+		);
+		assert.deepEqual(
+			messages[1].content.filter((block) => block.type === "tool_result").map((block) => block.tool_use_id),
+			["t1", "t2"],
+		);
+	});
+
+	it("converts a plain-string target user message and leads with the recovered result", () => {
+		const messages = [
+			{ role: "assistant", content: [{ type: "tool_use", id: "t1", name: "SlowTool", input: {} }] },
+			{ role: "user", content: "steer only" },
+			{ role: "assistant", content: [{ type: "tool_use", id: "t1", name: "SlowTool", input: {} }] },
+			{ role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "late" }] },
+		];
+
+		assert.deepEqual(recoverLaterToolResults(messages).map((item) => item.id), ["t1"]);
+		assert.deepEqual(messages[1].content.map((block) => block.type), ["tool_result", "text"]);
+		assert.equal(messages[1].content[1].text, "steer only");
 	});
 
 	it("mixed conversation: user → assistant(tool) → toolResult → assistant(text)", () => {

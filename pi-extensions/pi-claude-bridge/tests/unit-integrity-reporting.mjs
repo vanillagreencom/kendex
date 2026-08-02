@@ -63,10 +63,22 @@ describe("tool-result integrity reporting", () => {
 		assert.equal(sharedSession.forceRotate, undefined);
 	});
 
-	it("abort teardown marks forceRotate and still reports exactly once", () => {
+	it("expected abort teardown marks forceRotate without raising an integrity error", () => {
 		const queryCtx = makeMismatchContext();
-		assert.equal(reportToolResultMismatch(queryCtx, "abort", "/repo", { forceRotate: true }), true);
-		assert.equal(reportToolResultMismatch(queryCtx, "abort", "/repo", { forceRotate: true }), false);
+		const options = { expectedInterruption: true, forceRotate: true };
+		assert.equal(reportToolResultMismatch(queryCtx, "abort", "/repo", options), true);
+		assert.equal(reportToolResultMismatch(queryCtx, "abort", "/repo", options), false);
+
+		assert.equal(statSync(diagPath, { throwIfNoEntry: false }), undefined);
+		assert.equal(notifications.length, 0);
+		const { sharedSession } = __testGetBridgeIntegrityState();
+		assert.equal(sharedSession.needsRebuild, true);
+		assert.equal(sharedSession.forceRotate, true);
+	});
+
+	it("unexpected interruptions still report loudly with forceRotate", () => {
+		const queryCtx = makeMismatchContext();
+		assert.equal(reportToolResultMismatch(queryCtx, "stream idle timeout", "/repo", { forceRotate: true }), true);
 
 		assert.equal(readDiagEntries().length, 1);
 		assert.equal(notifications.length, 1);

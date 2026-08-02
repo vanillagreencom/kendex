@@ -153,7 +153,7 @@ LOGFILE_A="$LOGDIR/usage-test-bridge.ndjson"
 echo ""
 echo "Running bridge conversation..."
 timeout 600 pi --no-session -ne -e "$DIR" \
-  --model "claude-bridge/$MODEL" \
+  --model "pi-claude/$MODEL" \
   --mode json \
   "${PROMPT_ARGS[@]}" \
   > "$LOGFILE_A" 2>"$LOGFILE_A.err"

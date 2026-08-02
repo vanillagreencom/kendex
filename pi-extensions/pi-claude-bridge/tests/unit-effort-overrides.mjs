@@ -18,10 +18,14 @@ describe("Claude bridge effort overrides", () => {
 		}), "max");
 	});
 
-	it("accepts claude-bridge/<id> model override keys and wildcard keys", () => {
+	it("accepts pi-claude/<id> model override keys and wildcard keys", () => {
+		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", {
+			modelEffortOverrides: { "pi-claude/claude-opus-4-8": "max" },
+		}), "max");
+		// P2 / no-legacy: pre-rename claude-bridge/<id> keys are ignored.
 		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", {
 			modelEffortOverrides: { "claude-bridge/claude-opus-4-8": "max" },
-		}), "max");
+		}), "xhigh");
 		assert.equal(resolveConfiguredEffort("claude-haiku-4-5", "medium", {
 			modelEffortOverrides: { "*": "low" },
 		}), "low");

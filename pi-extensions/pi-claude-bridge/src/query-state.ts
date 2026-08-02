@@ -168,6 +168,11 @@ export class QueryContext {
 	reportedToolResultMismatch = false;
 	deferredUserMessages: string[] = [];
 	handledTerminalError = false;
+	// Once visible text/thinking, a complete tool call, or a child-executed
+	// CONNECTOR dispatch reaches Pi, the request must never be replayed on
+	// another account (duplicate side effects). Query-scoped, not per-turn:
+	// resetTurnState must not clear it.
+	committedOutput = false;
 	/** Armed grace timer for ending a tool_use turn whose terminal stream events
 	 *  (message_delta/message_stop) never arrive. The normal path ends the turn at
 	 *  message_stop, AFTER message_delta delivered the real output-token count;
@@ -305,6 +310,15 @@ export class QueryContext {
 	 *  (ToolSearch et al.) is tool plumbing, not account-data access, so nothing
 	 *  about it belongs in the audit trail and no result needs matching. */
 	noteChildExecutedToolCall(id: string | undefined, rawName: string, streamIndex?: number): void {
+		if (isConnectorTool(rawName)) {
+			// A connector call is an account-visible side effect the child may run
+			// before any Pi-visible event; crossing it permanently forbids account
+			// replay even when the result or a later text delta never arrives.
+			// Child-internal built-ins (ToolSearch et al.) are pure plumbing and
+			// deliberately do NOT commit — an early ToolSearch must not make the
+			// whole turn non-rotatable.
+			this.markOutputCommitted();
+		}
 		if (id && isConnectorTool(rawName)) {
 			this.childExecutedToolCalls.set(id, rawName);
 			// Both emission paths can see the same call (streamed block, then the
@@ -342,6 +356,10 @@ export class QueryContext {
 
 	hasRecordedToolCall(id: string | undefined): boolean {
 		return Boolean(id && (this.turnToolCallIds.includes(id) || this.turnToolCalls.some((call) => call.id === id)));
+	}
+
+	markOutputCommitted(): void {
+		this.committedOutput = true;
 	}
 
 	claimToolCall(toolName: string, args: Record<string, unknown> = {}): ClaimedToolCall {
