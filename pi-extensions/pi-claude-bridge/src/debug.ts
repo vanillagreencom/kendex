@@ -20,6 +20,10 @@ if (DEBUG) {
 	try {
 		mkdirSync(dirname(DEBUG_LOG_PATH), { recursive: true, mode: 0o700 });
 		mkdirSync(dirname(diagLogPath()), { recursive: true, mode: 0o700 });
+		// mode on mkdir/append applies only at CREATION — repair permissions on
+		// dirs and logs that predate the 0o700/0o600 hardening.
+		chmodSync(dirname(DEBUG_LOG_PATH), 0o700);
+		chmodSync(DEBUG_LOG_PATH, 0o600);
 	} catch {
 		// If directory creation fails, debug functions will throw on first use
 	}
@@ -52,7 +56,7 @@ export function makeCliDebugOptions(tag: string): { debug?: boolean; debugFile?:
 	const seq = nextCliDebugSeq++;
 	const ts = new Date().toISOString().replace(/[:.]/g, "-");
 	const logDir = join(dirname(DEBUG_LOG_PATH), "cc-cli-logs");
-	try { mkdirSync(logDir, { recursive: true, mode: 0o700 }); } catch { /* ignore */ }
+	try { mkdirSync(logDir, { recursive: true, mode: 0o700 }); chmodSync(logDir, 0o700); } catch { /* ignore */ }
 	const debugFile = join(logDir, `${ts}-${tag}-${seq}.log`);
 	debug(`cli-debug: ${tag} #${seq} → ${debugFile}`);
 	return {

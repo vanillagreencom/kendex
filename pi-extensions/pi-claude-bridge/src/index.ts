@@ -920,7 +920,10 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	const requestRotation = (failure: ClaudeAttemptFailure): boolean => {
 		recordAttemptFailure(failure);
 		const committed = abortCtx.committedOutput || attemptBuffer?.hasCommittedOutput === true;
-		const eligible = Boolean(account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < MAX_ROTATION_ATTEMPTS);
+		// Rotation retries re-enter streamClaudeAgentSdk from the outer promise
+		// chain — an outermost-only path. A reentrant (subagent) query that fails
+		// just fails; it must never queue a retry or burn a profile exclusion.
+		const eligible = Boolean(!isReentrant && account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < MAX_ROTATION_ATTEMPTS);
 		debug("provider: account rotation decision", JSON.stringify({
 			eligible,
 			account: account?.label,

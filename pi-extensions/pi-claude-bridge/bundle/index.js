@@ -26955,6 +26955,8 @@ if (DEBUG) {
   try {
     mkdirSync2(dirname(DEBUG_LOG_PATH), { recursive: true, mode: 448 });
     mkdirSync2(dirname(diagLogPath()), { recursive: true, mode: 448 });
+    chmodSync(dirname(DEBUG_LOG_PATH), 448);
+    chmodSync(DEBUG_LOG_PATH, 384);
   } catch {
   }
 }
@@ -26982,6 +26984,7 @@ function makeCliDebugOptions(tag) {
   const logDir = join2(dirname(DEBUG_LOG_PATH), "cc-cli-logs");
   try {
     mkdirSync2(logDir, { recursive: true, mode: 448 });
+    chmodSync(logDir, 448);
   } catch {
   }
   const debugFile = join2(logDir, `${ts2}-${tag}-${seq}.log`);
@@ -46413,7 +46416,7 @@ function streamClaudeAgentSdk(model, context, options) {
   const requestRotation = (failure) => {
     recordAttemptFailure(failure);
     const committed = abortCtx.committedOutput || attemptBuffer?.hasCommittedOutput === true;
-    const eligible = Boolean(account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < MAX_ROTATION_ATTEMPTS);
+    const eligible = Boolean(!isReentrant && account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < MAX_ROTATION_ATTEMPTS);
     debug("provider: account rotation decision", JSON.stringify({
       eligible,
       account: account?.label,
