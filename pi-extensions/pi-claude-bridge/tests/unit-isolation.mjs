@@ -168,7 +168,7 @@ describe("loadConfig isolation", () => {
 		}));
 		withEnv({ PI_CODING_AGENT_DIR: agentDir }, () => {
 			recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
-			// Normal Pi behavior is unchanged: trusted project manager settings win.
+			// Trusted project settings win in normal mode.
 			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined }, () => {
 				const config = loadConfig(project);
 				assert.equal(config.provider?.fastMode, true);

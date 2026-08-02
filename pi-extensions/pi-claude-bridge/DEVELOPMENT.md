@@ -50,12 +50,30 @@ The audit map is query-scoped and is NOT cleared by `resetToolTracking` — that
 
 Note that pi/core's `createBranchedSession` copies every non-label entry root→leaf, so a fork inherits the parent's connector-call records. Harmless for an audit trail, unlike the `claude-bridge-session` marker it sits beside, which needed a `piSessionId` guard for exactly that reason.
 
+## Optional account-router contract
+
+The bridge remains usable by itself. A companion may publish `vstack.pi.claude-account-router.v1` on `globalThis` to supply a subscription profile for each fresh request. The bridge passes only an opaque profile id, display label, and optional `CLAUDE_CONFIG_DIR`; credentials remain owned by the official Claude CLI.
+
+Account selection affects every account-scoped surface together:
+
+- the Agent SDK child environment;
+- `cc-session-io` create/open/delete paths;
+- Claude session resume IDs;
+- connector inventory/cache scope;
+- structured `accountInfo()` and experimental `/usage` feedback.
+
+A managed route with no explicit config directory means the real default profile: the child unsets inherited `CLAUDE_CONFIG_DIR`, while bridge-side session and connector paths are pinned explicitly to `$HOME/.claude` so an exported parent value cannot split the two. Persisted bridge-session markers contain only the opaque profile id and effective model. On resume, the companion re-resolves that id to the current profile path; markers from the earlier path-bearing format are accepted once as a migration fallback and rewritten without the path.
+
+A failed pre-output attempt is buffered so protocol setup frames do not leak into Pi, then retried with the failed profile excluded. Text/thinking deltas, Pi tool calls, and child-executed connector dispatches commit the request permanently; failures after that point are surfaced and never replayed, but are still recorded for the next request's routing decision. Child-internal plumbing such as `ToolSearch` is deliberately replay-neutral: it is neither a connector side effect nor account-visible output. `rate_limit_event` reset timestamps are sent back to the router before reranking. Without a router, rejected events retain Claude Code's native fallback behavior and are notified once rather than being converted into a second terminal error.
+
+The reciprocal `vstack.pi.claude-bridge.account-host.v1` service exposes a local `/usage` probe for account-management commands. Both symbols carry `version: 1`; incompatible future shapes must use a new symbol/version instead of mutating this contract in place.
+
 ## Provider registration — native pi ≥0.81 provider API (adopted in 2.0)
 
 Since 2.0 the bridge registers a native `Provider` object (`native-provider.ts`) via
-`pi.registerProvider(provider)`: registration is UNCONDITIONAL (once primary), and the provider's
+`pi.registerProvider(provider)`: registration is UNCONDITIONAL (once primary) for canonical `pi-claude` and the saved-session compatibility alias `claude-bridge`; the provider's
 own `auth.apiKey.check()/resolve()` report configured-ness from the same existence-only credential
-probes as before (`auth-presence.ts`), so pi itself hides claude-bridge models while no Claude
+probes as before (`auth-presence.ts`), so pi itself hides both provider aliases while no Claude
 account is connected and shows them when one appears. The 1.x credential-gated
 register/unregister state machine (`decideRegistration`) is gone. **Hosts must embed pi ≥0.81**
 (peer range `>=0.81.0`); on an older host the extension declines loudly once

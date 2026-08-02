@@ -2,6 +2,15 @@
 
 ## Consumer-impacting changes
 
+### 2.2.0
+
+- Added the canonical `pi-claude/*` provider identity while retaining `claude-bridge/*` as a saved-session compatibility alias.
+- Added an optional versioned account-router integration for usage-aware Claude subscription profiles. Each request runs with the selected official Claude CLI profile, keeps child sessions and connector credentials profile-scoped, and can retry a pre-output failure on another ready profile without replaying visible output or connector side effects.
+- Managed profile subprocesses now remove inherited API credentials, endpoint overrides, and third-party provider flags so `CLAUDE_CONFIG_DIR` remains the billing identity. Persisted Pi session markers store only the opaque profile id and effective model; profile paths are re-resolved at restore time.
+- Managed Fable requests exhaust ready accounts' Fable allowances before falling back to Opus. Legacy single-profile users retain Claude Code's native model fallback and rate-limit recovery behavior.
+- Extra Usage policy now remains exclusively in Claude account settings; the bridge no longer launches or enforces a separate Extra Usage flow.
+- Updated vulnerable production transitive dependencies; `npm audit --omit=dev` reports no findings.
+
 ### 2.1.0
 
 - Delivering multiple queued Pi follow-ups in one call (steer-queue drain, `followUpMode="all"`) no longer forces a Claude session rebuild: the REUSE path now recognizes an unbounded trailing run of user messages, combines them into one prompt, and resumes the existing session — no session-file rewrite and no prompt-cache flush (vstack#963).

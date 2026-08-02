@@ -7,6 +7,13 @@ export interface SessionState {
 	sessionId: string;
 	cursor: number;
 	cwd: string;
+	// Effective Claude model used to create/resume this child session. Persisting
+	// it lets the account router re-resolve an opaque profile id after restart.
+	modelId?: string;
+	// Claude Code session files and resume IDs are credential-profile scoped.
+	// A missing value is the legacy/default Claude profile.
+	accountProfileId?: string;
+	claudeConfigDir?: string;
 	// Force the next syncSharedSession call down the REBUILD path. Set when
 	// pi has mutated its messages array out from under us (compact, tree
 	// navigation) or after an abort left the JSONL in an indeterminate state.
@@ -118,7 +125,12 @@ export function reportSyntheticToolResultRepair(missing: MissingToolResult[], co
 	}
 }
 
-export function reportToolResultMismatch(queryCtx: QueryContext, reason: string, cwd: string | undefined, opts: { forceRotate?: boolean } = {}): boolean {
+export function reportToolResultMismatch(
+	queryCtx: QueryContext,
+	reason: string,
+	cwd: string | undefined,
+	opts: { expectedInterruption?: boolean; forceRotate?: boolean } = {},
+): boolean {
 	try {
 		if (queryCtx.reportedToolResultMismatch) return false;
 		const progress = queryCtx.toolResultProgress();
@@ -129,6 +141,15 @@ export function reportToolResultMismatch(queryCtx: QueryContext, reason: string,
 		queryCtx.reportedToolResultMismatch = true;
 		if (sharedSession) {
 			sharedSession = { ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) };
+		}
+		if (opts.expectedInterruption) {
+			debug(
+				`tool result delivery interrupted as expected during ${reason}; ` +
+				`delivered=${progress.deliveredCount}/${progress.expectedCount} ` +
+				`resolved=${progress.resolvedCount}/${progress.expectedCount} ` +
+				`waiting=${progress.waitingCount} queued=${progress.queuedCount}`,
+			);
+			return true;
 		}
 		const toolNameSummary = compactToolNameSummary(progress.toolNames);
 		diagDump("tool_result_delivery_mismatch", {

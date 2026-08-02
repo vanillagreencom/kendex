@@ -461,6 +461,17 @@ describe("usage across a Pi turn that spans several child messages", () => {
 describe("child-executed tool results", () => {
 	beforeEach(() => resetStack());
 
+	it("commits connector dispatches but keeps internal child plumbing replayable", () => {
+		const c = ctx();
+		c.noteChildExecutedToolCall("toolu_ts", "ToolSearch", 0);
+		assert.equal(c.committedOutput, false);
+		assert.equal(c.childExecutedStreamIndexes.has(0), true);
+
+		c.noteChildExecutedToolCall("toolu_conn", CONNECTOR_TOOL, 1);
+		assert.equal(c.committedOutput, true);
+		assert.equal(c.connectorCallAudit.has("toolu_conn"), true);
+	});
+
 	it("recognizes the child's own result without re-delivering it", () => {
 		const c = ctx();
 		c.resetTurnState(model);

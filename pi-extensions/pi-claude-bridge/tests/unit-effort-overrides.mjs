@@ -18,10 +18,13 @@ describe("Claude bridge effort overrides", () => {
 		}), "max");
 	});
 
-	it("accepts claude-bridge/<id> model override keys and wildcard keys", () => {
+	it("accepts canonical and legacy provider-prefixed override keys", () => {
 		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", {
-			modelEffortOverrides: { "claude-bridge/claude-opus-4-8": "max" },
+			modelEffortOverrides: { "pi-claude/claude-opus-4-8": "max" },
 		}), "max");
+		assert.equal(resolveConfiguredEffort("claude-opus-4-8", "xhigh", {
+			modelEffortOverrides: { "claude-bridge/claude-opus-4-8": "high" },
+		}), "high");
 		assert.equal(resolveConfiguredEffort("claude-haiku-4-5", "medium", {
 			modelEffortOverrides: { "*": "low" },
 		}), "low");

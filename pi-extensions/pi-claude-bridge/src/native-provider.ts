@@ -56,11 +56,14 @@ export function buildNativeProvider(
 	models: Array<Record<string, unknown>>,
 	streamSimple: (...args: unknown[]) => unknown,
 	env: NodeJS.ProcessEnv = process.env,
+	hasCredentials: () => boolean = () => hasClaudeCredentials(env),
+	providerId = PROVIDER_ID,
+	providerName = "Pi Claude",
 ): unknown {
 	if (!supportsNativeProvider(piAi)) throw new Error(NATIVE_PROVIDER_UNSUPPORTED_MESSAGE);
 	// The legacy config path stamped provider/api/baseUrl onto each model during
 	// composition; createProvider passes models through verbatim, so stamp here.
-	const stamped = models.map((model) => ({ api: "claude-bridge", baseUrl: "claude-bridge", provider: PROVIDER_ID, ...model }));
+	const stamped = models.map((model) => ({ ...model, api: "claude-bridge", baseUrl: "claude-bridge", provider: providerId }));
 	// The Claude Code subprocess router IS the implementation for both stream
 	// entry points — there is no raw-API shape to dispatch to.
 	const streams = {
@@ -68,8 +71,8 @@ export function buildNativeProvider(
 		streamSimple,
 	};
 	return (piAi as { createProvider: (input: unknown) => unknown }).createProvider({
-		id: PROVIDER_ID,
-		name: "Claude (Claude Code)",
+		id: providerId,
+		name: providerName,
 		baseUrl: "claude-bridge",
 		auth: {
 			apiKey: {
@@ -77,8 +80,8 @@ export function buildNativeProvider(
 				// check() exists so pi's availability pass never has to call
 				// resolve(): both are existence-only, but check is the documented
 				// side-effect-free probe.
-				check: async () => (hasClaudeCredentials(env) ? { type: "api_key" as const, source: claudeAuthSourceLabel(env) } : undefined),
-				resolve: async () => (hasClaudeCredentials(env)
+				check: async () => (hasCredentials() ? { type: "api_key" as const, source: claudeAuthSourceLabel(env) } : undefined),
+				resolve: async () => (hasCredentials()
 					? { auth: { apiKey: "not-used" }, source: claudeAuthSourceLabel(env) }
 					: undefined),
 			},
