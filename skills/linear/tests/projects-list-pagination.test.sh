@@ -84,7 +84,7 @@ run_list() {
   shift
   : >"$payload_log"
   PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY=test-token \
+    LINEAR_API_KEY_OVERRIDE=test-token \
     LINEAR_FORMAT=safe \
     LINEAR_TOTAL="${LINEAR_TOTAL:-100}" \
     CURL_PAYLOAD_LOG="$payload_log" \

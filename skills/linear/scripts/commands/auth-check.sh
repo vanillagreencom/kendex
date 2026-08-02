@@ -34,7 +34,7 @@ Fields:
   team              Resolved team name, or null
   team_source       environment | project-config | unset
   team_source_file  Project file that set the resolved team, or null
-  api_key_source    environment | project-config | unset
+  api_key_source    override | project-config | environment | unset
   writes_enabled    false when a mutation would be refused
   warnings          Configuration hazards found
 EOF
@@ -88,6 +88,10 @@ elif [[ "$LINEAR_TEAM_SOURCE" == "environment" ]]; then
   if [[ -n "$project_declared_team" && "$project_declared_team" != "$LINEAR_TEAM_TARGET" ]]; then
     warnings+=("LINEAR_TEAM from the process environment (\"$LINEAR_TEAM_TARGET\") overrides the project value (\"$project_declared_team\"). Writes go to the environment value.")
   fi
+fi
+
+if [[ "${LINEAR_API_KEY_ENV_SHADOWED:-0}" == "1" ]]; then
+  warnings+=("inherited LINEAR_API_KEY (sha256:$LINEAR_API_KEY_ENV_FINGERPRINT) differs from the project-config key (sha256:$LINEAR_API_KEY_PROJECT_FINGERPRINT); using project-config — unset the global export if unintended")
 fi
 
 emit() {

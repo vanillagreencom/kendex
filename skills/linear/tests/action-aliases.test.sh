@@ -45,7 +45,7 @@ SH
 chmod +x "$TMP_ROOT/bin/curl"
 
 issues_out="$(
-  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token \
+  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues relations PROJ-42 --format=safe
 )"
 
@@ -55,7 +55,7 @@ if ! jq -e '.blocks[0].id == "PROJ-43" and .blocked_by[0].id == "PROJ-41"' >/dev
 fi
 
 projects_out="$(
-  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token \
+  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" projects dependencies 'Project "Quoted"' --format=safe
 )"
 

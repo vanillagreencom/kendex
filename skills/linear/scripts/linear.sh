@@ -59,7 +59,10 @@ Examples:
 
 Environment:
   Runtime         Bash 4.0 or newer. macOS system Bash 3.2 is unsupported.
-  LINEAR_API_KEY  Required. Set in .env.local or export directly.
+  LINEAR_API_KEY  Required. Set in .env.local; a key from project files wins
+                  over a plain environment export (auth-check warns when they
+                  differ). LINEAR_API_KEY_OVERRIDE beats everything for one
+                  invocation (inline/test channel).
   LINEAR_TEAM     Required for writes; no default. Set it in vstack.settings.toml
                   [env] (committed, non-secret). With no team, writes refuse and
                   reads run without a team filter. Only issues/projects/cycles/

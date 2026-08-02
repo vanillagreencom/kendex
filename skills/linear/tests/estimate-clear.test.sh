@@ -28,7 +28,7 @@ fail() {
 run_update() {
     local capture="$1"
     shift
-    CAPTURE_FILE="$capture" LINEAR_API_KEY=test-token \
+    CAPTURE_FILE="$capture" LINEAR_API_KEY_OVERRIDE=test-token \
         bash -uo pipefail -c '
             capture="$CAPTURE_FILE"
             issues_sh="$1"
@@ -115,7 +115,7 @@ fi
 cache_dir="$TMP/cache"
 mkdir -p "$cache_dir"
 printf '%s' '[{"id":"uuid-1","identifier":"CC-1","title":"t","estimate":3,"state":{"name":"Todo","type":"unstarted"},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}]' >"$cache_dir/issues.json"
-LINEAR_API_KEY=test-token \
+LINEAR_API_KEY_OVERRIDE=test-token \
     bash -uo pipefail -c '
         issues_sh="$1"
         cache_dir="$2"
@@ -139,7 +139,7 @@ fi
 # --- bulk-update forwards --clear-estimate to the mutation ----------------
 cap="$TMP/bulk-clear.json"
 out="$(
-    CAPTURE_FILE="$cap" LINEAR_API_KEY=test-token \
+    CAPTURE_FILE="$cap" LINEAR_API_KEY_OVERRIDE=test-token \
         bash -uo pipefail -c '
             capture="$CAPTURE_FILE"
             issues_sh="$1"
@@ -162,7 +162,7 @@ fi
 
 # --- bulk-update rejects an out-of-range estimate per item ----------------
 out="$(
-    LINEAR_API_KEY=test-token \
+    LINEAR_API_KEY_OVERRIDE=test-token \
         bash -uo pipefail -c '
             issues_sh="$1"
             # shellcheck disable=SC1090

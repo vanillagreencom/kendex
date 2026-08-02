@@ -86,7 +86,7 @@ run_create() {
 
   : >"$payload_log"
   PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY=test-token \
+    LINEAR_API_KEY_OVERRIDE=test-token \
     CURL_PAYLOAD_LOG="$payload_log" \
     LINEAR_PARENT_TEST_CASE="$scenario" \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues create \

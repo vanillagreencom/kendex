@@ -41,7 +41,7 @@ chmod +x "$TMP_ROOT/bin/curl"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
 run_create() {
-  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY=test-token \
+  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token \
     bash "$LINEAR" issues create "$@"
 }
 

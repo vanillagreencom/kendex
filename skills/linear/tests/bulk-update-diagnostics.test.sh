@@ -9,7 +9,7 @@ ISSUES_SH="$SCRIPT_DIR/../scripts/commands/issues.sh"
 
 set +e
 out="$(
-    LINEAR_API_KEY=test-token bash -euo pipefail -c '
+    LINEAR_API_KEY_OVERRIDE=test-token bash -euo pipefail -c '
         issues_sh="$1"
         # shellcheck disable=SC1090
         source "$issues_sh"

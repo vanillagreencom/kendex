@@ -93,7 +93,7 @@ if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
   : >"$payload_log"
   set +e
   output=$(PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY=test-token LINEAR_TEAM=TestTeam \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
     CURL_PAYLOAD_LOG="$payload_log" \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
       issues add-relation CC-763 --blocks CC-764 2>&1)
@@ -119,7 +119,7 @@ run_add_relation() {
   shift
   : >"$payload_log"
   PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY=test-token LINEAR_TEAM=TestTeam \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
     CURL_PAYLOAD_LOG="$payload_log" \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues add-relation "$@"
 }

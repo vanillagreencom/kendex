@@ -114,7 +114,7 @@ chmod +x "$TMP_ROOT/bin/curl"
 # project's setting.
 run_validate() {
   PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY=test-token \
+    LINEAR_API_KEY_OVERRIDE=test-token \
     LINEAR_FORMAT=safe \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
     issues validate-completion "$@"

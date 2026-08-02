@@ -30,10 +30,27 @@ PROJECT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)"
 PROJECT_ROOT="$(linear_canonical_existing_dir "$PROJECT_ROOT_RAW")"
 unset PROJECT_ROOT_RAW
 
-# Inline secret overrides must beat project files. Cache-only commands rely on
-# this so fake/op:// test values are not replaced by a developer's .env.local.
-_CALLER_LINEAR_API_KEY_SET="${LINEAR_API_KEY+x}"
+# First 12 hex chars of sha256 — enough to tell two keys apart in a diagnostic
+# without exposing key material. macOS ships shasum, not sha256sum.
+linear_key_fingerprint() {
+    if command -v sha256sum &>/dev/null; then
+        printf '%s' "$1" | sha256sum | cut -c1-12
+    else
+        printf '%s' "$1" | shasum -a 256 | cut -c1-12
+    fi
+}
+
+# LINEAR_API_KEY precedence, highest first:
+#   1. LINEAR_API_KEY_OVERRIDE — the explicit inline channel. Tests rely on it
+#      so fake/op:// values are not replaced by a developer's .env.local.
+#   2. Project files (.env, then settings [env], then .env.local).
+#   3. Plain inherited LINEAR_API_KEY — only when no file provides a key.
+# Per-repo workspaces make a box-global export actively wrong for every other
+# repo, so unlike LINEAR_TEAM the inherited key must never shadow the project's
+# own (#1002). vstack_load_project_env re-asserts parent env over project files,
+# so the inherited value is snapshotted and unset before the files load.
 _CALLER_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
+unset LINEAR_API_KEY
 
 # Captured before project files load so auth-check can tell a box-global export
 # (which reaches whatever workspace the key owns) from project configuration.
@@ -48,21 +65,37 @@ _CALLER_LINEAR_TEAM="${LINEAR_TEAM:-}"
 source "$_LIB_DIR/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
 
-if [[ -n "$_CALLER_LINEAR_API_KEY_SET" ]]; then
+# Where each target-selecting value came from: override (LINEAR_API_KEY_OVERRIDE),
+# project-config (.env / vstack.settings.toml / .env.local), environment (process
+# env, used because the project files provided nothing), or unset. auth-check
+# reports these; a global key with no project team is the combination that
+# writes into another project's workspace.
+_PROJECT_LINEAR_API_KEY="${LINEAR_API_KEY:-}"
+if [[ -n "${LINEAR_API_KEY_OVERRIDE:-}" ]]; then
+    LINEAR_API_KEY="$LINEAR_API_KEY_OVERRIDE"
+    export LINEAR_API_KEY
+    LINEAR_API_KEY_SOURCE="override"
+elif [[ -n "$_PROJECT_LINEAR_API_KEY" ]]; then
+    LINEAR_API_KEY_SOURCE="project-config"
+elif [[ -n "$_CALLER_LINEAR_API_KEY" ]]; then
     LINEAR_API_KEY="$_CALLER_LINEAR_API_KEY"
     export LINEAR_API_KEY
-fi
-
-# Where each target-selecting value came from: environment (process env, e.g. a
-# box-global export), project-config (.env / vstack.settings.toml / .env.local),
-# or unset. auth-check reports these; a global key with no project team is the
-# combination that writes into another project's workspace.
-if [[ -n "$_CALLER_LINEAR_API_KEY" ]]; then
     LINEAR_API_KEY_SOURCE="environment"
-elif [[ -n "${LINEAR_API_KEY:-}" ]]; then
-    LINEAR_API_KEY_SOURCE="project-config"
 else
     LINEAR_API_KEY_SOURCE="unset"
+fi
+
+# The silent-shadowing signature: an inherited env key existed, a differing
+# project-file key won. auth-check surfaces it as a warning — fingerprints
+# only, never key material.
+LINEAR_API_KEY_ENV_SHADOWED=0
+LINEAR_API_KEY_ENV_FINGERPRINT=""
+LINEAR_API_KEY_PROJECT_FINGERPRINT=""
+if [[ "$LINEAR_API_KEY_SOURCE" == "project-config" && -n "$_CALLER_LINEAR_API_KEY" &&
+    "$_CALLER_LINEAR_API_KEY" != "$_PROJECT_LINEAR_API_KEY" ]]; then
+    LINEAR_API_KEY_ENV_SHADOWED=1
+    LINEAR_API_KEY_ENV_FINGERPRINT="$(linear_key_fingerprint "$_CALLER_LINEAR_API_KEY")"
+    LINEAR_API_KEY_PROJECT_FINGERPRINT="$(linear_key_fingerprint "$_PROJECT_LINEAR_API_KEY")"
 fi
 
 if [[ -n "$_CALLER_LINEAR_TEAM" ]]; then
@@ -81,7 +114,7 @@ else
     LINEAR_TEAM_ENV_BLANK=0
 fi
 
-unset _CALLER_LINEAR_API_KEY_SET _CALLER_LINEAR_API_KEY _CALLER_LINEAR_TEAM _CALLER_LINEAR_TEAM_SET
+unset _CALLER_LINEAR_API_KEY _PROJECT_LINEAR_API_KEY _CALLER_LINEAR_TEAM _CALLER_LINEAR_TEAM_SET
 
 # Default values can be overridden by vstack.settings.toml [env] or .env.local.
 # LINEAR_TEAM has no built-in fallback on purpose: a team name resolves inside

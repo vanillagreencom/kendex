@@ -111,11 +111,12 @@ Cache and attachment files live under `.cache/linear` in the physical git worktr
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `LINEAR_API_KEY` | API key (required for live API commands and sync; not required for cache reads) | — |
+| `LINEAR_API_KEY_OVERRIDE` | Explicit key override that beats project files; the inline/test channel | — |
 | `LINEAR_TEAM` | Team every write targets | — (unset refuses writes) |
 | `LINEAR_FORMAT` | Default output format | `safe` |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `PROJ` |
 
-Put `LINEAR_API_KEY` in `.env.local`. Put non-secret defaults in committed `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides.
+Put `LINEAR_API_KEY` in `.env.local`. Put non-secret defaults in committed `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides. For the API key specifically, a key set by project files (`.env` → settings `[env]` → `.env.local`) wins over a plain `LINEAR_API_KEY` inherited from the environment — per-repo workspaces make a box-global export wrong for every other repo, and `auth-check` warns (key fingerprints only) when a differing inherited key is being shadowed. `LINEAR_API_KEY_OVERRIDE` always wins; use it for one-off/inline keys and tests.
 
 `LINEAR_TEAM` has no default. A team name resolves inside whatever workspace the API key reaches, so an unset team means no target: every write (create, update, comment, archive, relation, state change) refuses with an actionable error before any API call, and reads run without a team filter. `--team <name>` overrides it per call only on the actions that take a team — `issues create`, `projects create`, `cycles create`, `labels create`; every other write requires the configured value. `linear.sh auth-check` reports the resolved team, where it came from, and `writes_enabled`; `linear.sh auth-check --strict` exits non-zero when writes would refuse — run it before the first mutation in a project.
 
