@@ -1,11 +1,11 @@
 /**
- * Tests for MODELS construction + resolveModelId.
+ * Tests for MODELS construction + fallback pairing.
  * Pins: opus shortcut resolves to whichever opus is first in MODEL_IDS_IN_ORDER,
  * projection strips pi-ai's baseUrl/api/provider/headers, and ordering is preserved.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, MODEL_IDS_IN_ORDER, OPUS_5_MODEL_ID, SONNET_5_MODEL_ID, buildModels, fallbackModelForPrimaryModel, modelDisplayName, resolveModelId } from "../src/models.js";
+import { FABLE_FALLBACK_MODEL_ID, FABLE_MODEL_ID, MODEL_IDS_IN_ORDER, OPUS_5_MODEL_ID, SONNET_5_MODEL_ID, buildModels, fallbackModelForPrimaryModel, modelDisplayName } from "../src/models.js";
 
 // Simulated pi-ai registry entry — extra fields mimic the ones pi-ai exposes
 // that must not leak into the provider-registered MODELS array.
@@ -85,38 +85,7 @@ describe("MODELS projection", () => {
 	});
 });
 
-describe("resolveModelId", () => {
-	const models = buildModels(MODEL_IDS_IN_ORDER.map(mockPiAiModel));
-
-	it("opus shortcut resolves to claude-opus-5 (first opus in order)", () => {
-		assert.equal(resolveModelId(models, "opus"), OPUS_5_MODEL_ID);
-	});
-
-	it("older opus IDs stay selectable by full ID despite the shortcut moving", () => {
-		assert.equal(resolveModelId(models, "claude-opus-4-8"), FABLE_FALLBACK_MODEL_ID);
-		assert.equal(resolveModelId(models, "claude-opus-4-7"), "claude-opus-4-7");
-	});
-
-	it("fable shortcut resolves to claude-fable-5", () => {
-		assert.equal(resolveModelId(models, "fable"), "claude-fable-5");
-	});
-
-	it("sonnet shortcut resolves to claude-sonnet-5", () => {
-		assert.equal(resolveModelId(models, "sonnet"), SONNET_5_MODEL_ID);
-	});
-
-	it("haiku shortcut resolves to claude-haiku-4-5", () => {
-		assert.equal(resolveModelId(models, "haiku"), "claude-haiku-4-5");
-	});
-
-	it("full ID passes through unchanged", () => {
-		assert.equal(resolveModelId(models, "claude-opus-4-6"), "claude-opus-4-6");
-	});
-
-	it("falls through to input when no match", () => {
-		assert.equal(resolveModelId(models, "gpt-9"), "gpt-9");
-	});
-
+describe("model fallback pairing", () => {
 	it("configures Opus 4.8 safety fallback for the two models whose classifiers decline", () => {
 		assert.equal(fallbackModelForPrimaryModel(FABLE_MODEL_ID), FABLE_FALLBACK_MODEL_ID);
 		assert.equal(fallbackModelForPrimaryModel(OPUS_5_MODEL_ID), FABLE_FALLBACK_MODEL_ID);

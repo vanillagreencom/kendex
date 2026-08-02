@@ -35,8 +35,8 @@ export const CLAUDE_BRIDGE_TOOL_ISOLATION = {
 // execution and tokens stay lean. This opt-in flag lets the authenticated
 // Claude account's authorized Google connectors flow through to the model,
 // exposing Gmail/Calendar/Drive tools the account has connected. Gated so the
-// default behavior is unchanged. See
-// docs/plans/claude-bridge-google-connectors.md.
+// default behavior is unchanged. See the Connectors section of this package's
+// README.
 export function connectorsEnabledFromEnv(): boolean {
 	const v = (process.env.CLAUDE_BRIDGE_ENABLE_CONNECTORS ?? "").trim().toLowerCase();
 	return v === "1" || v === "true" || v === "yes" || v === "on";

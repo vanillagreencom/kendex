@@ -15,7 +15,6 @@ import { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, supportsNativ
 import { extractAgentsAppend } from "./agents-md.js";
 import { buildPromptContextAppend } from "./prompt-context.js";
 import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
-import { readFileSync as nodeReadFileSync } from "node:fs";
 import { resolveGetModels } from "./pi-ai-compat.js";
 import { listAccountConnectors, resolveClaudeOAuth } from "./connector-inventory.js";
 // Re-exported from the extension entry point ON PURPOSE. Consuming apps
@@ -38,12 +37,13 @@ export {
 	type ConnectorEntry,
 	type ConnectorInventory,
 } from "./connector-inventory.js";
-export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
+export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, scopeKeyFor, writeCachedConnectors } from "./connector-cache.js";
+export { connectorServersSnapshot, primeConnectorServers } from "./connector-runtime.js";
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable, spawnClaudeCodeWithDiagnostics } from "./claude-executable.js";
-import { appendIntegrityEntry, argKeys, extensionApi, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession, type SessionState } from "./bridge-state.js";
-import { CLAUDE_BRIDGE_TOOL_ISOLATION, connectorMcpServers, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor, denyAllToolsHook, isChildExecutedTool, settingSourcesForQuery } from "./connectors.js";
-import { readCachedConnectors, writeCachedConnectors } from "./connector-cache.js";
+import { appendIntegrityEntry, argKeys, extensionApi, markSessionForRebuild, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, sharedSession, type SessionState } from "./bridge-state.js";
+import { CLAUDE_BRIDGE_TOOL_ISOLATION, connectorQueryOptions, connectorWriteModeFor, connectorsEnabledFor, denyAllToolsHook, isChildExecutedTool, settingSourcesForQuery } from "./connectors.js";
+import { connectorCredentialEnv, connectorServersSnapshot, primeConnectorServers, readCredentialFile } from "./connector-runtime.js";
 import { cancelScheduledSessionPersistence, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
 import { RATE_LIMIT_AUTO_RESUME_EVENT, RATE_LIMIT_TOKEN, formatAllowedRateLimitWarning, formatResetTimestamp, isUsageLimitMessage, uniqueNonEmptyLines } from "./rate-limit.js";
@@ -138,11 +138,14 @@ const COMMANDS_REGISTERED_KEY = Symbol.for("claude-bridge:commandsRegistered");
 // re-entry and the original call within ONE module instance only.
 const ROTATION_STATE_KEY = Symbol("claude-bridge:rotationState");
 
+/** Hard cap on account-rotation attempts per request (CHANGELOG 3.0.0). */
+const MAX_ROTATION_ATTEMPTS = 16;
+
 interface RotationRequestState {
 	excludedProfileIds: Set<string>;
 	attempts: number;
-	/** Model id already announced via toast for this request, so up to 16
-	 *  rotation attempts don't repeat an identical switch notice. */
+	/** Model id already announced via toast for this request, so up to
+	 *  MAX_ROTATION_ATTEMPTS don't repeat an identical switch notice. */
 	announcedModelId?: string;
 }
 
@@ -1029,7 +1032,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		// a pushed subagent context; Math.max covers a foreign context arriving on
 		// the top-level ctx, where the two conversations are indistinguishable.
 		if (sharedSession && stackDepth() === 0) {
-			sharedSession.cursor = Math.max(sharedSession.cursor, capturedThrough);
+			setSharedSession({ ...sharedSession, cursor: Math.max(sharedSession.cursor, capturedThrough) });
 		}
 		queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
 		return stream;
@@ -1041,7 +1044,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	const lastMsg = context.messages[context.messages.length - 1];
 	if (lastMsg?.role === "toolResult") {
 		debug(`provider: orphaned tool result after abort, emitting end_turn`);
-		if (sharedSession && stackDepth() === 0) sharedSession.cursor = context.messages.length;
+		if (sharedSession && stackDepth() === 0) setSharedSession({ ...sharedSession, cursor: context.messages.length });
 		const c = ctx();  // capture current context for the microtask
 		queueMicrotask(() => {
 			c.resetTurnState(model);
@@ -1361,6 +1364,10 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		if (isReentrant) return;
 		setSharedSession(next);
 	};
+	const markRebuildForThisQuery = (opts: { forceRotate?: boolean } = {}): void => {
+		if (isReentrant) return;
+		markSessionForRebuild(opts);
+	};
 	// #967 invariant: a deferred (mid-query) user message may be dropped only
 	// LOUDLY — the cursor already advanced over it on the promise of replay.
 	// Callers that keep a session record after a non-empty drop must persist it
@@ -1395,6 +1402,36 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		void sdkQuery.interrupt().catch(() => {});
 		try { sdkQuery.close(); } catch {}
 	};
+
+	// Decide whether a classified failure may be replayed on the next profile.
+	// Records the failure with the router either way (a post-output failure is
+	// not replayable but the next prompt's routing should still avoid the
+	// unhealthy account). The buffer's own committed flag backs up the context
+	// flag in case the two ever disagree. Shared by the stream-idle watchdog and
+	// the completion/error handlers below.
+	const requestRotation = (failure: ClaudeAttemptFailure): boolean => {
+		recordAttemptFailure(failure);
+		const committed = abortCtx.committedOutput || attemptBuffer?.hasCommittedOutput === true;
+		const eligible = Boolean(account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < MAX_ROTATION_ATTEMPTS);
+		debug("provider: account rotation decision", JSON.stringify({
+			eligible,
+			account: account?.label,
+			kind: failure.kind,
+			committedOutput: committed,
+			wasAborted,
+			signalAborted: options?.signal?.aborted === true,
+			attempts: rotationState.attempts,
+		}));
+		if (!eligible || !account || !router || !failure.kind) return false;
+		rotationState.excludedProfileIds.add(account.profileId);
+		retryRequested = true;
+		retryFailure = failure;
+		attemptBuffer?.discard();
+		abortCtx.currentPiStream = null;
+		debug(`provider: rotating account after ${failure.kind}, from=${account.label}, attempt=${rotationState.attempts}`);
+		return true;
+	};
+
 	const streamIdleTimeoutMs = streamIdleTimeoutMsFromEnv();
 	const streamIdleWatchdog = streamIdleTimeoutMs > 0
 		? createStreamIdleWatchdog({
@@ -1409,19 +1446,15 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 				if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || abortCtx.activeQuery !== sdkQuery) return;
 				streamIdleTimedOut = true;
 				dropDeferredUserMessages("stream-idle-timeout");
-				if (sharedSession) persistSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
+				markRebuildForThisQuery({ forceRotate: true });
 				const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
 				debug("provider: stream idle timeout", `model=${queryModel.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
 				const idleFailure: ClaudeAttemptFailure = { kind: "network", message: errorMessage };
-				recordAttemptFailure(idleFailure);
 				// A managed attempt that went idle before ANY visible output can move
-				// to the next profile instead of surfacing the timeout.
-				if (account && router && !abortCtx.committedOutput && attemptBuffer?.hasCommittedOutput !== true && rotationState.attempts < 16) {
-					rotationState.excludedProfileIds.add(account.profileId);
-					retryRequested = true;
-					retryFailure = idleFailure;
-					attemptBuffer?.discard();
-					abortCtx.currentPiStream = null;
+				// to the next profile instead of surfacing the timeout. The idle
+				// specifics (needsRebuild/forceRotate, killing the child) stay here;
+				// eligibility and retry bookkeeping are requestRotation's.
+				if (requestRotation(idleFailure)) {
 					requestAbort();
 					return;
 				}
@@ -1477,34 +1510,6 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		else options.signal.addEventListener("abort", onAbort, { once: true });
 	}
 
-	// Decide whether a classified failure may be replayed on the next profile.
-	// Records the failure with the router either way (a post-output failure is
-	// not replayable but the next prompt's routing should still avoid the
-	// unhealthy account). The buffer's own committed flag backs up the context
-	// flag in case the two ever disagree.
-	const requestRotation = (failure: ClaudeAttemptFailure): boolean => {
-		recordAttemptFailure(failure);
-		const committed = abortCtx.committedOutput || attemptBuffer?.hasCommittedOutput === true;
-		const eligible = Boolean(account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < 16);
-		debug("provider: account rotation decision", JSON.stringify({
-			eligible,
-			account: account?.label,
-			kind: failure.kind,
-			committedOutput: committed,
-			wasAborted,
-			signalAborted: options?.signal?.aborted === true,
-			attempts: rotationState.attempts,
-		}));
-		if (!eligible || !account || !router || !failure.kind) return false;
-		rotationState.excludedProfileIds.add(account.profileId);
-		retryRequested = true;
-		retryFailure = failure;
-		attemptBuffer?.discard();
-		abortCtx.currentPiStream = null;
-		debug(`provider: rotating account after ${failure.kind}, from=${account.label}, attempt=${rotationState.attempts}`);
-		return true;
-	};
-
 	const surfaceFailure = (failure: ClaudeAttemptFailure, aborted = false): void => {
 		attemptBuffer?.commit();
 		if (failure.rateLimitInfo) {
@@ -1550,7 +1555,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 
 			// --- Abort detection in normal completion path ---
 			if (wasAborted || options?.signal?.aborted) {
-				if (sharedSession) persistSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
+				markRebuildForThisQuery({ forceRotate: true });
 				dropDeferredUserMessages("abort-completion");
 				debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
 				surfaceFailure({ message: "Operation aborted" }, true);
@@ -1629,8 +1634,8 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 							// The shifted steer may never have reached the child, and any
 							// remaining ones certainly did not — the record must rebuild so
 							// they re-import from Pi history (#967).
-							if (dropDeferredUserMessages("continuation-failure", steerPrompt).length > 0 && sharedSession) {
-								persistSession({ ...sharedSession, needsRebuild: true });
+							if (dropDeferredUserMessages("continuation-failure", steerPrompt).length > 0) {
+								markRebuildForThisQuery();
 							}
 							break;
 						}
@@ -1647,8 +1652,8 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 						recordAttemptFailure(continuationFailure);
 						if (!abortCtx.handledTerminalError) surfaceFailure(continuationFailure);
 						// Same #967 posture as the failure branch above.
-						if (dropDeferredUserMessages("continuation-error", steerPrompt).length > 0 && sharedSession) {
-							persistSession({ ...sharedSession, needsRebuild: true });
+						if (dropDeferredUserMessages("continuation-error", steerPrompt).length > 0) {
+							markRebuildForThisQuery();
 						}
 						break;
 					} finally {
@@ -1665,14 +1670,14 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		.catch((error) => {
 			debug(`provider: query error, model=${queryModel.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
 			const suppressDuplicateError = abortCtx.handledTerminalError || (streamIdleTimedOut && !retryRequested);
-			if ((wasAborted || options?.signal?.aborted) && sharedSession) {
-				persistSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
+			if (wasAborted || options?.signal?.aborted) {
+				markRebuildForThisQuery({ forceRotate: true });
 			}
 			// #967: a record kept past this error with steers behind its cursor
 			// must rebuild so they re-import from Pi history. (The non-abort
 			// surface path below replaces the record with null, which rebuilds too.)
-			if (dropDeferredUserMessages("query-error").length > 0 && sharedSession && sharedSession.needsRebuild !== true) {
-				persistSession({ ...sharedSession, needsRebuild: true });
+			if (dropDeferredUserMessages("query-error").length > 0) {
+				markRebuildForThisQuery();
 			}
 			if (suppressDuplicateError || retryRequested) {
 				debug("provider: suppressing duplicate query error after terminal handling");
@@ -1770,114 +1775,6 @@ function showBridgeStatus(ctx: { ui: ExtensionUIContext; cwd?: string }): void {
 		`Pi Claude: ${config.enabled === false ? "disabled" : "enabled"}`,
 		"Claude account billing settings (including Extra Usage) are managed in Claude.",
 	].join("\n"), "info");
-}
-
-// Read a credential file, treating any read error as "absent" — a missing or
-// unreadable candidate must fall through to the next one, not abort resolution.
-function readCredentialFile(path: string): string | undefined {
-	try {
-		return nodeReadFileSync(path, "utf8");
-	} catch {
-		return undefined;
-	}
-}
-
-// Connector declarations for the query path (vstack#832), cached per credential
-// scope. The inventory is one HTTPS round trip; doing it per TURN would add that
-// latency to every message, and an account's connector set does not change
-// mid-session. Keyed by CLAUDE_CONFIG_DIR because that is what selects the
-// account — the org UUID in the request path is ignored, so two accounts on one
-// host differ only by which credential directory was read.
-//
-// FAILS OPEN. If credentials or the inventory call fail we return no
-// declarations and the turn proceeds exactly as it does today: connectors may
-// race, which is the bug, but a network blip must not break the turn outright.
-const connectorServerCache = new Map<string, Record<string, unknown>>();
-const connectorServerPending = new Set<string>();
-
-function connectorScopeKey(claudeConfigDir: string | undefined = process.env.CLAUDE_CONFIG_DIR): string {
-	return claudeConfigDir?.trim() || "<default>";
-}
-
-// Credential resolution env for a selected scope: managed requests always pass
-// their RESOLVED dir (accountSessionScope), so the parent's CLAUDE_CONFIG_DIR
-// never leaks into another profile's lookup; legacy passes undefined and keeps
-// the process-env rule.
-function connectorCredentialEnv(claudeConfigDir: string | undefined = process.env.CLAUDE_CONFIG_DIR): NodeJS.ProcessEnv {
-	const env = { ...process.env };
-	if (claudeConfigDir?.trim()) env.CLAUDE_CONFIG_DIR = claudeConfigDir.trim();
-	else delete env.CLAUDE_CONFIG_DIR;
-	return env;
-}
-
-// Kick off the inventory fetch for the current credential scope. Fire and
-// forget: the query path can only read a SYNCHRONOUS snapshot, because
-// streamClaudeAgentSdk returns a stream and claims the SDK query handle in the
-// same tick — there is no await boundary to hang a fetch on without
-// restructuring abort handling.
-//
-// Primed at provider registration so the result is in hand well before the
-// first turn (the call measured ~400ms against app startup). If a turn arrives
-// first it declares nothing and behaves exactly as it does today — the race is
-// back for that one turn, which is the bug, but never worse than the status quo.
-//
-// FAILS OPEN throughout: no credentials, a failed inventory, or a thrown call
-// all resolve to "declare nothing" rather than breaking the turn. Failures are
-// NOT cached — a transient blip at registration used to pin `{}` for the
-// process lifetime, keeping every later turn undeclared and the disk-cache
-// fallback unreachable. Leaving the key unset makes the next snapshot retry;
-// the pending set still dedupes concurrent fetches.
-export function primeConnectorServers(claudeConfigDir?: string): void {
-	const key = connectorScopeKey(claudeConfigDir);
-	if (connectorServerCache.has(key) || connectorServerPending.has(key)) return;
-	connectorServerPending.add(key);
-	void (async () => {
-		try {
-			const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(claudeConfigDir));
-			if (!credentials) {
-				debug("connectors: no OAuth credentials; declaring none (will retry)");
-				return;
-			}
-			const inventory = await listAccountConnectors({ credentials });
-			if (!inventory.ok) {
-				debug(`connectors: inventory failed (${inventory.reason}); declaring none (will retry)`);
-				return;
-			}
-			const servers = connectorMcpServers(inventory);
-			debug(`connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed`,
-				Object.keys(servers).join(", ") || "none");
-			connectorServerCache.set(key, servers);
-			// Persist so the NEXT cold process has this synchronously. Priming always
-			// loses the race against turn 1 in its own process; a cache written by an
-			// earlier run is the only thing turn 1 can read in time (vstack#870).
-			if (writeCachedConnectors(inventory.connectors, key)) {
-				debug(`connectors: cached ${inventory.connectors.length} entries`);
-			}
-		} catch (error) {
-			debug("connectors: declaration lookup threw; declaring none (will retry)", error);
-		} finally {
-			connectorServerPending.delete(key);
-		}
-	})();
-}
-
-/** Synchronous snapshot for the query path; `{}` until priming resolves. */
-function connectorServersSnapshot(claudeConfigDir?: string): Record<string, unknown> {
-	const key = connectorScopeKey(claudeConfigDir);
-	const ready = connectorServerCache.get(key);
-	if (ready) return ready;
-	// Always start (or continue) the live fetch — the cache is a head start, not
-	// a replacement, and the refresh keeps the next process current.
-	primeConnectorServers(claudeConfigDir);
-	// Fall back to the previous run's inventory, read synchronously. This is the
-	// only thing that can populate turn 1 of a cold process, because priming
-	// cannot finish before the first query is built (vstack#870).
-	const cached = readCachedConnectors(key);
-	if (!cached) return {};
-	const servers = connectorMcpServers({ ok: true, complete: true, connectors: cached });
-	if (Object.keys(servers).length === 0) return {};
-	debug(`connectors: turn-1 declarations from cache — ${Object.keys(servers).join(", ")}`);
-	return servers;
 }
 
 // Deterministic connector enumeration for the host app (vstack#838). Reports the
@@ -2003,7 +1900,7 @@ export default function (pi: ExtensionAPI) {
 		}
 		if (sharedSession) {
 			debug(`${event}: marking needsRebuild on session ${sharedSession.sessionId.slice(0, 8)}`);
-			setSharedSession({ ...sharedSession, needsRebuild: true });
+			markSessionForRebuild();
 		}
 	};
 	pi.on("session_compact", () => markRebuild("session_compact"));

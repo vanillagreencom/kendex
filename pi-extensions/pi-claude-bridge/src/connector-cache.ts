@@ -48,8 +48,19 @@ const CACHE_VERSION = 2;
  *  correctness boundary. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * THE canonical credential-scope key: a trimmed CLAUDE_CONFIG_DIR, or the
+ * `"<default>"` sentinel for the default account. The on-disk cache format has
+ * an external reader (see the module header), and the in-memory prime cache in
+ * connector-runtime.ts keys the same scopes — both MUST agree on this rule, so
+ * there is exactly one implementation.
+ */
+export function scopeKeyFor(claudeConfigDir?: string): string {
+	return claudeConfigDir?.trim() || "<default>";
+}
+
 export function connectorCacheScopeKey(env: NodeJS.ProcessEnv = process.env): string {
-	return env.CLAUDE_CONFIG_DIR?.trim() || "<default>";
+	return scopeKeyFor(env.CLAUDE_CONFIG_DIR);
 }
 
 // Full sha256 hex of a scope key. The filename keeps only the first 16 chars;

@@ -1,5 +1,4 @@
 // Canonical selection + display order for the model picker.
-// `resolveModelId` returns the first partial match, so `opus` resolves to the first-listed opus entry.
 // Extracted from index.ts so tests can import without activating the extension.
 
 export const FABLE_MODEL_ID = "claude-fable-5";
@@ -93,10 +92,4 @@ export function buildModels<T extends { id: string; [key: string]: any }>(piAiMo
 			id, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		}));
-}
-
-export function resolveModelId(models: Array<{ id: string }>, input: string): string {
-	const lower = input.toLowerCase();
-	const match = models.find((m) => m.id === lower || m.id.includes(lower));
-	return match ? match.id : input;
 }

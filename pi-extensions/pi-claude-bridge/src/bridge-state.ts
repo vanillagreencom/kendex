@@ -42,6 +42,15 @@ export function setSharedSession(next: SessionState | null): void {
 	sharedSession = next;
 }
 
+/** Force the next syncSharedSession down the REBUILD path (no-op without a
+ *  session). `forceRotate` additionally rotates the session UUID — set it when
+ *  a concurrent CC writer may still be flushing (abort, idle kill); see the
+ *  field docs on SessionState. */
+export function markSessionForRebuild(opts: { forceRotate?: boolean } = {}): void {
+	if (!sharedSession) return;
+	sharedSession = { ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) };
+}
+
 export function setExtensionApi(next: ExtensionAPI | undefined): void {
 	extensionApi = next;
 }
@@ -139,9 +148,7 @@ export function reportToolResultMismatch(
 			: progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0;
 		if (!hasMismatch) return false;
 		queryCtx.reportedToolResultMismatch = true;
-		if (sharedSession) {
-			sharedSession = { ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) };
-		}
+		markSessionForRebuild(opts);
 		// A user abort interrupting in-flight tool calls is expected teardown, not
 		// an integrity fault: mark the rebuild but skip the diag dump and toast.
 		if (opts.expectedInterruption) {

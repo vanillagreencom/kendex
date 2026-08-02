@@ -134,15 +134,7 @@ export function convertPiMessages(
 		if (toolMessages.length === 0) return;
 		anthropicMessages.push({
 			role: "user",
-			content: toolMessages.map((toolMsg) => {
-				const content = toolResultContentToAnthropic(toolMsg.content as string | Array<{ type: string; text?: string; data?: string; mimeType?: string }>);
-				return {
-					type: "tool_result",
-					tool_use_id: sanitizeToolId((toolMsg as { toolCallId: string }).toolCallId, sanitizedIds),
-					content: content || "",
-					is_error: (toolMsg as { isError?: boolean }).isError,
-				};
-			}),
+			content: toolMessages.map((toolMsg) => toolResultToAnthropicBlock(toolMsg, sanitizedIds)),
 		});
 	};
 

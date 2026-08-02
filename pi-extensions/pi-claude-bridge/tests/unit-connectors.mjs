@@ -9,9 +9,11 @@ import {
 	CLAUDE_BRIDGE_TOOL_ISOLATION,
 	DISALLOWED_BUILTIN_TOOLS,
 	CONNECTOR_WRITE_TOOLS,
+	isConnectorTool,
 	isConnectorWriteTool,
 	connectorBuiltinAllowlistHook,
 	connectorQueryOptions,
+	connectorServerNamespace,
 	connectorWriteDenyHook,
 	settingSourcesForQuery,
 } from "../bundle/index.js";
@@ -87,6 +89,19 @@ test("non-connectors setting sources are unchanged", () => {
 
 test("discovery tools are a subset of the default disallow list", () => {
 	for (const d of CONNECTOR_DISCOVERY_TOOLS) assert.ok(DISALLOWED_BUILTIN_TOOLS.includes(d), `${d} is disallowed by default`);
+});
+
+test("CONTRACT: connectors.ts and connector-inventory.ts agree on the connector namespace prefix", () => {
+	// CONNECTOR_NS_PREFIX is deliberately duplicated between the two modules
+	// (connector-inventory also builds standalone). This makes drift loud: the
+	// namespace connector-inventory derives for a server MUST classify as a
+	// connector tool, and the literal prefix is pinned so a change has to be
+	// made knowingly in both places.
+	const namespace = connectorServerNamespace("Probe Server");
+	assert.equal(namespace, "mcp__claude_ai_Probe_Server__");
+	assert.equal(isConnectorTool(`${namespace}get_thing`), true);
+	assert.ok(namespace.startsWith("mcp__claude_ai_"), "shared literal prefix");
+	assert.equal(isConnectorTool("mcp__claude_ai_X__anything"), true);
 });
 
 // --- C13: connectors-mode builtin containment is a fail-closed ALLOWLIST ---

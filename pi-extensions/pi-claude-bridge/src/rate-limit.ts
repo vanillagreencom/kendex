@@ -41,13 +41,18 @@ export function uniqueNonEmptyLines(values: unknown[]): string[] {
  *  `SDKRateLimitInfo.resetsAt` is a bare number in epoch SECONDS (measured:
  *  treating it as ms rendered "resets Jan 21, 1970" for a Jul 2026 reset).
  *  The unit is undocumented, so detect by magnitude — epoch seconds stay below
- *  1e12 until the year 33658, epoch ms passed 1e12 in 2001 — and accept ISO
- *  strings for older payloads. */
+ *  1e12 until the year 33658, epoch ms passed 1e12 in 2001. A numeric STRING
+ *  gets the same magnitude treatment (rate_limit_event payloads have carried
+ *  both), and anything else falls back to Date.parse for ISO strings. */
 export function resetTimestampMs(value: unknown): number | undefined {
-	let parsed = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN;
-	if (!Number.isFinite(parsed)) return undefined;
-	if (typeof value === "number" && Math.abs(parsed) < 1e12) parsed *= 1000;
-	return parsed;
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return Math.abs(value) < 1e12 ? value * 1000 : value;
+	}
+	if (typeof value !== "string" || !value.trim()) return undefined;
+	const numeric = Number(value);
+	if (Number.isFinite(numeric)) return Math.abs(numeric) < 1e12 ? numeric * 1000 : numeric;
+	const parsed = Date.parse(value);
+	return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 export function formatResetTimestamp(value: unknown): string {

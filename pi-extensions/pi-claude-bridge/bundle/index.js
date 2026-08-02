@@ -27920,15 +27920,7 @@ function convertPiMessages(messages, customToolNameToSdk) {
     if (toolMessages.length === 0) return;
     anthropicMessages.push({
       role: "user",
-      content: toolMessages.map((toolMsg) => {
-        const content = toolResultContentToAnthropic(toolMsg.content);
-        return {
-          type: "tool_result",
-          tool_use_id: sanitizeToolId(toolMsg.toolCallId, sanitizedIds),
-          content: content || "",
-          is_error: toolMsg.isError
-        };
-      })
+      content: toolMessages.map((toolMsg) => toolResultToAnthropicBlock(toolMsg, sanitizedIds))
     });
   };
   for (let i = 0; i < messages.length; i++) {
@@ -28575,6 +28567,10 @@ var piUI;
 function setSharedSession(next) {
   sharedSession = next;
 }
+function markSessionForRebuild(opts = {}) {
+  if (!sharedSession) return;
+  sharedSession = { ...sharedSession, needsRebuild: true, ...opts.forceRotate ? { forceRotate: true } : {} };
+}
 function setExtensionApi(next) {
   extensionApi = next;
 }
@@ -28643,9 +28639,7 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
     const hasMismatch = progress.expectedCount > 0 ? progress.unresolvedIds.length > 0 || progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0 : progress.waitingCount > 0 || progress.queuedCount > 0 || progress.unmatchedResultCount > 0;
     if (!hasMismatch) return false;
     queryCtx.reportedToolResultMismatch = true;
-    if (sharedSession) {
-      sharedSession = { ...sharedSession, needsRebuild: true, ...opts.forceRotate ? { forceRotate: true } : {} };
-    }
+    markSessionForRebuild(opts);
     if (opts.expectedInterruption) {
       debug(
         `tool result delivery interrupted as expected during ${reason}; delivered=${progress.deliveredCount}/${progress.expectedCount} resolved=${progress.resolvedCount}/${progress.expectedCount} waiting=${progress.waitingCount} queued=${progress.queuedCount}`
@@ -43591,9 +43585,6 @@ function jsonSchemaToZodShape(schema) {
   return shape;
 }
 
-// src/index.ts
-import { readFileSync as nodeReadFileSync } from "node:fs";
-
 // src/pi-ai-compat.ts
 var dynamicImport = (specifier) => import(specifier);
 async function resolveGetModels(root, loadCompat = () => dynamicImport("@earendil-works/pi-ai/compat")) {
@@ -43609,8 +43600,11 @@ import { mkdirSync as mkdirSync3, readFileSync as readFileSync6, writeFileSync }
 import { dirname as dirname5, join as join7 } from "node:path";
 var CACHE_VERSION = 2;
 var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+function scopeKeyFor(claudeConfigDir) {
+  return claudeConfigDir?.trim() || "<default>";
+}
 function connectorCacheScopeKey(env = process.env) {
-  return env.CLAUDE_CONFIG_DIR?.trim() || "<default>";
+  return scopeKeyFor(env.CLAUDE_CONFIG_DIR);
 }
 function connectorCacheScopeDigest(scopeKey) {
   return createHash("sha256").update(scopeKey).digest("hex");
@@ -43658,6 +43652,71 @@ function writeCachedConnectors(connectors, scopeKey = connectorCacheScopeKey(), 
     debug(`connector-cache: write failed ${path}:`, error51 instanceof Error ? error51.message : String(error51));
     return false;
   }
+}
+
+// src/connector-runtime.ts
+import { readFileSync as nodeReadFileSync } from "node:fs";
+function readCredentialFile(path) {
+  try {
+    return nodeReadFileSync(path, "utf8");
+  } catch {
+    return void 0;
+  }
+}
+var connectorServerCache = /* @__PURE__ */ new Map();
+var connectorServerPending = /* @__PURE__ */ new Set();
+function connectorScopeKey(claudeConfigDir = process.env.CLAUDE_CONFIG_DIR) {
+  return scopeKeyFor(claudeConfigDir);
+}
+function connectorCredentialEnv(claudeConfigDir = process.env.CLAUDE_CONFIG_DIR) {
+  const env = { ...process.env };
+  if (claudeConfigDir?.trim()) env.CLAUDE_CONFIG_DIR = claudeConfigDir.trim();
+  else delete env.CLAUDE_CONFIG_DIR;
+  return env;
+}
+function primeConnectorServers(claudeConfigDir) {
+  const key = connectorScopeKey(claudeConfigDir);
+  if (connectorServerCache.has(key) || connectorServerPending.has(key)) return;
+  connectorServerPending.add(key);
+  void (async () => {
+    try {
+      const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(claudeConfigDir));
+      if (!credentials) {
+        debug("connectors: no OAuth credentials; declaring none (will retry)");
+        return;
+      }
+      const inventory = await listAccountConnectors({ credentials });
+      if (!inventory.ok) {
+        debug(`connectors: inventory failed (${inventory.reason}); declaring none (will retry)`);
+        return;
+      }
+      const servers = connectorMcpServers(inventory);
+      debug(
+        `connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed`,
+        Object.keys(servers).join(", ") || "none"
+      );
+      connectorServerCache.set(key, servers);
+      if (writeCachedConnectors(inventory.connectors, key)) {
+        debug(`connectors: cached ${inventory.connectors.length} entries`);
+      }
+    } catch (error51) {
+      debug("connectors: declaration lookup threw; declaring none (will retry)", error51);
+    } finally {
+      connectorServerPending.delete(key);
+    }
+  })();
+}
+function connectorServersSnapshot(claudeConfigDir) {
+  const key = connectorScopeKey(claudeConfigDir);
+  const ready = connectorServerCache.get(key);
+  if (ready) return ready;
+  primeConnectorServers(claudeConfigDir);
+  const cached2 = readCachedConnectors(key);
+  if (!cached2) return {};
+  const servers = connectorMcpServers({ ok: true, complete: true, connectors: cached2 });
+  if (Object.keys(servers).length === 0) return {};
+  debug(`connectors: turn-1 declarations from cache \u2014 ${Object.keys(servers).join(", ")}`);
+  return servers;
 }
 
 // src/claude-executable.ts
@@ -44404,6 +44463,78 @@ function verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount)
 // src/account-router.ts
 import { homedir as homedir4 } from "node:os";
 import { join as join10 } from "node:path";
+
+// src/rate-limit.ts
+var RATE_LIMIT_AUTO_RESUME_EVENT = "vstack:rate-limit";
+var RATE_LIMIT_TOKEN = "\x1B[31m[rate-limit]\x1B[39m";
+var USAGE_LIMIT_PREFIXES = Array.isArray(qO) ? qO : [];
+function coerceMessageText(value) {
+  if (typeof value === "string") return value;
+  if (value instanceof Error) return value.message;
+  try {
+    return JSON.stringify(value ?? "");
+  } catch {
+    return String(value);
+  }
+}
+function isUsageLimitMessage(value) {
+  const text = coerceMessageText(value);
+  return USAGE_LIMIT_PREFIXES.some((prefix) => text.includes(prefix));
+}
+function uniqueNonEmptyLines(values) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const value of values) {
+    const text = typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  return out;
+}
+function resetTimestampMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.abs(value) < 1e12 ? value * 1e3 : value;
+  }
+  if (typeof value !== "string" || !value.trim()) return void 0;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return Math.abs(numeric) < 1e12 ? numeric * 1e3 : numeric;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : void 0;
+}
+function formatResetTimestamp(value) {
+  const parsed = resetTimestampMs(value);
+  if (parsed === void 0) return "unknown";
+  return new Date(parsed).toLocaleString(void 0, {
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+    second: "2-digit",
+    timeZoneName: "short",
+    year: "numeric"
+  });
+}
+var ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD = 80;
+function normalizeRateLimitUtilization(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return void 0;
+  if (value === 0) return 0;
+  if (value > 0 && value < 1) return value * 100;
+  if (value > 1 && value <= 100) return value;
+  return void 0;
+}
+function rateLimitTypeLabel(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || "unknown";
+}
+function formatAllowedRateLimitWarning(info) {
+  if (info?.status !== "allowed_warning") return void 0;
+  const utilization = normalizeRateLimitUtilization(info.utilization);
+  if (utilization === void 0 || utilization < ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD) return void 0;
+  return `Claude rate limit warning: nearing ${rateLimitTypeLabel(info.rateLimitType)} limit; check Claude Code /usage for exact utilization.`;
+}
+
+// src/account-router.ts
 var CLAUDE_ACCOUNT_ROUTER_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.claude-account-router.v1");
 var CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.claude-bridge.account-host.v1");
 function resolveClaudeAccountRouter() {
@@ -44503,13 +44634,7 @@ function rateLimitResetFromInfo(info) {
   return info?.resetsAt ?? info?.resets_at ?? info?.resetAt ?? info?.reset_at;
 }
 function rateLimitResetMs(info) {
-  const value = rateLimitResetFromInfo(info);
-  if (typeof value === "number" && Number.isFinite(value)) return value < 1e12 ? value * 1e3 : value;
-  if (typeof value !== "string" || !value.trim()) return void 0;
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) return numeric < 1e12 ? numeric * 1e3 : numeric;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : void 0;
+  return resetTimestampMs(rateLimitResetFromInfo(info));
 }
 function httpStatusInText(normalized) {
   const match = /\b(?:http|https|status(?: code)?|error|code)\b[^a-z0-9]{0,4}([45]\d\d)\b/.exec(normalized);
@@ -44929,72 +45054,6 @@ function createStreamIdleWatchdog({
     refresh: schedule,
     timedOut: () => didTimeout
   };
-}
-
-// src/rate-limit.ts
-var RATE_LIMIT_AUTO_RESUME_EVENT = "vstack:rate-limit";
-var RATE_LIMIT_TOKEN = "\x1B[31m[rate-limit]\x1B[39m";
-var USAGE_LIMIT_PREFIXES = Array.isArray(qO) ? qO : [];
-function coerceMessageText(value) {
-  if (typeof value === "string") return value;
-  if (value instanceof Error) return value.message;
-  try {
-    return JSON.stringify(value ?? "");
-  } catch {
-    return String(value);
-  }
-}
-function isUsageLimitMessage(value) {
-  const text = coerceMessageText(value);
-  return USAGE_LIMIT_PREFIXES.some((prefix) => text.includes(prefix));
-}
-function uniqueNonEmptyLines(values) {
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (const value of values) {
-    const text = typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
-    out.push(text);
-  }
-  return out;
-}
-function resetTimestampMs(value) {
-  let parsed = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN;
-  if (!Number.isFinite(parsed)) return void 0;
-  if (typeof value === "number" && Math.abs(parsed) < 1e12) parsed *= 1e3;
-  return parsed;
-}
-function formatResetTimestamp(value) {
-  const parsed = resetTimestampMs(value);
-  if (parsed === void 0) return "unknown";
-  return new Date(parsed).toLocaleString(void 0, {
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    month: "short",
-    second: "2-digit",
-    timeZoneName: "short",
-    year: "numeric"
-  });
-}
-var ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD = 80;
-function normalizeRateLimitUtilization(value) {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return void 0;
-  if (value === 0) return 0;
-  if (value > 0 && value < 1) return value * 100;
-  if (value > 1 && value <= 100) return value;
-  return void 0;
-}
-function rateLimitTypeLabel(value) {
-  const text = typeof value === "string" ? value.trim() : "";
-  return text || "unknown";
-}
-function formatAllowedRateLimitWarning(info) {
-  if (info?.status !== "allowed_warning") return void 0;
-  const utilization = normalizeRateLimitUtilization(info.utilization);
-  if (utilization === void 0 || utilization < ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD) return void 0;
-  return `Claude rate limit warning: nearing ${rateLimitTypeLabel(info.rateLimitType)} limit; check Claude Code /usage for exact utilization.`;
 }
 
 // src/tool-mapping.ts
@@ -45424,6 +45483,7 @@ var PRIMARY_INSTANCE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:primaryInst
 var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
 var COMMANDS_REGISTERED_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:commandsRegistered");
 var ROTATION_STATE_KEY = /* @__PURE__ */ Symbol("claude-bridge:rotationState");
+var MAX_ROTATION_ATTEMPTS = 16;
 var MODELS = buildModels(getModels("anthropic"));
 var sdkQueryFactory = Okt;
 function __testSetSdkQueryFactory(factory) {
@@ -46002,7 +46062,7 @@ function streamClaudeAgentSdk(model, context, options) {
       }
     }
     if (sharedSession && stackDepth() === 0) {
-      sharedSession.cursor = Math.max(sharedSession.cursor, capturedThrough);
+      setSharedSession({ ...sharedSession, cursor: Math.max(sharedSession.cursor, capturedThrough) });
     }
     queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
     return stream;
@@ -46010,7 +46070,7 @@ function streamClaudeAgentSdk(model, context, options) {
   const lastMsg = context.messages[context.messages.length - 1];
   if (lastMsg?.role === "toolResult") {
     debug(`provider: orphaned tool result after abort, emitting end_turn`);
-    if (sharedSession && stackDepth() === 0) sharedSession.cursor = context.messages.length;
+    if (sharedSession && stackDepth() === 0) setSharedSession({ ...sharedSession, cursor: context.messages.length });
     const c = ctx();
     queueMicrotask(() => {
       c.resetTurnState(model);
@@ -46222,6 +46282,10 @@ function streamClaudeAgentSdk(model, context, options) {
     if (isReentrant) return;
     setSharedSession(next);
   };
+  const markRebuildForThisQuery = (opts = {}) => {
+    if (isReentrant) return;
+    markSessionForRebuild(opts);
+  };
   const dropDeferredUserMessages = (site, undeliveredPrompt) => {
     const dropped = [...undeliveredPrompt !== void 0 ? [undeliveredPrompt] : [], ...abortCtx.deferredUserMessages];
     abortCtx.deferredUserMessages = [];
@@ -46248,6 +46312,28 @@ function streamClaudeAgentSdk(model, context, options) {
     } catch {
     }
   };
+  const requestRotation = (failure) => {
+    recordAttemptFailure(failure);
+    const committed = abortCtx.committedOutput || attemptBuffer?.hasCommittedOutput === true;
+    const eligible = Boolean(account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < MAX_ROTATION_ATTEMPTS);
+    debug("provider: account rotation decision", JSON.stringify({
+      eligible,
+      account: account?.label,
+      kind: failure.kind,
+      committedOutput: committed,
+      wasAborted,
+      signalAborted: options?.signal?.aborted === true,
+      attempts: rotationState.attempts
+    }));
+    if (!eligible || !account || !router || !failure.kind) return false;
+    rotationState.excludedProfileIds.add(account.profileId);
+    retryRequested = true;
+    retryFailure = failure;
+    attemptBuffer?.discard();
+    abortCtx.currentPiStream = null;
+    debug(`provider: rotating account after ${failure.kind}, from=${account.label}, attempt=${rotationState.attempts}`);
+    return true;
+  };
   const streamIdleTimeoutMs = streamIdleTimeoutMsFromEnv();
   const streamIdleWatchdog = streamIdleTimeoutMs > 0 ? createStreamIdleWatchdog({
     getState: () => ({
@@ -46261,17 +46347,11 @@ function streamClaudeAgentSdk(model, context, options) {
       if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || abortCtx.activeQuery !== sdkQuery) return;
       streamIdleTimedOut = true;
       dropDeferredUserMessages("stream-idle-timeout");
-      if (sharedSession) persistSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
+      markRebuildForThisQuery({ forceRotate: true });
       const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
       debug("provider: stream idle timeout", `model=${queryModel.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
       const idleFailure = { kind: "network", message: errorMessage };
-      recordAttemptFailure(idleFailure);
-      if (account && router && !abortCtx.committedOutput && attemptBuffer?.hasCommittedOutput !== true && rotationState.attempts < 16) {
-        rotationState.excludedProfileIds.add(account.profileId);
-        retryRequested = true;
-        retryFailure = idleFailure;
-        attemptBuffer?.discard();
-        abortCtx.currentPiStream = null;
+      if (requestRotation(idleFailure)) {
         requestAbort();
         return;
       }
@@ -46324,28 +46404,6 @@ function streamClaudeAgentSdk(model, context, options) {
     if (options.signal.aborted) onAbort();
     else options.signal.addEventListener("abort", onAbort, { once: true });
   }
-  const requestRotation = (failure) => {
-    recordAttemptFailure(failure);
-    const committed = abortCtx.committedOutput || attemptBuffer?.hasCommittedOutput === true;
-    const eligible = Boolean(account && router && failure.kind && !committed && !wasAborted && !options?.signal?.aborted && rotationState.attempts < 16);
-    debug("provider: account rotation decision", JSON.stringify({
-      eligible,
-      account: account?.label,
-      kind: failure.kind,
-      committedOutput: committed,
-      wasAborted,
-      signalAborted: options?.signal?.aborted === true,
-      attempts: rotationState.attempts
-    }));
-    if (!eligible || !account || !router || !failure.kind) return false;
-    rotationState.excludedProfileIds.add(account.profileId);
-    retryRequested = true;
-    retryFailure = failure;
-    attemptBuffer?.discard();
-    abortCtx.currentPiStream = null;
-    debug(`provider: rotating account after ${failure.kind}, from=${account.label}, attempt=${rotationState.attempts}`);
-    return true;
-  };
   const surfaceFailure = (failure, aborted2 = false) => {
     attemptBuffer?.commit();
     if (failure.rateLimitInfo) {
@@ -46380,7 +46438,7 @@ function streamClaudeAgentSdk(model, context, options) {
       return;
     }
     if (wasAborted || options?.signal?.aborted) {
-      if (sharedSession) persistSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
+      markRebuildForThisQuery({ forceRotate: true });
       dropDeferredUserMessages("abort-completion");
       debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
       surfaceFailure({ message: "Operation aborted" }, true);
@@ -46426,8 +46484,8 @@ function streamClaudeAgentSdk(model, context, options) {
           if (continuation.failure) {
             recordAttemptFailure(continuation.failure);
             if (!abortCtx.handledTerminalError) surfaceFailure(continuation.failure);
-            if (dropDeferredUserMessages("continuation-failure", steerPrompt).length > 0 && sharedSession) {
-              persistSession({ ...sharedSession, needsRebuild: true });
+            if (dropDeferredUserMessages("continuation-failure", steerPrompt).length > 0) {
+              markRebuildForThisQuery();
             }
             break;
           }
@@ -46443,8 +46501,8 @@ function streamClaudeAgentSdk(model, context, options) {
           };
           recordAttemptFailure(continuationFailure);
           if (!abortCtx.handledTerminalError) surfaceFailure(continuationFailure);
-          if (dropDeferredUserMessages("continuation-error", steerPrompt).length > 0 && sharedSession) {
-            persistSession({ ...sharedSession, needsRebuild: true });
+          if (dropDeferredUserMessages("continuation-error", steerPrompt).length > 0) {
+            markRebuildForThisQuery();
           }
           break;
         } finally {
@@ -46458,11 +46516,11 @@ function streamClaudeAgentSdk(model, context, options) {
   }).catch((error51) => {
     debug(`provider: query error, model=${queryModel.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error51);
     const suppressDuplicateError = abortCtx.handledTerminalError || streamIdleTimedOut && !retryRequested;
-    if ((wasAborted || options?.signal?.aborted) && sharedSession) {
-      persistSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
+    if (wasAborted || options?.signal?.aborted) {
+      markRebuildForThisQuery({ forceRotate: true });
     }
-    if (dropDeferredUserMessages("query-error").length > 0 && sharedSession && sharedSession.needsRebuild !== true) {
-      persistSession({ ...sharedSession, needsRebuild: true });
+    if (dropDeferredUserMessages("query-error").length > 0) {
+      markRebuildForThisQuery();
     }
     if (suppressDuplicateError || retryRequested) {
       debug("provider: suppressing duplicate query error after terminal handling");
@@ -46536,68 +46594,6 @@ function showBridgeStatus(ctx2) {
     `Pi Claude: ${config2.enabled === false ? "disabled" : "enabled"}`,
     "Claude account billing settings (including Extra Usage) are managed in Claude."
   ].join("\n"), "info");
-}
-function readCredentialFile(path) {
-  try {
-    return nodeReadFileSync(path, "utf8");
-  } catch {
-    return void 0;
-  }
-}
-var connectorServerCache = /* @__PURE__ */ new Map();
-var connectorServerPending = /* @__PURE__ */ new Set();
-function connectorScopeKey(claudeConfigDir = process.env.CLAUDE_CONFIG_DIR) {
-  return claudeConfigDir?.trim() || "<default>";
-}
-function connectorCredentialEnv(claudeConfigDir = process.env.CLAUDE_CONFIG_DIR) {
-  const env = { ...process.env };
-  if (claudeConfigDir?.trim()) env.CLAUDE_CONFIG_DIR = claudeConfigDir.trim();
-  else delete env.CLAUDE_CONFIG_DIR;
-  return env;
-}
-function primeConnectorServers(claudeConfigDir) {
-  const key = connectorScopeKey(claudeConfigDir);
-  if (connectorServerCache.has(key) || connectorServerPending.has(key)) return;
-  connectorServerPending.add(key);
-  void (async () => {
-    try {
-      const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(claudeConfigDir));
-      if (!credentials) {
-        debug("connectors: no OAuth credentials; declaring none (will retry)");
-        return;
-      }
-      const inventory = await listAccountConnectors({ credentials });
-      if (!inventory.ok) {
-        debug(`connectors: inventory failed (${inventory.reason}); declaring none (will retry)`);
-        return;
-      }
-      const servers = connectorMcpServers(inventory);
-      debug(
-        `connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed`,
-        Object.keys(servers).join(", ") || "none"
-      );
-      connectorServerCache.set(key, servers);
-      if (writeCachedConnectors(inventory.connectors, key)) {
-        debug(`connectors: cached ${inventory.connectors.length} entries`);
-      }
-    } catch (error51) {
-      debug("connectors: declaration lookup threw; declaring none (will retry)", error51);
-    } finally {
-      connectorServerPending.delete(key);
-    }
-  })();
-}
-function connectorServersSnapshot(claudeConfigDir) {
-  const key = connectorScopeKey(claudeConfigDir);
-  const ready = connectorServerCache.get(key);
-  if (ready) return ready;
-  primeConnectorServers(claudeConfigDir);
-  const cached2 = readCachedConnectors(key);
-  if (!cached2) return {};
-  const servers = connectorMcpServers({ ok: true, complete: true, connectors: cached2 });
-  if (Object.keys(servers).length === 0) return {};
-  debug(`connectors: turn-1 declarations from cache \u2014 ${Object.keys(servers).join(", ")}`);
-  return servers;
 }
 async function reportConnectorInventory(ctx2) {
   const account = ctx2.model ? resolveClaudeAccountRouter()?.current(ctx2.model.id, ctx2.sessionManager?.getSessionId?.()) : void 0;
@@ -46678,7 +46674,7 @@ function index_default(pi) {
     }
     if (sharedSession) {
       debug(`${event}: marking needsRebuild on session ${sharedSession.sessionId.slice(0, 8)}`);
-      setSharedSession({ ...sharedSession, needsRebuild: true });
+      markSessionForRebuild();
     }
   };
   pi.on("session_compact", () => markRebuild("session_compact"));
@@ -46725,6 +46721,7 @@ export {
   connectorResultByteSize,
   connectorServerName,
   connectorServerNamespace,
+  connectorServersSnapshot,
   connectorWriteDenyHook,
   connectorWriteModeFor,
   connectorWriteModeFromEnv,
@@ -46771,6 +46768,7 @@ export {
   resolveMcpTools,
   restoreSharedSessionFromPi,
   scheduleToolUseTurnEnd,
+  scopeKeyFor,
   setConnectorCallAuditSink,
   settingSourcesForQuery,
   shouldRestorePersistedBridgeEntry,
