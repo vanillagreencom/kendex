@@ -415,6 +415,7 @@ fn upsert_agent_value_in_section(
     let key_prefix_tight = format!("{}=", agent_name);
 
     let lines: Vec<&str> = content.lines().collect();
+    let string_content = toml_multiline_string_content_lines(content);
     let mut result: Vec<String> = Vec::with_capacity(lines.len());
     let mut in_section = false;
     let mut wrote_replacement = false;
@@ -425,7 +426,7 @@ fn upsert_agent_value_in_section(
         let line = lines[i];
         let trimmed = line.trim();
 
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, string_content[i]) {
             // Section transition
             in_section = trimmed == section_header;
             result.push(line.to_string());
@@ -434,6 +435,7 @@ fn upsert_agent_value_in_section(
         }
 
         if in_section
+            && !string_content[i]
             && (trimmed.starts_with(&key_prefix) || trimmed.starts_with(&key_prefix_tight))
         {
             // First occurrence: replace; subsequent: drop
@@ -503,7 +505,123 @@ fn starts_toml_multiline_value(trimmed_line: &str) -> bool {
 }
 
 fn closes_toml_multiline_value(trimmed_line: &str) -> bool {
-    trimmed_line.ends_with("\"\"\"") || trimmed_line.ends_with("'''")
+    closes_multiline_delimiter(trimmed_line, "\"\"\"")
+        || closes_multiline_delimiter(trimmed_line, "'''")
+}
+
+/// A multi-line string close may be followed by whitespace and a `#` comment
+/// on the same line; anything else after the delimiter keeps the line inside
+/// the string.
+fn closes_multiline_delimiter(trimmed_line: &str, delimiter: &str) -> bool {
+    let Some(position) = trimmed_line.rfind(delimiter) else {
+        return false;
+    };
+    let after = trimmed_line[position + delimiter.len()..].trim_start();
+    after.is_empty() || after.starts_with('#')
+}
+
+/// Per-line flags: true when the line BEGINS inside a TOML multi-line string
+/// value (`"""` basic or `'''` literal). The opening `key = """` line is
+/// structure (false); every following line through the one carrying the
+/// closing delimiter is string content (true).
+///
+/// The line-based passes in this file must treat flagged lines as opaque
+/// content: prose inside a string may mention `[section-name]` — even alone
+/// at the start of a line — or look like `key = value` without being TOML
+/// structure. Matching those shapes inside a string rewrites the consumer's
+/// prose (vstack#1006).
+fn toml_multiline_string_content_lines(content: &str) -> Vec<bool> {
+    let mut flags = Vec::with_capacity(content.lines().count());
+    let mut open_delimiter: Option<&'static str> = None;
+    for line in content.lines() {
+        flags.push(open_delimiter.is_some());
+        let trimmed = line.trim();
+        match open_delimiter {
+            Some(delimiter) => {
+                if closes_multiline_delimiter(trimmed, delimiter) {
+                    open_delimiter = None;
+                }
+            }
+            None => {
+                // Comment lines can quote opener shapes as prose — the
+                // launch-instructions heading itself contains `# iced = """`.
+                if !trimmed.starts_with('#')
+                    && let Some((_, value)) = trimmed.split_once('=')
+                {
+                    let value = value.trim_start();
+                    for delimiter in ["\"\"\"", "'''"] {
+                        if let Some(rest) = value.strip_prefix(delimiter) {
+                            if !rest.contains(delimiter) {
+                                open_delimiter = Some(delimiter);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    flags
+}
+
+/// A trimmed line is a structural TOML section header only outside any
+/// multi-line string value (see `toml_multiline_string_content_lines`).
+fn is_section_header_line(trimmed: &str, inside_multiline_string: bool) -> bool {
+    !inside_multiline_string && trimmed.starts_with('[') && !trimmed.starts_with("# [")
+}
+
+/// Replace occurrences of `old` in one physical line, skipping any occurrence
+/// that sits inside a single-line TOML string value (vstack#1006).
+fn replace_outside_inline_strings(line: &str, old: &str, new: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut cursor = 0;
+    while let Some(found) = line[cursor..].find(old) {
+        let idx = cursor + found;
+        out.push_str(&line[cursor..idx]);
+        if index_is_inside_inline_string(line, idx) {
+            out.push_str(old);
+        } else {
+            out.push_str(new);
+        }
+        cursor = idx + old.len();
+    }
+    out.push_str(&line[cursor..]);
+    out
+}
+
+/// True when byte offset `target` in `line` falls inside a single-line TOML
+/// string (`"..."` with backslash escapes, or `'...'`). Prose inside such a
+/// value may mention `[section-name]` without being structure (vstack#1006).
+fn index_is_inside_inline_string(line: &str, target: usize) -> bool {
+    let bytes = line.as_bytes();
+    let mut delimiter: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() && i < target {
+        let byte = bytes[i];
+        match delimiter {
+            Some(b'"') => {
+                if byte == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if byte == b'"' {
+                    delimiter = None;
+                }
+            }
+            Some(_) => {
+                if byte == b'\'' {
+                    delimiter = None;
+                }
+            }
+            None => {
+                if byte == b'"' || byte == b'\'' {
+                    delimiter = Some(byte);
+                }
+            }
+        }
+        i += 1;
+    }
+    delimiter.is_some()
 }
 
 fn toml_inline_string(value: &str) -> String {
@@ -679,6 +797,7 @@ fn upsert_agent_frontmatter_field(
 ) -> String {
     let field_value = toml_inline_string(value);
     let lines: Vec<&str> = content.lines().collect();
+    let string_content = toml_multiline_string_content_lines(content);
     let mut result: Vec<String> = Vec::with_capacity(lines.len() + 4);
     let mut i = 0;
     let mut found_section = false;
@@ -691,12 +810,17 @@ fn upsert_agent_frontmatter_field(
         let trimmed = line.trim();
         result.push(line.to_string());
 
-        if trimmed == "[agent-frontmatter]" {
+        if !string_content[i] && trimmed == "[agent-frontmatter]" {
             found_section = true;
             i += 1;
             while i < lines.len() {
                 let next = lines[i];
                 let next_trimmed = next.trim();
+                if string_content[i] {
+                    result.push(next.to_string());
+                    i += 1;
+                    continue;
+                }
                 if next_trimmed.starts_with('[') && !next_trimmed.starts_with("# [") {
                     break;
                 }
@@ -802,6 +926,7 @@ fn replace_toml_array_value(
     new_value: &str,
 ) -> String {
     let lines: Vec<&str> = content.lines().collect();
+    let string_content = toml_multiline_string_content_lines(content);
     let mut result: Vec<String> = Vec::new();
     let mut i = 0;
     let mut in_section = false;
@@ -810,11 +935,11 @@ fn replace_toml_array_value(
         let trimmed = lines[i].trim();
 
         // Track which section we're in
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, string_content[i]) {
             in_section = trimmed == section_header;
         }
 
-        if in_section {
+        if in_section && !string_content[i] {
             // Check if this line starts the key we want to replace
             let key_prefix = format!("{} = ", key);
             let key_prefix_tight = format!("{}= ", key);
@@ -986,13 +1111,13 @@ fn project_config_from_content(content: &str) -> ProjectConfig {
 }
 
 fn remove_agent_frontmatter_base_section(content: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut out = Vec::with_capacity(lines.len());
+    let string_content = toml_multiline_string_content_lines(content);
+    let mut out = Vec::new();
     let mut in_base = false;
 
-    for line in lines {
+    for (line, inside_string) in content.lines().zip(string_content) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, inside_string) {
             if trimmed == "[agent-frontmatter]" {
                 in_base = true;
                 continue;
@@ -1012,13 +1137,13 @@ fn remove_agent_frontmatter_base_section(content: &str) -> String {
 }
 
 fn remove_agent_colors_section(content: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut out = Vec::with_capacity(lines.len());
+    let string_content = toml_multiline_string_content_lines(content);
+    let mut out = Vec::new();
     let mut in_colors = false;
 
-    for line in lines {
+    for (line, inside_string) in content.lines().zip(string_content) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, inside_string) {
             if trimmed == "[agent-colors]" {
                 in_colors = true;
                 continue;
@@ -1424,17 +1549,17 @@ fn upsert_missing_inline_table_fields(
     agent_name: &str,
     defaults: &[(String, String)],
 ) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut result = Vec::with_capacity(lines.len() + 2);
+    let string_content = toml_multiline_string_content_lines(content);
+    let mut result = Vec::new();
     let mut active_section = "";
     let mut inserted = false;
     let mut section_found = false;
     let key_prefix = format!("{} =", agent_name);
     let key_prefix_tight = format!("{}=", agent_name);
 
-    for line in lines {
+    for (line, inside_string) in content.lines().zip(string_content) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, inside_string) {
             if active_section == section && !inserted {
                 result.push(format!(
                     "{} = {}",
@@ -1450,6 +1575,7 @@ fn upsert_missing_inline_table_fields(
         }
 
         if active_section == section
+            && !inside_string
             && (trimmed.starts_with(&key_prefix) || trimmed.starts_with(&key_prefix_tight))
         {
             let existing_value = line.split_once('=').map(|(_, value)| value).unwrap_or("{}");
@@ -1523,7 +1649,7 @@ fn upsert_missing_inline_table_fields(
             continue;
         }
 
-        if active_section == section && !inserted && trimmed.starts_with('#') {
+        if active_section == section && !inserted && !inside_string && trimmed.starts_with('#') {
             result.push(format!(
                 "{} = {}",
                 agent_name,
@@ -1590,7 +1716,14 @@ fn repair_project_config_structure(path: &Path) {
     let Ok(existing) = std::fs::read_to_string(path) else {
         return;
     };
-    let mut out = existing.clone();
+    let out = repair_project_config_content(&existing);
+    if !same_ignoring_trailing_newline(&out, &existing) {
+        let _ = std::fs::write(path, out);
+    }
+}
+
+fn repair_project_config_content(existing: &str) -> String {
+    let mut out = existing.to_string();
     out = normalize_attached_section_headers(&out);
     out = repair_instruction_multiline_values(&out);
     out = ensure_value_section_entry_spacing(&out);
@@ -1598,9 +1731,7 @@ fn repair_project_config_structure(path: &Path) {
     out = sync_project_config_header(&out);
     out = ensure_launch_instructions_heading(&out);
     out = ensure_agent_frontmatter_scaffold(&out);
-    if !same_ignoring_trailing_newline(&out, &existing) {
-        let _ = std::fs::write(path, out);
-    }
+    out
 }
 
 /// Refresh the canonical banner at the top of `vstack.toml`.
@@ -1708,15 +1839,18 @@ fn normalize_attached_section_headers(content: &str) -> String {
         "[[custom-hooks]]",
     ];
 
+    let string_content = toml_multiline_string_content_lines(content);
     let mut out = Vec::new();
-    for line in content.lines() {
+    for (line, inside_string) in content.lines().zip(string_content) {
         // vstack: a line that is entirely a comment (starts with `#` after
         // optional leading whitespace) can mention any section header as
         // prose. Splitting it on the header substring would slice the
         // comment in two and emit the header as TOML, then leave the
         // remainder as an orphaned line at column 1 — invalid TOML at the
-        // next parse. Keep comment lines verbatim.
-        if line.trim_start().starts_with('#') {
+        // next parse. Keep comment lines verbatim. The same holds for lines
+        // inside a multi-line string value: prose there may mention a
+        // section name in backticks (vstack#1006).
+        if inside_string || line.trim_start().starts_with('#') {
             out.push(line.to_string());
             continue;
         }
@@ -1725,7 +1859,9 @@ fn normalize_attached_section_headers(content: &str) -> String {
             let found = HEADERS
                 .iter()
                 .filter_map(|header| pending.find(header).map(|idx| (idx, *header)))
-                .filter(|(idx, _)| *idx > 0)
+                .filter(|(idx, _)| {
+                    *idx > 0 && !index_is_inside_inline_string(&pending, *idx)
+                })
                 .min_by_key(|(idx, _)| *idx);
             let Some((idx, header)) = found else {
                 out.push(pending);
@@ -1756,12 +1892,13 @@ fn normalize_attached_section_headers(content: &str) -> String {
 
 fn repair_instruction_multiline_values(content: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
+    let string_content = toml_multiline_string_content_lines(content);
     let mut out = Vec::with_capacity(lines.len());
     let mut active_section = "";
     let mut i = 0;
     while i < lines.len() {
         let trimmed = lines[i].trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, string_content[i]) {
             active_section = trimmed;
             out.push(lines[i].to_string());
             i += 1;
@@ -1770,7 +1907,10 @@ fn repair_instruction_multiline_values(content: &str) -> String {
 
         let is_instruction_section = active_section == "[agent-launch-instructions]"
             || active_section == "[agent-additional-instructions]";
-        if is_instruction_section && let Some((key, raw_value)) = trimmed.split_once('=') {
+        if is_instruction_section
+            && !string_content[i]
+            && let Some((key, raw_value)) = trimmed.split_once('=')
+        {
             let value = raw_value.trim();
             if starts_toml_multiline_value(trimmed) {
                 let mut block_lines = vec![lines[i].to_string()];
@@ -1844,12 +1984,13 @@ fn ensure_value_section_entry_spacing(content: &str) -> String {
     ];
 
     let lines: Vec<&str> = content.lines().collect();
+    let string_content = toml_multiline_string_content_lines(content);
     let mut out = Vec::with_capacity(lines.len());
     let mut active_section = "";
     let mut i = 0;
     while i < lines.len() {
         let trimmed = lines[i].trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, string_content[i]) {
             active_section = trimmed;
             out.push(lines[i].to_string());
             i += 1;
@@ -1858,6 +1999,7 @@ fn ensure_value_section_entry_spacing(content: &str) -> String {
 
         if (SPACED_SECTIONS.contains(&active_section)
             || is_agent_frontmatter_section(active_section))
+            && !string_content[i]
             && looks_like_toml_key_line(trimmed)
         {
             out.push(lines[i].to_string());
@@ -1901,11 +2043,11 @@ fn ensure_value_section_entry_spacing(content: &str) -> String {
 }
 
 fn ensure_blank_line_before_section_headers(content: &str) -> String {
+    let string_content = toml_multiline_string_content_lines(content);
     let mut out: Vec<String> = Vec::new();
-    for line in content.lines() {
+    for (line, inside_string) in content.lines().zip(string_content) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[')
-            && !trimmed.starts_with("# [")
+        if is_section_header_line(trimmed, inside_string)
             && out.last().is_some_and(|previous| {
                 !previous.trim().is_empty() && !previous.trim_start().starts_with('#')
             })
@@ -1939,13 +2081,14 @@ fn is_agent_frontmatter_section(section: &str) -> bool {
 }
 
 fn dedupe_agent_frontmatter_sections(content: &str) -> String {
+    let string_content = toml_multiline_string_content_lines(content);
     let mut out = Vec::new();
     let mut active_section = "";
     let mut seen_keys: HashSet<String> = HashSet::new();
 
-    for line in content.lines() {
+    for (line, inside_string) in content.lines().zip(string_content) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, inside_string) {
             active_section = trimmed;
             seen_keys.clear();
             out.push(line.to_string());
@@ -1953,6 +2096,7 @@ fn dedupe_agent_frontmatter_sections(content: &str) -> String {
         }
 
         if is_agent_frontmatter_section(active_section)
+            && !inside_string
             && looks_like_toml_key_line(trimmed)
             && let Some((key, _)) = trimmed.split_once('=')
         {
@@ -2007,16 +2151,17 @@ fn looks_like_toml_key_line(trimmed: &str) -> bool {
 
 fn migrate_agent_colors_to_frontmatter(content: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
+    let string_content = toml_multiline_string_content_lines(content);
     let mut out = Vec::with_capacity(lines.len());
     let mut colors: Vec<(String, String)> = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         let trimmed = lines[i].trim();
-        if trimmed == "[agent-colors]" {
+        if !string_content[i] && trimmed == "[agent-colors]" {
             i += 1;
             while i < lines.len() {
                 let next = lines[i].trim();
-                if next.starts_with('[') && !next.starts_with("# [") {
+                if is_section_header_line(next, string_content[i]) {
                     break;
                 }
                 if let Some((name, raw_value)) = next.split_once('=') {
@@ -2047,17 +2192,18 @@ fn migrate_agent_colors_to_frontmatter(content: &str) -> String {
 }
 
 fn agent_frontmatter_has_field(content: &str, agent: &str, field: &str) -> bool {
-    let lines: Vec<&str> = content.lines().collect();
+    let string_content = toml_multiline_string_content_lines(content);
     let mut in_section = false;
     let key_prefix = format!("{} =", agent);
     let key_prefix_tight = format!("{}=", agent);
-    for line in lines {
+    for (line, inside_string) in content.lines().zip(string_content) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, inside_string) {
             in_section = trimmed == "[agent-frontmatter]";
             continue;
         }
         if in_section
+            && !inside_string
             && (trimmed.starts_with(&key_prefix) || trimmed.starts_with(&key_prefix_tight))
         {
             let existing_value = trimmed.split_once('=').map(|(_, v)| v).unwrap_or("{}");
@@ -2128,11 +2274,11 @@ fn sync_agent_frontmatter_heading(content: &str) -> String {
 }
 
 fn first_agent_frontmatter_section_start(content: &str) -> Option<usize> {
+    let string_content = toml_multiline_string_content_lines(content);
     let mut offset = 0usize;
-    for line in content.split_inclusive('\n') {
+    for (line, inside_string) in content.split_inclusive('\n').zip(string_content) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[')
-            && !trimmed.starts_with("# [")
+        if is_section_header_line(trimmed, inside_string)
             && (trimmed == "[agent-frontmatter]" || trimmed.starts_with("[agent-frontmatter."))
         {
             return Some(offset);
@@ -2193,10 +2339,11 @@ fn sync_agent_frontmatter_pi_heading(content: &str) -> String {
 }
 
 fn section_start(content: &str, section_header: &str) -> Option<usize> {
+    let string_content = toml_multiline_string_content_lines(content);
     let mut offset = 0usize;
-    for line in content.split_inclusive('\n') {
+    for (line, inside_string) in content.split_inclusive('\n').zip(string_content) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") && trimmed == section_header {
+        if is_section_header_line(trimmed, inside_string) && trimmed == section_header {
             return Some(offset);
         }
         offset += line.len();
@@ -2205,11 +2352,12 @@ fn section_start(content: &str, section_header: &str) -> Option<usize> {
 }
 
 fn section_end(content: &str, section_header: &str) -> Option<usize> {
+    let string_content = toml_multiline_string_content_lines(content);
     let mut offset = 0usize;
     let mut in_section = false;
-    for line in content.split_inclusive('\n') {
+    for (line, inside_string) in content.split_inclusive('\n').zip(string_content) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("# [") {
+        if is_section_header_line(trimmed, inside_string) {
             if in_section {
                 return Some(offset);
             }
@@ -2237,8 +2385,9 @@ fn ensure_agent_frontmatter_scaffold(content: &str) -> String {
         return content.to_string();
     }
     let block = agent_frontmatter_scaffold();
-    let insert_at = content
-        .find("\n[agent-frontmatter.pi]")
+    // Anchor only on structural headers: a `\n[agent-frontmatter.pi]` substring
+    // match could sit inside a multi-line string value (vstack#1006).
+    let insert_at = section_start(content, "[agent-frontmatter.pi]")
         .or_else(|| content.find("\n# ── Optional Skills"))
         .or_else(|| content.find("\n# ── Custom Hooks"))
         .unwrap_or(content.len());
@@ -2288,8 +2437,25 @@ fn migrate_section_names(path: &Path) {
     for (old, new) in &migrations {
         // Only rename if the old name exists and the new name does NOT
         if out.contains(old) && !out.contains(new) {
-            out = out.replace(old, new);
-            changed = true;
+            // Rename headers and comments, but never prose inside a string
+            // value — multi-line or single-line (vstack#1006). Splice per
+            // physical line so the file keeps its own separators (CRLF
+            // stays CRLF).
+            let string_content = toml_multiline_string_content_lines(&out);
+            let mut rendered = String::with_capacity(out.len());
+            for (segment, inside_string) in out.split_inclusive('\n').zip(string_content) {
+                if inside_string {
+                    rendered.push_str(segment);
+                } else if segment.trim_start().starts_with('#') {
+                    rendered.push_str(&segment.replace(old, new));
+                } else {
+                    rendered.push_str(&replace_outside_inline_strings(segment, old, new));
+                }
+            }
+            if rendered != out {
+                out = rendered;
+                changed = true;
+            }
         }
     }
     if changed {
@@ -2447,6 +2613,7 @@ fn is_new_key(content: &str, name: &str) -> bool {
 /// Insert new keys into a specific TOML section, preserving all other content.
 fn insert_keys_into_section(content: &str, section_header: &str, new_keys: &[&String]) -> String {
     let lines: Vec<&str> = content.lines().collect();
+    let string_content = toml_multiline_string_content_lines(content);
     let mut result: Vec<String> = Vec::new();
     let mut i = 0;
     let mut found = false;
@@ -2455,11 +2622,18 @@ fn insert_keys_into_section(content: &str, section_header: &str, new_keys: &[&St
         let trimmed = lines[i].trim();
         result.push(lines[i].to_string());
 
-        if trimmed == section_header {
+        if !string_content[i] && trimmed == section_header {
             found = true;
             // Scan forward past existing keys in this section
             i += 1;
             while i < lines.len() {
+                // String content is never a section boundary, a key, or a
+                // comment — carry it through verbatim (vstack#1006).
+                if string_content[i] {
+                    result.push(lines[i].to_string());
+                    i += 1;
+                    continue;
+                }
                 let next = lines[i].trim();
                 let is_key_line = next.contains(" = ") || next.contains("= ");
                 let is_comment = next.starts_with('#');
@@ -2514,6 +2688,7 @@ fn insert_keys_into_section(content: &str, section_header: &str, new_keys: &[&St
 /// comments and surrounding content.  If the section doesn't exist, appends it.
 fn insert_entries_into_section(content: &str, section_header: &str, entries: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
+    let string_content = toml_multiline_string_content_lines(content);
     let mut result: Vec<String> = Vec::new();
     let mut i = 0;
     let mut inserted = false;
@@ -2522,17 +2697,20 @@ fn insert_entries_into_section(content: &str, section_header: &str, entries: &st
         let trimmed = lines[i].trim();
         result.push(lines[i].to_string());
 
-        if trimmed == section_header {
+        if !string_content[i] && trimmed == section_header {
             // Scan to the end of this logical section, preserving spaced entries.
             i += 1;
             while i < lines.len() {
                 let next = lines[i].trim();
-                // Stop at next section header or section-separator comment
-                if next.starts_with('[') && !next.starts_with("# [") {
-                    break;
-                }
-                if next.starts_with("# ──") {
-                    break;
+                // Stop at next section header or section-separator comment,
+                // but never inside a multi-line string value (vstack#1006).
+                if !string_content[i] {
+                    if next.starts_with('[') && !next.starts_with("# [") {
+                        break;
+                    }
+                    if next.starts_with("# ──") {
+                        break;
+                    }
                 }
                 result.push(lines[i].to_string());
                 i += 1;
@@ -3630,6 +3808,174 @@ rust = "Always use thiserror for errors."
                 < updated.find("\n[agent-frontmatter]").unwrap()
         );
         toml::from_str::<toml::Value>(&updated).expect("repaired TOML parses");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── vstack#1006: prose inside a multi-line string is not structure ──────
+    //
+    // A consumer's instruction prose mentioned `[agent-additional-instructions]`
+    // in backticks inside a `"""` value. `normalize_attached_section_headers`
+    // matched the bracketed substring inside the string, reflowed it onto its
+    // own line as a real section header, and the spacing pass then padded it —
+    // splitting the prose and injecting a duplicate table header mid-file.
+    // Section-header and key-line detection must ignore lines that sit inside
+    // multi-line string values.
+
+    /// A vstack.toml already in the exact shape every repair pass emits, so
+    /// the whole pipeline must be a byte-identical no-op on it.
+    fn canonical_repair_fixture(rust_additional_instructions: &str) -> String {
+        format!(
+            "{header}\n\n\n{launch}[agent-launch-instructions]\n\nrust = \"\"\n\n[agent-additional-instructions]\n\nrust = {value}\n\n{frontmatter}[agent-frontmatter.claude]\n\nrust = {{ model = \"opus\" }}\n",
+            header = project_config_header().trim_end(),
+            launch = launch_instructions_heading(),
+            value = format_toml_string_value(rust_additional_instructions),
+            frontmatter = agent_frontmatter_heading(),
+        )
+    }
+
+    #[test]
+    fn toml_multiline_string_content_lines_flags_string_bodies() {
+        let content = "a = \"\"\"\nprose [x]\nend\"\"\"\nb = 1\nc = '''\nlit\n'''\n[real]\n";
+        assert_eq!(
+            toml_multiline_string_content_lines(content),
+            [false, true, true, false, false, true, true, false]
+        );
+    }
+
+    #[test]
+    fn multiline_scanner_exits_on_closing_delimiter_with_trailing_comment() {
+        // A close followed by whitespace and a `#` comment is a valid TOML
+        // close; the scanner must not stay opaque past it.
+        let content = "a = \"\"\"\nprose\n\"\"\" # rationale\n[real]\nb = 1\n";
+        assert_eq!(
+            toml_multiline_string_content_lines(content),
+            [false, true, true, false, false]
+        );
+        assert!(section_start(content, "[real]").is_some());
+    }
+
+    #[test]
+    fn multiline_scanner_ignores_commented_opener_examples() {
+        // The launch-instructions heading itself contains `# iced = """` as a
+        // commented example; a comment must never open string state.
+        let content = "# iced = \"\"\"\n[agent-skills]\nrust = []\n";
+        assert_eq!(
+            toml_multiline_string_content_lines(content),
+            [false, false, false]
+        );
+        assert!(section_start(content, "[agent-skills]").is_some());
+    }
+
+    #[test]
+    fn migrate_section_names_preserves_bracketed_prose_in_inline_strings() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_migrate_prose_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+        std::fs::write(
+            &path,
+            "[agent-guidance]\nrust = \"See [agent-instructions] for details\"\n",
+        )
+        .unwrap();
+
+        migrate_section_names(&path);
+        let updated = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            updated,
+            "[agent-launch-instructions]\nrust = \"See [agent-instructions] for details\"\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migrate_section_names_preserves_crlf_line_endings() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_migrate_crlf_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+        std::fs::write(&path, "[agent-guidance]\r\nrust = \"x\"\r\n").unwrap();
+
+        migrate_section_names(&path);
+        let updated = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(updated, "[agent-launch-instructions]\r\nrust = \"x\"\r\n");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repair_canonical_fixture_is_byte_stable() {
+        let fixture = canonical_repair_fixture("Plain prose.\nSecond line of prose.");
+        assert_eq!(repair_project_config_content(&fixture), fixture);
+    }
+
+    #[test]
+    fn repair_preserves_backticked_section_mention_inside_multiline_prose() {
+        // Exact shape from vstack#1006: prose inside a multi-line value that
+        // names a section in backticks must survive every pass untouched.
+        let fixture = canonical_repair_fixture(
+            "which every agent also carries as a one-bullet\nbinder in `[agent-additional-instructions]` (asserted by `tools/agent-tooling-verify`).\nRest of the prose.",
+        );
+        assert_eq!(repair_project_config_content(&fixture), fixture);
+        assert_eq!(
+            fixture.matches("[agent-additional-instructions]").count(),
+            2,
+            "fixture holds the real header plus the prose mention"
+        );
+    }
+
+    #[test]
+    fn repair_ignores_line_start_section_header_inside_multiline_prose() {
+        // Worst case: the prose line IS a bracketed section name at column 0.
+        let fixture = canonical_repair_fixture(
+            "Prose before.\n[agent-additional-instructions]\nProse after.",
+        );
+        assert_eq!(repair_project_config_content(&fixture), fixture);
+    }
+
+    #[test]
+    fn repair_preserves_bracketed_section_mention_inside_single_line_string() {
+        // Same flaw, single-line variant: the mention sits inside a `"..."`
+        // value rather than a `"""` block.
+        let input = "[agent-additional-instructions]\n\nrust = \"binder in `[agent-additional-instructions]` (see docs).\"\n";
+        assert_eq!(normalize_attached_section_headers(input), input);
+    }
+
+    #[test]
+    fn repair_still_splits_real_attached_section_headers() {
+        let input =
+            "[agent-launch-instructions]\nrust = \"\" [agent-additional-instructions]\niced = \"\"\n";
+        let out = normalize_attached_section_headers(input);
+        assert!(out.contains("rust = \"\"\n[agent-additional-instructions]\niced = \"\"\n"));
+
+        let spaced = ensure_blank_line_before_section_headers("x = 1\n[agent-skills]\n");
+        assert_eq!(spaced, "x = 1\n\n[agent-skills]\n");
+    }
+
+    #[test]
+    fn ensure_project_config_leaves_bracketed_prose_untouched_end_to_end() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_prose_brackets_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+        let fixture = canonical_repair_fixture(
+            "binder in `[agent-additional-instructions]` (asserted by `tools/agent-tooling-verify`).",
+        );
+        std::fs::write(&path, &fixture).unwrap();
+
+        ensure_project_config(&dir, &["rust".into()], &[]);
+        let updated = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(updated, fixture);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
