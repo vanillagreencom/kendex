@@ -40,7 +40,7 @@ describe("child-executed tool classification", () => {
 	});
 
 	it("claims Claude Code's in-process meta-tools by exact name (vstack#980)", () => {
-		for (const name of ["ToolSearch", "ListMcpResources", "ReadMcpResource", "ScheduleWakeup"]) {
+		for (const name of ["ToolSearch", "ScheduleWakeup"]) {
 			assert.equal(isChildExecutedTool(name), true, name);
 			assert.equal(isChildInternalTool(name), true, name);
 			// A child built-in is NOT a connector: it must stay out of every
@@ -49,6 +49,19 @@ describe("child-executed tool classification", () => {
 		}
 		assert.equal(isConnectorTool(CONNECTOR_TOOL), true);
 		assert.equal(isChildInternalTool(CONNECTOR_TOOL), false);
+	});
+
+	it("does NOT claim the MCP-resource built-ins, under either SDK spelling (vstack#1007)", () => {
+		// The SDK renames these between the request side and the stream side
+		// (`ReadMcpResource` → `ReadMcpResourceTool`), which is how the old
+		// request-side entries sat dead in the set. Both spellings are excluded
+		// on purpose: a resource read stays a mirrored, Pi-visible tool call —
+		// the mirror is the audit surface for out-of-process hosts.
+		for (const name of ["ListMcpResources", "ReadMcpResource", "ListMcpResourcesTool", "ReadMcpResourceTool"]) {
+			assert.equal(isChildInternalTool(name), false, name);
+			assert.equal(isChildExecutedTool(name), false, name);
+			assert.equal(isConnectorTool(name), false, name);
+		}
 	});
 
 	it("claims nothing else — a Pi tool mismatch must still surface as a dispatcher error", () => {
@@ -60,7 +73,10 @@ describe("child-executed tool classification", () => {
 	});
 
 	it("matches child-internal names exactly, never as a prefix, suffix, or case variant", () => {
-		for (const name of ["ToolSearchX", "mytoolsearch", "toolsearch", "XToolSearch", "ToolSearch2", "listmcpresources"]) {
+		// "ToolSearchTool" guards the vstack#1007 lesson from being "fixed" with
+		// suffix matching: an SDK alias earns membership by being LISTED, never
+		// by resembling a listed name.
+		for (const name of ["ToolSearchX", "mytoolsearch", "toolsearch", "XToolSearch", "ToolSearch2", "ToolSearchTool", "listmcpresources", "ReadMcpResourceToolX"]) {
 			assert.equal(isChildExecutedTool(name), false, name);
 			assert.equal(isChildInternalTool(name), false, name);
 		}
@@ -325,6 +341,45 @@ describe("child-executed tools are never mirrored as Pi tool calls", () => {
 		assert.equal(c.turnBlocks[0].name, "ToolSearchX");
 		assert.equal(c.turnSawToolCall, true);
 	});
+
+	it("mirrors a streamed MCP-resource read under its stream-side spelling (vstack#1007)", () => {
+		// What actually arrives on the stream is the SDK's ALIASED name
+		// (`ReadMcpResourceTool`, not the request-side `ReadMcpResource`), and it
+		// must surface in Pi: the mirror is the resource-read audit surface for
+		// hosts with no view of the child transcript.
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+
+		processStreamEvent(streamEvent({
+			type: "content_block_start",
+			index: 0,
+			content_block: { type: "tool_use", id: "toolu_rr", name: "ReadMcpResourceTool", input: {} },
+		}), new Map(), model);
+
+		assert.equal(c.turnBlocks.length, 1, "a resource read is a visible Pi tool call");
+		assert.equal(c.turnBlocks[0].name, "ReadMcpResourceTool");
+		assert.equal(c.turnSawToolCall, true);
+		assert.equal(c.childExecutedStreamIndexes.has(0), false, "its deltas must stream, not be skipped");
+	});
+
+	it("mirrors an MCP-resource enumeration on the assistant-boundary path too (vstack#1007)", () => {
+		const c = ctx();
+		c.resetTurnState(model);
+		installFakeStream();
+		c.turnSawStreamEvent = true;
+
+		processAssistantMessage({
+			type: "assistant",
+			message: {
+				content: [{ type: "tool_use", id: "toolu_lr", name: "ListMcpResourcesTool", input: { server: "s1" } }],
+			},
+		}, model, new Map());
+
+		assert.equal(c.turnBlocks.length, 1);
+		assert.equal(c.turnBlocks[0].name, "ListMcpResourcesTool");
+		assert.equal(c.turnSawToolCall, true);
+	});
 });
 
 describe("usage across a Pi turn that spans several child messages", () => {
@@ -526,7 +581,7 @@ describe("account-replay commit boundary (committedOutput)", () => {
 	it("a child-internal built-in before visible output does NOT commit", () => {
 		const queryCtx = new QueryContext();
 		queryCtx.noteChildExecutedToolCall("t1", "ToolSearch", 0);
-		queryCtx.noteChildExecutedToolCall("t2", "ListMcpResources");
+		queryCtx.noteChildExecutedToolCall("t2", "ScheduleWakeup");
 		assert.equal(queryCtx.committedOutput, false);
 	});
 

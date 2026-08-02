@@ -271,13 +271,28 @@ export function isConnectorTool(name: string | undefined): boolean {
 }
 
 // Claude Code built-in meta-tools the child resolves ENTIRELY in-process:
-// deferred-tool discovery and MCP-resource enumeration. They surface in a
-// bridge stream when connectors are enabled (CONNECTOR_DISCOVERY_TOOLS
-// un-blocks the first three so deferred connector tools are discoverable), but
-// they are not connector calls and Pi cannot run them. Matched EXACTLY, never
-// by prefix or substring: a Pi tool that merely resembles one of these names
-// is a Pi tool, and a mismatch on it must still surface as a dispatcher error.
-const CHILD_INTERNAL_TOOLS = new Set(["ToolSearch", "ListMcpResources", "ReadMcpResource", "ScheduleWakeup"]);
+// deferred-tool discovery and scheduled wakeups. They surface in a bridge
+// stream when connectors are enabled (CONNECTOR_DISCOVERY_TOOLS un-blocks
+// discovery so deferred connector tools are reachable), but they are not
+// connector calls and Pi cannot run them. Matched EXACTLY, never by prefix or
+// substring: a Pi tool that merely resembles one of these names is a Pi tool,
+// and a mismatch on it must still surface as a dispatcher error.
+//
+// Membership is tested against the STREAM-side spelling — the `name` on
+// `content_block_start` / assistant-message blocks, the exact fields
+// processStreamEvent/processAssistantMessage read. That distinction matters
+// because the SDK RENAMES the two MCP-resource built-ins between the request
+// side and the stream side (`ListMcpResources` → `ListMcpResourcesTool`,
+// `ReadMcpResource` → `ReadMcpResourceTool`); their request-side spellings
+// used to sit in this set and never matched anything (vstack#1007).
+//
+// The MCP-resource tools are now EXCLUDED deliberately, under BOTH spellings:
+// a resource read is a real account-surface access, and both consumer hosts
+// audit it through the Pi mirror (an out-of-process sidecar has no view of the
+// bridge's own connector-call entries or the child transcript), so it stays
+// mirrored into Pi. Do not re-add either spelling without revisiting that
+// decision in vstack#1007.
+const CHILD_INTERNAL_TOOLS = new Set(["ToolSearch", "ScheduleWakeup"]);
 
 /**
  * True for a Claude Code built-in meta-tool the child resolves in-process.

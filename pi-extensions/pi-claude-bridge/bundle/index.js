@@ -27679,7 +27679,7 @@ var CONNECTOR_WRITE_TOOLS = [
 function isConnectorTool(name) {
   return typeof name === "string" && name.startsWith(CONNECTOR_NS_PREFIX2);
 }
-var CHILD_INTERNAL_TOOLS = /* @__PURE__ */ new Set(["ToolSearch", "ListMcpResources", "ReadMcpResource", "ScheduleWakeup"]);
+var CHILD_INTERNAL_TOOLS = /* @__PURE__ */ new Set(["ToolSearch", "ScheduleWakeup"]);
 function isChildInternalTool(name) {
   return typeof name === "string" && CHILD_INTERNAL_TOOLS.has(name);
 }
@@ -46027,9 +46027,9 @@ function extractUserPromptBlocks(messages) {
   }
   return hasImage ? blocks : null;
 }
-function planDeferredUserReplay(messages) {
+function planDeferredUserReplay(messages, capturedThrough = 0) {
   let runStart = messages.length;
-  while (runStart > 0 && messages[runStart - 1]?.role === "user") runStart--;
+  while (runStart > capturedThrough && messages[runStart - 1]?.role === "user") runStart--;
   const trailingUsers = messages.slice(runStart);
   const prompt = trailingUsers.length > 0 ? extractUserPrompt(trailingUsers) : null;
   const blocks = trailingUsers.length > 0 ? extractUserPromptBlocks(trailingUsers) : null;
@@ -46250,7 +46250,7 @@ function streamClaudeAgentSdk(model, context, options) {
     }
     let capturedThrough = context.messages.length;
     if (lastMsgRole === "user") {
-      const replay = planDeferredUserReplay(context.messages);
+      const replay = planDeferredUserReplay(context.messages, queryCtx.latestCursor);
       if (replay.prompt || replay.blocks) {
         ctx().deferredUserMessages.push({ text: replay.prompt ?? "", blocks: replay.blocks ?? void 0 });
         debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query${replay.blocks ? ` (${replay.blocks.length} blocks incl. images)` : ""}: ${(replay.prompt ?? "[image-only]").slice(0, 60)}`);

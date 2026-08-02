@@ -229,7 +229,8 @@ function extractUserPromptBlocks(messages: Context["messages"]): ContentBlockPar
 
 export interface DeferredUserReplayPlan {
 	// Index where the trailing consecutive user run begins (=== messages.length
-	// when the context doesn't end in a user message).
+	// when the context doesn't end in a user message; never below the caller's
+	// capturedThrough bound).
 	runStart: number;
 	userMessageCount: number;
 	// All trailing user messages combined into one replay prompt, or null when
@@ -243,10 +244,15 @@ export interface DeferredUserReplayPlan {
 
 /** Plan replay of user messages pi injected mid-query (steer drain, followUp).
  *  Captures the ENTIRE trailing consecutive user run, not just the last
- *  message — dropping the earlier ones was silent input loss (vstack#967). */
-export function planDeferredUserReplay(messages: Context["messages"]): DeferredUserReplayPlan {
+ *  message — dropping the earlier ones was silent input loss (vstack#967) —
+ *  but never walks below `capturedThrough`, the position an earlier callback
+ *  of the SAME query already captured (or deliberately held at, for an
+ *  all-empty run). Without that lower bound a second mid-query steer re-planned
+ *  the whole run from scratch and the first steer was queued — and delivered to
+ *  Claude — twice (vstack#1009). */
+export function planDeferredUserReplay(messages: Context["messages"], capturedThrough = 0): DeferredUserReplayPlan {
 	let runStart = messages.length;
-	while (runStart > 0 && messages[runStart - 1]?.role === "user") runStart--;
+	while (runStart > capturedThrough && messages[runStart - 1]?.role === "user") runStart--;
 	const trailingUsers = messages.slice(runStart);
 	const prompt = trailingUsers.length > 0 ? extractUserPrompt(trailingUsers) : null;
 	const blocks = trailingUsers.length > 0 ? extractUserPromptBlocks(trailingUsers) : null;
@@ -596,7 +602,15 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		// messages was captured while the cursor skipped them all).
 		let capturedThrough = context.messages.length;
 		if (lastMsgRole === "user") {
-			const replay = planDeferredUserReplay(context.messages);
+			// Bound the plan at this query's own captured position (latestCursor
+			// Math.max-advances with every callback's capturedThrough below), so a
+			// second steer callback only queues messages BEYOND what the first one
+			// already owns — re-planning the whole trailing run queued the earlier
+			// steer twice (vstack#1009). latestCursor, not the shared record's
+			// cursor, deliberately: it lives on this QueryContext, so it is correct
+			// for reentrant and detached foreign queries too, whose contexts the
+			// shared cursor does not index (vstack#1001).
+			const replay = planDeferredUserReplay(context.messages, queryCtx.latestCursor);
 			// Image-only runs have no usable text but must still replay — capture
 			// whenever EITHER form has content (vstack#993).
 			if (replay.prompt || replay.blocks) {

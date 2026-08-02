@@ -100,3 +100,81 @@ describe("planDeferredUserReplay image blocks (vstack#993)", () => {
 		assert.equal(plan.prompt, "plain");
 	});
 });
+
+// vstack#1009: the plan took no lower bound, so a second mid-query steer
+// callback re-derived the ENTIRE trailing user run from scratch — including the
+// message the first callback already queued. The replay loop sends each queue
+// entry as its own continuation query, so the first steer reached Claude twice.
+// The caller now passes the position it already captured through
+// (queryCtx.latestCursor), and the run walk must never cross below it.
+describe("planDeferredUserReplay capture bound (vstack#1009)", () => {
+	it("issue reproduction: a second steer queues each message exactly once", () => {
+		// steer #1 arrives with the tool result; captured, cursor advances.
+		const queue = [];
+		let messages = [user("original"), assistant(), toolResult(), user("STEER-ONE")];
+		const first = planDeferredUserReplay(messages, 0);
+		queue.push(first.prompt);
+		assert.equal(first.runStart, 3);
+		const captured = messages.length; // caller: capturedThrough on capture
+
+		// steer #2 arrives while the query is still active — same trailing run,
+		// one message longer.
+		messages = [...messages, user("STEER-TWO")];
+		const second = planDeferredUserReplay(messages, captured);
+		queue.push(second.prompt);
+
+		// Before the bound this was ["STEER-ONE", "STEER-ONE\n\nSTEER-TWO"].
+		assert.deepEqual(queue, ["STEER-ONE", "STEER-TWO"]);
+		assert.equal(second.runStart, 4, "the walk must stop at the captured position");
+		assert.equal(second.userMessageCount, 1);
+		// Cursor math stays consistent: the new capture covers exactly the run.
+		assert.equal(messages.length, second.runStart + second.userMessageCount);
+	});
+
+	it("returns an empty plan when everything is already captured", () => {
+		const messages = [assistant(), toolResult(), user("steer")];
+		const plan = planDeferredUserReplay(messages, messages.length);
+
+		assert.equal(plan.prompt, null);
+		assert.equal(plan.blocks, null);
+		assert.equal(plan.userMessageCount, 0);
+		// runStart === capturedThrough === messages.length: the caller's skip
+		// branch holds the cursor there, advancing nothing.
+		assert.equal(plan.runStart, 3);
+	});
+
+	it("still sweeps up an UNCAPTURED empty steer below a later real one (vstack#967 interplay)", () => {
+		// Callback 1 saw only an empty steer: nothing captured, and the caller
+		// held the cursor at runStart (2), NOT past the empty message.
+		let messages = [assistant(), toolResult(), user("")];
+		const first = planDeferredUserReplay(messages, 0);
+		assert.equal(first.prompt, null);
+		const captured = first.runStart; // caller: capturedThrough on skip
+		assert.equal(captured, 2);
+
+		// Callback 2: a real steer lands behind it. The bound is the HELD
+		// position, so the empty message is still part of the plan and finally
+		// gets owned by this capture.
+		messages = [...messages, user("real steer")];
+		const second = planDeferredUserReplay(messages, captured);
+
+		assert.equal(second.runStart, 2);
+		assert.equal(second.userMessageCount, 2);
+		// The empty message contributes only the join separator.
+		assert.equal(second.prompt, "\n\nreal steer");
+	});
+
+	it("does not re-send already-captured image blocks (vstack#993 interplay)", () => {
+		const image = { type: "image", data: "aGk=", mimeType: "image/png" };
+		let messages = [assistant(), { role: "user", content: [image] }];
+		const first = planDeferredUserReplay(messages, 0);
+		assert.ok(Array.isArray(first.blocks) && first.blocks.length > 0, "image steer captured");
+		const captured = messages.length;
+
+		messages = [...messages, user("follow-up text")];
+		const second = planDeferredUserReplay(messages, captured);
+
+		assert.equal(second.prompt, "follow-up text");
+		assert.equal(second.blocks, null, "the captured image must not be queued a second time");
+	});
+});
