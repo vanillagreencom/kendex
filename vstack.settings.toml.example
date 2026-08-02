@@ -186,6 +186,71 @@ VSTACK_GITHUB_AUTH_TIMEOUT = "10"
 VSTACK_GITHUB_PR_VIEW_TIMEOUT = "30"
 # Used by: github (`pr-view`).
 
+# REVIEW GATE (shared CI merge-gate engine)
+# The review-gate scripts resolve each key environment-first, then this file,
+# then the built-in default. List values pack into one string with ';'
+# separators. Full reference: review-gate SKILL.md / references/adoption.md.
+
+REVIEW_GATE_CONTEXT = "Review gate"
+# Used by: review-gate (`approval-refire.sh`, the CI gate job). Commit-status
+# context the gate posts on PR heads — the required check name in branch
+# protection. Keep it stable.
+
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "Devin Review"
+# Used by: review-gate (`review-predicate.sh`). Exact names of the trusted
+# reviewer's clean-analysis check-run and/or legacy commit status; a success
+# for a listed name on the current head counts as review evidence. SECURITY:
+# matched by NAME, and any GitHub App or workflow can publish under any name
+# — list only trusted bots' checks, on repos where all publishers are trusted.
+
+REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
+# Used by: review-gate (`review-predicate.sh`). A trusted "pass" must prove
+# analysis RAN: a success whose output/description contains one of these
+# case-insensitive substrings is NOT-EVIDENCE (same as absent, never a
+# failure). Empty disables the filter.
+
+REVIEW_GATE_COMMENT_REVIEWERS = ""
+# Used by: review-gate (`review-predicate.sh`). 'login:binding-pattern' pairs
+# for bots whose clean pass is only an issue comment (no review object, no
+# check/status); the first ':' splits, the pattern is a LITERAL prefix that
+# must precede the bound commit sha. SECURITY: trust keys on the author
+# LOGIN; the body is read only to bind evidence to a commit. Empty disables.
+
+REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
+# Used by: review-gate (`review-predicate.sh`). Shortest sha prefix (4–40) a
+# comment-form reviewer may bind evidence to.
+
+REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
+# Used by: review-gate (`review-predicate.sh`) — and orch's
+# PR_REVIEW_OUTAGE_CONTEXT is the writer side of the same context.
+# Reviewer-outage attestation status; substitutes for MISSING review
+# evidence only. SECURITY: same trusted-publisher model as
+# REVIEW_GATE_TRUSTED_STATUS_CONTEXTS. Empty disables.
+
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
+# Used by: review-gate (`review-predicate.sh`). Logins whose review objects
+# at the exact head count as evidence. Empty = any non-author (compatible
+# default; set the list to stop drive-by collaborator reviews satisfying the
+# gate).
+
+REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
+# Used by: review-gate (`review-predicate.sh`). "any" or "approved"
+# (an APPROVED at head not withdrawn by a LATER CHANGES_REQUESTED from the
+# same login; a trailing COMMENTED never supersedes an approval).
+
+REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
+# Used by: review-gate (`approval-refire.sh`). Rerun backstop for
+# pathological evidence ping-pong, not normal review cycles.
+
+REVIEW_GATE_TRUST_PR_WORKFLOWS = "false"
+# Used by: review-gate (workflow WIRING, not the scripts — see
+# references/adoption.md). SECURITY: "false" (default, safe) = the gate job
+# runs the predicate from the BASE revision with a read-only token and posts
+# the status from a separate minimal-permission step. "true" = deliberately
+# self-evaluating (a gate-fix PR can open its own gate) — defensible only on
+# private, effectively single-author repos; this key makes that choice
+# explicit.
+
 # SECOND OPINION
 
 SECOND_OPINION_TARGET = "codex"

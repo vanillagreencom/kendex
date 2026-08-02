@@ -1,0 +1,160 @@
+# SCAFFOLD from the vstack review-gate skill (templates/approval-rerun.yml).
+# Copy once into .github/workflows/ in the adoption PR; the file is REPO-OWNED
+# after the copy — `vstack refresh` does not sync workflow YAML. Lines marked
+# ADAPT reference trust values that live in vstack.settings.toml but cannot be
+# read from workflow `if:` expressions; keep them aligned with the repo's
+# REVIEW_GATE_* settings. A loose filter here costs a wasted run, never a
+# false approval — the predicate re-derives the verdict from scratch.
+name: Approval CI re-fire
+
+# Converges the review-gate commit status with the live review state (see
+# .agents/skills/review-gate/scripts/approval-refire.sh for the model). On
+# review submit/dismiss, on the trusted reviewer's clean-analysis evidence,
+# and on a comment-form reviewer's clean pass:
+#   - downward transitions (dismissal, changes-requested) post the
+#     pending/failure status directly — pending blocks merge on its own, so
+#     no check-run churn is needed;
+#   - the first awaiting→approved flip RE-RUNS the head's pull_request runs
+#     in place, so the new attempt opens the gate and executes the heavy
+#     jobs. Re-running in place (never a separate review-triggered run)
+#     matters to merge queues: enqueue counts every check-run on the head,
+#     and a stale failed/cancelled required check from a superseded run
+#     blocks it.
+#
+# Anti-loop: this workflow triggers only on review/evidence events; the
+# reruns it issues never re-trigger it. A genuinely-failing build after
+# approval is NOT retried automatically — the gate status stays success and
+# the red required contexts block on their own; re-run manually to retry.
+
+"on":
+  pull_request_review:
+    types: [submitted, dismissed]
+  # NOTE: `pull_request_review_thread` is a WEBHOOK event but NOT a GitHub
+  # Actions workflow trigger (per the "Events that trigger workflows"
+  # reference) — declaring it never fires on thread resolution; it only makes
+  # GitHub's push-time workflow validation log a phantom failed "workflow
+  # file issue" run on every push. The unresolved-threads condition therefore
+  # has no direct re-fire signal here; approval-sweep.yml covers it with a
+  # scheduled sweep over the same shared script.
+  # A CLEAN re-analysis by a check-run-publishing reviewer posts no review
+  # object and no review event — only its check-run. Without this trigger the
+  # re-fire never runs in the clean case and the pending gate status would
+  # stand forever. The job-level guard filters to the trusted check name.
+  check_run:
+    types: [completed]
+  # Some reviewers publish their clean-analysis evidence as a legacy commit
+  # STATUS instead of a check-run, and a status update is a `status` event -
+  # not check_run. Without this trigger the clean path still cannot re-fire
+  # the gate here.
+  status: {}
+  # Comment-form reviewers post NEITHER a review object NOR a check/status on
+  # a clean pass — only an ISSUE COMMENT on the PR. Its evidence is accepted
+  # by the predicate, but without this trigger nothing tells the gate to
+  # re-evaluate, so convergence would wait on the scheduled sweep — which,
+  # with every other reviewer out, would be the whole merge cadence. The
+  # job-level guard filters to the bot author and the commit-binding line.
+  # DELETE this trigger (and its guard below) on repos with no comment-form
+  # reviewer configured.
+  issue_comment:
+    types: [created]
+
+permissions:
+  # rerun of the head's pull_request runs
+  actions: write
+  # the gate predicate reads (reviews, PR author, PR conversation comments)
+  pull-requests: read
+  # PR conversation comments are ISSUE comments; comment-form clean-pass
+  # evidence is read through that API.
+  issues: read
+  # clean-analysis evidence read
+  checks: read
+  # read the current gate status + POST the converged one
+  statuses: write
+  # checkout of the shared re-fire script
+  contents: read
+
+concurrency:
+  # check_run events include the CHECK NAME in the group key: the job-level
+  # name filter runs AFTER concurrency slotting, so a skipped untrusted
+  # check_run would otherwise replace a queued trusted-reviewer re-fire in
+  # the shared pending slot and silently drop it. Same-name collisions are
+  # safe - the run re-reads current state.
+  group: approval-rerun-${{ github.event.issue.number || github.event.pull_request.number || format('{0}-{1}', github.event.check_run.head_sha || github.event.sha, github.event.check_run.name || github.event.context) }}
+  cancel-in-progress: false
+
+jobs:
+  rerun:
+    name: Re-fire CI after review
+    # check_run events: act only on the trusted reviewer's own check (exact
+    # name), and only when it has an associated PR (guarded again in-script).
+    # issue_comment fires on plain issues too, and on every human comment.
+    # Filter to a PR, to the trusted reviewer login, and to the commit-binding
+    # line — same trust model as the predicate: the AUTHOR is what is trusted,
+    # the body only narrows which comments are worth a re-fire.
+    # ADAPT: 'Devin Review' = REVIEW_GATE_TRUSTED_STATUS_CONTEXTS,
+    # 'vstack-reviewer-outage' = REVIEW_GATE_OUTAGE_CONTEXT,
+    # 'chatgpt-codex-connector[bot]' / 'Reviewed commit' =
+    # REVIEW_GATE_COMMENT_REVIEWERS login / binding pattern.
+    if: >-
+      (github.event_name != 'check_run' || github.event.check_run.name == 'Devin Review') &&
+      (github.event_name != 'status' || ((github.event.context == 'Devin Review' || github.event.context == 'vstack-reviewer-outage') && github.event.state == 'success')) &&
+      (github.event_name != 'issue_comment' || (github.event.issue.pull_request != null && github.event.comment.user.login == 'chatgpt-codex-connector[bot]' && contains(github.event.comment.body, 'Reviewed commit')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || github.event.check_run.pull_requests[0].number }}
+      # issue_comment carries no head sha — the comment is on the conversation,
+      # not on a commit. Resolved from the PR in the step below, and resolved
+      # there rather than read out of the comment body deliberately: the gate
+      # must converge on what the PR head IS, not on what a comment says it was.
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.check_run.head_sha || github.event.sha }}
+      # Empty on check_run and issue_comment events; resolved from the PR.
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+    steps:
+      # The evaluate-and-converge logic lives in the shared vendored script
+      # (single source of truth with approval-sweep.yml). Checkout is pinned
+      # to the DEFAULT branch with credentials dropped: these trigger events
+      # must never execute a PR-controlled version of the re-fire logic, and
+      # jobs that execute repository code must not persist a token into it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Converge the review gate for the PR head
+        run: |
+          set -u
+          # check_run.pull_requests[] is best-effort - it can be EMPTY even
+          # for same-repo PRs (notably app-created check runs), so an empty
+          # PR_NUMBER must not silently no-op the clean-case re-fire. Resolve
+          # the PR from the head sha instead; only a genuine no-open-PR
+          # result (push-triggered analysis) exits.
+          if [ -z "${PR_NUMBER:-}" ]; then
+            PR_NUMBER="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/pulls" --jq '[.[] | select(.state == "open")][0].number // empty')" || PR_NUMBER=""
+            if [ -z "${PR_NUMBER:-}" ]; then
+              echo "no open PR associated with head $HEAD_SHA; nothing to do"
+              exit 0
+            fi
+            echo "resolved PR #$PR_NUMBER from head sha (check_run payload had no pull_requests)"
+          fi
+          # issue_comment events carry no head sha (see the env note above).
+          if [ -z "${HEAD_SHA:-}" ]; then
+            HEAD_SHA="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq .head.sha)" || {
+              echo "::error::could not resolve head sha for PR #$PR_NUMBER"
+              exit 1
+            }
+            export HEAD_SHA
+            echo "resolved head $HEAD_SHA for PR #$PR_NUMBER (comment event carries no sha)"
+          fi
+          if [ ! -f .agents/skills/review-gate/scripts/approval-refire.sh ]; then
+            # Only reachable while the PR introducing the vendored skill is
+            # unmerged (these trigger events check out the default branch) —
+            # or if the skill was deleted from the default branch, which must
+            # stay loud.
+            echo "::error::.agents/skills/review-gate/scripts/approval-refire.sh is missing on the default branch (bootstrap PR? deleted?); no re-fire action taken"
+            exit 1
+          fi
+          export PR_NUMBER
+          exec .agents/skills/review-gate/scripts/approval-refire.sh

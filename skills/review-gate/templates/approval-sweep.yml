@@ -1,0 +1,98 @@
+# SCAFFOLD from the vstack review-gate skill (templates/approval-sweep.yml).
+# Copy once into .github/workflows/ in the adoption PR; the file is REPO-OWNED
+# after the copy — `vstack refresh` does not sync workflow YAML.
+name: Approval gate sweep
+
+# Some gate-relevant transitions emit NO usable Actions event, so the
+# event-driven re-fire (approval-rerun.yml) can never see them. Chief case:
+# resolving (or REOPENING) the last unresolved review thread —
+# `pull_request_review_thread` is a webhook event but not an Actions trigger
+# — so a fully-addressed PR's pending gate status would stand until some
+# other trusted event happened. Late outage-marker timing has the same shape.
+#
+# This scheduled sweep closes those gaps. Every 15 minutes it re-evaluates
+# the gate predicate for every open PR via the shared vendored script
+# (.agents/skills/review-gate/scripts/approval-refire.sh — single source of
+# truth with approval-rerun.yml) and converges the gate commit status:
+# downward transitions are a direct status post; the first awaiting→approved
+# flip re-runs the head's pull_request runs, bounded by
+# REVIEW_GATE_MAX_RERUN_ATTEMPTS so an evidence-disagreement ping-pong can
+# never retry forever. A genuinely failing build is never retried by the
+# sweep — once an approved attempt has run, the gate status carries a
+# success entry and only direct posts happen.
+#
+# A read error for one PR is reported (::error) and the sweep continues to
+# the other PRs, then exits non-zero so the failure is visible in the run
+# list — fail loudly, never silently (matching the shared script's posture).
+
+"on":
+  schedule:
+    # Worst-case added latency for a thread-resolution-only transition.
+    - cron: "*/15 * * * *"
+  # Manual sweep for testing and for "I just resolved the last thread and
+  # don't want to wait" moments.
+  workflow_dispatch: {}
+
+permissions:
+  # rerun of the head's pull_request runs
+  actions: write
+  # PR list + reviews (gate predicate)
+  pull-requests: read
+  # PR conversation comments (comment-form clean-pass evidence)
+  issues: read
+  # clean-analysis evidence reads
+  checks: read
+  # read the current gate status + POST the converged one
+  statuses: write
+  # checkout of the shared script
+  contents: read
+
+concurrency:
+  group: approval-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Converge review gates that drifted
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # Pinned to the DEFAULT branch with credentials dropped:
+      # `workflow_dispatch` follows the dispatched ref by default, which
+      # would let a branch-controlled copy of the script run under this
+      # job's `actions: write` token. Manual dispatch is for testing the
+      # MERGED sweep, same trust boundary as approval-rerun.yml's checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Sweep open PRs
+        run: |
+          set -u
+          # Full pagination (one array per page, slurped flat) — a fixed page
+          # limit would silently leave PRs beyond it unswept forever.
+          raw_prs="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate)" || {
+            echo "::error::could not list open PRs"
+            exit 1
+          }
+          prs="$(jq -s '[add // [] | .[] | {number, headRefOid: .head.sha, author: {login: (.user.login // "")}}]' <<<"$raw_prs")" || {
+            echo "::error::could not parse the open-PR list"
+            exit 1
+          }
+          count="$(jq length <<<"$prs")"
+          echo "sweeping $count open PR(s)"
+          failed=0
+          while read -r number head author; do
+            [ -z "$number" ] && continue
+            if ! PR_NUMBER="$number" HEAD_SHA="$head" PR_AUTHOR="$author" \
+                QUIESCE=0 \
+                .agents/skills/review-gate/scripts/approval-refire.sh; then
+              echo "::error::sweep failed for PR #$number (see log above)"
+              failed=1
+            fi
+          done < <(jq -r '.[] | "\(.number) \(.headRefOid) \(.author.login // "")"' <<<"$prs")
+          exit "$failed"

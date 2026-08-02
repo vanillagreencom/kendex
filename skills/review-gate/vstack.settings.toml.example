@@ -1,0 +1,79 @@
+[env]
+
+# REVIEW GATE — shared merge-gate engine (review-gate skill).
+# Project-scope `vstack add` / `vstack refresh` merge these defaults into
+# <project>/vstack.settings.toml (never overwriting existing keys). The
+# scripts resolve each key environment-first, then this file, then the
+# built-in default. List values pack into one string with ';' separators.
+# Full reference: review-gate SKILL.md and references/adoption.md.
+
+# Commit-status context the gate posts on PR heads — the required check name
+# in branch protection. Keep it stable: changing it strands the old required
+# context on open PRs until branch protection is updated to match.
+REVIEW_GATE_CONTEXT = "Review gate"
+
+# Clean-analysis evidence: exact names of the trusted reviewer's check-run
+# and/or legacy commit status; a success for a listed name on the current
+# head counts as review evidence (for bots that submit a review object only
+# when they have findings). Both APIs are queried; either counts. SECURITY:
+# check-runs and statuses are matched by NAME, and any GitHub App or Actions
+# workflow can publish under any name — list only names produced by trusted
+# bots, on repos where every publisher is trusted.
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "Devin Review"
+
+# A trusted "pass" must prove analysis RAN: a success whose check-run
+# output/status description contains one of these case-insensitive
+# substrings (e.g. a reviewer that posts its check as pass with "Review rate
+# limited" after doing nothing) is treated as NOT-EVIDENCE — the same as
+# absent, never a failure. Empty disables the filter (an explicit choice to
+# trust every success blindly).
+REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
+
+# Comment-form reviewers: 'login:binding-pattern' pairs for bots whose clean
+# pass is only an issue comment on the PR conversation (no review object, no
+# check/status). The first ':' splits login from pattern; the pattern is a
+# LITERAL prefix that must precede the bound commit sha in the body (e.g.
+# "chatgpt-codex-connector[bot]:Reviewed commit:"). SECURITY: trust keys on
+# the author LOGIN (only GitHub can set it); the body is read only to bind
+# the evidence to a commit. Empty disables the source.
+REVIEW_GATE_COMMENT_REVIEWERS = ""
+
+# Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to;
+# git's short-sha default. A degenerate prefix must not match every head.
+REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
+
+# Reviewer-outage attestation: commit-status context a trusted orchestrator
+# posts on the head ONLY on genuine total reviewer silence. Substitutes for
+# MISSING review evidence only — changes-requested and unresolved threads
+# still fail closed. SECURITY: a deliberate, bounded relaxation with the
+# same trusted-publisher model as REVIEW_GATE_TRUSTED_STATUS_CONTEXTS; name
+# it only where every status publisher is trusted. Empty disables.
+REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
+
+# Review-object trust list: logins whose review objects at the exact head
+# count as evidence. Empty = any non-author (the compatible default; on
+# repos with outside read-access collaborators this means any drive-by
+# COMMENTED review satisfies the gate — set the list to close that).
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
+
+# Minimum review-object state that counts as evidence: "any" (any
+# non-dismissed row) or "approved" (an APPROVED at head not withdrawn by a
+# LATER CHANGES_REQUESTED from the same login; a trailing COMMENTED never
+# supersedes an approval).
+REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
+
+# Rerun backstop for approval-refire.sh: runs at/above this attempt count
+# are left alone (gh run rerun retries manually). The cap exists for
+# pathological evidence ping-pong, not normal review cycles.
+REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
+
+# Trust posture for the CI gate job (consumed by workflow WIRING, not by the
+# scripts — see references/adoption.md). SECURITY: "false" (default, safe) =
+# the gate job runs the predicate from the BASE revision with a read-only
+# token and posts the status from a separate minimal-permission step; a PR
+# cannot execute its own predicate copy under a write-capable token. "true"
+# = deliberately self-evaluating (PR-head predicate) for the bootstrap
+# property that a gate-fix PR can open its own gate — defensible only on
+# private, effectively single-author repos; this key makes that choice
+# explicit and visible.
+REVIEW_GATE_TRUST_PR_WORKFLOWS = "false"

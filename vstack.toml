@@ -87,6 +87,7 @@ generalist = [
     "dev",
     "linear",
     "dep-radar",
+    "review-gate",
 ]
 
 planner = [
