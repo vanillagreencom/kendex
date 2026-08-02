@@ -192,11 +192,15 @@ function convertAndImportMessages(
 
 interface SyncResult {
 	sessionId: string | null;
-	promptMessages: Context["messages"];
+	// Index into the caller's messages array where this query's prompt begins.
+	// Everything from promptStart to the end is user input Claude has not seen;
+	// the caller slices it out itself (single owner of the messages array).
+	promptStart: number;
 }
 
 export interface IncrementalPromptBatchPlan {
-	cursorBeforeQuery: number;
+	// Doubles as the cursor to store before the query runs: Claude owns
+	// [0, promptStart) and the prompt delivers [promptStart, end).
 	promptStart: number;
 	userMessageCount: number;
 }
@@ -220,20 +224,18 @@ export function planIncrementalPromptBatch(
 
 	const pendingPrompts = messages.slice(promptStart);
 	if (pendingPrompts.length === 0 || pendingPrompts.some((message) => (message as { role?: string }).role !== "user")) {
+		// Log the rejected tail so a diag log can tell apart "two assistants in
+		// tail" vs "toolResult in tail" vs "stale cursor" without a repro.
+		debug(`planIncrementalPromptBatch: rejected — cursor=${cursor} promptStart=${promptStart} tail roles=[${messages.slice(boundedCursor).map((m) => (m as { role?: string }).role).join(", ")}]`);
 		return undefined;
 	}
 
 	return {
-		cursorBeforeQuery: promptStart,
 		promptStart,
 		userMessageCount: pendingPrompts.length,
 	};
 }
 
-/**
- * Ensure the shared session has all messages up to (but not including) the last user message.
- * Returns session ID to resume from, or null if no resume needed.
- */
 // Read the session file we just wrote and sanity-check it. Warns instead of
 // throwing — CC may be more tolerant than our checks, so a false positive
 // shouldn't block the user. Pure logic is in session-verify.js; this wrapper
@@ -282,10 +284,17 @@ function debugSessionPaths(label: string, cwd: string, jsonlPath: string): void 
 }
 
 // Two semantic paths:
-//   REUSE — pi's history is in sync with the existing sharedSession (or drifted
-//     only by the trailing final-assistant message that pi appends after
-//     streamSimple returns, which CC's own persisted session already has).
-//     Returns the existing sessionId. Keeps CC's prompt cache warm.
+//   REUSE — pi's history is in sync with the existing sharedSession, drifted
+//     only by an optional trailing assistant message (the final-assistant pi
+//     appends after streamSimple returns, which CC's own persisted session
+//     already has) plus an unbounded trailing run of user messages delivered
+//     together by pi (steer-queue drain, followUpMode="all"). The whole user
+//     run becomes this query's prompt. The unbounded run is safe because
+//     promptStart can never land on a user message Claude already persisted:
+//     Claude owns [0, cursor), promptStart starts at the cursor and only ever
+//     advances (past the one optional assistant), so everything from
+//     promptStart on is new input. Returns the existing sessionId. Keeps CC's
+//     prompt cache warm.
 //   REBUILD — no session yet, or pi's history has diverged (non-trailing
 //     missed messages, e.g. another provider took a turn). Wipes the existing
 //     session file (if any) and writes a fresh one containing all prior
@@ -318,15 +327,15 @@ export function syncSharedSession(
 	if (sharedSession && !sharedSession.needsRebuild) {
 		const batch = planIncrementalPromptBatch(messages, sharedSession.cursor);
 		if (batch) {
-			setSharedSession({ ...sharedSession, cursor: batch.cursorBeforeQuery, cwd });
+			setSharedSession({ ...sharedSession, cursor: batch.promptStart, cwd });
 			const batching = batch.userMessageCount > 1
 				? `batched ${batch.userMessageCount} consecutive user messages, `
-				: batch.cursorBeforeQuery > sharedSession.cursor ? "advanced cursor past trailing assistant, " : "";
-			debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.cursorBeforeQuery}`);
-			debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${batch.cursorBeforeQuery} promptUsers=${batch.userMessageCount}`);
+				: batch.promptStart > sharedSession.cursor ? "advanced cursor past trailing assistant, " : "";
+			debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.promptStart}`);
+			debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${batch.promptStart} promptUsers=${batch.userMessageCount}`);
 			return {
 				sessionId: sharedSession.sessionId,
-				promptMessages: messages.slice(batch.promptStart),
+				promptStart: batch.promptStart,
 			};
 		}
 	}
@@ -335,7 +344,7 @@ export function syncSharedSession(
 	if (priorMessages.length === 0) {
 		debug(`Case 1: clean start, ${messages.length} total messages`);
 		debug(`syncResult: path=clean-start`);
-		return { sessionId: null, promptMessages: messages.slice(-1) };
+		return { sessionId: null, promptStart: messages.length - 1 };
 	}
 	const previousSessionId = sharedSession?.sessionId;
 	const previousCursor = sharedSession?.cursor ?? 0;
@@ -368,5 +377,5 @@ export function syncSharedSession(
 	}
 	debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath);
 	debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === undefined ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`);
-	return { sessionId: session.sessionId, promptMessages: messages.slice(-1) };
+	return { sessionId: session.sessionId, promptStart: messages.length - 1 };
 }

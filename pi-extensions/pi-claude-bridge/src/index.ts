@@ -220,7 +220,15 @@ function extractAllToolResults(context: Context): McpResult[] {
 	return results;
 }
 
-/** Combine one or more consecutive user messages into a single SDK prompt. */
+/** Combine one or more consecutive user messages into a single SDK prompt.
+ *
+ *  Representation divergence, accepted on purpose: this MERGES N pi user
+ *  messages into ONE Claude user record ("\n\n"-joined), while a REBUILD
+ *  (convertPiMessages in convert.ts) imports the same pi history as N separate
+ *  user records. Streaming N SDKUserMessages instead would collapse N pi turns
+ *  into one Pi reply with double-counted usage, so the join stays. The merged
+ *  form is only ever a query's live prompt — it is never re-imported, so the
+ *  two representations never meet in one session file. */
 function extractUserPrompt(messages: Context["messages"]): string | null {
 	if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
 	return messages.map((message) =>
@@ -229,7 +237,8 @@ function extractUserPrompt(messages: Context["messages"]): string | null {
 }
 
 /** Combine consecutive user messages as ContentBlockParam[] while preserving images.
- *  Returns null if no images — caller should fall back to the string prompt. */
+ *  Returns null if no images — caller should fall back to the string prompt.
+ *  Same N-into-1 merge as extractUserPrompt (see its comment for why). */
 function extractUserPromptBlocks(messages: Context["messages"]): ContentBlockParam[] | null {
 	if (messages.length === 0 || messages.some((message) => message.role !== "user")) return null;
 
@@ -265,6 +274,31 @@ function extractUserPromptBlocks(messages: Context["messages"]): ContentBlockPar
 		}
 	}
 	return hasImage ? blocks : null;
+}
+
+export interface DeferredUserReplayPlan {
+	// Index where the trailing consecutive user run begins (=== messages.length
+	// when the context doesn't end in a user message).
+	runStart: number;
+	userMessageCount: number;
+	// All trailing user messages combined into one replay prompt, or null when
+	// there is nothing usable to replay (no trailing users, or all-empty text).
+	prompt: string | null;
+}
+
+/** Plan replay of user messages pi injected mid-query (steer drain, followUp).
+ *  Captures the ENTIRE trailing consecutive user run, not just the last
+ *  message — dropping the earlier ones was silent input loss (vstack#967). */
+export function planDeferredUserReplay(messages: Context["messages"]): DeferredUserReplayPlan {
+	let runStart = messages.length;
+	while (runStart > 0 && messages[runStart - 1]?.role === "user") runStart--;
+	const trailingUsers = messages.slice(runStart);
+	const prompt = trailingUsers.length > 0 ? extractUserPrompt(trailingUsers) : null;
+	return {
+		runStart,
+		userMessageCount: trailingUsers.length,
+		prompt: prompt?.trim() ? prompt : null,
+	};
 }
 
 async function* wrapPromptStream(blocks: ContentBlockParam[]): AsyncIterable<SDKUserMessage> {
@@ -747,16 +781,29 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		//   - A followUp is delivered between tool-result turns.
 		// The bridge can't forward these mid-query (the SDK query is in progress),
 		// so we save them for replay as continuation queries after consumeQuery ends.
+		// The cursor may only advance over messages actually captured for replay:
+		// claiming Claude owns a user message that was never deferred is permanent
+		// silent input loss (vstack#967 — only the LAST of several trailing user
+		// messages was captured while the cursor skipped them all).
+		let capturedThrough = context.messages.length;
 		if (lastMsgRole === "user") {
-			const userPrompt = extractUserPrompt(context.messages.slice(-1));
-			if (userPrompt) {
-				ctx().deferredUserMessages.push(userPrompt);
-				debug(`provider: deferred user message for replay after query: ${userPrompt.slice(0, 60)}`);
+			const replay = planDeferredUserReplay(context.messages);
+			if (replay.prompt) {
+				ctx().deferredUserMessages.push(replay.prompt);
+				debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query: ${replay.prompt.slice(0, 60)}`);
+			} else {
+				capturedThrough = replay.runStart;
+				diagDump("deferred_user_replay_skipped", {
+					contextLength: context.messages.length,
+					runStart: replay.runStart,
+					userMessageCount: replay.userMessageCount,
+					messageRoles: context.messages.map((m, i) => `[${i}]${m.role}`).join(" "),
+				});
 			}
 		}
 
-		if (sharedSession) sharedSession.cursor = context.messages.length;
-		queryCtx.latestCursor = Math.max(queryCtx.latestCursor, context.messages.length);
+		if (sharedSession) sharedSession.cursor = capturedThrough;
+		queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
 		return stream;
 	}
 
@@ -822,19 +869,36 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	ctx().latestCursor = 0;
 
 	const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
-	const { sessionId: resumeSessionId, promptMessages } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
+
+	// Config + executable preflight run BEFORE syncSharedSession on purpose: the
+	// sync's REBUILD path is destructive (deleteSession + createSession + save),
+	// so a misconfigured executable must fail this query while the previous
+	// session file is still intact.
+	const bridgeConfig = loadConfig(cwd);
+	const providerSettings = bridgeConfig.provider ?? {};
+	const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
+	const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : undefined;
+
+	const cursorBeforeSync = sharedSession?.cursor ?? null;
+	const { sessionId: resumeSessionId, promptStart } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
+	const promptMessages = context.messages.slice(promptStart);
 	const promptBlocks = extractUserPromptBlocks(promptMessages);
 	let promptText = extractUserPrompt(promptMessages) ?? "";
 
-	// Guard: empty prompt means the last context message isn't a user message.
-	// This should never happen with the state stack fix — dump diagnostics if it does.
-	if (!promptText && !promptBlocks) {
+	// Guard: a prompt with no usable content means the last context message
+	// isn't a user message (or the batch was all-empty — joined batches turn ""
+	// into "\n\n", so test the trimmed text, not truthiness). Should never
+	// happen with the state stack fix — dump diagnostics if it does.
+	if (!promptText.trim() && !promptBlocks) {
 		diagDump("empty_prompt", {
 			contextLength: context.messages.length,
 			lastMsgRole: lastMsg?.role,
 			isReentrant,
 			stackDepth: stackDepth(),
 			activeQueryExists: ctx().activeQuery !== null,
+			cursorBeforeSync,
+			promptStart,
+			promptRoles: promptMessages.map((m) => m.role).join(" "),
 			sharedSession: sharedSession ? { sessionId: sharedSession.sessionId.slice(0, 8), cursor: sharedSession.cursor } : null,
 			messageRoles: context.messages.map((m, i) => `[${i}]${m.role}`).join(" "),
 		});
@@ -846,8 +910,6 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		? wrapPromptStream(promptBlocks)
 		: promptText;
 	const mcpServers = buildMcpServers(mcpTools, ctx());
-	const bridgeConfig = loadConfig(cwd);
-	const providerSettings = bridgeConfig.provider ?? {};
 	// Whether to expose the Claude account's claude.ai cloud MCP connectors
 	// (Gmail/Calendar/Drive). Enabled via env or config; drives setting-sources,
 	// tool isolation, and the ENABLE_CLAUDEAI_MCP_SERVERS child-env gate below.
@@ -881,8 +943,6 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			? undefined
 			: providerSettings.settingSources ?? ["user", "project"];
 	const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
-	const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
-	const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : undefined;
 	// Prefer the model's own thinkingLevelMap when present (pi-ai 0.72+ ships
 	// per-model overrides — e.g. opus-4-7 wants xhigh→xhigh, not xhigh→max).
 	// Fall back to our generic table for older pi-ai or unmapped levels.

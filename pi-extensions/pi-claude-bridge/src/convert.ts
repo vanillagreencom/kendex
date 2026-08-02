@@ -149,6 +149,10 @@ export function convertPiMessages(
 	for (let i = 0; i < messages.length; i++) {
 		const msg = messages[i];
 		if (msg.role === "user") {
+			// Rebuild imports each pi user message as its OWN record. The REUSE path
+			// (extractUserPrompt/extractUserPromptBlocks in index.ts) instead merges a
+			// trailing user run into one "\n\n"-joined prompt — accepted divergence,
+			// see the comment there; the merged form is never re-imported here.
 			anthropicMessages.push(userMessageToAnthropic(msg));
 		} else if (msg.role === "assistant") {
 			const content = Array.isArray(msg.content) ? msg.content : [];

@@ -13,7 +13,6 @@ describe("planIncrementalPromptBatch", () => {
 		);
 
 		assert.deepEqual(plan, {
-			cursorBeforeQuery: 2,
 			promptStart: 2,
 			userMessageCount: 2,
 		});
@@ -26,7 +25,6 @@ describe("planIncrementalPromptBatch", () => {
 		);
 
 		assert.deepEqual(plan, {
-			cursorBeforeQuery: 2,
 			promptStart: 2,
 			userMessageCount: 1,
 		});
@@ -39,7 +37,6 @@ describe("planIncrementalPromptBatch", () => {
 		);
 
 		assert.deepEqual(plan, {
-			cursorBeforeQuery: 2,
 			promptStart: 2,
 			userMessageCount: 2,
 		});
@@ -57,6 +54,13 @@ describe("planIncrementalPromptBatch", () => {
 	it("rejects a non-user final prompt", () => {
 		assert.equal(
 			planIncrementalPromptBatch(roles("user", "assistant", "toolResult"), 1),
+			undefined,
+		);
+	});
+
+	it("rejects a toolResult inside the pending tail", () => {
+		assert.equal(
+			planIncrementalPromptBatch(roles("user", "assistant", "toolResult", "user"), 1),
 			undefined,
 		);
 	});

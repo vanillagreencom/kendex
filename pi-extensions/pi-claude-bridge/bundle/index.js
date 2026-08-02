@@ -44414,10 +44414,10 @@ function planIncrementalPromptBatch(messages, cursor) {
   if (messages[promptStart]?.role === "assistant") promptStart++;
   const pendingPrompts = messages.slice(promptStart);
   if (pendingPrompts.length === 0 || pendingPrompts.some((message) => message.role !== "user")) {
+    debug(`planIncrementalPromptBatch: rejected \u2014 cursor=${cursor} promptStart=${promptStart} tail roles=[${messages.slice(boundedCursor).map((m) => m.role).join(", ")}]`);
     return void 0;
   }
   return {
-    cursorBeforeQuery: promptStart,
     promptStart,
     userMessageCount: pendingPrompts.length
   };
@@ -44463,20 +44463,20 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId) {
   if (sharedSession && !sharedSession.needsRebuild) {
     const batch = planIncrementalPromptBatch(messages, sharedSession.cursor);
     if (batch) {
-      setSharedSession({ ...sharedSession, cursor: batch.cursorBeforeQuery, cwd });
-      const batching = batch.userMessageCount > 1 ? `batched ${batch.userMessageCount} consecutive user messages, ` : batch.cursorBeforeQuery > sharedSession.cursor ? "advanced cursor past trailing assistant, " : "";
-      debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.cursorBeforeQuery}`);
-      debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${batch.cursorBeforeQuery} promptUsers=${batch.userMessageCount}`);
+      setSharedSession({ ...sharedSession, cursor: batch.promptStart, cwd });
+      const batching = batch.userMessageCount > 1 ? `batched ${batch.userMessageCount} consecutive user messages, ` : batch.promptStart > sharedSession.cursor ? "advanced cursor past trailing assistant, " : "";
+      debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.promptStart}`);
+      debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${batch.promptStart} promptUsers=${batch.userMessageCount}`);
       return {
         sessionId: sharedSession.sessionId,
-        promptMessages: messages.slice(batch.promptStart)
+        promptStart: batch.promptStart
       };
     }
   }
   if (priorMessages.length === 0) {
     debug(`Case 1: clean start, ${messages.length} total messages`);
     debug(`syncResult: path=clean-start`);
-    return { sessionId: null, promptMessages: messages.slice(-1) };
+    return { sessionId: null, promptStart: messages.length - 1 };
   }
   const previousSessionId = sharedSession?.sessionId;
   const previousCursor = sharedSession?.cursor ?? 0;
@@ -44504,7 +44504,7 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId) {
   }
   debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath);
   debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === void 0 ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`);
-  return { sessionId: session.sessionId, promptMessages: messages.slice(-1) };
+  return { sessionId: session.sessionId, promptStart: messages.length - 1 };
 }
 
 // src/stream-idle-watchdog.ts
@@ -45228,6 +45228,17 @@ function extractUserPromptBlocks(messages) {
   }
   return hasImage ? blocks : null;
 }
+function planDeferredUserReplay(messages) {
+  let runStart = messages.length;
+  while (runStart > 0 && messages[runStart - 1]?.role === "user") runStart--;
+  const trailingUsers = messages.slice(runStart);
+  const prompt = trailingUsers.length > 0 ? extractUserPrompt(trailingUsers) : null;
+  return {
+    runStart,
+    userMessageCount: trailingUsers.length,
+    prompt: prompt?.trim() ? prompt : null
+  };
+}
 async function* wrapPromptStream(blocks) {
   yield {
     type: "user",
@@ -45544,15 +45555,24 @@ function streamClaudeAgentSdk(model, context, options) {
       debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
       piUI?.notify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting \u2014 provider may be stuck`, "warning");
     }
+    let capturedThrough = context.messages.length;
     if (lastMsgRole === "user") {
-      const userPrompt = extractUserPrompt(context.messages.slice(-1));
-      if (userPrompt) {
-        ctx().deferredUserMessages.push(userPrompt);
-        debug(`provider: deferred user message for replay after query: ${userPrompt.slice(0, 60)}`);
+      const replay = planDeferredUserReplay(context.messages);
+      if (replay.prompt) {
+        ctx().deferredUserMessages.push(replay.prompt);
+        debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query: ${replay.prompt.slice(0, 60)}`);
+      } else {
+        capturedThrough = replay.runStart;
+        diagDump("deferred_user_replay_skipped", {
+          contextLength: context.messages.length,
+          runStart: replay.runStart,
+          userMessageCount: replay.userMessageCount,
+          messageRoles: context.messages.map((m, i) => `[${i}]${m.role}`).join(" ")
+        });
       }
     }
-    if (sharedSession) sharedSession.cursor = context.messages.length;
-    queryCtx.latestCursor = Math.max(queryCtx.latestCursor, context.messages.length);
+    if (sharedSession) sharedSession.cursor = capturedThrough;
+    queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
     return stream;
   }
   const lastMsg = context.messages[context.messages.length - 1];
@@ -45609,16 +45629,25 @@ function streamClaudeAgentSdk(model, context, options) {
   ctx().resetToolTracking();
   ctx().latestCursor = 0;
   const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context);
-  const { sessionId: resumeSessionId, promptMessages } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
+  const bridgeConfig = loadConfig(cwd);
+  const providerSettings = bridgeConfig.provider ?? {};
+  const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
+  const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
+  const cursorBeforeSync = sharedSession?.cursor ?? null;
+  const { sessionId: resumeSessionId, promptStart } = syncSharedSession(context.messages, cwd, customToolNameToSdk, model.id);
+  const promptMessages = context.messages.slice(promptStart);
   const promptBlocks = extractUserPromptBlocks(promptMessages);
   let promptText = extractUserPrompt(promptMessages) ?? "";
-  if (!promptText && !promptBlocks) {
+  if (!promptText.trim() && !promptBlocks) {
     diagDump("empty_prompt", {
       contextLength: context.messages.length,
       lastMsgRole: lastMsg?.role,
       isReentrant,
       stackDepth: stackDepth(),
       activeQueryExists: ctx().activeQuery !== null,
+      cursorBeforeSync,
+      promptStart,
+      promptRoles: promptMessages.map((m) => m.role).join(" "),
       sharedSession: sharedSession ? { sessionId: sharedSession.sessionId.slice(0, 8), cursor: sharedSession.cursor } : null,
       messageRoles: context.messages.map((m, i) => `[${i}]${m.role}`).join(" ")
     });
@@ -45626,8 +45655,6 @@ function streamClaudeAgentSdk(model, context, options) {
   }
   const prompt = promptBlocks ? wrapPromptStream(promptBlocks) : promptText;
   const mcpServers = buildMcpServers(mcpTools, ctx());
-  const bridgeConfig = loadConfig(cwd);
-  const providerSettings = bridgeConfig.provider ?? {};
   const enableCloudMcp = connectorsEnabledFor(bridgeConfig);
   const connectorWriteMode = connectorWriteModeFor(bridgeConfig);
   const connectorServers = enableCloudMcp ? connectorServersSnapshot() : {};
@@ -45639,8 +45666,6 @@ function streamClaudeAgentSdk(model, context, options) {
   const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : void 0;
   const settingSources = enableCloudMcp ? providerSettings.settingSources ?? ["user", "project", "local"] : appendSystemPrompt ? void 0 : providerSettings.settingSources ?? ["user", "project"];
   const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
-  const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
-  const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
   const requestedEffort = options?.reasoning ? model.thinkingLevelMap?.[options.reasoning] ?? REASONING_TO_EFFORT[options.reasoning] : void 0;
   const effort = resolveConfiguredEffort(model.id, requestedEffort, providerSettings);
   const extraArgs = {};
@@ -46083,6 +46108,7 @@ export {
   mapToolName,
   normalizeRateLimitUtilization,
   noteChildExecutedToolResults,
+  planDeferredUserReplay,
   planIncrementalPromptBatch,
   preflightClaudeExecutable,
   primeConnectorServers,
