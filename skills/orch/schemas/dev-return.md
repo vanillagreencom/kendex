@@ -168,14 +168,22 @@ skip the artifact to stay honest — `analysis` is the honest spelling.
 Orch validates the artifact deterministically with
 `.agents/skills/orch/scripts/dev-artifact-check` (round mode:
 `--worktree WT --issue ISSUE --round-id RID [--expect-items N,N,...]`). It prints
-`{ok, path, reason}`; the gates are ordered and the first failure wins:
+`{ok, path, reason, warning}`; the gates are ordered and the first failure wins:
 
 | Order | reason | Meaning |
 |-------|--------|---------|
 | 1 | `missing` | No artifact at the resolved round-scoped path |
 | 2 | `invalid` | Internal `round_id` != expected, OR not parseable JSON, OR a required field wrong-typed/empty: `kind` ∈ implement\|fix\|analysis; `issue`/`branch` non-empty **strings**; `round_id` non-empty string; `schema_version` a number. implement/fix additionally require `commit`/`validate` non-empty strings; **analysis requires the inverse** — no `commit`, `validate`, or `validate_note` key present at all |
-| 3 | `incomplete` | `items[]` fails the applicable rule (below), or an `analysis` artifact's `summary` is not a non-empty string |
+| 3 | `commit_unresolvable` | The artifact's `commit` names no object in the worktree's git repo (vstack#994) — e.g. a hand-reconstructed SHA with a fabricated tail. Round mode only; skipped when the worktree is not a git repo, and always in `--file` mode (no repo to check against) |
+| 4 | `incomplete` | `items[]` fails the applicable rule (below), or an `analysis` artifact's `summary` is not a non-empty string |
 | — | `valid` | All gates pass |
+
+**`warning: "commit_unreachable"` (non-fatal, vstack#994):** the `commit`
+resolves as a commit object but is not an ancestor of the current `HEAD` — the
+signature of a receipt orphaned by a later rebase. `ok` stays `true` and
+`reason` stays `valid`: a legitimate rebase orphans the SHAs of every
+previously accepted round, so this is a signal for the orchestrator to weigh,
+not a failure. `warning` is `null` in every other case.
 
 **Items rule:**
 - With `--expect-items N,N,...` (fix rounds — the orchestrator passes the delegated
@@ -194,7 +202,8 @@ Orch validates the artifact deterministically with
 The mtime/freshness gate is gone — identity is by round id (see above), so there
 is no `stale` reason. A fresh **valid** artifact for the current round lets orch
 accept a completion whose live return message was lost, without re-delegation. The
-artifact proves the agent finished its tail; git/tracker corroboration and
+artifact proves the agent finished its tail, and (vstack#994) that its `commit`
+names a real object in the worktree's repo; tracker corroboration and
 exact-commit binding (`.commit == git rev-parse HEAD`) stay in the orch acceptance
 decision table (`dev-start.md` § 3 / `dev-fix.md`). An `analysis` artifact has no
 `commit`, so its round has no exact-commit binding and no validate gate — the

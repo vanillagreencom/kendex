@@ -31,9 +31,16 @@
 # recommendation/evidence is the round's deliverable → else incomplete).
 #
 # The scalars prove the agent finished its tail; the items gates prove a fix or
-# bundled artifact carries its per-item results. Git/tracker corroboration (and
-# exact-commit binding) stay in the orch workflow; this script never runs git or
-# tracker checks.
+# bundled artifact carries its per-item results. In round mode, when the
+# worktree is a git repo and the artifact carries a .commit, the recorded SHA is
+# additionally checked against that repo (vstack#994): a SHA that names no
+# object fails with reason=commit_unresolvable (a hand-fabricated SHA — same
+# short prefix as HEAD, invented tail — passes every schema gate yet proves
+# nothing), and a commit that resolves but is not an ancestor of HEAD is
+# surfaced as the NON-FATAL warning=commit_unreachable (a legitimate rebase
+# orphans the SHAs of previously accepted rounds, so this is a signal for the
+# orchestrator, not a failure). Exact-commit binding (.commit == the observed
+# HEAD) and tracker corroboration stay in the orch workflow.
 
 set -euo pipefail
 
@@ -50,7 +57,8 @@ Usage:
   dev-artifact-check --file <json_path> [--round-id RID] [--expect-items N,N,...]
 
 Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
-requires it exists, its internal .round_id == RID, then the scalar/kind/items gates.
+requires it exists, its internal .round_id == RID, then the scalar/kind, commit
+object (against WT's git repo, vstack#994), and items gates.
 File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
 artifacts — with no production caller; the orch workflows always use round mode.
@@ -63,10 +71,11 @@ decision ∈ {Applied,Skipped,Blocked}, every reasoning non-empty. Without it, a
 fix/bundled artifact only needs a non-empty, well-formed items[].
 
 Prints JSON: {ok: bool, path: string|null,
-              reason: "valid"|"missing"|"invalid"|"incomplete"}
+              reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|"incomplete",
+              warning: "commit_unreachable"|null}
 
 Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
-items → incomplete → valid.
+commit object → commit_unresolvable → items → incomplete → valid.
 
 reason meanings when ok=false:
   missing     artifact file does not exist at the resolved path
@@ -78,11 +87,21 @@ reason meanings when ok=false:
               .validate, or .validate_note key present at all (an analysis round
               produces no commit and runs no validation, so their presence is a
               fabricated claim — vstack#952)
+  commit_unresolvable
+              the artifact's .commit names no object in the worktree's repo
+              (vstack#994) — e.g. a hand-reconstructed SHA with a fabricated
+              tail. Round mode only, and only when the worktree is a git repo;
+              --file mode has no repo to check against and skips this gate.
   incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
               or non-empty-well-formed (kind fix OR bundled==true). kind implement
               without bundled keeps allowing items: []. kind analysis is
               incomplete when .summary is not a non-empty string (the
               recommendation is the round's deliverable).
+
+warning=commit_unreachable (NON-FATAL, ok stays true): the .commit resolves as a
+commit object but is not an ancestor of the current HEAD — the signature of a
+receipt orphaned by a later rebase (vstack#994). Expected after a legitimate
+rebase; the orchestrator decides what it means for the round.
 
 Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error.
 EOF
@@ -113,14 +132,15 @@ check_id_token() {
 # one that was never recorded (vstack#884). Both are null when the artifact is
 # missing or unparseable.
 emit() {
-  local ok="$1" path="$2" reason="$3" validate=null validate_note=null
+  local ok="$1" path="$2" reason="$3" warning="${4:-}" validate=null validate_note=null
   if [[ -n "$path" && -f "$path" ]]; then
     validate="$(jq -c 'if (.validate? | type) == "string" then .validate else null end' "$path" 2>/dev/null || printf 'null')"
     validate_note="$(jq -c 'if (.validate_note? | type) == "string" then .validate_note else null end' "$path" 2>/dev/null || printf 'null')"
   fi
-  jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" \
+  jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" --arg warning "$warning" \
     --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
     '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason,
+      warning: (if $warning == "" then null else $warning end),
       validate: $validate, validate_note: $validate_note}'
 }
 
@@ -209,12 +229,15 @@ analysis_incomplete() {
 }
 
 # Shared gate: existence → (round_id match, when expected) → required scalars
-# (invalid) → items/summary (incomplete) → valid. Emits {ok, path, reason},
-# returns 0 iff valid. want_round "" skips the round_id match (--file mode
-# without --round-id). expect_items "" uses the fix/bundled fallback instead of
-# the exact-set rule.
+# (invalid) → commit object (commit_unresolvable, vstack#994) → items/summary
+# (incomplete) → valid. Emits {ok, path, reason, warning}, returns 0 iff valid.
+# want_round "" skips the round_id match (--file mode without --round-id).
+# expect_items "" uses the fix/bundled fallback instead of the exact-set rule.
+# repo "" skips the commit checks (--file mode); so does a worktree that is not
+# a git repo — production worktrees always are, and a check that cannot run
+# proves nothing either way.
 validate_artifact() {
-  local file="$1" want_round="$2" expect_items="$3"
+  local file="$1" want_round="$2" expect_items="$3" repo="${4:-}" warning=""
   if [[ ! -f "$file" ]]; then
     emit false "" "missing"
     return 1
@@ -226,6 +249,26 @@ validate_artifact() {
   if ! has_required_fields "$file"; then
     emit false "$file" "invalid"
     return 1
+  fi
+  # vstack#994: a .commit that passed the scalar gate must name a real commit
+  # object in the worktree's repo — a fabricated SHA (same short prefix as HEAD,
+  # invented tail) reads as evidence while proving nothing. Resolvable but not
+  # an ancestor of HEAD is the orphaned-by-rebase signature: non-fatal warning,
+  # because a legitimate rebase produces it on every previously accepted round.
+  local commit=""
+  if [[ -n "$repo" ]] && git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    commit="$(jq -r 'if (.commit? | type) == "string" then .commit else "" end' "$file" 2>/dev/null || true)"
+  fi
+  if [[ -n "$commit" ]]; then
+    if [[ "$(git -C "$repo" cat-file -t "$commit" 2>/dev/null)" != "commit" ]]; then
+      printf '%s: artifact commit %s: no such object in the repo at %s\n' "$PROG" "$commit" "$repo" >&2
+      emit false "$file" "commit_unresolvable"
+      return 1
+    fi
+    if ! git -C "$repo" merge-base --is-ancestor "$commit" HEAD >/dev/null 2>&1; then
+      warning="commit_unreachable"
+      printf '%s: artifact commit %s resolves but is not an ancestor of HEAD in %s (orphaned by a rebase?)\n' "$PROG" "$commit" "$repo" >&2
+    fi
   fi
   if [[ -n "$expect_items" ]]; then
     if ! items_exact_ok "$file" "$expect_items"; then
@@ -240,7 +283,7 @@ validate_artifact() {
     emit false "$file" "incomplete"
     return 1
   fi
-  emit true "$file" "valid"
+  emit true "$file" "valid" "$warning"
   return 0
 }
 
@@ -255,6 +298,7 @@ fi
 file=""
 want_round=""
 expect_items=""
+repo=""
 
 if [[ "${1:-}" == "--file" ]]; then
   shift
@@ -286,6 +330,7 @@ elif [[ "${1:-}" == --* ]]; then
   check_id_token --issue "$issue"
   check_id_token --round-id "$round_id"
   want_round="$round_id"
+  repo="$worktree"
   file="$worktree/tmp/dev-return-$issue-$round_id.json"
 else
   # Neither --file nor round mode → usage error. One identity model (round id);
@@ -298,4 +343,4 @@ fi
 if [[ -n "$expect_items" && ! "$expect_items" =~ $EXPECT_GRAMMAR ]]; then
   die "--expect-items must be comma-separated item numbers, got '$expect_items'"
 fi
-if validate_artifact "$file" "$want_round" "$expect_items"; then exit 0; else exit 1; fi
+if validate_artifact "$file" "$want_round" "$expect_items" "$repo"; then exit 0; else exit 1; fi

@@ -266,6 +266,81 @@ printf 'Recommend: re-scope; seam moved in refactor.\n' > "$rt_wt/analysis.md"
 "$WRITE" --worktree "$rt_wt" --kind analysis --issue issue-9 --round-id 9-10 --branch b --summary-file "$rt_wt/analysis.md" --no-summary >/dev/null
 assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 9-10)" "valid" "writer analysis output round-trips as valid (vstack#952)"
 
+# --- vstack#994: the recorded commit must name a real object in the worktree's repo ---
+# Case 1 (hyprtrade CC-1006): a dev agent hand-reconstructed a full SHA from the
+# short form — same 8-char prefix as HEAD, fabricated tail — and the receipt
+# passed every schema gate while naming no object. That must now fail with the
+# distinct fatal reason commit_unresolvable. Case 2: a commit orphaned by a
+# later rebase still resolves as an object but is no ancestor of HEAD; per the
+# issue that is a distinct NON-FATAL signal (warning=commit_unreachable, ok
+# stays true) because a legitimate rebase produces it. All the non-git-repo
+# worktrees above (plain mktemp dirs) skip these gates entirely.
+gitwt="$TMP_ROOT/gitwt"
+mkdir -p "$gitwt/tmp"
+git -C "$gitwt" init -q -b main
+git -C "$gitwt" config user.email test@example.com
+git -C "$gitwt" config user.name Test
+git -C "$gitwt" config commit.gpgsign false
+git -C "$gitwt" commit -q --allow-empty -m base
+git -C "$gitwt" commit -q --allow-empty -m orphan-me
+orphan_sha="$(git -C "$gitwt" rev-parse HEAD)"
+git -C "$gitwt" reset -q --hard HEAD~1   # orphan_sha still resolves, now unreachable
+head_sha="$(git -C "$gitwt" rev-parse HEAD)"
+fake_sha="${head_sha:0:8}00000000000000000000000000000000"
+gartifact="$gitwt/tmp/dev-return-$issue-$R.json"
+
+# valid, reachable commit (HEAD) → valid with no warning
+printf '%s' "$valid_impl" | jq -c --arg c "$head_sha" '.commit=$c' > "$gartifact"
+out="$("$CHECK" --worktree "$gitwt" --issue "$issue" --round-id "$R")"
+rc=$?
+assert_eq "$rc" "0" "reachable HEAD commit exits 0"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "reachable HEAD commit reports reason=valid"
+assert_eq "$(jq -r '.warning' <<<"$out")" "null" "reachable HEAD commit reports warning=null"
+
+# fabricated SHA (real prefix, invented tail) → ok=false, commit_unresolvable, exit 1
+printf '%s' "$valid_impl" | jq -c --arg c "$fake_sha" '.commit=$c' > "$gartifact"
+set +e
+out="$("$CHECK" --worktree "$gitwt" --issue "$issue" --round-id "$R" 2>/dev/null)"
+rc=$?
+err="$("$CHECK" --worktree "$gitwt" --issue "$issue" --round-id "$R" 2>&1 >/dev/null)"
+set -e
+assert_eq "$rc" "1" "fabricated commit SHA exits 1"
+assert_eq "$(jq -r '.ok' <<<"$out")" "false" "fabricated commit SHA reports ok=false"
+assert_eq "$(jq -r '.reason' <<<"$out")" "commit_unresolvable" "fabricated commit SHA reports reason=commit_unresolvable"
+assert_eq "$(grep -F "$fake_sha" <<<"$err" | grep -cF 'no such object')" "1" "commit_unresolvable stderr names the sha and 'no such object'"
+
+# orphaned-but-real commit → NON-FATAL: ok=true, reason=valid, warning=commit_unreachable
+printf '%s' "$valid_impl" | jq -c --arg c "$orphan_sha" '.commit=$c' > "$gartifact"
+out="$("$CHECK" --worktree "$gitwt" --issue "$issue" --round-id "$R" 2>/dev/null)"
+rc=$?
+assert_eq "$rc" "0" "orphaned-but-real commit still exits 0 (non-fatal per vstack#994)"
+assert_eq "$(jq -r '.ok' <<<"$out")" "true" "orphaned commit reports ok=true"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "orphaned commit reports reason=valid"
+assert_eq "$(jq -r '.warning' <<<"$out")" "commit_unreachable" "orphaned commit reports warning=commit_unreachable"
+
+# analysis artifact (no commit key) in a git worktree → unaffected by the commit gates
+printf '%s' "$valid_analysis" > "$gartifact"
+out="$("$CHECK" --worktree "$gitwt" --issue "$issue" --round-id "$R")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "commit-less analysis artifact in a git worktree stays valid"
+assert_eq "$(jq -r '.warning' <<<"$out")" "null" "commit-less analysis artifact reports warning=null"
+
+# gate ordering: scalar invalid beats the commit gates; commit_unresolvable beats incomplete
+printf '%s' "$valid_impl" | jq -c 'del(.commit)' > "$gartifact"
+assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "invalid" "missing .commit in a git worktree stays reason=invalid (scalar gate first)"
+printf '%s' "$valid_fix" | jq -c --arg c "$fake_sha" '.commit=$c | .items=[]' > "$gartifact"
+assert_eq "$(reason --worktree "$gitwt" --issue "$issue" --round-id "$R")" "commit_unresolvable" "commit_unresolvable beats incomplete (fake sha + empty items)"
+
+# non-repo worktree keeps today's behavior: commit gates skipped, still valid
+printf '%s' "$valid_impl" > "$artifact"
+out="$("$CHECK" --worktree "$worktree" --issue "$issue" --round-id "$R")"
+assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "non-git worktree skips the commit gates (reason=valid)"
+assert_eq "$(jq -r '.warning' <<<"$out")" "null" "non-git worktree reports warning=null"
+
+# --file mode has no repo to check against → fabricated sha still validates
+gext="$TMP_ROOT/dev-return-994.json"
+printf '%s' "$valid_impl" | jq -c --arg c "$fake_sha" '.commit=$c' > "$gext"
+assert_eq "$(reason --file "$gext")" "valid" "--file mode skips the commit gates (no repo)"
+
 # --- doc wiring: ALL FOUR dev/QA paths mint a fresh round id + accept via round mode ---
 # dev-start / orch dev-fix / review-pr-comments / ci-fix each mint dev_round_id
 # before delegating and accept via dev-artifact-check round mode — one identity
