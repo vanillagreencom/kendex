@@ -11,6 +11,7 @@ import {
 	CONNECTOR_WRITE_TOOLS,
 	isConnectorWriteTool,
 	connectorWriteDenyHook,
+	settingSourcesForQuery,
 } from "../bundle/index.js";
 
 function withEnv(value, fn) {
@@ -52,6 +53,34 @@ test("toolIsolationForQuery(true) exposes connectors: drops empty tools, allows 
 	for (const d of CONNECTOR_DISCOVERY_TOOLS) assert.ok(!iso.disallowedTools.includes(d), `un-block ${d}`);
 	// File/shell built-ins stay blocked so Pi keeps tool ownership.
 	for (const b of ["Read", "Write", "Bash", "WebFetch"]) assert.ok(iso.disallowedTools.includes(b), `still block ${b}`);
+});
+
+// --- vstack#990: connectors mode must not load repo-controlled settings ---
+
+test("CONTRACT: connectors mode loads USER setting sources only", () => {
+	// Settings files carry `env` and `apiKeyHelper`; "project"/"local" would let
+	// a hostile checkout's .claude/settings.json reinject the provider-override
+	// env the bridge scrubs (e.g. ANTHROPIC_BASE_URL). Connector state is
+	// user-scope, so ["user"] is sufficient for connectors to surface.
+	assert.deepEqual(settingSourcesForQuery(true, true), ["user"]);
+	assert.deepEqual(settingSourcesForQuery(true, false), ["user"]);
+	for (const scope of ["project", "local"]) {
+		assert.ok(!settingSourcesForQuery(true, true).includes(scope), `must not include ${scope}`);
+	}
+});
+
+test("explicit provider.settingSources still wins verbatim in connectors mode", () => {
+	assert.deepEqual(settingSourcesForQuery(true, true, ["user", "project"]), ["user", "project"]);
+	assert.deepEqual(settingSourcesForQuery(true, true, []), []);
+});
+
+test("non-connectors setting sources are unchanged", () => {
+	// appendSystemPrompt=true → isolation; configured sources deliberately ignored.
+	assert.equal(settingSourcesForQuery(false, true), undefined);
+	assert.equal(settingSourcesForQuery(false, true, ["user"]), undefined);
+	// appendSystemPrompt=false → historical default, explicit override honored.
+	assert.deepEqual(settingSourcesForQuery(false, false), ["user", "project"]);
+	assert.deepEqual(settingSourcesForQuery(false, false, ["user", "local"]), ["user", "local"]);
 });
 
 test("discovery tools are a subset of the default disallow list", () => {

@@ -160,6 +160,8 @@ Set `allow` only for a one-shot write-executor session that has already obtained
 
 > **`allow` is per-process, not global.** A host's approved-write executor should set `CLAUDE_BRIDGE_CONNECTOR_WRITE=allow` in the **child env of a dedicated one-shot process** that runs the single approved write and exits. Do not set `connectorWriteMode: "allow"` in persistent `settings.json` (or `allow` process-globally) for a shared/long-lived sidecar — that would make every connector session in that process write-capable, defeating the approval gate.
 
+Connectors mode also makes the child Claude Code resolve its filesystem settings (with them off, the child runs fully isolated). Only **user-scope** settings are loaded — connector state lives in the account's config dir, so that is all connectors need. Project/local scope (a checkout's `.claude/settings.json`) is deliberately excluded: settings files can set an `env` map and `apiKeyHelper`, so a hostile repo could otherwise redirect the child's API traffic (`ANTHROPIC_BASE_URL`, key overrides) just by being the cwd of a connector query. Setting `provider.settingSources` in bridge config still overrides this verbatim, but listing `"project"`/`"local"` there reopens that surface — only do it for checkouts you trust.
+
 ### Isolated mode (embedding hosts)
 
 Host apps that embed the bridge and own every config dir explicitly can set `CLAUDE_BRIDGE_ISOLATED=1` in the bridge process env. Isolated mode disables every cwd/home discovery fallback so nothing outside the host-owned dirs is read:

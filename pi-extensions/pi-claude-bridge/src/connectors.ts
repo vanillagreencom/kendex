@@ -1,4 +1,4 @@
-import { type HookCallback, type query } from "@anthropic-ai/claude-agent-sdk";
+import { type HookCallback, type query, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { normalizeConnectorWriteMode, type Config, type ConnectorWriteMode } from "./config.js";
 import { MCP_SERVER_NAME } from "./skills.js";
 import { connectorProxyUrl, connectorServerName, type ConnectorInventory } from "./connector-inventory.js";
@@ -48,6 +48,41 @@ export function connectorsEnabledFromEnv(): boolean {
 // app enable it declaratively via its written settings.json.
 export function connectorsEnabledFor(config?: Config): boolean {
 	return connectorsEnabledFromEnv() || config?.provider?.enableConnectors === true;
+}
+
+// Which filesystem setting sources the `claude` child may load.
+//
+// claude.ai cloud MCP connectors only load when Claude Code resolves its
+// filesystem setting sources at all: the SDK treats settingSources=undefined as
+// isolation (no sources), which drops the connectors even with
+// ENABLE_CLAUDEAI_MCP_SERVERS=1. So connectors mode must pass SOME source list.
+//
+// It must be `["user"]` and nothing more (vstack#990). Connector state lives in
+// USER scope — the account's config dir (CLAUDE_CONFIG_DIR for managed router
+// profiles) — so user scope is sufficient for connectors to surface. Claude
+// Code settings files can also carry an `env` map and `apiKeyHelper`; including
+// "project"/"local" would let a repo's checked-in `.claude/settings.json`
+// reintroduce exactly the provider-override env the bridge scrubs from the
+// child (e.g. ANTHROPIC_BASE_URL → traffic redirection) on any bridge query
+// whose cwd is a hostile checkout. User scope is the account owner's own
+// machine config: whoever writes it already owns the child's env.
+//
+// An explicit `provider.settingSources` in bridge config still wins verbatim —
+// that config channel is user-scope/trust-gated (see loadConfig) — but adding
+// "project"/"local" there reopens the repo-controlled settings surface; the
+// README says so.
+export function settingSourcesForQuery(
+	connectorsEnabled: boolean,
+	appendSystemPrompt: boolean,
+	configured?: SettingSource[],
+): SettingSource[] | undefined {
+	if (connectorsEnabled) return configured ?? ["user"];
+	// Non-connectors: appendSystemPrompt=true (default) keeps SDK isolation
+	// (undefined = no filesystem settings; configured sources deliberately do
+	// not apply in isolation mode). If users turn it off they opted into Claude
+	// Code's own settings behavior; project scope there is the historical
+	// contract and runs alongside --strict-mcp-config (see the query builder).
+	return appendSystemPrompt ? undefined : configured ?? ["user", "project"];
 }
 
 // Cloud MCP connector tool namespaces auto-allowed when connectors are enabled.

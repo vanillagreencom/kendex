@@ -41,6 +41,14 @@ export interface Config {
 		forceEffort?: BridgeEffortLevel;
 		/** Per-model Claude Code effort overrides keyed by model id (e.g. claude-opus-4-8). */
 		modelEffortOverrides?: Record<string, BridgeEffortLevel>;
+		/**
+		 * Verbatim override for the child's filesystem setting sources.
+		 * Defaults (see settingSourcesForQuery in connectors.ts): connectors
+		 * mode uses ["user"] only, so repo-controlled `.claude/settings.json`
+		 * (project/local scope) cannot inject `env`/`apiKeyHelper` into the
+		 * child. Listing "project"/"local" here reopens that surface — only do
+		 * so for checkouts you trust.
+		 */
 		settingSources?: SettingSource[];
 		strictMcpConfig?: boolean;
 		pathToClaudeCodeExecutable?: string;

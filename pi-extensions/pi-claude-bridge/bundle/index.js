@@ -27412,6 +27412,10 @@ function connectorsEnabledFromEnv() {
 function connectorsEnabledFor(config2) {
   return connectorsEnabledFromEnv() || config2?.provider?.enableConnectors === true;
 }
+function settingSourcesForQuery(connectorsEnabled, appendSystemPrompt, configured) {
+  if (connectorsEnabled) return configured ?? ["user"];
+  return appendSystemPrompt ? void 0 : configured ?? ["user", "project"];
+}
 var CLAUDE_AI_CONNECTOR_TOOL_PATTERNS = [
   "mcp__claude_ai_Gmail__*",
   "mcp__claude_ai_Google_Calendar__*",
@@ -46052,7 +46056,11 @@ function streamClaudeAgentSdk(model, context, options) {
   const promptContextAppend = buildPromptContextAppend(context.systemPrompt, cwd, bridgeConfig.promptContext ?? {});
   const appendParts = [agentsAppend, skillsAppend, promptContextAppend.text].filter((part) => Boolean(part));
   const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : void 0;
-  const settingSources = enableCloudMcp ? providerSettings.settingSources ?? ["user", "project", "local"] : appendSystemPrompt ? void 0 : providerSettings.settingSources ?? ["user", "project"];
+  const settingSources = settingSourcesForQuery(
+    enableCloudMcp,
+    appendSystemPrompt,
+    providerSettings.settingSources
+  );
   const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
   const requestedEffort = options?.reasoning ? queryModel.thinkingLevelMap?.[options.reasoning] ?? REASONING_TO_EFFORT[options.reasoning] : void 0;
   const effort = resolveConfiguredEffort(queryModel.id, requestedEffort, providerSettings);
@@ -46633,6 +46641,7 @@ export {
   restoreSharedSessionFromPi,
   scheduleToolUseTurnEnd,
   setConnectorCallAuditSink,
+  settingSourcesForQuery,
   shouldRestorePersistedBridgeEntry,
   spawnClaudeCodeWithDiagnostics,
   streamClaudeAgentSdk,

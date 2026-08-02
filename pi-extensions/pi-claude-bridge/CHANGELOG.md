@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.0.1
+
+- **Connectors mode now loads only USER-scope settings in the child Claude Code** (previously `["user", "project", "local"]`). Claude Code settings files can set an `env` map and `apiKeyHelper`, so a checkout's `.claude/settings.json` could reintroduce the provider-override env the bridge scrubs from the child (e.g. `ANTHROPIC_BASE_URL`) on any connector query run in that cwd. Connector state lives in user scope, so connectors still surface unchanged. If a session genuinely needs project/local settings in the child, set `provider.settingSources` explicitly in bridge config (it still wins verbatim) — knowing it reopens the repo-controlled settings surface. Non-connectors behavior is unchanged. New export: `settingSourcesForQuery`.
+
 ### 3.0.0
 
 - **Multi-account subscription routing (optional).** A companion extension may publish an account router on `globalThis` under the versioned symbol `vstack.pi.claude-account-router.v1` to supply a subscription profile (opaque id, label, optional `CLAUDE_CONFIG_DIR`) for each fresh Claude request. The child environment, `cc-session-io` session files, resume IDs, connector inventory/cache scope, and usage probes are all scoped to the selected profile together. Classified pre-output failures (auth, billing, rate-limit, overloaded, server, network) rotate to the next profile — capped at 16 attempts per request — while protocol setup frames are buffered (`RetryEventBuffer`) so a retried attempt never leaks a duplicate `start` frame or replays committed output. Once visible text/thinking, a Pi tool call, or a child-executed connector dispatch has reached Pi, the request is never replayed on another account; post-output failures are still recorded for the next request's routing. Managed child processes drop inherited Anthropic API/provider-override env (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_*`, …) so the selected profile remains the billing identity. Without a router the bridge behaves exactly as before. The reciprocal `vstack.pi.claude-bridge.account-host.v1` service exposes a local `/usage` probe for account-management commands.
