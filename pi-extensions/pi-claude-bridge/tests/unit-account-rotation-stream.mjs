@@ -219,7 +219,7 @@ describe("legacy sessions (no account router)", () => {
 			return {
 				async *[Symbol.asyncIterator]() {
 					// Pi injected a steer mid-query; the provider path deferred it.
-					ctx().deferredUserMessages.push("queued steer");
+					ctx().deferredUserMessages.push({ text: "queued steer" });
 					yield { type: "system", subtype: "init", session_id: "session-legacy" };
 					for (const message of STREAMED_TEXT("partial work")) yield message;
 					yield { type: "result", subtype: "error_max_turns", errors: ["max turns exceeded"] };

@@ -44744,8 +44744,9 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account)
   if (sharedSession && sameAccount && !sharedSession.needsRebuild) {
     const batch = planIncrementalPromptBatch(messages, sharedSession.cursor);
     if (batch) {
+      const cursorBeforeUpdate = sharedSession.cursor;
       setSharedSession({ ...sharedSession, cursor: batch.promptStart, cwd });
-      const batching = batch.userMessageCount > 1 ? `batched ${batch.userMessageCount} consecutive user messages, ` : batch.promptStart > sharedSession.cursor ? "advanced cursor past trailing assistant, " : "";
+      const batching = batch.userMessageCount > 1 ? `batched ${batch.userMessageCount} consecutive user messages, ` : batch.promptStart > cursorBeforeUpdate ? "advanced cursor past trailing assistant, " : "";
       debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.promptStart}, account=${accountProfileId ?? "default"}`);
       debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${batch.promptStart} promptUsers=${batch.userMessageCount}`);
       return {
@@ -45962,10 +45963,12 @@ function planDeferredUserReplay(messages) {
   while (runStart > 0 && messages[runStart - 1]?.role === "user") runStart--;
   const trailingUsers = messages.slice(runStart);
   const prompt = trailingUsers.length > 0 ? extractUserPrompt(trailingUsers) : null;
+  const blocks = trailingUsers.length > 0 ? extractUserPromptBlocks(trailingUsers) : null;
   return {
     runStart,
     userMessageCount: trailingUsers.length,
-    prompt: prompt?.trim() ? prompt : null
+    prompt: prompt?.trim() ? prompt : null,
+    blocks
   };
 }
 async function* wrapPromptStream(blocks) {
@@ -46179,9 +46182,9 @@ function streamClaudeAgentSdk(model, context, options) {
     let capturedThrough = context.messages.length;
     if (lastMsgRole === "user") {
       const replay = planDeferredUserReplay(context.messages);
-      if (replay.prompt) {
-        ctx().deferredUserMessages.push(replay.prompt);
-        debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query: ${replay.prompt.slice(0, 60)}`);
+      if (replay.prompt || replay.blocks) {
+        ctx().deferredUserMessages.push({ text: replay.prompt ?? "", blocks: replay.blocks ?? void 0 });
+        debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query${replay.blocks ? ` (${replay.blocks.length} blocks incl. images)` : ""}: ${(replay.prompt ?? "[image-only]").slice(0, 60)}`);
       } else {
         capturedThrough = replay.runStart;
         diagDump("deferred_user_replay_skipped", {
@@ -46381,14 +46384,14 @@ function streamClaudeAgentSdk(model, context, options) {
     if (isReentrant) return;
     markSessionForRebuild(opts);
   };
-  const dropDeferredUserMessages = (site, undeliveredPrompt) => {
-    const dropped = [...undeliveredPrompt !== void 0 ? [undeliveredPrompt] : [], ...abortCtx.deferredUserMessages];
+  const dropDeferredUserMessages = (site, undelivered) => {
+    const dropped = [...undelivered !== void 0 ? [undelivered] : [], ...abortCtx.deferredUserMessages];
     abortCtx.deferredUserMessages = [];
     if (dropped.length > 0) {
       diagDump("deferred_user_messages_dropped", {
         site,
         count: dropped.length,
-        previews: dropped.map((message) => message.slice(0, 60))
+        previews: dropped.map((message) => (message.text || "[image-only]").slice(0, 60))
       });
     }
     return dropped;
@@ -46560,26 +46563,27 @@ function streamClaudeAgentSdk(model, context, options) {
     if (account && router) safeRouterCall("recordSuccess", () => router.recordSuccess(account.profileId, options?.sessionId));
     try {
       while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
-        const steerPrompt = abortCtx.deferredUserMessages.shift();
-        debug(`provider: replaying deferred user message: ${steerPrompt.slice(0, 60)}`);
+        const steer = abortCtx.deferredUserMessages.shift();
+        const steerPreview = (steer.text || "[image-only]").slice(0, 60);
+        debug(`provider: replaying deferred user message: ${steerPreview}`);
         abortCtx.resetTurnState(queryModel);
         abortCtx.resetToolTracking();
         const resumeId = sharedSession?.sessionId;
         if (!resumeId) {
           debug(`WARNING: no session to resume for deferred message, dropping`);
-          dropDeferredUserMessages("continuation-no-resume-id", steerPrompt);
+          dropDeferredUserMessages("continuation-no-resume-id", steer);
           break;
         }
         const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
-        const contQuery = sdkQueryFactory({ prompt: steerPrompt, options: contOptions });
+        const contQuery = sdkQueryFactory({ prompt: steer.blocks ? wrapPromptStream(steer.blocks) : steer.text, options: contOptions });
         abortCtx.activeQuery = contQuery;
-        debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPrompt.slice(0, 60)}`);
+        debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPreview}`);
         try {
           const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, account, router);
           if (continuation.failure) {
             recordAttemptFailure(continuation.failure);
             if (!abortCtx.handledTerminalError) surfaceFailure(continuation.failure);
-            if (dropDeferredUserMessages("continuation-failure", steerPrompt).length > 0) {
+            if (dropDeferredUserMessages("continuation-failure", steer).length > 0) {
               markRebuildForThisQuery();
             }
             break;
@@ -46596,7 +46600,7 @@ function streamClaudeAgentSdk(model, context, options) {
           };
           recordAttemptFailure(continuationFailure);
           if (!abortCtx.handledTerminalError) surfaceFailure(continuationFailure);
-          if (dropDeferredUserMessages("continuation-error", steerPrompt).length > 0) {
+          if (dropDeferredUserMessages("continuation-error", steer).length > 0) {
             markRebuildForThisQuery();
           }
           break;

@@ -409,10 +409,15 @@ export function syncSharedSession(
 	if (sharedSession && sameAccount && !sharedSession.needsRebuild) {
 		const batch = planIncrementalPromptBatch(messages, sharedSession.cursor);
 		if (batch) {
+			// Read the pre-update cursor first: setSharedSession reassigns the live
+			// binding, so comparing against sharedSession.cursor afterwards would
+			// always be equal and the "advanced past trailing assistant" debug
+			// branch could never print (vstack#993).
+			const cursorBeforeUpdate = sharedSession.cursor;
 			setSharedSession({ ...sharedSession, cursor: batch.promptStart, cwd });
 			const batching = batch.userMessageCount > 1
 				? `batched ${batch.userMessageCount} consecutive user messages, `
-				: batch.promptStart > sharedSession.cursor ? "advanced cursor past trailing assistant, " : "";
+				: batch.promptStart > cursorBeforeUpdate ? "advanced cursor past trailing assistant, " : "";
 			debug(`Case 3: ${batching}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${batch.promptStart}, account=${accountProfileId ?? "default"}`);
 			debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${batch.promptStart} promptUsers=${batch.userMessageCount}`);
 			return {

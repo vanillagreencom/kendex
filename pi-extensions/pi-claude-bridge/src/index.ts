@@ -7,7 +7,7 @@ import { PROVIDER_ID, messageContentToText } from "./convert.js";
 import { buildModels, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
-import { QueryContext, ctx, drainPendingToolCalls, popContext, stackDepth, pushContext, toolCallDrainCause } from "./query-state.js";
+import { QueryContext, ctx, drainPendingToolCalls, popContext, stackDepth, pushContext, toolCallDrainCause, type DeferredUserMessage } from "./query-state.js";
 import { teardownQuery } from "./query-teardown.js";
 import { loadConfig, recordProjectTrust, registerExternalConfigResolver } from "./config.js";
 import { hasClaudeCredentials } from "./auth-presence.js";
@@ -233,8 +233,12 @@ export interface DeferredUserReplayPlan {
 	runStart: number;
 	userMessageCount: number;
 	// All trailing user messages combined into one replay prompt, or null when
-	// there is nothing usable to replay (no trailing users, or all-empty text).
+	// there is nothing usable to replay (no trailing users, or all-empty text
+	// with no image blocks).
 	prompt: string | null;
+	// Present when the run carries image blocks — the replay must send these
+	// (via wrapPromptStream) or the images are silently lost (vstack#993).
+	blocks: ContentBlockParam[] | null;
 }
 
 /** Plan replay of user messages pi injected mid-query (steer drain, followUp).
@@ -245,10 +249,12 @@ export function planDeferredUserReplay(messages: Context["messages"]): DeferredU
 	while (runStart > 0 && messages[runStart - 1]?.role === "user") runStart--;
 	const trailingUsers = messages.slice(runStart);
 	const prompt = trailingUsers.length > 0 ? extractUserPrompt(trailingUsers) : null;
+	const blocks = trailingUsers.length > 0 ? extractUserPromptBlocks(trailingUsers) : null;
 	return {
 		runStart,
 		userMessageCount: trailingUsers.length,
 		prompt: prompt?.trim() ? prompt : null,
+		blocks,
 	};
 }
 
@@ -591,9 +597,11 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		let capturedThrough = context.messages.length;
 		if (lastMsgRole === "user") {
 			const replay = planDeferredUserReplay(context.messages);
-			if (replay.prompt) {
-				ctx().deferredUserMessages.push(replay.prompt);
-				debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query: ${replay.prompt.slice(0, 60)}`);
+			// Image-only runs have no usable text but must still replay — capture
+			// whenever EITHER form has content (vstack#993).
+			if (replay.prompt || replay.blocks) {
+				ctx().deferredUserMessages.push({ text: replay.prompt ?? "", blocks: replay.blocks ?? undefined });
+				debug(`provider: deferred ${replay.userMessageCount} user message(s) for replay after query${replay.blocks ? ` (${replay.blocks.length} blocks incl. images)` : ""}: ${(replay.prompt ?? "[image-only]").slice(0, 60)}`);
 			} else {
 				capturedThrough = replay.runStart;
 				diagDump("deferred_user_replay_skipped", {
@@ -872,14 +880,14 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 	// LOUDLY — the cursor already advanced over it on the promise of replay.
 	// Callers that keep a session record after a non-empty drop must persist it
 	// with needsRebuild so the next turn re-imports the steers from Pi history.
-	const dropDeferredUserMessages = (site: string, undeliveredPrompt?: string): string[] => {
-		const dropped = [...(undeliveredPrompt !== undefined ? [undeliveredPrompt] : []), ...abortCtx.deferredUserMessages];
+	const dropDeferredUserMessages = (site: string, undelivered?: DeferredUserMessage): DeferredUserMessage[] => {
+		const dropped = [...(undelivered !== undefined ? [undelivered] : []), ...abortCtx.deferredUserMessages];
 		abortCtx.deferredUserMessages = [];
 		if (dropped.length > 0) {
 			diagDump("deferred_user_messages_dropped", {
 				site,
 				count: dropped.length,
-				previews: dropped.map((message) => message.slice(0, 60)),
+				previews: dropped.map((message) => (message.text || "[image-only]").slice(0, 60)),
 			});
 		}
 		return dropped;
@@ -1104,8 +1112,9 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 			// deferred messages for the parent to handle after it finishes.
 			try {
 				while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
-					const steerPrompt = abortCtx.deferredUserMessages.shift()!;
-					debug(`provider: replaying deferred user message: ${steerPrompt.slice(0, 60)}`);
+					const steer = abortCtx.deferredUserMessages.shift()!;
+					const steerPreview = (steer.text || "[image-only]").slice(0, 60);
+					debug(`provider: replaying deferred user message: ${steerPreview}`);
 					abortCtx.resetTurnState(queryModel);
 					abortCtx.resetToolTracking();
 
@@ -1114,15 +1123,17 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 						debug(`WARNING: no session to resume for deferred message, dropping`);
 						// No record survives here (no session id), so the next turn
 						// rebuilds from Pi history anyway — but the drop is still diagnosed.
-						dropDeferredUserMessages("continuation-no-resume-id", steerPrompt);
+						dropDeferredUserMessages("continuation-no-resume-id", steer);
 						break;
 					}
 
 					const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
-					const contQuery = sdkQueryFactory({ prompt: steerPrompt, options: contOptions });
+					// Runs carrying image blocks replay as blocks (wrapPromptStream) so
+					// the images survive; text-only runs stay plain strings (vstack#993).
+					const contQuery = sdkQueryFactory({ prompt: steer.blocks ? wrapPromptStream(steer.blocks) : steer.text, options: contOptions });
 					abortCtx.activeQuery = contQuery;
 
-					debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPrompt.slice(0, 60)}`);
+					debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPreview}`);
 
 					try {
 						const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, account, router);
@@ -1134,7 +1145,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 							// The shifted steer may never have reached the child, and any
 							// remaining ones certainly did not — the record must rebuild so
 							// they re-import from Pi history (#967).
-							if (dropDeferredUserMessages("continuation-failure", steerPrompt).length > 0) {
+							if (dropDeferredUserMessages("continuation-failure", steer).length > 0) {
 								markRebuildForThisQuery();
 							}
 							break;
@@ -1152,7 +1163,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 						recordAttemptFailure(continuationFailure);
 						if (!abortCtx.handledTerminalError) surfaceFailure(continuationFailure);
 						// Same #967 posture as the failure branch above.
-						if (dropDeferredUserMessages("continuation-error", steerPrompt).length > 0) {
+						if (dropDeferredUserMessages("continuation-error", steer).length > 0) {
 							markRebuildForThisQuery();
 						}
 						break;

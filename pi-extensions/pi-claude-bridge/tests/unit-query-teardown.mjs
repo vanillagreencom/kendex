@@ -43,12 +43,12 @@ describe("popContextFor", () => {
 		parent.activeQuery = "q-parent";
 		pushContext();
 		const child = ctx();
-		child.deferredUserMessages.push("steer");
+		child.deferredUserMessages.push({ text: "steer" });
 
 		assert.equal(popContextFor(child), true);
 		assert.equal(ctx(), parent);
 		assert.equal(stackDepth(), 0);
-		assert.deepEqual(parent.deferredUserMessages, ["steer"]);
+		assert.deepEqual(parent.deferredUserMessages, [{ text: "steer" }]);
 	});
 
 	it("splices a buried context out of the stack without touching the live child", () => {
@@ -57,7 +57,7 @@ describe("popContextFor", () => {
 		pushContext();
 		const mid = ctx();
 		mid.activeQuery = "q-mid";
-		mid.deferredUserMessages.push("mid-steer");
+		mid.deferredUserMessages.push({ text: "mid-steer" });
 		pushContext();
 		const grandchild = ctx();
 
@@ -66,7 +66,7 @@ describe("popContextFor", () => {
 		assert.equal(ctx(), grandchild);
 		assert.equal(stackDepth(), 1);
 		// mid's deferred messages went to ITS parent (outer), not the grandchild.
-		assert.deepEqual(outer.deferredUserMessages, ["mid-steer"]);
+		assert.deepEqual(outer.deferredUserMessages, [{ text: "mid-steer" }]);
 		assert.deepEqual(grandchild.deferredUserMessages, []);
 
 		// The grandchild's own pop now restores the correct grandparent.
@@ -156,7 +156,7 @@ describe("teardownQuery", () => {
 		const mid = ctx();
 		const midQuery = { id: "mid-query" };
 		mid.activeQuery = midQuery;
-		mid.deferredUserMessages.push("mid-steer");
+		mid.deferredUserMessages.push({ text: "mid-steer" });
 		const midWaiting = registerWaitingCall(mid, "mid-call");
 
 		pushContext();
@@ -170,7 +170,7 @@ describe("teardownQuery", () => {
 		// Grandchild stays live; mid was spliced out and its deferreds went to outer.
 		assert.equal(ctx(), grandchild);
 		assert.equal(stackDepth(), 1);
-		assert.deepEqual(outer.deferredUserMessages, ["mid-steer"]);
+		assert.deepEqual(outer.deferredUserMessages, [{ text: "mid-steer" }]);
 
 		popContext();
 		assert.equal(ctx(), outer);

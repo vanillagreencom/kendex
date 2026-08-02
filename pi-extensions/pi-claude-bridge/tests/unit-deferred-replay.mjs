@@ -58,3 +58,45 @@ describe("planDeferredUserReplay", () => {
 		assert.equal(plan.prompt, null);
 	});
 });
+
+// vstack#993 item 2: the replay queue was text-only (string[]), so a mid-query
+// user message carrying image blocks replayed as its text alone and the images
+// were silently dropped. The plan now also carries the block form when images
+// are present, and an image-only run must be captured, not skipped.
+describe("planDeferredUserReplay image blocks (vstack#993)", () => {
+	const image = () => ({ type: "image", data: "aGk=", mimeType: "image/png" });
+
+	it("carries blocks alongside text for a mixed run", () => {
+		const messages = [
+			{ role: "assistant", content: [] },
+			{ role: "user", content: [{ type: "text", text: "look at this" }, image()] },
+			{ role: "user", content: "and fix it" },
+		];
+
+		const plan = planDeferredUserReplay(messages);
+
+		assert.equal(plan.userMessageCount, 2);
+		assert.equal(plan.prompt, "look at this\n\nand fix it");
+		assert.ok(Array.isArray(plan.blocks), "block form present when the run carries images");
+		assert.ok(plan.blocks.some((b) => b.type === "image"), "image block preserved");
+		assert.ok(plan.blocks.some((b) => b.type === "text" && b.text === "and fix it"), "text preserved in block form");
+	});
+
+	it("captures an image-only run (no usable text) instead of skipping it", () => {
+		const messages = [
+			{ role: "assistant", content: [] },
+			{ role: "user", content: [image()] },
+		];
+
+		const plan = planDeferredUserReplay(messages);
+
+		assert.equal(plan.prompt, null);
+		assert.ok(Array.isArray(plan.blocks) && plan.blocks.length > 0, "image-only run still produces a replay payload");
+	});
+
+	it("returns null blocks for a text-only run", () => {
+		const plan = planDeferredUserReplay([{ role: "user", content: "plain" }]);
+		assert.equal(plan.blocks, null);
+		assert.equal(plan.prompt, "plain");
+	});
+});

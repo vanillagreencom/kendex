@@ -6,9 +6,20 @@
 //
 // Extracted from index.ts so tests can import without activating the extension.
 
+import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import type { AssistantMessage, AssistantMessageEventStream, Model } from "@earendil-works/pi-ai";
 import { isConnectorTool } from "./connectors.js";
 import type { McpResult } from "./extract-tool-results.js";
+
+/** A mid-query user run captured for replay after the active query ends.
+ *  `text` is the joined text form (previews, and the replay prompt when no
+ *  image blocks were captured). `blocks` is present when the run carried
+ *  images — the replay must send the blocks or the images are silently lost
+ *  (vstack#993). */
+export interface DeferredUserMessage {
+	text: string;
+	blocks?: ContentBlockParam[];
+}
 
 export interface PendingToolCall {
 	toolName: string;
@@ -166,7 +177,7 @@ export class QueryContext {
 	resolvedToolResultIds = new Set<string>();
 	unmatchedToolResultIds = new Set<string>();
 	reportedToolResultMismatch = false;
-	deferredUserMessages: string[] = [];
+	deferredUserMessages: DeferredUserMessage[] = [];
 	handledTerminalError = false;
 	// Once visible text/thinking, a complete tool call, or a child-executed
 	// CONNECTOR dispatch reaches Pi, the request must never be replayed on
