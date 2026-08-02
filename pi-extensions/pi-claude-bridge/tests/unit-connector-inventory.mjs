@@ -87,10 +87,33 @@ describe("credential resolution", () => {
 		assert.equal(resolveClaudeOAuth(() => undefined, { HOME: "/h" }), undefined);
 	});
 
-	it("probes CLAUDE_CONFIG_DIR paths before HOME paths", () => {
+	it("probes ONLY the CLAUDE_CONFIG_DIR root when it is set (no HOME fallback)", () => {
+		// A managed profile with a missing .credentials.json must NOT silently
+		// borrow the default account's token — that is a confident, well-formed
+		// answer for the wrong account.
 		const paths = credentialCandidatePaths({ HOME: "/h", CLAUDE_CONFIG_DIR: "/cfg" });
-		assert.equal(paths[0], "/cfg/.credentials.json");
-		assert.ok(paths.indexOf("/cfg/.claude.json") < paths.indexOf("/h/.claude/.credentials.json"));
+		assert.deepEqual(paths, ["/cfg/.credentials.json", "/cfg/.claude.json"]);
+	});
+
+	it("keeps the HOME candidates when no config dir is selected", () => {
+		const paths = credentialCandidatePaths({ HOME: "/h" });
+		assert.deepEqual(paths, [
+			"/h/.claude/.credentials.json",
+			"/h/.claude/.claude.json",
+			"/h/.credentials.json",
+			"/h/.claude.json",
+		]);
+	});
+
+	it("a managed profile missing its credentials resolves nothing rather than the default account", () => {
+		const files = {
+			// Default account fully present under HOME…
+			"/h/.claude/.credentials.json": JSON.stringify({ claudeAiOauth: { accessToken: "default-tok" } }),
+			"/h/.claude.json": JSON.stringify({ oauthAccount: { organizationUuid: "default-org" } }),
+		};
+		// …but the selected profile dir is empty: no borrowing.
+		const got = resolveClaudeOAuth((p) => files[p], { HOME: "/h", CLAUDE_CONFIG_DIR: "/profiles/b" });
+		assert.equal(got, undefined);
 	});
 });
 

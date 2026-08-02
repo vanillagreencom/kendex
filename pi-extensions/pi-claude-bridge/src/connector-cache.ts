@@ -37,6 +37,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { piUserDir } from "./config.js";
+import { debug } from "./debug.js";
 import type { ConnectorEntry } from "./connector-inventory.js";
 
 const CACHE_VERSION = 2;
@@ -88,7 +89,10 @@ export function readCachedConnectors(
 	let parsed: any;
 	try {
 		parsed = JSON.parse(raw);
-	} catch {
+	} catch (error) {
+		// A corrupt cache degrades to the no-cache path by contract, but silently
+		// doing so on every turn is how a bad file hides forever.
+		debug(`connector-cache: corrupt cache ${connectorCachePath(scopeKey)}:`, error instanceof Error ? error.message : String(error));
 		return undefined;
 	}
 	if (parsed?.version !== CACHE_VERSION) return undefined;
@@ -124,7 +128,10 @@ export function writeCachedConnectors(
 			{ mode: 0o600 },
 		);
 		return true;
-	} catch {
+	} catch (error) {
+		// Best-effort by contract, but a persistent write failure means every cold
+		// process re-loses the turn-1 race this cache exists to win — say so.
+		debug(`connector-cache: write failed ${path}:`, error instanceof Error ? error.message : String(error));
 		return false;
 	}
 }

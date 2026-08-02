@@ -15,9 +15,12 @@ function connectorServerNamespace(connectorName) {
 function credentialCandidatePaths(env = process.env) {
   const roots = [];
   const configDir = env.CLAUDE_CONFIG_DIR?.trim();
-  if (configDir) roots.push(configDir);
-  const home = env.HOME?.trim();
-  if (home) roots.push(`${home}/.claude`, home);
+  if (configDir) {
+    roots.push(configDir);
+  } else {
+    const home = env.HOME?.trim();
+    if (home) roots.push(`${home}/.claude`, home);
+  }
   const seen = /* @__PURE__ */ new Set();
   const paths = [];
   for (const root of roots) {

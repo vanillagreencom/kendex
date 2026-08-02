@@ -10,6 +10,7 @@
 import type { AssistantMessageEvent, AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { debug } from "./debug.js";
 
 export const CLAUDE_ACCOUNT_ROUTER_SYMBOL = Symbol.for("vstack.pi.claude-account-router.v1");
 export const CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL = Symbol.for("vstack.pi.claude-bridge.account-host.v1");
@@ -75,6 +76,17 @@ export function resolveClaudeAccountRouter(): ClaudeAccountRouterV1 | undefined 
 	const host = globalThis as unknown as Record<PropertyKey, unknown>;
 	const candidate = host[CLAUDE_ACCOUNT_ROUTER_SYMBOL] as ClaudeAccountRouterV1 | undefined;
 	return candidate?.version === 1 ? candidate : undefined;
+}
+
+/** Run a companion-router telemetry callback without letting it fail the turn.
+ *  The router is third-party code reached from delivery paths (a throwing
+ *  recordSuccess would otherwise error a turn whose answer already rendered). */
+export function safeRouterCall(label: string, call: () => void): void {
+	try {
+		call();
+	} catch (error) {
+		debug(`router callback ${label} threw:`, error);
+	}
 }
 
 export function subscriberProfileEnv(

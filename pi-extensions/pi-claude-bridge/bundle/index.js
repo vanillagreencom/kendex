@@ -26941,13 +26941,88 @@ function splitPrefixSuffix(input, options = {}) {
 // src/config.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 import { homedir } from "os";
-import { dirname, join as join2, resolve as resolve2, sep as sep2 } from "path";
+import { dirname as dirname2, join as join3, resolve as resolve2, sep as sep2 } from "path";
+
+// src/debug.ts
+import { appendFileSync as appendFileSync2, chmodSync, mkdirSync as mkdirSync2 } from "fs";
+import { dirname, join as join2 } from "path";
+var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
+var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join2(piUserDir(), "claude-bridge.log");
+function diagLogPath() {
+  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join2(piUserDir(), "claude-bridge-diag.log");
+}
+if (DEBUG) {
+  try {
+    mkdirSync2(dirname(DEBUG_LOG_PATH), { recursive: true, mode: 448 });
+    mkdirSync2(dirname(diagLogPath()), { recursive: true, mode: 448 });
+  } catch {
+  }
+}
+var moduleInstanceId = Math.random().toString(36).slice(2, 8);
+function debug(...args) {
+  if (!DEBUG) return;
+  const ts2 = (/* @__PURE__ */ new Date()).toISOString();
+  const fmt = (a) => {
+    if (typeof a === "string") return a;
+    if (a instanceof Error) return `${a.name}: ${a.message}${a.stack ? "\n" + a.stack : ""}`;
+    return JSON.stringify(a);
+  };
+  const msg = args.map(fmt).join(" ");
+  try {
+    appendFileSync2(DEBUG_LOG_PATH, `[${ts2}] [${moduleInstanceId}] ${msg}
+`, { mode: 384 });
+  } catch {
+  }
+}
+var nextCliDebugSeq = 1;
+function makeCliDebugOptions(tag) {
+  if (!DEBUG) return {};
+  const seq = nextCliDebugSeq++;
+  const ts2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+  const logDir = join2(dirname(DEBUG_LOG_PATH), "cc-cli-logs");
+  try {
+    mkdirSync2(logDir, { recursive: true, mode: 448 });
+  } catch {
+  }
+  const debugFile = join2(logDir, `${ts2}-${tag}-${seq}.log`);
+  debug(`cli-debug: ${tag} #${seq} \u2192 ${debugFile}`);
+  return {
+    debug: true,
+    debugFile,
+    stderr: (data) => {
+      for (const line of data.split(/\r?\n/)) {
+        if (line) debug(`[cli-stderr ${tag}#${seq}] ${line}`);
+      }
+    }
+  };
+}
+function diagDump(label, data) {
+  try {
+    const ts2 = (/* @__PURE__ */ new Date()).toISOString();
+    const entry = { ts: ts2, moduleInstanceId, label, ...data };
+    const path = diagLogPath();
+    try {
+      mkdirSync2(dirname(path), { recursive: true, mode: 448 });
+    } catch {
+    }
+    appendFileSync2(path, JSON.stringify(entry) + "\n", { mode: 384 });
+    try {
+      chmodSync(path, 384);
+    } catch {
+    }
+    debug(`DIAG: ${label} (see ${path})`);
+  } catch (error51) {
+    debug(`DIAG FAILED: ${label}`, error51);
+  }
+}
+
+// src/config.ts
 var PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
 var EXTERNAL_CONFIG_RESOLVER_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.extension-config-resolver");
 var VALID_EFFORT_LEVELS = /* @__PURE__ */ new Set(["low", "medium", "high", "xhigh", "max"]);
 function expandHome(input) {
   if (input === "~") return homedir();
-  if (input.startsWith("~/")) return join2(homedir(), input.slice(2));
+  if (input.startsWith("~/")) return join3(homedir(), input.slice(2));
   return input;
 }
 function piUserDir() {
@@ -26972,11 +27047,11 @@ function mergeDeep(target, source) {
 function projectSettingsPath(cwd) {
   let current = resolve2(cwd);
   while (true) {
-    const candidate = join2(current, ".pi", "settings.json");
+    const candidate = join3(current, ".pi", "settings.json");
     if (existsSync2(candidate)) return candidate;
-    if (existsSync2(join2(current, ".pi")) || existsSync2(join2(current, ".git")) || existsSync2(join2(current, ".vstack-lock.json"))) return candidate;
-    const parent = dirname(current);
-    if (parent === current) return join2(resolve2(cwd), ".pi", "settings.json");
+    if (existsSync2(join3(current, ".pi")) || existsSync2(join3(current, ".git")) || existsSync2(join3(current, ".vstack-lock.json"))) return candidate;
+    const parent = dirname2(current);
+    if (parent === current) return join3(resolve2(cwd), ".pi", "settings.json");
     current = parent;
   }
 }
@@ -27006,7 +27081,7 @@ function projectSettingsTrusted(settingsPath) {
   return projectTrustRegistry().projectSettings?.get(settingsPath) === true;
 }
 function settingsPaths(cwd) {
-  const user = join2(piUserDir(), "settings.json");
+  const user = join3(piUserDir(), "settings.json");
   if (isolatedFromEnv()) return [];
   const project = projectSettingsPath(cwd);
   return projectSettingsTrusted(project) ? [user, project] : [user];
@@ -27015,23 +27090,38 @@ function tryParseJson(path) {
   if (!existsSync2(path)) return {};
   try {
     return JSON.parse(readFileSync2(path, "utf-8"));
-  } catch {
+  } catch (error51) {
+    debug(`config: ignoring malformed ${path}:`, error51 instanceof Error ? error51.message : String(error51));
     return {};
   }
 }
 function readManagerConfig(cwd) {
   const merged = {};
+  const userPath = join3(piUserDir(), "settings.json");
   for (const path of settingsPaths(cwd)) {
     if (!existsSync2(path)) continue;
     try {
       const parsed = JSON.parse(readFileSync2(path, "utf8"));
       const configRoot = asRecord(asRecord(asRecord(parsed?.vstack)?.extensionManager)?.config);
       const config2 = asRecord(configRoot?.[PACKAGE_ID]);
-      if (config2) mergeDeep(merged, config2);
-    } catch {
+      if (config2) mergeDeep(merged, path === userPath ? config2 : withoutUserScopeOnlyKeys(config2));
+    } catch (error51) {
+      debug(`config: ignoring malformed manager config ${path}:`, error51 instanceof Error ? error51.message : String(error51));
     }
   }
   return merged;
+}
+var USER_SCOPE_ONLY_PROVIDER_KEYS = ["enableConnectors", "connectorWriteMode"];
+function withoutUserScopeOnlyKeys(raw) {
+  const out = { ...raw };
+  for (const key of USER_SCOPE_ONLY_PROVIDER_KEYS) delete out[key];
+  return out;
+}
+function stripUserScopeOnlyProviderKeys(config2) {
+  if (!config2.provider) return config2;
+  const provider = { ...config2.provider };
+  for (const key of USER_SCOPE_ONLY_PROVIDER_KEYS) delete provider[key];
+  return { ...config2, provider };
 }
 function boolFrom(raw, key) {
   return typeof raw[key] === "boolean" ? raw[key] : void 0;
@@ -27138,13 +27228,13 @@ function legacyFileConfig(path) {
   };
 }
 function legacyLayers(cwd) {
-  const globalPath = join2(piUserDir(), "claude-bridge.json");
+  const globalPath = join3(piUserDir(), "claude-bridge.json");
   const layers = [{ path: globalPath, config: legacyFileConfig(globalPath) }];
   if (isolatedFromEnv()) return layers;
   const projectSettings = projectSettingsPath(cwd);
   if (!projectSettingsTrusted(projectSettings)) return layers;
-  const projectPath = join2(dirname(projectSettings), "claude-bridge.json");
-  return [...layers, { path: projectPath, config: legacyFileConfig(projectPath) }];
+  const projectPath = join3(dirname2(projectSettings), "claude-bridge.json");
+  return [...layers, { path: projectPath, config: stripUserScopeOnlyProviderKeys(legacyFileConfig(projectPath)) }];
 }
 function mergeLayers(layers) {
   const merged = { provider: {}, promptContext: {} };
@@ -27243,9 +27333,12 @@ function connectorServerNamespace(connectorName) {
 function credentialCandidatePaths(env = process.env) {
   const roots = [];
   const configDir = env.CLAUDE_CONFIG_DIR?.trim();
-  if (configDir) roots.push(configDir);
-  const home = env.HOME?.trim();
-  if (home) roots.push(`${home}/.claude`, home);
+  if (configDir) {
+    roots.push(configDir);
+  } else {
+    const home = env.HOME?.trim();
+    if (home) roots.push(`${home}/.claude`, home);
+  }
   const seen = /* @__PURE__ */ new Set();
   const paths = [];
   for (const root of roots) {
@@ -27622,8 +27715,7 @@ function connectorWriteDenyHook() {
       if (!isConnectorWriteTool(input.tool_name)) return { continue: true };
       return connectorWriteDenyOutput(input.tool_name);
     } catch {
-      const toolName = typeof input?.tool_name === "string" ? input.tool_name : "<unknown>";
-      return connectorWriteDenyOutput(toolName);
+      return connectorWriteDenyOutput(safeToolNameFrom(input));
     }
   };
 }
@@ -27636,10 +27728,62 @@ function connectorWriteDenyOutput(toolName) {
     }
   };
 }
+function isAllowlistedConnectorSessionTool(name) {
+  return name.startsWith(MCP_TOOL_PREFIX) || name.startsWith(CONNECTOR_NS_PREFIX2) || CONNECTOR_DISCOVERY_TOOLS.includes(name);
+}
+function connectorBuiltinAllowlistHook() {
+  return async (input) => {
+    try {
+      if (input.hook_event_name !== "PreToolUse") return { continue: true };
+      if (typeof input.tool_name !== "string") return allowlistDenyOutput("<unknown>");
+      if (isAllowlistedConnectorSessionTool(input.tool_name)) return { continue: true };
+      return allowlistDenyOutput(input.tool_name);
+    } catch {
+      return allowlistDenyOutput(safeToolNameFrom(input));
+    }
+  };
+}
+function safeToolNameFrom(input) {
+  try {
+    const candidate = input?.tool_name;
+    return typeof candidate === "string" ? candidate : "<unknown>";
+  } catch {
+    return "<unknown>";
+  }
+}
+function allowlistDenyOutput(toolName) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: `Tool "${toolName}" is not available in this connector session. Only bridged custom tools, claude.ai connector tools, and tool discovery are permitted here.`
+    }
+  };
+}
+function denyAllToolsHook() {
+  return async (input) => {
+    try {
+      if (input.hook_event_name !== "PreToolUse") return { continue: true };
+      return denyAllOutput(typeof input.tool_name === "string" ? input.tool_name : "<unknown>");
+    } catch {
+      return denyAllOutput("<unknown>");
+    }
+  };
+}
+function denyAllOutput(toolName) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: `Tool "${toolName}" is not available: this session executes no tools.`
+    }
+  };
+}
 function connectorQueryOptions(connectorsEnabled, writeMode = "deny") {
   const isolation = toolIsolationForQuery(connectorsEnabled, writeMode);
-  if (!connectorsEnabled || writeMode === "allow") return isolation;
-  return { ...isolation, hooks: { PreToolUse: [{ hooks: [connectorWriteDenyHook()] }] } };
+  if (!connectorsEnabled) return isolation;
+  const hooks = writeMode === "allow" ? [connectorBuiltinAllowlistHook()] : [connectorBuiltinAllowlistHook(), connectorWriteDenyHook()];
+  return { ...isolation, hooks: { PreToolUse: [{ hooks }] } };
 }
 function toolIsolationForQuery(connectorsEnabled, writeMode = "deny") {
   if (!connectorsEnabled) return CLAUDE_BRIDGE_TOOL_ISOLATION;
@@ -28326,79 +28470,6 @@ function popContextFor(target) {
   return true;
 }
 
-// src/debug.ts
-import { appendFileSync as appendFileSync2, chmodSync, mkdirSync as mkdirSync2 } from "fs";
-import { dirname as dirname2, join as join3 } from "path";
-var DEBUG = process.env.CLAUDE_BRIDGE_DEBUG === "1";
-var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join3(piUserDir(), "claude-bridge.log");
-function diagLogPath() {
-  return process.env.CLAUDE_BRIDGE_DIAG_PATH || join3(piUserDir(), "claude-bridge-diag.log");
-}
-if (DEBUG) {
-  try {
-    mkdirSync2(dirname2(DEBUG_LOG_PATH), { recursive: true });
-    mkdirSync2(dirname2(diagLogPath()), { recursive: true, mode: 448 });
-  } catch {
-  }
-}
-var moduleInstanceId = Math.random().toString(36).slice(2, 8);
-function debug(...args) {
-  if (!DEBUG) return;
-  const ts2 = (/* @__PURE__ */ new Date()).toISOString();
-  const fmt = (a) => {
-    if (typeof a === "string") return a;
-    if (a instanceof Error) return `${a.name}: ${a.message}${a.stack ? "\n" + a.stack : ""}`;
-    return JSON.stringify(a);
-  };
-  const msg = args.map(fmt).join(" ");
-  try {
-    appendFileSync2(DEBUG_LOG_PATH, `[${ts2}] [${moduleInstanceId}] ${msg}
-`);
-  } catch {
-  }
-}
-var nextCliDebugSeq = 1;
-function makeCliDebugOptions(tag) {
-  if (!DEBUG) return {};
-  const seq = nextCliDebugSeq++;
-  const ts2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const logDir = join3(dirname2(DEBUG_LOG_PATH), "cc-cli-logs");
-  try {
-    mkdirSync2(logDir, { recursive: true });
-  } catch {
-  }
-  const debugFile = join3(logDir, `${ts2}-${tag}-${seq}.log`);
-  debug(`cli-debug: ${tag} #${seq} \u2192 ${debugFile}`);
-  return {
-    debug: true,
-    debugFile,
-    stderr: (data) => {
-      for (const line of data.split(/\r?\n/)) {
-        if (line) debug(`[cli-stderr ${tag}#${seq}] ${line}`);
-      }
-    }
-  };
-}
-function diagDump(label, data) {
-  try {
-    const ts2 = (/* @__PURE__ */ new Date()).toISOString();
-    const entry = { ts: ts2, moduleInstanceId, label, ...data };
-    const path = diagLogPath();
-    try {
-      mkdirSync2(dirname2(path), { recursive: true, mode: 448 });
-    } catch {
-    }
-    appendFileSync2(path, JSON.stringify(entry) + "\n", { mode: 384 });
-    try {
-      chmodSync(path, 384);
-    } catch {
-    }
-    debug(`DIAG: ${label} (see ${path})`);
-  } catch (error51) {
-    debug(`DIAG FAILED: ${label}`, error51);
-  }
-}
-
 // src/tool-pairing-audit.ts
 function contentBlocks(content) {
   return Array.isArray(content) ? content.filter((block) => Boolean(block && typeof block === "object")) : [];
@@ -28819,7 +28890,8 @@ function extractAgentsAppend() {
     return sanitized.length > 0 ? `# CLAUDE.md
 
 ${sanitized}` : void 0;
-  } catch {
+  } catch (error51) {
+    debug(`agents-md: failed to read ${agentsPath}:`, error51 instanceof Error ? error51.message : String(error51));
     return void 0;
   }
 }
@@ -28840,7 +28912,8 @@ function readTrimmed(path) {
     if (!existsSync5(path)) return void 0;
     const content = readFileSync5(path, "utf8").trim();
     return content.length > 0 ? content : void 0;
-  } catch {
+  } catch (error51) {
+    debug(`prompt-context: failed to read ${path}:`, error51 instanceof Error ? error51.message : String(error51));
     return void 0;
   }
 }
@@ -43556,7 +43629,8 @@ function readCachedConnectors(scopeKey = connectorCacheScopeKey(), now = Date.no
   let parsed;
   try {
     parsed = JSON.parse(raw);
-  } catch {
+  } catch (error51) {
+    debug(`connector-cache: corrupt cache ${connectorCachePath(scopeKey)}:`, error51 instanceof Error ? error51.message : String(error51));
     return void 0;
   }
   if (parsed?.version !== CACHE_VERSION) return void 0;
@@ -43580,7 +43654,8 @@ function writeCachedConnectors(connectors, scopeKey = connectorCacheScopeKey(), 
       { mode: 384 }
     );
     return true;
-  } catch {
+  } catch (error51) {
+    debug(`connector-cache: write failed ${path}:`, error51 instanceof Error ? error51.message : String(error51));
     return false;
   }
 }
@@ -44336,6 +44411,13 @@ function resolveClaudeAccountRouter() {
   const candidate = host[CLAUDE_ACCOUNT_ROUTER_SYMBOL];
   return candidate?.version === 1 ? candidate : void 0;
 }
+function safeRouterCall(label, call) {
+  try {
+    call();
+  } catch (error51) {
+    debug(`router callback ${label} threw:`, error51);
+  }
+}
 function subscriberProfileEnv(profile, base = process.env) {
   const env = { ...base };
   const directOverrides = /* @__PURE__ */ new Set([
@@ -44594,7 +44676,11 @@ function schedulePersistSharedSession(ctxLike) {
       extensionApi?.appendEntry(BRIDGE_SESSION_CUSTOM_TYPE, data);
       debug(`persistSharedSession: saved ${data.sessionId.slice(0, 8)}, cursor=${data.cursor}`);
     } catch (error51) {
-      debug("persistSharedSession failed:", error51);
+      diagDump("persist_shared_session_failed", {
+        sessionId: snapshot.sessionId.slice(0, 8),
+        cursor: snapshot.cursor,
+        error: error51 instanceof Error ? `${error51.name}: ${error51.message}` : String(error51)
+      });
     }
   }, 0);
   scheduledPersistenceTimers.add(timer);
@@ -44642,7 +44728,11 @@ function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
 function planIncrementalPromptBatch(messages, cursor) {
   const lastIndex = messages.length - 1;
   if (lastIndex < 0 || messages[lastIndex].role !== "user") return void 0;
-  const boundedCursor = Math.max(0, Math.min(cursor, lastIndex));
+  if (cursor > lastIndex) {
+    debug(`planIncrementalPromptBatch: rejected \u2014 cursor=${cursor} beyond last index ${lastIndex}; messages are not the conversation this cursor describes`);
+    return void 0;
+  }
+  const boundedCursor = Math.max(0, cursor);
   let promptStart = boundedCursor;
   if (messages[promptStart]?.role === "assistant") promptStart++;
   const pendingPrompts = messages.slice(promptStart);
@@ -44659,9 +44749,9 @@ function verifyWrittenSession2(jsonlPath, expectedSessionId, expectedRecordCount
   const warnings = verifyWrittenSession(jsonlPath, expectedSessionId, expectedRecordCount);
   for (const msg of warnings) {
     debug(`WARNING session verify: ${msg}`);
-    piUI?.notify(
+    safeNotify(
       `Session file issue: ${msg}
-cwd=${cwd} realpath=${safeRealpath(cwd)}
+cwd=${displayPath(cwd)} realpath=${displayPath(safeRealpath(cwd))}
 Please copy and paste this message into a new issue at https://github.com/vanillagreencom/vstack/issues/new` + (DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
       "warning"
     );
@@ -44953,8 +45043,7 @@ function mapToolArgs(toolName, args) {
 
 // src/assistant-stream.ts
 import { calculateCost } from "@earendil-works/pi-ai";
-function updateUsage(output, usage, model) {
-  const c = ctx();
+function updateUsage(output, usage, model, c) {
   const current = c.currentMessageUsage;
   const carry = c.turnUsageCarry;
   if (usage.input_tokens != null) current.input = usage.input_tokens;
@@ -45045,8 +45134,7 @@ function reapStaleQueuedResults(c) {
     "warning"
   );
 }
-function updateTurnOutputModel(modelId) {
-  const c = ctx();
+function updateTurnOutputModel(modelId, c = ctx()) {
   if (typeof modelId !== "string" || !modelId || !c.turnOutput) return;
   if (c.turnOutput.model === modelId) return;
   debug(`provider: active Claude model changed ${c.turnOutput.model} -> ${modelId}`);
@@ -45075,8 +45163,7 @@ function finalizeToolUseTurnFromMcpInvocation(queryCtx, toolCallId, toolName, ma
   debug(`mcp handler: finalizing tool_use turn from MCP invocation [${toolCallId}] (${toolName}) \u2014 terminal stream events never arrived`);
   endToolUseTurn(queryCtx);
 }
-function processStreamEvent(message, customToolNameToPi, model) {
-  const c = ctx();
+function processStreamEvent(message, customToolNameToPi, model, c = ctx()) {
   if (!c.currentPiStream || !c.turnOutput) return;
   const event = message.event;
   if (event?.type === "ping") return;
@@ -45088,13 +45175,13 @@ function processStreamEvent(message, customToolNameToPi, model) {
     reapStaleQueuedResults(c);
     c.resetToolTracking();
     c.beginChildMessage(event.message?.id);
-    updateTurnOutputModel(event.message?.model);
-    if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
+    updateTurnOutputModel(event.message?.model, c);
+    if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model, c);
     return;
   }
   if (event?.type === "content_block_start") {
     c.turnSawStreamEvent = true;
-    ensureTurnStarted();
+    ensureTurnStarted(c);
     c.childExecutedStreamIndexes.delete(event.index);
     if (event.content_block?.type === "tool_use" && isChildExecutedTool(event.content_block.name)) {
       c.noteChildExecutedToolCall(event.content_block.id, event.content_block.name, event.index);
@@ -45185,7 +45272,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
   }
   if (event?.type === "message_delta") {
     c.turnOutput.stopReason = mapStopReason(event.delta?.stop_reason);
-    if (event.usage) updateUsage(c.turnOutput, event.usage, model);
+    if (event.usage) updateUsage(c.turnOutput, event.usage, model, c);
     return;
   }
   if (event?.type === "message_stop" && c.turnSawToolCall) {
@@ -45196,8 +45283,7 @@ function processStreamEvent(message, customToolNameToPi, model) {
     debug("processStreamEvent: unhandled event type", event?.type);
   }
 }
-function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi) {
-  const c = ctx();
+function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi, c) {
   if (!assistantMsg?.content) return false;
   let sawToolUse = false;
   for (const block of assistantMsg.content) {
@@ -45224,7 +45310,7 @@ function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameT
       }
       continue;
     }
-    ensureTurnStarted();
+    ensureTurnStarted(c);
     c.turnBlocks.push({
       type: "toolCall",
       id: block.id,
@@ -45236,11 +45322,10 @@ function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameT
     c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
     c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock, partial: c.turnOutput });
   }
-  if (assistantMsg.usage && c.turnOutput && c.currentPiStream) updateUsage(c.turnOutput, assistantMsg.usage, model);
+  if (assistantMsg.usage && c.turnOutput && c.currentPiStream) updateUsage(c.turnOutput, assistantMsg.usage, model, c);
   return sawToolUse;
 }
-function noteChildExecutedToolResults(message) {
-  const c = ctx();
+function noteChildExecutedToolResults(message, c = ctx()) {
   if (c.childExecutedToolCalls.size === 0) return;
   const content = message.message?.content;
   if (!Array.isArray(content)) return;
@@ -45254,13 +45339,12 @@ function noteChildExecutedToolResults(message) {
     debug(`child-executed tool result: ${name} [${block.tool_use_id}] isError=${isError} byteSize=${byteSize ?? "unknown"} audited=${audited}`);
   }
 }
-function processAssistantMessage(message, model, customToolNameToPi) {
-  const c = ctx();
+function processAssistantMessage(message, model, customToolNameToPi, c = ctx()) {
   const assistantMsg = message.message;
   if (!assistantMsg?.content) return;
-  updateTurnOutputModel(assistantMsg.model);
+  updateTurnOutputModel(assistantMsg.model, c);
   if (c.turnSawStreamEvent) {
-    if (appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi)) {
+    if (appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi, c)) {
       c.turnSawToolCall = true;
       scheduleToolUseTurnEnd(c, () => endToolUseTurn(c), "assistant-boundary");
     }
@@ -45277,7 +45361,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
   for (const block of assistantMsg.content) {
     if (block.type === "text" && block.text) {
       if (alreadyRendered("text", block.text)) continue;
-      ensureTurnStarted();
+      ensureTurnStarted(c);
       c.turnBlocks.push({ type: "text", text: block.text });
       const idx = c.turnBlocks.length - 1;
       c.currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: c.turnOutput });
@@ -45285,7 +45369,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
       c.currentPiStream?.push({ type: "text_end", contentIndex: idx, content: block.text, partial: c.turnOutput });
     } else if (block.type === "thinking") {
       if (alreadyRendered("thinking", block.thinking ?? "")) continue;
-      ensureTurnStarted();
+      ensureTurnStarted(c);
       c.turnBlocks.push({ type: "thinking", thinking: block.thinking ?? "", thinkingSignature: block.signature ?? "" });
       const idx = c.turnBlocks.length - 1;
       c.currentPiStream?.push({ type: "thinking_start", contentIndex: idx, partial: c.turnOutput });
@@ -45297,7 +45381,7 @@ function processAssistantMessage(message, model, customToolNameToPi) {
         debug(`processAssistantMessage fallback: child-executed tool ${block.name} [${block.id}] \u2014 not mirrored as a Pi tool call`);
         continue;
       }
-      ensureTurnStarted();
+      ensureTurnStarted(c);
       c.turnSawToolCall = true;
       const mappedName = mapToolName(block.name, customToolNameToPi);
       const mappedArgs = mapToolArgs(mappedName, block.input);
@@ -45321,12 +45405,12 @@ function processAssistantMessage(message, model, customToolNameToPi) {
       c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
       c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock, partial: c.turnOutput });
     } else if (block.type === "fallback") {
-      updateTurnOutputModel(block.to?.model);
+      updateTurnOutputModel(block.to?.model, c);
     } else {
       debug("processAssistantMessage: unhandled block type", block.type);
     }
   }
-  if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model);
+  if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model, c);
   if (c.turnSawToolCall && c.currentPiStream && c.turnOutput) {
     endToolUseTurn(c);
   }
@@ -45387,7 +45471,12 @@ async function probeClaudeAccountProfile(input) {
         DISABLE_AUTO_COMPACT: "1"
       },
       maxTurns: 1,
+      // bypassPermissions makes tool containment the only gate, so the probe
+      // gets BOTH layers: the standard bridge isolation lists AND a deny-all
+      // PreToolUse hook — a /usage probe has no business executing anything.
       permissionMode: "bypassPermissions",
+      ...CLAUDE_BRIDGE_TOOL_ISOLATION,
+      hooks: { PreToolUse: [{ hooks: [denyAllToolsHook()] }] },
       ...claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {},
       spawnClaudeCodeProcess: spawnClaudeCodeWithDiagnostics,
       ...makeCliDebugOptions("account-probe")
@@ -45626,10 +45715,14 @@ function resolveConfiguredEffort(modelId, reasoningEffort, providerConfig) {
   }
   return normalizeEffortLevel(providerConfig?.forceEffort) ?? reasoningEffort;
 }
-async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridgeConfig, wasAborted, account, router) {
+async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridgeConfig, wasAborted, account, router, attemptFailureBox) {
   let capturedSessionId;
   let failure;
   let accountProbe;
+  const holdFailure = (next) => {
+    failure = next;
+    if (attemptFailureBox) attemptFailureBox.failure = next;
+  };
   for await (const message of sdkQuery) {
     if (wasAborted()) break;
     activeStreamIdleWatchdogs.get(queryCtx)?.noteChunk();
@@ -45644,27 +45737,30 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
       }));
     }
     if (!queryCtx.turnOutput) continue;
-    if (!queryCtx.currentPiStream && !(message.type === "assistant" && queryCtx.turnSawToolCall)) continue;
+    const streamLive = Boolean(queryCtx.currentPiStream);
     switch (message.type) {
       case "stream_event":
-        processStreamEvent(message, customToolNameToPi, model);
+        if (!streamLive) break;
+        processStreamEvent(message, customToolNameToPi, model, queryCtx);
         break;
       case "assistant": {
         const sdkError = message.error;
         if (sdkError && account) {
-          if (!failure) failure = { kind: classifyClaudeFailure(sdkError), message: String(sdkError) };
+          if (!failure) holdFailure({ kind: classifyClaudeFailure(sdkError), message: String(sdkError) });
           break;
         }
-        processAssistantMessage(message, model, customToolNameToPi);
+        if (!streamLive && !queryCtx.turnSawToolCall) break;
+        processAssistantMessage(message, model, customToolNameToPi, queryCtx);
         break;
       }
       case "result":
         if (failure && message.subtype === "success" && queryCtx.committedOutput) {
           debug(`consumeQuery: clearing informational ${failure.kind ?? "unclassified"} failure \u2014 query recovered with committed output`);
-          failure = void 0;
+          holdFailure(void 0);
         }
         if (account && failure) break;
         if (!queryCtx.turnSawStreamEvent && message.subtype === "success") {
+          if (!streamLive) break;
           const text = message.result || "";
           if (queryCtx.turnBlocks.some((b) => b.type === "text" && b.text === text)) {
             debug("consumeQuery: result text already rendered by assistant fallback; skipping duplicate");
@@ -45681,7 +45777,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
           const errors = errorLines.length > 0 ? errorLines.join("\n") : String(message.result || message.subtype || "Claude Code request failed");
           const usageLimit = isUsageLimitMessage(message);
           if (!failure || !failure.rateLimitInfo) {
-            failure = { kind: usageLimit ? "rate-limit" : classifyClaudeFailure(errors), message: errors };
+            holdFailure({ kind: usageLimit ? "rate-limit" : classifyClaudeFailure(errors), message: errors });
           }
           if (account) break;
           if (usageLimit) {
@@ -45695,6 +45791,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
         }
         break;
       case "system":
+        if (!streamLive) break;
         if (message.subtype === "init" && message.session_id) {
           capturedSessionId = message.session_id;
           queryCtx.childSessionId = capturedSessionId;
@@ -45707,12 +45804,17 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
                 subscriptionType: info.subscriptionType
               })),
               sdkQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET().then((usage) => router.recordUsage(account.profileId, usage))
-            ]).then(() => void 0);
+            ]).then((results) => {
+              const labels = ["recordIdentity", "recordUsage"];
+              results.forEach((result, i) => {
+                if (result.status === "rejected") debug(`consumeQuery: account probe ${labels[i]} rejected:`, result.reason);
+              });
+            });
           }
         } else if (message.subtype === "model_refusal_fallback") {
           const originalModel = message.original_model;
           const fallbackModel = message.fallback_model;
-          updateTurnOutputModel(fallbackModel);
+          updateTurnOutputModel(fallbackModel, queryCtx);
           debug("consumeQuery: model_refusal_fallback", JSON.stringify({ originalModel, fallbackModel }));
           if (typeof fallbackModel === "string" && typeof originalModel === "string" && fallbackModelForPrimaryModel(originalModel) === fallbackModel) {
             safeNotify(
@@ -45723,9 +45825,10 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
         }
         break;
       case "user":
-        noteChildExecutedToolResults(message);
+        noteChildExecutedToolResults(message, queryCtx);
         break;
       case "rate_limit_event": {
+        if (!streamLive) break;
         const info = message.rate_limit_info;
         debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));
         if (info?.status === "rejected") {
@@ -45734,8 +45837,8 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
           const resetAtMs = rateLimitResetMs(info);
           const reason = `${rateLimitType ?? "unknown"} rate limit`;
           if (account && router) {
-            failure = { kind: "rate-limit", message: reason, rateLimitInfo: info };
-            router.recordRateLimit(account.profileId, info, model.id);
+            holdFailure({ kind: "rate-limit", message: reason, rateLimitInfo: info });
+            safeRouterCall("recordRateLimit", () => router.recordRateLimit(account.profileId, info, model.id));
           } else {
             const resetsAt = formatResetTimestamp(resetAtMs ?? resetAt);
             emitRateLimitEvent({
@@ -45748,11 +45851,11 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
               source: "claude-bridge",
               status: "rejected"
             });
-            piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${reason} hit \u2014 resets ${resetsAt}`, "warning");
+            safeNotify(`${RATE_LIMIT_TOKEN} Claude ${reason} hit \u2014 resets ${resetsAt}`, "warning");
           }
         } else if (info?.status === "allowed_warning") {
           const warning = formatAllowedRateLimitWarning(info);
-          if (warning) piUI?.notify(warning, "warning");
+          if (warning) safeNotify(warning, "warning");
           else debug("consumeQuery: suppressed low/ambiguous allowed_warning rate_limit_event", JSON.stringify(info).slice(0, 300));
         }
         break;
@@ -45880,7 +45983,7 @@ function streamClaudeAgentSdk(model, context, options) {
     }
     if (queryCtx.pendingToolCalls.size > 0) {
       debug(`WARNING: ${queryCtx.pendingToolCalls.size} MCP handlers still waiting after delivering ${allResults.length} results`);
-      piUI?.notify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting \u2014 provider may be stuck`, "warning");
+      safeNotify(`Claude bridge: ${queryCtx.pendingToolCalls.size} tool handler(s) still waiting \u2014 provider may be stuck`, "warning");
     }
     let capturedThrough = context.messages.length;
     if (lastMsgRole === "user") {
@@ -45898,14 +46001,16 @@ function streamClaudeAgentSdk(model, context, options) {
         });
       }
     }
-    if (sharedSession) sharedSession.cursor = capturedThrough;
+    if (sharedSession && stackDepth() === 0) {
+      sharedSession.cursor = Math.max(sharedSession.cursor, capturedThrough);
+    }
     queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
     return stream;
   }
   const lastMsg = context.messages[context.messages.length - 1];
   if (lastMsg?.role === "toolResult") {
     debug(`provider: orphaned tool result after abort, emitting end_turn`);
-    if (sharedSession) sharedSession.cursor = context.messages.length;
+    if (sharedSession && stackDepth() === 0) sharedSession.cursor = context.messages.length;
     const c = ctx();
     queueMicrotask(() => {
       c.resetTurnState(model);
@@ -46026,7 +46131,7 @@ function streamClaudeAgentSdk(model, context, options) {
   const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
   const accountScope = accountSessionScope(account);
   const cursorBeforeSync = sharedSession?.cursor ?? null;
-  const { sessionId: resumeSessionId, promptStart } = syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope);
+  const { sessionId: resumeSessionId, promptStart } = isReentrant ? { sessionId: null, promptStart: context.messages.length - 1 } : syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope);
   const promptMessages = context.messages.slice(promptStart);
   const promptBlocks = extractUserPromptBlocks(promptMessages);
   let promptText = extractUserPrompt(promptMessages) ?? "";
@@ -46112,10 +46217,27 @@ function streamClaudeAgentSdk(model, context, options) {
   const sdkQuery = sdkQueryFactory({ prompt, options: queryOptions });
   ctx().activeQuery = sdkQuery;
   const abortCtx = ctx();
+  const attemptFailure = {};
+  const persistSession = (next) => {
+    if (isReentrant) return;
+    setSharedSession(next);
+  };
+  const dropDeferredUserMessages = (site, undeliveredPrompt) => {
+    const dropped = [...undeliveredPrompt !== void 0 ? [undeliveredPrompt] : [], ...abortCtx.deferredUserMessages];
+    abortCtx.deferredUserMessages = [];
+    if (dropped.length > 0) {
+      diagDump("deferred_user_messages_dropped", {
+        site,
+        count: dropped.length,
+        previews: dropped.map((message) => message.slice(0, 60))
+      });
+    }
+    return dropped;
+  };
   let accountFailureRecorded = false;
   const recordAttemptFailure = (failure) => {
     if (accountFailureRecorded || !account || !router || !failure.kind || failure.rateLimitInfo || wasAborted || options?.signal?.aborted) return;
-    router.recordFailure(account.profileId, failure.kind, queryModel.id);
+    safeRouterCall("recordFailure", () => router.recordFailure(account.profileId, failure.kind, queryModel.id));
     accountFailureRecorded = true;
   };
   const requestAbort = () => {
@@ -46138,8 +46260,8 @@ function streamClaudeAgentSdk(model, context, options) {
     onTimeout: ({ idleMs, timeoutMs }) => {
       if (streamIdleTimedOut || wasAborted || options?.signal?.aborted || abortCtx.activeQuery !== sdkQuery) return;
       streamIdleTimedOut = true;
-      abortCtx.deferredUserMessages = [];
-      if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
+      dropDeferredUserMessages("stream-idle-timeout");
+      if (sharedSession) persistSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
       const errorMessage = buildStreamIdleTimeoutErrorMessage(timeoutMs);
       debug("provider: stream idle timeout", `model=${queryModel.id}`, `timeout=${timeoutMs}`, `idle=${idleMs}`);
       const idleFailure = { kind: "network", message: errorMessage };
@@ -46165,7 +46287,7 @@ function streamClaudeAgentSdk(model, context, options) {
         status: "rejected",
         timeoutMs
       });
-      piUI?.notify(`${RATE_LIMIT_TOKEN} Claude stream idle timeout after ${formatDurationShort(timeoutMs)} \u2014 retrying via rate-limit backoff`, "warning");
+      safeNotify(`${RATE_LIMIT_TOKEN} Claude stream idle timeout after ${formatDurationShort(timeoutMs)} \u2014 retrying via rate-limit backoff`, "warning");
       if (abortCtx.turnOutput) {
         abortCtx.turnOutput.stopReason = "error";
         abortCtx.turnOutput.errorMessage = errorMessage;
@@ -46188,7 +46310,7 @@ function streamClaudeAgentSdk(model, context, options) {
   }
   const onAbort = () => {
     wasAborted = true;
-    abortCtx.deferredUserMessages = [];
+    dropDeferredUserMessages("abort");
     reportToolResultMismatch(abortCtx, "abort", cwd, {
       expectedInterruption: true,
       forceRotate: true
@@ -46240,7 +46362,7 @@ function streamClaudeAgentSdk(model, context, options) {
         source: "claude-bridge",
         status: "rejected"
       });
-      piUI?.notify(`${RATE_LIMIT_TOKEN} Claude ${failure.message} \u2014 resets ${formatResetTimestamp(resetAtMs ?? resetAt)}`, "warning");
+      safeNotify(`${RATE_LIMIT_TOKEN} Claude ${failure.message} \u2014 resets ${formatResetTimestamp(resetAtMs ?? resetAt)}`, "warning");
     }
     if (abortCtx.turnOutput) {
       abortCtx.turnOutput.stopReason = aborted2 ? "aborted" : "error";
@@ -46250,16 +46372,16 @@ function streamClaudeAgentSdk(model, context, options) {
     abortCtx.currentPiStream?.end();
     abortCtx.currentPiStream = null;
   };
-  consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, account, router).then(async ({ capturedSessionId, failure }) => {
+  consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, account, router, attemptFailure).then(async ({ capturedSessionId, failure }) => {
     debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
     if (streamIdleTimedOut) {
-      abortCtx.deferredUserMessages = [];
+      dropDeferredUserMessages("stream-idle-timeout-completion");
       debug(`provider: stream idle timeout ${retryRequested ? "queued account rotation" : "already surfaced"}; skipping normal completion`);
       return;
     }
     if (wasAborted || options?.signal?.aborted) {
-      if (sharedSession) setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
-      abortCtx.deferredUserMessages = [];
+      if (sharedSession) persistSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
+      dropDeferredUserMessages("abort-completion");
       debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
       surfaceFailure({ message: "Operation aborted" }, true);
       return;
@@ -46267,12 +46389,12 @@ function streamClaudeAgentSdk(model, context, options) {
     if (failure) {
       if (requestRotation(failure)) return;
       if (!abortCtx.handledTerminalError) surfaceFailure(failure);
-      abortCtx.deferredUserMessages = [];
+      const droppedSteers = dropDeferredUserMessages("terminal-failure");
       const failedSessionId = capturedSessionId ?? sharedSession?.sessionId;
       if (failedSessionId) {
         const cursor = Math.max(context.messages.length, abortCtx.latestCursor, sharedSession?.cursor ?? 0);
-        debug(`provider: terminal failure, persisting session=${failedSessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}`);
-        setSharedSession({ sessionId: failedSessionId, cursor, cwd, ...accountScope });
+        debug(`provider: terminal failure, persisting session=${failedSessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}, droppedSteers=${droppedSteers.length}`);
+        persistSession({ sessionId: failedSessionId, cursor, cwd, ...accountScope, ...droppedSteers.length > 0 ? { needsRebuild: true } : {} });
       }
       return;
     }
@@ -46280,9 +46402,9 @@ function streamClaudeAgentSdk(model, context, options) {
     if (sessionId) {
       const cursor = Math.max(context.messages.length, abortCtx.latestCursor, sharedSession?.cursor ?? 0);
       debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}`);
-      setSharedSession({ sessionId, cursor, cwd, ...accountScope });
+      persistSession({ sessionId, cursor, cwd, ...accountScope });
     }
-    if (account && router) router.recordSuccess(account.profileId, options?.sessionId);
+    if (account && router) safeRouterCall("recordSuccess", () => router.recordSuccess(account.profileId, options?.sessionId));
     try {
       while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
         const steerPrompt = abortCtx.deferredUserMessages.shift();
@@ -46292,6 +46414,7 @@ function streamClaudeAgentSdk(model, context, options) {
         const resumeId = sharedSession?.sessionId;
         if (!resumeId) {
           debug(`WARNING: no session to resume for deferred message, dropping`);
+          dropDeferredUserMessages("continuation-no-resume-id", steerPrompt);
           break;
         }
         const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
@@ -46303,11 +46426,14 @@ function streamClaudeAgentSdk(model, context, options) {
           if (continuation.failure) {
             recordAttemptFailure(continuation.failure);
             if (!abortCtx.handledTerminalError) surfaceFailure(continuation.failure);
+            if (dropDeferredUserMessages("continuation-failure", steerPrompt).length > 0 && sharedSession) {
+              persistSession({ ...sharedSession, needsRebuild: true });
+            }
             break;
           }
           const sid = continuation.capturedSessionId ?? sharedSession?.sessionId;
           if (sid) {
-            setSharedSession({ sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd, ...accountScope });
+            persistSession({ sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd, ...accountScope });
           }
         } catch (contError) {
           debug(`provider: continuation query error:`, contError);
@@ -46317,6 +46443,9 @@ function streamClaudeAgentSdk(model, context, options) {
           };
           recordAttemptFailure(continuationFailure);
           if (!abortCtx.handledTerminalError) surfaceFailure(continuationFailure);
+          if (dropDeferredUserMessages("continuation-error", steerPrompt).length > 0 && sharedSession) {
+            persistSession({ ...sharedSession, needsRebuild: true });
+          }
           break;
         } finally {
           contQuery.close();
@@ -46330,19 +46459,21 @@ function streamClaudeAgentSdk(model, context, options) {
     debug(`provider: query error, model=${queryModel.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error51);
     const suppressDuplicateError = abortCtx.handledTerminalError || streamIdleTimedOut && !retryRequested;
     if ((wasAborted || options?.signal?.aborted) && sharedSession) {
-      setSharedSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
+      persistSession({ ...sharedSession, needsRebuild: true, forceRotate: true });
     }
-    abortCtx.deferredUserMessages = [];
+    if (dropDeferredUserMessages("query-error").length > 0 && sharedSession && sharedSession.needsRebuild !== true) {
+      persistSession({ ...sharedSession, needsRebuild: true });
+    }
     if (suppressDuplicateError || retryRequested) {
       debug("provider: suppressing duplicate query error after terminal handling");
       return;
     }
-    const failure = {
+    const failure = attemptFailure.failure?.rateLimitInfo ? attemptFailure.failure : {
       kind: classifyClaudeFailure(error51),
       message: error51 instanceof Error ? error51.message : String(error51)
     };
     if (requestRotation(failure)) return;
-    if (!wasAborted && !options?.signal?.aborted) setSharedSession(null);
+    if (!wasAborted && !options?.signal?.aborted) persistSession(null);
     surfaceFailure(failure, Boolean(options?.signal?.aborted));
   }).finally(() => {
     streamIdleWatchdog?.dispose();
@@ -46432,14 +46563,12 @@ function primeConnectorServers(claudeConfigDir) {
     try {
       const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(claudeConfigDir));
       if (!credentials) {
-        debug("connectors: no OAuth credentials; declaring none");
-        connectorServerCache.set(key, {});
+        debug("connectors: no OAuth credentials; declaring none (will retry)");
         return;
       }
       const inventory = await listAccountConnectors({ credentials });
       if (!inventory.ok) {
-        debug(`connectors: inventory failed (${inventory.reason}); declaring none`);
-        connectorServerCache.set(key, {});
+        debug(`connectors: inventory failed (${inventory.reason}); declaring none (will retry)`);
         return;
       }
       const servers = connectorMcpServers(inventory);
@@ -46452,8 +46581,7 @@ function primeConnectorServers(claudeConfigDir) {
         debug(`connectors: cached ${inventory.connectors.length} entries`);
       }
     } catch (error51) {
-      debug("connectors: declaration lookup threw; declaring none", error51);
-      connectorServerCache.set(key, {});
+      debug("connectors: declaration lookup threw; declaring none (will retry)", error51);
     } finally {
       connectorServerPending.delete(key);
     }
@@ -46587,6 +46715,7 @@ export {
   claudeAuthSourceLabel,
   claudeDirForProfile,
   commitsVisibleOutput,
+  connectorBuiltinAllowlistHook,
   connectorCachePath,
   connectorCacheScopeKey,
   connectorDeclarationsDisabled,
@@ -46605,11 +46734,13 @@ export {
   createStreamIdleWatchdog,
   credentialCandidatePaths,
   index_default as default,
+  denyAllToolsHook,
   endToolUseTurn,
   finalizeToolUseTurnFromMcpInvocation,
   flushConnectorCallAudit,
   formatAllowedRateLimitWarning,
   formatResetTimestamp,
+  isAllowlistedConnectorSessionTool,
   isChildExecutedTool,
   isChildInternalTool,
   isConnectorTool,

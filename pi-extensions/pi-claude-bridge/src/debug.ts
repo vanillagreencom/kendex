@@ -13,10 +13,12 @@ export function diagLogPath(): string {
 	return process.env.CLAUDE_BRIDGE_DIAG_PATH || join(piUserDir(), "claude-bridge-diag.log");
 }
 
-// Ensure log directories exist when debug is enabled
+// Ensure log directories exist when debug is enabled. 0o700/0o600 throughout:
+// these logs carry prompt previews and session metadata and belong to the user
+// alone — same discipline as diagDump.
 if (DEBUG) {
 	try {
-		mkdirSync(dirname(DEBUG_LOG_PATH), { recursive: true });
+		mkdirSync(dirname(DEBUG_LOG_PATH), { recursive: true, mode: 0o700 });
 		mkdirSync(dirname(diagLogPath()), { recursive: true, mode: 0o700 });
 	} catch {
 		// If directory creation fails, debug functions will throw on first use
@@ -35,7 +37,7 @@ export function debug(...args: unknown[]) {
 		return JSON.stringify(a);
 	};
 	const msg = args.map(fmt).join(" ");
-	try { appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`); } catch { /* debug is best effort */ }
+	try { appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`, { mode: 0o600 }); } catch { /* debug is best effort */ }
 }
 
 // Per-query CLI debug capture. When CLAUDE_BRIDGE_DEBUG=1, ask the Claude Code
@@ -50,7 +52,7 @@ export function makeCliDebugOptions(tag: string): { debug?: boolean; debugFile?:
 	const seq = nextCliDebugSeq++;
 	const ts = new Date().toISOString().replace(/[:.]/g, "-");
 	const logDir = join(dirname(DEBUG_LOG_PATH), "cc-cli-logs");
-	try { mkdirSync(logDir, { recursive: true }); } catch { /* ignore */ }
+	try { mkdirSync(logDir, { recursive: true, mode: 0o700 }); } catch { /* ignore */ }
 	const debugFile = join(logDir, `${ts}-${tag}-${seq}.log`);
 	debug(`cli-debug: ${tag} #${seq} → ${debugFile}`);
 	return {

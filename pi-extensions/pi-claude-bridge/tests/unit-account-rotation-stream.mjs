@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
@@ -11,6 +14,7 @@ import {
 import { RATE_LIMIT_TOKEN } from "../src/rate-limit.ts";
 import { setExtensionApi } from "../src/bridge-state.ts";
 import { CLAUDE_ACCOUNT_ROUTER_SYMBOL } from "../src/account-router.ts";
+import { setConnectorCallAuditSink } from "../src/connector-audit.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
 
 const model = {
@@ -105,12 +109,21 @@ function textEvents(events) {
 
 let notifications;
 let emittedRateLimitEvents;
+let diagDir;
+
+function readDiagLog() {
+	try { return readFileSync(process.env.CLAUDE_BRIDGE_DIAG_PATH, "utf8"); } catch { return ""; }
+}
 
 beforeEach(() => {
 	process.env.CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT = "0";
 	// Legacy (no-router) paths gate on credential presence; an env token is an
 	// existence-only signal that never gets read.
 	process.env.CLAUDE_CODE_OAUTH_TOKEN = "test-token";
+	// Keep unconditional diagnostics out of the real user diag log — and
+	// readable for the tests that assert on them.
+	diagDir = mkdtempSync(join(tmpdir(), "bridge-diag-"));
+	process.env.CLAUDE_BRIDGE_DIAG_PATH = join(diagDir, "diag.log");
 	resetStack();
 	notifications = [];
 	emittedRateLimitEvents = [];
@@ -127,6 +140,8 @@ beforeEach(() => {
 afterEach(() => {
 	delete process.env.CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT;
 	delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+	delete process.env.CLAUDE_BRIDGE_DIAG_PATH;
+	rmSync(diagDir, { recursive: true, force: true });
 	delete globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL];
 	__testSetSdkQueryFactory();
 	setExtensionApi(undefined);
@@ -194,6 +209,10 @@ describe("legacy sessions (no account router)", () => {
 		// Surfacing a terminal failure ends the Pi stream. A continuation query
 		// spawned after that would run with its output invisible while its tool
 		// side effects still execute — so the deferred-replay loop must not run.
+		// The dropped steers must be dropped LOUDLY (#967): the cursor already
+		// advanced over them on the promise of replay, so the surviving record
+		// must carry needsRebuild (rebuild re-imports them from Pi history) and
+		// the drop must be diagnosed.
 		let calls = 0;
 		__testSetSdkQueryFactory(() => {
 			calls += 1;
@@ -215,6 +234,10 @@ describe("legacy sessions (no account router)", () => {
 		assert.equal(events.filter((event) => event.type === "error").length, 1);
 		const { sharedSession } = __testGetBridgeIntegrityState();
 		assert.equal(sharedSession?.sessionId, "session-legacy", "session record still persisted");
+		assert.equal(sharedSession?.needsRebuild, true, "record with dropped steers behind its cursor must rebuild");
+		const diag = readDiagLog();
+		assert.match(diag, /deferred_user_messages_dropped/, "the drop must be diagnosed");
+		assert.match(diag, /queued steer/, "the diagnostic previews the dropped steer");
 	});
 
 	it("surfaces other non-success result subtypes as an explicit error and persists the session", async () => {
@@ -632,6 +655,187 @@ describe("managed account stream rotation", () => {
 	});
 });
 
+describe("reentrant subagent queries and the shared session (C1)", () => {
+	it("a foreign short context arriving mid-query never shrinks the parent cursor", async () => {
+		// While a parent query is active, a reentrant subagent call routed through
+		// this instance lands in the tool-result delivery path carrying ITS OWN
+		// short conversation. Writing that context's length used to shrink the
+		// parent's cursor from 40 down to the foreign context's length.
+		const parentRecord = { sessionId: "parent-session-0001", cursor: 40, cwd: "/parent" };
+		__testSetBridgeIntegrityState({ sharedSession: { ...parentRecord } });
+		let release;
+		const gate = new Promise((resolve) => { release = resolve; });
+		__testSetSdkQueryFactory(() => ({
+			async *[Symbol.asyncIterator]() {
+				yield { type: "system", subtype: "init", session_id: "parent-live" };
+				await gate; // hold the parent query active
+				yield { type: "result", subtype: "success", result: "parent-done" };
+			},
+			close() {},
+			async interrupt() {},
+		}));
+
+		// Parent turn: fresh query, sets ctx().activeQuery. Rebuild is skipped
+		// (single-message context → Case 1), so the seeded record survives sync.
+		const parentStream = streamClaudeAgentSdk(model, context, { sessionId: "parent" });
+		assert.ok(parentStream);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		const before = JSON.stringify(__testGetBridgeIntegrityState().sharedSession);
+
+		// Reentrant call: a subagent's own short [user] conversation (empty text,
+		// so nothing is queued for replay — this isolates the cursor guard).
+		const subagentStream = streamClaudeAgentSdk(model, {
+			messages: [{ role: "user", content: "", timestamp: Date.now() }],
+		}, { sessionId: "subagent" });
+		assert.ok(subagentStream, "the reentrant call returns a stream");
+		const after = __testGetBridgeIntegrityState().sharedSession;
+		assert.equal(JSON.stringify(after), before, "parent record must be byte-identical after the reentrant call");
+		assert.equal(after?.cursor, 40, "cursor must not shrink to the foreign context's length");
+
+		// Let the parent finish and the whole promise chain settle before the
+		// factory is reset, so nothing floats into the next test. (The parent
+		// stream itself is left unconsumed: the reentrant delivery re-pointed
+		// rendering at the subagent's stream, which is part of what this guard
+		// contains — the cursor and record stay correct regardless.)
+		release();
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	});
+
+	it("a subagent-shaped fresh query gets no resume id from the parent record", async () => {
+		// A subagent call can also arrive while no query is active (parent idle
+		// between turns). Its short [user] context with the parent's large cursor
+		// used to CLAMP into a REUSE plan that resumed the parent's Claude
+		// session; the plan now rejects and the query runs as a clean one-shot.
+		__testSetBridgeIntegrityState({ sharedSession: { sessionId: "parent-session-0002", cursor: 40, cwd: "/parent" } });
+		let queryOptions;
+		__testSetSdkQueryFactory((input) => {
+			queryOptions = input.options;
+			return fakeSdkQuery([
+				{ type: "system", subtype: "init", session_id: "subagent-child" },
+				{ type: "result", subtype: "success", result: "subagent-answer" },
+			], "legacy", observedState());
+		});
+
+		const events = await collect(streamClaudeAgentSdk(model, {
+			messages: [{ role: "user", content: "subagent prompt", timestamp: Date.now() }],
+		}, { sessionId: "subagent" }));
+		assert.equal(queryOptions.resume, undefined, "must not resume the parent's Claude session");
+		assert.deepEqual(textEvents(events), ["subagent-answer"]);
+	});
+});
+
+describe("stream-independent metadata capture (C3)", () => {
+	it("captures a terminal result failure that arrives after a tool-use turn ended the stream", async () => {
+		// A tool-use message_stop ends the Pi stream (currentPiStream = null). A
+		// terminal `result` failure arriving after that boundary was skipped by
+		// the stream guard: the attempt looked like a success to the router.
+		const observed = observedState();
+		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
+		__testSetSdkQueryFactory(() => fakeSdkQuery([
+			{ type: "system", subtype: "init", session_id: "session-a" },
+			{ type: "stream_event", event: { type: "message_start", message: { id: "m1", model: model.id, usage: { input_tokens: 1 } } } },
+			{ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "call-1", name: "mytool", input: {} } } },
+			{ type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+			{ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } } },
+			{ type: "stream_event", event: { type: "message_stop" } },
+			// Stream is now ended (tool-use boundary) — this must still classify.
+			{ type: "result", subtype: "error_during_execution", errors: ["internal server error"] },
+		], "a", observed));
+
+		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "post-boundary-failure" }));
+		// The Pi stream ended at the toolUse boundary, so completion runs after.
+		await new Promise((resolve) => setTimeout(resolve, 25));
+		assert.ok(events.some((event) => event.type === "done" && event.reason === "toolUse"));
+		assert.deepEqual(observed.failures, [{ profileId: "a", kind: "server" }], "failure classified despite the ended stream");
+		assert.deepEqual(observed.successes, [], "the attempt must not be recorded as a success");
+	});
+
+	it("audits a connector result that arrives after the stream ended instead of 'unobserved'", async () => {
+		const auditRecords = [];
+		setConnectorCallAuditSink((record) => auditRecords.push(record));
+		try {
+			__testSetSdkQueryFactory(() => fakeSdkQuery([
+				{ type: "system", subtype: "init", session_id: "session-conn" },
+				{ type: "stream_event", event: { type: "message_start", message: { id: "m1", model: model.id, usage: { input_tokens: 1 } } } },
+				// Child-executed connector call (not mirrored, does not end the turn)…
+				{ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "conn-1", name: "mcp__claude_ai_Gmail__search_threads", input: {} } } },
+				// …then a Pi tool call that DOES end the Pi turn.
+				{ type: "stream_event", event: { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "call-1", name: "mytool", input: {} } } },
+				{ type: "stream_event", event: { type: "content_block_stop", index: 1 } },
+				{ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } } },
+				{ type: "stream_event", event: { type: "message_stop" } },
+				// Stream is ended; the connector's real result arrives late on a
+				// `user` message and must still be observed and audited.
+				{ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "conn-1", content: "found 3 threads" }] } },
+				{ type: "result", subtype: "success", result: "done" },
+			], "legacy", observedState()));
+
+			await collect(streamClaudeAgentSdk(model, context, { sessionId: "late-connector-result" }));
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			const record = auditRecords.find((entry) => entry.toolUseId === "conn-1");
+			assert.ok(record, "the connector call must be audited");
+			assert.equal(record.outcome, "ok", "the observed late result must not be recorded as unobserved");
+		} finally {
+			setConnectorCallAuditSink(undefined);
+		}
+	});
+});
+
+describe("router callback safety (C5/C7)", () => {
+	it("counts a rejected rate limit once when the iterator then throws", async () => {
+		// The SDK rejects the rate limit as an event and THEN throws out of the
+		// iterator. Re-classifying the thrown error lost rateLimitInfo, so
+		// recordFailure ran on top of the recordRateLimit the event already
+		// delivered — a double-counted cooldown.
+		const observed = observedState();
+		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
+		let calls = 0;
+		__testSetSdkQueryFactory(() => {
+			calls += 1;
+			return calls === 1
+				? fakeSdkQuery([
+					{ type: "system", subtype: "init", session_id: "session-a" },
+					{
+						type: "rate_limit_event",
+						rate_limit_info: {
+							status: "rejected",
+							rateLimitType: "five_hour",
+							resetsAt: new Date(Date.now() + 60_000).toISOString(),
+						},
+					},
+					new Error("Claude Code exited before completing the request"),
+				], "a", observed)
+				: fakeSdkQuery([
+					{ type: "system", subtype: "init", session_id: "session-b" },
+					{ type: "result", subtype: "success", result: "rotated-after-throw" },
+				], "b", observed);
+		});
+
+		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "throw-after-rate-limit" }));
+		assert.equal(calls, 2, "the rate-limited attempt still rotates");
+		assert.equal(observed.rateLimits.length, 1, "recordRateLimit exactly once");
+		assert.deepEqual(observed.failures, [], "recordFailure must not double-count the same rejection");
+		assert.ok(textEvents(events).includes("rotated-after-throw"));
+	});
+
+	it("a throwing recordSuccess cannot fail a delivered turn", async () => {
+		const observed = observedState();
+		const router = makeRouter(observed);
+		router.recordSuccess = () => { throw new Error("telemetry exploded"); };
+		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = router;
+		__testSetSdkQueryFactory(() => fakeSdkQuery([
+			{ type: "system", subtype: "init", session_id: "session-a" },
+			...STREAMED_TEXT("delivered"),
+			{ type: "result", subtype: "success", result: "delivered" },
+		], "a", observedState()));
+
+		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "throwing-success" }));
+		assert.deepEqual(textEvents(events), ["delivered"]);
+		assert.equal(events.filter((event) => event.type === "error").length, 0, "no error after a throwing telemetry callback");
+		assert.equal(events.filter((event) => event.type === "done").length, 1);
+	});
+});
+
 describe("account host probe (probeProfile)", () => {
 	it("settles within its deadline and kills a stalled probe child", async () => {
 		// probeProfile is a published entry point and `signal` is optional: a
@@ -660,6 +864,28 @@ describe("account host probe (probeProfile)", () => {
 		});
 		assert.deepEqual(result, {});
 		assert.equal(closed, true, "the expired probe must kill its child");
+	});
+
+	it("spawns the probe child with tool isolation AND a deny-all PreToolUse hook", async () => {
+		// The probe runs /usage under bypassPermissions, so tool containment is
+		// the only gate — it must carry both layers (C12).
+		let probeOptions;
+		__testSetSdkQueryFactory((input) => {
+			probeOptions = input.options;
+			return fakeSdkQuery([{ type: "system", subtype: "init", session_id: "probe-session" }], "a", observedState());
+		});
+
+		await probeClaudeAccountProfile({
+			profile: { profileId: "a", label: "account-a" },
+			cwd: process.cwd(),
+			deadlineMs: 500,
+		});
+		assert.deepEqual(probeOptions.tools, [], "built-in tool set removed");
+		assert.ok(probeOptions.disallowedTools.includes("Bash"), "built-ins disallowed");
+		const hook = probeOptions.hooks?.PreToolUse?.[0]?.hooks?.[0];
+		assert.equal(typeof hook, "function", "deny-all PreToolUse hook registered");
+		const out = await hook({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} }, "t1", { signal: new AbortController().signal });
+		assert.equal(out.hookSpecificOutput.permissionDecision, "deny", "every tool call is denied");
 	});
 
 	it("returns identity and usage when the probe completes before the deadline", async () => {

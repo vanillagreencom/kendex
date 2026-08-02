@@ -102,6 +102,62 @@ describe("loadConfig", () => {
 		assert.equal(config.provider?.modelEffortOverrides, undefined);
 	}));
 
+	// --- connector keys are user-scope + env only ---
+	// enableConnectors/connectorWriteMode expose (and un-gate writes on) the
+	// account's live connectors; a repo-controlled channel must not flip them
+	// even for a trusted project.
+
+	it("ignores project-scope enableConnectors/connectorWriteMode from manager settings", () => withTempDirs(({ user, project }) => {
+		writeFileSync(join(user, "settings.json"), JSON.stringify({
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": { fastMode: false } } } },
+		}));
+		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": {
+				fastMode: true,
+				enableConnectors: true,
+				connectorWriteMode: "allow",
+			} } } },
+		}));
+		recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
+
+		const config = loadConfig(project);
+		assert.equal(config.provider?.fastMode, true, "ordinary options still honor trusted project scope");
+		assert.equal(config.provider?.enableConnectors, undefined, "project scope cannot enable connectors");
+		assert.equal(config.provider?.connectorWriteMode, undefined, "project scope cannot open connector writes");
+	}));
+
+	it("ignores trusted project claude-bridge.json for the connector keys", () => withTempDirs(({ project }) => {
+		writeFileSync(join(project, ".pi", "settings.json"), "{}");
+		writeFileSync(join(project, ".pi", "claude-bridge.json"), JSON.stringify({
+			provider: { fastMode: true, enableConnectors: true, connectorWriteMode: "allow" },
+			enableConnectors: true,
+		}));
+		recordProjectTrust({ cwd: project, isProjectTrusted: () => true });
+
+		const config = loadConfig(project);
+		assert.equal(config.provider?.fastMode, true, "ordinary legacy options still merge");
+		assert.equal(config.provider?.enableConnectors, undefined);
+		assert.equal(config.provider?.connectorWriteMode, undefined);
+	}));
+
+	it("still honors user-scope connector keys (manager settings and legacy file)", () => withTempDirs(({ user, project }) => {
+		writeFileSync(join(user, "settings.json"), JSON.stringify({
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-claude-bridge": {
+				enableConnectors: true,
+				connectorWriteMode: "allow",
+			} } } },
+		}));
+		assert.equal(loadConfig(project).provider?.enableConnectors, true);
+		assert.equal(loadConfig(project).provider?.connectorWriteMode, "allow");
+
+		rmSync(join(user, "settings.json"));
+		writeFileSync(join(user, "claude-bridge.json"), JSON.stringify({
+			provider: { enableConnectors: true, connectorWriteMode: "allow" },
+		}));
+		assert.equal(loadConfig(project).provider?.enableConnectors, true);
+		assert.equal(loadConfig(project).provider?.connectorWriteMode, "allow");
+	}));
+
 	it("lets manager defaults clear lower-precedence legacy effort overrides", () => withTempDirs(({ user, project }) => {
 		writeFileSync(join(user, "claude-bridge.json"), JSON.stringify({
 			provider: { forceEffort: "max", modelEffortOverrides: { "claude-opus-4-8": "max" } },

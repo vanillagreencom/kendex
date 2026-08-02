@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { isolatedFromEnv, piUserDir } from "./config.js";
+import { debug } from "./debug.js";
 
 export interface PromptContextSettings {
 	includeAppendSystemPromptMd?: boolean;
@@ -19,7 +20,10 @@ function readTrimmed(path: string): string | undefined {
 		if (!existsSync(path)) return undefined;
 		const content = readFileSync(path, "utf8").trim();
 		return content.length > 0 ? content : undefined;
-	} catch {
+	} catch (error) {
+		// The file exists but could not be read: the user opted into forwarding
+		// it, so a silent drop looks like the setting being ignored.
+		debug(`prompt-context: failed to read ${path}:`, error instanceof Error ? error.message : String(error));
 		return undefined;
 	}
 }

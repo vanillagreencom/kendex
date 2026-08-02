@@ -10,6 +10,8 @@ import {
 	DISALLOWED_BUILTIN_TOOLS,
 	CONNECTOR_WRITE_TOOLS,
 	isConnectorWriteTool,
+	connectorBuiltinAllowlistHook,
+	connectorQueryOptions,
 	connectorWriteDenyHook,
 	settingSourcesForQuery,
 } from "../bundle/index.js";
@@ -85,6 +87,73 @@ test("non-connectors setting sources are unchanged", () => {
 
 test("discovery tools are a subset of the default disallow list", () => {
 	for (const d of CONNECTOR_DISCOVERY_TOOLS) assert.ok(DISALLOWED_BUILTIN_TOOLS.includes(d), `${d} is disallowed by default`);
+});
+
+// --- C13: connectors-mode builtin containment is a fail-closed ALLOWLIST ---
+// DISALLOWED_BUILTIN_TOOLS blocks the CLI built-ins known TODAY, but a
+// connectors session ingests untrusted third-party content, and a future
+// built-in absent from that denylist would be callable by whatever that
+// content talks the model into. The allowlist hook denies everything that is
+// not a bridged custom tool, a claude.ai connector tool, or discovery.
+
+async function runAllowlistHook(toolName) {
+	const hook = connectorBuiltinAllowlistHook();
+	return hook({ hook_event_name: "PreToolUse", tool_name: toolName, tool_input: {}, tool_use_id: "t1" }, "t1", { signal: new AbortController().signal });
+}
+
+test("allowlist hook permits bridged custom tools, connector tools, and discovery", async () => {
+	const allowed = [
+		"mcp__custom-tools__read",
+		"mcp__custom-tools__anything_else",
+		"mcp__claude_ai_Gmail__search_threads",
+		"mcp__claude_ai_Some_Org_Thing__whatever",
+		...CONNECTOR_DISCOVERY_TOOLS,
+	];
+	for (const name of allowed) {
+		assert.equal((await runAllowlistHook(name)).continue, true, `${name} must pass`);
+	}
+});
+
+test("allowlist hook denies denylisted AND future/unknown builtins (fail closed)", async () => {
+	const denied = [
+		"Bash", // already denylisted — belt
+		"SlashCommand", // a real CLI builtin absent from the denylist
+		"SomeFutureBuiltin2027", // an unknown future name
+		"mcp__some_other_server__do_thing", // an unrelated MCP server
+	];
+	for (const name of denied) {
+		const out = await runAllowlistHook(name);
+		assert.equal(out.hookSpecificOutput?.permissionDecision, "deny", `${name} must be denied`);
+	}
+});
+
+test("allowlist hook denies on malformed input and on exceptions", async () => {
+	const hook = connectorBuiltinAllowlistHook();
+	const malformed = await hook({ hook_event_name: "PreToolUse", tool_name: 42 }, "t1", { signal: new AbortController().signal });
+	assert.equal(malformed.hookSpecificOutput.permissionDecision, "deny");
+	// A throwing property access inside the body must convert to a deny.
+	const trap = new Proxy({}, {
+		get(_target, prop) {
+			if (prop === "hook_event_name") return "PreToolUse";
+			throw new Error("hostile input");
+		},
+	});
+	const out = await hook(trap, "t1", { signal: new AbortController().signal });
+	assert.equal(out.hookSpecificOutput.permissionDecision, "deny", "an exception must deny, never allow");
+});
+
+test("connectorQueryOptions wires the allowlist hook in BOTH write modes", async () => {
+	for (const mode of ["deny", "allow"]) {
+		const opts = connectorQueryOptions(true, mode);
+		const hooks = opts.hooks?.PreToolUse?.[0]?.hooks ?? [];
+		assert.ok(hooks.length >= 1, `mode ${mode} registers hooks`);
+		// The FIRST hook is the allowlist: it must deny an unknown builtin.
+		const out = await hooks[0]({ hook_event_name: "PreToolUse", tool_name: "SlashCommand", tool_input: {} }, "t1", { signal: new AbortController().signal });
+		assert.equal(out.hookSpecificOutput?.permissionDecision, "deny", `mode ${mode} denies unknown builtins`);
+	}
+	// Write-deny mode additionally carries the write-deny hook.
+	assert.equal(connectorQueryOptions(true, "deny").hooks.PreToolUse[0].hooks.length, 2);
+	assert.equal(connectorQueryOptions(true, "allow").hooks.PreToolUse[0].hooks.length, 1);
 });
 
 // --- vstack#892: the deny reason is shared source shown verbatim to a model ---

@@ -9,12 +9,11 @@ import { mapToolArgs, mapToolName } from "./tool-mapping.js";
 
 // --- Usage helpers ---
 
-function updateUsage(output: AssistantMessage, usage: Record<string, number | undefined>, model: Model<any>): void {
+function updateUsage(output: AssistantMessage, usage: Record<string, number | undefined>, model: Model<any>, c: QueryContext): void {
 	// Anthropic reports per-message counters and RE-reports them as the message
 	// grows, so the in-flight message's figures are replaced, not added. What is
 	// added is every child message already finished in this Pi turn — see
 	// `turnUsageCarry` in query-state.ts for why a turn can span several.
-	const c = ctx();
 	const current = c.currentMessageUsage;
 	const carry = c.turnUsageCarry;
 	if (usage.input_tokens != null) current.input = usage.input_tokens;
@@ -148,8 +147,7 @@ export function reapStaleQueuedResults(c: QueryContext): void {
 	);
 }
 
-export function updateTurnOutputModel(modelId: unknown): void {
-	const c = ctx();
+export function updateTurnOutputModel(modelId: unknown, c: QueryContext = ctx()): void {
 	if (typeof modelId !== "string" || !modelId || !c.turnOutput) return;
 	if (c.turnOutput.model === modelId) return;
 	debug(`provider: active Claude model changed ${c.turnOutput.model} -> ${modelId}`);
@@ -209,8 +207,11 @@ export function processStreamEvent(
 	message: SDKMessage,
 	customToolNameToPi: Map<string, string>,
 	model: Model<any>,
+	// The consuming query's CAPTURED context, never the live ctx() (see the C4
+	// note in consumeQuery): a reentrant subagent can be pushed while the parent
+	// iterator is suspended, and live-state reads would hit the wrong query.
+	c: QueryContext = ctx(),
 ): void {
-	const c = ctx();
 	if (!c.currentPiStream || !c.turnOutput) return;
 	const event = (message as SDKMessage & { event: any }).event;
 	if (event?.type === "ping") return;
@@ -228,14 +229,14 @@ export function processStreamEvent(
 		// counters are replaced. No-op on the turn's first, and no-op if this same
 		// message was already declared (see beginChildMessage).
 		c.beginChildMessage(event.message?.id);
-		updateTurnOutputModel(event.message?.model);
-		if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model);
+		updateTurnOutputModel(event.message?.model, c);
+		if (event.message?.usage) updateUsage(c.turnOutput, event.message.usage, model, c);
 		return;
 	}
 
 	if (event?.type === "content_block_start") {
 		c.turnSawStreamEvent = true;
-		ensureTurnStarted();
+		ensureTurnStarted(c);
 		// A new block owns this index from here on, so release any child-executed
 		// claim on it. Belt-and-braces against a missed message_start: without this
 		// a stale index could silently swallow a later text block's deltas.
@@ -338,7 +339,7 @@ export function processStreamEvent(
 
 	if (event?.type === "message_delta") {
 		c.turnOutput.stopReason = mapStopReason(event.delta?.stop_reason);
-		if (event.usage) updateUsage(c.turnOutput, event.usage, model);
+		if (event.usage) updateUsage(c.turnOutput, event.usage, model, c);
 		return;
 	}
 
@@ -371,8 +372,8 @@ function appendMissingToolUsesFromAssistant(
 	assistantMsg: { content?: Array<any>; usage?: Record<string, number | undefined> },
 	model: Model<any>,
 	customToolNameToPi: Map<string, string>,
+	c: QueryContext,
 ): boolean {
-	const c = ctx();
 	if (!assistantMsg?.content) return false;
 	let sawToolUse = false;
 	for (const block of assistantMsg.content) {
@@ -403,7 +404,7 @@ function appendMissingToolUsesFromAssistant(
 			continue;
 		}
 
-		ensureTurnStarted();
+		ensureTurnStarted(c);
 		c.turnBlocks.push({
 			type: "toolCall", id: block.id,
 			name,
@@ -418,7 +419,7 @@ function appendMissingToolUsesFromAssistant(
 	// message_start placeholder usage (output ≈ 1–7), and once the done event has
 	// delivered turnOutput to pi, overwriting its usage with those placeholders
 	// would corrupt the very figure message_delta got right.
-	if (assistantMsg.usage && c.turnOutput && c.currentPiStream) updateUsage(c.turnOutput, assistantMsg.usage, model);
+	if (assistantMsg.usage && c.turnOutput && c.currentPiStream) updateUsage(c.turnOutput, assistantMsg.usage, model, c);
 	return sawToolUse;
 }
 
@@ -441,8 +442,7 @@ function appendMissingToolUsesFromAssistant(
  * `CustomEntry` (connector-audit.ts) so the Pi session records that the call
  * happened, without a content block Pi's agent loop could try to dispatch.
  */
-export function noteChildExecutedToolResults(message: SDKMessage): void {
-	const c = ctx();
+export function noteChildExecutedToolResults(message: SDKMessage, c: QueryContext = ctx()): void {
 	if (c.childExecutedToolCalls.size === 0) return;
 	const content = (message as SDKMessage & { message?: { content?: unknown } }).message?.content;
 	if (!Array.isArray(content)) return;
@@ -457,11 +457,10 @@ export function noteChildExecutedToolResults(message: SDKMessage): void {
 	}
 }
 
-export function processAssistantMessage(message: SDKMessage, model: Model<any>, customToolNameToPi: Map<string, string>): void {
-	const c = ctx();
+export function processAssistantMessage(message: SDKMessage, model: Model<any>, customToolNameToPi: Map<string, string>, c: QueryContext = ctx()): void {
 	const assistantMsg = (message as any).message;
 	if (!assistantMsg?.content) return;
-	updateTurnOutputModel(assistantMsg.model);
+	updateTurnOutputModel(assistantMsg.model, c);
 	if (c.turnSawStreamEvent) {
 		// The SDK yields the completed assistant message BEFORE the stream's
 		// message_delta/message_stop on every tool-use turn (measured — this is
@@ -472,7 +471,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 		// message_start placeholders (1–7 output tokens per tool turn). The grace
 		// timer force-ends the turn if the terminal events never arrive, so pi
 		// still gets to execute the tools and unblock the MCP handlers.
-		if (appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi)) {
+		if (appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameToPi, c)) {
 			c.turnSawToolCall = true;
 			scheduleToolUseTurnEnd(c, () => endToolUseTurn(c), "assistant-boundary");
 		}
@@ -509,7 +508,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 	for (const block of assistantMsg.content) {
 		if (block.type === "text" && block.text) {
 			if (alreadyRendered("text", block.text)) continue;
-			ensureTurnStarted();
+			ensureTurnStarted(c);
 			c.turnBlocks.push({ type: "text", text: block.text });
 			const idx = c.turnBlocks.length - 1;
 			c.currentPiStream?.push({ type: "text_start", contentIndex: idx, partial: c.turnOutput });
@@ -517,7 +516,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 			c.currentPiStream?.push({ type: "text_end", contentIndex: idx, content: block.text, partial: c.turnOutput });
 		} else if (block.type === "thinking") {
 			if (alreadyRendered("thinking", block.thinking ?? "")) continue;
-			ensureTurnStarted();
+			ensureTurnStarted(c);
 			c.turnBlocks.push({ type: "thinking", thinking: block.thinking ?? "", thinkingSignature: block.signature ?? "" });
 			const idx = c.turnBlocks.length - 1;
 			c.currentPiStream?.push({ type: "thinking_start", contentIndex: idx, partial: c.turnOutput });
@@ -531,7 +530,7 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 				debug(`processAssistantMessage fallback: child-executed tool ${block.name} [${block.id}] — not mirrored as a Pi tool call`);
 				continue;
 			}
-			ensureTurnStarted();
+			ensureTurnStarted(c);
 			c.turnSawToolCall = true;
 			const mappedName = mapToolName(block.name, customToolNameToPi);
 			const mappedArgs = mapToolArgs(mappedName, block.input);
@@ -557,12 +556,12 @@ export function processAssistantMessage(message: SDKMessage, model: Model<any>, 
 			c.currentPiStream?.push({ type: "toolcall_start", contentIndex: idx, partial: c.turnOutput });
 			c.currentPiStream?.push({ type: "toolcall_end", contentIndex: idx, toolCall: toolBlock as any, partial: c.turnOutput });
 		} else if (block.type === "fallback") {
-			updateTurnOutputModel(block.to?.model);
+			updateTurnOutputModel(block.to?.model, c);
 		} else {
 			debug("processAssistantMessage: unhandled block type", block.type);
 		}
 	}
-	if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model);
+	if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model, c);
 
 	// End the stream on tool_use. Immediate (no grace deferral) ON PURPOSE: this
 	// branch only runs when NO content blocks streamed for the message, so there

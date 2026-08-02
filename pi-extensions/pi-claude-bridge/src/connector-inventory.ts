@@ -140,16 +140,23 @@ export function connectorServerNamespace(connectorName: string): string {
 }
 
 // Candidate credential files, in precedence order. CLAUDE_CONFIG_DIR is set
-// per-account by hosts that run one sidecar per Claude account, so it must win
-// over the home-directory default or a multi-account host reads the wrong
-// account's connectors. Both file names are probed under each root because the
-// token and the org UUID do not reliably live in the same file across versions.
+// per-account by hosts that run one sidecar per Claude account, so when it is
+// set that root is probed EXCLUSIVELY: falling through to `~/.claude`/$HOME
+// would silently borrow the DEFAULT account's token for a managed profile
+// whose own `.credentials.json` is missing — a confident, well-formed answer
+// for the wrong account (see the token-scoping note above). Only the
+// no-config-dir default probes the home locations. Both file names are probed
+// under each root because the token and the org UUID do not reliably live in
+// the same file across versions.
 export function credentialCandidatePaths(env: NodeJS.ProcessEnv = process.env): string[] {
 	const roots: string[] = [];
 	const configDir = env.CLAUDE_CONFIG_DIR?.trim();
-	if (configDir) roots.push(configDir);
-	const home = env.HOME?.trim();
-	if (home) roots.push(`${home}/.claude`, home);
+	if (configDir) {
+		roots.push(configDir);
+	} else {
+		const home = env.HOME?.trim();
+		if (home) roots.push(`${home}/.claude`, home);
+	}
 	const seen = new Set<string>();
 	const paths: string[] = [];
 	for (const root of roots) {

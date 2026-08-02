@@ -1,6 +1,6 @@
 import { type HookCallback, type query, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { normalizeConnectorWriteMode, type Config, type ConnectorWriteMode } from "./config.js";
-import { MCP_SERVER_NAME } from "./skills.js";
+import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { connectorProxyUrl, connectorServerName, type ConnectorInventory } from "./connector-inventory.js";
 
 // Disable Claude Code built-ins in the provider path. Pi owns tool execution;
@@ -435,10 +435,7 @@ export function connectorWriteDenyHook(): HookCallback {
 			if (!isConnectorWriteTool(input.tool_name)) return { continue: true };
 			return connectorWriteDenyOutput(input.tool_name);
 		} catch {
-			const toolName = typeof (input as { tool_name?: unknown })?.tool_name === "string"
-				? (input as { tool_name: string }).tool_name
-				: "<unknown>";
-			return connectorWriteDenyOutput(toolName);
+			return connectorWriteDenyOutput(safeToolNameFrom(input));
 		}
 	};
 }
@@ -461,15 +458,104 @@ function connectorWriteDenyOutput(toolName: string) {
 	};
 }
 
-// Connector query-option fragment: tool isolation (allow/deny lists) plus, when
-// connectors are enabled and writes are denied, the runtime PreToolUse write
-// hook. Spread into the SDK query options; continuation queries inherit it via
-// `{ ...queryOptions }`. Exported so the wiring is unit-testable end to end.
+// The names a connectors-mode child session may call at all — the fail-closed
+// complement of DISALLOWED_BUILTIN_TOOLS. That denylist blocks the built-ins we
+// know about TODAY, but a connectors session ingests untrusted third-party
+// content (mail bodies, tickets, documents), and a future CLI built-in absent
+// from the list would be callable by whatever that content talks the model
+// into. Exactly three name classes have any business executing in a connector
+// session: Pi's bridged custom tools, the claude.ai connector namespace (whose
+// writes the write-deny hook still catches), and the discovery built-ins that
+// make deferred connector tools reachable.
+export function isAllowlistedConnectorSessionTool(name: string): boolean {
+	return name.startsWith(MCP_TOOL_PREFIX)
+		|| name.startsWith(CONNECTOR_NS_PREFIX)
+		|| CONNECTOR_DISCOVERY_TOOLS.includes(name);
+}
+
+// PreToolUse ALLOWLIST hook for connectors mode. Same fail-closed shape as
+// connectorWriteDenyHook: the CLI treats a hook error/timeout as an empty hook
+// output and lets the call proceed, so every exception in this body must
+// convert to a deny, never an allow.
+export function connectorBuiltinAllowlistHook(): HookCallback {
+	return async (input) => {
+		try {
+			if (input.hook_event_name !== "PreToolUse") return { continue: true };
+			if (typeof input.tool_name !== "string") return allowlistDenyOutput("<unknown>");
+			if (isAllowlistedConnectorSessionTool(input.tool_name)) return { continue: true };
+			return allowlistDenyOutput(input.tool_name);
+		} catch {
+			return allowlistDenyOutput(safeToolNameFrom(input));
+		}
+	};
+}
+
+// Exception-proof tool-name read for hook catch handlers: the input may be
+// hostile enough that even reading `tool_name` throws, and a catch handler
+// that throws makes the CLI treat the hook as empty output — fail OPEN.
+function safeToolNameFrom(input: unknown): string {
+	try {
+		const candidate = (input as { tool_name?: unknown })?.tool_name;
+		return typeof candidate === "string" ? candidate : "<unknown>";
+	} catch {
+		return "<unknown>";
+	}
+}
+
+// Product-neutral for the same reason as connectorWriteDenyOutput: this string
+// is shown verbatim to the child's model in every consuming app.
+function allowlistDenyOutput(toolName: string) {
+	return {
+		hookSpecificOutput: {
+			hookEventName: "PreToolUse" as const,
+			permissionDecision: "deny" as const,
+			permissionDecisionReason:
+				`Tool "${toolName}" is not available in this connector session. ` +
+				`Only bridged custom tools, claude.ai connector tools, and tool discovery are permitted here.`,
+		},
+	};
+}
+
+// PreToolUse hook that denies EVERY tool call. For children that must never
+// execute anything — the account probe runs `/usage` with bypassPermissions,
+// and a slash command needs no tools at all. Same fail-closed try/catch-deny
+// shape as the hooks above.
+export function denyAllToolsHook(): HookCallback {
+	return async (input) => {
+		try {
+			if (input.hook_event_name !== "PreToolUse") return { continue: true };
+			return denyAllOutput(typeof input.tool_name === "string" ? input.tool_name : "<unknown>");
+		} catch {
+			return denyAllOutput("<unknown>");
+		}
+	};
+}
+
+function denyAllOutput(toolName: string) {
+	return {
+		hookSpecificOutput: {
+			hookEventName: "PreToolUse" as const,
+			permissionDecision: "deny" as const,
+			permissionDecisionReason: `Tool "${toolName}" is not available: this session executes no tools.`,
+		},
+	};
+}
+
+// Connector query-option fragment: tool isolation (allow/deny lists) plus the
+// runtime PreToolUse hooks — the fail-closed builtin allowlist always, and the
+// write-deny hook additionally while writes are denied. Spread into the SDK
+// query options; continuation queries inherit it via `{ ...queryOptions }`.
+// Exported so the wiring is unit-testable end to end.
 export function connectorQueryOptions(connectorsEnabled: boolean, writeMode: ConnectorWriteMode = "deny"): Partial<Pick<NonNullable<Parameters<typeof query>[0]["options"]>, "tools" | "allowedTools" | "disallowedTools" | "hooks">> {
 	const isolation = toolIsolationForQuery(connectorsEnabled, writeMode);
-	// Only enforce (and only meaningful) when connectors are on and writes denied.
-	if (!connectorsEnabled || writeMode === "allow") return isolation;
-	return { ...isolation, hooks: { PreToolUse: [{ hooks: [connectorWriteDenyHook()] }] } };
+	if (!connectorsEnabled) return isolation;
+	// The allowlist applies in BOTH write modes — the one-shot write executor is
+	// still a connectors session ingesting third-party content. Deny rules from
+	// either hook win over any allow.
+	const hooks = writeMode === "allow"
+		? [connectorBuiltinAllowlistHook()]
+		: [connectorBuiltinAllowlistHook(), connectorWriteDenyHook()];
+	return { ...isolation, hooks: { PreToolUse: [{ hooks }] } };
 }
 
 // Tool isolation for a query. When connectors are enabled we still remove

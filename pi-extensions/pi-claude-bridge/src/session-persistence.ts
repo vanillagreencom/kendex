@@ -3,7 +3,8 @@ import { createSession, deleteSession, openSession, repairToolPairing } from "cc
 import { createHash } from "crypto";
 import { realpathSync, statSync } from "fs";
 import { resolve as pathResolve } from "path";
-import { extensionApi, piUI, reportSyntheticToolResultRepair, setSharedSession, sharedSession, type SessionState } from "./bridge-state.js";
+import { extensionApi, reportSyntheticToolResultRepair, safeNotify, setSharedSession, sharedSession, type SessionState } from "./bridge-state.js";
+import { displayPath } from "./config.js";
 import { convertPiMessages } from "./convert.js";
 import { DEBUG, DEBUG_LOG_PATH, debug, diagDump } from "./debug.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
@@ -172,7 +173,14 @@ export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknow
 			extensionApi?.appendEntry(BRIDGE_SESSION_CUSTOM_TYPE, data);
 			debug(`persistSharedSession: saved ${data.sessionId.slice(0, 8)}, cursor=${data.cursor}`);
 		} catch (error) {
-			debug("persistSharedSession failed:", error);
+			// A failed persist means the next startup restores a stale (or no)
+			// bridge marker and silently rebuilds — worth an unconditional diagnostic,
+			// not just a debug line nobody has enabled.
+			diagDump("persist_shared_session_failed", {
+				sessionId: snapshot.sessionId.slice(0, 8),
+				cursor: snapshot.cursor,
+				error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+			});
 		}
 	}, 0);
 	scheduledPersistenceTimers.add(timer);
@@ -264,7 +272,15 @@ export function planIncrementalPromptBatch(
 	const lastIndex = messages.length - 1;
 	if (lastIndex < 0 || (messages[lastIndex] as { role?: string }).role !== "user") return undefined;
 
-	const boundedCursor = Math.max(0, Math.min(cursor, lastIndex));
+	// A cursor past the end is PROOF this messages array is not the conversation
+	// the cursor describes (e.g. a reentrant subagent's short context arriving
+	// while the parent's cursor is large). Clamping it used to fabricate a REUSE
+	// plan against foreign history — reject so the caller takes the rebuild path.
+	if (cursor > lastIndex) {
+		debug(`planIncrementalPromptBatch: rejected — cursor=${cursor} beyond last index ${lastIndex}; messages are not the conversation this cursor describes`);
+		return undefined;
+	}
+	const boundedCursor = Math.max(0, cursor);
 	let promptStart = boundedCursor;
 	if ((messages[promptStart] as { role?: string } | undefined)?.role === "assistant") promptStart++;
 
@@ -299,10 +315,12 @@ function verifyWrittenSession(
 		// No CLAUDE_CONFIG_DIR value here: this text asks to be pasted into a
 		// public issue and config-dir paths are account-identifying (see the
 		// persisted-shape note at the top of this file). The diagDump below
-		// records it locally instead.
-		piUI?.notify(
+		// records it locally instead. Paths are home-relativized for the same
+		// reason — an absolute cwd carries the username; the diagDump keeps the
+		// absolute forms.
+		safeNotify(
 			`Session file issue: ${msg}\n` +
-			`cwd=${cwd} realpath=${safeRealpath(cwd)}\n` +
+			`cwd=${displayPath(cwd)} realpath=${displayPath(safeRealpath(cwd))}\n` +
 			`Please copy and paste this message into a new issue at https://github.com/vanillagreencom/vstack/issues/new` +
 			(DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
 			"warning",

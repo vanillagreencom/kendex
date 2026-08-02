@@ -8,6 +8,7 @@ import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join, resolve, sep } from "path";
+import { debug } from "./debug.js";
 
 export const PACKAGE_ID = "@vanillagreen/pi-claude-bridge";
 
@@ -57,7 +58,9 @@ export interface Config {
 		 * connectors (Gmail / Google Calendar / Google Drive, etc.) to the model.
 		 * Off by default so Pi owns tool execution and tokens stay lean. Also
 		 * settable via the CLAUDE_BRIDGE_ENABLE_CONNECTORS env var (env OR config
-		 * enables it). See docs/plans/claude-bridge-google-connectors.md.
+		 * enables it). Resolved from USER-scope config and env only — a project's
+		 * checked-in settings cannot enable it (see USER_SCOPE_ONLY_PROVIDER_KEYS).
+		 * See the Connectors section of this package's README.
 		 */
 		enableConnectors?: boolean;
 		/**
@@ -70,7 +73,8 @@ export interface Config {
 		 * one-shot approved-write executor process. Also settable via
 		 * CLAUDE_BRIDGE_CONNECTOR_WRITE=deny|allow (env wins over config). Any
 		 * value but exact `allow` is treated as `deny`. Ignored when connectors
-		 * are disabled.
+		 * are disabled. Like enableConnectors, resolved from USER-scope config
+		 * and env only (see USER_SCOPE_ONLY_PROVIDER_KEYS).
 		 */
 		connectorWriteMode?: ConnectorWriteMode;
 	};
@@ -192,27 +196,55 @@ export function tryParseJson(path: string): Partial<Config> {
 	if (!existsSync(path)) return {};
 	try {
 		return JSON.parse(readFileSync(path, "utf-8"));
-	} catch {
+	} catch (error) {
 		// Malformed optional config should not write raw terminal diagnostics;
-		// stdout/stderr output can corrupt active Pi TUI widgets.
+		// stdout/stderr output can corrupt active Pi TUI widgets. The debug log is
+		// the one place a silently-ignored file explains itself.
+		debug(`config: ignoring malformed ${path}:`, error instanceof Error ? error.message : String(error));
 		return {};
 	}
 }
 
 function readManagerConfig(cwd: string): SettingsRecord {
 	const merged: SettingsRecord = {};
+	const userPath = join(piUserDir(), "settings.json");
 	for (const path of settingsPaths(cwd)) {
 		if (!existsSync(path)) continue;
 		try {
 			const parsed = JSON.parse(readFileSync(path, "utf8"));
 			const configRoot = asRecord(asRecord(asRecord(parsed?.vstack)?.extensionManager)?.config);
 			const config = asRecord(configRoot?.[PACKAGE_ID]);
-			if (config) mergeDeep(merged, config);
-		} catch {
-			// Ignore malformed optional manager config; Pi will surface settings issues elsewhere.
+			if (config) mergeDeep(merged, path === userPath ? config : withoutUserScopeOnlyKeys(config));
+		} catch (error) {
+			// Ignore malformed optional manager config; Pi will surface settings
+			// issues elsewhere. Still say so in the debug log.
+			debug(`config: ignoring malformed manager config ${path}:`, error instanceof Error ? error.message : String(error));
 		}
 	}
 	return merged;
+}
+
+// Connector enablement and write mode decide whether the child claude gains
+// access to the account's live connectors (mail, calendar, files) and whether
+// their WRITE tools are exposed. A repo-controlled channel (a checkout's
+// `.pi/settings.json` or `.pi/claude-bridge.json`, even when the project is
+// trusted for ordinary options) must not be able to flip them: these two keys
+// resolve from USER scope and the env vars only, mirroring the
+// settingSourcesForQuery rationale — whoever writes user scope already owns
+// the process.
+const USER_SCOPE_ONLY_PROVIDER_KEYS = ["enableConnectors", "connectorWriteMode"] as const;
+
+function withoutUserScopeOnlyKeys(raw: SettingsRecord): SettingsRecord {
+	const out = { ...raw };
+	for (const key of USER_SCOPE_ONLY_PROVIDER_KEYS) delete out[key];
+	return out;
+}
+
+function stripUserScopeOnlyProviderKeys(config: Partial<Config>): Partial<Config> {
+	if (!config.provider) return config;
+	const provider = { ...config.provider };
+	for (const key of USER_SCOPE_ONLY_PROVIDER_KEYS) delete provider[key];
+	return { ...config, provider };
 }
 
 function boolFrom(raw: SettingsRecord, key: string): boolean | undefined {
@@ -355,7 +387,9 @@ function legacyLayers(cwd: string): LegacyLayer[] {
 	const projectSettings = projectSettingsPath(cwd);
 	if (!projectSettingsTrusted(projectSettings)) return layers;
 	const projectPath = join(dirname(projectSettings), "claude-bridge.json");
-	return [...layers, { path: projectPath, config: legacyFileConfig(projectPath) }];
+	// Project trust covers ordinary options only; the connector keys stay
+	// user-scope/env (see USER_SCOPE_ONLY_PROVIDER_KEYS).
+	return [...layers, { path: projectPath, config: stripUserScopeOnlyProviderKeys(legacyFileConfig(projectPath)) }];
 }
 
 function mergeLayers(layers: LegacyLayer[]): Partial<Config> {
@@ -404,8 +438,9 @@ function configValueForKey(config: Partial<Config>, key: string): unknown {
 	return undefined;
 }
 
-/** Home-relative when possible, because the point is telling a user what to edit. */
-function displayPath(path: string): string {
+/** Home-relative when possible — for user-facing path mentions (what to edit,
+ *  what to paste into an issue) where an absolute path would leak the username. */
+export function displayPath(path: string): string {
 	const home = homedir();
 	return home && path.startsWith(home + sep) ? `~${path.slice(home.length)}` : path;
 }

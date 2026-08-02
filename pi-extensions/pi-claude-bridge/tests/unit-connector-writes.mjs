@@ -299,20 +299,29 @@ test("PreToolUse hook denies writes on an UNKNOWN connector namespace", async ()
 	assert.equal((await runHook(hook, "mcp__some_other_server__create_thing")).continue, true, "non-connector MCP continues");
 });
 
-test("connectorQueryOptions(true) [deny] wires BOTH disallowedTools ids AND the PreToolUse hook", () => {
+test("connectorQueryOptions(true) [deny] wires disallowedTools ids AND both PreToolUse hooks", async () => {
 	const opts = connectorQueryOptions(true); // default deny
 	for (const w of CONNECTOR_WRITE_TOOLS) assert.ok(opts.disallowedTools.includes(w), `deny id ${w}`);
 	for (const p of CLAUDE_AI_CONNECTOR_TOOL_PATTERNS) assert.ok(opts.allowedTools.includes(p), `allow ${p}`);
-	assert.ok(Array.isArray(opts.hooks?.PreToolUse), "PreToolUse hook registered");
+	assert.ok(Array.isArray(opts.hooks?.PreToolUse), "PreToolUse hooks registered");
 	assert.equal(opts.hooks.PreToolUse.length, 1);
-	assert.equal(typeof opts.hooks.PreToolUse[0].hooks[0], "function");
+	// Builtin allowlist + write deny, in that order (C13).
+	assert.equal(opts.hooks.PreToolUse[0].hooks.length, 2);
+	const [allowlist, writeDeny] = opts.hooks.PreToolUse[0].hooks;
+	assert.ok(isDeny(await runHook(allowlist, "SlashCommand")), "allowlist denies non-permitted builtins");
+	assert.ok(isDeny(await runHook(writeDeny, "mcp__claude_ai_Gmail__create_draft")), "write hook denies connector writes");
 });
 
-test("connectorQueryOptions(true, 'allow') exposes writes and registers NO hook", () => {
+test("connectorQueryOptions(true, 'allow') exposes writes but KEEPS the builtin allowlist", async () => {
 	const opts = connectorQueryOptions(true, "allow");
 	for (const w of CONNECTOR_WRITE_TOOLS) assert.ok(!opts.disallowedTools.includes(w), `not denied ${w}`);
-	assert.equal(opts.hooks, undefined, "no write hook when writes allowed");
 	for (const p of CLAUDE_AI_CONNECTOR_TOOL_PATTERNS) assert.ok(opts.allowedTools.includes(p), `allow ${p}`);
+	// The one-shot write executor is still a connectors session ingesting
+	// third-party content: no write-deny hook, but the allowlist stays (C13).
+	assert.equal(opts.hooks.PreToolUse[0].hooks.length, 1);
+	const [allowlist] = opts.hooks.PreToolUse[0].hooks;
+	assert.equal((await runHook(allowlist, "mcp__claude_ai_Gmail__create_draft")).continue, true, "writes pass the allowlist in allow mode");
+	assert.ok(isDeny(await runHook(allowlist, "SlashCommand")), "unknown builtins still denied in allow mode");
 });
 
 test("connectorQueryOptions(false) [connectors off] is default isolation, no hook, no write denies", () => {

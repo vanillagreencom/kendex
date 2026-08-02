@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { isolatedFromEnv, piUserDir } from "./config.js";
+import { debug } from "./debug.js";
 
 function globalAgentsPath(): string {
 	return join(piUserDir(), "AGENTS.md");
@@ -47,7 +48,10 @@ export function extractAgentsAppend(): string | undefined {
 		if (!content) return undefined;
 		const sanitized = sanitizeAgentsContent(content);
 		return sanitized.length > 0 ? `# CLAUDE.md\n\n${sanitized}` : undefined;
-	} catch {
+	} catch (error) {
+		// An unreadable AGENTS.md silently drops the user's standing instructions
+		// from every child prompt — degrade as before, but leave a trace.
+		debug(`agents-md: failed to read ${agentsPath}:`, error instanceof Error ? error.message : String(error));
 		return undefined;
 	}
 }

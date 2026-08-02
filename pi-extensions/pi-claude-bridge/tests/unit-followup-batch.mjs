@@ -64,4 +64,21 @@ describe("planIncrementalPromptBatch", () => {
 			undefined,
 		);
 	});
+
+	it("rejects a cursor beyond the array instead of clamping (reentrant/foreign context)", () => {
+		// A cursor past the end proves the messages array is NOT the conversation
+		// the cursor describes — e.g. a subagent's short reentrant context while
+		// the parent cursor is 40. Clamping used to fabricate a REUSE plan that
+		// resumed the parent session against foreign history.
+		const messages = roles("user");
+		assert.equal(planIncrementalPromptBatch(messages, 40), undefined);
+		// cursor == messages.length also means Claude owns the trailing user
+		// already — clamping would resend an owned message as a new prompt.
+		assert.equal(planIncrementalPromptBatch(roles("user", "assistant", "user"), 3), undefined);
+		// The legitimate boundary (cursor == lastIndex) still plans a REUSE.
+		assert.deepEqual(planIncrementalPromptBatch(roles("user", "assistant", "user"), 2), {
+			promptStart: 2,
+			userMessageCount: 1,
+		});
+	});
 });
