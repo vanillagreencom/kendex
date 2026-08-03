@@ -221,6 +221,51 @@ else
 fi
 assert_contains "$dash_out" "user-data.txt" "dash-path warning names the untracked file"
 
+echo "=== non-file entries and modified tracked files block the repair ==="
+# FIFOs/sockets/devices and empty untracked dirs are data the old file-only
+# inventory missed; a tracked file with local edits (hidden from git status
+# by assume-unchanged) is data a name-only comparison missed.
+rm -f "$WT/harness"
+mkdir -p "$WT/harness/empty-sub"
+printf 'tracked\n' >"$WT/harness/tracked.md"
+set +e
+empty_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
+empty_rc=$?
+set -e
+if [[ -d "$WT/harness" && ! -L "$WT/harness" && -d "$WT/harness/empty-sub" ]]; then
+  ok "empty untracked subdir blocks and survives"
+else
+  bad "empty untracked subdir blocks and survives" "$empty_out"
+fi
+assert_contains "$empty_out" "empty untracked directory" "warning names the empty dir"
+
+rm -rf "$WT/harness"
+mkdir -p "$WT/harness"
+printf 'tracked\n' >"$WT/harness/tracked.md"
+if mkfifo "$WT/harness/pipe.fifo" 2>/dev/null; then
+  set +e
+  fifo_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
+  set -e
+  if [[ -p "$WT/harness/pipe.fifo" ]]; then ok "FIFO blocks and survives"; else bad "FIFO blocks and survives" "$fifo_out"; fi
+  assert_contains "$fifo_out" "pipe.fifo" "warning names the FIFO"
+  rm -f "$WT/harness/pipe.fifo"
+else
+  ok "skipped: mkfifo unavailable"
+fi
+
+printf 'tracked WITH LOCAL EDITS\n' >"$WT/harness/tracked.md"
+set +e
+edit_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
+set -e
+if [[ "$(cat "$WT/harness/tracked.md")" == "tracked WITH LOCAL EDITS" ]]; then
+  ok "locally-edited tracked file blocks and survives"
+else
+  bad "locally-edited tracked file blocks and survives" "$edit_out"
+fi
+assert_contains "$edit_out" "local edits vs index" "warning names the divergence"
+rm -rf "$WT/harness"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
+
 echo "=== a failed scan blocks the repair instead of reading as empty ==="
 # find exiting nonzero (unreadable subdirectory) must fail closed: "cannot
 # prove safe to replace", never "no untracked files". Root sees through

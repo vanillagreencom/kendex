@@ -58,9 +58,13 @@ cache_worktree_cache_clobbered() {
     [[ "$main_root" != "$root" ]] || return 1
     [[ -e "$main_root/.cache" ]] || return 1
     if [[ -n "${WORKTREE_SYMLINKS:-}" ]]; then
-        local manages_cache=false
+        local manages_cache=false stripped=""
         for entry in ${WORKTREE_SYMLINKS}; do
-            if [[ "${entry%/}" == ".cache" ]]; then
+            # The worktree config normalizer strips ANY number of trailing
+            # slashes; match it, or ".cache//" would read as an opt-out.
+            stripped="$entry"
+            while [[ "$stripped" == */ ]]; do stripped="${stripped%/}"; done
+            if [[ "$stripped" == ".cache" ]]; then
                 manages_cache=true
                 break
             fi

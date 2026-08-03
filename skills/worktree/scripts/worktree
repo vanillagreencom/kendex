@@ -1051,37 +1051,107 @@ install_worktree_autorepair_hooks() {
   return 0
 }
 
-# Files present on disk under a configured path that git does not track — the
-# data an auto-repair would destroy. The tracked skeleton (e.g. a lone
-# .cache/.gitkeep) is exactly what a git operation re-materializes, so a real
-# directory holding ONLY tracked files is safe to re-link; anything beyond it
-# (untracked OR ignored — a worktree-local cache is ignored data) is not.
-worktree_path_untracked_disk_files() {
-  local wt="$1" path="$2" raw="" disk="" tracked="" rc=0
-  # ./ prefix: a configured path may begin with '-' (normalization does not
-  # forbid it), which bare find would parse as an expression — the discarded
-  # error would then read as "no files" and let the repair clobber real data.
-  # The prefix is stripped again so the names compare against git ls-files.
-  raw="$(cd "$wt" 2>/dev/null && find "./$path" \( -type f -o -type l \) 2>/dev/null)" || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    # Fail closed: a failed traversal (permissions, concurrent removal) must
-    # read as "cannot prove the path is safe to replace", never as "empty".
-    # The sentinel flows into the caller's warning as the blocking file list.
-    printf '[scan failed: could not enumerate files under %s (exit %s)]\n' "$path" "$rc"
+# Entries inside a quarantined (moved-aside) materialized path that forbid an
+# automatic re-link. The tracked skeleton (e.g. a lone .cache/.gitkeep) is
+# exactly what a git operation re-materializes, so a copy holding ONLY tracked
+# files at their index content is safe to discard; anything beyond it is not:
+#   - any entry git does not track, of ANY type — FIFOs, sockets, devices and
+#     empty untracked directories included (untracked OR ignored data — a
+#     worktree-local cache is ignored data);
+#   - a tracked name whose content, kind, or exec bit differs from the index
+#     (assume-unchanged hides such edits from git status, so only a direct
+#     compare sees them);
+#   - anything that could not be scanned or read — fail closed, never "empty".
+# Names print relative to the configured path; any output means blocked.
+worktree_quarantine_unsafe_entries() {
+  local wt="$1" path="$2" qdir="$3" rc=0 raw="" empties="" disk="" tracked=""
+  local name="" meta="" mode="" oid="" actual=""
+
+  if [[ ! -d "$qdir" || -L "$qdir" ]]; then
+    # The materialized path is a single non-directory entry: safe only when
+    # git tracks $path itself as a regular file with identical content.
+    if [[ "$(git -C "$wt" ls-files -- "$path" 2>/dev/null)" != "$path" ]]; then
+      printf '%s (untracked)\n' "$path"
+      return 0
+    fi
+    worktree_tracked_entry_mismatch "$wt" "$path" "$path" "$qdir"
     return 0
   fi
-  disk="$(printf '%s\n' "$raw" | sed 's|^\./||' | grep -v '^$' | LC_ALL=C sort)"
-  [[ -n "$disk" ]] || return 0
-  tracked="$(git -C "$wt" ls-files -- "$path" "$path/" 2>/dev/null | LC_ALL=C sort)"
-  LC_ALL=C comm -23 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked") | grep -v '^$' || true
+
+  raw="$(find "$qdir" ! -type d 2>/dev/null)" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    empties="$(find "$qdir" -mindepth 1 -type d -empty 2>/dev/null)" || rc=$?
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    printf '[scan failed: could not enumerate entries under %s (exit %s)]\n' "$path" "$rc"
+    return 0
+  fi
+  # An empty untracked directory is never part of the skeleton — git creates
+  # directories only to hold tracked files.
+  if [[ -n "$empties" ]]; then
+    printf '%s\n' "$empties" | sed "s|^$qdir/|$path/|; s|\$| (empty untracked directory)|"
+  fi
+  disk="$(printf '%s\n' "$raw" | sed "s|^$qdir/||" | grep -v '^$' | LC_ALL=C sort)"
+  tracked="$(git -C "$wt" ls-files -- "$path/" 2>/dev/null | sed "s|^$path/||" | LC_ALL=C sort)"
+  LC_ALL=C comm -23 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked") | grep -v '^$' | sed "s|^|$path/|" || true
+  # Tracked names present in the copy must match the index exactly.
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    worktree_tracked_entry_mismatch "$wt" "$path/$name" "$path/$name" "$qdir/$name"
+  done < <(LC_ALL=C comm -12 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked"))
+}
+
+# Print a blocking line iff the on-disk entry differs from the index record
+# for the tracked pathspec (content oid, symlink target, kind, or exec bit).
+worktree_tracked_entry_mismatch() {
+  local wt="$1" spec="$2" label="$3" file="$4" meta="" mode="" oid="" actual=""
+  meta="$(git -C "$wt" ls-files -s -- "$spec" 2>/dev/null | head -n 1)"
+  mode="${meta%% *}"
+  oid="$(printf '%s\n' "$meta" | awk '{print $2}')"
+  if [[ -z "$mode" || -z "$oid" ]]; then
+    printf '%s (index record unreadable)\n' "$label"
+    return 0
+  fi
+  case "$mode" in
+    120000)
+      if [[ ! -L "$file" ]] || [[ "$(readlink "$file" 2>/dev/null)" != "$(git -C "$wt" cat-file blob "$oid" 2>/dev/null)" ]]; then
+        printf '%s (symlink differs from index)\n' "$label"
+      fi
+      ;;
+    100644 | 100755)
+      if [[ ! -f "$file" || -L "$file" ]]; then
+        printf '%s (not the regular file the index records)\n' "$label"
+        return 0
+      fi
+      actual="$(git -C "$wt" hash-object -- "$file" 2>/dev/null)" || actual=""
+      if [[ -z "$actual" ]]; then
+        printf '%s (unreadable)\n' "$label"
+      elif [[ "$actual" != "$oid" ]]; then
+        printf '%s (local edits vs index)\n' "$label"
+      elif [[ "$mode" == 100755 && ! -x "$file" ]] || [[ "$mode" == 100644 && -x "$file" ]]; then
+        printf '%s (exec bit differs from index)\n' "$label"
+      fi
+      ;;
+    *)
+      printf '%s (unsupported index mode %s)\n' "$label" "$mode"
+      ;;
+  esac
 }
 
 # Re-assert configured WORKTREE_SYMLINKS in one worktree. Cheap on the healthy
 # path (one readlink per entry); repair is the existing fix-links logic
 # (symlink_into_worktree). A materialized path holding data git does not track
 # is never clobbered — it is reported loudly with the manual way out instead.
+#
+# The materialized path is atomically renamed aside BEFORE inspection: a
+# writer racing the scan by path lands in a freshly-created directory (or
+# fails with ENOENT), never in the tree being judged, and a blocked copy is
+# renamed back intact. A writer holding an already-open fd into the old tree
+# can still lose post-scan writes — that residual window is unclosable
+# without never deleting at all; the by-path race (the incident class: a
+# cache sync creating files while the hook runs) is what the rename closes.
 repair_worktree_links() {
-  local wt="$1" path="" src="" dst="" extras="" extra_count=0 repaired="" blocked=false
+  local wt="$1" path="" src="" dst="" qdir="" extras="" extra_count=0 repaired="" blocked=false
   validate_worktree_setup_config || return 1
 
   split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
@@ -1094,12 +1164,21 @@ repair_worktree_links() {
       # Healthy steady state; also covers a link re-pointed at a moved main.
       [[ "$(readlink "$dst" 2>/dev/null || true)" == "$src" ]] && continue
     elif [[ -e "$dst" ]]; then
-      extras="$(worktree_path_untracked_disk_files "$wt" "$path")"
+      qdir="$dst.vstack-repair.$$"
+      if ! mv "$dst" "$qdir" 2>/dev/null; then
+        blocked=true
+        echo "Warning: '$path' in $wt is materialized but could not be moved aside for inspection; leaving it untouched. Repair manually: cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
+        continue
+      fi
+      extras="$(worktree_quarantine_unsafe_entries "$wt" "$path" "$qdir")"
       if [[ -n "$extras" ]]; then
         blocked=true
+        if ! mv "$qdir" "$dst" 2>/dev/null; then
+          echo "CRITICAL: '$path' data is preserved at '$qdir' but could not be moved back to '$dst' — restore it manually before anything else." >&2
+        fi
         extra_count="$(printf '%s\n' "$extras" | grep -c .)"
         {
-          echo "Warning: '$path' in $wt should be a symlink to '$src' but is a real path holding $extra_count file(s) git does not track:"
+          echo "Warning: '$path' in $wt should be a symlink to '$src' but is a real path holding $extra_count entr(y/ies) git does not track or that differ from the index:"
           printf '%s\n' "$extras" | head -n 10 | sed 's/^/  - /'
           if [[ "$extra_count" -gt 10 ]]; then
             echo "  ... and $((extra_count - 10)) more"
@@ -1110,6 +1189,7 @@ repair_worktree_links() {
         } >&2
         continue
       fi
+      rm -rf "$qdir"
     fi
     if symlink_into_worktree "$path" "$wt"; then
       repaired="$repaired $path"

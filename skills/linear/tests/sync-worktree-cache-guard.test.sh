@@ -167,6 +167,17 @@ else
   note_fail "opt-out repo was refused or failed: rc=$rc_opt $err_opt"
 fi
 
+# --- trailing slashes: ".cache//" is the same managed entry, not an opt-out ---
+SLASH_ROOT="$TMP_BASE/slash"
+make_repo "$SLASH_ROOT" $'[env]\nWORKTREE_SYMLINKS = ".cache//"'
+set +e
+err_slash="$(run_sync "$SLASH_ROOT/wt" 2>&1 >/dev/null)"
+rc_slash=$?
+set -e
+[[ $rc_slash -ne 0 ]] && grep -q "Sync refused" <<<"$err_slash" \
+  && note_ok "'.cache//' still refuses (normalizer strips all trailing slashes)" \
+  || note_fail "'.cache//' was treated as an opt-out: rc=$rc_slash $err_slash"
+
 # --- no worktree config at all: the issue's bare prescription still refuses ----
 BARE_ROOT="$TMP_BASE/bare"
 make_repo "$BARE_ROOT" ""
