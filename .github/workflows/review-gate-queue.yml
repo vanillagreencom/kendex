@@ -30,11 +30,13 @@ jobs:
     steps:
       # Checkout only to resolve the CONFIGURABLE gate context from
       # vstack.settings.toml — a hard-coded name here would silently detach
-      # the queue from a renamed REVIEW_GATE_CONTEXT. Queue entries are
-      # post-approval by construction, so running merged content here is
-      # within the queue's own trust model.
+      # the queue from a renamed REVIEW_GATE_CONTEXT. Pinned to the DEFAULT
+      # branch, not the merge-group content: the ruleset requires whatever
+      # context name MAIN's config declares, and nothing queued may run
+      # under this job's write-capable token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Post success (queue entries are post-approval by construction)
         run: |

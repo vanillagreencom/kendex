@@ -47,10 +47,18 @@ WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .
 
 # REVIEW GATE — this repo's SELF-ADOPTION of its own shared engine (VST-10;
 # skills/review-gate is the canonical source here, so workflows reference
-# tracked script paths). review-gate.yml is the PR-side gate pair in the
-# safe posture (TRUST_PR_WORKFLOWS false: read-only base-revision evaluate +
-# no-checkout post) — the latency path and first-success source; the
-# default-branch-defined rerun/sweep workflows are the writers of record.
+# tracked script paths). review-gate.yml is the PR-side gate pair — the
+# latency path and first-success source; the default-branch-defined
+# rerun/sweep workflows are the writers of record and correct any drift
+# within one sweep interval. TRUST_PR_WORKFLOWS is the engine's DELIBERATE
+# self-evaluating re-affirmation, set "true" with eyes open: this is an
+# effectively single-author steward-operated repo, pull_request workflow
+# DEFINITIONS ride the PR head (so a write-capable PR-side post job is
+# PR-editable regardless of what it checks out), and the bootstrap property
+# (a PR fixing a broken predicate can open its own gate) is wanted here.
+# The evaluate job still runs the BASE-revision predicate as defense in
+# depth. Review-object trust is pinned to the two reviewer bots + the owner
+# (closes the any-collaborator-COMMENTED gap).
 # Evidence: CodeRabbit (status/check + review objects) and Copilot's
 # clean-analysis check-run (it never APPROVES, so min_state stays "any" —
 # the same review-mode semantics as the legacy PR_REVIEW_* gate above).
@@ -60,7 +68,7 @@ REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
 REVIEW_GATE_COMMENT_REVIEWERS = ""
 REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
-REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];bmethod"
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
-REVIEW_GATE_TRUST_PR_WORKFLOWS = "false"
+REVIEW_GATE_TRUST_PR_WORKFLOWS = "true"
