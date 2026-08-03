@@ -35,12 +35,15 @@ name: Approval CI re-fire
   # file issue" run on every push. The unresolved-threads condition therefore
   # has no direct re-fire signal here; approval-sweep.yml covers it with a
   # scheduled sweep over the same shared script.
-  # A CLEAN re-analysis by a check-run-publishing reviewer posts no review
-  # object and no review event — only its check-run. Without this trigger the
-  # re-fire never runs in the clean case and the pending gate status would
-  # stand forever. The job-level guard filters to the trusted check name.
-  check_run:
-    types: [completed]
+  # NO check_run trigger here, deliberately: both of this repo's reviewers
+  # emit a usable non-check_run signal on every analysis (Copilot always
+  # submits a review OBJECT, even when clean; CodeRabbit posts a commit
+  # STATUS), while every ordinary CI job completion is also a
+  # check_run.completed — the job-level trust filter runs AFTER concurrency
+  # slotting, so those runs would churn the single gate-writer pending slot
+  # and could replace a queued trusted re-fire (sweep-recoverable, but
+  # needless). Restore the scaffold's check_run trigger if a reviewer that
+  # publishes ONLY check-runs is ever added.
   # Some reviewers publish their clean-analysis evidence as a legacy commit
   # STATUS instead of a check-run, and a status update is a `status` event -
   # not check_run. Without this trigger the clean path still cannot re-fire
@@ -78,23 +81,22 @@ concurrency:
 jobs:
   rerun:
     name: Re-fire CI after review
-    # check_run events: act only on the trusted reviewer's own check (exact
-    # name), and only when it has an associated PR (guarded again in-script).
-    # ADAPT: 'CodeRabbit' = REVIEW_GATE_TRUSTED_STATUS_CONTEXTS,
+    # ADAPT: 'CodeRabbit'/'copilot-pull-request-reviewer' =
+    # REVIEW_GATE_TRUSTED_STATUS_CONTEXTS,
     # 'vstack-reviewer-outage' = REVIEW_GATE_OUTAGE_CONTEXT,
-    # no comment-form reviewer in this repo (the
-    # issue_comment trigger from the scaffold is deliberately dropped).
+    # no comment-form reviewer in this repo (the issue_comment trigger from
+    # the scaffold is deliberately dropped, and so is check_run — see the
+    # trigger comment above).
     if: >-
-      (github.event_name != 'check_run' || github.event.check_run.name == 'CodeRabbit' || github.event.check_run.name == 'copilot-pull-request-reviewer') &&
       (github.event_name != 'status' || ((github.event.context == 'CodeRabbit' || github.event.context == 'copilot-pull-request-reviewer' || github.event.context == 'vstack-reviewer-outage') && github.event.state == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
-      PR_NUMBER: ${{ github.event.pull_request.number || github.event.check_run.pull_requests[0].number }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.check_run.head_sha || github.event.sha }}
-      # Empty on check_run and status events; resolved from the PR.
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.sha }}
+      # Empty on status events; resolved from the PR.
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
     steps:
       # The evaluate-and-converge logic lives in the shared vendored script
@@ -110,11 +112,10 @@ jobs:
       - name: Converge the review gate for the PR head
         run: |
           set -u
-          # check_run.pull_requests[] is best-effort - it can be EMPTY even
-          # for same-repo PRs (notably app-created check runs), so an empty
-          # PR_NUMBER must not silently no-op the clean-case re-fire. Resolve
-          # the PR from the head sha instead; only a genuine no-open-PR
-          # result (push-triggered analysis) exits.
+          # status events carry no PR association, so an empty PR_NUMBER
+          # must not silently no-op the clean-case re-fire. Resolve the PR
+          # from the head sha instead; only a genuine no-open-PR result
+          # (push-triggered analysis) exits.
           if [ -z "${PR_NUMBER:-}" ]; then
             # The lookup itself must fail LOUDLY: an API outage that lands in
             # the no-op branch would silently drop a clean-case re-fire. Only
@@ -127,7 +128,7 @@ jobs:
               echo "no open PR associated with head $HEAD_SHA; nothing to do"
               exit 0
             fi
-            echo "resolved PR #$PR_NUMBER from head sha (check_run payload had no pull_requests)"
+            echo "resolved PR #$PR_NUMBER from head sha (status events carry no PR association)"
           fi
           if [ ! -f skills/review-gate/scripts/approval-refire.sh ]; then
             # Only reachable while the PR introducing the vendored skill is

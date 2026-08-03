@@ -8,6 +8,9 @@ name: Skill Tests
 
 "on":
   pull_request:
+  # Required checks must exist on merge-group shas too, or queue entries
+  # block forever on contexts nothing creates (VST-10).
+  merge_group:
   push:
     branches: [main]
 

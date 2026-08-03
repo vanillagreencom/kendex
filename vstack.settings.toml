@@ -47,9 +47,10 @@ WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .
 
 # REVIEW GATE — this repo's SELF-ADOPTION of its own shared engine (VST-10;
 # skills/review-gate is the canonical source here, so workflows reference
-# tracked script paths). Writers of record are the default-branch-defined
-# rerun/sweep workflows (TRUST_PR_WORKFLOWS false: no PR-side gate job at
-# all — event-driven convergence plus the scheduled sweep carry the status).
+# tracked script paths). review-gate.yml is the PR-side gate pair in the
+# safe posture (TRUST_PR_WORKFLOWS false: read-only base-revision evaluate +
+# no-checkout post) — the latency path and first-success source; the
+# default-branch-defined rerun/sweep workflows are the writers of record.
 # Evidence: CodeRabbit (status/check + review objects) and Copilot's
 # clean-analysis check-run (it never APPROVES, so min_state stays "any" —
 # the same review-mode semantics as the legacy PR_REVIEW_* gate above).

@@ -1,0 +1,125 @@
+# vstack SELF-ADOPTION of its own review-gate engine (VST-10) — the PR-side
+# gate pair in the engine's SAFE posture (REVIEW_GATE_TRUST_PR_WORKFLOWS
+# "false", see skills/review-gate/references/adoption.md):
+#
+#   evaluate  read-only permissions, checks out the PR's BASE revision and
+#             runs the base-revision predicate against the PR head's live
+#             review state — PR-controlled code never runs with a
+#             write-capable token;
+#   post      statuses: write, NO checkout at all, posts the verdict as the
+#             gate commit status.
+#
+# This job pair is BOTH the latency path (fresh heads get a pending status
+# immediately instead of waiting for the sweep) AND the first-success source:
+# approval-refire.sh deliberately never posts an initial success — it re-runs
+# the head's pull_request workflows and relies on this gate re-evaluating in
+# the new attempt (success-needs-proof). The scheduled sweep remains the
+# writer of record for anything this pair misses; on `pull_request` events
+# the workflow DEFINITION itself rides the PR head, which is exactly why the
+# default-branch-defined rerun/sweep stay authoritative.
+name: Review gate
+
+"on":
+  pull_request:
+
+concurrency:
+  # Same single gate-writer group as approval-rerun.yml / approval-sweep.yml:
+  # writers must never interleave posts for the same head out of order.
+  group: review-gate-writer
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    name: Evaluate the review predicate (read-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: read
+      statuses: read
+    outputs:
+      verdict: ${{ steps.eval.outputs.verdict }}
+      detail: ${{ steps.eval.outputs.detail }}
+      context: ${{ steps.eval.outputs.context }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+    steps:
+      # BASE revision, credentials dropped: the predicate copy that runs here
+      # must not be the PR's own (a PR fixing the predicate is judged by the
+      # base copy — the deliberate TRUST_PR_WORKFLOWS="false" trade).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Run the base-revision predicate against the head's review state
+        id: eval
+        run: |
+          set -u
+          # Resolve the configurable gate context from the base revision's
+          # settings so the post job (no checkout) can carry it.
+          . skills/review-gate/scripts/lib/settings.sh
+          ctx="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
+          if [ -z "$ctx" ]; then
+            echo "::error::REVIEW_GATE_CONTEXT must not be empty"
+            exit 1
+          fi
+          # Predicate exit 2 = no verdict (read/config failure): fail the job
+          # WITHOUT posting — acting on a transient failure could flip a
+          # healthy PR's merge state.
+          line="$(skills/review-gate/scripts/review-predicate.sh)" || {
+            echo "::error::review predicate reached no verdict; posting nothing"
+            exit 1
+          }
+          verdict="${line#verdict=}"; verdict="${verdict%% *}"
+          detail="${line#*detail=}"
+          printf 'verdict=%s\n' "$verdict" >>"$GITHUB_OUTPUT"
+          printf 'detail=%s\n' "$detail" >>"$GITHUB_OUTPUT"
+          printf 'context=%s\n' "$ctx" >>"$GITHUB_OUTPUT"
+
+  post:
+    name: Post the gate status
+    needs: evaluate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # NO repository checkout in this job — nothing PR-controlled can run
+    # under the write-capable token.
+    permissions:
+      statuses: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      VERDICT: ${{ needs.evaluate.outputs.verdict }}
+      DETAIL: ${{ needs.evaluate.outputs.detail }}
+      GATE_CONTEXT: ${{ needs.evaluate.outputs.context }}
+    steps:
+      - name: Post the verdict as the gate commit status
+        run: |
+          set -u
+          case "$VERDICT" in
+            approved)              state="success" ;;
+            changes-requested)     state="failure" ;;
+            awaiting|threads-open) state="pending" ;;
+            *)
+              echo "::error::unknown verdict '$VERDICT'; posting nothing"
+              exit 1
+              ;;
+          esac
+          gh api -X POST "repos/$GH_REPO/statuses/$HEAD_SHA" \
+            -f state="$state" -f context="$GATE_CONTEXT" \
+            -f description="${DETAIL:0:140}" \
+            -f target_url="https://github.com/$GH_REPO/pull/$PR_NUMBER" || {
+            echo "::error::could not post $GATE_CONTEXT=$state on $HEAD_SHA"
+            exit 1
+          }
+          echo "posted $GATE_CONTEXT=$state on $HEAD_SHA ($DETAIL)"
