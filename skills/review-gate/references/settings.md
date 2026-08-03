@@ -9,7 +9,7 @@ per-repo wiring and values: [adoption.md](adoption.md).
 | Key | Default | Meaning |
 |---|---|---|
 | `REVIEW_GATE_CONTEXT` | `Review gate` | Gate commit-status context (the required check name). |
-| `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | `Devin Review` | Clean-analysis check-run/status names; either API counts. |
+| `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | (empty) | Clean-analysis check-run/status names; either API counts. Empty disables the source — trust is opt-in per repo, never a shipped vendor default. |
 | `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` | `rate limited;skipped;queued` | Case-insensitive substrings marking a trusted "pass" as analysis-not-run → not evidence. Empty disables. |
 | `REVIEW_GATE_COMMENT_REVIEWERS` | (empty) | `login:binding-pattern` pairs; first `:` splits; pattern is a literal prefix. Empty disables the source. |
 | `REVIEW_GATE_SHA_PREFIX_FLOOR` | `7` | Shortest sha prefix a comment may bind (4–40). |

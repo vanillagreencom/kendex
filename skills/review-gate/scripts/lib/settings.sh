@@ -31,18 +31,20 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment ("empty disables" per the settings docs) and must override the
     # built-in default, exactly like a set-but-empty env var does above.
-    if grep -q "^$name[[:space:]]*=" "$file"; then
-      line="$(grep "^$name[[:space:]]*=" "$file" | head -n 1)"
+    if grep -q "^${name}[[:space:]]*=" "$file"; then
+      line="$(grep "^${name}[[:space:]]*=" "$file" | head -n 1)"
       # A PRESENT assignment this parser cannot read (e.g. TOML array syntax
       # for a list key) must fail LOUDLY, never collapse to empty: an empty
       # value can silently widen the gate (empty trusted-logins = any
       # non-author). Only the flat single-line basic-string shape is
-      # supported; anything else is a configuration error.
-      if ! printf '%s\n' "$line" | grep -q "^$name[[:space:]]*=[[:space:]]*\".*\"[[:space:]]*\$"; then
+      # supported — the value is quote-free ([^"]*), which makes the
+      # extraction exact even with a trailing TOML comment (accepted);
+      # anything else is a configuration error.
+      if ! printf '%s\n' "$line" | grep -Eq "^${name}[[:space:]]*=[[:space:]]*\"[^\"]*\"[[:space:]]*(#.*)?\$"; then
         echo "::error::$file: unsupported syntax for $name (expected a single-line basic string: $name = \"value\"; list keys pack items with ';' separators)" >&2
         return 1
       fi
-      val="$(printf '%s\n' "$line" | sed -n "s/^$name[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*\$/\1/p")"
+      val="$(printf '%s\n' "$line" | sed -n "s/^${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"
       printf '%s' "$val"
       return 0
     fi

@@ -41,7 +41,7 @@ predicate="$here/review-predicate.sh"
 # environment/settings. The configured layer generates its cases from these.
 # `|| exit 1`: rg_setting fails loud on an unparseable assignment; the
 # selftest must not generate cases from a silently-emptied config.
-ACTIVE_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "Devin Review")" || exit 1
+ACTIVE_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "")" || exit 1
 ACTIVE_SKIPS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")" || exit 1
 ACTIVE_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 1
 ACTIVE_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 1
@@ -331,6 +331,9 @@ run "combined-status read failure" "" 2
 unset GH_SHIM_FAIL
 
 reset
+# The check-runs read only happens for a configured trusted context (the
+# shipped default is empty = source disabled), so force one.
+CFG_CONTEXTS="mech-ctx"
 export GH_SHIM_FAIL=checkruns
 run "check-run read failure" "" 2
 unset GH_SHIM_FAIL

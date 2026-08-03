@@ -19,7 +19,11 @@ REVIEW_GATE_CONTEXT = "Review gate"
 # check-runs and statuses are matched by NAME, and any GitHub App or Actions
 # workflow can publish under any name — list only names produced by trusted
 # bots, on repos where every publisher is trusted.
-REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "Devin Review"
+# Default is EMPTY (source disabled): trust is opt-in per repo, never a
+# shipped vendor default. Example for a repo whose reviewer posts a
+# check/status under the name "Devin Review":
+# REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "Devin Review"
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = ""
 
 # A trusted "pass" must prove analysis RAN: a success whose check-run
 # output/status description contains one of these case-insensitive

@@ -34,6 +34,8 @@
 #   r16. non-integer rerun cap               -> exit 1
 #   r17. legacy MAX_ATTEMPTS env raises the  -> run at attempt 5 reruns under
 #        cap                                    MAX_ATTEMPTS=6
+#   r18. settings value with trailing TOML   -> value resolves, comment
+#        comment                                stripped
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -155,74 +157,74 @@ THREADS="verdict=threads-open detail=unresolved review threads on the current he
 
 echo "=== downward transitions are direct posts ==="
 
-out=$(run_refire STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]')
-assert_eq "$?" "0" "r1: awaiting exits 0"
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]') || rc=$?
+assert_eq "$rc" "0" "r1: awaiting exits 0"
 assert_contains "$(cat "$POST_LOG")" "state=pending" "r1: awaiting posts pending"
 assert_contains "$(cat "$POST_LOG")" "context=Review gate" "r1: post carries the default gate context"
-assert_eq "$(wc -l < "$RERUN_LOG")" "0" "r1: no rerun on a downward transition"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r1: no rerun on a downward transition"
 
 out=$(run_refire STUB_VERDICT_LINE="$AWAITING" \
   STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha"}]')
-assert_eq "$(wc -l < "$POST_LOG")" "0" "r2: already-pending same description posts nothing"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "r2: already-pending same description posts nothing"
 assert_contains "$out" "nothing to do" "r2: reports the no-op"
 
 out=$(run_refire STUB_VERDICT_LINE="$CR" STUB_GATE_HISTORY='[]')
 assert_contains "$(cat "$POST_LOG")" "state=failure" "r3: changes-requested posts failure"
-assert_eq "$(wc -l < "$RERUN_LOG")" "0" "r3: no rerun on changes-requested"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r3: no rerun on changes-requested"
 
-out=$(run_refire STUB_VERDICT_LINE="$THREADS" STUB_GATE_HISTORY='[]')
-assert_eq "$?" "0" "r13: threads-open exits 0"
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$THREADS" STUB_GATE_HISTORY='[]') || rc=$?
+assert_eq "$rc" "0" "r13: threads-open exits 0"
 assert_contains "$(cat "$POST_LOG")" "state=pending" "r13: threads-open posts pending"
-assert_eq "$(wc -l < "$RERUN_LOG")" "0" "r13: no rerun on threads-open"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r13: no rerun on threads-open"
 
 echo "=== upward flip: success needs proof ==="
 
-out=$(run_refire STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success","description":"ok"}]')
-assert_eq "$?" "0" "r4: approved with current success exits 0"
-assert_eq "$(wc -l < "$POST_LOG")" "0" "r4: current success posts nothing"
-assert_eq "$(wc -l < "$RERUN_LOG")" "0" "r4: current success reruns nothing"
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success","description":"ok"}]') || rc=$?
+assert_eq "$rc" "0" "r4: approved with current success exits 0"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "r4: current success posts nothing"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r4: current success reruns nothing"
 
-out=$(run_refire STUB_VERDICT_LINE="$APPROVED" \
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" \
   STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"x"},{"context":"Review gate","state":"success","description":"ok"}]')
 assert_contains "$(cat "$POST_LOG")" "state=success" "r5: prior success on the sha allows a direct success post"
-assert_eq "$(wc -l < "$RERUN_LOG")" "0" "r5: proof fast path never reruns"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r5: proof fast path never reruns"
 
-out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed)
-assert_eq "$?" "0" "r6: first approved flip exits 0"
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed) || rc=$?
+assert_eq "$rc" "0" "r6: first approved flip exits 0"
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "r6: full rerun of the completed pull_request run only (never the push run)"
-assert_eq "$(wc -l < "$POST_LOG")" "0" "r6: no direct success without proof"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "r6: no direct success without proof"
 
-out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=high_attempt)
-assert_eq "$?" "0" "r7: attempt cap exits 0"
-assert_eq "$(wc -l < "$RERUN_LOG")" "0" "r7: run at MAX_ATTEMPTS is left alone"
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=high_attempt) || rc=$?
+assert_eq "$rc" "0" "r7: attempt cap exits 0"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r7: run at MAX_ATTEMPTS is left alone"
 assert_contains "$out" "cap 5" "r7: warns about the cap"
 
 out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
   STUB_RUNS_MODE=high_attempt MAX_ATTEMPTS=6)
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "r17: legacy MAX_ATTEMPTS env raises the cap (attempt 5 reruns under cap 6)"
 
-out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  STUB_RUNS_MODE=in_progress QUIESCE=0)
-assert_eq "$?" "0" "r8: in-progress head under QUIESCE=0 exits 0"
-assert_eq "$(wc -l < "$RERUN_LOG")" "0" "r8: in-progress run is left to finish"
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RUNS_MODE=in_progress QUIESCE=0) || rc=$?
+assert_eq "$rc" "0" "r8: in-progress head under QUIESCE=0 exits 0"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r8: in-progress run is left to finish"
 assert_contains "$out" "still in progress" "r8: says why"
 
 echo "=== fail loud, act never ==="
 
 set +e
-out=$(run_refire STUB_PREDICATE_RC=2 STUB_GATE_HISTORY='[]')
+rc=0; out=$(run_refire STUB_PREDICATE_RC=2 STUB_GATE_HISTORY='[]')
 rc=$?
 set -e
 assert_eq "$rc" "1" "r9: predicate failure exits 1"
-assert_eq "$(wc -l < "$POST_LOG")$(wc -l < "$RERUN_LOG")" "00" "r9: no POST and no rerun on predicate failure"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "r9: no POST and no rerun on predicate failure"
 
 set +e
 out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY=fail)
 rc=$?
 set -e
 assert_eq "$rc" "1" "r10: status-history read failure exits 1"
-assert_eq "$(wc -l < "$POST_LOG")$(wc -l < "$RERUN_LOG")" "00" "r10: no action on history read failure"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "r10: no action on history read failure"
 
 set +e
 out=$(env PATH="$TMP_ROOT/bin:$PATH" GH_REPO=acme/widgets HEAD_SHA=headsha \
@@ -246,7 +248,7 @@ out=$(run_refire STUB_VERDICT_LINE="$APPROVED" REVIEW_GATE_CONTEXT="CI Required"
   STUB_GATE_HISTORY='[{"context":"Review gate","state":"success","description":"ok"}]' \
   STUB_RUNS_MODE=completed)
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "r12: another context's success is not proof - reruns instead"
-assert_eq "$(wc -l < "$POST_LOG")" "0" "r12: and posts no success"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "r12: and posts no success"
 
 out=$(run_refire STUB_VERDICT_LINE="$AWAITING" REVIEW_GATE_CONTEXT="CI Required" STUB_GATE_HISTORY='[]')
 assert_contains "$(cat "$POST_LOG")" "context=CI Required" "r12: posts name the custom context"
@@ -254,10 +256,18 @@ assert_contains "$(cat "$POST_LOG")" "context=CI Required" "r12: posts name the 
 cat > "$TMP_ROOT/settings.toml" <<'EOF'
 REVIEW_GATE_CONTEXT = "File Gate"
 EOF
-out=$(run_refire STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
-  REVIEW_GATE_SETTINGS_FILE="$TMP_ROOT/settings.toml")
-assert_eq "$?" "0" "r14: settings-file context exits 0"
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
+  REVIEW_GATE_SETTINGS_FILE="$TMP_ROOT/settings.toml") || rc=$?
+assert_eq "$rc" "0" "r14: settings-file context exits 0"
 assert_contains "$(cat "$POST_LOG")" "context=File Gate" "r14: posts name the settings-file context"
+
+cat > "$TMP_ROOT/commented-settings.toml" <<'EOF'
+REVIEW_GATE_CONTEXT = "File Gate" # inline TOML comment is valid
+EOF
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
+  REVIEW_GATE_SETTINGS_FILE="$TMP_ROOT/commented-settings.toml") || rc=$?
+assert_eq "$rc" "0" "r18: settings value with a trailing TOML comment exits 0"
+assert_contains "$(cat "$POST_LOG")" "context=File Gate" "r18: trailing comment does not pollute the value"
 
 cat > "$TMP_ROOT/bad-settings.toml" <<'EOF'
 REVIEW_GATE_CONTEXT = ["Review gate", "Other"]
@@ -269,7 +279,7 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "r15: unparseable settings assignment exits 1"
 assert_contains "$out" "unsupported syntax" "r15: names the configuration error"
-assert_eq "$(wc -l < "$POST_LOG")$(wc -l < "$RERUN_LOG")" "00" "r15: no POST and no rerun on a config error"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "r15: no POST and no rerun on a config error"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
