@@ -60,8 +60,9 @@ jobs:
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
     steps:
       # BASE revision, credentials dropped: the predicate copy that runs here
-      # must not be the PR's own (a PR fixing the predicate is judged by the
-      # base copy — the deliberate TRUST_PR_WORKFLOWS="false" trade).
+      # is not the PR's own (defense in depth; note a predicate-fixing PR is
+      # judged by the base copy, so its own gate opens via the refire after
+      # merge-independent evidence, not via its fixed predicate).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
