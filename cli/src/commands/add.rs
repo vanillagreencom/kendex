@@ -1442,7 +1442,7 @@ fn resolve_source_for_app(
             // project and report "nothing found". Skip self-references and
             // keep walking the fallback chain so resolution is identical
             // across repo shapes.
-            let allow_project_self = crate::resolve::is_vstack_source(project_root);
+            let allow_project_self = crate::resolve::has_vstack_source_content(project_root);
             let usable = |dir: &Path| allow_project_self || !same_path(dir, project_root);
 
             // Prefer the source selected for THIS project. Source selection is
@@ -1626,14 +1626,6 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         update_cli,
     ) = loop {
         let resolved = resolve_source_for_app(current_source.as_deref(), &registry, &project_root)?;
-        if resolved.persist {
-            if global {
-                registry.remember(&resolved.source);
-            } else {
-                registry.remember_for_project(&project_root, &resolved.source);
-            }
-            registry.save(&config::source_registry_path())?;
-        }
         let source_dir = resolved.dir.clone();
         let all_agents = crate::catalog::discover_agents(&source_dir)?;
         let all_skills = crate::catalog::discover_skills(&source_dir)?;
@@ -1692,6 +1684,16 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 source_dir.display(),
                 missing.join(", ")
             );
+        }
+        // Persist the source choice only once the run can still succeed: a
+        // failed add must not mutate sources.json (vstack#1024 review round).
+        if resolved.persist {
+            if global {
+                registry.remember(&resolved.source);
+            } else {
+                registry.remember_for_project(&project_root, &resolved.source);
+            }
+            registry.save(&config::source_registry_path())?;
         }
         let agents = match agent_filter.as_deref() {
             Some(filter) if filter.iter().any(|f| f == "*") => all_agents,
@@ -2402,7 +2404,7 @@ fn source_from_project_lock(project_root: &Path) -> Option<String> {
     let lock = config::LockFile::load(&project_root.join(".vstack-lock.json")).ok()?;
     // Project-local items record the project itself as their source; those
     // entries must not outvote the canonical source (vstack#1024).
-    let allow_project_self = crate::resolve::is_vstack_source(project_root);
+    let allow_project_self = crate::resolve::has_vstack_source_content(project_root);
     let mut counts = std::collections::BTreeMap::<String, usize>::new();
     for entry in lock.entries.values() {
         if !allow_project_self && same_path(Path::new(&entry.source), project_root) {

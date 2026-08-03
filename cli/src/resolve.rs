@@ -194,6 +194,10 @@ pub fn build_agent_extras(
 }
 
 /// Check if a directory looks like a vstack source repo (has 2+ source item dirs).
+/// The dot-prefix rejection keeps hidden dirs (.vstack, .agents mirrors) out of
+/// CWD walk-up DISCOVERY; callers that already hold an explicit project root
+/// should use [`has_vstack_source_content`] instead — a checkout is a source
+/// because of what it contains, not what its directory is named.
 pub fn is_vstack_source(dir: &Path) -> bool {
     if dir
         .file_name()
@@ -202,6 +206,12 @@ pub fn is_vstack_source(dir: &Path) -> bool {
     {
         return false;
     }
+    has_vstack_source_content(dir)
+}
+
+/// Content-only source check (no directory-name heuristics): a catalog table
+/// or 2+ source item dirs.
+pub fn has_vstack_source_content(dir: &Path) -> bool {
     if crate::catalog::has_catalog_table(dir) {
         return true;
     }
