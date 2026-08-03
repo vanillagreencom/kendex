@@ -444,6 +444,15 @@ reviews_set "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")" \
             "$(review "reviewer" CHANGES_REQUESTED "2026-08-02T18:00:00Z")"
 run "cleared CR fed in reversed array order stays cleared" approved
 
+# An objection is never withdrawn by a later COMMENT — the mirror of the
+# approval-is-never-superseded rule. GitHub keeps requested changes standing
+# until re-approval or dismissal, and so does the reduction.
+reset
+reviews_set "$(review "reviewer" CHANGES_REQUESTED "2026-08-02T18:00:00Z")" \
+            "$(review "reviewer" COMMENTED "2026-08-02T19:00:00Z")" \
+            "$(review "other-reviewer" APPROVED "2026-08-02T19:30:00Z")"
+run "trailing COMMENTED does not withdraw a standing CR" changes-requested
+
 # ...and an APPROVED that POST-dates the CR clears it again.
 reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="approved"

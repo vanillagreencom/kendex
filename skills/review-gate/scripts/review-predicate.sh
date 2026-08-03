@@ -151,14 +151,18 @@ reviews="$(jq -s 'add // []' <<<"$raw_reviews")" || {
   echo "::error::could not parse reviews for PR #$PR_NUMBER" >&2
   exit 2
 }
-# Changes-requested counts only each reviewer's LATEST non-dismissed review on
-# the head, so a superseded CR that the same reviewer later cleared can't pin
-# the PR red forever. Deliberately unfiltered by the trust list: anyone's
-# standing objection fails the gate closed. PENDING rows (unsubmitted drafts,
-# visible when the token authored them) are excluded EVERYWHERE: a draft is
-# not a review event — it must neither clear a standing CR here nor count as
-# evidence below.
-cr="$(jq --arg sha "$HEAD_SHA" '[.[] | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")] | group_by(.user.login) | map(sort_by(.submitted_at // "") | .[-1]) | map(select(.state == "CHANGES_REQUESTED")) | length' <<<"$reviews")" || {
+# Changes-requested reduces each reviewer over their DECISIVE states only
+# (APPROVED / CHANGES_REQUESTED, ordered by submitted_at): a later APPROVED
+# clears that reviewer's objection, so a superseded CR can't pin the PR red
+# forever — but a trailing COMMENTED row never withdraws one (GitHub itself
+# keeps requested changes standing until re-approval or dismissal), the
+# mirror of the header's approval-is-never-superseded-by-a-comment rule.
+# Deliberately unfiltered by the trust list: anyone's standing objection
+# fails the gate closed. PENDING rows (unsubmitted drafts, visible when the
+# token authored them) are excluded EVERYWHERE: a draft is not a review
+# event — it must neither clear a standing CR here nor count as evidence
+# below.
+cr="$(jq --arg sha "$HEAD_SHA" '[.[] | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING") | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | group_by(.user.login) | map(sort_by(.submitted_at // "") | .[-1]) | map(select(.state == "CHANGES_REQUESTED")) | length' <<<"$reviews")" || {
   echo "::error::could not evaluate changes-requested reviews for PR #$PR_NUMBER" >&2
   exit 2
 }
