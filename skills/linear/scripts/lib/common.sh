@@ -273,6 +273,16 @@ graphql_query() {
         http_code="${raw_output##*${delimiter}}"
         response="${raw_output%${delimiter}*}"
 
+        # Linear emits rate-limit rejections with an OUTER HTTP 400 (the body
+        # carries extensions.code RATELIMITED / extensions.statusCode 429), so
+        # normalize on the body marker: without this they fall into the
+        # generic branch and surface as "HTTP error: 400" — and callers like
+        # resolve_team_id then compound it into "Team not found".
+        if [ "$http_code" != "200" ] && echo "$response" | jq -e \
+            '[.errors[]? | select(.extensions.code == "RATELIMITED")] | length > 0' >/dev/null 2>&1; then
+            http_code=429
+        fi
+
         # Handle HTTP errors
         case "$http_code" in
         200)
@@ -330,7 +340,16 @@ graphql_query() {
                 attempt=$((attempt + 1))
                 continue
             fi
-            echo "{\"error\": \"HTTP error: $http_code\"}" >&2
+            # Carry the body's first error message: a bare status code hides
+            # the actionable reason (validation detail, quota text, ...).
+            local error_detail
+            error_detail=$(echo "$response" | jq -r '.errors[0].message // empty' 2>/dev/null || true)
+            if [ -n "$error_detail" ]; then
+                jq -cn --arg code "$http_code" --arg msg "$error_detail" \
+                    '{error: ("HTTP error: " + $code + ": " + $msg)}' >&2
+            else
+                echo "{\"error\": \"HTTP error: $http_code\"}" >&2
+            fi
             return 1
             ;;
         esac
@@ -630,10 +649,15 @@ resolve_team_id() {
         return 0
     fi
 
-    # Look up by name
+    # Look up by name. A FAILED query must propagate as the API failure it
+    # is (rate limit, outage) — "Team not found" is only true for a
+    # successful lookup that returned no match.
     local query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
     local result
-    result=$(graphql_query "$query" "{\"name\": \"$team_ref\"}")
+    if ! result=$(graphql_query "$query" "{\"name\": \"$team_ref\"}"); then
+        echo "{\"error\": \"Could not resolve team '$team_ref': Linear API request failed (see previous error)\"}" >&2
+        return 1
+    fi
     local team_id
     team_id=$(echo "$result" | jq -r '.teams.nodes[0].id // empty')
 
