@@ -27,8 +27,11 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout
   fi
   file="${REVIEW_GATE_SETTINGS_FILE:-vstack.settings.toml}"
   if [ -f "$file" ]; then
-    val="$(sed -n "s/^$name[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*\$/\1/p" "$file" | head -n 1)"
-    if [ -n "$val" ]; then
+    # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
+    # assignment ("empty disables" per the settings docs) and must override the
+    # built-in default, exactly like a set-but-empty env var does above.
+    if grep -q "^$name[[:space:]]*=" "$file"; then
+      val="$(sed -n "s/^$name[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*\$/\1/p" "$file" | head -n 1)"
       printf '%s' "$val"
       return 0
     fi

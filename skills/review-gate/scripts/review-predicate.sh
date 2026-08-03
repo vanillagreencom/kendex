@@ -183,8 +183,17 @@ while IFS= read -r ctx; do
   ctx="$(printf '%s' "$ctx" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   [ -z "$ctx" ] && continue
   ctx_uri="$(jq -rn --arg s "$ctx" '$s|@uri')"
-  checkruns_resp="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/check-runs?check_name=$ctx_uri&per_page=50")" || {
+  # --paginate emits one OBJECT per page for this endpoint; jq -s merges the
+  # pages' check_runs arrays so a success beyond the first page still counts
+  # (a missed run strands the gate at awaiting — wrong direction to lose).
+  # Fetch and merge are SEPARATE steps: a pipe would replace gh's exit status
+  # with jq's and turn a read failure into an empty-success (fail-open).
+  checkruns_pages="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/check-runs?check_name=$ctx_uri&per_page=100" --paginate)" || {
     echo "::error::could not read '$ctx' check-runs" >&2
+    exit 2
+  }
+  checkruns_resp="$(jq -s '{check_runs: (map(.check_runs) | add // [])}' <<<"$checkruns_pages")" || {
+    echo "::error::could not merge '$ctx' check-run pages" >&2
     exit 2
   }
   # Bind each skip pattern to a variable BEFORE testing containment: inside

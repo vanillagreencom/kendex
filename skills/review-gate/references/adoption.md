@@ -167,67 +167,71 @@ cases from the repo's actual trust values.
 
 ## Per-repo settings
 
-| Key | memsira | drovr | hyprtrade |
-|---|---|---|---|
-| `REVIEW_GATE_CONTEXT` | `Review gate` | `Review gate` | `CI Required` (existing aggregate name) or `Review gate` on re-architecture — owner call |
-| `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | `Devin Review` | `Devin Review` | `Devin Review` (+ CodeRabbit's check if it is to be trusted — previously used ad hoc with no trust entry) |
-| `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` | default | default | default — closes the live rate-limited-pass gap |
-| `REVIEW_GATE_COMMENT_REVIEWERS` | `chatgpt-codex-connector[bot]:Reviewed commit:` | (empty — no comment-form reviewer) | (empty unless one is adopted) |
-| `REVIEW_GATE_SHA_PREFIX_FLOOR` | `7` | n/a (default) | n/a (default) |
-| `REVIEW_GATE_OUTAGE_CONTEXT` | `vstack-reviewer-outage` | `vstack-reviewer-outage` | `vstack-reviewer-outage` — carries over unchanged |
-| `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | (empty) | (empty) | set (e.g. `devin-ai-integration` + any trusted humans) — closes the any-collaborator-COMMENTED gap |
-| `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` | `any` | `approved` |
-| `REVIEW_GATE_MAX_RERUN_ATTEMPTS` | `5` | `5` | n/a under its own convergence tool |
-| `REVIEW_GATE_TRUST_PR_WORKFLOWS` | `true` (deliberate: bootstrap property on a private single-author repo — an explicit re-affirmation, not an accident) | `false` (safe posture; outside-contribution exposure not ruled out) | `false` |
+Concrete per-consumer value assignments are tracked on the org adoption issue
+(vstack's issue tracker), not here — this table names each key's decision axis.
+The three adopting consumers map onto the archetypes in the next section.
+
+| Key | Decision axis |
+|---|---|
+| `REVIEW_GATE_CONTEXT` | The repo's protected commit-status name. A repo with an existing aggregate context (archetype C) either sets this to that existing name or renames the context AND updates branch protection/rulesets in the same adoption — a mismatch leaves merges blocked on an absent required check. |
+| `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` | The repo's trusted clean-analysis reviewer context(s). A context previously trusted ad hoc gets an explicit entry here or stops counting. |
+| `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` | Default closes the rate-limited-pass gap everywhere; empty is an explicit opt-out. |
+| `REVIEW_GATE_COMMENT_REVIEWERS` | Only for repos with a comment-form reviewer (reviewer login + binding prefix); empty otherwise. |
+| `REVIEW_GATE_SHA_PREFIX_FLOOR` | Only where a comment-form reviewer binds by SHA prefix. |
+| `REVIEW_GATE_OUTAGE_CONTEXT` | Carries over unchanged (`vstack-reviewer-outage`) unless a repo renames its outage attestation. |
+| `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | Empty = any non-author (adoption-non-breaking). A repo closing the any-collaborator-COMMENTED gap lists its trusted reviewer logins. |
+| `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` keeps today's behavior; `approved` requires an APPROVED verdict. |
+| `REVIEW_GATE_MAX_RERUN_ATTEMPTS` | Refire budget; n/a for a repo keeping its own convergence tool. |
+| `REVIEW_GATE_TRUST_PR_WORKFLOWS` | `false` is the safe posture. `true` is a deliberate, documented re-affirmation for a self-evaluating repo (bootstrap property, private single-author) — never an accident of copying. |
 
 ## Per-consumer adoption shape
 
-**memsira** — closest to a rename-in-place (its implementation is the
-engine's reference):
+Three archetypes cover the current consumers; an adoption PR states which one
+it is and follows that shape.
 
-- Delete `.github/scripts/review-predicate.sh`, `approval-refire.sh`,
+**Archetype R — reference-origin** (the repo whose local implementation this
+engine was lifted from; adoption is a rename-in-place):
+
+- Delete the repo-local `review-predicate.sh`, `approval-refire.sh`, and
   `review-predicate-selftest.sh`.
-- Repoint `ci.yml`'s gate step and selftest job, `approval-rerun.yml`, and
-  `approval-sweep.yml` at `.agents/skills/review-gate/scripts/*.sh`.
-- Settings per the table. Setting `REVIEW_GATE_TRUST_PR_WORKFLOWS = "true"`
-  is the explicit, documented re-affirmation of its self-evaluating posture
-  (the alternative is rewiring `ci.yml` — and `ios.yml`, the predicate's
-  second consumer — to the safe two-job shape above).
-- No docs-only waiver to port (deliberately rejected there).
+- Repoint the CI gate step, the selftest job, `approval-rerun.yml`, and
+  `approval-sweep.yml` at `.agents/skills/review-gate/scripts/*.sh` — and
+  every OTHER workflow that consumes the predicate (a second consumer
+  workflow is easy to miss).
+- If the repo keeps its self-evaluating posture, `REVIEW_GATE_TRUST_PR_WORKFLOWS
+  = "true"` is the explicit re-affirmation; the alternative is rewiring the
+  consuming workflows to the safe two-job shape above.
 
-**drovr**:
+**Archetype M — minimal local gate** (predicate-only today, no sweep
+workflow, thread resolution enforced at merge time rather than CI-side):
 
-- Delete `.github/scripts/review-predicate.sh` and repoint
-  `approval-rerun.yml`; drovr has no sweep workflow today — copy
-  `templates/approval-sweep.yml` to gain the thread-resolution backstop, or
-  record that its merge-time thread gate covers it.
-- **Docs-only waiver decision (owner call, flag in the adoption PR):**
-  drovr's `classify-changes.sh` computes a `gate_exempt` docs-only waiver
-  the shared engine deliberately does not have. Either keep it as
-  drovr-local logic layered on top of the shared predicate, or drop it —
-  dropping silently would be a behavior regression.
-- drovr enforces thread resolution at merge time (its `pr-merge` gate +
-  ruleset), not CI-side; the shared predicate's thread term simply adds the
-  CI-side latency signal.
-- No comment-form reviewer; leave `REVIEW_GATE_COMMENT_REVIEWERS` empty.
+- Delete the repo-local predicate and repoint `approval-rerun.yml`; either
+  copy `templates/approval-sweep.yml` to gain the thread-resolution backstop
+  or record that the merge-time thread gate covers it.
+- **Existing local waivers are an explicit adopt-or-drop decision.** The
+  shared engine deliberately ships no exemptions (e.g. a docs-only
+  review-received waiver computed by a repo-local classification script).
+  Keep such a waiver as repo-local logic layered on top of the shared
+  predicate, or drop it in the adoption PR with the behavior change stated —
+  dropping silently is a regression.
+- No comment-form reviewer → leave `REVIEW_GATE_COMMENT_REVIEWERS` empty.
 
-**hyprtrade** — the largest adoption; **not a script swap**:
+**Archetype C — converge-based** (the largest adoption; **not a script
+swap**):
 
-- Its gate is a different architecture: flag-parsing CLI tools
-  (`tools/ci-required-gate`, `tools/ci-review-convergence`), status name
-  `CI Required`, a convergence sweep that deliberately never writes on read
-  failure (universal 5-minute retry + escalation to a rolling incident
-  issue instead of fail-loud writes), and no PR-ref triggers at all
-  (convergence runs from `status` / `workflow_run` / `schedule` only, after
-  PR-ref runs left permanently-retained non-green check runs on merge-bound
-  heads).
-- **Scope decision for the owner before implementation:** (a) adopt the
-  full engine including refire/sweep convergence, or (b) adopt the shared
-  **predicate only** (the evidence logic — which is where its two
-  live-observed gaps are) and keep `ci-review-convergence` as the
-  convergence layer. The engine supports (b) cleanly: the predicate is a
-  standalone script with a stable one-line verdict contract.
-- Merge queue: verify `merge_group` posting against its ruleset (above).
-- Carry `REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"` over
-  unchanged; add the review-object trust keys and skip patterns per the
-  table — both close gaps observed live on its PRs.
+- Such a repo runs a different architecture: its own flag-parsing gate/
+  convergence CLI tools, an existing protected aggregate context name, a
+  convergence sweep that deliberately never writes on read failure
+  (retry + escalation instead of fail-loud writes), and no PR-ref triggers
+  (convergence from `status` / `workflow_run` / `schedule` only).
+- **Scope decision for the owner before implementation:** (a) adopt the full
+  engine including refire/sweep convergence, or (b) adopt the shared
+  **predicate only** — the evidence logic, where the live-observed gaps are —
+  and keep the repo's convergence layer. The engine supports (b) cleanly:
+  the predicate is a standalone script with a stable one-line verdict
+  contract.
+- **Align `REVIEW_GATE_CONTEXT` explicitly** with the existing protected
+  context name (or rename the context and update rulesets in the same
+  adoption); verify `merge_group` posting against the ruleset.
+- Add the review-object trust keys and skip patterns — both close gaps
+  observed live on this archetype's PRs.
