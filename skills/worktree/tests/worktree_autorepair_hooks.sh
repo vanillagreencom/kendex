@@ -221,5 +221,33 @@ else
 fi
 assert_contains "$dash_out" "user-data.txt" "dash-path warning names the untracked file"
 
+echo "=== a failed scan blocks the repair instead of reading as empty ==="
+# find exiting nonzero (unreadable subdirectory) must fail closed: "cannot
+# prove safe to replace", never "no untracked files". Root sees through
+# permission bits, so skip there (CI runners and dev shells are non-root).
+if [[ "$EUID" -eq 0 ]]; then
+  ok "skipped: running as root, permission-based scan failure cannot be simulated"
+else
+  rm -f "$TMP_ROOT/dash-wt/-dash/user-data.txt"
+  mkdir -p "$TMP_ROOT/dash-wt/-dash/noperm"
+  printf 'hidden\n' >"$TMP_ROOT/dash-wt/-dash/noperm/data.txt"
+  chmod 000 "$TMP_ROOT/dash-wt/-dash/noperm"
+  set +e
+  scan_out="$(cd "$DASH_MAIN" && "$WORKTREE_SCRIPT" repair-links "$TMP_ROOT/dash-wt" 2>&1)"
+  set -e
+  chmod 755 "$TMP_ROOT/dash-wt/-dash/noperm"
+  if [[ -d "$TMP_ROOT/dash-wt/-dash" && ! -L "$TMP_ROOT/dash-wt/-dash" ]]; then
+    ok "unreadable subdir: dir left in place"
+  else
+    bad "unreadable subdir: dir left in place" "$scan_out"
+  fi
+  if [[ "$(cat "$TMP_ROOT/dash-wt/-dash/noperm/data.txt" 2>/dev/null)" == "hidden" ]]; then
+    ok "unreadable subdir: data intact"
+  else
+    bad "unreadable subdir: data intact"
+  fi
+  assert_contains "$scan_out" "scan failed" "warning names the failed scan"
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

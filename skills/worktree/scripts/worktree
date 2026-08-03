@@ -1057,12 +1057,20 @@ install_worktree_autorepair_hooks() {
 # directory holding ONLY tracked files is safe to re-link; anything beyond it
 # (untracked OR ignored — a worktree-local cache is ignored data) is not.
 worktree_path_untracked_disk_files() {
-  local wt="$1" path="$2" disk="" tracked=""
+  local wt="$1" path="$2" raw="" disk="" tracked="" rc=0
   # ./ prefix: a configured path may begin with '-' (normalization does not
   # forbid it), which bare find would parse as an expression — the discarded
   # error would then read as "no files" and let the repair clobber real data.
   # The prefix is stripped again so the names compare against git ls-files.
-  disk="$( (cd "$wt" 2>/dev/null && find "./$path" \( -type f -o -type l \) 2>/dev/null) | sed 's|^\./||' | LC_ALL=C sort)"
+  raw="$(cd "$wt" 2>/dev/null && find "./$path" \( -type f -o -type l \) 2>/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    # Fail closed: a failed traversal (permissions, concurrent removal) must
+    # read as "cannot prove the path is safe to replace", never as "empty".
+    # The sentinel flows into the caller's warning as the blocking file list.
+    printf '[scan failed: could not enumerate files under %s (exit %s)]\n' "$path" "$rc"
+    return 0
+  fi
+  disk="$(printf '%s\n' "$raw" | sed 's|^\./||' | grep -v '^$' | LC_ALL=C sort)"
   [[ -n "$disk" ]] || return 0
   tracked="$(git -C "$wt" ls-files -- "$path" "$path/" 2>/dev/null | LC_ALL=C sort)"
   LC_ALL=C comm -23 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked") | grep -v '^$' || true
