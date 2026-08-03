@@ -647,6 +647,21 @@ CFG_OUTAGE="mech-outage"; CFG_PUBLISHER_REJECT="github-actions[bot]"
 status_ctx "mech-outage" success "reviewer outage attested" "trusted-orchestrator"
 run "publisher filter set: unlisted-login outage attestation still counts" approved
 
+# The outage read is a separate jq implementation, so its null/default
+# semantics need their own pins: an App-posted attestation (creator null) is
+# never rejected by a login entry, and the empty default stays publisher-blind
+# even for github-actions — Actions-posted attestation is legitimate on some
+# repos (vstack's own sweep/refire included).
+reset
+CFG_OUTAGE="mech-outage"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+status_ctx "mech-outage" success "reviewer outage attested"
+run "publisher filter set: App-posted outage attestation (creator null) still counts" approved
+
+reset
+CFG_OUTAGE="mech-outage"; CFG_PUBLISHER_REJECT=""
+status_ctx "mech-outage" success "reviewer outage attested" "github-actions[bot]"
+run "publisher filter unset: github-actions-minted outage attestation counts (default unchanged)" approved
+
 # Invalid configuration must reach NO verdict (exit 2) — a typo in trust
 # config must never quietly widen or narrow the gate.
 reset

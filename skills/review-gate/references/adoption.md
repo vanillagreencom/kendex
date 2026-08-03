@@ -194,6 +194,7 @@ The three adopting consumers map onto the archetypes in the next section.
 | `REVIEW_GATE_COMMENT_REVIEWERS` | Only for repos with a comment-form reviewer (reviewer login + binding prefix); empty otherwise. |
 | `REVIEW_GATE_SHA_PREFIX_FLOOR` | Only where a comment-form reviewer binds by SHA prefix. |
 | `REVIEW_GATE_OUTAGE_CONTEXT` | Carries over unchanged (`vstack-reviewer-outage`) unless a repo renames its outage attestation. |
+| `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | Empty (the default) keeps status evidence publisher-blind — required where the outage attestation is itself Actions-posted (vstack's sweep/refire is). A repo whose PR workflows hold `statuses:write` AND whose attestation comes from a non-Actions identity opts in with `github-actions[bot]` to close the PR-mintable status gap; App-posted statuses (creator null) are never rejected. |
 | `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | Empty = any non-author (adoption-non-breaking). A repo closing the any-collaborator-COMMENTED gap lists its trusted reviewer logins. |
 | `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` keeps today's behavior; `approved` requires an APPROVED verdict. |
 | `REVIEW_GATE_MAX_RERUN_ATTEMPTS` | Refire budget; n/a for a repo keeping its own convergence tool. |

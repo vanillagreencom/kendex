@@ -43,6 +43,10 @@ grep -q "publisher filter set: github-actions-minted outage attestation is not e
   || note "outage publisher-filter near-miss case missing"
 grep -q "publisher filter unset: github-actions-minted status counts" "$work/defaults.out" \
   || note "publisher-filter default-unchanged case missing"
+grep -q "publisher filter set: App-posted outage attestation (creator null) still counts" "$work/defaults.out" \
+  || note "outage null-creator case missing (outage read is a separate jq implementation)"
+grep -q "publisher filter unset: github-actions-minted outage attestation counts" "$work/defaults.out" \
+  || note "outage default-unchanged case missing (outage read is a separate jq implementation)"
 
 # --- layer 2: the selftest must exercise CONFIGURED values ------------------
 mkdir -p "$work/configured"
