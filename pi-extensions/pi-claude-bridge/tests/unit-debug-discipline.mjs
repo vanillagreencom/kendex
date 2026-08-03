@@ -72,6 +72,12 @@ function runThrowingArgsProbeChild() {
 		`// The thrown value itself can defeat String(): a null-prototype object`,
 		`// has no toString at all. The placeholder must degrade to its constant.`,
 		`debug("second-line", () => { throw Object.create(null); }, "still-logs");`,
+		`// JSON.stringify returns undefined (not a string) for undefined and`,
+		`// Symbol args — they must render, not silently blank the slot; and an`,
+		`// Error whose message is a Symbol would make template interpolation of`,
+		`// the placeholder itself throw without String() around the reason.`,
+		`const symErr = new Error(); symErr.message = Symbol("sym-reason");`,
+		`debug("third-line", undefined, Symbol("naked-symbol"), () => { throw symErr; }, "tail");`,
 	].join("\n"));
 	const env = { ...process.env, PI_CODING_AGENT_DIR: join(dir, "agent") };
 	env.CLAUDE_BRIDGE_DIAG_PATH = join(dir, "diag.log");
@@ -94,6 +100,10 @@ describe("debug() formatting failures are non-fatal (vstack#1041)", () => {
 		// Thrown null-prototype object: String(error) itself throws, so the
 		// placeholder degrades to its constant and the line still logs whole.
 		assert.match(log, /second-line \[unprintable: formatting failed\] still-logs/);
+		// undefined and Symbol args render (JSON.stringify yields undefined for
+		// both — join() must not silently blank the slot), and an Error carrying
+		// a Symbol message cannot make the placeholder interpolation throw.
+		assert.match(log, /third-line undefined Symbol\(naked-symbol\) \[unprintable: Symbol\(sym-reason\)\] tail/);
 	});
 });
 

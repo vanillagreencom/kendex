@@ -26974,16 +26974,19 @@ function debug(...args) {
     return JSON.stringify(a);
   };
   const safeFmt = (a) => {
+    let out;
     try {
-      return fmt(a);
+      out = fmt(a);
     } catch (error51) {
       let reason = "formatting failed";
       try {
-        reason = error51 instanceof Error ? error51.message : String(error51);
+        reason = String(error51 instanceof Error ? error51.message : error51);
       } catch {
       }
       return `[unprintable: ${reason}]`;
     }
+    if (out !== void 0) return out;
+    return typeof a === "function" ? "undefined" : String(a);
   };
   const msg = args.map(safeFmt).join(" ");
   try {

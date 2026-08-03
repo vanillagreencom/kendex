@@ -59,18 +59,27 @@ export function debug(...args: unknown[]) {
 	// formatting failure would abort the user's turn exactly when they enabled
 	// debugging. A failed arg degrades to a placeholder; the rest still log.
 	const safeFmt = (a: unknown): string => {
+		let out: string | undefined;
 		try {
-			return fmt(a);
+			out = fmt(a);
 		} catch (error) {
 			// The caught value's own conversion can throw too (a thrown
-			// null-prototype object, a throwing toString) — degrade to a
-			// constant rather than let the placeholder itself escape.
+			// null-prototype object, a throwing toString, an Error whose
+			// message is a Symbol — template interpolation would rethrow) —
+			// degrade to a constant rather than let the placeholder escape.
 			let reason = "formatting failed";
 			try {
-				reason = error instanceof Error ? error.message : String(error);
+				reason = String(error instanceof Error ? error.message : error);
 			} catch { /* keep the constant */ }
 			return `[unprintable: ${reason}]`;
 		}
+		// JSON.stringify returns undefined (not a string) for undefined and
+		// Symbol arguments; render them explicitly instead of letting join()
+		// silently drop the slot. (A non-function arg here can only be
+		// undefined or a Symbol — String() is safe on both; a thunk that
+		// returned one of those renders as plain "undefined".)
+		if (out !== undefined) return out;
+		return typeof a === "function" ? "undefined" : String(a);
 	};
 	const msg = args.map(safeFmt).join(" ");
 	try { appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`, { mode: 0o600 }); } catch { /* debug is best effort */ }
