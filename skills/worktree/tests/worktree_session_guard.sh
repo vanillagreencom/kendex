@@ -1203,16 +1203,17 @@ assert_eq "$RUN_RC" "0" "release without flock"
 [[ ! -e "$nf_mutex" ]] || fail "the mkdir mutex must not outlive the release"
 
 # Companion cutoff case: a GENUINELY unwritable lock location must still fail
-# loudly rather than retry forever — the shim fails every mkdir on the mutex
-# dir without creating it, so the guard sees only failed-mkdir-with-nothing-
-# there observations and must conclude unwritable after the third.
+# loudly rather than retry forever — the shim refuses every mkdir under the
+# mutex path (the mutex itself AND the sibling probe, prefix match), which is
+# exactly what an unwritable parent looks like: the probe fails too, and the
+# guard concludes unwritable immediately instead of spinning.
 unwritable_count="$tmp_dir/unwritable-count"
 unwritable_shim_dir="$tmp_dir/unwritable-shim"
 mkdir -p "$unwritable_shim_dir"
 {
 	printf '#!/usr/bin/env bash\n'
-	printf 'if [[ "${!#}" == %q ]]; then\n' "$nf_mutex"
-	printf '\techo x >>%q\n' "$unwritable_count"
+	printf 'if [[ "${!#}" == %q* ]]; then\n' "$nf_mutex"
+	printf '\techo "${!#}" >>%q\n' "$unwritable_count"
 	printf '\texit 1\n'
 	printf 'fi\n'
 	printf 'exec %q "$@"\n' "$real_mkdir"
@@ -1224,8 +1225,14 @@ env PATH="$unwritable_shim_dir:$noflock_bin" "$GUARD" claim "$nf_wt" --owner CC-
 	>"$run_out" 2>"$run_err" || RUN_RC=$?
 [[ "$RUN_RC" -ne 0 ]] || fail "an unwritable mutex location must fail, not succeed or spin"
 assert_contains "$run_err" "cannot create the session-guard mutex"
-attempts="$(wc -l <"$unwritable_count" 2>/dev/null | tr -d '[:space:]')"
-assert_eq "$attempts" "3" "exactly three consecutive vanished observations reach the unwritable conclusion"
+# Two refusals reach the conclusion: the mutex mkdir, then the sibling probe
+# that proves the parent (not a vanished mutex) is at fault. Guarded read:
+# a missing count file must fail the assertion, not the suite (set -e).
+attempts=0
+[[ -f "$unwritable_count" ]] && attempts="$(wc -l <"$unwritable_count" | tr -d '[:space:]')"
+assert_eq "$attempts" "2" "the mutex attempt plus the sibling probe reach the unwritable conclusion"
+grep -q "probe" "$unwritable_count" 2>/dev/null \
+	|| fail "the sibling probe was never attempted; unwritability was concluded without proof"
 
 # ── The documented exit-code contract ────────────────────────────────
 

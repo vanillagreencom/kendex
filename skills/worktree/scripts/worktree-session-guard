@@ -401,27 +401,31 @@ mkdir_lock_holder_gone() {
 # cannot both remove it and one of them delete a third contender's fresh
 # acquisition.
 acquire_mkdir_lock() {
-	local dir="$1" holder tries=0 vanished=0
+	local dir="$1" holder tries=0
 	while ! mkdir -- "$dir" 2>/dev/null; do
 		if [[ ! -e "$dir" ]]; then
 			# mkdir failed with nothing in the way. Either the common dir is
 			# unwritable — no locking mechanism can work here — or the mutex
 			# vanished inside the probe window: the holder's release (or a
 			# breaker's rename of a dead holder's directory) landed between
-			# the failed mkdir and this check (vstack#1029). A vanished mutex
-			# is acquirable on the next attempt, so only consecutive failures
-			# with nothing in the way prove unwritability.
-			vanished=$((vanished + 1))
-			if [[ "$vanished" -ge 3 ]]; then
-				fail "cannot create the session-guard mutex $dir; without a lock a mutation would race, so it fails loudly instead of running unguarded"
+			# the failed mkdir and this check (vstack#1029). The two are
+			# distinguished DEFINITIVELY with a uniquely named sibling probe
+			# — consecutive vanished observations cannot prove unwritability,
+			# because under contention each one can be a real release.
+			if mkdir -- "$dir.probe.$$" 2>/dev/null; then
+				rmdir -- "$dir.probe.$$" 2>/dev/null || rm -rf -- "$dir.probe.$$"
+				# The parent accepts writes, so the mutex simply vanished:
+				# retry for the real directory, on the loop's usual backoff
+				# and bounded by the same overall attempt budget.
+				tries=$((tries + 1))
+				if [[ "$tries" -ge 600 ]]; then
+					fail "cannot acquire the session-guard mutex after 60s of vanishing contention: $dir"
+				fi
+				sleep 0.1
+				continue
 			fi
-			# Same backoff as the held-mutex path: back-to-back retries would
-			# reach the unwritable conclusion in microseconds and add churn —
-			# the conclusion should require ~sustained nothing-in-the-way.
-			sleep 0.1
-			continue
+			fail "cannot create the session-guard mutex $dir; without a lock a mutation would race, so it fails loudly instead of running unguarded"
 		fi
-		vanished=0
 		holder="$(cat -- "$dir/pid" 2>/dev/null || true)"
 		if mkdir_lock_holder_gone "$holder"; then
 			if mv -- "$dir" "$dir.stale.$$" 2>/dev/null; then
