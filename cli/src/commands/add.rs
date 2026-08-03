@@ -1144,6 +1144,205 @@ role: engineer
 
         let _ = std::fs::remove_dir_all(root);
     }
+
+    fn write_project_skills_dir_config(project: &Path) {
+        std::fs::create_dir_all(project.join("project-skills")).unwrap();
+        std::fs::write(
+            project.join("vstack.toml"),
+            "project-skills-dir = \"project-skills\"\n",
+        )
+        .unwrap();
+    }
+
+    fn write_canonical_source(dir: &Path) {
+        std::fs::create_dir_all(dir.join("agents")).unwrap();
+        std::fs::create_dir_all(dir.join("skills")).unwrap();
+    }
+
+    fn self_pointing_registry(project: &Path) -> config::SourceRegistry {
+        let key = project.canonicalize().unwrap().display().to_string();
+        let mut registry = config::SourceRegistry::default();
+        registry.project_current.insert(key.clone(), key);
+        registry
+    }
+
+    /// vstack#1024: a project that is not itself a vstack source must never
+    /// become its own default add source. Installing a project-local item with
+    /// an explicit self path records the project in the registry
+    /// (project-skills-dir repos do exactly that); the no-SOURCE path must
+    /// skip that self-reference and fall through to the lock-recorded source.
+    #[test]
+    fn default_source_skips_project_self_reference_in_registry() {
+        let root = tmpdir("self-source-registry");
+        let project = root.join("project");
+        let canonical = root.join("canonical");
+        std::fs::create_dir_all(&project).unwrap();
+        write_canonical_source(&canonical);
+        write_project_skills_dir_config(&project);
+        let registry = self_pointing_registry(&project);
+        write_project_skill_lock(&project, &canonical, InstallMethod::Copy);
+
+        let resolved =
+            resolve_source_for_app(None, &registry, &project).expect("default source resolves");
+
+        assert_eq!(
+            resolved.dir,
+            canonical.canonicalize().unwrap(),
+            "no-SOURCE add must not resolve the project itself as the source"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// vstack#1024: project-local lock entries (source = the project) must not
+    /// outvote the canonical source when deriving the default source from the
+    /// project lock.
+    #[test]
+    fn default_source_ignores_self_sourced_lock_entries() {
+        let root = tmpdir("self-source-lock");
+        let project = root.join("project");
+        let canonical = root.join("canonical");
+        std::fs::create_dir_all(&project).unwrap();
+        write_canonical_source(&canonical);
+        write_project_skills_dir_config(&project);
+
+        let mut lock = LockFile::default();
+        for name in ["local-a", "local-b"] {
+            lock.add(config::LockEntry {
+                name: name.into(),
+                kind: config::ItemKind::Skill,
+                source: project.to_string_lossy().into_owned(),
+                source_repo: None,
+                harnesses: vec!["claude-code".into()],
+                method: InstallMethod::Copy,
+                installed_at: "2026-07-03T00:00:00Z".into(),
+                source_hash: String::new(),
+            });
+        }
+        lock.add(config::LockEntry {
+            name: "demo".into(),
+            kind: config::ItemKind::Skill,
+            source: canonical.to_string_lossy().into_owned(),
+            source_repo: None,
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+        let registry = config::SourceRegistry::default();
+        let resolved =
+            resolve_source_for_app(None, &registry, &project).expect("default source resolves");
+
+        assert_eq!(resolved.dir, canonical.canonicalize().unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The self-source guard must not break the legitimate case where the
+    /// project root really is a vstack source (e.g. running add inside the
+    /// vstack checkout itself).
+    #[test]
+    fn default_source_keeps_project_that_is_a_real_vstack_source() {
+        let root = tmpdir("self-source-genuine");
+        let project = root.join("project");
+        write_canonical_source(&project);
+        let registry = self_pointing_registry(&project);
+
+        let resolved =
+            resolve_source_for_app(None, &registry, &project).expect("default source resolves");
+
+        assert_eq!(resolved.dir, project.canonicalize().unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// vstack#1024: a requested-by-name item that is not in the source must be
+    /// a hard error, never "nothing found" + exit 0 — scripted adopters chain
+    /// on the exit code.
+    #[test]
+    fn add_named_missing_skill_fails_nonzero() {
+        let root = tmpdir("missing-skill");
+        let source = root.join("source");
+        let project = root.join("project");
+        let home = root.join("home");
+        let config_home = root.join("config");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config_home).unwrap();
+        write_demo_skill(&source);
+
+        let err = crate::test_util::with_home_and_config(&home, &config_home, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["codex".into()]),
+                    None,
+                    Some(vec!["review-gate".into()]),
+                    None,
+                    None,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap_err()
+            })
+        });
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("skill 'review-gate'"),
+            "error must name the missing item: {msg}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A partial match must also fail: naming one existing skill plus a
+    /// missing agent and hook installs nothing and errors listing every
+    /// missing item.
+    #[test]
+    fn add_partial_named_match_fails_and_installs_nothing() {
+        let root = tmpdir("missing-partial");
+        let source = root.join("source");
+        let project = root.join("project");
+        let home = root.join("home");
+        let config_home = root.join("config");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config_home).unwrap();
+        write_demo_skill(&source);
+
+        let err = crate::test_util::with_home_and_config(&home, &config_home, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    Some(vec!["codex".into()]),
+                    Some(vec!["ghost".into()]),
+                    Some(vec!["demo".into()]),
+                    Some(vec!["nohook".into()]),
+                    None,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap_err()
+            })
+        });
+
+        let msg = err.to_string();
+        assert!(msg.contains("agent 'ghost'"), "missing agent named: {msg}");
+        assert!(msg.contains("hook 'nohook'"), "missing hook named: {msg}");
+        assert!(
+            !project.join(".agents/skills/demo/SKILL.md").exists(),
+            "a failed add must not partially install the matched items"
+        );
+        assert!(!project.join(".vstack-lock.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 /// vstack#71: walk each agent's [agent-skills] + [role-skills] + transitive
@@ -1236,11 +1435,22 @@ fn resolve_source_for_app(
             })
         }
         None => {
+            // vstack#1024: a project that is not itself a vstack source must
+            // never become its own default source. Installing a project-local
+            // item with an explicit self path records the project in the
+            // registry and lock; the no-SOURCE path would then scan the
+            // project and report "nothing found". Skip self-references and
+            // keep walking the fallback chain so resolution is identical
+            // across repo shapes.
+            let allow_project_self = crate::resolve::is_vstack_source(project_root);
+            let usable = |dir: &Path| allow_project_self || !same_path(dir, project_root);
+
             // Prefer the source selected for THIS project. Source selection is
             // intentionally project-scoped: choosing a repo while working in
             // one project must not silently change the source used by another.
             if let Some(current) = registry.current_for_project(project_root)
                 && let Ok(dir) = resolve_source(Some(current))
+                && usable(&dir)
             {
                 return Ok(ResolvedSource {
                     source: current.to_string(),
@@ -1256,6 +1466,7 @@ fn resolve_source_for_app(
             // project's repo choice remains stable across invocations.
             if let Some(current) = source_from_project_lock(project_root)
                 && let Ok(dir) = resolve_source(Some(&current))
+                && usable(&dir)
             {
                 return Ok(ResolvedSource {
                     label: source_label(&current),
@@ -1439,6 +1650,49 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             || skill_filter.is_some()
             || hook_filter.is_some()
             || pi_extension_filter.is_some();
+
+        // vstack#1024: a requested-by-name item that is not in the source is a
+        // hard error in non-interactive mode — scripted adopters chain on the
+        // exit code, so "nothing found" + exit 0 reads as installed. Interactive
+        // runs keep going so the user can switch sources in the picker.
+        let mut missing: Vec<String> = Vec::new();
+        let collect_missing = |missing: &mut Vec<String>,
+                               kind: &str,
+                               filter: Option<&[String]>,
+                               exists: &dyn Fn(&str) -> bool| {
+            for name in filter.unwrap_or_default() {
+                if name != "*" && !exists(name) {
+                    missing.push(format!("{kind} '{name}'"));
+                }
+            }
+        };
+        collect_missing(&mut missing, "agent", agent_filter.as_deref(), &|name| {
+            all_agents.iter().any(|a| a.name == name)
+        });
+        collect_missing(&mut missing, "skill", skill_filter.as_deref(), &|name| {
+            all_skills.iter().any(|s| s.name == name)
+        });
+        collect_missing(&mut missing, "hook", hook_filter.as_deref(), &|name| {
+            all_hooks.iter().any(|h| h.name == name)
+        });
+        collect_missing(
+            &mut missing,
+            "pi-extension",
+            pi_extension_filter.as_deref(),
+            &|name| {
+                all_pi_extensions.iter().any(|e| {
+                    e.name == name
+                        || crate::pi_extension::legacy_names_for(&e.name).contains(&name)
+                })
+            },
+        );
+        if !missing.is_empty() && non_interactive {
+            anyhow::bail!(
+                "not found in {}: {}\nNothing was installed. Check the name with `vstack list`, or pass an explicit SOURCE.",
+                source_dir.display(),
+                missing.join(", ")
+            );
+        }
         let agents = match agent_filter.as_deref() {
             Some(filter) if filter.iter().any(|f| f == "*") => all_agents,
             Some(filter) => {
@@ -2146,8 +2400,14 @@ fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
 
 fn source_from_project_lock(project_root: &Path) -> Option<String> {
     let lock = config::LockFile::load(&project_root.join(".vstack-lock.json")).ok()?;
+    // Project-local items record the project itself as their source; those
+    // entries must not outvote the canonical source (vstack#1024).
+    let allow_project_self = crate::resolve::is_vstack_source(project_root);
     let mut counts = std::collections::BTreeMap::<String, usize>::new();
     for entry in lock.entries.values() {
+        if !allow_project_self && same_path(Path::new(&entry.source), project_root) {
+            continue;
+        }
         *counts.entry(entry.source.clone()).or_default() += 1;
     }
     counts
