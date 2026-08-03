@@ -401,13 +401,23 @@ mkdir_lock_holder_gone() {
 # cannot both remove it and one of them delete a third contender's fresh
 # acquisition.
 acquire_mkdir_lock() {
-	local dir="$1" holder tries=0
+	local dir="$1" holder tries=0 vanished=0
 	while ! mkdir -- "$dir" 2>/dev/null; do
 		if [[ ! -e "$dir" ]]; then
-			# mkdir failed with nothing in the way: the common dir itself is
-			# unwritable, so no locking mechanism can work here.
-			fail "cannot create the session-guard mutex $dir; without a lock a mutation would race, so it fails loudly instead of running unguarded"
+			# mkdir failed with nothing in the way. Either the common dir is
+			# unwritable — no locking mechanism can work here — or the mutex
+			# vanished inside the probe window: the holder's release (or a
+			# breaker's rename of a dead holder's directory) landed between
+			# the failed mkdir and this check (vstack#1029). A vanished mutex
+			# is acquirable on the next attempt, so only consecutive failures
+			# with nothing in the way prove unwritability.
+			vanished=$((vanished + 1))
+			if [[ "$vanished" -ge 3 ]]; then
+				fail "cannot create the session-guard mutex $dir; without a lock a mutation would race, so it fails loudly instead of running unguarded"
+			fi
+			continue
 		fi
+		vanished=0
 		holder="$(cat -- "$dir/pid" 2>/dev/null || true)"
 		if mkdir_lock_holder_gone "$holder"; then
 			if mv -- "$dir" "$dir.stale.$$" 2>/dev/null; then

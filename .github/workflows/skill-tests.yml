@@ -57,10 +57,14 @@ jobs:
       - name: orch suite (run-all)
         run: bash skills/orch/tests/run-all.sh
 
+      # A failure is announced twice: inline where it happened, and in a
+      # FAILED SUITES block at the end — the tail of a red job must name the
+      # culprits instead of showing only the later suites passing (#1029).
       - name: all other skill suites
         run: |
           set -u
           fail=0
+          failed=""
           for t in skills/*/tests/*.sh; do
             case "$t" in
               skills/orch/tests/*) continue ;;
@@ -69,8 +73,12 @@ jobs:
             if ! bash "$t"; then
               echo "FAILED: $t"
               fail=1
+              failed="$failed $t"
             fi
           done
+          if [ "$fail" -ne 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
           exit "$fail"
 
       - name: hook suites

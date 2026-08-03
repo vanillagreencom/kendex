@@ -1167,6 +1167,37 @@ fi
 rm -rf "$nf_mutex"
 wait "$blocked_pid" || fail "the contender must acquire the mutex once the holder releases it"
 
+# The released-mutex window (vstack#1029): a contender's mkdir can fail while
+# the holder's release is mid-flight, so by the time the contender probes the
+# path there is nothing in the way. That observation must read as "retry",
+# not "the common dir is unwritable" — the race above only hits this window
+# under scheduler pressure, so it is provoked deterministically instead: a
+# mkdir shim fails the first attempt on the lock directory without creating
+# it, handing the guard exactly one failed-mkdir-with-nothing-there
+# observation before delegating to the real mkdir.
+vanish_marker="$tmp_dir/vanish-marker"
+vanish_shim_dir="$tmp_dir/vanish-shim"
+mkdir -p "$vanish_shim_dir"
+real_mkdir="$(command -v mkdir)"
+{
+	printf '#!/usr/bin/env bash\n'
+	printf 'if [[ "${!#}" == %q && ! -e %q ]]; then\n' "$nf_mutex" "$vanish_marker"
+	printf '\t: >%q\n' "$vanish_marker"
+	printf '\texit 1\n'
+	printf 'fi\n'
+	printf 'exec %q "$@"\n' "$real_mkdir"
+} >"$vanish_shim_dir/mkdir"
+chmod +x "$vanish_shim_dir/mkdir"
+
+RUN_RC=0
+env PATH="$vanish_shim_dir:$noflock_bin" "$GUARD" refresh "$nf_wt" --owner CC-1000 \
+	>"$run_out" 2>"$run_err" || RUN_RC=$?
+[[ -e "$vanish_marker" ]] \
+	|| fail "the vanish shim never intercepted a mkdir; the released-mutex window was not exercised"
+assert_eq "$RUN_RC" "0" "a contender must retry a mutex that vanished mid-probe"
+assert_not_contains "$run_err" "cannot create the session-guard mutex"
+[[ ! -e "$nf_mutex" ]] || fail "the mkdir mutex must be released after the vanished-mutex retry"
+
 run_noflock release "$nf_wt" --owner CC-1000
 assert_eq "$RUN_RC" "0" "release without flock"
 [[ ! -e "$nf_mutex" ]] || fail "the mkdir mutex must not outlive the release"
