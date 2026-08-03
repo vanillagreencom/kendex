@@ -11,5 +11,7 @@ applyTo: "skills/**,agents/**"
   established convention — do not flag citations there.
 - Shell scripts and tests must stay Bash 3.2-compatible: flag `mapfile`,
   `declare -A`, `${var,,}` and other Bash 4+ constructs as real defects. New
-  scripts and tests must carry the executable bit (CI lints this) — flag
-  files added without it.
+  `tests/*.sh` and `scripts/*` files must carry the executable bit (CI lints
+  this) — sourced `scripts/lib/` libraries are the exception, and non-shell
+  tests (e.g. `.mjs`) need none; flag only those in-scope shapes added
+  without it.

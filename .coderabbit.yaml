@@ -92,13 +92,18 @@ reviews:
     - path: "skills/**/{scripts,tests}/**"
       instructions: >-
         Shell here must stay Bash 3.2-compatible — flag mapfile, declare -A,
-        "${var,,}" and other Bash 4+ constructs as real defects. New scripts
-        and tests must carry the executable bit (CI lints this); flag files
-        added without it.
+        "${var,,}" and other Bash 4+ constructs as real defects. New shell
+        tests (tests/*.sh) and scripts/* files must carry the executable bit
+        (CI lints this) — sourced scripts/lib/ libraries are the exception,
+        and non-shell tests (e.g. .mjs) need no executable bit; flag only
+        those in-scope shapes added without it.
     - path: "cli/**"
       instructions: >-
         Rust workspace; repo convention runs cargo test and clippy. Code that
         writes vstack.toml or vstack.settings.toml must never reformat content
         inside TOML string values — flag any line-oriented pass over TOML text
         that is not aware of string state; this has corrupted user config
-        before.
+        before. Inline #[cfg(test)] modules deliberately use the OS tempdir
+        (std::env::temp_dir) with cleanup — the repo's "<worktree>/tmp/" rule
+        governs agent working artifacts, not test-runtime fixtures; do not
+        flag OS-tempdir use inside test code.

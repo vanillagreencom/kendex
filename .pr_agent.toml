@@ -24,8 +24,10 @@ issues_user_guidelines = """
 - Fail-closed allowlists in hooks/ (e.g. the connectors-mode PreToolUse hook)
   are the intended security design; do not propose denylists or loosening.
 - Skill scripts and tests must be Bash 3.2-compatible (no mapfile, declare -A,
-  "${var,,}") and new scripts/tests need the executable bit — these are real
-  defects, report them.
+  "${var,,}") — these are real defects, report them. New tests/*.sh and
+  scripts/* files need the executable bit (CI lints this); sourced
+  scripts/lib/ libraries are the exception, and non-shell tests (e.g. .mjs)
+  need none.
 - In cli/ (Rust), writers of vstack.toml / vstack.settings.toml must never
   reformat content inside TOML string values; report any line-oriented TOML
   pass that is not string-state-aware.
