@@ -29,9 +29,17 @@ name: Review gate
   pull_request:
 
 concurrency:
-  # Same single gate-writer group as approval-rerun.yml / approval-sweep.yml:
-  # writers must never interleave posts for the same head out of order.
-  group: review-gate-writer
+  # PER-PR group, deliberately NOT the repo-wide review-gate-writer group the
+  # rerun/sweep share: the write race needing serialization is two writers on
+  # the SAME head posting out of order, which this per-PR key still prevents
+  # for this workflow's runs. Joining the global group would let a sweep that
+  # reruns every approved PR's workflows queue all their gate runs into ONE
+  # pending slot — GitHub keeps a single pending run per group, so later PRs
+  # would cancel earlier PRs' first-success reruns (fleet-wide gate
+  # starvation). The residual cross-workflow interleave with the sweep is
+  # transient by construction: every writer re-reads live state, and the
+  # next sweep or evidence event converges it.
+  group: review-gate-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 permissions:
