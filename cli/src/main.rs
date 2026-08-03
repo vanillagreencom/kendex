@@ -303,6 +303,11 @@ enum Commands {
         /// Upstream repo for vstack-owned issues (default: vanillagreencom/vstack).
         #[arg(long)]
         upstream: Option<String>,
+        /// Surface area for the `area:*` routing label on vstack-owned issues:
+        /// cli | skills | harness | review-gate | docs | tech-debt. Derived from
+        /// the asset selector when omitted.
+        #[arg(long)]
+        area: Option<String>,
         /// Print the ownership decision, target repo, and exact gh command
         /// without filing anything.
         #[arg(long)]
@@ -415,6 +420,7 @@ fn main() -> Result<()> {
             global,
             scope,
             upstream,
+            area,
             dry_run,
         }) => commands::report::run(commands::report::ReportArgs {
             skill,
@@ -427,6 +433,7 @@ fn main() -> Result<()> {
             global,
             scope,
             upstream,
+            area,
             dry_run,
         }),
         // No subcommand → default to add

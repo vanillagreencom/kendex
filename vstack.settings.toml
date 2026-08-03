@@ -47,7 +47,7 @@ WORKTREE_COPIES = ".vstack-lock.json"
 WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
 WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
-WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .pi/agents .pi/APPEND_SYSTEM.md .claude/settings.json .claude/agents .claude/hooks .claude/skills"
+WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .pi/agents .pi/APPEND_SYSTEM.md .claude/settings.json .claude/agents .claude/hooks .claude/skills .cache"
 
 # REVIEW GATE — this repo's SELF-ADOPTION of its own shared engine (VST-10;
 # skills/review-gate is the canonical source here, so workflows reference
