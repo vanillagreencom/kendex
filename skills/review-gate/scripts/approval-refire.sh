@@ -55,8 +55,10 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib/settings.sh"
 
 QUIESCE="${QUIESCE:-1}"
-MAX_ATTEMPTS="${MAX_ATTEMPTS:-$(rg_setting REVIEW_GATE_MAX_RERUN_ATTEMPTS "5")}"
-GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")"
+# `|| exit 1`: rg_setting fails on a present-but-unparseable assignment, and
+# that is a configuration error to surface, never an empty value to act on.
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-$(rg_setting REVIEW_GATE_MAX_RERUN_ATTEMPTS "5")}" || exit 1
+GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
 
 case "$MAX_ATTEMPTS" in
   ''|*[!0-9]*)

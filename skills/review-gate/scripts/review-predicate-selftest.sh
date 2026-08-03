@@ -39,13 +39,15 @@ predicate="$here/review-predicate.sh"
 # ------------------------------------------------------------ active config ---
 # Resolved exactly as the predicate resolves it, from the invoking repo's
 # environment/settings. The configured layer generates its cases from these.
-ACTIVE_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "Devin Review")"
-ACTIVE_SKIPS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")"
-ACTIVE_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")"
-ACTIVE_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")"
-ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")"
-ACTIVE_TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")"
-ACTIVE_MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")"
+# `|| exit 1`: rg_setting fails loud on an unparseable assignment; the
+# selftest must not generate cases from a silently-emptied config.
+ACTIVE_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "Devin Review")" || exit 1
+ACTIVE_SKIPS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")" || exit 1
+ACTIVE_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 1
+ACTIVE_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 1
+ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 1
+ACTIVE_TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 1
+ACTIVE_MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 1
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

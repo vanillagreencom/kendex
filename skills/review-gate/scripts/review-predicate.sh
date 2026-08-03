@@ -66,13 +66,15 @@ set -u
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib/settings.sh"
 
-TRUSTED_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "Devin Review")"
-SKIP_PATTERNS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")"
-COMMENT_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")"
-SHA_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")"
-OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")"
-TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")"
-MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")"
+# `|| exit 2`: rg_setting fails on a present-but-unparseable assignment, and
+# that is a configuration error (no verdict), never an empty value.
+TRUSTED_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "Devin Review")" || exit 2
+SKIP_PATTERNS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")" || exit 2
+COMMENT_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 2
+SHA_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 2
+OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 2
+TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 2
+MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 2
 
 # Configuration errors are exit 2 (no verdict), same contract as a failed
 # evidence read: a typo in trust config must never quietly widen or narrow
@@ -171,11 +173,18 @@ got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
 # to not-evidence — the same as absent, never a failure. A read FAILURE here
 # must fail LOUDLY: treating it as absent evidence could flip a healthy PR's
 # merge state on a transient API hiccup.
-# The combined-status endpoint carries every context in one read; fetch it
-# once (fail loud) and evaluate each trusted context — and the outage
-# attestation below — against the same snapshot.
-status_resp="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/status")" || {
+# The combined-status endpoint paginates its statuses array (default 30
+# contexts per page), so fetch EVERY page (fail loud) and merge them into one
+# snapshot — each trusted context and the outage attestation below evaluate
+# against it. Fetch and merge are SEPARATE steps for the same reason as the
+# check-runs read: a pipe would replace gh's exit status with jq's and turn a
+# read failure into an empty-success (fail-open).
+status_pages="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/status?per_page=100" --paginate)" || {
   echo "::error::could not read the combined commit status for $HEAD_SHA" >&2
+  exit 2
+}
+status_resp="$(jq -s '{statuses: (map(.statuses) | add // [])}' <<<"$status_pages")" || {
+  echo "::error::could not merge the combined commit status pages for $HEAD_SHA" >&2
   exit 2
 }
 check=0

@@ -4,7 +4,7 @@ All keys resolve environment-first, then the repo's `vstack.settings.toml`,
 then the built-in default (`REVIEW_GATE_SETTINGS_FILE` overrides the file
 path, e.g. in tests). List values pack into one string with `;` separators.
 Commented defaults ship in this skill's `vstack.settings.toml.example`;
-per-repo wiring and values: [references/adoption.md](references/adoption.md).
+per-repo wiring and values: [adoption.md](adoption.md).
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -32,4 +32,4 @@ self-evaluation (PR-head predicate) for its bootstrap property — a PR that
 fixes the gate can open its own gate — which is defensible only on private,
 effectively single-author repos; the settings key exists so that choice is
 explicit and visible, never an accident. Wiring for both postures:
-[references/adoption.md](references/adoption.md).
+[adoption.md](adoption.md).

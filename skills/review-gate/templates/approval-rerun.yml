@@ -132,7 +132,13 @@ jobs:
           # the PR from the head sha instead; only a genuine no-open-PR
           # result (push-triggered analysis) exits.
           if [ -z "${PR_NUMBER:-}" ]; then
-            PR_NUMBER="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/pulls" --jq '[.[] | select(.state == "open")][0].number // empty')" || PR_NUMBER=""
+            # The lookup itself must fail LOUDLY: an API outage that lands in
+            # the no-op branch would silently drop a clean-case re-fire. Only
+            # a SUCCESSFUL empty response means "no open PR".
+            PR_NUMBER="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/pulls" --jq '[.[] | select(.state == "open")][0].number // empty')" || {
+              echo "::error::could not list open PRs for head $HEAD_SHA; taking no action"
+              exit 1
+            }
             if [ -z "${PR_NUMBER:-}" ]; then
               echo "no open PR associated with head $HEAD_SHA; nothing to do"
               exit 0
