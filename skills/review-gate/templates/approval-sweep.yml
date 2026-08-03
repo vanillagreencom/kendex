@@ -48,7 +48,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: approval-sweep
+  # Shares the single repo-wide gate-writer group with approval-rerun.yml: a
+  # sweep evaluating a stale snapshot must never interleave its posts with a
+  # newer event-driven write (see the rerun template's comment).
+  group: review-gate-writer
   cancel-in-progress: false
 
 jobs:

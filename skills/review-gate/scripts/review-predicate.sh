@@ -17,7 +17,10 @@
 #       login whose body binds the evidence to this head's sha;
 #   (d) the trusted reviewer-outage attestation status — substitutes for
 #       MISSING evidence only;
-# AND no changes-requested against the head AND zero unresolved review
+# AND no STANDING changes-requested (each reviewer's latest decisive review
+# across the WHOLE PR — GitHub keeps an objection standing across pushes
+# until re-approval or dismissal, so the reduction must not be scoped to the
+# head; positive evidence stays exact-head) AND zero unresolved review
 # threads. Changes-requested and unresolved threads always fail closed, even
 # with evidence present.
 #
@@ -152,17 +155,20 @@ reviews="$(jq -s 'add // []' <<<"$raw_reviews")" || {
   exit 2
 }
 # Changes-requested reduces each reviewer over their DECISIVE states only
-# (APPROVED / CHANGES_REQUESTED, ordered by submitted_at): a later APPROVED
-# clears that reviewer's objection, so a superseded CR can't pin the PR red
-# forever — but a trailing COMMENTED row never withdraws one (GitHub itself
-# keeps requested changes standing until re-approval or dismissal), the
-# mirror of the header's approval-is-never-superseded-by-a-comment rule.
-# Deliberately unfiltered by the trust list: anyone's standing objection
-# fails the gate closed. PENDING rows (unsubmitted drafts, visible when the
-# token authored them) are excluded EVERYWHERE: a draft is not a review
-# event — it must neither clear a standing CR here nor count as evidence
-# below.
-cr="$(jq --arg sha "$HEAD_SHA" '[.[] | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING") | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | group_by(.user.login) | map(sort_by(.submitted_at // "") | .[-1]) | map(select(.state == "CHANGES_REQUESTED")) | length' <<<"$reviews")" || {
+# (APPROVED / CHANGES_REQUESTED, ordered by submitted_at) across the WHOLE
+# PR — never scoped to the head: GitHub keeps an objection standing when the
+# author pushes new commits, so a head-scoped reduction would let any
+# evidence source on the fresh head open the gate past a standing human
+# objection. A later APPROVED from the same reviewer (on any commit) clears
+# it, so a superseded CR can't pin the PR red forever — but a trailing
+# COMMENTED row never withdraws one (GitHub itself keeps requested changes
+# standing until re-approval or dismissal), the mirror of the header's
+# approval-is-never-superseded-by-a-comment rule. Deliberately unfiltered by
+# the trust list: anyone's standing objection fails the gate closed. PENDING
+# rows (unsubmitted drafts, visible when the token authored them) are
+# excluded EVERYWHERE: a draft is not a review event — it must neither clear
+# a standing CR here nor count as evidence below.
+cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | group_by(.user.login) | map(sort_by(.submitted_at // "") | .[-1]) | map(select(.state == "CHANGES_REQUESTED")) | length' <<<"$reviews")" || {
   echo "::error::could not evaluate changes-requested reviews for PR #$PR_NUMBER" >&2
   exit 2
 }
@@ -366,7 +372,7 @@ unresolved="$(gh api graphql \
 echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok changes-requested=$cr unresolved-threads=$unresolved" >&2
 
 if [ "$cr" != "0" ]; then
-  echo "verdict=changes-requested detail=review changes requested on the current head"
+  echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
 elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ]; then
   echo "verdict=awaiting detail=awaiting a non-author review for $HEAD_SHA"
 elif [ "$unresolved" != "0" ]; then

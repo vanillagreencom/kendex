@@ -74,12 +74,16 @@ permissions:
   contents: read
 
 concurrency:
-  # check_run events include the CHECK NAME in the group key: the job-level
-  # name filter runs AFTER concurrency slotting, so a skipped untrusted
-  # check_run would otherwise replace a queued trusted-reviewer re-fire in
-  # the shared pending slot and silently drop it. Same-name collisions are
-  # safe - the run re-reads current state.
-  group: approval-rerun-${{ github.event.issue.number || github.event.pull_request.number || format('{0}-{1}', github.event.check_run.head_sha || github.event.sha, github.event.check_run.name || github.event.context) }}
+  # ONE repo-wide group for EVERY gate writer (this workflow AND the sweep):
+  # per-event group keys let two writers evaluate different snapshots of the
+  # same head concurrently and post out of order — an older `approved`
+  # evaluation taking the prior-success fast path could overwrite a newer
+  # failure post. Serializing all writers removes that race. Events that get
+  # replaced in the single pending slot are converged, not lost: every run
+  # re-reads CURRENT review state at execution, and the scheduled sweep is
+  # the convergence backstop for any dropped trigger (latency, not
+  # correctness).
+  group: review-gate-writer
   cancel-in-progress: false
 
 jobs:

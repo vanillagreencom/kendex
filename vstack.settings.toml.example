@@ -196,7 +196,7 @@ REVIEW_GATE_CONTEXT = "Review gate"
 # context the gate posts on PR heads — the required check name in branch
 # protection. Keep it stable.
 
-REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "Devin Review"
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = ""
 # Used by: review-gate (`review-predicate.sh`). Exact names of the trusted
 # reviewer's clean-analysis check-run and/or legacy commit status; a success
 # for a listed name on the current head counts as review evidence. SECURITY:

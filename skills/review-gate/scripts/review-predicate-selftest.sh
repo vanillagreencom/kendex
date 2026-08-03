@@ -112,8 +112,8 @@ threads() { # isResolved values as args
   jq -n --argjson nodes "$nodes" \
     '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:$nodes}}}}}'
 }
-review() { # login, state, submitted_at -> one review row (append with reviews_add)
-  jq -n --arg sha "$HEAD" --arg login "$1" --arg state "$2" --arg at "${3:-2026-01-01T00:00:00Z}" \
+review() { # login, state, submitted_at, [commit sha; default HEAD] -> one review row
+  jq -n --arg sha "${4:-$HEAD}" --arg login "$1" --arg state "$2" --arg at "${3:-2026-01-01T00:00:00Z}" \
     '{commit_id:$sha,state:$state,submitted_at:$at,user:{login:$login}}'
 }
 reviews_set() { # rows... -> reviews.json
@@ -446,6 +446,22 @@ CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="approved"
 reviews_set "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")" \
             "$(review "reviewer" CHANGES_REQUESTED "2026-08-02T18:00:00Z")"
 run "cleared CR fed in reversed array order stays cleared" approved
+
+# An objection persists ACROSS PUSHES: GitHub does not clear a
+# changes-requested when the author pushes a new head, so evidence on the
+# fresh head must not open the gate past it...
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+reviews_set "$(review "objector" CHANGES_REQUESTED "2026-08-02T18:00:00Z" "$OTHER")" \
+            "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")"
+run "CR on a previous commit still blocks a freshly-approved head" changes-requested
+
+# ...and a later APPROVED from the same reviewer (at the new head) clears it.
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+reviews_set "$(review "objector" CHANGES_REQUESTED "2026-08-02T18:00:00Z" "$OTHER")" \
+            "$(review "objector" APPROVED "2026-08-02T19:00:00Z")"
+run "the objector re-approving at the new head clears their old-commit CR" approved
 
 # An objection is never withdrawn by a later COMMENT — the mirror of the
 # approval-is-never-superseded rule. GitHub keeps requested changes standing
