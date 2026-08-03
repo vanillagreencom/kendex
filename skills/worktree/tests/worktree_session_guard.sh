@@ -1231,7 +1231,7 @@ assert_contains "$run_err" "cannot create the session-guard mutex"
 attempts=0
 [[ -f "$unwritable_count" ]] && attempts="$(wc -l <"$unwritable_count" | tr -d '[:space:]')"
 assert_eq "$attempts" "2" "the mutex attempt plus the sibling probe reach the unwritable conclusion"
-grep -q "probe" "$unwritable_count" 2>/dev/null \
+grep -qF -- ".probe." "$unwritable_count" 2>/dev/null \
 	|| fail "the sibling probe was never attempted; unwritability was concluded without proof"
 
 # ── The documented exit-code contract ────────────────────────────────

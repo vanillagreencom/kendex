@@ -401,7 +401,7 @@ mkdir_lock_holder_gone() {
 # cannot both remove it and one of them delete a third contender's fresh
 # acquisition.
 acquire_mkdir_lock() {
-	local dir="$1" holder tries=0
+	local dir="$1" holder tries=0 probe=""
 	while ! mkdir -- "$dir" 2>/dev/null; do
 		if [[ ! -e "$dir" ]]; then
 			# mkdir failed with nothing in the way. Either the common dir is
@@ -412,11 +412,26 @@ acquire_mkdir_lock() {
 			# distinguished DEFINITIVELY with a uniquely named sibling probe
 			# — consecutive vanished observations cannot prove unwritability,
 			# because under contention each one can be a real release.
-			if mkdir -- "$dir.probe.$$" 2>/dev/null; then
-				rmdir -- "$dir.probe.$$" 2>/dev/null || rm -rf -- "$dir.probe.$$"
+			# The probe name is randomized: a fixed name could collide with a
+			# stale probe left by a killed process (or PID reuse) and misread
+			# writability. Deliberately mkdir(1), not mktemp: the probe must
+			# exercise the same operation the mutex acquisition uses.
+			probe="$dir.probe.$$.$RANDOM$RANDOM"
+			if mkdir -- "$probe" 2>/dev/null; then
+				rmdir -- "$probe" 2>/dev/null || rm -rf -- "$probe"
 				# The parent accepts writes, so the mutex simply vanished:
 				# retry for the real directory, on the loop's usual backoff
 				# and bounded by the same overall attempt budget.
+				tries=$((tries + 1))
+				if [[ "$tries" -ge 600 ]]; then
+					fail "cannot acquire the session-guard mutex after 60s of vanishing contention: $dir"
+				fi
+				sleep 0.1
+				continue
+			fi
+			if [[ -e "$probe" ]]; then
+				# Freak name collision with an existing probe: evidence of
+				# nothing either way — retry on the same bounded budget.
 				tries=$((tries + 1))
 				if [[ "$tries" -ge 600 ]]; then
 					fail "cannot acquire the session-guard mutex after 60s of vanishing contention: $dir"
