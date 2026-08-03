@@ -251,10 +251,18 @@ while IFS= read -r ctx; do
   # every clean pass would "match" and be filtered to not-evidence. Same
   # rebinding trap as the comment-sha binding below; the selftest's
   # genuine-clean-pass case is what catches it.
+  # Check-runs are matched by NAME, but names are not reserved: any PR
+  # workflow with `checks: write` can publish a check run under ANY name
+  # through the shared `github-actions` app — trusted reviewer bots publish
+  # under their own app slug. A github-actions-published name-match is
+  # therefore never clean-analysis evidence (VST-19); rejecting it here is
+  # the mechanical half of the settings doc's "only names produced by
+  # trusted bots" precondition.
   check_runs="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | [ .check_runs[]
           | select(.name == $ctx and .conclusion == "success")
+          | select(((.app.slug // "") != "") and ((.app.slug // "") != "github-actions"))
           | (((.output.title // "") + " " + (.output.summary // "")) | ascii_downcase) as $text
           | select(([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
         ] | length' <<<"$checkruns_resp")" || {
