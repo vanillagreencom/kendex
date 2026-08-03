@@ -1386,7 +1386,7 @@ role: engineer
 
         let err = crate::test_util::with_home_and_config(&home, &config_home, || {
             crate::test_util::with_project_root(&project, || {
-                run(
+                let err = run(
                     Some(source.to_string_lossy().into_owned()),
                     false,
                     Some(vec!["not-a-harness".into()]),
@@ -1400,7 +1400,15 @@ role: engineer
                     false,
                     false,
                 )
-                .unwrap_err()
+                .unwrap_err();
+
+                // #1047 round 4: a failing add must not touch registry state —
+                // no sources.json had existed, so none may appear.
+                assert!(
+                    !config::source_registry_path().exists(),
+                    "a failed add must not create sources.json"
+                );
+                err
             })
         });
 
@@ -1431,7 +1439,21 @@ role: engineer
 
         let err = crate::test_util::with_home_and_config(&home, &config_home, || {
             crate::test_util::with_project_root(&project, || {
-                run(
+                // #1047 round 4: a failing add must not mutate sources.json.
+                // Seed a registry carrying a stale project-self entry that the
+                // persist-path prune WOULD rewrite, and pin the exact bytes.
+                let reg_path = config::source_registry_path();
+                let registry = config::SourceRegistry {
+                    entries: vec![
+                        "vanillagreencom/vstack".to_string(),
+                        project.display().to_string(),
+                    ],
+                    ..Default::default()
+                };
+                registry.save(&reg_path).unwrap();
+                let before = std::fs::read(&reg_path).unwrap();
+
+                let err = run(
                     Some(source.to_string_lossy().into_owned()),
                     false,
                     None,
@@ -1445,7 +1467,14 @@ role: engineer
                     false,
                     false,
                 )
-                .unwrap_err()
+                .unwrap_err();
+
+                assert_eq!(
+                    std::fs::read(&reg_path).unwrap(),
+                    before,
+                    "a failed add must leave sources.json byte-identical"
+                );
+                err
             })
         });
 
@@ -1909,19 +1938,6 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 missing.join(", ")
             );
         }
-        // Persist the source choice only once the run can still succeed: a
-        // failed add must not mutate sources.json (vstack#1024 review round).
-        if resolved.persist {
-            if global {
-                registry.remember(&resolved.source);
-            } else {
-                registry.remember_for_project(&project_root, &resolved.source);
-            }
-            // vstack#1038: opportunistic hygiene on the write path — drop a
-            // stale self entry left by an earlier project-local install.
-            registry.prune_project_self_non_source(&project_root);
-            registry.save(&config::source_registry_path())?;
-        }
         let agents = match agent_filter.as_deref() {
             Some(filter) if filter.iter().any(|f| f == "*") => all_agents,
             Some(filter) => {
@@ -1994,6 +2010,33 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             );
         }
 
+        // Validate the non-interactive harness selection while the run can
+        // still fail cleanly. `--all` always uses every harness and the
+        // interactive picker chooses harnesses in the TUI, so only the
+        // -y/--harness path can come up empty.
+        let noninteractive_harness_selection = if !all && (yes || harness_filter.is_some()) {
+            Some(noninteractive_harnesses(harness_filter.as_deref())?)
+        } else {
+            None
+        };
+
+        // Persist the source choice only once the run can still succeed: a
+        // failed add must not mutate sources.json — neither the remembered
+        // source nor the opportunistic self-entry prune may land when nothing
+        // will be installed (vstack#1024 review round; the empty-source and
+        // zero-harness validations above must stay above this block).
+        if resolved.persist {
+            if global {
+                registry.remember(&resolved.source);
+            } else {
+                registry.remember_for_project(&project_root, &resolved.source);
+            }
+            // vstack#1038: opportunistic hygiene on the write path — drop a
+            // stale self entry left by an earlier project-local install.
+            registry.prune_project_self_non_source(&project_root);
+            registry.save(&config::source_registry_path())?;
+        }
+
         eprintln!(
             "Found {} agent(s), {} skill(s), {} hook(s), {} pi-package(s), {} extra(s) in {}",
             agents.len(),
@@ -2020,8 +2063,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 },
                 false,
             );
-        } else if yes || harness_filter.is_some() {
-            let harnesses = noninteractive_harnesses(harness_filter.as_deref())?;
+        } else if let Some(harnesses) = noninteractive_harness_selection {
 
             // In non-interactive mode, only auto-install Pi packages when Pi
             // is one of the chosen harnesses. The agents/skills/hooks loops
