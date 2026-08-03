@@ -1182,7 +1182,22 @@ worktree_tracked_entry_mismatch() {
   fi
   case "$mode" in
     120000)
-      if [[ ! -L "$file" ]] || [[ "$(readlink "$file" 2>/dev/null)" != "$(git -C "$wt" cat-file blob "$oid" 2>/dev/null)" ]]; then
+      if [[ ! -L "$file" ]]; then
+        printf '%s (symlink differs from index)\n' "$label"
+        return 0
+      fi
+      # Sentinel-preserved comparison: bare command substitution strips ALL
+      # trailing newlines from both sides, so targets differing only by
+      # trailing newline bytes would compare equal and the difference would
+      # be discarded. readlink appends exactly one newline of its own;
+      # cat-file emits the blob verbatim.
+      local disk_target="" index_target=""
+      disk_target="$(readlink "$file" 2>/dev/null; printf x)"
+      disk_target="${disk_target%x}"
+      disk_target="${disk_target%$'\n'}"
+      index_target="$(git -C "$wt" cat-file blob "$oid" 2>/dev/null; printf x)"
+      index_target="${index_target%x}"
+      if [[ "$disk_target" != "$index_target" ]]; then
         printf '%s (symlink differs from index)\n' "$label"
       fi
       ;;
