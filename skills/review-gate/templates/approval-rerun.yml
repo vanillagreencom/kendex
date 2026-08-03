@@ -180,5 +180,15 @@ jobs:
           # status, review submit/dismiss, trusted check_run, comment-form
           # evidence — therefore converges EVERY open PR; replacement
           # subsumes and eviction loses nothing.
+          # Bootstrap window: this yaml can run PRE-merge (pull_request_review
+          # uses the PR's workflow version) while the checkout above pins the
+          # DEFAULT branch's script — which, before the all-PRs change lands
+          # there, ignores ALL_OPEN_PRS and demands PR_NUMBER. Skip cleanly in
+          # that window; the sweep still converges, and this branch is dead
+          # once the script and yaml land together on the default branch.
+          if ! grep -q ALL_OPEN_PRS .agents/skills/review-gate/scripts/approval-refire.sh; then
+            echo "::warning::default-branch approval-refire.sh predates all-PRs mode (bootstrap window); skipping — the scheduled sweep covers convergence"
+            exit 0
+          fi
           export ALL_OPEN_PRS=1
           exec .agents/skills/review-gate/scripts/approval-refire.sh
