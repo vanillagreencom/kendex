@@ -1412,6 +1412,51 @@ role: engineer
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// vstack#1038 (review round 3): a non-interactive add against a source
+    /// with nothing installable must exit nonzero — same defect shape as the
+    /// zero-harness path: exit 0 with nothing installed reads as success to
+    /// scripted adopters. Interactive runs never hit this bail; without
+    /// -y/--all/--harness they fall through to the source picker instead.
+    #[test]
+    fn add_empty_source_noninteractive_fails_nonzero() {
+        let root = tmpdir("empty-source");
+        let source = root.join("source");
+        let project = root.join("project");
+        let home = root.join("home");
+        let config_home = root.join("config");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config_home).unwrap();
+
+        let err = crate::test_util::with_home_and_config(&home, &config_home, || {
+            crate::test_util::with_project_root(&project, || {
+                run(
+                    Some(source.to_string_lossy().into_owned()),
+                    false,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap_err()
+            })
+        });
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("No agents, skills, hooks, pi-packages, or extras found"),
+            "empty source must fail loud: {msg}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn noninteractive_harnesses_rejects_all_unknown_ids_naming_the_flag() {
         let err = noninteractive_harnesses(Some(&["nope".to_string()])).unwrap_err();
@@ -1939,11 +1984,14 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
 
         let installable_total = agents.len() + skills.len() + hooks.len() + pi_extensions.len();
         if installable_total == 0 && extras.is_empty() && (yes || all || harness_filter.is_some()) {
-            eprintln!(
+            // vstack#1038: nothing installed must exit nonzero — scripted
+            // adopters chain on the exit code. Interactive runs never reach
+            // this bail: without -y/--all/--harness they fall through to the
+            // picker below, where the user can switch sources.
+            anyhow::bail!(
                 "No agents, skills, hooks, pi-packages, or extras found in {}",
                 source_dir.display()
             );
-            return Ok(());
         }
 
         eprintln!(
