@@ -62,7 +62,14 @@ export function debug(...args: unknown[]) {
 		try {
 			return fmt(a);
 		} catch (error) {
-			return `[unprintable: ${error instanceof Error ? error.message : String(error)}]`;
+			// The caught value's own conversion can throw too (a thrown
+			// null-prototype object, a throwing toString) — degrade to a
+			// constant rather than let the placeholder itself escape.
+			let reason = "formatting failed";
+			try {
+				reason = error instanceof Error ? error.message : String(error);
+			} catch { /* keep the constant */ }
+			return `[unprintable: ${reason}]`;
 		}
 	};
 	const msg = args.map(safeFmt).join(" ");

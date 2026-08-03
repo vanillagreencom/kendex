@@ -69,6 +69,9 @@ function runThrowingArgsProbeChild() {
 		`import { debug } from ${JSON.stringify(pathToFileURL(join(pkgRoot, "src/debug.ts")).href)};`,
 		`const circular = {}; circular.self = circular;`,
 		`debug("before-args", () => { throw new Error("thunk boom"); }, circular, 10n, "after-args");`,
+		`// The thrown value itself can defeat String(): a null-prototype object`,
+		`// has no toString at all. The placeholder must degrade to its constant.`,
+		`debug("second-line", () => { throw Object.create(null); }, "still-logs");`,
 	].join("\n"));
 	const env = { ...process.env, PI_CODING_AGENT_DIR: join(dir, "agent") };
 	env.CLAUDE_BRIDGE_DIAG_PATH = join(dir, "diag.log");
@@ -88,6 +91,9 @@ describe("debug() formatting failures are non-fatal (vstack#1041)", () => {
 		assert.match(log, /\[unprintable: thunk boom\]/);
 		assert.match(log, /\[unprintable: [^[]*circular[\s\S]*?\]/i);
 		assert.match(log, /\[unprintable: [^[]*BigInt[\s\S]*?\]/);
+		// Thrown null-prototype object: String(error) itself throws, so the
+		// placeholder degrades to its constant and the line still logs whole.
+		assert.match(log, /second-line \[unprintable: formatting failed\] still-logs/);
 	});
 });
 

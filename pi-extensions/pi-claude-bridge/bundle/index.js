@@ -26977,7 +26977,12 @@ function debug(...args) {
     try {
       return fmt(a);
     } catch (error51) {
-      return `[unprintable: ${error51 instanceof Error ? error51.message : String(error51)}]`;
+      let reason = "formatting failed";
+      try {
+        reason = error51 instanceof Error ? error51.message : String(error51);
+      } catch {
+      }
+      return `[unprintable: ${reason}]`;
     }
   };
   const msg = args.map(safeFmt).join(" ");
