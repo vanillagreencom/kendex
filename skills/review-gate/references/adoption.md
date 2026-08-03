@@ -126,6 +126,16 @@ with a write-capable token:
   at worst be tricked into an unwarranted build, not a green gate — but it
   is the same root cause, so the base-revision rule applies to every job
   that executes the predicate with any token.
+- The split removes PR-controlled CODE from the write path, but on
+  `pull_request` events the workflow DEFINITION itself still ships with the
+  PR head: a same-repo collaborator PR can edit the posting job directly
+  (fork PRs cannot — their token holds no `statuses: write`). Where
+  collaborators are inside the threat model, the status writer of record
+  must be a workflow defined on a trusted revision — exactly the property
+  the scaffold rerun/sweep workflows already have (non-PR triggers,
+  default-branch checkout). Rely on the scheduled sweep as that writer of
+  record and treat the PR-side gate job as the latency optimization,
+  mirroring the thread-resolution term below.
 
 ## The ungated selftest job
 

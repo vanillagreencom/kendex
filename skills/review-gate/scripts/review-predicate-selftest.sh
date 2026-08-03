@@ -417,6 +417,17 @@ reviews_set "$(review "reviewer" APPROVED "2026-08-02T18:28:47Z")" \
             "$(review "reviewer" COMMENTED "2026-08-02T18:28:50Z")"
 run "approval NOT superseded by a later COMMENTED (min_state=any)" approved
 
+# PENDING rows are unsubmitted drafts, not review events: one must neither
+# clear a standing changes-requested nor count as evidence.
+reset
+reviews_set "$(review "reviewer" CHANGES_REQUESTED "2026-08-02T18:00:00Z")" \
+            "$(review "reviewer" PENDING "2026-08-02T18:30:00Z")"
+run "a PENDING draft after CHANGES_REQUESTED does not clear the objection" changes-requested
+
+reset
+reviews_set "$(review "reviewer" PENDING)"
+run "a lone PENDING draft is not review evidence" awaiting
+
 # ...but a LATER CHANGES_REQUESTED from the same login does supersede, and
 # fails the whole gate closed.
 reset

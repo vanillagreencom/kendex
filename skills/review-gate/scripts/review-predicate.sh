@@ -154,8 +154,11 @@ reviews="$(jq -s 'add // []' <<<"$raw_reviews")" || {
 # Changes-requested counts only each reviewer's LATEST non-dismissed review on
 # the head, so a superseded CR that the same reviewer later cleared can't pin
 # the PR red forever. Deliberately unfiltered by the trust list: anyone's
-# standing objection fails the gate closed.
-cr="$(jq --arg sha "$HEAD_SHA" '[.[] | select(.commit_id == $sha and .state != "DISMISSED")] | group_by(.user.login) | map(.[-1]) | map(select(.state == "CHANGES_REQUESTED")) | length' <<<"$reviews")" || {
+# standing objection fails the gate closed. PENDING rows (unsubmitted drafts,
+# visible when the token authored them) are excluded EVERYWHERE: a draft is
+# not a review event — it must neither clear a standing CR here nor count as
+# evidence below.
+cr="$(jq --arg sha "$HEAD_SHA" '[.[] | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")] | group_by(.user.login) | map(.[-1]) | map(select(.state == "CHANGES_REQUESTED")) | length' <<<"$reviews")" || {
   echo "::error::could not evaluate changes-requested reviews for PR #$PR_NUMBER" >&2
   exit 2
 }
@@ -168,7 +171,7 @@ got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS" --arg minstate "$MIN_STATE" '
   ($trusted | split("[;,\n]+"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
   | [ .[]
-      | select(.commit_id == $sha and .state != "DISMISSED" and .user.login != $author)
+      | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
       | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
     ]
   | if $minstate == "approved" then
