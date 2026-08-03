@@ -252,8 +252,10 @@ fn noninteractive_harnesses(filter: Option<&[String]>) -> Result<Vec<Harness>> {
             .collect(),
     };
     if harnesses.is_empty() {
+        let ids: Vec<&str> = Harness::ALL.iter().map(Harness::id).collect();
         anyhow::bail!(
-            "No harnesses selected or detected. Use --harness to specify (claude,cursor,opencode,codex,pi)."
+            "No harnesses selected or detected. Use --harness to specify ({}).",
+            ids.join(",")
         );
     }
     Ok(harnesses)
@@ -1413,9 +1415,12 @@ role: engineer
     #[test]
     fn noninteractive_harnesses_rejects_all_unknown_ids_naming_the_flag() {
         let err = noninteractive_harnesses(Some(&["nope".to_string()])).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("--harness"), "hint must name the real flag: {msg}");
+        let ids: Vec<&str> = Harness::ALL.iter().map(Harness::id).collect();
         assert!(
-            err.to_string().contains("--harness"),
-            "hint must name the real flag: {err}"
+            msg.contains(&ids.join(",")),
+            "hint must carry the canonical id list, derived so it cannot drift: {msg}"
         );
     }
 
