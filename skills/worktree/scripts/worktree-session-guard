@@ -415,6 +415,10 @@ acquire_mkdir_lock() {
 			if [[ "$vanished" -ge 3 ]]; then
 				fail "cannot create the session-guard mutex $dir; without a lock a mutation would race, so it fails loudly instead of running unguarded"
 			fi
+			# Same backoff as the held-mutex path: back-to-back retries would
+			# reach the unwritable conclusion in microseconds and add churn —
+			# the conclusion should require ~sustained nothing-in-the-way.
+			sleep 0.1
 			continue
 		fi
 		vanished=0

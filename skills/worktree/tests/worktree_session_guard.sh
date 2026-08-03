@@ -1202,6 +1202,31 @@ run_noflock release "$nf_wt" --owner CC-1000
 assert_eq "$RUN_RC" "0" "release without flock"
 [[ ! -e "$nf_mutex" ]] || fail "the mkdir mutex must not outlive the release"
 
+# Companion cutoff case: a GENUINELY unwritable lock location must still fail
+# loudly rather than retry forever — the shim fails every mkdir on the mutex
+# dir without creating it, so the guard sees only failed-mkdir-with-nothing-
+# there observations and must conclude unwritable after the third.
+unwritable_count="$tmp_dir/unwritable-count"
+unwritable_shim_dir="$tmp_dir/unwritable-shim"
+mkdir -p "$unwritable_shim_dir"
+{
+	printf '#!/usr/bin/env bash\n'
+	printf 'if [[ "${!#}" == %q ]]; then\n' "$nf_mutex"
+	printf '\techo x >>%q\n' "$unwritable_count"
+	printf '\texit 1\n'
+	printf 'fi\n'
+	printf 'exec %q "$@"\n' "$real_mkdir"
+} >"$unwritable_shim_dir/mkdir"
+chmod +x "$unwritable_shim_dir/mkdir"
+
+RUN_RC=0
+env PATH="$unwritable_shim_dir:$noflock_bin" "$GUARD" claim "$nf_wt" --owner CC-1000 \
+	>"$run_out" 2>"$run_err" || RUN_RC=$?
+[[ "$RUN_RC" -ne 0 ]] || fail "an unwritable mutex location must fail, not succeed or spin"
+assert_contains "$run_err" "cannot create the session-guard mutex"
+attempts="$(wc -l <"$unwritable_count" 2>/dev/null | tr -d '[:space:]')"
+assert_eq "$attempts" "3" "exactly three consecutive vanished observations reach the unwritable conclusion"
+
 # ── The documented exit-code contract ────────────────────────────────
 
 # The skill's agent-facing documents restate the exit codes agents are told to branch
