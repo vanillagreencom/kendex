@@ -121,6 +121,23 @@ echo "=== repeated install is idempotent ==="
 marker_count="$(grep -cF "$MARKER" "$HOOKS_DIR/post-merge" || true)"
 if [[ "$marker_count" -eq 1 ]]; then ok "fix-links does not duplicate the marker line"; else bad "fix-links does not duplicate the marker line" "count=$marker_count"; fi
 
+echo "=== composed line is exit-status transparent ==="
+# post-checkout's exit status becomes git's exit status, so the appended line
+# must re-assert the consumer hook's own final status — nonzero stays nonzero,
+# zero stays zero. Exercise the exact line the installer wrote.
+installed_line="$(grep -F "$MARKER" "$HOOKS_DIR/post-merge")"
+printf '#!/bin/sh\nfalse\n%s\n' "$installed_line" >"$TMP_ROOT/failing-hook"
+printf '#!/bin/sh\ntrue\n%s\n' "$installed_line" >"$TMP_ROOT/passing-hook"
+chmod +x "$TMP_ROOT/failing-hook" "$TMP_ROOT/passing-hook"
+set +e
+(cd "$WT" && "$TMP_ROOT/failing-hook" >/dev/null 2>&1)
+failing_rc=$?
+(cd "$WT" && "$TMP_ROOT/passing-hook" >/dev/null 2>&1)
+passing_rc=$?
+set -e
+if [[ "$failing_rc" -ne 0 ]]; then ok "a consumer hook ending nonzero still exits nonzero"; else bad "a consumer hook ending nonzero still exits nonzero" "rc=0 after composition"; fi
+if [[ "$passing_rc" -eq 0 ]]; then ok "a consumer hook ending zero still exits zero"; else bad "a consumer hook ending zero still exits zero" "rc=$passing_rc"; fi
+
 echo "=== a git operation auto-repairs a materialized tracked-skeleton dir ==="
 rm -f "$WT/harness"
 mkdir -p "$WT/harness"

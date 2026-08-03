@@ -993,7 +993,12 @@ HELPER
 # worktree — it just keeps only the use-time materialization warning.
 install_worktree_autorepair_hooks() {
   local hooks_dir="" hook="" hook_path="" custom_hooks=""
-  local call_line='vstack_wt_hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null)" && [ -x "$vstack_wt_hooks_dir/vstack-worktree-autorepair" ] && "$vstack_wt_hooks_dir/vstack-worktree-autorepair" "$@" || :  # vstack-worktree-autorepair'
+  # The delegating line must be exit-status transparent when appended to an
+  # existing hook: post-checkout's exit status becomes git's, so a consumer
+  # hook whose final command deliberately returns nonzero must keep doing so.
+  # $? is captured first and re-asserted last (in a subshell, so hook content
+  # a later tool appends after this line still runs).
+  local call_line='vstack_wt_rc=$?; vstack_wt_hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null)" && [ -x "$vstack_wt_hooks_dir/vstack-worktree-autorepair" ] && "$vstack_wt_hooks_dir/vstack-worktree-autorepair" "$@" || :; ( exit "$vstack_wt_rc" )  # vstack-worktree-autorepair'
 
   custom_hooks="$(git -C "$PROJECT_ROOT" config --get core.hooksPath 2>/dev/null || true)"
   if [[ -n "$custom_hooks" ]]; then
