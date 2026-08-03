@@ -36,6 +36,9 @@
 #        cap                                    MAX_ATTEMPTS=6
 #   r18. settings value with trailing TOML   -> value resolves, comment
 #        comment                                stripped
+#   r19. same key assigned twice in the      -> exit 1, NO POST, NO rerun
+#        settings file (file-wide matching      (ambiguous, fail loud)
+#        makes it ambiguous)
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -152,8 +155,8 @@ run_refire() {
 
 AWAITING="verdict=awaiting detail=awaiting a non-author review for headsha"
 APPROVED="verdict=approved detail=reviewed at head with no unresolved threads"
-CR="verdict=changes-requested detail=review changes requested on the current head"
-THREADS="verdict=threads-open detail=unresolved review threads on the current head"
+CR="verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
+THREADS="verdict=threads-open detail=2 unresolved review thread(s)"
 
 echo "=== downward transitions are direct posts ==="
 
@@ -280,6 +283,23 @@ set -e
 assert_eq "$rc" "1" "r15: unparseable settings assignment exits 1"
 assert_contains "$out" "unsupported syntax" "r15: names the configuration error"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "r15: no POST and no rerun on a config error"
+
+# Keys are matched file-wide regardless of TOML table (the settings contract),
+# so a second assignment of the same name — here under an unrelated table —
+# is ambiguous and must fail loud, never silently resolve to either value.
+cat > "$TMP_ROOT/dup-settings.toml" <<'EOF'
+REVIEW_GATE_CONTEXT = "File Gate"
+[unrelated]
+REVIEW_GATE_CONTEXT = "Other Gate"
+EOF
+set +e
+out=$(run_refire STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
+  REVIEW_GATE_SETTINGS_FILE="$TMP_ROOT/dup-settings.toml")
+rc=$?
+set -e
+assert_eq "$rc" "1" "r19: duplicate key assignment exits 1"
+assert_contains "$out" "assigned more than once" "r19: names the ambiguity"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "r19: no POST and no rerun on a duplicate-key config error"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
