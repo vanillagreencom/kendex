@@ -22,6 +22,13 @@
 # callers must keep these names unique file-wide. The one detectable
 # ambiguity, the same name assigned more than once, fails loud below.
 #
+# Assignments may be indented (TOML permits leading whitespace, and keys
+# under a table often are), so every matcher below allows it. Missing that
+# made an indented assignment invisible to BOTH the value read (silently
+# resolving a configured key to the built-in default — silent gate
+# divergence on a security key) and the duplicate guard (an indented
+# re-assignment lost silently to the column-0 copy).
+#
 # Scripts run from the repo root in CI (workflow working directory), so the
 # default settings path is relative.
 
@@ -39,16 +46,16 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment ("empty disables" per the settings docs) and must override the
     # built-in default, exactly like a set-but-empty env var does above.
-    if grep -q "^${name}[[:space:]]*=" "$file"; then
+    if grep -q "^[[:space:]]*${name}[[:space:]]*=" "$file"; then
       # File-wide matching (header contract) makes a re-assigned name
       # ambiguous — e.g. the same key under two tables. Silently taking the
       # first could read an unrelated table's value on a security-sensitive
       # path, so ambiguity is a configuration error.
-      if [ "$(grep -c "^${name}[[:space:]]*=" "$file")" -gt 1 ]; then
+      if [ "$(grep -c "^[[:space:]]*${name}[[:space:]]*=" "$file")" -gt 1 ]; then
         echo "::error::$file: $name is assigned more than once (keys are matched file-wide regardless of TOML table; each name must be unique in the file)" >&2
         return 1
       fi
-      line="$(grep "^${name}[[:space:]]*=" "$file" | head -n 1)"
+      line="$(grep "^[[:space:]]*${name}[[:space:]]*=" "$file" | head -n 1)"
       # A PRESENT assignment this parser cannot read (e.g. TOML array syntax
       # for a list key) must fail LOUDLY, never collapse to empty: an empty
       # value can silently widen the gate (empty trusted-logins = any
@@ -56,11 +63,11 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       # supported — the value is quote-free ([^"]*), which makes the
       # extraction exact even with a trailing TOML comment (accepted);
       # anything else is a configuration error.
-      if ! printf '%s\n' "$line" | grep -Eq "^${name}[[:space:]]*=[[:space:]]*\"[^\"]*\"[[:space:]]*(#.*)?\$"; then
+      if ! printf '%s\n' "$line" | grep -Eq "^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"[^\"]*\"[[:space:]]*(#.*)?\$"; then
         echo "::error::$file: unsupported syntax for $name (expected a single-line basic string: $name = \"value\"; list keys pack items with ';' separators)" >&2
         return 1
       fi
-      val="$(printf '%s\n' "$line" | sed -n "s/^${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"
+      val="$(printf '%s\n' "$line" | sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"
       printf '%s' "$val"
       return 0
     fi

@@ -301,6 +301,35 @@ assert_eq "$rc" "1" "r19: duplicate key assignment exits 1"
 assert_contains "$out" "assigned more than once" "r19: names the ambiguity"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "r19: no POST and no rerun on a duplicate-key config error"
 
+# TOML permits leading whitespace before a key, and keys under a table are
+# often indented. An indented re-assignment is the SAME ambiguity as r19 and
+# must fail identically — before this guard matched leading whitespace, the
+# indented copy lost silently to the column-0 copy.
+cat > "$TMP_ROOT/indented-dup-settings.toml" <<'EOF'
+REVIEW_GATE_CONTEXT = "File Gate"
+[unrelated]
+  REVIEW_GATE_CONTEXT = "Other Gate"
+EOF
+set +e
+out=$(run_refire STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
+  REVIEW_GATE_SETTINGS_FILE="$TMP_ROOT/indented-dup-settings.toml")
+rc=$?
+set -e
+assert_eq "$rc" "1" "r20: indented duplicate key assignment exits 1"
+assert_contains "$out" "assigned more than once" "r20: names the ambiguity"
+
+# A key assigned ONLY with indentation is a real TOML assignment and must be
+# READ — silently resolving it to the built-in default is silent gate
+# divergence on a security-sensitive key.
+cat > "$TMP_ROOT/indented-only-settings.toml" <<'EOF'
+[env]
+  REVIEW_GATE_CONTEXT = "Indented Gate"
+EOF
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
+  REVIEW_GATE_SETTINGS_FILE="$TMP_ROOT/indented-only-settings.toml") || rc=$?
+assert_eq "$rc" "0" "r21: indented-only assignment exits 0"
+assert_contains "$(cat "$POST_LOG")" "context=Indented Gate" "r21: the indented value is read, not the default"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
