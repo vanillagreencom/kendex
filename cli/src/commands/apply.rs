@@ -1,6 +1,7 @@
 use crate::config;
 use crate::extra::{Extra, ExtraKind, ThemeSpec};
 use crate::ghostty_apply::{self, GhosttyPathContext, GhosttyPlatform};
+use crate::resolve::source_from_project_lock;
 use crate::vscode_apply::VscodeEditor;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -991,20 +992,6 @@ fn find_source_root_with_extras_from_cwd() -> Result<Option<PathBuf>> {
             return Ok(None);
         }
     }
-}
-
-fn source_from_project_lock(project_root: &Path) -> Option<String> {
-    let lock = config::LockFile::load(&project_root.join(".vstack-lock.json")).ok()?;
-    let mut counts = std::collections::BTreeMap::<String, usize>::new();
-    for entry in lock.entries.values() {
-        *counts.entry(entry.source.clone()).or_default() += 1;
-    }
-    counts
-        .into_iter()
-        .max_by(|(a_source, a_count), (b_source, b_count)| {
-            a_count.cmp(b_count).then_with(|| b_source.cmp(a_source))
-        })
-        .map(|(source, _)| source)
 }
 
 fn build_plan_for_source(
@@ -2137,6 +2124,69 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn write_source_dirs(dir: &Path) {
+        fs::create_dir_all(dir.join("agents")).unwrap();
+        fs::create_dir_all(dir.join("skills")).unwrap();
+    }
+
+    fn skill_lock_entry(name: &str, source: &Path) -> config::LockEntry {
+        config::LockEntry {
+            name: name.into(),
+            kind: config::ItemKind::Skill,
+            source: source.to_string_lossy().into_owned(),
+            source_repo: None,
+            harnesses: vec!["claude-code".into()],
+            method: config::InstallMethod::Copy,
+            installed_at: "2026-08-02T00:00:00Z".into(),
+            source_hash: String::new(),
+        }
+    }
+
+    /// vstack#1038: `apply` shares add's guarded lock vote — project-local
+    /// lock entries (source = the project itself) must not outvote the
+    /// canonical source when the project is not itself a vstack source
+    /// (vstack#1024).
+    #[test]
+    fn apply_lock_vote_ignores_self_sourced_entries_in_non_source_project() {
+        let root = sandbox("lock_vote_self");
+        let project = root.join("project");
+        let canonical = root.join("canonical");
+        fs::create_dir_all(&project).unwrap();
+        write_source_dirs(&canonical);
+
+        let mut lock = config::LockFile::default();
+        lock.add(skill_lock_entry("local-a", &project));
+        lock.add(skill_lock_entry("local-b", &project));
+        lock.add(skill_lock_entry("demo", &canonical));
+        lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+        assert_eq!(
+            source_from_project_lock(&project),
+            Some(canonical.to_string_lossy().into_owned()),
+            "self-sourced entries must not outvote the canonical source"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The guard must keep self entries when the project genuinely is a
+    /// vstack source (running apply inside a source checkout).
+    #[test]
+    fn apply_lock_vote_keeps_self_entries_for_real_vstack_source() {
+        let root = sandbox("lock_vote_genuine");
+        let project = root.join("project");
+        write_source_dirs(&project);
+
+        let mut lock = config::LockFile::default();
+        lock.add(skill_lock_entry("local-a", &project));
+        lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+        assert_eq!(
+            source_from_project_lock(&project),
+            Some(project.to_string_lossy().into_owned())
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

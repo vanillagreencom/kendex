@@ -204,9 +204,26 @@ impl SourceRegistry {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content = to_json_pretty(self)?;
+        // vstack#1038: writing the registry is when stale non-source entries
+        // get dropped. Prune a serialization copy so an unsaved in-memory
+        // registry keeps whatever the caller put in it for the current run.
+        let mut on_disk = self.clone();
+        on_disk.prune_resolvable_non_sources();
+        let content = to_json_pretty(&on_disk)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+
+    /// Drop `entries` that expand to an existing local directory which
+    /// provably lacks vstack source content — consumer projects recorded as
+    /// their own source by project-local installs (vstack#1024). Unresolvable
+    /// paths (unmounted disk, network share) are left alone: a missing path is
+    /// no evidence about its content, and pruning it would lose a real source.
+    /// Remote shorthands are never path-checked. Returns the number removed.
+    pub fn prune_resolvable_non_sources(&mut self) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|entry| !is_resolvable_non_source(entry));
+        before - self.entries.len()
     }
 
     pub fn remember(&mut self, source: &str) {
@@ -310,6 +327,14 @@ fn is_temporary_local_path(entry: &str) -> bool {
     prefixes
         .iter()
         .any(|p| raw_path.starts_with(p) || canonical_path.starts_with(p))
+}
+
+/// True iff `entry` is a local path that exists and provably lacks vstack
+/// source content — the same content-based check source resolution uses
+/// (vstack#1037). Missing paths return false: unresolvable is not non-source.
+pub(crate) fn is_resolvable_non_source(entry: &str) -> bool {
+    expanded_local_path(entry)
+        .is_some_and(|path| path.exists() && !crate::resolve::has_vstack_source_content(&path))
 }
 
 fn expanded_local_path(entry: &str) -> Option<PathBuf> {
@@ -1883,6 +1908,63 @@ mod source_registry_tests {
         let on_disk: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(on_disk["entries"].as_array().unwrap().len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// vstack#1038: writing the registry prunes `entries` that expand to an
+    /// existing local dir which provably lacks vstack source content (a
+    /// consumer project recorded as its own source, vstack#1024). A missing
+    /// path is NOT pruned by save — being unresolvable (unmounted disk) is no
+    /// evidence the entry is a non-source. Remote shorthands are never touched.
+    #[test]
+    fn save_prunes_resolvable_non_source_entries_and_keeps_unresolvable_ones() {
+        let dir = sandbox("save_prunes_non_sources");
+        let path = dir.join("sources.json");
+        let genuine = dir.join("genuine");
+        fs::create_dir_all(genuine.join("agents")).unwrap();
+        fs::create_dir_all(genuine.join("skills")).unwrap();
+        let consumer = dir.join("consumer");
+        fs::create_dir_all(&consumer).unwrap();
+        let missing = dir.join("missing");
+
+        let reg = SourceRegistry {
+            current: Some(consumer.display().to_string()),
+            entries: vec![
+                "vanillagreencom/vstack".to_string(),
+                genuine.display().to_string(),
+                consumer.display().to_string(),
+                missing.display().to_string(),
+            ],
+            ..Default::default()
+        };
+        reg.save(&path).unwrap();
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let entries: Vec<String> = on_disk["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            !entries.contains(&consumer.display().to_string()),
+            "resolvable non-source entry must be pruned on write: {entries:?}"
+        );
+        assert!(entries.contains(&genuine.display().to_string()));
+        assert!(
+            entries.contains(&missing.display().to_string()),
+            "unresolvable path must be kept: {entries:?}"
+        );
+        assert!(entries.contains(&"vanillagreencom/vstack".to_string()));
+        // `current`/`project_current` are left alone: the #1024 read-side
+        // guards already neutralize a stale self-pointer there, and dropping a
+        // user's sticky per-project choice is riskier than cleaning the
+        // picker-facing entries list.
+        assert_eq!(
+            on_disk["current"].as_str(),
+            Some(consumer.display().to_string().as_str())
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

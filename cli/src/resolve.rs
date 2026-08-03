@@ -209,6 +209,37 @@ pub fn is_vstack_source(dir: &Path) -> bool {
     has_vstack_source_content(dir)
 }
 
+/// Compare two paths with symlinks resolved; a path that cannot be
+/// canonicalized (e.g. it does not exist) falls back to raw comparison.
+pub fn same_path(a: &Path, b: &Path) -> bool {
+    let a = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let b = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    a == b
+}
+
+/// Majority-vote a default source from the project's lock file. Project-local
+/// items record the project itself as their source; those self entries must
+/// not outvote the canonical source (vstack#1024) unless the project genuinely
+/// carries vstack source content. Shared by `add` and `apply` so default
+/// source resolution is identical across commands (vstack#1038).
+pub fn source_from_project_lock(project_root: &Path) -> Option<String> {
+    let lock = crate::config::LockFile::load(&project_root.join(".vstack-lock.json")).ok()?;
+    let allow_project_self = has_vstack_source_content(project_root);
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for entry in lock.entries.values() {
+        if !allow_project_self && same_path(Path::new(&entry.source), project_root) {
+            continue;
+        }
+        *counts.entry(entry.source.clone()).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .max_by(|(a_source, a_count), (b_source, b_count)| {
+            a_count.cmp(b_count).then_with(|| b_source.cmp(a_source))
+        })
+        .map(|(source, _)| source)
+}
+
 /// Content-only source check (no directory-name heuristics): a catalog table
 /// or 2+ source item dirs.
 pub fn has_vstack_source_content(dir: &Path) -> bool {
