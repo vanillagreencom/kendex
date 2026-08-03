@@ -44,3 +44,22 @@ WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
 WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
 WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .pi/agents .pi/APPEND_SYSTEM.md .claude/settings.json .claude/agents .claude/hooks .claude/skills"
+
+# REVIEW GATE — this repo's SELF-ADOPTION of its own shared engine (VST-10;
+# skills/review-gate is the canonical source here, so workflows reference
+# tracked script paths). Writers of record are the default-branch-defined
+# rerun/sweep workflows (TRUST_PR_WORKFLOWS false: no PR-side gate job at
+# all — event-driven convergence plus the scheduled sweep carry the status).
+# Evidence: CodeRabbit (status/check + review objects) and Copilot's
+# clean-analysis check-run (it never APPROVES, so min_state stays "any" —
+# the same review-mode semantics as the legacy PR_REVIEW_* gate above).
+REVIEW_GATE_CONTEXT = "Review gate"
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
+REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
+REVIEW_GATE_COMMENT_REVIEWERS = ""
+REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
+REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
+REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
+REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
+REVIEW_GATE_TRUST_PR_WORKFLOWS = "false"

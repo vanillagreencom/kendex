@@ -1,0 +1,141 @@
+# vstack SELF-ADOPTION of its own review-gate engine (VST-10; adapted from
+# skills/review-gate/templates/approval-rerun.yml — this repo ships the
+# engine, so scripts are referenced at their tracked canonical path, not the
+# .agents install mirror). Keep the literal names below aligned with the
+# REVIEW_GATE_* values in vstack.settings.toml; a loose filter costs a wasted
+# run, never a false approval — the predicate re-derives the verdict.
+name: Approval CI re-fire
+
+# Converges the review-gate commit status with the live review state (see
+# skills/review-gate/scripts/approval-refire.sh for the model). On
+# review submit/dismiss, on the trusted reviewer's clean-analysis evidence,
+# and on a comment-form reviewer's clean pass:
+#   - downward transitions (dismissal, changes-requested) post the
+#     pending/failure status directly — pending blocks merge on its own, so
+#     no check-run churn is needed;
+#   - the first awaiting→approved flip RE-RUNS the head's pull_request runs
+#     in place, so the new attempt opens the gate and executes the heavy
+#     jobs. Re-running in place (never a separate review-triggered run)
+#     matters to merge queues: enqueue counts every check-run on the head,
+#     and a stale failed/cancelled required check from a superseded run
+#     blocks it.
+#
+# Anti-loop: this workflow triggers only on review/evidence events; the
+# reruns it issues never re-trigger it. A genuinely-failing build after
+# approval is NOT retried automatically — the gate status stays success and
+# the red required contexts block on their own; re-run manually to retry.
+
+"on":
+  pull_request_review:
+    types: [submitted, dismissed]
+  # NOTE: `pull_request_review_thread` is a WEBHOOK event but NOT a GitHub
+  # Actions workflow trigger (per the "Events that trigger workflows"
+  # reference) — declaring it never fires on thread resolution; it only makes
+  # GitHub's push-time workflow validation log a phantom failed "workflow
+  # file issue" run on every push. The unresolved-threads condition therefore
+  # has no direct re-fire signal here; approval-sweep.yml covers it with a
+  # scheduled sweep over the same shared script.
+  # A CLEAN re-analysis by a check-run-publishing reviewer posts no review
+  # object and no review event — only its check-run. Without this trigger the
+  # re-fire never runs in the clean case and the pending gate status would
+  # stand forever. The job-level guard filters to the trusted check name.
+  check_run:
+    types: [completed]
+  # Some reviewers publish their clean-analysis evidence as a legacy commit
+  # STATUS instead of a check-run, and a status update is a `status` event -
+  # not check_run. Without this trigger the clean path still cannot re-fire
+  # the gate here.
+  status: {}
+
+permissions:
+  # rerun of the head's pull_request runs
+  actions: write
+  # the gate predicate reads (reviews, PR author, PR conversation comments)
+  pull-requests: read
+  # PR conversation comments are ISSUE comments; comment-form clean-pass
+  # evidence is read through that API.
+  issues: read
+  # clean-analysis evidence read
+  checks: read
+  # read the current gate status + POST the converged one
+  statuses: write
+  # checkout of the shared re-fire script
+  contents: read
+
+concurrency:
+  # ONE repo-wide group for EVERY gate writer (this workflow AND the sweep):
+  # per-event group keys let two writers evaluate different snapshots of the
+  # same head concurrently and post out of order — an older `approved`
+  # evaluation taking the prior-success fast path could overwrite a newer
+  # failure post. Serializing all writers removes that race. Events that get
+  # replaced in the single pending slot are converged, not lost: every run
+  # re-reads CURRENT review state at execution, and the scheduled sweep is
+  # the convergence backstop for any dropped trigger (latency, not
+  # correctness).
+  group: review-gate-writer
+  cancel-in-progress: false
+
+jobs:
+  rerun:
+    name: Re-fire CI after review
+    # check_run events: act only on the trusted reviewer's own check (exact
+    # name), and only when it has an associated PR (guarded again in-script).
+    # ADAPT: 'CodeRabbit' = REVIEW_GATE_TRUSTED_STATUS_CONTEXTS,
+    # 'vstack-reviewer-outage' = REVIEW_GATE_OUTAGE_CONTEXT,
+    # no comment-form reviewer in this repo (the
+    # issue_comment trigger from the scaffold is deliberately dropped).
+    if: >-
+      (github.event_name != 'check_run' || github.event.check_run.name == 'CodeRabbit' || github.event.check_run.name == 'copilot-pull-request-reviewer') &&
+      (github.event_name != 'status' || ((github.event.context == 'CodeRabbit' || github.event.context == 'copilot-pull-request-reviewer' || github.event.context == 'vstack-reviewer-outage') && github.event.state == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number || github.event.check_run.pull_requests[0].number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.check_run.head_sha || github.event.sha }}
+      # Empty on check_run and status events; resolved from the PR.
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+    steps:
+      # The evaluate-and-converge logic lives in the shared vendored script
+      # (single source of truth with approval-sweep.yml). Checkout is pinned
+      # to the DEFAULT branch with credentials dropped: these trigger events
+      # must never execute a PR-controlled version of the re-fire logic, and
+      # jobs that execute repository code must not persist a token into it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Converge the review gate for the PR head
+        run: |
+          set -u
+          # check_run.pull_requests[] is best-effort - it can be EMPTY even
+          # for same-repo PRs (notably app-created check runs), so an empty
+          # PR_NUMBER must not silently no-op the clean-case re-fire. Resolve
+          # the PR from the head sha instead; only a genuine no-open-PR
+          # result (push-triggered analysis) exits.
+          if [ -z "${PR_NUMBER:-}" ]; then
+            # The lookup itself must fail LOUDLY: an API outage that lands in
+            # the no-op branch would silently drop a clean-case re-fire. Only
+            # a SUCCESSFUL empty response means "no open PR".
+            PR_NUMBER="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/pulls" --jq '[.[] | select(.state == "open")][0].number // empty')" || {
+              echo "::error::could not list open PRs for head $HEAD_SHA; taking no action"
+              exit 1
+            }
+            if [ -z "${PR_NUMBER:-}" ]; then
+              echo "no open PR associated with head $HEAD_SHA; nothing to do"
+              exit 0
+            fi
+            echo "resolved PR #$PR_NUMBER from head sha (check_run payload had no pull_requests)"
+          fi
+          if [ ! -f skills/review-gate/scripts/approval-refire.sh ]; then
+            # Only reachable while the PR introducing the vendored skill is
+            # unmerged (these trigger events check out the default branch) —
+            # or if the skill was deleted from the default branch, which must
+            # stay loud.
+            echo "::error::skills/review-gate/scripts/approval-refire.sh is missing on the default branch (bootstrap PR? deleted?); no re-fire action taken"
+            exit 1
+          fi
+          export PR_NUMBER
+          exec skills/review-gate/scripts/approval-refire.sh

@@ -267,6 +267,24 @@ cd cli && cargo test                     # unit + integration tests
 cli/scripts/integration-check.sh         # integration check in a throwaway temp project
 ```
 
+## Merge flow (review-gate self-adoption, VST-10)
+
+- This repo runs its own review-gate engine: the required "Review gate"
+  commit status is converged by the default-branch-defined
+  `approval-rerun.yml` (event-driven) and `approval-sweep.yml` (scheduled)
+  workflows — there is deliberately NO PR-side gate job
+  (`REVIEW_GATE_TRUST_PR_WORKFLOWS = "false"`); trust values live in
+  `vstack.settings.toml`. `review-gate-queue.yml` posts the context on
+  merge-group shas (queue entries are post-approval by construction).
+- Merge via `github.sh pr-merge` as always. With the merge queue enabled,
+  a successful merge returns exit 75 (`QUEUED IN MERGE QUEUE`) and completes
+  asynchronously — confirm with `await-mergeable` / `state == MERGED`
+  before propagation, and never force past a queue refusal.
+- A fresh head has no gate status until a trusted reviewer's evidence event
+  or the next sweep converges it (fail-closed latency, not an error).
+  Ruleset/branch-protection changes (required checks, queue enablement,
+  Copilot auto-review toggle) are owner actions.
+
 ## Publishing & Releases
 
 The agent does not auto-publish or auto-release. When the user asks:

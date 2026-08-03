@@ -1,0 +1,36 @@
+# vstack SELF-ADOPTION of its own review-gate engine (VST-10).
+#
+# Merge-queue entries are POST-APPROVAL BY CONSTRUCTION: a PR only enters the
+# queue after its own head satisfied the required "Review gate" status (plus
+# every other required check), so the ephemeral merge-group sha gets an
+# unconditional success for the same context — without it, requiring the gate
+# context in the queue's ruleset would strand every entry on a check nothing
+# posts. This is the merge-queue shape from
+# skills/review-gate/references/adoption.md § Repo-side wiring.
+name: Review gate (merge queue)
+
+"on":
+  merge_group: {}
+
+permissions:
+  statuses: write
+
+jobs:
+  post:
+    name: Post the gate context on the merge-group sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+    steps:
+      - name: Post success (queue entries are post-approval by construction)
+        run: |
+          set -u
+          gh api -X POST "repos/$GH_REPO/statuses/$HEAD_SHA" \
+            -f state=success -f context="Review gate" \
+            -f description="merge-queue entry: post-approval by construction" || {
+            echo "::error::could not post the gate context on merge-group sha $HEAD_SHA"
+            exit 1
+          }
