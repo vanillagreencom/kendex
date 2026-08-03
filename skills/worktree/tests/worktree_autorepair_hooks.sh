@@ -266,6 +266,25 @@ assert_contains "$edit_out" "local edits vs index" "warning names the divergence
 rm -rf "$WT/harness"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
 
+echo "=== a newline-named file cannot slip through the line inventory ==="
+# A filename that is (or contains) a newline shreds the line-delimited
+# listing; the NUL-count cross-check must block rather than read it as empty.
+rm -f "$WT/harness"
+mkdir -p "$WT/harness"
+printf 'tracked\n' >"$WT/harness/tracked.md"
+printf 'sneaky\n' >"$WT/harness/"$'\n'
+set +e
+nl_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
+set -e
+if [[ -d "$WT/harness" && ! -L "$WT/harness" && -f "$WT/harness/"$'\n' ]]; then
+  ok "newline-named file blocks and survives"
+else
+  bad "newline-named file blocks and survives" "$nl_out"
+fi
+assert_contains "$nl_out" "scan mismatch" "warning names the representation mismatch"
+rm -rf "$WT/harness"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
+
 echo "=== a failed scan blocks the repair instead of reading as empty ==="
 # find exiting nonzero (unreadable subdirectory) must fail closed: "cannot
 # prove safe to replace", never "no untracked files". Root sees through

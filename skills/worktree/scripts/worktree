@@ -1087,13 +1087,40 @@ worktree_quarantine_unsafe_entries() {
     return 0
   fi
   # An empty untracked directory is never part of the skeleton — git creates
-  # directories only to hold tracked files.
+  # directories only to hold tracked files. No regex: paths are stripped with
+  # literal parameter expansion (a path may contain sed metacharacters, and a
+  # broken sed expression would fail OPEN as an empty listing).
   if [[ -n "$empties" ]]; then
-    printf '%s\n' "$empties" | sed "s|^$qdir/|$path/|; s|\$| (empty untracked directory)|"
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      printf '%s/%s (empty untracked directory)\n' "$path" "${name#"$qdir"/}"
+    done <<<"$empties"
   fi
-  disk="$(printf '%s\n' "$raw" | sed "s|^$qdir/||" | grep -v '^$' | LC_ALL=C sort)"
-  tracked="$(git -C "$wt" ls-files -- "$path/" 2>/dev/null | sed "s|^$path/||" | LC_ALL=C sort)"
-  LC_ALL=C comm -23 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked") | grep -v '^$' | sed "s|^|$path/|" || true
+  disk="$(while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    printf '%s\n' "${name#"$qdir"/}"
+  done <<<"$raw" | LC_ALL=C sort)"
+  # A filename containing a newline shreds a line-delimited inventory into
+  # fragments (or, for a pure-newline name, into nothing once command
+  # substitution strips trailing newlines). Cross-check the reconstructed
+  # entry count against a NUL-delimited pass — any mismatch blocks rather
+  # than risking a deletion decision on a listing that cannot represent the
+  # names it saw.
+  local n_disk=0 n_nul=0
+  n_disk="$(printf '%s' "$disk" | grep -c . || true)"
+  n_nul="$(find "$qdir" ! -type d -print0 2>/dev/null | tr -cd '\0' | wc -c | tr -d '[:space:]')" || n_nul=-1
+  if [[ "$n_disk" != "$n_nul" ]]; then
+    printf '[scan mismatch: %s entries by NUL count vs %s reconstructed line entries — a name this listing cannot represent]\n' "$n_nul" "$n_disk"
+    return 0
+  fi
+  tracked="$(git -C "$wt" ls-files -- "$path/" 2>/dev/null | while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    printf '%s\n' "${name#"$path"/}"
+  done | LC_ALL=C sort)"
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    printf '%s/%s\n' "$path" "$name"
+  done < <(LC_ALL=C comm -23 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked"))
   # Tracked names present in the copy must match the index exactly.
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
@@ -1189,7 +1216,31 @@ repair_worktree_links() {
         } >&2
         continue
       fi
-      rm -rf "$qdir"
+      # An active by-path writer may have recreated the path while the old
+      # tree was inspected; linking now would delete that fresh data inside
+      # symlink_into_worktree. Leave the newcomer for the next hook firing.
+      # The quarantined copy is proven index-identical, so discarding it
+      # loses nothing git cannot restore.
+      if [[ -e "$dst" || -L "$dst" ]]; then
+        blocked=true
+        rm -rf "$qdir"
+        echo "Warning: '$path' in $wt reappeared while its materialized copy was being inspected (an active writer?); leaving the new path alone. The next git operation will re-attempt the repair." >&2
+        continue
+      fi
+      # The quarantined copy is deleted only after the link is in place —
+      # a failed relink restores it instead of leaving the path absent.
+      if symlink_into_worktree "$path" "$wt"; then
+        rm -rf "$qdir"
+        repaired="$repaired $path"
+      else
+        blocked=true
+        if [[ ! -e "$dst" && ! -L "$dst" ]] && mv "$qdir" "$dst" 2>/dev/null; then
+          echo "Warning: relinking '$path' in $wt failed; the materialized copy was restored. Repair manually: cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
+        else
+          echo "CRITICAL: relinking '$path' in $wt failed and the copy could not be restored — its content is preserved at '$qdir'." >&2
+        fi
+      fi
+      continue
     fi
     if symlink_into_worktree "$path" "$wt"; then
       repaired="$repaired $path"
