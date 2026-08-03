@@ -13,6 +13,16 @@ export function diagLogPath(): string {
 	return process.env.CLAUDE_BRIDGE_DIAG_PATH || join(piUserDir(), "claude-bridge-diag.log");
 }
 
+/** Trailing clause for user-facing integrity notifications. With DEBUG on the
+ *  diag log exists and is worth pointing at; without it the file was never
+ *  written (diagDump early-returns), so point at the switch that would have
+ *  captured a dump instead of at a path that does not exist. */
+export function diagGuidance(): string {
+	return DEBUG
+		? `see ${diagLogPath()}`
+		: "re-run with CLAUDE_BRIDGE_DEBUG=1 to capture a diagnostic dump";
+}
+
 // Ensure log directories exist when debug is enabled. 0o700/0o600 throughout:
 // these logs carry prompt previews and session metadata and belong to the user
 // alone — same discipline as diagDump.
@@ -44,7 +54,18 @@ export function debug(...args: unknown[]) {
 		if (typeof a === "function") return fmt((a as () => unknown)());
 		return JSON.stringify(a);
 	};
-	const msg = args.map(fmt).join(" ");
+	// A throwing thunk or JSON.stringify (circular structure, BigInt) must not
+	// escape debug() — one call site sits inside the SDK stream loop, where a
+	// formatting failure would abort the user's turn exactly when they enabled
+	// debugging. A failed arg degrades to a placeholder; the rest still log.
+	const safeFmt = (a: unknown): string => {
+		try {
+			return fmt(a);
+		} catch (error) {
+			return `[unprintable: ${error instanceof Error ? error.message : String(error)}]`;
+		}
+	};
+	const msg = args.map(safeFmt).join(" ");
 	try { appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`, { mode: 0o600 }); } catch { /* debug is best effort */ }
 }
 

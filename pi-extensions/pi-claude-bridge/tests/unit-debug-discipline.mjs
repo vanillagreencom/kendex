@@ -26,7 +26,7 @@ import assert from "node:assert/strict";
 
 // In-process modules must load with DEBUG off regardless of the runner's env.
 delete process.env.CLAUDE_BRIDGE_DEBUG;
-const { DEBUG } = await import("../src/debug.ts");
+const { DEBUG, diagGuidance, diagLogPath } = await import("../src/debug.ts");
 const { summarizeDroppedUserMessages } = await import("../src/query-state.ts");
 const { consumeQuery } = await import("../src/consume-query.ts");
 
@@ -57,6 +57,48 @@ function runProbeChild({ debugOn }) {
 	else delete env.CLAUDE_BRIDGE_DEBUG;
 	execFileSync(process.execPath, ["--import", "tsx", scriptPath], { cwd: pkgRoot, env });
 }
+
+// Run a child (DEBUG on) whose debug() call mixes healthy args with args whose
+// formatting throws: a throwing thunk, a circular structure, and a BigInt
+// (JSON.stringify throws on the last two). vstack#1041: the formatting used to
+// run outside debug()'s try, so any of these aborted the caller — including
+// the consumeQuery stream loop.
+function runThrowingArgsProbeChild() {
+	const scriptPath = join(dir, "probe-throwing-args.mjs");
+	writeFileSync(scriptPath, [
+		`import { debug } from ${JSON.stringify(pathToFileURL(join(pkgRoot, "src/debug.ts")).href)};`,
+		`const circular = {}; circular.self = circular;`,
+		`debug("before-args", () => { throw new Error("thunk boom"); }, circular, 10n, "after-args");`,
+	].join("\n"));
+	const env = { ...process.env, PI_CODING_AGENT_DIR: join(dir, "agent") };
+	env.CLAUDE_BRIDGE_DIAG_PATH = join(dir, "diag.log");
+	env.CLAUDE_BRIDGE_DEBUG_PATH = join(dir, "debug.log");
+	env.CLAUDE_BRIDGE_DEBUG = "1";
+	execFileSync(process.execPath, ["--import", "tsx", scriptPath], { cwd: pkgRoot, env });
+}
+
+describe("debug() formatting failures are non-fatal (vstack#1041)", () => {
+	it("a throwing thunk / circular arg / BigInt degrade to placeholders and the other args still log", () => {
+		// execFileSync throws on a non-zero exit, so reaching the assertions
+		// proves debug() did not let the formatting failures escape.
+		runThrowingArgsProbeChild();
+		const log = readFileSync(join(dir, "debug.log"), "utf8");
+		assert.match(log, /before-args/);
+		assert.match(log, /after-args/, "args after a failed one must still log");
+		assert.match(log, /\[unprintable: thunk boom\]/);
+		assert.match(log, /\[unprintable: [^[]*circular[\s\S]*?\]/i);
+		assert.match(log, /\[unprintable: [^[]*BigInt[\s\S]*?\]/);
+	});
+});
+
+describe("diagGuidance (vstack#1041)", () => {
+	it("with DEBUG off points at the debug env var, never at the unwritten diag log", () => {
+		assert.equal(DEBUG, false, "precondition: this test process must run with DEBUG off");
+		const guidance = diagGuidance();
+		assert.match(guidance, /CLAUDE_BRIDGE_DEBUG=1/);
+		assert.ok(!guidance.includes(diagLogPath()), "no pointer to a diag file that was never written");
+	});
+});
 
 describe("diagDump gating (VST-15)", () => {
 	it("writes nothing to disk when CLAUDE_BRIDGE_DEBUG is off", () => {

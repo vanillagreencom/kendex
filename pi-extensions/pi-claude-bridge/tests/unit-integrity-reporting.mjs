@@ -55,6 +55,10 @@ describe("tool-result integrity reporting", () => {
 		assert.equal(notifications.length, 1);
 		assert.equal(notifications[0].level, "error");
 		assert.match(notifications[0].message, /delivered 2\/2, resolved 1\/2/);
+		// vstack#1041: with DEBUG on the diag log is real, so the toast points at
+		// it — and not at the DEBUG-off guidance to re-run with the env var.
+		assert.ok(notifications[0].message.includes(`see ${diagPath}`), "DEBUG-on toast points at the diag log");
+		assert.ok(!notifications[0].message.includes("CLAUDE_BRIDGE_DEBUG=1"), "no env-var guidance when the log exists");
 		const entries = readDiagEntries();
 		assert.equal(entries.length, 1);
 		assert.equal(entries[0].label, "tool_result_delivery_mismatch");

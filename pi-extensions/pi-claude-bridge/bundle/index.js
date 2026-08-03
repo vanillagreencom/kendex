@@ -26951,6 +26951,9 @@ var DEBUG_LOG_PATH = process.env.CLAUDE_BRIDGE_DEBUG_PATH || join2(piUserDir(), 
 function diagLogPath() {
   return process.env.CLAUDE_BRIDGE_DIAG_PATH || join2(piUserDir(), "claude-bridge-diag.log");
 }
+function diagGuidance() {
+  return DEBUG ? `see ${diagLogPath()}` : "re-run with CLAUDE_BRIDGE_DEBUG=1 to capture a diagnostic dump";
+}
 if (DEBUG) {
   try {
     mkdirSync2(dirname(DEBUG_LOG_PATH), { recursive: true, mode: 448 });
@@ -26970,7 +26973,14 @@ function debug(...args) {
     if (typeof a === "function") return fmt(a());
     return JSON.stringify(a);
   };
-  const msg = args.map(fmt).join(" ");
+  const safeFmt = (a) => {
+    try {
+      return fmt(a);
+    } catch (error51) {
+      return `[unprintable: ${error51 instanceof Error ? error51.message : String(error51)}]`;
+    }
+  };
+  const msg = args.map(safeFmt).join(" ");
   try {
     appendFileSync2(DEBUG_LOG_PATH, `[${ts2}] [${moduleInstanceId}] ${msg}
 `, { mode: 384 });
@@ -28656,7 +28666,7 @@ function reportSyntheticToolResultRepair(missing, context) {
       sampledToolCallIds: sampledToolCallIds.slice(0, 12)
     });
     safeNotify(
-      `Claude bridge: ${missing.length} missing tool result(s) repaired with an explicit error placeholder${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. Real tool output was lost before Claude session import; see ${diagLogPath()}.`,
+      `Claude bridge: ${missing.length} missing tool result(s) repaired with an explicit error placeholder${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. Real tool output was lost before Claude session import; ${diagGuidance()}.`,
       "error"
     );
   } catch (error51) {
@@ -28702,7 +28712,7 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
       unmatchedResultIds: progress.unmatchedResultIds
     });
     safeNotify(
-      `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` + (queryCtx.detachedFromSharedSession ? `Detached one-shot query \u2014 shared Claude session record left untouched; see ${diagLogPath()}.` : `Claude session will rebuild before the next turn; see ${diagLogPath()}.`),
+      `Claude bridge: tool result delivery interrupted during ${reason}; delivered ${progress.deliveredCount}/${progress.expectedCount}, resolved ${progress.resolvedCount}/${progress.expectedCount}, waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` + (queryCtx.detachedFromSharedSession ? `Detached one-shot query \u2014 shared Claude session record left untouched; ${diagGuidance()}.` : `Claude session will rebuild before the next turn; ${diagGuidance()}.`),
       "error"
     );
     return true;

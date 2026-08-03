@@ -1,5 +1,5 @@
 import { type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { debug, diagDump, diagLogPath } from "./debug.js";
+import { debug, diagDump, diagGuidance } from "./debug.js";
 import { type QueryContext } from "./query-state.js";
 import { summarizeMissingToolNames, type MissingToolResult } from "./tool-pairing-audit.js";
 
@@ -141,7 +141,7 @@ export function reportSyntheticToolResultRepair(missing: MissingToolResult[], co
 		safeNotify(
 			`Claude bridge: ${missing.length} missing tool result(s) repaired with an explicit error placeholder` +
 			`${toolNameSummary.length ? ` for ${toolNameSummary.join(", ")}` : ""}. ` +
-			`Real tool output was lost before Claude session import; see ${diagLogPath()}.`,
+			`Real tool output was lost before Claude session import; ${diagGuidance()}.`,
 			"error",
 		);
 	} catch (error) {
@@ -212,8 +212,8 @@ export function reportToolResultMismatch(
 			`waiting=${progress.waitingCount}, queued=${progress.queuedCount}, unmatched=${progress.unmatchedResultCount}` +
 			`${toolNameSummary.length ? `, tools=${toolNameSummary.join(", ")}` : ""}. ` +
 			(queryCtx.detachedFromSharedSession
-				? `Detached one-shot query — shared Claude session record left untouched; see ${diagLogPath()}.`
-				: `Claude session will rebuild before the next turn; see ${diagLogPath()}.`),
+				? `Detached one-shot query — shared Claude session record left untouched; ${diagGuidance()}.`
+				: `Claude session will rebuild before the next turn; ${diagGuidance()}.`),
 			"error",
 		);
 		return true;

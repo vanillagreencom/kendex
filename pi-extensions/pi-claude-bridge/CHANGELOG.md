@@ -2,6 +2,13 @@
 
 ## Consumer-impacting changes
 
+### 3.1.5
+
+Two follow-ons from the 3.1.4 release (vstack#1041), verified against the shipped bundle.
+
+- **A throwing debug argument no longer escapes `debug()`.** The lazy-thunk evaluation and `JSON.stringify` introduced for VST-15 ran OUTSIDE the try that makes logging best-effort, so a thunk that throws — or a stringify failure on a circular structure or BigInt — propagated out of `debug()`. One such call site sits inside the SDK stream loop (`consumeQuery`'s per-managed-message trace), where the escape aborted the user's turn exactly when they had enabled debugging. Formatting failures now degrade that argument to an `[unprintable: <error message>]` placeholder; the remaining arguments still log.
+- **Integrity toasts no longer point at a diag log that was never written.** 3.1.4 gated `diagDump` on `CLAUDE_BRIDGE_DEBUG` (VST-15) but left the tool-result integrity notifications unconditionally saying "see `<diag log path>`" — a file that does not exist in a default run. Without the debug flag those toasts now advise re-running with `CLAUDE_BRIDGE_DEBUG=1` to capture a diagnostic dump; with it, they keep pointing at the real log.
+
 ### 3.1.4
 
 All three found by memsira while re-vendoring 3.1.3 (VST-14, VST-15, VST-16), verified against the shipped bundle at `90f246ed`.
