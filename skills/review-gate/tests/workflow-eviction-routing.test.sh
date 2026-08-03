@@ -12,15 +12,18 @@
 #   w2. `status` events are NOT filtered at the job level — a skipped
 #       status job would still evict the pending writer while converging
 #       nothing
-#   w3. status-shaped runs route to ALL_OPEN_PRS=1 (sweep-style full
-#       convergence: surviving in the slot subsumes whatever was evicted)
-#   w4. PR-specific events keep the single-PR fast path
-#   w5. the `status` trigger stays declared — the gate's own status posts
-#       re-trigger a full-convergence pass, which is the healing mechanism
-#       for writers evicted by PR-specific runs
-#   w6. the scaffold keeps its check_run / issue_comment trust guards, and
-#       a trusted check_run with no resolvable open PR falls back to
-#       all-PRs mode instead of exiting having evicted for nothing
+#   w3. EVERY executing run routes to ALL_OPEN_PRS=1 (sweep-style full
+#       convergence: surviving in the slot subsumes whatever was evicted).
+#       No single-PR fast path exists: the workflows run on GITHUB_TOKEN,
+#       and GitHub suppresses workflow runs for token-authored events, so
+#       the gate's own posts can never re-trigger a healing pass — the run
+#       that evicted a writer must do everything itself. No invariant here
+#       may depend on token-authored recursion.
+#   w5. the `status` trigger stays declared — legacy-status reviewer
+#       evidence has no other re-fire signal
+#   w6. the scaffold keeps its check_run / issue_comment trust guards
+#       (volume control; a guard-skipped run's eviction is recovered only
+#       by the scheduled sweep, and the comments must say so)
 #   w7. both sweep workflows delegate enumeration to the shared script's
 #       all-PRs mode — no duplicated open-PR listing in workflow YAML; the
 #       script is the single source of truth for it
@@ -65,10 +68,11 @@ check_rerun() {
   assert_grep "$file" 'group: review-gate-writer' "w1[$label]: shared writer group"
   assert_grep "$file" 'cancel-in-progress: false' "w1[$label]: replace, never cancel the executing writer"
   assert_not_grep "$file" "github.event_name != 'status'" "w2[$label]: no job-level status filter (a skipped run still evicts)"
-  assert_grep "$file" '"status" ]' "w3[$label]: status-shaped runs are routed by event name"
-  assert_grep "$file" 'ALL_OPEN_PRS=1' "w3[$label]: eviction-prone shapes converge all open PRs"
-  assert_grep "$file" 'export PR_NUMBER' "w4[$label]: single-PR fast path preserved"
-  assert_grep "$file" 'status: {}' "w5[$label]: status trigger declared (self-healing re-trigger)"
+  assert_grep "$file" 'export ALL_OPEN_PRS=1' "w3[$label]: every executing run converges all open PRs"
+  assert_not_grep "$file" 'export PR_NUMBER' "w3[$label]: no single-PR fast path (token-authored posts cannot re-trigger healing)"
+  assert_not_grep "$file" 'trailing all-PRs pass' "w3[$label]: no comment may claim a self-triggered trailing pass"
+  assert_grep "$file" 'suppresses' "w3[$label]: comments state the token-authored suppression rule"
+  assert_grep "$file" 'status: {}' "w5[$label]: status trigger declared (legacy-status evidence re-fire)"
 }
 
 check_sweep() {
@@ -83,7 +87,7 @@ echo "=== shipped templates ==="
 check_rerun "$TEMPLATES/approval-rerun.yml" "template"
 assert_grep "$TEMPLATES/approval-rerun.yml" 'github.event.check_run.name ==' "w6[template]: check_run trust guard retained"
 assert_grep "$TEMPLATES/approval-rerun.yml" 'github.event.comment.user.login ==' "w6[template]: issue_comment trust guard retained"
-assert_grep "$TEMPLATES/approval-rerun.yml" 'converging all open PRs instead' "w6[template]: no-open-PR check_run falls back to all-PRs mode"
+assert_not_grep "$TEMPLATES/approval-rerun.yml" 'converging all open PRs instead' "w6[template]: no residual single-PR resolution branches"
 check_sweep "$TEMPLATES/approval-sweep.yml" "template"
 
 echo "=== shared script owns the enumeration ==="

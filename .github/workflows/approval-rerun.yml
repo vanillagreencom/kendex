@@ -20,15 +20,17 @@ name: Approval CI re-fire
 #     and a stale failed/cancelled required check from a superseded run
 #     blocks it.
 #
-# Anti-loop: the reruns this workflow issues never re-trigger it. Its own
-# gate-status POSTs DO re-trigger it — they are `status` events, and status
-# is deliberately unfiltered (see the event routing in the job) — so every
-# write is followed by one all-PRs convergence pass. That trailing pass is
-# the healing mechanism for writers evicted from the shared concurrency
-# group by PR-specific runs, and the chain terminates because a converged
-# repo posts nothing. A genuinely-failing build after approval is NOT
-# retried automatically — the gate status stays success and the red required
-# contexts block on their own; re-run manually to retry.
+# Anti-loop: the reruns this workflow issues never re-trigger it, and
+# neither do its own gate-status POSTs — they are authored by the workflow's
+# GITHUB_TOKEN, and GitHub suppresses workflow runs for token-authored
+# events (the standard anti-recursion rule; see also
+# skills/orch/DEVELOPMENT.md on this). There is therefore NO self-triggered
+# trailing pass to lean on: every run that executes converges EVERY open PR
+# itself (see the event routing in the job), and the scheduled sweep is the
+# only guaranteed backstop for evictions by runs that never execute. A
+# genuinely-failing build after approval is NOT retried automatically — the
+# gate status stays success and the red required contexts block on their
+# own; re-run manually to retry.
 
 "on":
   pull_request_review:
@@ -46,7 +48,7 @@ name: Approval CI re-fire
   # STATUS), while every ordinary CI job completion is also a
   # check_run.completed — those runs would enter the shared gate-writer
   # group before any job-level filter and evict pending writers for nothing
-  # (healed only by the next status-shaped pass or the sweep). Restore the
+  # (recovered only by the scheduled sweep). Restore the
   # scaffold's check_run trigger (and its trust guard + routing) if a
   # reviewer that publishes ONLY check-runs is ever added.
   # Some reviewers publish their clean-analysis evidence as a legacy commit
@@ -81,14 +83,14 @@ concurrency:
   # GitHub keeps ONE pending run per group and REPLACES it, so an arriving
   # run EVICTS whatever writer was pending — including another PR's
   # changes-requested convergence. Replacement is latency, not correctness,
-  # BECAUSE of the event routing in the job below (#1039): eviction-prone
-  # shapes (`status` — which cannot be filtered at `on:` level and enters
-  # this group for ANY context) converge ALL open PRs, so a surviving run
-  # subsumes the work of every run it displaced; PR-specific survivors
-  # converge their own PR, and any status they post re-triggers a trailing
-  # all-PRs pass that restores whatever they evicted. The scheduled sweep
-  # remains the backstop for the writerless residue (a no-op PR-specific
-  # survivor posts nothing) — bounded at its 15-minute cadence.
+  # BECAUSE every run that executes converges ALL open PRs (#1039): a
+  # surviving run subsumes the work of every run it displaced, whatever
+  # event shape either had. No shape keeps a single-PR fast path — the
+  # workflow's own token-authored status posts cannot re-trigger it (GitHub
+  # suppresses token-authored events), so a "PR-specific survivor +
+  # trailing healing pass" design cannot exist here. With this repo's
+  # triggers every run executes, so the sweep backstops only external
+  # oddities — bounded at its 15-minute cadence.
   group: review-gate-writer
   cancel-in-progress: false
 
@@ -100,8 +102,11 @@ jobs:
     # would run AFTER concurrency slotting — a skipped status run would still
     # have evicted the pending writer it replaced while converging nothing,
     # silently dropping another PR's changes-requested convergence. Status
-    # runs therefore always execute and converge ALL open PRs (the routing
-    # below); the predicate re-derives every verdict from scratch, so a
+    # runs therefore always execute — and every executing run, status or
+    # review-shaped, converges ALL open PRs (the routing below): the
+    # workflow's token-authored posts cannot re-trigger it, so an evicted
+    # writer's work is only recovered by the run that evicted it doing
+    # everything. The predicate re-derives every verdict from scratch, so a
     # missing filter can never cause a false approval, only work. No
     # comment-form reviewer in this repo (the scaffold's issue_comment
     # trigger is deliberately dropped, and so is check_run — see the trigger
@@ -112,20 +117,16 @@ jobs:
     # POSTs stay capped per head by REVIEW_GATE_MAX_RERUN_ATTEMPTS. Status
     # events come only from commit-status posters (the gate itself,
     # CodeRabbit, the outage marker — Actions CI emits check_runs, not
-    # statuses), and the shared group both serializes passes and REPLACES
-    # the pending slot, so a burst of k status events coalesces into at most
-    # one executing plus one trailing pass. Sustained worst case:
-    # back-to-back sweep-equivalents in a single serialized lane.
+    # statuses), review events are human-cadence, and the shared group both
+    # serializes passes and REPLACES the pending slot, so a burst of k
+    # events coalesces into at most one executing plus one pending pass.
+    # Sustained worst case: back-to-back sweep-equivalents in a single
+    # serialized lane.
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
-      # Populated on pull_request_review; empty on status events, which
-      # never reach the single-PR path (see the routing below).
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
     steps:
       # The evaluate-and-converge logic lives in the shared vendored script
       # (single source of truth with approval-sweep.yml). Checkout is pinned
@@ -148,23 +149,14 @@ jobs:
             echo "::error::skills/review-gate/scripts/approval-refire.sh is missing on the default branch (bootstrap PR? deleted?); no re-fire action taken"
             exit 1
           fi
-          # Event-shape routing (#1039): a `status` run entered the shared
-          # writer group for ANY context on ANY commit and already evicted
-          # whatever writer was pending — converging only "its own" commit's
-          # PR (or nothing, when the context is irrelevant) would lose the
-          # evicted work until the sweep. Status-shaped survivors converge
-          # EVERY open PR, so replacement subsumes and eviction loses
-          # nothing. pull_request_review is PR-specific and always carries
-          # its PR: the single-PR fast path.
-          if [ "${GITHUB_EVENT_NAME:-}" = "status" ]; then
-            export ALL_OPEN_PRS=1
-            exec skills/review-gate/scripts/approval-refire.sh
-          fi
-          if [ -z "${PR_NUMBER:-}" ]; then
-            # Unreachable with the current triggers; fail loud if a trigger
-            # is ever added without deciding its routing above.
-            echo "::error::event ${GITHUB_EVENT_NAME:-?} reached the single-PR path without a PR number"
-            exit 1
-          fi
-          export PR_NUMBER
+          # Event-shape routing (#1039): every run that reaches this step
+          # entered the shared writer group and REPLACED whatever writer was
+          # pending there — possibly another PR's changes-requested
+          # convergence. This workflow's own token-authored status posts
+          # cannot re-trigger it (GitHub suppresses token-authored events),
+          # so there is no trailing pass to recover evicted work later: the
+          # run that evicted it must do everything. Every executing shape
+          # therefore converges EVERY open PR; replacement subsumes and
+          # eviction loses nothing.
+          export ALL_OPEN_PRS=1
           exec skills/review-gate/scripts/approval-refire.sh

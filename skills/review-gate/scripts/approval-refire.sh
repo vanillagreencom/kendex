@@ -27,13 +27,16 @@
 #         rulesets, so a directly-posted success would merge untested code.
 #
 # Callers (see the skill's templates/):
-#   - approval-rerun.yml (event-driven). PR-specific events (review
-#     submit/dismiss, trusted check_run, comment-form reviewer comments)
-#     converge their own PR, QUIESCE=1. Eviction-prone shapes — `status`
-#     events, and a trusted check_run with no resolvable open PR — set
-#     ALL_OPEN_PRS=1: their run evicted whatever writer was pending in the
-#     shared concurrency group, so it must converge everything (#1039).
+#   - approval-rerun.yml (event-driven)                       ALL_OPEN_PRS=1
+#     EVERY executing run converges every open PR: it evicted whatever
+#     writer was pending in the shared concurrency group, and the
+#     workflow's own token-authored status posts cannot re-trigger it
+#     (GitHub suppresses token-authored events), so no later pass exists to
+#     recover the evicted work — the evictor does everything (#1039).
 #   - approval-sweep.yml (scheduled backstop)                 ALL_OPEN_PRS=1
+#     Also the only recovery for evictions by runs the job-level trust
+#     guards skip (which never execute the script at all).
+#   Single-PR mode (PR_NUMBER/HEAD_SHA) remains for direct invocation.
 #
 # Env (required): GH_TOKEN (or ambient gh auth), GH_REPO; PR_NUMBER and
 # HEAD_SHA unless ALL_OPEN_PRS=1.
