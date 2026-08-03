@@ -540,6 +540,10 @@ reset
 CFG_OUTAGE="Gate X"; CFG_GATE_CONTEXT="Gate X"
 run "gate context equal to the outage context is a config error" "" 2
 
+reset
+CFG_GATE_CONTEXT=""
+run "explicitly empty gate context is a config error" "" 2
+
 # ================================================================ configured ===
 # The same discipline against THIS repo's resolved trust settings.
 echo "--- configured layer (this repo's REVIEW_GATE_* settings)"
