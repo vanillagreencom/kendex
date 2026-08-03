@@ -7,7 +7,7 @@ import { PROVIDER_ID, messageContentToText } from "./convert.js";
 import { buildModels, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
-import { QueryContext, ctx, drainPendingToolCalls, popContext, stackDepth, pushContext, toolCallDrainCause, type DeferredUserMessage } from "./query-state.js";
+import { QueryContext, ctx, drainPendingToolCalls, popContext, stackDepth, pushContext, summarizeDroppedUserMessages, toolCallDrainCause, type DeferredUserMessage } from "./query-state.js";
 import { teardownQuery } from "./query-teardown.js";
 import { loadConfig, recordProjectTrust, registerExternalConfigResolver } from "./config.js";
 import { hasClaudeCredentials } from "./auth-presence.js";
@@ -924,11 +924,7 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 		const dropped = [...(undelivered !== undefined ? [undelivered] : []), ...abortCtx.deferredUserMessages];
 		abortCtx.deferredUserMessages = [];
 		if (dropped.length > 0) {
-			diagDump("deferred_user_messages_dropped", {
-				site,
-				count: dropped.length,
-				previews: dropped.map((message) => (message.text || "[image-only]").slice(0, 60)),
-			});
+			diagDump("deferred_user_messages_dropped", summarizeDroppedUserMessages(site, dropped));
 		}
 		return dropped;
 	};

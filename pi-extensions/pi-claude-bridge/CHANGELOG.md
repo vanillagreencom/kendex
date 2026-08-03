@@ -2,6 +2,15 @@
 
 ## Consumer-impacting changes
 
+### 3.1.4
+
+All three found by memsira while re-vendoring 3.1.3 (VST-14, VST-15, VST-16), verified against the shipped bundle at `90f246ed`.
+
+- **Connector priming is now bounded and backs off on persistent failure (VST-14).** The inventory request `primeConnectorServers` issued carried no abort signal, so a hung claude.ai call had nothing bounding it — and since 3.1.0 removed the process-lifetime failure pin, nothing stood between "cached forever" and "one new HTTPS request per turn": a persistently failing account re-primed on every cold-key turn indefinitely. The request now carries a 10s deadline (the account-host probe's budget), and a failed or timed-out attempt arms a 60s per-scope cooldown before the next retry. Failure stays non-fatal — no connectors declared, disk-cache fallback unchanged — and loud in the debug log. Missing credentials are exempt from the cooldown (a local file check with no request to bound), so a just-completed `claude login` still takes effect on the next turn.
+- **`diagDump` is gated on `CLAUDE_BRIDGE_DEBUG`, and the deferred-drop entry carries no user content (VST-15).** Diagnostic dumps were written to `<piUserDir>/claude-bridge-diag.log` unconditionally — including 60-char previews of user-authored prompt text in every `deferred_user_messages_dropped` entry — on hosts that never enabled any debug flag, in a log outside any host app's retention and cleanup boundary. `diagDump` now early-returns unless `CLAUDE_BRIDGE_DEBUG=1` (the same discipline as `debug()`), and the drop entry records site, count, per-message text lengths, and an image-only count — never message text. MIGRATION for hosts that read the diag log in post-mortems: set `CLAUDE_BRIDGE_DEBUG=1` to keep receiving entries.
+- **The managed stream path no longer pays a per-SDK-message `JSON.stringify` when debugging is off (VST-15).** `consumeQuery`'s managed-message trace built its payload before `debug()` could check the DEBUG flag, once per SDK message — including one `stream_event` per streamed token. `debug()` now evaluates function arguments lazily after its early return, and the call site passes a thunk.
+- **`normalizeRateLimitUtilization` no longer discards exactly 1, so the utilization warning fires at 100% (VST-16).** The fractional (`0 < v < 1`) and percent (`1 < v <= 100`) branches both excluded exactly 1, which normalized to `undefined` and read as "no warning" — suppressing the advisory `allowed_warning` toast at precisely full utilization. Exactly 1 now reads as the fractional form (100%): the fail-closed direction, since under the percent convention 1% falls below the 80% threshold anyway. The `rejected` rate-limit path never called this helper and is unaffected.
+
 ### 3.1.3
 
 Found by drovr while re-vendoring 3.1.1 (drovr DRO-39), verified live against claude 2.1.220.

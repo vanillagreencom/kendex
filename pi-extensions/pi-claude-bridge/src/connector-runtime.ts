@@ -31,6 +31,25 @@ export function readCredentialFile(path: string): string | undefined {
 
 const connectorServerCache = new Map<string, Record<string, unknown>>();
 const connectorServerPending = new Set<string>();
+// Epoch ms of the last FAILED inventory attempt per scope, so a persistently
+// failing account cools down instead of issuing one new HTTPS request per turn
+// (VST-14). Missing credentials are exempt: that check is a local file read
+// with no request to bound, and a just-completed `claude login` must take
+// effect on the next turn.
+const connectorServerFailureAt = new Map<string, number>();
+
+// Deadline on the inventory round trip. Without one, a hung claude.ai request
+// held the pending flag forever — same budget as the account-host probe's
+// ACCOUNT_PROBE_DEADLINE_MS (VST-14).
+const CONNECTOR_PRIME_TIMEOUT_MS = 10_000;
+const CONNECTOR_PRIME_FAILURE_COOLDOWN_MS = 60_000;
+
+/** Overrides for tests; production callers use the defaults. */
+export type PrimeConnectorOverrides = {
+	timeoutMs?: number;
+	failureCooldownMs?: number;
+	now?: () => number;
+};
 
 function connectorScopeKey(claudeConfigDir: string | undefined = process.env.CLAUDE_CONFIG_DIR): string {
 	// One rule for every scope key — the on-disk cache and this in-memory cache
@@ -65,27 +84,44 @@ export function connectorCredentialEnv(claudeConfigDir: string | undefined = pro
 // NOT cached — a transient blip at registration used to pin `{}` for the
 // process lifetime, keeping every later turn undeclared and the disk-cache
 // fallback unreachable. Leaving the key unset makes the next snapshot retry;
-// the pending set still dedupes concurrent fetches.
-export function primeConnectorServers(claudeConfigDir?: string): void {
+// the pending set dedupes concurrent fetches, and a failed inventory attempt
+// stamps a per-scope cooldown so a persistently failing account backs off
+// instead of re-priming on every turn (VST-14).
+export function primeConnectorServers(claudeConfigDir?: string, overrides: PrimeConnectorOverrides = {}): void {
 	const key = connectorScopeKey(claudeConfigDir);
 	if (connectorServerCache.has(key) || connectorServerPending.has(key)) return;
+	const now = overrides.now ?? Date.now;
+	const cooldownMs = overrides.failureCooldownMs ?? CONNECTOR_PRIME_FAILURE_COOLDOWN_MS;
+	const failedAt = connectorServerFailureAt.get(key);
+	if (failedAt !== undefined && now() - failedAt < cooldownMs) {
+		debug("connectors: prime cooling down after failure; declaring none until retry window opens");
+		return;
+	}
 	connectorServerPending.add(key);
 	void (async () => {
+		let failed = false;
 		try {
 			const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(claudeConfigDir));
 			if (!credentials) {
 				debug("connectors: no OAuth credentials; declaring none (will retry)");
 				return;
 			}
-			const inventory = await listAccountConnectors({ credentials });
+			const inventory = await listAccountConnectors({
+				credentials,
+				// A hung inventory request must not outlive the deadline: the abort
+				// surfaces as `ok: false` and takes the cooldown path below.
+				signal: AbortSignal.timeout(overrides.timeoutMs ?? CONNECTOR_PRIME_TIMEOUT_MS),
+			});
 			if (!inventory.ok) {
-				debug(`connectors: inventory failed (${inventory.reason}); declaring none (will retry)`);
+				failed = true;
+				debug(`connectors: inventory failed (${inventory.reason}); declaring none (will retry after cooldown)`);
 				return;
 			}
 			const servers = connectorMcpServers(inventory);
 			debug(`connectors: declaring ${Object.keys(servers).length} of ${inventory.connectors.length} installed`,
 				Object.keys(servers).join(", ") || "none");
 			connectorServerCache.set(key, servers);
+			connectorServerFailureAt.delete(key);
 			// Persist so the NEXT cold process has this synchronously. Priming always
 			// loses the race against turn 1 in its own process; a cache written by an
 			// earlier run is the only thing turn 1 can read in time (vstack#870).
@@ -93,8 +129,10 @@ export function primeConnectorServers(claudeConfigDir?: string): void {
 				debug(`connectors: cached ${inventory.connectors.length} entries`);
 			}
 		} catch (error) {
-			debug("connectors: declaration lookup threw; declaring none (will retry)", error);
+			failed = true;
+			debug("connectors: declaration lookup threw; declaring none (will retry after cooldown)", error);
 		} finally {
+			if (failed) connectorServerFailureAt.set(key, now());
 			connectorServerPending.delete(key);
 		}
 	})();

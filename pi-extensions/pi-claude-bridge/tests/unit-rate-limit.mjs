@@ -50,14 +50,32 @@ describe("rate_limit_event allowed_warning", () => {
 		assert.equal(warning, undefined);
 	});
 
-	it("suppresses exact 1 because SDK unit is ambiguous", () => {
+	// VST-16: exact 1 used to fall between the fractional (0<v<1) and percent
+	// (1<v<=100) branches and normalize to undefined — suppressing the warning
+	// at precisely 100% utilization. It now reads as the fractional form (100%):
+	// the fail-closed direction, since under the percent convention 1% is below
+	// the threshold anyway and nothing is lost by warning.
+	it("warns at exact 1, read as the fractional form (100%)", () => {
 		const warning = formatAllowedRateLimitWarning({
 			status: "allowed_warning",
 			rateLimitType: "seven_day",
 			utilization: 1,
 		});
 
-		assert.equal(warning, undefined);
+		assert.equal(warning, "Claude rate limit warning: nearing seven_day limit; check Claude Code /usage for exact utilization.");
+	});
+
+	it("normalizes the full boundary matrix", () => {
+		assert.equal(normalizeRateLimitUtilization(0), 0);
+		assert.equal(normalizeRateLimitUtilization(0.5), 50);
+		assert.equal(normalizeRateLimitUtilization(1), 100);
+		assert.equal(normalizeRateLimitUtilization(1.5), 1.5);
+		assert.equal(normalizeRateLimitUtilization(100), 100);
+		assert.equal(normalizeRateLimitUtilization(101), undefined);
+		assert.equal(normalizeRateLimitUtilization(NaN), undefined);
+		assert.equal(normalizeRateLimitUtilization(-1), undefined);
+		assert.equal(normalizeRateLimitUtilization("91"), undefined);
+		assert.equal(normalizeRateLimitUtilization(undefined), undefined);
 	});
 
 	it("normalizes fractional and percent values before thresholding", () => {

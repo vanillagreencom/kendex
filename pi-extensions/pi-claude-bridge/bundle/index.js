@@ -26967,6 +26967,7 @@ function debug(...args) {
   const fmt = (a) => {
     if (typeof a === "string") return a;
     if (a instanceof Error) return `${a.name}: ${a.message}${a.stack ? "\n" + a.stack : ""}`;
+    if (typeof a === "function") return fmt(a());
     return JSON.stringify(a);
   };
   const msg = args.map(fmt).join(" ");
@@ -27000,6 +27001,7 @@ function makeCliDebugOptions(tag) {
   };
 }
 function diagDump(label, data) {
+  if (!DEBUG) return;
   try {
     const ts2 = (/* @__PURE__ */ new Date()).toISOString();
     const entry = { ts: ts2, moduleInstanceId, label, ...data };
@@ -28092,6 +28094,14 @@ function extractAllToolResults(messages) {
 }
 
 // src/query-state.ts
+function summarizeDroppedUserMessages(site, dropped) {
+  return {
+    site,
+    count: dropped.length,
+    textLengths: dropped.map((message) => message.text.length),
+    imageOnlyCount: dropped.filter((message) => !message.text && message.blocks?.length).length
+  };
+}
 var DRAIN_CAUSE_TEXT = {
   "abort": "the turn was aborted",
   "stream-idle-timeout": "the Claude Code stream went idle and the turn timed out",
@@ -43514,6 +43524,9 @@ function readCredentialFile(path) {
 }
 var connectorServerCache = /* @__PURE__ */ new Map();
 var connectorServerPending = /* @__PURE__ */ new Set();
+var connectorServerFailureAt = /* @__PURE__ */ new Map();
+var CONNECTOR_PRIME_TIMEOUT_MS = 1e4;
+var CONNECTOR_PRIME_FAILURE_COOLDOWN_MS = 6e4;
 function connectorScopeKey(claudeConfigDir = process.env.CLAUDE_CONFIG_DIR) {
   return scopeKeyFor(claudeConfigDir);
 }
@@ -43523,20 +43536,34 @@ function connectorCredentialEnv(claudeConfigDir = process.env.CLAUDE_CONFIG_DIR)
   else delete env.CLAUDE_CONFIG_DIR;
   return env;
 }
-function primeConnectorServers(claudeConfigDir) {
+function primeConnectorServers(claudeConfigDir, overrides = {}) {
   const key = connectorScopeKey(claudeConfigDir);
   if (connectorServerCache.has(key) || connectorServerPending.has(key)) return;
+  const now = overrides.now ?? Date.now;
+  const cooldownMs = overrides.failureCooldownMs ?? CONNECTOR_PRIME_FAILURE_COOLDOWN_MS;
+  const failedAt = connectorServerFailureAt.get(key);
+  if (failedAt !== void 0 && now() - failedAt < cooldownMs) {
+    debug("connectors: prime cooling down after failure; declaring none until retry window opens");
+    return;
+  }
   connectorServerPending.add(key);
   void (async () => {
+    let failed = false;
     try {
       const credentials = resolveClaudeOAuth(readCredentialFile, connectorCredentialEnv(claudeConfigDir));
       if (!credentials) {
         debug("connectors: no OAuth credentials; declaring none (will retry)");
         return;
       }
-      const inventory = await listAccountConnectors({ credentials });
+      const inventory = await listAccountConnectors({
+        credentials,
+        // A hung inventory request must not outlive the deadline: the abort
+        // surfaces as `ok: false` and takes the cooldown path below.
+        signal: AbortSignal.timeout(overrides.timeoutMs ?? CONNECTOR_PRIME_TIMEOUT_MS)
+      });
       if (!inventory.ok) {
-        debug(`connectors: inventory failed (${inventory.reason}); declaring none (will retry)`);
+        failed = true;
+        debug(`connectors: inventory failed (${inventory.reason}); declaring none (will retry after cooldown)`);
         return;
       }
       const servers = connectorMcpServers(inventory);
@@ -43545,12 +43572,15 @@ function primeConnectorServers(claudeConfigDir) {
         Object.keys(servers).join(", ") || "none"
       );
       connectorServerCache.set(key, servers);
+      connectorServerFailureAt.delete(key);
       if (writeCachedConnectors(inventory.connectors, key)) {
         debug(`connectors: cached ${inventory.connectors.length} entries`);
       }
     } catch (error51) {
-      debug("connectors: declaration lookup threw; declaring none (will retry)", error51);
+      failed = true;
+      debug("connectors: declaration lookup threw; declaring none (will retry after cooldown)", error51);
     } finally {
+      if (failed) connectorServerFailureAt.set(key, now());
       connectorServerPending.delete(key);
     }
   })();
@@ -44368,7 +44398,7 @@ var ALLOWED_RATE_LIMIT_WARNING_UTILIZATION_THRESHOLD = 80;
 function normalizeRateLimitUtilization(value) {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return void 0;
   if (value === 0) return 0;
-  if (value > 0 && value < 1) return value * 100;
+  if (value > 0 && value <= 1) return value * 100;
   if (value > 1 && value <= 100) return value;
   return void 0;
 }
@@ -45569,7 +45599,7 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
     if (wasAborted()) break;
     activeStreamIdleWatchdogs.get(queryCtx)?.noteChunk();
     if (account) {
-      debug("consumeQuery: managed message", JSON.stringify({
+      debug("consumeQuery: managed message", () => JSON.stringify({
         type: message.type,
         subtype: message.subtype,
         error: message.error,
@@ -46471,11 +46501,7 @@ function streamClaudeAgentSdk(model, context, options) {
     const dropped = [...undelivered !== void 0 ? [undelivered] : [], ...abortCtx.deferredUserMessages];
     abortCtx.deferredUserMessages = [];
     if (dropped.length > 0) {
-      diagDump("deferred_user_messages_dropped", {
-        site,
-        count: dropped.length,
-        previews: dropped.map((message) => (message.text || "[image-only]").slice(0, 60))
-      });
+      diagDump("deferred_user_messages_dropped", summarizeDroppedUserMessages(site, dropped));
     }
     return dropped;
   };

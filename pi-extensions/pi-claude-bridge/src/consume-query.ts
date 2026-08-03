@@ -109,7 +109,10 @@ export async function consumeQuery(
 		if (wasAborted()) break;
 		activeStreamIdleWatchdogs.get(queryCtx)?.noteChunk();
 		if (account) {
-			debug("consumeQuery: managed message", JSON.stringify({
+			// Thunk, not a value: this runs once per SDK message — including one
+			// stream_event per streamed token — and debug() only evaluates function
+			// args after its DEBUG early return (VST-15).
+			debug("consumeQuery: managed message", () => JSON.stringify({
 				type: message.type,
 				subtype: (message as any).subtype,
 				error: (message as any).error,

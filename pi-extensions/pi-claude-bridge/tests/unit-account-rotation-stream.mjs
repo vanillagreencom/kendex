@@ -1,3 +1,7 @@
+// Must load before any bridge module: diag assertions need the debug flag
+// set when src/debug.ts is evaluated (VST-15).
+import "./lib/debug-env.mjs";
+
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -120,8 +124,8 @@ beforeEach(() => {
 	// Legacy (no-router) paths gate on credential presence; an env token is an
 	// existence-only signal that never gets read.
 	process.env.CLAUDE_CODE_OAUTH_TOKEN = "test-token";
-	// Keep unconditional diagnostics out of the real user diag log — and
-	// readable for the tests that assert on them.
+	// Keep diagnostics out of the real user diag log — and readable for the
+	// tests that assert on them (debug-env.mjs enabled the gating flag).
 	diagDir = mkdtempSync(join(tmpdir(), "bridge-diag-"));
 	process.env.CLAUDE_BRIDGE_DIAG_PATH = join(diagDir, "diag.log");
 	resetStack();
@@ -237,7 +241,9 @@ describe("legacy sessions (no account router)", () => {
 		assert.equal(sharedSession?.needsRebuild, true, "record with dropped steers behind its cursor must rebuild");
 		const diag = readDiagLog();
 		assert.match(diag, /deferred_user_messages_dropped/, "the drop must be diagnosed");
-		assert.match(diag, /queued steer/, "the diagnostic previews the dropped steer");
+		// VST-15: the entry records count + text length — never the steer's content.
+		assert.doesNotMatch(diag, /queued steer/, "no user-authored text in the diagnostic");
+		assert.match(diag, /"textLengths":\[12\]/, "the entry records the dropped steer's length");
 	});
 
 	it("surfaces other non-success result subtypes as an explicit error and persists the session", async () => {

@@ -21,6 +21,19 @@ export interface DeferredUserMessage {
 	blocks?: ContentBlockParam[];
 }
 
+/** Diag payload for a deferred-message drop: counts, sites, and lengths only.
+ *  The messages are user-authored prompt text and the diag log sits outside
+ *  any host app's retention boundary, so no content — not even a preview —
+ *  may appear in the entry (VST-15). */
+export function summarizeDroppedUserMessages(site: string, dropped: DeferredUserMessage[]): Record<string, unknown> {
+	return {
+		site,
+		count: dropped.length,
+		textLengths: dropped.map((message) => message.text.length),
+		imageOnlyCount: dropped.filter((message) => !message.text && message.blocks?.length).length,
+	};
+}
+
 export interface PendingToolCall {
 	toolName: string;
 	resolve: (result: McpResult) => void;

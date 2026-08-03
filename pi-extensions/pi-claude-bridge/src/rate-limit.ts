@@ -75,8 +75,12 @@ export function normalizeRateLimitUtilization(value: unknown): number | undefine
 	if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
 	if (value === 0) return 0;
 	// Claude SDK payloads have appeared as both fractions and percentages.
-	// Exact 1 is unit-ambiguous (1% vs 100%), so do not use it for allowed-warning copy.
-	if (value > 0 && value < 1) return value * 100;
+	// Exact 1 is unit-ambiguous (1% vs 100%); read it as the fractional form
+	// (100%) because that is the fail-closed direction — under the fraction
+	// convention 1 is the fully-consumed case the warning exists to surface,
+	// while under the percent convention 1% sits below the threshold anyway,
+	// so nothing is lost by warning (VST-16).
+	if (value > 0 && value <= 1) return value * 100;
 	if (value > 1 && value <= 100) return value;
 	return undefined;
 }

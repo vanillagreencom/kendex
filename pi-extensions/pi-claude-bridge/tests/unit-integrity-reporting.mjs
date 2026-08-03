@@ -1,3 +1,7 @@
+// Must load before any bridge module: diag assertions need the debug flag
+// set when src/debug.ts is evaluated (VST-15).
+import "./lib/debug-env.mjs";
+
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";

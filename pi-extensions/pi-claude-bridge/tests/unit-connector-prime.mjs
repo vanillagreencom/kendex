@@ -2,7 +2,11 @@
 // A transient failure at provider registration used to pin `{}` for the scope,
 // so every later turn stayed undeclared and the disk-cache fallback was
 // unreachable until restart. Failures now leave the key unset and the next
-// prime retries.
+// prime retries — but only after a per-scope cooldown (VST-14): removing the
+// lifetime pin had left NOTHING between "cached forever" and "one new HTTPS
+// request per turn", so a persistently failing account re-primed every turn.
+// The inventory call also now carries an abort deadline, so a hung request
+// cannot hold the pending flag open indefinitely.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,13 +75,71 @@ describe("primeConnectorServers failure caching (C6)", () => {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		assert.equal(readCachedConnectors(configDir), undefined, "a failed prime writes no disk cache");
 
-		// Second prime for the SAME scope: must actually retry (the failure was
-		// not cached) and succeed end to end, including the disk cache write.
+		// Second prime for the SAME scope, past the failure cooldown: must
+		// actually retry (the failure was not cached for the process lifetime)
+		// and succeed end to end, including the disk cache write.
 		globalThis.fetch = okInventoryFetch();
-		primeConnectorServers(configDir);
+		primeConnectorServers(configDir, { now: () => Date.now() + 120_000 });
 		const cached = await waitFor(() => readCachedConnectors(configDir) !== undefined);
 		assert.ok(cached, "the retry primes and persists the inventory");
 		assert.deepEqual(readCachedConnectors(configDir)?.map((entry) => entry.name), ["Gmail"]);
+	});
+
+	it("cools down after a failed inventory instead of re-priming every turn (VST-14)", async () => {
+		writeCredentials(configDir);
+
+		let fetchCalls = 0;
+		globalThis.fetch = async () => {
+			fetchCalls += 1;
+			throw new Error("persistently down");
+		};
+		const t0 = 1_000_000;
+		primeConnectorServers(configDir, { now: () => t0 });
+		await waitFor(() => fetchCalls >= 1);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		// Inside the 60s cooldown window: the per-turn snapshot path calls prime
+		// again, but no new inventory request may go out.
+		primeConnectorServers(configDir, { now: () => t0 + 30_000 });
+		primeConnectorServers(configDir, { now: () => t0 + 59_999 });
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(fetchCalls, 1, "a prime inside the cooldown issues no request");
+
+		// Cooldown elapsed: the retry goes out (and fails again, re-arming it).
+		primeConnectorServers(configDir, { now: () => t0 + 60_000 });
+		await waitFor(() => fetchCalls >= 2);
+		assert.equal(fetchCalls, 2, "a prime after the cooldown retries");
+	});
+
+	it("bounds the inventory request with an abort deadline (VST-14)", async () => {
+		writeCredentials(configDir);
+
+		let sawSignal = false;
+		let abortedAt = 0;
+		let fetchCalls = 0;
+		// A hung request: never settles except through the abort signal.
+		globalThis.fetch = (_url, init) => {
+			fetchCalls += 1;
+			sawSignal = init?.signal instanceof AbortSignal;
+			return new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () => {
+					abortedAt = Date.now();
+					reject(init.signal.reason);
+				});
+			});
+		};
+		const startedAt = Date.now();
+		primeConnectorServers(configDir, { timeoutMs: 50 });
+		assert.ok(await waitFor(() => abortedAt > 0), "the deadline aborts a hung inventory request");
+		assert.ok(sawSignal, "the inventory fetch carries an abort signal");
+		assert.ok(abortedAt - startedAt >= 40, "the abort waits for the deadline");
+
+		// The abort is a failure: the pending flag is released AND the cooldown is
+		// armed, so an immediate re-prime issues no new request.
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		primeConnectorServers(configDir, { timeoutMs: 50 });
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(fetchCalls, 1, "a timed-out prime cools down like any failure");
 	});
 
 	it("retries after a missing-credentials prime once credentials appear", async () => {
