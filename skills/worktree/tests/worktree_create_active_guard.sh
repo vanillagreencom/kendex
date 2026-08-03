@@ -496,9 +496,10 @@ assert_contains "$owned_err" "Active work already exists" "owned-issue refusal s
 assert_contains "$owned_err" "Worktree: $BASE1034_ROOT/trees/issue-base-default" "owned-issue refusal names the issue worktree"
 assert_not_contains "$owned_err" "Worktree: $BASE1034_ROOT/main" "owned-issue refusal never names the main checkout"
 
-# A candidate branch checked out in the main checkout is not worktree
-# ownership; the local-branch signal still refuses, without rendering the
-# main checkout as reusable work or recommending --reuse into it.
+# A candidate branch checked out in the main checkout still blocks the id,
+# but the refusal must say so plainly: never render the main checkout as a
+# reusable worktree, never recommend --reuse into it, and never suggest
+# --recover-local (which would refuse for the same reason).
 MAINCO_ROOT="$TMP_ROOT/main-checkout-branch"
 make_repo "$MAINCO_ROOT"
 export GH_STATE="$MAINCO_ROOT/gh-state"
@@ -509,10 +510,26 @@ mainco_code=$?
 set -e
 mainco_err="$(cat "$MAINCO_ROOT/mainco.err")"
 assert_eq "$mainco_code" "75" "candidate branch checked out in the main checkout exits 75"
-assert_contains "$mainco_err" "existing local branch" "main-checkout candidate refuses via the local-branch signal"
+assert_contains "$mainco_err" "checked out in the main checkout" "main-checkout candidate refusal names the actual situation"
+assert_contains "$mainco_err" "Move that work off the main checkout" "main-checkout candidate refusal gives the actionable remedy"
 assert_not_contains "$mainco_err" "refusing implicit reuse" "main-checkout candidate is never rendered as a reusable worktree"
 assert_not_contains "$mainco_err" "--reuse" "main-checkout candidate never recommends --reuse"
+assert_not_contains "$mainco_err" "--recover-local" "main-checkout candidate never recommends --recover-local"
 export GH_STATE="$BASE1034_ROOT/gh-state"
+
+# A local branch literally named "origin/<default>" is a legal (if
+# pathological) positional branch name, not the remote-qualified --base
+# spelling: it must keep its full ownership checks instead of being filtered
+# out of the candidate list.
+git -C "$BASE1034_ROOT/main" branch "origin/main" main 2>/dev/null
+set +e
+(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-ambig "origin/main" >"$BASE1034_ROOT/ambig.out" 2>"$BASE1034_ROOT/ambig.err")
+ambig_code=$?
+set -e
+assert_eq "$ambig_code" "75" "positional branch literally named origin/<default> exits 75"
+assert_contains "$(cat "$BASE1034_ROOT/ambig.err")" "existing local branch" "literal origin/<default> branch keeps its ownership checks"
+assert_path_absent "$BASE1034_ROOT/trees/issue-ambig" "literal origin/<default> branch creates no worktree"
+git -C "$BASE1034_ROOT/main" branch -D "origin/main" >/dev/null
 
 # (c) Control: a non-default --base whose branch has a live worktree still
 # refuses with the real owning worktree.

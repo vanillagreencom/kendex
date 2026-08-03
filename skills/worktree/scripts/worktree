@@ -1887,12 +1887,15 @@ build_candidate_branches() {
   issue_lower="$(issue_branch_name "$issue")"
   CANDIDATE_BRANCHES=()
   # The default branch always exists and is checked out in the main checkout;
-  # that is expected repository state, never evidence that issue work exists.
-  # A requested branch naming it (either spelling) must not become an
-  # ownership candidate (#1034).
-  case "${requested_branch:-}" in
-    "$DEFAULT_BRANCH" | "origin/$DEFAULT_BRANCH") requested_branch="" ;;
-  esac
+  # that is expected repository state, never evidence that issue work exists,
+  # so a requested branch naming it must not become an ownership candidate
+  # (#1034). Only the unqualified spelling is filtered: requested_branch is a
+  # literal local branch name at every caller, and a local branch actually
+  # named "origin/<default>" must keep its ownership checks. The remote-
+  # qualified --base spelling is normalized separately in the create flow.
+  if [[ "${requested_branch:-}" == "$DEFAULT_BRANCH" ]]; then
+    requested_branch=""
+  fi
   add_candidate_branch "${requested_branch:-$issue_lower}"
   add_candidate_branch "$issue_lower"
   if [[ -n "${BOT_NAME:-}" ]]; then
@@ -1954,12 +1957,19 @@ scan_candidate_ownership() {
   local issue="$1" branch="" existing_wt="" remote_ref="" pr_details="" pr_number=""
   for branch in "${CANDIDATE_BRANCHES[@]}"; do
     existing_wt="$(worktree_for_branch "$branch" 2>/dev/null || true)"
-    # The main checkout is never issue work: a candidate resolving there is
-    # no ownership for the worktree signal (the local-branch signal below
-    # still sees the branch), and --reuse into it must never be recommended
-    # (#1034).
+    # The main checkout is never issue work, so it must never be rendered as
+    # a reusable worktree. It still blocks this id — git cannot check the
+    # branch out a second time — but the remedy is to move that work off the
+    # main checkout, not --reuse and not --recover-local (which would refuse
+    # for the same reason) (#1034).
     if [[ -n "$existing_wt" ]] && same_canonical_dir "$existing_wt" "$PROJECT_ROOT"; then
-      existing_wt=""
+      echo "Active work already exists for '$issue'; refusing to create a duplicate worktree." >&2
+      echo "  Branch: $branch" >&2
+      echo "  Signal: checked out in the main checkout ($PROJECT_ROOT)" >&2
+      echo "No worktree was created and no local branch was rebased or modified." >&2
+      echo "The main checkout is never issue work and the branch cannot be checked out twice." >&2
+      echo "Move that work off the main checkout (or pick another issue id), then retry." >&2
+      return "$ACTIVE_WORK_EXIT"
     fi
     if [[ -n "$existing_wt" ]]; then
       refuse_existing_worktree "$issue" "$existing_wt"
