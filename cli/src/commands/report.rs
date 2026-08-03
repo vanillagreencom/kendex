@@ -51,12 +51,18 @@ pub struct ReportArgs {
     pub dry_run: bool,
 }
 
-/// The vstack surface an issue belongs to. Emitted as an `area:*` GitHub label
-/// on vstack-targeted issues; the GitHub->Linear sync carries it across, where a
+/// The vstack surface an issue belongs to. Emitted as a flat GitHub label on
+/// vstack-targeted issues; the GitHub->Linear sync carries it across, where a
 /// Linear triage rule routes the synced issue into the matching project.
 ///
-/// Project-local issues never get one: the label set is defined on the upstream
-/// repo, and consuming repos have their own taxonomies.
+/// Label names follow the workspace convention: bare subsystem words, no prefix
+/// and no exclusive parent group (only `agent:*` uses that shape). Three are
+/// existing workspace-wide labels reused as-is — `ci-infra`, `docs`, `chore` —
+/// and three are vstack subsystem labels on team VST, the same shape as
+/// memsira's `vault`/`claude-bridge`.
+///
+/// Project-local issues never get one: consuming repos have their own
+/// taxonomies, and `gh` fails outright on a label the target repo lacks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Area {
     Cli,
@@ -68,30 +74,33 @@ enum Area {
 }
 
 impl Area {
-    /// The GitHub/Linear label name. Must match the labels created on
-    /// `vanillagreencom/vstack` and under the `Area` group on Linear team VST.
+    /// The GitHub/Linear label name. Must match a label on
+    /// `vanillagreencom/vstack` AND a Linear label of the same name reachable
+    /// from team VST, or the sync drops it and the triage rule never fires.
     fn label(self) -> &'static str {
         match self {
-            Area::Cli => "area:cli",
-            Area::Skills => "area:skills",
-            Area::Harness => "area:harness",
-            Area::ReviewGate => "area:review-gate",
-            Area::Docs => "area:docs",
-            Area::TechDebt => "area:tech-debt",
+            Area::Cli => "cli",
+            Area::Skills => "skills",
+            Area::Harness => "harness",
+            // Workspace-wide label; its description ("CI, review gates, runners,
+            // and repo tooling") already covers this surface exactly.
+            Area::ReviewGate => "ci-infra",
+            Area::Docs => "docs",
+            Area::TechDebt => "chore",
         }
     }
 
-    /// Parse the `--area` value. Accepts the bare surface name with or without
-    /// the `area:` prefix, so `--area cli` and `--area area:cli` both work.
+    /// Parse the `--area` value. Accepts either the surface name or the label
+    /// it maps to, so `--area review-gate` and `--area ci-infra` both work.
     fn parse(raw: &str) -> Result<Self> {
-        let normalized = raw.trim().trim_start_matches("area:").to_ascii_lowercase();
+        let normalized = raw.trim().to_ascii_lowercase();
         match normalized.as_str() {
             "cli" => Ok(Area::Cli),
             "skills" => Ok(Area::Skills),
             "harness" => Ok(Area::Harness),
-            "review-gate" => Ok(Area::ReviewGate),
+            "review-gate" | "ci-infra" => Ok(Area::ReviewGate),
             "docs" => Ok(Area::Docs),
-            "tech-debt" => Ok(Area::TechDebt),
+            "tech-debt" | "chore" => Ok(Area::TechDebt),
             other => anyhow::bail!(
                 "unknown --area '{other}'; expected one of: \
                  cli, skills, harness, review-gate, docs, tech-debt"
@@ -1297,8 +1306,8 @@ mod tests {
             Area::ReviewGate,
         );
         let label_idx = plan.gh_args.iter().position(|a| a == "--label").unwrap();
-        assert_eq!(plan.gh_args[label_idx + 1], "area:review-gate");
-        assert_eq!(plan.area_label(), Some("area:review-gate"));
+        assert_eq!(plan.gh_args[label_idx + 1], "ci-infra");
+        assert_eq!(plan.area_label(), Some("ci-infra"));
     }
 
     #[test]
@@ -1319,10 +1328,13 @@ mod tests {
     }
 
     #[test]
-    fn area_parse_accepts_bare_and_prefixed_forms() {
+    fn area_parse_accepts_surface_name_or_label_name() {
         assert_eq!(Area::parse("cli").unwrap(), Area::Cli);
-        assert_eq!(Area::parse("area:cli").unwrap(), Area::Cli);
         assert_eq!(Area::parse("  Tech-Debt  ").unwrap(), Area::TechDebt);
+        // The label a surface maps to is accepted as an alias, so callers can
+        // pass either vocabulary.
+        assert_eq!(Area::parse("ci-infra").unwrap(), Area::ReviewGate);
+        assert_eq!(Area::parse("chore").unwrap(), Area::TechDebt);
     }
 
     #[test]
@@ -1330,6 +1342,27 @@ mod tests {
         let err = Area::parse("frontend").unwrap_err().to_string();
         assert!(err.contains("unknown --area 'frontend'"));
         assert!(err.contains("review-gate"));
+    }
+
+    #[test]
+    fn area_labels_follow_the_flat_workspace_convention() {
+        // No `area:` prefix and no exclusive parent group — only `agent:*` uses
+        // that shape. Regressing to a prefixed name would break the triage rules
+        // and diverge from memsira/hyprtrade.
+        for area in [
+            Area::Cli,
+            Area::Skills,
+            Area::Harness,
+            Area::ReviewGate,
+            Area::Docs,
+            Area::TechDebt,
+        ] {
+            assert!(
+                !area.label().contains(':'),
+                "{} must be a flat label",
+                area.label()
+            );
+        }
     }
 
     #[test]
@@ -1378,7 +1411,7 @@ mod tests {
             DEFAULT_UPSTREAM,
             Some(Area::TechDebt),
         );
-        assert_eq!(plan.area_label(), Some("area:tech-debt"));
+        assert_eq!(plan.area_label(), Some("chore"));
     }
 
     #[test]
