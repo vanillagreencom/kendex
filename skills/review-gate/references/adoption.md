@@ -165,6 +165,11 @@ cases from the repo's actual trust values.
 
 - Branch protection / ruleset: require the gate context (the repo's
   `REVIEW_GATE_CONTEXT` value) as a required status check.
+- Verify the status writer of record is trusted-revision-defined: the
+  rerun/sweep workflows must be installed on the default branch (their
+  non-PR triggers and default-branch checkout are the trust property), and
+  adoption sign-off includes confirming the scheduled sweep converges the
+  gate with the PR-side gate job treated as latency optimization only.
 - Keep (or add) the zero-bypass thread-resolution ruleset
   (`required_review_thread_resolution`) — the CI-side thread term is a
   latency optimization, not the enforcement point of record.

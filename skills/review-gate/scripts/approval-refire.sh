@@ -157,7 +157,9 @@ fi
 runs="[]"
 polls=1
 [ "$QUIESCE" = "1" ] && polls=60
-for attempt in $(seq 1 "$polls"); do
+attempt=0
+while [ "$attempt" -lt "$polls" ]; do
+  attempt=$((attempt + 1))
   # Paginated + slurped like every other list read: repeated reopen/ready
   # transitions can push a head past one page of runs.
   raw_runs="$(gh api "repos/$GH_REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" --paginate)" || {

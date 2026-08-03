@@ -158,7 +158,7 @@ reviews="$(jq -s 'add // []' <<<"$raw_reviews")" || {
 # visible when the token authored them) are excluded EVERYWHERE: a draft is
 # not a review event — it must neither clear a standing CR here nor count as
 # evidence below.
-cr="$(jq --arg sha "$HEAD_SHA" '[.[] | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")] | group_by(.user.login) | map(.[-1]) | map(select(.state == "CHANGES_REQUESTED")) | length' <<<"$reviews")" || {
+cr="$(jq --arg sha "$HEAD_SHA" '[.[] | select(.commit_id == $sha and .state != "DISMISSED" and .state != "PENDING")] | group_by(.user.login) | map(sort_by(.submitted_at // "") | .[-1]) | map(select(.state == "CHANGES_REQUESTED")) | length' <<<"$reviews")" || {
   echo "::error::could not evaluate changes-requested reviews for PR #$PR_NUMBER" >&2
   exit 2
 }

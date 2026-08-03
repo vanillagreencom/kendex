@@ -436,6 +436,14 @@ reviews_set "$(review "reviewer" APPROVED "2026-08-02T18:28:47Z")" \
             "$(review "reviewer" CHANGES_REQUESTED "2026-08-02T18:30:00Z")"
 run "APPROVED then later CHANGES_REQUESTED fails closed" changes-requested
 
+# Recency is decided by submitted_at, never by array position: the same
+# cleared objection fed in REVERSED order must still read as cleared.
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="approved"
+reviews_set "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")" \
+            "$(review "reviewer" CHANGES_REQUESTED "2026-08-02T18:00:00Z")"
+run "cleared CR fed in reversed array order stays cleared" approved
+
 # ...and an APPROVED that POST-dates the CR clears it again.
 reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="approved"
