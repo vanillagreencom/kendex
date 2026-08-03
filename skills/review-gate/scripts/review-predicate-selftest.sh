@@ -555,10 +555,12 @@ run "trusted approval + untrusted changes-requested fails closed" changes-reques
 
 # The pass-without-analysis filter, pinned against the live fixture shape: a
 # rate-limited reviewer posted its own check as PASS with "Review rate
-# limited" and zero analysis performed.
+# limited" and zero analysis performed. The fixture carries a trusted app
+# slug: without one, the provenance rejection would reach "awaiting" first
+# and this case would stop exercising the skip-pattern text at all.
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_SKIPS="rate limited"
-printf '{"check_runs":[{"name":"mech-ctx","conclusion":"success","output":{"title":"mech-ctx","summary":"Review rate limited. 0 files reviewed."}}]}\n' \
+printf '{"check_runs":[{"name":"mech-ctx","conclusion":"success","app":{"slug":"trusted-reviewer-app"},"output":{"title":"mech-ctx","summary":"Review rate limited. 0 files reviewed."}}]}\n' \
   >"$fixtures/checkruns.json"
 run "rate-limited 'pass' check-run is NOT evidence (live fixture)" awaiting
 
