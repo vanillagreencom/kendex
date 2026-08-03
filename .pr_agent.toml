@@ -1,0 +1,42 @@
+# Qodo Merge (14-day trial) — secondary reviewer. Keep this file minimal and
+# self-contained: nothing else in the repo references Qodo, and no merge
+# tooling or trusted-evidence config names it, so ending the trial is exactly
+# `git rm .pr_agent.toml`.
+
+[github_app]
+# Auto-review only. /agentic_describe is deliberately absent: CodeRabbit's
+# review comment is the single PR summary; Qodo posts no describe/summary
+# decoration.
+pr_commands = ["/agentic_review"]
+# Re-review pushed commits so follow-up batches get covered, matching
+# CodeRabbit's incremental reviews.
+handle_push_trigger = true
+
+[review_agent]
+issues_user_guidelines = """
+- Tests under skills/, pi-extensions/, and cli/ deliberately use the OS
+  tempdir (mktemp, os.tmpdir, std::env::temp_dir) with cleanup. That is not a
+  violation of the repo's "<worktree>/tmp/" scratch rule, which governs agent
+  working artifacts only.
+- pi-extensions/*/bundle/ files are committed esbuild artifacts of src/:
+  report findings against the corresponding src/ file and never propose
+  editing the bundle — it is rebuilt, not patched.
+- Fail-closed allowlists in hooks/ (e.g. the connectors-mode PreToolUse hook)
+  are the intended security design; do not propose denylists or loosening.
+- Skill scripts and tests must be Bash 3.2-compatible (no mapfile, declare -A,
+  "${var,,}") and new scripts/tests need the executable bit — these are real
+  defects, report them.
+- In cli/ (Rust), writers of vstack.toml / vstack.settings.toml must never
+  reformat content inside TOML string values; report any line-oriented TOML
+  pass that is not string-state-aware.
+"""
+compliance_user_guidelines = """
+- Issue-number citations are banned in instruction-flow skill/agent markdown,
+  but skills/*/schemas/*.md reference docs carry issue provenance by
+  established convention — do not flag citations there.
+- Cross-repo consumer-sync impacts (consumer repos vendor the extensions and
+  skills) are coordination notes, not merge blockers; each extension's
+  CHANGELOG.md is the consumer-facing delta contract.
+- SKILL.md files follow mechanism-over-prose: do not request defensive caveat
+  paragraphs or history notes; request a concrete mechanism or nothing.
+"""

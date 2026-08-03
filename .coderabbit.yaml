@@ -1,0 +1,104 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# Checked-in CodeRabbit config. A committed .coderabbit.yaml SUPERSEDES org and
+# repo UI settings entirely, so this file encodes the full intended state —
+# never treat it as a delta on top of the dashboard.
+#
+# Review-completion evidence surfaces:
+#   - Formal PR review (review_status + request_changes_workflow below): the
+#     surface our merge tooling consumes — skills/github pr-review-status and
+#     pr-merge read login-attributed formal reviews and review threads.
+#   - Commit status named "CodeRabbit" (commit_status below): consumed only
+#     name-agnostically via `gh pr checks` in pr-merge, where a pending review
+#     blocks merge like any other pending context.
+# Manual `@coderabbitai review` may be deferred under rate windows; the merge
+# flow tolerates that latency (pending status just holds the merge gate).
+
+reviews:
+  # Formal-review surfaces pinned on. request_changes_workflow makes CodeRabbit
+  # approve on its own once its change requests are resolved, which is what
+  # converges a changes-requested verdict without human dismissal.
+  review_status: true
+  commit_status: true
+  request_changes_workflow: true
+
+  # One PR summary max across all bots: all duplicative decoration off.
+  high_level_summary: false
+  high_level_summary_in_walkthrough: false
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  auto_apply_labels: false
+  suggested_reviewers: false
+  poem: false
+  in_progress_fortune: false
+
+  auto_review:
+    enabled: true
+    # Review PRs against any base branch: avoids base-branch mis-detection and
+    # covers stacked PRs.
+    base_branches: [".*"]
+    drafts: false
+
+  # Exclude only zero-review-value machine blobs. Bundles and vendored code
+  # stay in review scope.
+  path_filters:
+    - "!**/package-lock.json"
+    - "!cli/Cargo.lock"
+    - "!**/.test-output/**"
+
+  path_instructions:
+    - path: "{skills,pi-extensions,cli}/**/tests/**"
+      instructions: >-
+        Tests deliberately use the OS tempdir (mktemp, os.tmpdir,
+        std::env::temp_dir) with cleanup so fixtures cannot dirty the git
+        tree. The repo's "<worktree>/tmp/" rule governs agent working
+        artifacts, not test-runtime fixtures — do not flag OS-tempdir use in
+        tests as a violation of it.
+    - path: "pi-extensions/*/bundle/**"
+      instructions: >-
+        Files here are committed esbuild artifacts of the extension's src/.
+        Findings in bundle output are legitimate, but frame every finding
+        against the corresponding src/ file and never propose patching the
+        bundle itself — bundles are rebuilt from src/, not edited.
+    - path: "{pi-extensions,skills}/**"
+      instructions: >-
+        Consumer repos vendor these extensions and skills and re-vendor in
+        deliberate batches; each extension's CHANGELOG.md is the
+        consumer-facing delta contract. Treat cross-repo consumer-sync
+        observations as coordination notes, not merge blockers.
+    - path: "skills/**/schemas/**/*.md"
+      instructions: >-
+        Schema and reference docs carry issue-number provenance by established
+        convention. Do not flag issue citations here — the repo ban on
+        issue-number citations applies to instruction-flow skill/agent
+        markdown, not schema/reference docs.
+    - path: "skills/**/SKILL.md"
+      instructions: >-
+        Skills follow mechanism-over-prose. Do not propose adding defensive
+        caveat paragraphs, history, or editorializing to always-loaded
+        SKILL.md content — propose a concrete mechanism (validation, script,
+        schema) or nothing.
+    - path: "hooks/**"
+      instructions: >-
+        Security containment here is deliberately fail-closed allowlisting
+        (e.g. the connectors-mode PreToolUse hook). The allowlist design is
+        intended — do not recommend switching to denylists or loosening the
+        fail-closed posture.
+    - path: "skills/**/{scripts,tests}/**"
+      instructions: >-
+        Shell here must stay Bash 3.2-compatible — flag mapfile, declare -A,
+        "${var,,}" and other Bash 4+ constructs as real defects. New scripts
+        and tests must carry the executable bit (CI lints this); flag files
+        added without it.
+    - path: "cli/**"
+      instructions: >-
+        Rust workspace; repo convention runs cargo test and clippy. Code that
+        writes vstack.toml or vstack.settings.toml must never reformat content
+        inside TOML string values — flag any line-oriented pass over TOML text
+        that is not aware of string state; this has corrupted user config
+        before.
