@@ -270,14 +270,14 @@ cli/scripts/integration-check.sh         # integration check in a throwaway temp
 ## Merge flow (review-gate self-adoption, VST-10)
 
 - This repo runs its own review-gate engine: `review-gate.yml` is the
-  PR-side gate pair (read-only evaluate on the BASE revision + a no-checkout
+  PR-side gate pair (read-only self-evaluating evaluate + a no-checkout
   post job) — both the latency path and the first-success source the
   refire's rerun relies on. `REVIEW_GATE_TRUST_PR_WORKFLOWS = "true"` is the
   engine's DELIBERATE self-evaluating re-affirmation, declared with eyes
   open (see the settings comment): pull_request workflow definitions ride
   the PR head, this is an effectively single-author steward-operated repo,
-  and the bootstrap property is wanted; the base-revision evaluate stays as
-  defense in depth. The default-branch-defined `approval-rerun.yml`
+  and the bootstrap property is wanted — a PR repairing a broken predicate
+  is judged by its own fixed copy and can open its own gate. The default-branch-defined `approval-rerun.yml`
   (event-driven) and `approval-sweep.yml` (scheduled) converge drift and
   remain the writers of record; trust values live in `vstack.settings.toml`.
   `review-gate-queue.yml` posts the context on merge-group shas (queue

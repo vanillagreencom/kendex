@@ -2,11 +2,11 @@
 # gate pair. REVIEW_GATE_TRUST_PR_WORKFLOWS is declared "true" (the engine's
 # deliberate self-evaluating re-affirmation — see vstack.settings.toml for
 # the full trade), because on pull_request events this DEFINITION rides the
-# PR head; the job split below is kept as defense in depth
-# (skills/review-gate/references/adoption.md):
+# PR head; the read-only/write job split below is kept so PR-controlled
+# code never holds a write token (skills/review-gate/references/adoption.md):
 #
-#   evaluate  read-only permissions, checks out the PR's BASE revision and
-#             runs the base-revision predicate against the PR head's live
+#   evaluate  read-only permissions, runs the predicate (self-evaluating
+#             checkout per the declared posture) against the PR head's live
 #             review state — PR-controlled code never runs with a
 #             write-capable token;
 #   post      statuses: write, NO checkout at all, posts the verdict as the
@@ -59,20 +59,23 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       PR_AUTHOR: ${{ github.event.pull_request.user.login }}
     steps:
-      # BASE revision, credentials dropped: the predicate copy that runs here
-      # is not the PR's own (defense in depth; note a predicate-fixing PR is
-      # judged by the base copy, so its own gate opens via the refire after
-      # merge-independent evidence, not via its fixed predicate).
+      # PR MERGE REF, credentials dropped — the self-evaluating checkout the
+      # declared TRUST_PR_WORKFLOWS="true" posture means: a PR repairing a
+      # broken predicate is evaluated by its own fixed copy, so the repair
+      # can open its own gate (the bootstrap property this repo wants). A
+      # base-revision checkout here would only pretend otherwise — on
+      # pull_request events the workflow DEFINITION is PR-controlled anyway;
+      # the read-only permission split and the default-branch sweep (writer
+      # of record) are the real controls.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - name: Run the base-revision predicate against the head's review state
+      - name: Run the predicate against the head's review state
         id: eval
         run: |
           set -u
-          # Resolve the configurable gate context from the base revision's
-          # settings so the post job (no checkout) can carry it.
+          # Resolve the configurable gate context so the post job (no
+          # checkout) can carry it.
           . skills/review-gate/scripts/lib/settings.sh
           ctx="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
           if [ -z "$ctx" ]; then

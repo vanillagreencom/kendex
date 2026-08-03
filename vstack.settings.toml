@@ -56,8 +56,10 @@ WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .
 # DEFINITIONS ride the PR head (so a write-capable PR-side post job is
 # PR-editable regardless of what it checks out), and the bootstrap property
 # (a PR fixing a broken predicate can open its own gate) is wanted here.
-# The evaluate job still runs the BASE-revision predicate as defense in
-# depth. Review-object trust is pinned to the two reviewer bots + the owner
+# The evaluate job is self-evaluating (PR merge ref) per this posture, so
+# a predicate-repair PR can open its own gate; the read-only/write job
+# split and the default-branch sweep (writer of record) are the controls.
+# Review-object trust is pinned to the two reviewer bots + the owner
 # (closes the any-collaborator-COMMENTED gap).
 # Evidence: CodeRabbit (status/check + review objects) and Copilot's
 # clean-analysis check-run (it never APPROVES, so min_state stays "any" —
