@@ -28,9 +28,9 @@ name: Approval CI re-fire
 # trigger workflows": GITHUB_TOKEN-authored events do not create new
 # workflow runs). There is therefore NO self-triggered
 # trailing pass to lean on: every run that executes converges EVERY open PR
-# itself (see the event routing in the job), and the scheduled sweep is the
-# only guaranteed backstop for evictions by runs the job-level trust guards
-# skip. A genuinely-failing build after approval is NOT retried
+# itself (see the event routing in the job); the concurrency group sits at
+# JOB level, so a run the trust guards skip never claims the writer slot in
+# the first place. A genuinely-failing build after approval is NOT retried
 # automatically — the gate status stays success and the red required
 # contexts block on their own; re-run manually to retry.
 
@@ -82,30 +82,30 @@ permissions:
   # checkout of the shared re-fire script
   contents: read
 
-concurrency:
-  # ONE repo-wide group for EVERY gate writer (this workflow AND the sweep):
-  # per-event group keys let two writers evaluate different snapshots of the
-  # same head concurrently and post out of order — an older `approved`
-  # evaluation taking the prior-success fast path could overwrite a newer
-  # failure post. Serializing all writers removes that race.
-  #
-  # GitHub keeps ONE pending run per group and REPLACES it, so an arriving
-  # run EVICTS whatever writer was pending — including another PR's
-  # changes-requested convergence. Replacement is latency, not correctness,
-  # BECAUSE every run that executes converges ALL open PRs (#1039): a
-  # surviving run subsumes the work of every run it displaced, whatever
-  # event shape either had. No shape keeps a single-PR fast path — the
-  # workflow's own token-authored status posts cannot re-trigger it (GitHub
-  # suppresses token-authored events), so a "PR-specific survivor + trailing
-  # healing pass" design cannot exist here. The scheduled sweep remains the
-  # only guaranteed backstop for the one residue: a run whose job-level
-  # trust guard skips it still evicts and converges nothing — bounded at
-  # the sweep's 15-minute cadence.
-  group: review-gate-writer
-  cancel-in-progress: false
 
 jobs:
   rerun:
+    concurrency:
+      # ONE repo-wide group for EVERY gate writer (this workflow AND the sweep):
+      # per-event group keys let two writers evaluate different snapshots of the
+      # same head concurrently and post out of order — an older `approved`
+      # evaluation taking the prior-success fast path could overwrite a newer
+      # failure post. Serializing all writers removes that race.
+      #
+      # GitHub keeps ONE pending run per group and REPLACES it, so an arriving
+      # run EVICTS whatever writer was pending — including another PR's
+      # changes-requested convergence. Replacement is latency, not correctness,
+      # BECAUSE every run that executes converges ALL open PRs (#1039): a
+      # surviving run subsumes the work of every run it displaced, whatever
+      # event shape either had. No shape keeps a single-PR fast path — the
+      # workflow's own token-authored status posts cannot re-trigger it (GitHub
+      # suppresses token-authored events), so a "PR-specific survivor + trailing
+      # healing pass" design cannot exist here. The scheduled sweep remains the
+      # only guaranteed backstop for the one residue: a run whose job-level
+      # trust guard skips it still evicts and converges nothing — bounded at
+      # the sweep's 15-minute cadence.
+      group: review-gate-writer
+      cancel-in-progress: false
     name: Re-fire CI after review
     # check_run events: act only on the trusted reviewer's own check (exact
     # name), and only when it has an associated PR (guarded again in-script).
@@ -126,8 +126,9 @@ jobs:
     # every verdict from scratch, so a loose gate here can never cause a
     # false approval, only work. The check_run/issue_comment guards stay:
     # their event volume (every CI job completion, every human comment)
-    # makes running on all of them unaffordable, and a guard-SKIPPED run's
-    # eviction is the one residue — recovered only by the scheduled sweep.
+    # makes running on all of them unaffordable — and with the group at job
+    # level a guard-skipped run never claims the writer slot, so the skip
+    # costs nothing.
     #
     # Cost bound: an executing pass costs one paginated PR listing plus
     # ~6-8 API reads per open PR (the same bill as one scheduled sweep);
@@ -149,6 +150,11 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
+      # Used ONLY by the bootstrap-window fallback below; the normal path is
+      # all-PRs and ignores these. Empty for non-pull_request_review events.
+      BOOTSTRAP_PR_NUMBER: ${{ github.event.pull_request.number }}
+      BOOTSTRAP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BOOTSTRAP_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
     steps:
       # The evaluate-and-converge logic lives in the shared vendored script
       # (single source of truth with approval-sweep.yml). Checkout is pinned
@@ -188,7 +194,16 @@ jobs:
           # that window; the sweep still converges, and this branch is dead
           # once the script and yaml land together on the default branch.
           if ! grep -q ALL_OPEN_PRS .agents/skills/review-gate/scripts/approval-refire.sh; then
-            echo "::warning::default-branch approval-refire.sh predates all-PRs mode (bootstrap window); skipping — the scheduled sweep covers convergence"
+            # Degrade to the old script's OWN interface instead of a silent
+            # green no-op: PR-shaped events converge their PR exactly as the
+            # pre-change system did; only PR-less shapes have nothing to
+            # offer an old script and skip with a loud warning.
+            if [ -n "${BOOTSTRAP_PR_NUMBER:-}" ]; then
+              echo "::warning::default-branch approval-refire.sh predates all-PRs mode (bootstrap window); converging PR #$BOOTSTRAP_PR_NUMBER single-PR"
+              export PR_NUMBER="$BOOTSTRAP_PR_NUMBER" HEAD_SHA="$BOOTSTRAP_HEAD_SHA" PR_AUTHOR="$BOOTSTRAP_PR_AUTHOR"
+              exec .agents/skills/review-gate/scripts/approval-refire.sh
+            fi
+            echo "::warning::default-branch approval-refire.sh predates all-PRs mode (bootstrap window) and this event carries no PR; skipping — the scheduled sweep covers convergence"
             exit 0
           fi
           export ALL_OPEN_PRS=1

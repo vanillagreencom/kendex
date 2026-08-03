@@ -67,18 +67,34 @@ check_rerun() {
   local file="$1" label="$2"
   assert_grep "$file" 'group: review-gate-writer' "w1[$label]: shared writer group"
   assert_grep "$file" 'cancel-in-progress: false' "w1[$label]: replace, never cancel the executing writer"
+  assert_job_level_group "$file" "$label"
   assert_not_grep "$file" "github.event_name != 'status'" "w2[$label]: no job-level status filter (a skipped run still evicts)"
   assert_grep "$file" 'export ALL_OPEN_PRS=1' "w3[$label]: every executing run converges all open PRs"
-  assert_not_grep "$file" 'export PR_NUMBER' "w3[$label]: no single-PR fast path (token-authored posts cannot re-trigger healing)"
+  assert_not_grep "$file" 'GITHUB_EVENT_NAME' "w3[$label]: no event-shape routing — every executing run takes the all-PRs path (the bootstrap fallback is the only PR-scoped branch)"
   assert_not_grep "$file" 'trailing all-PRs pass' "w3[$label]: no comment may claim a self-triggered trailing pass"
   assert_grep "$file" 'suppresses' "w3[$label]: comments state the token-authored suppression rule"
   assert_grep "$file" 'status: {}' "w5[$label]: status trigger declared (legacy-status evidence re-fire)"
+}
+
+# The writer group must be claimed at JOB level: job concurrency is claimed
+# only after the job-level `if:` evaluates, so a trust-guard-skipped run
+# never evicts a pending writer. A top-level group would re-open that hole.
+assert_job_level_group() {
+  local file="$1" label="$2"
+  if awk '/^jobs:/{exit 1} /^concurrency:/{found=1} END{exit !found}' "$file"; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  w1[%s]: concurrency group must sit at JOB level, not workflow level\n' "$label"
+  else
+    PASS=$((PASS + 1))
+    printf '  ok    w1[%s]: concurrency group sits at job level\n' "$label"
+  fi
 }
 
 check_sweep() {
   local file="$1" label="$2"
   assert_grep "$file" 'group: review-gate-writer' "w1[$label]: shared writer group"
   assert_grep "$file" 'cancel-in-progress: false' "w1[$label]: replace, never cancel"
+  assert_job_level_group "$file" "$label"
   assert_grep "$file" 'ALL_OPEN_PRS=1' "w7[$label]: sweep delegates to the script's all-PRs mode"
   assert_not_grep "$file" 'pulls?state=open' "w7[$label]: no duplicated enumeration in workflow YAML"
 }
