@@ -44,9 +44,19 @@ exactly, so a vstack-specific `review-gate` label would have been a pointless tw
 A routing label is a **routing signal, not a classification**. Pair it with the type
 labels (`bug`, `feature`, `refactor`, `test`, `security`) as usual.
 
-Because `chore` and `docs` are also ordinary type labels, **rule order matters**: put the
-three team subsystem rules first so a `cli` + `chore` issue lands in CLI & Distribution
-rather than Tech Debt & Bugs. Triage rules run top to bottom.
+Because `chore` and `docs` are also ordinary type labels, an issue routinely matches two
+rules, so **rule order matters**. Linear runs triage rules top-down *cumulatively* — it
+does not stop at the first match, and a later rule overwrites an earlier one on the same
+property. So the **last** matching rule wins the project, and the rules must be ordered
+generic first, specific last:
+
+```
+chore → docs → ci-infra → harness → skills → cli
+```
+
+A `cli` + `chore` issue then hits the chore rule (Tech Debt & Bugs) and is overwritten by
+the cli rule, landing in CLI & Distribution. Reversing this order silently drains every
+labelled issue into Tech Debt or Docs.
 
 ## How the label gets applied
 
@@ -72,8 +82,8 @@ Triage:
 2. Create the Linear label — workspace-scoped if it would apply to any project, team VST
    otherwise — or confirm an existing workspace label already covers it.
 3. Create the matching GitHub label on `vanillagreencom/vstack`, same name.
-4. Add the Linear triage rule mapping label → project, positioned correctly relative to
-   the existing rules.
+4. Add the Linear triage rule mapping label → project, positioned by specificity — a
+   subsystem rule goes below the generic type-label rules so it wins the overwrite.
 
 Then extend `Area` in `cli/src/commands/report.rs` (variant, `label()`, `parse()`, and the
 `derive()` arm) so `vstack report` can emit it, and update this table.
