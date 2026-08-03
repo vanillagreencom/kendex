@@ -87,9 +87,9 @@ assert_job_level_group() {
   if grep -q '^concurrency:' "$file"; then
     FAIL=$((FAIL + 1))
     printf '  FAIL  w1[%s]: workflow-level concurrency block present (must sit at JOB level)\n' "$label"
-  elif ! grep -qE '^[[:space:]]+concurrency:' "$file"; then
+  elif ! awk '/^[[:space:]]+concurrency:/{c=NR} /group: review-gate-writer/{if (c && NR-c<=20) found=1} END{exit !found}' "$file"; then
     FAIL=$((FAIL + 1))
-    printf '  FAIL  w1[%s]: no job-level concurrency block found\n' "$label"
+    printf '  FAIL  w1[%s]: the review-gate-writer group is not under a job-level concurrency block\n' "$label"
   else
     PASS=$((PASS + 1))
     printf '  ok    w1[%s]: concurrency group sits at job level\n' "$label"
