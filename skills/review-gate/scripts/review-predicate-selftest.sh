@@ -48,6 +48,7 @@ ACTIVE_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 1
 ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 1
 ACTIVE_TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 1
 ACTIVE_MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 1
+ACTIVE_GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -144,6 +145,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_OUTAGE_CONTEXT="$CFG_OUTAGE" \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
     REVIEW_GATE_REVIEW_OBJECT_MIN_STATE="$CFG_MIN_STATE" \
+    REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$AUTHOR" \
     "$predicate" 2>/dev/null)"
   rc=$?
@@ -175,6 +177,7 @@ reset() {
   CFG_OUTAGE="$ACTIVE_OUTAGE"
   CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
   CFG_MIN_STATE="$ACTIVE_MIN_STATE"
+  CFG_GATE_CONTEXT="$ACTIVE_GATE_CONTEXT"
 }
 
 # A review login that the ACTIVE config accepts as review-object evidence.
@@ -526,6 +529,16 @@ run "unknown min_state is a config error" "" 2
 reset
 CFG_REVIEWERS="just-a-login-no-pattern"
 run "comment reviewer entry without a pattern is a config error" "" 2
+
+# The gate's own context must never be an evidence source: a posted gate
+# success counting as review evidence would keep the gate green forever.
+reset
+CFG_CONTEXTS="Devin Review;Gate X"; CFG_GATE_CONTEXT="Gate X"
+run "gate context listed as a trusted status context is a config error" "" 2
+
+reset
+CFG_OUTAGE="Gate X"; CFG_GATE_CONTEXT="Gate X"
+run "gate context equal to the outage context is a config error" "" 2
 
 # ================================================================ configured ===
 # The same discipline against THIS repo's resolved trust settings.

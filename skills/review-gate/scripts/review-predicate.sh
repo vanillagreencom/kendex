@@ -97,6 +97,29 @@ case "$MIN_STATE" in
     ;;
 esac
 
+# The gate's own posted status must never be review evidence: with
+# REVIEW_GATE_CONTEXT listed as a trusted status context (or naming the
+# outage attestation), a previously posted gate success would satisfy the
+# predicate by itself — once green, the gate could never close again even
+# after the real review evidence is withdrawn. Fail configuration instead.
+GATE_CONTEXT_SELF="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 2
+if [ -n "$GATE_CONTEXT_SELF" ]; then
+  if [ "$OUTAGE_CONTEXT" = "$GATE_CONTEXT_SELF" ]; then
+    echo "::error::review-predicate: REVIEW_GATE_OUTAGE_CONTEXT equals REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot attest a reviewer outage to itself" >&2
+    exit 2
+  fi
+  while IFS= read -r ctx; do
+    ctx="$(printf '%s' "$ctx" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [ -z "$ctx" ] && continue
+    if [ "$ctx" = "$GATE_CONTEXT_SELF" ]; then
+      echo "::error::review-predicate: REVIEW_GATE_TRUSTED_STATUS_CONTEXTS includes REVIEW_GATE_CONTEXT ('$GATE_CONTEXT_SELF') — the gate's own status cannot be its own review evidence" >&2
+      exit 2
+    fi
+  done <<EOF_GATE_CTX
+$(printf '%s' "$TRUSTED_CONTEXTS" | tr ';' '\n')
+EOF_GATE_CTX
+fi
+
 for required in GH_REPO PR_NUMBER HEAD_SHA; do
   if [ -z "$(eval "echo \${$required:-}")" ]; then
     echo "::error::review-predicate: $required is required" >&2
