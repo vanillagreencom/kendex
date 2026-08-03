@@ -26,7 +26,7 @@ import assert from "node:assert/strict";
 
 // In-process modules must load with DEBUG off regardless of the runner's env.
 delete process.env.CLAUDE_BRIDGE_DEBUG;
-const { DEBUG, debug } = await import("../src/debug.ts");
+const { DEBUG } = await import("../src/debug.ts");
 const { summarizeDroppedUserMessages } = await import("../src/query-state.ts");
 const { consumeQuery } = await import("../src/consume-query.ts");
 

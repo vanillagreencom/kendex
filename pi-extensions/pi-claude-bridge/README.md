@@ -224,7 +224,7 @@ If Claude Code accepts a turn but produces no visible output, the bridge returns
 
 Set `CLAUDE_BRIDGE_DEBUG=1` to write bridge logs to `<agent dir>/claude-bridge.log` and per-query Claude Code CLI logs under `<agent dir>/cc-cli-logs/`, where `<agent dir>` is `PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`. Override the exact files with `CLAUDE_BRIDGE_DEBUG_PATH` / `CLAUDE_BRIDGE_DIAG_PATH`.
 
-Tool-result integrity problems are surfaced even when debug logging is off. Pi shows an error notification, writes a diagnostic file to `<agent dir>/claude-bridge-diag.log`, and appends a `claude-bridge-integrity` custom entry to the pi session transcript (compact metadata only — never tool output), so lost or mismatched tool output stays analyzable from the session file alone.
+Tool-result integrity problems always surface as a Pi error notification plus a `claude-bridge-integrity` custom entry in the pi session transcript (compact metadata only — never tool output), so lost or mismatched tool output stays analyzable from the session file alone. The on-disk diagnostic file (`<agent dir>/claude-bridge-diag.log`) is written only with `CLAUDE_BRIDGE_DEBUG=1` — like every other bridge disk log, it is opt-in (3.1.4).
 
 Startup failures include the resolved Claude executable and working directory, which makes missing binaries and wrong launch directories easier to fix.
 

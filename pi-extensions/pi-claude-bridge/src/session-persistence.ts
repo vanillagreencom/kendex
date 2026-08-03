@@ -252,8 +252,9 @@ export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknow
 			debug(`persistSharedSession: saved ${data.sessionId.slice(0, 8)}, cursor=${data.cursor}`);
 		} catch (error) {
 			// A failed persist means the next startup restores a stale (or no)
-			// bridge marker and silently rebuilds — worth an unconditional diagnostic,
-			// not just a debug line nobody has enabled.
+			// bridge marker and silently rebuilds — worth a diagnostic entry.
+			// Like all diagDump output this lands only under CLAUDE_BRIDGE_DEBUG=1
+			// (VST-15); the failure itself stays non-fatal either way.
 			diagDump("persist_shared_session_failed", {
 				sessionId: snapshot.sessionId.slice(0, 8),
 				cursor: snapshot.cursor,
