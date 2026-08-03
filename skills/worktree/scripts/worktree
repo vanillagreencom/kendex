@@ -1058,7 +1058,11 @@ install_worktree_autorepair_hooks() {
 # (untracked OR ignored — a worktree-local cache is ignored data) is not.
 worktree_path_untracked_disk_files() {
   local wt="$1" path="$2" disk="" tracked=""
-  disk="$( (cd "$wt" 2>/dev/null && find "$path" \( -type f -o -type l \) 2>/dev/null) | LC_ALL=C sort)"
+  # ./ prefix: a configured path may begin with '-' (normalization does not
+  # forbid it), which bare find would parse as an expression — the discarded
+  # error would then read as "no files" and let the repair clobber real data.
+  # The prefix is stripped again so the names compare against git ls-files.
+  disk="$( (cd "$wt" 2>/dev/null && find "./$path" \( -type f -o -type l \) 2>/dev/null) | sed 's|^\./||' | LC_ALL=C sort)"
   [[ -n "$disk" ]] || return 0
   tracked="$(git -C "$wt" ls-files -- "$path" "$path/" 2>/dev/null | LC_ALL=C sort)"
   LC_ALL=C comm -23 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked") | grep -v '^$' || true

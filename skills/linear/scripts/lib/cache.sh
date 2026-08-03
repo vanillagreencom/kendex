@@ -80,8 +80,22 @@ cache_worktree_clobber_refusal() {
         echo "  A git operation re-materialized the symlink. Syncing here would re-pull the full"
         echo "  Linear history into this worktree instead of the shared cache, silently burning"
         echo "  the shared API budget. Repair the link from the main checkout, then re-run sync:"
-        echo "    cd '$CACHE_WORKTREE_MAIN_ROOT' && .agents/skills/worktree/scripts/worktree fix-links '$CACHE_PROJECT_ROOT'"
+        echo "    cd '$CACHE_WORKTREE_MAIN_ROOT' && $(cache_worktree_repair_script) fix-links '$CACHE_PROJECT_ROOT'"
     } >&2
+}
+
+# The worktree script lives at .agents/skills/... in a consumer install and
+# at skills/... in the source repo — point the repair guidance at whichever
+# exists so it can be pasted as-is (consumer spelling when neither resolves).
+cache_worktree_repair_script() {
+    local rel=""
+    for rel in ".agents/skills/worktree/scripts/worktree" "skills/worktree/scripts/worktree"; do
+        if [[ -x "$CACHE_WORKTREE_MAIN_ROOT/$rel" ]]; then
+            printf '%s\n' "$rel"
+            return 0
+        fi
+    done
+    printf '%s\n' ".agents/skills/worktree/scripts/worktree"
 }
 
 # =============================================================================

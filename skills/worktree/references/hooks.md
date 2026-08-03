@@ -13,7 +13,7 @@ Installation-time wiring so app-created worktrees get the same env/config provis
 
 ## Git-hook auto-repair (`repair-links`)
 
-A rebase, merge, or branch checkout can re-materialize a `WORKTREE_SYMLINKS` entry as a real directory holding only the tracked files beneath it (vstack#1032 — the incident wrote a fresh multi-MB Linear cache into a worktree-local `.cache`). The clobber happens at git-operation time, mid-session, from any harness or a plain human shell, so the interception point is git itself.
+A rebase, merge, or branch checkout can re-materialize a `WORKTREE_SYMLINKS` entry as a real directory holding only the tracked files beneath it (the incident shape: a fresh multi-MB Linear cache written into a worktree-local `.cache`). The clobber happens at git-operation time, mid-session, from any harness or a plain human shell, so the interception point is git itself.
 
 `create` and `fix-links` install shared `post-checkout`, `post-merge`, and `post-rewrite` hooks into the **main checkout's** hooks directory — worktrees resolve hooks there (`git rev-parse --git-path hooks`), so one installation covers every worktree and every harness. Mechanics:
 

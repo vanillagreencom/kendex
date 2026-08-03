@@ -25,6 +25,12 @@ WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$SKILL_DIR/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# Isolate fixtures from system AND developer git configuration: hook
+# installation is the behavior under test, and an ambient core.hooksPath
+# would legitimately skip it (by design) and fail the suite.
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL=/dev/null
+
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
@@ -182,6 +188,38 @@ echo "=== manual fix-links remains the way out of the blocked state ==="
 rm -rf "$WT/harness"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
 if [[ -L "$WT/harness" ]]; then ok "fix-links restores the link after the data is dealt with"; else bad "fix-links restores the link after the data is dealt with"; fi
+
+echo "=== a '-'-leading configured path cannot bypass the untracked-data guard ==="
+# Config normalization permits an entry beginning with '-'; a bare find would
+# parse it as an expression, discard the error, and report "no untracked
+# files" — letting the repair clobber real data. The ./ prefix pins this.
+DASH_MAIN="$TMP_ROOT/dash-main"
+mkdir -p "$DASH_MAIN/-dash"
+git -C "$DASH_MAIN" init -q -b main
+git -C "$DASH_MAIN" config user.email test@example.com
+git -C "$DASH_MAIN" config user.name Test
+git -C "$DASH_MAIN" config commit.gpgsign false
+printf -- '-dash/**\n!-dash/tracked.md\n' >"$DASH_MAIN/.gitignore"
+printf 'tracked\n' >"$DASH_MAIN/-dash/tracked.md"
+printf 'WORKTREE_SYMLINKS="-dash"\n' >"$DASH_MAIN/.env"
+git -C "$DASH_MAIN" add .gitignore -- ./-dash/tracked.md
+git -C "$DASH_MAIN" commit -q -m base
+git -C "$DASH_MAIN" worktree add -q "$TMP_ROOT/dash-wt" -b dash-probe
+printf 'precious\n' >"$TMP_ROOT/dash-wt/-dash/user-data.txt"
+set +e
+dash_out="$(cd "$DASH_MAIN" && "$WORKTREE_SCRIPT" repair-links "$TMP_ROOT/dash-wt" 2>&1)"
+set -e
+if [[ -d "$TMP_ROOT/dash-wt/-dash" && ! -L "$TMP_ROOT/dash-wt/-dash" ]]; then
+  ok "dash-path dir with untracked data left in place"
+else
+  bad "dash-path dir with untracked data left in place" "$dash_out"
+fi
+if [[ "$(cat "$TMP_ROOT/dash-wt/-dash/user-data.txt" 2>/dev/null)" == "precious" ]]; then
+  ok "dash-path untracked data intact"
+else
+  bad "dash-path untracked data intact"
+fi
+assert_contains "$dash_out" "user-data.txt" "dash-path warning names the untracked file"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
