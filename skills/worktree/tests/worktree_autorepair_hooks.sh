@@ -127,6 +127,32 @@ echo "=== repeated install is idempotent ==="
 marker_count="$(grep -cF "$MARKER" "$HOOKS_DIR/post-merge" || true)"
 if [[ "$marker_count" -eq 1 ]]; then ok "fix-links does not duplicate the marker line"; else bad "fix-links does not duplicate the marker line" "count=$marker_count"; fi
 
+echo "=== a symlinked hook is never written through ==="
+# Live or dangling, a symlink points at content the install does not own —
+# a dangling one even passes `! -e` and would otherwise materialize its
+# target via the fresh-write branch.
+printf '#!/bin/sh\nexternal-managed\n' >"$TMP_ROOT/external-hook"
+external_before="$(cat "$TMP_ROOT/external-hook")"
+mv "$HOOKS_DIR/post-checkout" "$TMP_ROOT/post-checkout.real"
+ln -s "$TMP_ROOT/external-hook" "$HOOKS_DIR/post-checkout"
+sym_out="$( (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT") 2>&1 || true)"
+if [[ "$(cat "$TMP_ROOT/external-hook")" == "$external_before" ]]; then
+  ok "live symlink target untouched"
+else
+  bad "live symlink target untouched" "$(cat "$TMP_ROOT/external-hook")"
+fi
+assert_contains "$sym_out" "is a symlink; not modifying its target" "warning names the symlinked hook"
+rm -f "$HOOKS_DIR/post-checkout"
+ln -s "$TMP_ROOT/does-not-exist" "$HOOKS_DIR/post-checkout"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1 || true)
+if [[ ! -e "$TMP_ROOT/does-not-exist" ]]; then
+  ok "dangling symlink target not materialized"
+else
+  bad "dangling symlink target not materialized"
+fi
+rm -f "$HOOKS_DIR/post-checkout"
+mv "$TMP_ROOT/post-checkout.real" "$HOOKS_DIR/post-checkout"
+
 echo "=== composed line is exit-status transparent ==="
 # post-checkout's exit status becomes git's exit status, so the appended line
 # must re-assert the consumer hook's own final status — nonzero stays nonzero,

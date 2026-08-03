@@ -1035,6 +1035,14 @@ install_worktree_autorepair_hooks() {
 
   for hook in $WORKTREE_AUTOREPAIR_HOOKS; do
     hook_path="$hooks_dir/$hook"
+    # A symlinked hook points at a shared or externally managed target —
+    # writing through it (live) or materializing its target (dangling, which
+    # passes `! -e`) would modify content this install does not own.
+    if [[ -L "$hook_path" ]]; then
+      echo "Warning: $hook_path is a symlink; not modifying its target." >&2
+      echo "  Have it run: $0 repair-links" >&2
+      continue
+    fi
     if [[ ! -e "$hook_path" ]]; then
       printf '#!/bin/sh\n%s\n' "$call_line" >"$hook_path" 2>/dev/null || {
         echo "Warning: could not write $hook_path; auto-repair will not run on $hook." >&2
