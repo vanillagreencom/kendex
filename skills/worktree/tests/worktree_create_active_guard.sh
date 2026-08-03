@@ -43,6 +43,17 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if ! grep -qF -- "$needle" <<<"$haystack"; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        unwanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
+  fi
+}
+
 assert_path_exists() {
   local path="$1" name="$2"
   if [[ -e "$path" ]]; then
@@ -438,6 +449,91 @@ create_branch_out=$(cd "$CREATE_HELP_ROOT/main" && "$WORKTREE_SCRIPT" create iss
 assert_eq "$create_branch_out" "$CREATE_HELP_ROOT/trees/issue-legit" "create <id> <branch> returns the worktree path"
 assert_path_exists "$CREATE_HELP_ROOT/trees/issue-legit/.git" "create <id> <branch> registers the worktree"
 assert_eq "$(git -C "$CREATE_HELP_ROOT/trees/issue-legit" branch --show-current)" "custom-branch-name" "create <id> <branch> uses the positional branch name"
+
+echo "=== worktree create --base <default-branch> (#1034) ==="
+
+# The default branch is expected repository state, never issue-ownership
+# evidence: it is always checked out in the main checkout, so treating it as
+# an owned worktree refused every `create <id> --base <default>` and
+# recommended --reuse INTO the main checkout.
+BASE1034_ROOT="$TMP_ROOT/base-1034"
+make_repo "$BASE1034_ROOT"
+export GH_STATE="$BASE1034_ROOT/gh-state"
+
+# (a) The exact regression: --base <default> with no prior work must succeed
+# and check out a fresh issue branch based on the default branch.
+base_default_out="$(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-base-default --base main 2>"$BASE1034_ROOT/base-default.err")"
+assert_eq "$base_default_out" "$BASE1034_ROOT/trees/issue-base-default" "--base <default> with no prior work returns the new worktree path"
+assert_path_exists "$BASE1034_ROOT/trees/issue-base-default/.git" "--base <default> registers a real worktree"
+assert_eq "$(git -C "$BASE1034_ROOT/trees/issue-base-default" branch --show-current)" "issue-base-default" "--base <default> checks out a new issue branch, not the default branch"
+assert_eq "$(git -C "$BASE1034_ROOT/trees/issue-base-default" rev-parse HEAD)" "$(git -C "$BASE1034_ROOT/main" rev-parse origin/main)" "--base <default> bases the new branch on origin/<default>"
+assert_eq "$(git -C "$BASE1034_ROOT/main" branch --show-current)" "main" "--base <default> leaves the main checkout untouched"
+
+# The remote-qualified spelling of the default branch behaves the same.
+base_origin_out="$(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-base-origin --base origin/main 2>"$BASE1034_ROOT/base-origin.err")"
+assert_eq "$base_origin_out" "$BASE1034_ROOT/trees/issue-base-origin" "--base origin/<default> also succeeds"
+assert_eq "$(git -C "$BASE1034_ROOT/trees/issue-base-origin" branch --show-current)" "issue-base-origin" "--base origin/<default> checks out a new issue branch"
+
+# A positional work-branch name equal to the default branch can never be
+# created; it must fail loudly, not die inside the suppressed worktree add.
+set +e
+(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-posmain main >"$BASE1034_ROOT/posmain.out" 2>"$BASE1034_ROOT/posmain.err")
+posmain_code=$?
+set -e
+assert_eq "$posmain_code" "1" "positional default-branch work branch exits 1"
+assert_contains "$(cat "$BASE1034_ROOT/posmain.err")" "is the default branch" "positional default-branch guard explains the refusal"
+assert_path_absent "$BASE1034_ROOT/trees/issue-posmain" "positional default-branch guard creates no worktree"
+
+# (b) A genuinely-owned issue still refuses under --base <default>, and the
+# refusal names the issue worktree — never the main checkout.
+set +e
+(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-base-default --base main >"$BASE1034_ROOT/owned.out" 2>"$BASE1034_ROOT/owned.err")
+owned_code=$?
+set -e
+owned_err="$(cat "$BASE1034_ROOT/owned.err")"
+assert_eq "$owned_code" "75" "--base <default> for an owned issue still exits 75"
+assert_contains "$owned_err" "Active work already exists" "owned-issue refusal still fires"
+assert_contains "$owned_err" "Worktree: $BASE1034_ROOT/trees/issue-base-default" "owned-issue refusal names the issue worktree"
+assert_not_contains "$owned_err" "Worktree: $BASE1034_ROOT/main" "owned-issue refusal never names the main checkout"
+
+# A candidate branch checked out in the main checkout is not worktree
+# ownership; the local-branch signal still refuses, without rendering the
+# main checkout as reusable work or recommending --reuse into it.
+MAINCO_ROOT="$TMP_ROOT/main-checkout-branch"
+make_repo "$MAINCO_ROOT"
+export GH_STATE="$MAINCO_ROOT/gh-state"
+git -C "$MAINCO_ROOT/main" checkout -q -b issue-mainco
+set +e
+(cd "$MAINCO_ROOT/main" && "$WORKTREE_SCRIPT" create issue-mainco >"$MAINCO_ROOT/mainco.out" 2>"$MAINCO_ROOT/mainco.err")
+mainco_code=$?
+set -e
+mainco_err="$(cat "$MAINCO_ROOT/mainco.err")"
+assert_eq "$mainco_code" "75" "candidate branch checked out in the main checkout exits 75"
+assert_contains "$mainco_err" "existing local branch" "main-checkout candidate refuses via the local-branch signal"
+assert_not_contains "$mainco_err" "refusing implicit reuse" "main-checkout candidate is never rendered as a reusable worktree"
+assert_not_contains "$mainco_err" "--reuse" "main-checkout candidate never recommends --reuse"
+export GH_STATE="$BASE1034_ROOT/gh-state"
+
+# (c) Control: a non-default --base whose branch has a live worktree still
+# refuses with the real owning worktree.
+git -C "$BASE1034_ROOT/trees/issue-base-default" push -q -u origin issue-base-default
+set +e
+(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-inspect --base issue-base-default >"$BASE1034_ROOT/inspect.out" 2>"$BASE1034_ROOT/inspect.err")
+inspect_code=$?
+set -e
+inspect_err="$(cat "$BASE1034_ROOT/inspect.err")"
+assert_eq "$inspect_code" "75" "non-default --base with a live worktree still exits 75"
+assert_contains "$inspect_err" "Worktree: $BASE1034_ROOT/trees/issue-base-default" "non-default --base refusal names the owning worktree"
+assert_path_absent "$BASE1034_ROOT/trees/issue-inspect" "non-default --base refusal creates no duplicate checkout"
+
+# Control: non-default --base inspection of an unclaimed remote branch keeps
+# its checkout-the-branch semantics.
+git -C "$BASE1034_ROOT/main" branch feature-inspect main
+git -C "$BASE1034_ROOT/main" push -q origin feature-inspect
+git -C "$BASE1034_ROOT/main" branch -D feature-inspect >/dev/null
+inspect2_out="$(cd "$BASE1034_ROOT/main" && "$WORKTREE_SCRIPT" create issue-inspect2 --base feature-inspect 2>"$BASE1034_ROOT/inspect2.err")"
+assert_eq "$inspect2_out" "$BASE1034_ROOT/trees/issue-inspect2" "non-default --base still creates the inspection worktree"
+assert_eq "$(git -C "$BASE1034_ROOT/trees/issue-inspect2" branch --show-current)" "feature-inspect" "non-default --base still checks out the named branch"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

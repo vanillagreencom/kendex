@@ -2,7 +2,9 @@
 # Portable git worktree manager
 # Usage: worktree create|restack|list|remove|cleanup|path|exists|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID] [options]
 #   create options:
-#     --base BRANCH   Checkout an existing remote branch into the worktree
+#     --base BRANCH   Checkout an existing remote branch into the worktree;
+#                     the default branch instead starts a new issue branch
+#                     from it (it can never be checked out twice)
 #     --from REF      Create a new branch starting from REF (branch, tag, or commit)
 #     --pr NUMBER     Look up the branch from a PR number (implies --base)
 #     --reuse         Explicitly reuse and update an existing issue worktree
@@ -1884,6 +1886,13 @@ build_candidate_branches() {
   local issue="$1" requested_branch="$2" issue_lower=""
   issue_lower="$(issue_branch_name "$issue")"
   CANDIDATE_BRANCHES=()
+  # The default branch always exists and is checked out in the main checkout;
+  # that is expected repository state, never evidence that issue work exists.
+  # A requested branch naming it (either spelling) must not become an
+  # ownership candidate (#1034).
+  case "${requested_branch:-}" in
+    "$DEFAULT_BRANCH" | "origin/$DEFAULT_BRANCH") requested_branch="" ;;
+  esac
   add_candidate_branch "${requested_branch:-$issue_lower}"
   add_candidate_branch "$issue_lower"
   if [[ -n "${BOT_NAME:-}" ]]; then
@@ -1945,6 +1954,13 @@ scan_candidate_ownership() {
   local issue="$1" branch="" existing_wt="" remote_ref="" pr_details="" pr_number=""
   for branch in "${CANDIDATE_BRANCHES[@]}"; do
     existing_wt="$(worktree_for_branch "$branch" 2>/dev/null || true)"
+    # The main checkout is never issue work: a candidate resolving there is
+    # no ownership for the worktree signal (the local-branch signal below
+    # still sees the branch), and --reuse into it must never be recommended
+    # (#1034).
+    if [[ -n "$existing_wt" ]] && same_canonical_dir "$existing_wt" "$PROJECT_ROOT"; then
+      existing_wt=""
+    fi
     if [[ -n "$existing_wt" ]]; then
       refuse_existing_worktree "$issue" "$existing_wt"
       return "$ACTIVE_WORK_EXIT"
@@ -2345,6 +2361,17 @@ refuse_existing_worktree() {
   local branch="" dirty="clean" upstream="" counts="" behind="0" ahead="0"
   local lock_reason="" pr_details="" pr_number="" pr_url="" pr_lookup_failed=false
 
+  # Defence in depth: callers must treat the main checkout as no ownership
+  # before reaching this renderer ("The main checkout is never a fallback
+  # target"). Never present it as reusable issue work or advertise --reuse
+  # into it (#1034).
+  if same_canonical_dir "$wt" "$PROJECT_ROOT"; then
+    echo "Error: An ownership scan for '$issue' resolved the main checkout ($PROJECT_ROOT)." >&2
+    echo "The main checkout is never issue work; refusing without a reuse remedy." >&2
+    echo "No worktree was created and nothing was modified." >&2
+    return "$ACTIVE_WORK_EXIT"
+  fi
+
   branch="$(git -C "$wt" branch --show-current 2>/dev/null || true)"
   if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null || true)" ]]; then
     dirty="dirty"
@@ -2580,7 +2607,8 @@ case "${1:-}" in
       echo "explicit branch-name positional."
       echo ""
       echo "Options:"
-      echo "  --base BRANCH   Checkout an existing remote branch into the worktree"
+      echo "  --base BRANCH   Checkout an existing remote branch into the worktree;"
+      echo "                  the default branch instead starts a new issue branch from it"
       echo "  --from REF      Create a new branch starting from REF (branch, tag, or commit)"
       echo "  --pr NUMBER     Look up the branch from a PR number (implies --base)"
       echo "  --reuse         Explicitly reuse and update an existing issue worktree"
@@ -2639,6 +2667,26 @@ case "${1:-}" in
     if [[ "$REPLAY" == true && "$REUSE" != true && "$RESTACK" != true ]]; then
       echo "Error: --replay selects the restack engine for --reuse/--restack; combine it with one of them." >&2
       exit 1
+    fi
+    # A positional branch name equal to the default branch can never become
+    # new issue work: `git worktree add -b` would always refuse the existing
+    # branch. Fail loudly instead of dying inside the suppressed add (#1034).
+    if [[ -n "$BRANCH" && "$BRANCH" == "$DEFAULT_BRANCH" ]]; then
+      echo "Error: '$BRANCH' is the default branch and cannot be claimed as an issue work branch." >&2
+      echo "To base new work on it, run: $0 create $ISSUE --base $DEFAULT_BRANCH" >&2
+      exit 1
+    fi
+    # --base names a fork point when it is the default branch. "Checkout an
+    # existing branch" semantics can never apply to it — it is always checked
+    # out in the main checkout — and it is not issue-ownership evidence, so
+    # base a fresh issue branch on it exactly like --from (#1034).
+    if [[ -z "$FROM" && -z "$PR" ]]; then
+      case "$BASE" in
+        "$DEFAULT_BRANCH" | "origin/$DEFAULT_BRANCH")
+          FROM="$DEFAULT_BRANCH"
+          BASE=""
+          ;;
+      esac
     fi
 
     if [[ "$RECOVER_LOCAL" == true ]]; then
@@ -2977,6 +3025,13 @@ case "${1:-}" in
       fi
       EXISTING_WT="$(worktree_for_branch "$BASE" 2>/dev/null || true)"
       if [[ -n "$EXISTING_WT" ]]; then
+        # A base branch checked out in the main checkout is not issue work,
+        # and git cannot check a branch out twice anyway. Refuse plainly
+        # without ever recommending --reuse into the main checkout (#1034).
+        if same_canonical_dir "$EXISTING_WT" "$PROJECT_ROOT"; then
+          echo "Error: Branch '$BASE' is checked out in the main checkout ($PROJECT_ROOT); it cannot be checked out into a second worktree." >&2
+          exit 1
+        fi
         refuse_existing_worktree "$ISSUE" "$EXISTING_WT" || exit "$ACTIVE_WORK_EXIT"
       fi
 
@@ -2993,6 +3048,11 @@ case "${1:-}" in
       fi
       EXISTING_WT="$(worktree_for_branch "$BASE" 2>/dev/null || true)"
       if [[ -n "$EXISTING_WT" ]]; then
+        # Same main-checkout guard as the pre-lock check above (#1034).
+        if same_canonical_dir "$EXISTING_WT" "$PROJECT_ROOT"; then
+          echo "Error: Branch '$BASE' is checked out in the main checkout ($PROJECT_ROOT); it cannot be checked out into a second worktree." >&2
+          exit 1
+        fi
         refuse_existing_worktree "$ISSUE" "$EXISTING_WT" || exit "$ACTIVE_WORK_EXIT"
       fi
 

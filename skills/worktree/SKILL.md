@@ -53,7 +53,7 @@ An existing owner may opt in with `create <ID> --reuse`, which refreshes setup a
 
 | Flag | Effect |
 |------|--------|
-| `--base BRANCH` | Checkout an existing remote branch into the worktree |
+| `--base BRANCH` | Checkout an existing remote branch into the worktree; the default branch instead starts a new issue branch from it (it is always checked out in the main checkout and is never issue-ownership evidence) |
 | `--from REF` | Create a new branch (named after ID) starting from REF after the normal ownership claim gate |
 | `--pr NUMBER` | Look up the branch from a GitHub PR number (implies `--base`) |
 | `--reuse` | Explicitly reuse an existing issue worktree and rebase it onto `origin/<default>` |
