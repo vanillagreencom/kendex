@@ -13,9 +13,6 @@ name: Review gate (merge queue)
   merge_group: {}
 
 permissions:
-  statuses: write
-
-permissions:
   contents: read
 
 jobs:
