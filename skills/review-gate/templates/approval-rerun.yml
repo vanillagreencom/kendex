@@ -24,8 +24,9 @@ name: Approval CI re-fire
 # Anti-loop: the reruns this workflow issues never re-trigger it, and
 # neither do its own gate-status POSTs — they are authored by the workflow's
 # GITHUB_TOKEN, and GitHub suppresses workflow runs for token-authored
-# events (the standard anti-recursion rule; see also
-# skills/orch/DEVELOPMENT.md on this). There is therefore NO self-triggered
+# events — the platform's standard anti-recursion rule ("Events that
+# trigger workflows": GITHUB_TOKEN-authored events do not create new
+# workflow runs). There is therefore NO self-triggered
 # trailing pass to lean on: every run that executes converges EVERY open PR
 # itself (see the event routing in the job), and the scheduled sweep is the
 # only guaranteed backstop for evictions by runs the job-level trust guards
