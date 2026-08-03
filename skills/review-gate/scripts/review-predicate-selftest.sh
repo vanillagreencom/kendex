@@ -121,9 +121,12 @@ reviews_set() { # rows... -> reviews.json
   for row in "$@"; do rows="$(jq -c --argjson r "$row" '. + [$r]' <<<"$rows")"; done
   printf '%s\n' "$rows" >"$fixtures/reviews.json"
 }
-checkrun() { # name, conclusion, summary -> checkruns.json
-  jq -n --arg name "$1" --arg conclusion "$2" --arg summary "${3:-}" \
-    '{check_runs:[{name:$name,conclusion:$conclusion,output:{title:null,summary:$summary}}]}' \
+checkrun() { # name, conclusion, summary, [app slug] -> checkruns.json
+  # Real check runs always carry a publishing app; the default models a
+  # trusted reviewer's own app. Pass "github-actions" for the near-miss:
+  # a PR workflow can publish under ANY NAME through that shared app.
+  jq -n --arg name "$1" --arg conclusion "$2" --arg summary "${3:-}" --arg app "${4:-trusted-reviewer-app}" \
+    '{check_runs:[{name:$name,conclusion:$conclusion,app:{slug:$app},output:{title:null,summary:$summary}}]}' \
     >"$fixtures/checkruns.json"
 }
 status_ctx() { # context, state, description -> status.json
@@ -344,6 +347,21 @@ CFG_CONTEXTS="mech-ctx"
 export GH_SHIM_FAIL=graphql
 run "thread read failure (with evidence present)" "" 2
 unset GH_SHIM_FAIL
+
+# Check-run names are not reserved: any PR workflow with checks:write can
+# publish under ANY name through the shared github-actions app, while real
+# reviewer bots publish under their own app slug. A github-actions-published
+# name-match must stay not-evidence (VST-19) — the paired trusted-app case
+# proves the rejection is what separates them.
+reset
+CFG_CONTEXTS="mech-ctx"
+checkrun "mech-ctx" success "analysis complete"
+run "trusted-app check-run success is evidence" approved
+
+reset
+CFG_CONTEXTS="mech-ctx"
+checkrun "mech-ctx" success "analysis complete" "github-actions"
+run "github-actions-published check-run under a trusted name is not evidence" awaiting
 
 # >100 threads is a SUCCESSFUL read we cannot fully verify: fail closed to
 # threads-open, never open the gate.

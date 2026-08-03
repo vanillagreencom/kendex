@@ -202,6 +202,10 @@ REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = ""
 # for a listed name on the current head counts as review evidence. SECURITY:
 # matched by NAME, and any GitHub App or workflow can publish under any name
 # — list only trusted bots' checks, on repos where all publishers are trusted.
+# Check-runs published by the shared github-actions app are rejected
+# automatically (any PR workflow can mint those; real reviewer bots publish
+# under their own app slug); legacy commit STATUSES still rely on the
+# publisher-trust precondition above.
 
 REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
 # Used by: review-gate (`review-predicate.sh`). A trusted "pass" must prove

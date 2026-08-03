@@ -19,6 +19,10 @@ REVIEW_GATE_CONTEXT = "Review gate"
 # check-runs and statuses are matched by NAME, and any GitHub App or Actions
 # workflow can publish under any name — list only names produced by trusted
 # bots, on repos where every publisher is trusted.
+# Check-runs published by the shared github-actions app are rejected
+# automatically (any PR workflow can mint those; real reviewer bots publish
+# under their own app slug); legacy commit STATUSES still rely on the
+# publisher-trust precondition above.
 # Default is EMPTY (source disabled): trust is opt-in per repo, never a
 # shipped vendor default. Example for a repo whose reviewer posts a
 # check/status under the name "Devin Review":
