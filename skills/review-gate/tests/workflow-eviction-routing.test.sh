@@ -81,9 +81,15 @@ check_rerun() {
 # never evicts a pending writer. A top-level group would re-open that hole.
 assert_job_level_group() {
   local file="$1" label="$2"
-  if awk '/^jobs:/{exit 1} /^concurrency:/{found=1} END{exit !found}' "$file"; then
+  # Order-independent: a top-level `concurrency:` (column one) is forbidden
+  # anywhere in the file — YAML allows top-level keys after `jobs:` — and an
+  # indented (job-level) block must exist.
+  if grep -q '^concurrency:' "$file"; then
     FAIL=$((FAIL + 1))
-    printf '  FAIL  w1[%s]: concurrency group must sit at JOB level, not workflow level\n' "$label"
+    printf '  FAIL  w1[%s]: workflow-level concurrency block present (must sit at JOB level)\n' "$label"
+  elif ! grep -qE '^[[:space:]]+concurrency:' "$file"; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  w1[%s]: no job-level concurrency block found\n' "$label"
   else
     PASS=$((PASS + 1))
     printf '  ok    w1[%s]: concurrency group sits at job level\n' "$label"
