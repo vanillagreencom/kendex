@@ -653,16 +653,20 @@ resolve_team_id() {
     # is (rate limit, outage) — "Team not found" is only true for a
     # successful lookup that returned no match.
     local query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local result
-    if ! result=$(graphql_query "$query" "{\"name\": \"$team_ref\"}"); then
-        echo "{\"error\": \"Could not resolve team '$team_ref': Linear API request failed (see previous error)\"}" >&2
+    # Build variables and diagnostics with jq: a team name containing a
+    # quote or backslash must neither break the request JSON nor the error.
+    local vars result
+    vars=$(jq -cn --arg name "$team_ref" '{name: $name}')
+    if ! result=$(graphql_query "$query" "$vars"); then
+        jq -cn --arg team "$team_ref" \
+            '{error: ("Could not resolve team '\''" + $team + "'\'': Linear API request failed (see previous error)")}' >&2
         return 1
     fi
     local team_id
     team_id=$(echo "$result" | jq -r '.teams.nodes[0].id // empty')
 
     if [ -z "$team_id" ]; then
-        echo "{\"error\": \"Team not found: $team_ref\"}" >&2
+        jq -cn --arg team "$team_ref" '{error: ("Team not found: " + $team)}' >&2
         return 1
     fi
 
