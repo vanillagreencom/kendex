@@ -37,6 +37,7 @@ Issue IDs used to derive paths must match `[A-Za-z0-9][A-Za-z0-9._-]*` and must 
 | `exists` | Check if worktree exists for issue ID |
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
 | `push` | Push worktree branch with auto-rebase |
+| `fix-links` / `repair-links` | Restore configured symlinks in a worktree; `repair-links` is the git-hook-driven variant that never destroys untracked data — [references/hooks.md](references/hooks.md) |
 | `codex-setup` / `codex-branch` / `codex-cleanup` | Codex Desktop app-created worktree hooks — [references/hooks.md](references/hooks.md) |
 | `claude-setup` / `claude-cleanup` | Claude Code worktree hooks (`WorktreeCreate`) — [references/hooks.md](references/hooks.md) |
 
@@ -89,6 +90,8 @@ The configured symlinks (`WORKTREE_SYMLINKS`, typically `.agents`) point from a 
 | A genuinely modified or corrupt **tracked** file | `git checkout -- <path>` — run in the checkout the file really lives in |
 
 A tracked file *can* sit under a symlinked path — a project may symlink a directory it also tracks content in — and there `git checkout` from the worktree writes through the link into the main checkout while `assume-unchanged` keeps `git status` clean in both; recover at the real path in the owning checkout ([references/config.md](references/config.md)).
+
+Most of the time the links now heal themselves: `create` and `fix-links` install shared `post-checkout`/`post-merge`/`post-rewrite` hooks in the main checkout's hooks dir (worktrees resolve hooks there, so one install covers every worktree and every harness) that re-assert the configured symlinks after the git operations that clobber them. The auto-repair refuses to touch a materialized path holding data git does not track — it warns loudly and leaves the manual `fix-links` as the way out — and it is skipped entirely when `core.hooksPath` is set ([references/hooks.md](references/hooks.md)).
 
 **Run `fix-links` from the main checkout, not from the broken worktree** — the worktree's own copy of this script is reached *through* the link that is broken, so invoking it from there is the one place it may not exist. `fix-links` is also the repair after any operation that can replace a configured symlink with tracked content — a manual rebase or a partially-completed `remove`. Until the link is fixed, do not trust local verification from that tree: [references/recovery.md](references/recovery.md).
 

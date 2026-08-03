@@ -1,4 +1,4 @@
-# App-created worktree hooks (Codex Desktop, Claude Code)
+# App-created worktree hooks (Codex Desktop, Claude Code) and git-hook auto-repair
 
 Installation-time wiring so app-created worktrees get the same env/config provisioning `create` applies. The everyday contract lives in [../SKILL.md](../SKILL.md).
 
@@ -9,6 +9,18 @@ Installation-time wiring so app-created worktrees get the same env/config provis
 | `codex-cleanup` | Non-destructive Codex Desktop cleanup hook; app owns deletion |
 | `claude-setup` | Apply env/config setup to a Claude Code-created worktree (`WorktreeCreate` hook) |
 | `claude-cleanup` | Non-destructive Claude Code cleanup hook; app owns deletion |
+| `repair-links` | Hook-driven symlink re-assertion; quiet no-op outside a managed worktree |
+
+## Git-hook auto-repair (`repair-links`)
+
+A rebase, merge, or branch checkout can re-materialize a `WORKTREE_SYMLINKS` entry as a real directory holding only the tracked files beneath it (vstack#1032 — the incident wrote a fresh multi-MB Linear cache into a worktree-local `.cache`). The clobber happens at git-operation time, mid-session, from any harness or a plain human shell, so the interception point is git itself.
+
+`create` and `fix-links` install shared `post-checkout`, `post-merge`, and `post-rewrite` hooks into the **main checkout's** hooks directory — worktrees resolve hooks there (`git rev-parse --git-path hooks`), so one installation covers every worktree and every harness. Mechanics:
+
+- The hook logic lives in an owned helper file, `hooks/vstack-worktree-autorepair`, rewritten on every install. The three stock hooks get one marked delegating line: an existing shell hook is **appended to**, never overwritten; a non-shell or non-executable (disabled) hook is left alone with a warning; the append is idempotent.
+- `core.hooksPath` is never used or modified — it replaces the hooks directory wholesale and would disable a consumer's own hooks. When it is set, the install is skipped with a warning; add a `repair-links` call to those hooks manually.
+- The helper no-ops in the main checkout and in repos without the skill installed, and never fails the git operation it runs after.
+- `repair-links` is cheap on the healthy path (one `readlink` per entry). Repair itself is the existing `fix-links` logic, with one extra guarantee: a materialized path holding files git does not track (untracked **or** ignored — a worktree-local cache is ignored data) is never clobbered; the hook warns loudly, names the files, and points at manual `fix-links` after the data has been moved or deleted.
 
 ## Codex Desktop hooks
 

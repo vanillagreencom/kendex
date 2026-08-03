@@ -1,6 +1,6 @@
 #!/bin/bash
 # Portable git worktree manager
-# Usage: worktree create|restack|list|remove|cleanup|path|exists|check|push|fix-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID] [options]
+# Usage: worktree create|restack|list|remove|cleanup|path|exists|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID] [options]
 #   create options:
 #     --base BRANCH   Checkout an existing remote branch into the worktree
 #     --from REF      Create a new branch starting from REF (branch, tag, or commit)
@@ -863,6 +863,9 @@ symlink_into_worktree() {
         printf '%s\n' "$shadowed" | sed 's/^/  - /'
         echo "  They are now assume-unchanged here, so git cannot write them in this worktree"
         echo "  (cherry-pick/checkout/merge will fail while 'git status' looks clean)."
+        echo "  Tracked files under a symlinked dir are the generator of link clobbering:"
+        echo "  a rebase/checkout that must write them WILL replace the '$path' symlink with"
+        echo "  a real directory until they are untracked (git rm --cached) in the project."
         echo "  If the project still tracks these, narrow the entry to the untracked subpaths."
       } >&2
       printf '%s\n' "$shadowed" | \
@@ -895,9 +898,11 @@ symlink_into_worktree() {
 # This is deliberately a WARNING, not a failure: the command the operator asked
 # for may not touch the affected paths, and a hard error would be a regression
 # for them. It runs at the points where materialization has just become likely
-# (post-rebase) rather than via a git hook — see the issue thread for why
-# `core.hooksPath` is the wrong mechanism: it replaces the hooks directory
-# wholesale and would disable the consumer's own hooks.
+# (post-rebase). Since #1032 the stock post-checkout/post-merge/post-rewrite
+# hooks also auto-repair (see install_worktree_autorepair_hooks); this warning
+# stays as the backstop for repos where the hooks could not be installed.
+# `core.hooksPath` remains the wrong mechanism either way: it replaces the
+# hooks directory wholesale and would disable the consumer's own hooks.
 warn_if_links_materialized() {
   local wt="$1" path="" materialized=""
   [[ -n "$wt" && -d "$wt" ]] || return 0
@@ -924,6 +929,180 @@ warn_if_links_materialized() {
     echo "    cd '$PROJECT_ROOT' && .agents/skills/worktree/scripts/worktree fix-links '$wt'"
   } >&2
   return 0
+}
+
+# ─── Git-hook auto-repair (#1032) ────────────────────────────────────────────
+#
+# The clobber that materializes a configured symlink happens at git-operation
+# time — rebase, merge, branch checkout — from any harness or a plain human
+# shell, so the use-time warning above only catches the flows this script sees.
+# The universal interception point is git itself: worktrees resolve hooks to
+# the MAIN checkout's hooks directory (`git rev-parse --git-path hooks` from a
+# worktree yields main's hooks dir), so one installation covers every worktree
+# and every harness.
+#
+# `core.hooksPath` is deliberately NOT used — it replaces the hooks directory
+# wholesale and would disable a consumer's own hooks. Instead the three stock
+# hooks that follow the destructive operations (post-checkout, post-merge,
+# post-rewrite) are created, or appended-to when they already exist, with one
+# marked delegating line; the actual logic lives in a helper file this script
+# owns outright and rewrites on every install.
+
+readonly WORKTREE_AUTOREPAIR_HELPER="vstack-worktree-autorepair"
+readonly WORKTREE_AUTOREPAIR_HOOKS="post-checkout post-merge post-rewrite"
+
+# The helper is POSIX sh and self-contained: it resolves the main checkout
+# from the common git dir, no-ops there, and otherwise delegates to this
+# script's repair-links from the main checkout (the worktree's own copy may be
+# among the clobbered files). stdin is redirected away because post-rewrite
+# feeds the rewritten-commit list on stdin and the repair must not consume it
+# from any hook content composed after ours. It never fails the git operation.
+write_worktree_autorepair_helper() {
+  local helper="$1"
+  cat >"$helper" <<'HELPER' || return 1
+#!/bin/sh
+# vstack worktree auto-repair (#1032). Managed by the worktree skill and
+# rewritten on every install — do not edit. Re-asserts configured
+# WORKTREE_SYMLINKS entries in a linked worktree after a git operation that
+# can re-materialize them as real directories. Never fails the git operation.
+common="$(git rev-parse --git-common-dir 2>/dev/null)" || exit 0
+[ -n "$common" ] || exit 0
+case "$common" in /*) ;; *) common="$PWD/$common" ;; esac
+main="$(dirname "$common")"
+top="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$top" ] || exit 0
+main_phys="$(cd "$main" 2>/dev/null && pwd -P)" || exit 0
+top_phys="$(cd "$top" 2>/dev/null && pwd -P)" || exit 0
+# The main checkout's configured paths are real directories by design.
+[ "$top_phys" = "$main_phys" ] && exit 0
+for script in "$main_phys/.agents/skills/worktree/scripts/worktree" \
+              "$main_phys/skills/worktree/scripts/worktree"; do
+  if [ -x "$script" ]; then
+    "$script" repair-links "$top_phys" </dev/null || :
+    break
+  fi
+done
+exit 0
+HELPER
+  chmod +x "$helper"
+}
+
+# Install (or refresh) the shared auto-repair hooks in the common hooks dir.
+# Best-effort by design: every failure is a warning and exit 0, because a repo
+# where the hooks cannot be written must still get a fully provisioned
+# worktree — it just keeps only the use-time materialization warning.
+install_worktree_autorepair_hooks() {
+  local hooks_dir="" hook="" hook_path="" custom_hooks=""
+  local call_line='vstack_wt_hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null)" && [ -x "$vstack_wt_hooks_dir/vstack-worktree-autorepair" ] && "$vstack_wt_hooks_dir/vstack-worktree-autorepair" "$@" || :  # vstack-worktree-autorepair'
+
+  custom_hooks="$(git -C "$PROJECT_ROOT" config --get core.hooksPath 2>/dev/null || true)"
+  if [[ -n "$custom_hooks" ]]; then
+    echo "Warning: core.hooksPath is set ('$custom_hooks'); the worktree auto-repair git hooks were NOT installed." >&2
+    echo "  Have your post-checkout/post-merge/post-rewrite hooks run: $0 repair-links" >&2
+    return 0
+  fi
+
+  hooks_dir="$PROJECT_COMMON_GIT_DIR/hooks"
+  if ! mkdir -p "$hooks_dir" 2>/dev/null; then
+    echo "Warning: could not create $hooks_dir; the worktree auto-repair git hooks were NOT installed." >&2
+    return 0
+  fi
+  if ! write_worktree_autorepair_helper "$hooks_dir/$WORKTREE_AUTOREPAIR_HELPER"; then
+    echo "Warning: could not write $hooks_dir/$WORKTREE_AUTOREPAIR_HELPER; the worktree auto-repair git hooks were NOT installed." >&2
+    return 0
+  fi
+
+  for hook in $WORKTREE_AUTOREPAIR_HOOKS; do
+    hook_path="$hooks_dir/$hook"
+    if [[ ! -e "$hook_path" ]]; then
+      printf '#!/bin/sh\n%s\n' "$call_line" >"$hook_path" 2>/dev/null || {
+        echo "Warning: could not write $hook_path; auto-repair will not run on $hook." >&2
+        continue
+      }
+      chmod +x "$hook_path" 2>/dev/null || true
+      continue
+    fi
+    # Compose with existing hook content, never overwrite it. The marker makes
+    # the append idempotent across create/fix-links runs.
+    if grep -qF "$WORKTREE_AUTOREPAIR_HELPER" "$hook_path" 2>/dev/null; then
+      continue
+    fi
+    if [[ ! -x "$hook_path" ]]; then
+      echo "Warning: $hook_path exists but is not executable (a disabled hook); not appending the auto-repair line to it." >&2
+      continue
+    fi
+    if ! head -n 1 "$hook_path" | grep -qE '^#!.*(sh|bash|dash|ksh|zsh)([[:space:]]|$)'; then
+      echo "Warning: $hook_path is not a shell script; not appending the auto-repair line." >&2
+      echo "  Have it run: $0 repair-links" >&2
+      continue
+    fi
+    # Guarantee our line starts on its own line even when the existing hook
+    # has no trailing newline.
+    if [[ -s "$hook_path" && -n "$(tail -c 1 "$hook_path" 2>/dev/null)" ]]; then
+      printf '\n' >>"$hook_path"
+    fi
+    printf '%s\n' "$call_line" >>"$hook_path"
+  done
+  return 0
+}
+
+# Files present on disk under a configured path that git does not track — the
+# data an auto-repair would destroy. The tracked skeleton (e.g. a lone
+# .cache/.gitkeep) is exactly what a git operation re-materializes, so a real
+# directory holding ONLY tracked files is safe to re-link; anything beyond it
+# (untracked OR ignored — a worktree-local cache is ignored data) is not.
+worktree_path_untracked_disk_files() {
+  local wt="$1" path="$2" disk="" tracked=""
+  disk="$( (cd "$wt" 2>/dev/null && find "$path" \( -type f -o -type l \) 2>/dev/null) | LC_ALL=C sort)"
+  [[ -n "$disk" ]] || return 0
+  tracked="$(git -C "$wt" ls-files -- "$path" "$path/" 2>/dev/null | LC_ALL=C sort)"
+  LC_ALL=C comm -23 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked") | grep -v '^$' || true
+}
+
+# Re-assert configured WORKTREE_SYMLINKS in one worktree. Cheap on the healthy
+# path (one readlink per entry); repair is the existing fix-links logic
+# (symlink_into_worktree). A materialized path holding data git does not track
+# is never clobbered — it is reported loudly with the manual way out instead.
+repair_worktree_links() {
+  local wt="$1" path="" src="" dst="" extras="" extra_count=0 repaired="" blocked=false
+  validate_worktree_setup_config || return 1
+
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
+    src="$PROJECT_ROOT/$path"
+    dst="$wt/$path"
+    [[ -e "$src" ]] || continue
+    if [[ -L "$dst" ]]; then
+      # Healthy steady state; also covers a link re-pointed at a moved main.
+      [[ "$(readlink "$dst" 2>/dev/null || true)" == "$src" ]] && continue
+    elif [[ -e "$dst" ]]; then
+      extras="$(worktree_path_untracked_disk_files "$wt" "$path")"
+      if [[ -n "$extras" ]]; then
+        blocked=true
+        extra_count="$(printf '%s\n' "$extras" | grep -c .)"
+        {
+          echo "Warning: '$path' in $wt should be a symlink to '$src' but is a real path holding $extra_count file(s) git does not track:"
+          printf '%s\n' "$extras" | head -n 10 | sed 's/^/  - /'
+          if [[ "$extra_count" -gt 10 ]]; then
+            echo "  ... and $((extra_count - 10)) more"
+          fi
+          echo "  Auto-repair refuses to destroy untracked data. Move it into '$src' (or delete it),"
+          echo "  then restore the link from the main checkout:"
+          echo "    cd '$PROJECT_ROOT' && $0 fix-links '$wt'"
+        } >&2
+        continue
+      fi
+    fi
+    if symlink_into_worktree "$path" "$wt"; then
+      repaired="$repaired $path"
+    fi
+  done
+
+  if [[ -n "$repaired" ]]; then
+    echo "worktree auto-repair: restored symlink(s) in $wt:$repaired" >&2
+  fi
+  [[ "$blocked" != true ]]
 }
 
 # Undo symlink shadowing so git can check out through the configured paths
@@ -1101,6 +1280,9 @@ setup_app_worktree() {
   setup_worktree_links "$wt" || return 1
   configure_worktree_git "$wt" || return 1
   install_worktree_dependencies "$wt" || return 1
+  # Best-effort by contract (#1032): a repo where the hooks cannot be written
+  # still gets a fully provisioned worktree.
+  install_worktree_autorepair_hooks
 }
 
 is_git_worktree_path() {
@@ -3027,7 +3209,32 @@ case "${1:-}" in
       exit 1
     fi
     setup_worktree_links "$WT_PATH"
+    # Re-assert the shared auto-repair hooks too (#1032): a fix-links run is
+    # the natural refresh point after upgrading the skill or the config.
+    install_worktree_autorepair_hooks
     echo "Restored symlinks in $WT_PATH"
+    ;;
+
+  repair-links)
+    # Hook-driven sibling of fix-links (#1032): re-assert configured
+    # WORKTREE_SYMLINKS after a git operation, refusing to destroy any data
+    # git does not track that a materialized path has accumulated. Exits 0
+    # quietly for the main checkout or an unregistered path because its
+    # callers are shared git hooks that fire for every checkout of the repo.
+    ARG="${2:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    if ! is_git_worktree_path "$WT_PATH" || \
+       ! is_registered_project_worktree "$WT_PATH" || \
+       same_canonical_dir "$WT_PATH" "$PROJECT_ROOT"; then
+      exit 0
+    fi
+    repair_worktree_links "$WT_PATH"
     ;;
 
   codex-setup)
@@ -3157,7 +3364,7 @@ case "${1:-}" in
     ;;
 
   *)
-    echo "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|check|push|fix-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
+    echo "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
     exit 1
     ;;
 esac

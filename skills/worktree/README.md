@@ -21,6 +21,8 @@ Route by shape. `git checkout -- .agents` is **never** the recovery: the path ho
 
 `fix-links` is also the repair after anything that can replace a configured symlink with tracked content: a manual rebase, a partially-completed `remove`, or a restack replay. A worktree whose `.agents` is not a symlink cannot be trusted for local verification until it is fixed.
 
+Most clobbers now heal automatically: `create` and `fix-links` install shared `post-checkout`/`post-merge`/`post-rewrite` hooks in the main checkout's hooks directory that run `repair-links` after the git operations that materialize links. The auto-repair never destroys data git does not track — such a path is left in place with a loud warning pointing at manual `fix-links` — and the install is skipped (with a warning) when `core.hooksPath` is set. Details: `references/hooks.md`.
+
 ## Session guard
 
 `worktree-session-guard` records a session's claim on an issue worktree as a **native Git worktree lock** whose reason line carries the owner and heartbeat, so `git worktree remove [--force]` refuses it and `git worktree prune` leaves the registration alone. Using the native lock rather than a private marker file is deliberate: it needs no cooperation from whoever runs the cleanup.

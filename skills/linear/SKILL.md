@@ -95,6 +95,8 @@ linear.sh sync --full           # Full re-sync
 
 Cache and attachment files live under `.cache/linear` in the physical git worktree root reported by `git rev-parse --show-toplevel`, not under the path used to reach the skill script. This keeps `sync`, `cache`, and attachment reads consistent across symlinked checkout spellings, worktrees, and canonical source-path invocation. A missing-cache error includes the checked `cache_dir` and `meta_path`; inspect those fields before assuming a sync wrote somewhere else.
 
+In a linked git worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed symlink into the main checkout but is a real directory (a git operation re-materialized it), any full or reconciling `sync` refuses before touching the API — a full re-sync into a worktree-local dir would silently re-pull the entire history and burn the shared API budget (vstack#1032). The refusal names the worktree, the expected symlink, and the repair: run `worktree fix-links <PATH>` from the main checkout, then re-run `sync`. Repos whose configured `WORKTREE_SYMLINKS` deliberately excludes `.cache` are exempt.
+
 ## Output Formats
 
 | Format | Description |

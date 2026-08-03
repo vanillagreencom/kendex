@@ -518,6 +518,22 @@ main() {
         esac
     done
 
+    # Fail-closed budget guard (vstack#1032): when the cache dir is a
+    # clobbered worktree-local real directory, refuse before touching the lock
+    # or the API. Gated to syncs that would go full (--full, or no meta.json —
+    # exactly what a freshly re-materialized empty dir looks like) or
+    # reconciling (--reconcile, or the hourly stamp is missing/stale, which in
+    # the clobbered dir it always is). A bare sync on a healthy checkout never
+    # enters this branch: there `.cache` is either the intact symlink or the
+    # main checkout's own real directory.
+    if cache_worktree_cache_clobbered; then
+        if [[ "$full" == true || ! -f "$CACHE_DIR/meta.json" || "$force_reconcile" == true ]] \
+            || ! reconcile_is_fresh 60; then
+            cache_worktree_clobber_refusal
+            return 1
+        fi
+    fi
+
     # Check if sync needed when --if-stale specified
     if [[ -n "$if_stale" ]] && cache_is_fresh "$if_stale"; then
         echo "Cache fresh (< ${if_stale}m), skipped" >&2
