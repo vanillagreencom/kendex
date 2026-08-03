@@ -1,0 +1,347 @@
+# ─────────────────────────────────────────────────────
+# vstack-local.toml — vstack's OWN agent customization
+#
+# INTERNAL TO THIS REPO. Consumers of vstack should
+# ignore this file entirely — you will never have one.
+#
+# Your project keeps everything in a single tracked
+# vstack.toml. This repo needs the split because its
+# vstack.toml is the canonical source catalog that every
+# consuming repo clones and reads (is_source_catalog =
+# true). Writing vstack's own self-install state there
+# would mutate the catalog it publishes, so the CLI
+# redirects that state here instead — see
+# project_config_path() in cli/src/project_config.rs.
+#
+# Everything below is the ordinary project-config format,
+# and is tracked in git like any other config.
+#
+# Customize agent behavior for this project. These
+# settings are merged into generated agent files on
+# every install and refresh.
+#
+# Skills live in [agent-skills]. Generated frontmatter
+# overrides like model, effort, deny-tools, color, pane,
+# and Claude background/isolation/memory live in
+# harness-specific [agent-frontmatter.<harness>] tables.
+#
+# After editing, run:  vstack refresh
+# ─────────────────────────────────────────────────────
+
+
+# ── Launch Instructions ───────────────────────────────
+# Adds a "## Launch Instructions" section near the top
+# of each agent file. Use this for startup tasks, required
+# reading, or project-specific operating notes.
+# Examples:
+# rust = "Read docs/architecture.md before coding."
+# iced = """
+# Read docs/ui.md.
+# Update docs when UI architecture changes.
+# """
+#
+[agent-launch-instructions]
+tpm = ""
+
+generalist = ""
+
+planner = ""
+
+researcher = ""
+
+reviewer-arch = ""
+
+reviewer-correctness = ""
+
+reviewer-doc = ""
+
+reviewer-error = ""
+
+reviewer-perf = ""
+
+reviewer-quality = ""
+
+reviewer-safety = ""
+
+reviewer-security = ""
+
+reviewer-structure = ""
+
+reviewer-test = ""
+
+rust = ""
+
+scout = ""
+
+
+# ── Additional Instructions ──────────────────────────
+# Adds a "## Additional Instructions" section at the
+# bottom of each agent file. Project-specific rules,
+# conventions, or reminders for this agent.
+#
+[agent-additional-instructions]
+tpm = ""
+
+generalist = ""
+
+planner = ""
+
+researcher = ""
+
+reviewer-arch = ""
+
+reviewer-correctness = ""
+
+reviewer-doc = ""
+
+reviewer-error = ""
+
+reviewer-perf = ""
+
+reviewer-quality = ""
+
+reviewer-safety = ""
+
+reviewer-security = ""
+
+reviewer-structure = ""
+
+reviewer-test = ""
+
+rust = ""
+
+scout = ""
+
+
+# ── Skill Instructions ────────────────────────────────
+# Adds a "## Project Instructions" section at the
+# top of each skill's SKILL.md. Project-specific
+# context for how this skill applies to your codebase.
+# Won't overwrite the skill author's own instructions.
+#
+[skill-instructions]
+price-handling = ""
+
+vstack-issues = ""
+
+trading-design = ""
+
+decider = ""
+
+deep-research = ""
+
+dev = ""
+
+github = ""
+
+html-artifact = ""
+
+iced-rs = ""
+
+iced-shadcn = ""
+
+linear = ""
+
+orch = ""
+
+project-management = """
+## vstack issue-label taxonomy
+
+Full taxonomy: `docs/issue-label-taxonomy.md` (tracked). Summary:
+
+Labels are flat bare words — no prefix, no parent group — matching memsira and hyprtrade.
+`agent:*` is the workspace's only grouped-and-prefixed set. Reuse a workspace label
+whenever one covers the case; never create a team-scoped twin of a workspace label.
+
+Every issue on team VST carries one routing label, which a triage rule uses to file the
+synced issue into its project:
+
+| Label | Scope | Project |
+|-------|-------|---------|
+| `cli` | team VST | CLI & Distribution |
+| `skills` | team VST | Skills & Agents Library |
+| `harness` | team VST | Agent Harness Integrations |
+| `ci-infra` | workspace | Review Gate & CI |
+| `docs` | workspace | Docs & Onboarding |
+| `chore` | workspace | Tech Debt & Bugs |
+
+`vstack report` stamps one automatically on vstack-targeted issues (derived from the asset
+selector, overridable with `--area`). Hand-filed issues should carry one too; anything
+unlabeled stays parked in Linear Triage until a human or the TPM audit routes it.
+
+A routing label is not a classification: pair it with the type labels (`bug`, `feature`,
+`refactor`, `test`, `security`) as usual. Before adding a new one, read the four-step
+rollout in the tracked doc — a partial rollout silently drops issues into Triage.
+"""
+
+reviewer = ""
+
+second-opinion = ""
+
+worktree = ""
+
+
+# ── Agent Skills ─────────────────────────────────────
+# Skills attached to each agent's frontmatter.
+# This is the single source of truth — add or remove
+# skills here and run `vstack refresh` to apply.
+#
+# Populated automatically at install time from source
+# mappings. You can freely add your own skills to any
+# agent's list (they don't need to be in the vstack
+# repo — local skill directories work too).
+#
+[agent-skills]
+
+# ── Agent Frontmatter ────────────────────────────────
+# vstack writes active defaults here for every installed agent.
+# Edit fields, then run `vstack refresh` to regenerate harness files.
+# Harness-specific entries apply only to that harness.
+# Fields: color, model, effort, deny-tools, allowed-subagents,
+# pane, background, isolation, memory, mode, sandbox-mode,
+# model-reasoning-effort, nickname-candidates.
+# Claude background is seeded from Pi pane on first install (pane=true -> false, pane=false -> true), then preserved on refresh.
+# Pi allowed-subagents is the restricted delegation allowlist for delegate_subagent (engineer default ['scout']; set [] to disable).
+# OpenCode maps colors to hex. Effort values are written verbatim per harness.
+#
+[agent-frontmatter.claude]
+generalist = { color = "green", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = false }
+
+planner = { color = "blue", model = "inherit", effort = "max", deny-tools = ["Agent"], background = false }
+
+researcher = { color = "purple", model = "inherit", effort = "max", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-arch = { color = "yellow", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-correctness = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-doc = { color = "yellow", model = "inherit", effort = "medium", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-error = { color = "orange", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-perf = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-quality = { color = "purple", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-safety = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-security = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-structure = { color = "cyan", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+reviewer-test = { color = "blue", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+rust = { color = "orange", model = "inherit", effort = "max", deny-tools = ["Agent", "AskUserQuestion"], background = false }
+
+scout = { color = "cyan", model = "sonnet", effort = "high", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+
+iced = { color = "cyan", model = "inherit", effort = "max", deny-tools = ["Agent", "AskUserQuestion"], background = false }
+
+tpm = { color = "blue", model = "inherit", effort = "high", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+# opencode frontmatter values generated by vstack. Edit fields, then run `vstack refresh`.
+[agent-frontmatter.opencode]
+generalist = { color = "#22c55e", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+planner = { color = "#3b82f6", model = "openai/gpt-5.5", deny-tools = ["task"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+researcher = { color = "#a855f7", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+reviewer-arch = { color = "#eab308", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+reviewer-correctness = { color = "#ef4444", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+reviewer-doc = { color = "#eab308", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "medium" }
+
+reviewer-error = { color = "#f97316", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+reviewer-perf = { color = "#ef4444", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+reviewer-quality = { color = "#a855f7", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+reviewer-safety = { color = "#ef4444", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+reviewer-security = { color = "#ef4444", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+reviewer-structure = { color = "#06b6d4", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+reviewer-test = { color = "#3b82f6", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+rust = { color = "#f97316", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+scout = { color = "#06b6d4", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "medium" }
+
+iced = { color = "#06b6d4", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
+
+tpm = { color = "#3b82f6", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "high" }
+# codex frontmatter values generated by vstack. Edit fields, then run `vstack refresh`.
+[agent-frontmatter.codex]
+generalist = { model = "gpt-5.5", sandbox-mode = "danger-full-access", model-reasoning-effort = "xhigh", nickname-candidates = ["Generalist-Atlas", "Generalist-Delta", "Generalist-Echo", "Generalist-Nova", "Generalist-Orion", "Generalist-Vector"] }
+
+planner = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Planner-Atlas", "Planner-Delta", "Planner-Echo", "Planner-Nova", "Planner-Orion", "Planner-Vector"] }
+
+researcher = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Researcher-Atlas", "Researcher-Delta", "Researcher-Echo", "Researcher-Nova", "Researcher-Orion", "Researcher-Vector"] }
+
+reviewer-arch = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Arch-Atlas", "Reviewer-Arch-Delta", "Reviewer-Arch-Echo", "Reviewer-Arch-Nova", "Reviewer-Arch-Orion", "Reviewer-Arch-Vector"] }
+
+reviewer-correctness = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Correctness-Atlas", "Reviewer-Correctness-Delta", "Reviewer-Correctness-Echo", "Reviewer-Correctness-Nova", "Reviewer-Correctness-Orion", "Reviewer-Correctness-Vector"] }
+
+reviewer-doc = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "medium", nickname-candidates = ["Reviewer-Doc-Atlas", "Reviewer-Doc-Delta", "Reviewer-Doc-Echo", "Reviewer-Doc-Nova", "Reviewer-Doc-Orion", "Reviewer-Doc-Vector"] }
+
+reviewer-error = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Error-Atlas", "Reviewer-Error-Delta", "Reviewer-Error-Echo", "Reviewer-Error-Nova", "Reviewer-Error-Orion", "Reviewer-Error-Vector"] }
+
+reviewer-perf = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Perf-Atlas", "Reviewer-Perf-Delta", "Reviewer-Perf-Echo", "Reviewer-Perf-Nova", "Reviewer-Perf-Orion", "Reviewer-Perf-Vector"] }
+
+reviewer-quality = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Quality-Atlas", "Reviewer-Quality-Delta", "Reviewer-Quality-Echo", "Reviewer-Quality-Nova", "Reviewer-Quality-Orion", "Reviewer-Quality-Vector"] }
+
+reviewer-safety = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Safety-Atlas", "Reviewer-Safety-Delta", "Reviewer-Safety-Echo", "Reviewer-Safety-Nova", "Reviewer-Safety-Orion", "Reviewer-Safety-Vector"] }
+
+reviewer-security = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Security-Atlas", "Reviewer-Security-Delta", "Reviewer-Security-Echo", "Reviewer-Security-Nova", "Reviewer-Security-Orion", "Reviewer-Security-Vector"] }
+
+reviewer-structure = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Structure-Atlas", "Reviewer-Structure-Delta", "Reviewer-Structure-Echo", "Reviewer-Structure-Nova", "Reviewer-Structure-Orion", "Reviewer-Structure-Vector"] }
+
+reviewer-test = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Test-Atlas", "Reviewer-Test-Delta", "Reviewer-Test-Echo", "Reviewer-Test-Nova", "Reviewer-Test-Orion", "Reviewer-Test-Vector"] }
+
+rust = { model = "gpt-5.5", sandbox-mode = "danger-full-access", model-reasoning-effort = "xhigh", nickname-candidates = ["Rust-Atlas", "Rust-Delta", "Rust-Echo", "Rust-Nova", "Rust-Orion", "Rust-Vector"] }
+
+scout = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "medium", nickname-candidates = ["Scout-Atlas", "Scout-Delta", "Scout-Echo", "Scout-Nova", "Scout-Orion", "Scout-Vector"] }
+
+iced = { model = "gpt-5.5", sandbox-mode = "danger-full-access", model-reasoning-effort = "xhigh", nickname-candidates = ["Iced-Atlas", "Iced-Delta", "Iced-Echo", "Iced-Nova", "Iced-Orion", "Iced-Vector"] }
+
+tpm = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "high", nickname-candidates = ["TPM-Atlas", "TPM-Delta", "TPM-Echo", "TPM-Nova", "TPM-Orion", "TPM-Vector"] }
+
+# Pi-specific frontmatter values. The Pi /agents popup edits
+# vstack-managed entries in this file, then `vstack refresh` applies them.
+[agent-frontmatter.pi]
+generalist = { color = "green", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
+
+planner = { color = "blue", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent"], allowed-subagents = [], pane = true }
+
+researcher = { color = "purple", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question"], allowed-subagents = [], pane = false }
+
+reviewer-arch = { color = "yellow", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+reviewer-correctness = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+reviewer-doc = { color = "yellow", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+reviewer-error = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+reviewer-perf = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+reviewer-quality = { color = "purple", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+reviewer-safety = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+reviewer-security = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+reviewer-structure = { color = "cyan", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+reviewer-test = { color = "blue", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
+
+rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
+
+scout = { color = "cyan", model = "openai-codex/gpt-5.5:medium", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question"], allowed-subagents = [], pane = false }
+
+iced = { color = "cyan", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
+
+tpm = { color = "blue", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question"], allowed-subagents = [], pane = false }

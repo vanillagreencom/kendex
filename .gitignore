@@ -53,7 +53,9 @@ Thumbs.db
 
 # Local vstack install state (per-checkout absolute paths; do not commit)
 .vstack-lock.json
-vstack-local.toml
+# vstack-local.toml is deliberately NOT ignored: it holds this repo's own agent
+# config (no machine-specific paths) and is only separate from vstack.toml
+# because that file is the source catalog consumers read. See its header.
 
 # Cross-repo mailbox log — machine-local session coordination, never committed
 # (docs/cross-repo.md, the curated contract, IS tracked on purpose)
