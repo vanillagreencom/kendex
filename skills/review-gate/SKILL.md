@@ -59,8 +59,9 @@ Evidence for the CURRENT head is any of:
    NOT-EVIDENCE, never a failure — it is silence, and silence is what the
    `awaiting` path already handles.
 3. **Comment-form clean pass** (`REVIEW_GATE_COMMENT_REVIEWERS`): an issue
-   comment by a trusted bot login whose body binds the evidence to this
-   head's sha (full sha or backtick short form, floor
+   comment by a trusted bot login — never the PR author, even if configured
+   — whose body binds the evidence to this head's sha (full sha or a short
+   prefix, bare or backtick-quoted; floor
    `REVIEW_GATE_SHA_PREFIX_FLOOR`).
 4. **Reviewer-outage attestation** (`REVIEW_GATE_OUTAGE_CONTEXT`): a trusted
    orchestrator's status posted only on genuine total reviewer silence.

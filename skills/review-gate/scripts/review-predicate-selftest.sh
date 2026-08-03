@@ -479,6 +479,13 @@ CFG_REVIEWERS="mech-bot[bot]:Reviewed commit:"
 comment "other-bot[bot]" "Reviewed commit: \`${HEAD:0:7}\`" >"$fixtures/comments.json"
 run "comment from a DIFFERENT bot than configured is not evidence" awaiting
 
+# The PR author is excluded even when CONFIGURED as the comment reviewer —
+# a bot opening its own update PR must not self-approve it.
+reset
+CFG_REVIEWERS="$AUTHOR:Reviewed commit:"
+comment "$AUTHOR" "Reviewed commit: \`${HEAD:0:7}\`" >"$fixtures/comments.json"
+run "configured comment reviewer that IS the PR author cannot self-approve" awaiting
+
 # Floor mechanism at a non-default value.
 reset
 CFG_REVIEWERS="mech-bot[bot]:Reviewed commit:"; CFG_FLOOR="10"

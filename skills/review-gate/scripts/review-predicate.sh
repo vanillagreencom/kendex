@@ -266,11 +266,15 @@ EOF
 # Comment-form clean-pass evidence: some reviewers post NEITHER a review
 # object NOR a check/status on a clean pass — only an issue comment on the PR
 # conversation ("... Reviewed commit: `<sha>`"). Trust keys on the AUTHOR
-# LOGIN (exact match; only GitHub can set it); the body is read ONLY to bind
-# the evidence to a commit. The bound sha may be full or a backtick-quoted
-# short prefix: the match is "HEAD_SHA starts with the quoted sha",
-# case-insensitively, with a floor so a degenerate prefix cannot match every
-# head.
+# LOGIN (exact match; only GitHub can set it) — and the PR author is
+# excluded even when configured as a comment reviewer, or a bot could
+# self-approve its own update PR; the body is read ONLY to bind the
+# evidence to a commit. The bound sha may be the full sha or a short prefix
+# (bare or backtick-quoted — decoration between the binding pattern and the
+# sha is ignored as non-hex): the match is "HEAD_SHA starts with the bound
+# sha", case-insensitively, with a floor so a degenerate prefix cannot
+# match every head. The trust anchor is the author login plus the LITERAL
+# binding pattern immediately preceding the sha slot, not the quoting.
 comment_hits=0
 if [ -n "$COMMENT_REVIEWERS" ]; then
   # Two steps, not a pipe — same pagination/fail-loud reason as the reviews
@@ -294,12 +298,12 @@ if [ -n "$COMMENT_REVIEWERS" ]; then
     fi
     # The binding pattern is a LITERAL prefix (regex-quoted here), not a
     # regex: trust config must not be able to smuggle in a permissive match.
-    hits="$(jq --arg sha "$HEAD_SHA" --arg bot "$login" \
+    hits="$(jq --arg sha "$HEAD_SHA" --arg bot "$login" --arg author "$PR_AUTHOR" \
                --arg pat "$pattern" --arg floor "$SHA_FLOOR" '
       def requote: gsub("(?<c>[.^$|?*+()\\[\\]{}\\\\-])"; "\\" + .c);
       (($pat | requote) + "[^0-9a-fA-F]*([0-9a-fA-F]{" + $floor + ",40})") as $re
       | [ .[]
-          | select(.user.login == $bot)
+          | select(.user.login == $bot and .user.login != $author)
           | (.body // "")
           | scan($re)
           # Bind the claimed sha BEFORE comparing. Piping the head into
