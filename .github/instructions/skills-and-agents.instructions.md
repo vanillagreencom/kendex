@@ -10,7 +10,9 @@ applyTo: "skills/**,agents/**"
   but `skills/*/schemas/*.md` reference docs carry issue provenance by
   established convention — do not flag citations there.
 - Shell scripts and tests must stay Bash 3.2-compatible: flag `mapfile`,
-  `declare -A`, `${var,,}` and other Bash 4+ constructs as real defects. New
+  `declare -A`, `${var,,}` and other Bash 4+ constructs as real defects —
+  unless the skill's own SKILL.md documents a newer-Bash dependency (e.g.
+  `skills/linear` requires Bash 4.0+; its lint tests reflect that). New
   `tests/*.sh` and `scripts/*` files must carry the executable bit (CI lints
   this) — sourced `scripts/lib/` libraries are the exception, and non-shell
   tests (e.g. `.mjs`) need none; flag only those in-scope shapes added
