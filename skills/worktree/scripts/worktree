@@ -958,8 +958,21 @@ readonly WORKTREE_AUTOREPAIR_HOOKS="post-checkout post-merge post-rewrite"
 # feeds the rewritten-commit list on stdin and the repair must not consume it
 # from any hook content composed after ours. It never fails the git operation.
 write_worktree_autorepair_helper() {
-  local helper="$1"
-  cat >"$helper" <<'HELPER' || return 1
+  local helper="$1" tmp=""
+  # The name is vstack-namespaced, but the non-destructive contract holds
+  # even against a collision: never write through a symlink, never replace a
+  # non-regular file, and never overwrite content missing our marker. Our
+  # own helper is rewritten on every install, via atomic rename.
+  if [[ -L "$helper" ]] || [[ -e "$helper" && ! -f "$helper" ]]; then
+    echo "Warning: $helper exists and is not a regular file; refusing to replace it." >&2
+    return 1
+  fi
+  if [[ -f "$helper" ]] && ! grep -q "vstack worktree auto-repair" "$helper" 2>/dev/null; then
+    echo "Warning: $helper exists but was not written by the worktree skill; refusing to overwrite it." >&2
+    return 1
+  fi
+  tmp="$helper.tmp.$$"
+  cat >"$tmp" <<'HELPER' || { rm -f "$tmp"; return 1; }
 #!/bin/sh
 # vstack worktree auto-repair (#1032). Managed by the worktree skill and
 # rewritten on every install — do not edit. Re-asserts configured
@@ -984,7 +997,10 @@ for script in "$main_phys/.agents/skills/worktree/scripts/worktree" \
 done
 exit 0
 HELPER
-  chmod +x "$helper"
+  chmod +x "$tmp" 2>/dev/null && mv -f "$tmp" "$helper" || {
+    rm -f "$tmp"
+    return 1
+  }
 }
 
 # Install (or refresh) the shared auto-repair hooks in the common hooks dir.
@@ -1099,7 +1115,10 @@ worktree_quarantine_unsafe_entries() {
   disk="$(while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     printf '%s\n' "${name#"$qdir"/}"
-  done <<<"$raw" | LC_ALL=C sort)"
+  done <<<"$raw" | LC_ALL=C sort)" || {
+    printf '[scan failed: could not sort the inventory]\n'
+    return 0
+  }
   # A filename containing a newline shreds a line-delimited inventory into
   # fragments (or, for a pure-newline name, into nothing once command
   # substitution strips trailing newlines). Cross-check the reconstructed
@@ -1113,19 +1132,33 @@ worktree_quarantine_unsafe_entries() {
     printf '[scan mismatch: %s entries by NUL count vs %s reconstructed line entries — a name this listing cannot represent]\n' "$n_nul" "$n_disk"
     return 0
   fi
+  # A failed tracked-listing sort collapses to an empty set, which reads as
+  # "everything is untracked" — fail-closed on its own. The comm calls are
+  # NOT: a failed comm yields empty output in both directions, which reads
+  # as "nothing extra and nothing to verify" — so their exit status must be
+  # checked explicitly.
   tracked="$(git -C "$wt" ls-files -- "$path/" 2>/dev/null | while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     printf '%s\n' "${name#"$path"/}"
-  done | LC_ALL=C sort)"
+  done | LC_ALL=C sort)" || tracked=""
+  local untracked="" present_tracked="" cmp_rc=0
+  untracked="$(LC_ALL=C comm -23 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked") 2>/dev/null)" || cmp_rc=$?
+  if [[ "$cmp_rc" -eq 0 ]]; then
+    present_tracked="$(LC_ALL=C comm -12 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked") 2>/dev/null)" || cmp_rc=$?
+  fi
+  if [[ "$cmp_rc" -ne 0 ]]; then
+    printf '[scan failed: name-set comparison failed (exit %s)]\n' "$cmp_rc"
+    return 0
+  fi
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     printf '%s/%s\n' "$path" "$name"
-  done < <(LC_ALL=C comm -23 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked"))
+  done <<<"$untracked"
   # Tracked names present in the copy must match the index exactly.
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     worktree_tracked_entry_mismatch "$wt" "$path/$name" "$path/$name" "$qdir/$name"
-  done < <(LC_ALL=C comm -12 <(printf '%s\n' "$disk") <(printf '%s\n' "$tracked"))
+  done <<<"$present_tracked"
 }
 
 # Print a blocking line iff the on-disk entry differs from the index record

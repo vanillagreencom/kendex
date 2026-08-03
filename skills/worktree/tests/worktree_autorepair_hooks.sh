@@ -238,6 +238,7 @@ else
   bad "empty untracked subdir blocks and survives" "$empty_out"
 fi
 assert_contains "$empty_out" "empty untracked directory" "warning names the empty dir"
+if [[ "$empty_rc" -ne 0 ]]; then ok "blocked repair exits nonzero"; else bad "blocked repair exits nonzero" "rc=0"; fi
 
 rm -rf "$WT/harness"
 mkdir -p "$WT/harness"
