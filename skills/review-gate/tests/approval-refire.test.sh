@@ -39,6 +39,17 @@
 #   r19. same key assigned twice in the      -> exit 1, NO POST, NO rerun
 #        settings file (file-wide matching      (ambiguous, fail loud)
 #        makes it ambiguous)
+#
+# All-PRs mode (ALL_OPEN_PRS=1 — the sweep's enumeration moved into the
+# script so eviction-prone event shapes can reuse it, #1039):
+#   a1.  two open PRs                        -> converges BOTH heads; no
+#                                               PR_NUMBER/HEAD_SHA required
+#   a2.  predicate fails for one PR          -> exit 1, but the OTHER PR is
+#                                               still converged (containment)
+#   a3.  QUIESCE defaults to 0 in all mode   -> in-progress head is left to
+#                                               finish with NO "waiting" poll
+#   a4.  open-PR listing fails               -> exit 1, NO POST (fail loud)
+#   a5.  zero open PRs                       -> exit 0, nothing posted
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -80,9 +91,15 @@ cat > "$TMP_ROOT/scripts/review-predicate.sh" <<'EOF'
 #!/usr/bin/env bash
 # Predicate stub: STUB_PREDICATE_RC != 0 simulates an evidence-read failure
 # (no verdict); otherwise STUB_VERDICT_LINE is the authoritative verdict.
+# STUB_PREDICATE_FAIL_PR fails only that PR's evaluation (all-PRs-mode
+# containment cases).
 if [[ "${STUB_PREDICATE_RC:-0}" != "0" ]]; then
   echo "::error::stubbed predicate failure" >&2
   exit "${STUB_PREDICATE_RC}"
+fi
+if [[ -n "${STUB_PREDICATE_FAIL_PR:-}" && "${STUB_PREDICATE_FAIL_PR}" == "${PR_NUMBER:-}" ]]; then
+  echo "::error::stubbed predicate failure for PR ${PR_NUMBER}" >&2
+  exit 2
 fi
 printf '%s\n' "${STUB_VERDICT_LINE:?}"
 EOF
@@ -115,6 +132,13 @@ case "$args" in
       exit 1
     fi
     printf '%s\n' "${STUB_GATE_HISTORY:-[]}"
+    ;;
+  *"pulls?state=open"*)
+    if [[ "${STUB_OPEN_PRS:-[]}" == "fail" ]]; then
+      echo "HTTP 500" >&2
+      exit 1
+    fi
+    printf '%s\n' "${STUB_OPEN_PRS:-[]}"
     ;;
   *"/actions/runs?"*)
     case "${STUB_RUNS_MODE:-completed}" in
@@ -300,6 +324,72 @@ set -e
 assert_eq "$rc" "1" "r19: duplicate key assignment exits 1"
 assert_contains "$out" "assigned more than once" "r19: names the ambiguity"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "r19: no POST and no rerun on a duplicate-key config error"
+
+echo "=== all-PRs mode (ALL_OPEN_PRS=1) ==="
+
+# No PR_NUMBER/HEAD_SHA/PR_AUTHOR: all-PRs mode enumerates them itself. The
+# timeout guard (where available) bounds the damage if the QUIESCE=0 default
+# regresses — a QUIESCE=1 all-PRs pass would sleep 30s per poll.
+run_refire_all() {
+  : > "$POST_LOG"
+  : > "$RERUN_LOG"
+  local -a runner=()
+  command -v timeout >/dev/null 2>&1 && runner=(timeout 90)
+  env PATH="$TMP_ROOT/bin:$PATH" \
+    GH_REPO=acme/widgets \
+    REVIEW_GATE_SETTINGS_FILE=/dev/null \
+    STUB_POST_LOG="$POST_LOG" STUB_RERUN_LOG="$RERUN_LOG" \
+    ALL_OPEN_PRS=1 \
+    "$@" "${runner[@]+"${runner[@]}"}" bash "$TMP_ROOT/scripts/approval-refire.sh" 2>&1
+}
+
+OPEN2='[{"number":7,"head":{"sha":"sha7"},"user":{"login":"alice"}},{"number":8,"head":{"sha":"sha8"},"user":{"login":"bob"}}]'
+
+rc=0; out=$(run_refire_all STUB_VERDICT_LINE="$AWAITING" STUB_OPEN_PRS="$OPEN2" \
+  STUB_GATE_HISTORY='[]') || rc=$?
+assert_eq "$rc" "0" "a1: all-PRs pass over two PRs exits 0"
+assert_contains "$out" "converging 2 open PR(s)" "a1: reports the enumeration"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "2" "a1: one post per open PR"
+assert_contains "$(cat "$POST_LOG")" "statuses/sha7" "a1: converged PR #7's head"
+assert_contains "$(cat "$POST_LOG")" "statuses/sha8" "a1: converged PR #8's head"
+
+set +e
+out=$(run_refire_all STUB_VERDICT_LINE="$AWAITING" STUB_OPEN_PRS="$OPEN2" \
+  STUB_GATE_HISTORY='[]' STUB_PREDICATE_FAIL_PR=7)
+rc=$?
+set -e
+assert_eq "$rc" "1" "a2: one failing PR fails the pass"
+assert_contains "$out" "convergence failed for PR #7" "a2: names the failing PR"
+assert_contains "$(cat "$POST_LOG")" "statuses/sha8" "a2: the other PR is still converged"
+
+rc=0; out=$(run_refire_all STUB_VERDICT_LINE="$APPROVED" STUB_OPEN_PRS="$OPEN2" \
+  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=in_progress) || rc=$?
+assert_eq "$rc" "0" "a3: in-progress heads exit 0 in all-PRs mode"
+assert_contains "$out" "still in progress" "a3: leaves in-progress runs to finish"
+assert_not_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if grep -qF -- "$needle" <<<"$haystack"; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        must not contain: %s\n' "$name" "$needle"
+  else
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  fi
+}
+assert_not_contains "$out" "waiting:" "a3: QUIESCE defaults to 0 (no quiesce polling in all-PRs mode)"
+
+set +e
+out=$(run_refire_all STUB_VERDICT_LINE="$AWAITING" STUB_OPEN_PRS=fail)
+rc=$?
+set -e
+assert_eq "$rc" "1" "a4: open-PR listing failure exits 1"
+assert_contains "$out" "could not list open PRs" "a4: says why"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "a4: no action on a listing failure"
+
+rc=0; out=$(run_refire_all STUB_VERDICT_LINE="$AWAITING" STUB_OPEN_PRS='[]') || rc=$?
+assert_eq "$rc" "0" "a5: zero open PRs exits 0"
+assert_contains "$out" "converging 0 open PR(s)" "a5: reports the empty sweep"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "a5: posts nothing"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

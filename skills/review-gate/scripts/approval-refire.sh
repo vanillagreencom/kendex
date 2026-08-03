@@ -27,18 +27,29 @@
 #         rulesets, so a directly-posted success would merge untested code.
 #
 # Callers (see the skill's templates/):
-#   - approval-rerun.yml (event-driven: review submitted/dismissed, trusted
-#     check_run/status evidence, comment-form reviewer comments)   QUIESCE=1
-#   - approval-sweep.yml (scheduled: transitions that emit no usable Actions
-#     event, chiefly resolving the last review thread)             QUIESCE=0
+#   - approval-rerun.yml (event-driven). PR-specific events (review
+#     submit/dismiss, trusted check_run, comment-form reviewer comments)
+#     converge their own PR, QUIESCE=1. Eviction-prone shapes — `status`
+#     events, and a trusted check_run with no resolvable open PR — set
+#     ALL_OPEN_PRS=1: their run evicted whatever writer was pending in the
+#     shared concurrency group, so it must converge everything (#1039).
+#   - approval-sweep.yml (scheduled backstop)                 ALL_OPEN_PRS=1
 #
-# Env (required): GH_TOKEN (or ambient gh auth), GH_REPO, PR_NUMBER, HEAD_SHA
+# Env (required): GH_TOKEN (or ambient gh auth), GH_REPO; PR_NUMBER and
+# HEAD_SHA unless ALL_OPEN_PRS=1.
 # Env (optional):
 #   PR_AUTHOR     resolved from the PR when empty.
-#   QUIESCE       "1" (default): wait (bounded) for in-progress runs on the
-#                 head to complete before a rerun decision. "0": act on
+#   QUIESCE       "1" (default in single-PR mode): wait (bounded) for
+#                 in-progress runs on the head to complete before a rerun
+#                 decision. "0" (default under ALL_OPEN_PRS=1): act on
 #                 completed runs only (the next scheduled pass catches
-#                 stragglers).
+#                 stragglers) — a serialized writer must not camp the shared
+#                 concurrency slot polling one head.
+#   ALL_OPEN_PRS  "1": ignore PR_NUMBER/HEAD_SHA and converge EVERY open PR
+#                 (the sweep's enumeration, owned here so event-driven
+#                 callers reuse it instead of duplicating it). A failure for
+#                 one PR is reported (::error) and the pass continues to the
+#                 rest, then exits non-zero.
 # Settings (lib/settings.sh — env > vstack.settings.toml > default):
 #   REVIEW_GATE_CONTEXT             gate commit-status context (default "Review gate")
 #   REVIEW_GATE_MAX_RERUN_ATTEMPTS  rerun backstop (default 5): runs at/above
@@ -54,7 +65,12 @@ set -u
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/lib/settings.sh"
 
-QUIESCE="${QUIESCE:-1}"
+ALL_OPEN_PRS="${ALL_OPEN_PRS:-0}"
+if [ "$ALL_OPEN_PRS" = "1" ]; then
+  QUIESCE="${QUIESCE:-0}"
+else
+  QUIESCE="${QUIESCE:-1}"
+fi
 # `|| exit 1`: rg_setting fails on a present-but-unparseable assignment, and
 # that is a configuration error to surface, never an empty value to act on.
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-$(rg_setting REVIEW_GATE_MAX_RERUN_ATTEMPTS "5")}" || exit 1
@@ -69,6 +85,36 @@ esac
 if [ -z "$GATE_CONTEXT" ]; then
   echo "::error::approval-refire: REVIEW_GATE_CONTEXT must not be empty"
   exit 1
+fi
+
+if [ "$ALL_OPEN_PRS" = "1" ]; then
+  if [ -z "${GH_REPO:-}" ]; then
+    echo "::error::approval-refire: GH_REPO is required"
+    exit 1
+  fi
+  # Full pagination (one array per page, slurped flat) — a fixed page limit
+  # would silently leave PRs beyond it unconverged forever.
+  raw_prs="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate)" || {
+    echo "::error::could not list open PRs"
+    exit 1
+  }
+  prs="$(jq -s '[add // [] | .[] | {number, headRefOid: .head.sha, author: {login: (.user.login // "")}}]' <<<"$raw_prs")" || {
+    echo "::error::could not parse the open-PR list"
+    exit 1
+  }
+  count="$(jq length <<<"$prs")"
+  echo "converging $count open PR(s)"
+  self="$script_dir/$(basename "${BASH_SOURCE[0]}")"
+  failed=0
+  while read -r number head author; do
+    [ -z "$number" ] && continue
+    if ! ALL_OPEN_PRS=0 PR_NUMBER="$number" HEAD_SHA="$head" PR_AUTHOR="$author" \
+        QUIESCE="$QUIESCE" bash "$self" </dev/null; then
+      echo "::error::convergence failed for PR #$number (see log above)"
+      failed=1
+    fi
+  done < <(jq -r '.[] | "\(.number) \(.headRefOid) \(.author.login // "")"' <<<"$prs")
+  exit "$failed"
 fi
 
 for required in GH_REPO PR_NUMBER HEAD_SHA; do

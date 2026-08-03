@@ -10,10 +10,13 @@ name: Approval gate sweep
 # — so a fully-addressed PR's pending gate status would stand until some
 # other trusted event happened. Late outage-marker timing has the same shape.
 #
-# This scheduled sweep closes those gaps. Every 15 minutes it re-evaluates
-# the gate predicate for every open PR via the shared vendored script
-# (skills/review-gate/scripts/approval-refire.sh — single source of
-# truth with approval-rerun.yml) and converges the gate commit status:
+# This scheduled sweep closes those gaps, and backstops writer runs evicted
+# from the shared concurrency group (see the rerun workflow's comments).
+# Every 15 minutes the shared script's all-PRs mode
+# (skills/review-gate/scripts/approval-refire.sh, ALL_OPEN_PRS=1 — single
+# source of truth with approval-rerun.yml, which uses the same mode for
+# eviction-prone event shapes) re-evaluates the gate predicate for every
+# open PR and converges the gate commit status:
 # downward transitions are a direct status post; the first awaiting→approved
 # flip re-runs the head's pull_request runs, bounded by
 # REVIEW_GATE_MAX_RERUN_ATTEMPTS so an evidence-disagreement ping-pong can
@@ -80,26 +83,8 @@ jobs:
             echo "::error::skills/review-gate/scripts/approval-refire.sh is missing on the default branch (bootstrap PR? deleted?); sweep aborted"
             exit 1
           fi
-          # Full pagination (one array per page, slurped flat) — a fixed page
-          # limit would silently leave PRs beyond it unswept forever.
-          raw_prs="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate)" || {
-            echo "::error::could not list open PRs"
-            exit 1
-          }
-          prs="$(jq -s '[add // [] | .[] | {number, headRefOid: .head.sha, author: {login: (.user.login // "")}}]' <<<"$raw_prs")" || {
-            echo "::error::could not parse the open-PR list"
-            exit 1
-          }
-          count="$(jq length <<<"$prs")"
-          echo "sweeping $count open PR(s)"
-          failed=0
-          while read -r number head author; do
-            [ -z "$number" ] && continue
-            if ! PR_NUMBER="$number" HEAD_SHA="$head" PR_AUTHOR="$author" \
-                QUIESCE=0 \
-                skills/review-gate/scripts/approval-refire.sh; then
-              echo "::error::sweep failed for PR #$number (see log above)"
-              failed=1
-            fi
-          done < <(jq -r '.[] | "\(.number) \(.headRefOid) \(.author.login // "")"' <<<"$prs")
-          exit "$failed"
+          # Enumeration, pagination, and per-PR failure containment live in
+          # the script's all-PRs mode — shared verbatim with the rerun
+          # workflow's eviction-prone event path (#1039).
+          export ALL_OPEN_PRS=1
+          exec skills/review-gate/scripts/approval-refire.sh
