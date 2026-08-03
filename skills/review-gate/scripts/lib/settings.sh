@@ -32,8 +32,8 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # identifier shape every real key has, so a metacharacter can neither
   # misgrep nor inject pattern syntax.
   case "$name" in
-    "" | *[!A-Za-z0-9_]*)
-      echo "::error::rg_setting: invalid key name '$name' (A-Za-z0-9_ only)" >&2
+    "" | [0-9]* | *[!A-Za-z0-9_]*)
+      echo "::error::rg_setting: invalid key name '$name' (shell identifier shape required: [A-Za-z_][A-Za-z0-9_]*)" >&2
       return 1
       ;;
   esac
