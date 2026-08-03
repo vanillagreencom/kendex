@@ -37,6 +37,12 @@ grep -q "approval NOT superseded by a later COMMENTED" "$work/defaults.out" \
   || note "approval non-supersession case missing"
 grep -q "UNTRUSTED login's review is not evidence" "$work/defaults.out" \
   || note "review-object trust-list case missing"
+grep -q "publisher filter set: github-actions-minted trusted status is not evidence" "$work/defaults.out" \
+  || note "status publisher-filter near-miss case missing"
+grep -q "publisher filter set: github-actions-minted outage attestation is not evidence" "$work/defaults.out" \
+  || note "outage publisher-filter near-miss case missing"
+grep -q "publisher filter unset: github-actions-minted status counts" "$work/defaults.out" \
+  || note "publisher-filter default-unchanged case missing"
 
 # --- layer 2: the selftest must exercise CONFIGURED values ------------------
 mkdir -p "$work/configured"
@@ -47,6 +53,7 @@ REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "quota exceeded"
 REVIEW_GATE_COMMENT_REVIEWERS = "acme-reviewer[bot]:Analysis (clean) for commit"
 REVIEW_GATE_SHA_PREFIX_FLOOR = "9"
 REVIEW_GATE_OUTAGE_CONTEXT = "acme-outage"
+REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
 REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "acme-reviewer[bot];human-lead"
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "approved"
 EOF
@@ -73,6 +80,10 @@ grep -q "login outside the repo trust list is not evidence" "$work/configured.ou
   || note "configured review-object trust list near-miss not exercised"
 grep -q "outage attestation (acme-outage)" "$work/configured.out" \
   || note "configured outage context not exercised"
+grep -q '\[Acme Review\] status minted by a rejected publisher is not evidence' "$work/configured.out" \
+  || note "configured publisher reject-list near-miss not exercised"
+grep -q "outage attestation from a rejected publisher is not evidence" "$work/configured.out" \
+  || note "configured outage publisher reject-list near-miss not exercised"
 
 if [ "$fail" -ne 0 ]; then
   echo "review-predicate-selftest.test: FAIL"

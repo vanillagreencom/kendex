@@ -46,6 +46,7 @@ ACTIVE_SKIPS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skip
 ACTIVE_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 1
 ACTIVE_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 1
 ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 1
+ACTIVE_PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 1
 ACTIVE_TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 1
 ACTIVE_MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 1
 ACTIVE_GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
@@ -129,9 +130,13 @@ checkrun() { # name, conclusion, summary, [app slug] -> checkruns.json
     '{check_runs:[{name:$name,conclusion:$conclusion,app:{slug:$app},output:{title:null,summary:$summary}}]}' \
     >"$fixtures/checkruns.json"
 }
-status_ctx() { # context, state, description -> status.json
-  jq -n --arg ctx "$1" --arg state "$2" --arg desc "${3:-}" \
-    '{statuses:[{context:$ctx,state:$state,description:$desc}]}' >"$fixtures/status.json"
+status_ctx() { # context, state, description, [creator login] -> status.json
+  # GitHub App statuses serialize creator as null (the default here); a
+  # status posted by a workflow or user carries its creator login — pass one
+  # for the publisher-filter cases.
+  jq -n --arg ctx "$1" --arg state "$2" --arg desc "${3:-}" --arg creator "${4:-}" \
+    '{statuses:[{context:$ctx,state:$state,description:$desc,
+      creator:(if $creator == "" then null else {login:$creator} end)}]}' >"$fixtures/status.json"
 }
 
 cases=0
@@ -146,6 +151,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_COMMENT_REVIEWERS="$CFG_REVIEWERS" \
     REVIEW_GATE_SHA_PREFIX_FLOOR="$CFG_FLOOR" \
     REVIEW_GATE_OUTAGE_CONTEXT="$CFG_OUTAGE" \
+    REVIEW_GATE_STATUS_PUBLISHER_REJECT="$CFG_PUBLISHER_REJECT" \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
     REVIEW_GATE_REVIEW_OBJECT_MIN_STATE="$CFG_MIN_STATE" \
     REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" \
@@ -178,6 +184,7 @@ reset() {
   CFG_REVIEWERS="$ACTIVE_REVIEWERS"
   CFG_FLOOR="$ACTIVE_FLOOR"
   CFG_OUTAGE="$ACTIVE_OUTAGE"
+  CFG_PUBLISHER_REJECT="$ACTIVE_PUBLISHER_REJECT"
   CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
   CFG_MIN_STATE="$ACTIVE_MIN_STATE"
   CFG_GATE_CONTEXT="$ACTIVE_GATE_CONTEXT"
@@ -281,6 +288,14 @@ context_battery() { # context
   status_ctx "$ctx (untrusted twin)" success "analysis complete"
   run "[$ctx] status under a DIFFERENT context name" awaiting
 
+  # A repo that opts into the publisher reject-list tests its OWN list: the
+  # first rejected login must not be able to mint this trusted context.
+  if [ -n "$ACTIVE_PUBLISHER_REJECT" ]; then
+    reset
+    status_ctx "$ctx" success "analysis complete" "$(first_item "$ACTIVE_PUBLISHER_REJECT")"
+    run "[$ctx] status minted by a rejected publisher is not evidence" awaiting
+  fi
+
   reset
   status_ctx "$ctx" pending "still running"
   run "[$ctx] non-success status" awaiting
@@ -369,6 +384,33 @@ reset
 CFG_CONTEXTS="mech-ctx"
 jq -n '{check_runs:[{name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.json"
 run "check-run with no app slug (unprovable provenance) is not evidence" awaiting
+
+# Legacy commit STATUSES carry no app slug, only a creator — and on repos
+# whose PR workflows hold statuses:write, PR content can mint one under any
+# context through github-actions[bot]. The OPT-IN publisher reject-list
+# (REVIEW_GATE_STATUS_PUBLISHER_REJECT) must drop a listed creator's status
+# while an unlisted login and an App-posted status (creator null — NOT the
+# forgeable identity, deliberately unlike the no-app-slug check-run case)
+# stay evidence, and the shipped default (empty) must change nothing.
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+status_ctx "mech-ctx" success "analysis complete" "github-actions[bot]"
+run "publisher filter set: github-actions-minted trusted status is not evidence" awaiting
+
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+status_ctx "mech-ctx" success "analysis complete" "trusted-status-bot"
+run "publisher filter set: unlisted creator login is still evidence" approved
+
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+status_ctx "mech-ctx" success "analysis complete"
+run "publisher filter set: App-posted status (creator null) is still evidence" approved
+
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT=""
+status_ctx "mech-ctx" success "analysis complete" "github-actions[bot]"
+run "publisher filter unset: github-actions-minted status counts (default unchanged)" approved
 
 # >100 threads is a SUCCESSFUL read we cannot fully verify: fail closed to
 # threads-open, never open the gate.
@@ -591,6 +633,20 @@ CFG_OUTAGE=""
 status_ctx "vstack-reviewer-outage" success "reviewer outage attested"
 run "empty outage context disables the source" awaiting
 
+# The publisher reject-list guards the outage read too: the sanctioned
+# relaxation is the highest-value status to forge, so a listed creator must
+# not be able to mint it — while an unlisted publisher's attestation stays
+# accepted.
+reset
+CFG_OUTAGE="mech-outage"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+status_ctx "mech-outage" success "reviewer outage attested" "github-actions[bot]"
+run "publisher filter set: github-actions-minted outage attestation is not evidence" awaiting
+
+reset
+CFG_OUTAGE="mech-outage"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+status_ctx "mech-outage" success "reviewer outage attested" "trusted-orchestrator"
+run "publisher filter set: unlisted-login outage attestation still counts" approved
+
 # Invalid configuration must reach NO verdict (exit 2) — a typo in trust
 # config must never quietly widen or narrow the gate.
 reset
@@ -655,6 +711,12 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
   reset
   status_ctx "$ACTIVE_OUTAGE" success "reviewer outage attested"
   run "configured: outage attestation ($ACTIVE_OUTAGE)" approved
+
+  if [ -n "$ACTIVE_PUBLISHER_REJECT" ]; then
+    reset
+    status_ctx "$ACTIVE_OUTAGE" success "reviewer outage attested" "$(first_item "$ACTIVE_PUBLISHER_REJECT")"
+    run "configured: outage attestation from a rejected publisher is not evidence" awaiting
+  fi
 fi
 
 if [ "$failures" -ne 0 ]; then

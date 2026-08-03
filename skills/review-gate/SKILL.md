@@ -76,7 +76,13 @@ transient API error must never flip a healthy PR's merge state. More than
 of a review or comment (exact match on the bot login) or the exact
 check/status context on repos where every publisher is trusted. A comment
 body is never trusted to establish trust — it is read only to BIND evidence
-to a commit, so a stale comment cannot vouch for a later push.
+to a commit, so a stale comment cannot vouch for a later push. Where PR
+workflows hold `statuses:write`, the opt-in
+`REVIEW_GATE_STATUS_PUBLISHER_REJECT` list rejects statuses minted by a
+forgeable creator login (typically `github-actions[bot]`) on both the
+trusted-context and outage-context reads; App-posted statuses (creator
+null) are never rejected by a login entry, and the empty default leaves
+behavior unchanged.
 
 ## Scripts
 

@@ -231,6 +231,18 @@ REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
 # evidence only. SECURITY: same trusted-publisher model as
 # REVIEW_GATE_TRUSTED_STATUS_CONTEXTS. Empty disables.
 
+REVIEW_GATE_STATUS_PUBLISHER_REJECT = ""
+# Used by: review-gate (`review-predicate.sh`). Creator logins whose commit
+# statuses are never evidence — applied to BOTH the trusted-context and
+# outage-context status reads. SECURITY: where PR-triggered workflows hold
+# statuses:write, PR content can mint a status under any context through
+# github-actions[bot]; listing it closes that mint. Reject-list, not a
+# provenance requirement: App-posted statuses (creator null) are never
+# rejected by a login entry. Empty (default) disables — legitimate outage
+# attestation is Actions-posted on some repos. Recommended
+# "github-actions[bot]" for repos wanting the protection whose outage
+# attestation is NOT Actions-posted.
+
 REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
 # Used by: review-gate (`review-predicate.sh`). Logins whose review objects
 # at the exact head count as evidence. Empty = any non-author (compatible

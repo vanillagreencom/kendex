@@ -58,6 +58,20 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 # it only where every status publisher is trusted. Empty disables.
 REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
 
+# Status publisher reject-list: creator logins whose commit statuses are
+# never evidence, applied to BOTH the trusted-context and outage-context
+# status reads. SECURITY: on repos whose PR-triggered workflows hold
+# statuses:write, PR content can mint a status under any context through
+# github-actions[bot] — the one publisher identity PR code can wield;
+# listing it closes that mint. This is a reject-list for the forgeable
+# identity, not a provenance requirement: GitHub App statuses serialize
+# creator as null and a login entry never rejects them. Default is EMPTY
+# (filter disabled) because legitimate outage attestation is Actions-posted
+# on some repos (vstack's own sweep/refire included) — a shipped reject
+# would break those. Recommended "github-actions[bot]" for repos that want
+# the protection and whose outage attestation is NOT Actions-posted.
+REVIEW_GATE_STATUS_PUBLISHER_REJECT = ""
+
 # Review-object trust list: logins whose review objects at the exact head
 # count as evidence. Empty = any non-author (the compatible default; on
 # repos with outside read-access collaborators this means any drive-by

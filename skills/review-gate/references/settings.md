@@ -25,6 +25,7 @@ reserved all the same.
 | `REVIEW_GATE_COMMENT_REVIEWERS` | (empty) | `login:binding-pattern` pairs; first `:` splits; pattern is a literal prefix. Empty disables the source. |
 | `REVIEW_GATE_SHA_PREFIX_FLOOR` | `7` | Shortest sha prefix a comment may bind (4–40). |
 | `REVIEW_GATE_OUTAGE_CONTEXT` | `vstack-reviewer-outage` | Outage-attestation status context. Empty disables. |
+| `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | (empty) | Commit-status creator logins that are never evidence, on both the trusted-context and outage-context reads (typically `github-actions[bot]` — the publisher PR content can wield where PR workflows hold `statuses:write`). App-posted statuses serialize creator as null and are never rejected by a login entry. Empty disables — legitimate outage attestation is Actions-posted on some repos, so rejection is opt-in per repo. |
 | `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | (empty) | Review-object trust list. Empty = any non-author (compatible default). |
 | `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` | `any` counts any accepted review row; `approved` requires an APPROVED not withdrawn by a later CHANGES_REQUESTED from the same login. |
 | `REVIEW_GATE_MAX_RERUN_ATTEMPTS` | `5` | Refire rerun backstop for pathological ping-pong. |

@@ -48,6 +48,9 @@
 #                                             (first ':' splits; pattern is a literal prefix)
 #   REVIEW_GATE_SHA_PREFIX_FLOOR              (c) shortest sha prefix a comment may bind
 #   REVIEW_GATE_OUTAGE_CONTEXT                (d) attestation status context; empty disables
+#   REVIEW_GATE_STATUS_PUBLISHER_REJECT       (b,d) commit-status creator logins whose
+#                                             statuses are never evidence, ';'-separated;
+#                                             empty disables (opt-in per repo)
 #   REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS  (a) trust list; empty = any non-author
 #   REVIEW_GATE_REVIEW_OBJECT_MIN_STATE       (a) "any" (any review row) or "approved"
 #                                             (an APPROVED row not withdrawn by a later
@@ -76,6 +79,7 @@ SKIP_PATTERNS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;ski
 COMMENT_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 2
 SHA_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 2
 OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 2
+PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 2
 TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 2
 MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 2
 
@@ -269,10 +273,25 @@ while IFS= read -r ctx; do
     echo "::error::could not evaluate '$ctx' check-runs" >&2
     exit 2
   }
-  check_status="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" '
+  # Legacy commit statuses carry no app slug to reject on, but they do carry
+  # a creator: on repos whose PR-triggered workflows hold statuses:write, PR
+  # content can mint a status under ANY context through github-actions[bot] —
+  # the one publisher identity PR code can wield. The OPT-IN
+  # REVIEW_GATE_STATUS_PUBLISHER_REJECT list is the status-side mirror of the
+  # check-run app rejection above: a status whose creator login is listed is
+  # never evidence. It is a reject-list for the forgeable identity, NOT a
+  # provenance requirement — GitHub App statuses serialize creator as null,
+  # and null is not the forgeable identity, so a login entry never rejects
+  # it (deliberately unlike the no-app-slug check-run case, which fails
+  # closed). Empty (the shipped default) disables the filter: legitimate
+  # outage attestation is Actions-posted on some repos, so rejection is a
+  # per-repo choice.
+  check_status="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" --arg reject "$PUBLISHER_REJECT" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
+      | ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
       | [ .statuses[]
           | select(.context == $ctx and .state == "success")
+          | select((.creator.login // "") as $l | ($rj | index($l)) == null)
           | ((.description // "") | ascii_downcase) as $text
           | select(([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
         ] | length' <<<"$status_resp")" || {
@@ -354,8 +373,17 @@ fi
 # contexts above. See orch DEVELOPMENT.md "Reviewer-outage recognition".
 outageok=0
 if [ -n "$OUTAGE_CONTEXT" ]; then
-  outageok="$(jq --arg ctx "$OUTAGE_CONTEXT" \
-    '[.statuses[] | select(.context == $ctx and .state == "success")] | length' <<<"$status_resp")" || {
+  # The publisher reject-list applies here too — the outage relaxation is
+  # the highest-value status to forge, so a listed creator (typically
+  # github-actions[bot] where PR workflows hold statuses:write) must not be
+  # able to mint it. Same null-creator semantics as the trusted-context
+  # read above: App-posted statuses are never rejected by a login entry.
+  outageok="$(jq --arg ctx "$OUTAGE_CONTEXT" --arg reject "$PUBLISHER_REJECT" '
+    ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
+    | [ .statuses[]
+        | select(.context == $ctx and .state == "success")
+        | select((.creator.login // "") as $l | ($rj | index($l)) == null)
+      ] | length' <<<"$status_resp")" || {
     echo "::error::could not evaluate the reviewer-outage status" >&2
     exit 2
   }
