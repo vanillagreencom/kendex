@@ -23,6 +23,10 @@ ORCH_STATE_DIR = "tmp"
 PR_REVIEW_GATE = "review"
 PR_REVIEW_NUDGE_SECS = "600"
 PR_REVIEW_NUDGE = ""
+# Outage attestation WRITER key (orch approval-wait posts this context when
+# proceeding past genuine reviewer silence); must match the review-gate
+# reader (REVIEW_GATE_OUTAGE_CONTEXT below) or the attestation never lands.
+PR_REVIEW_OUTAGE_CONTEXT = "vstack-reviewer-outage"
 # Copilot publishes its analysis as the "copilot-pull-request-reviewer"
 # check-run; a success of that exact name on the current head satisfies the
 # review-received predicate when a clean re-analysis submits no review object

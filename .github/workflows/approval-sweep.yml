@@ -76,6 +76,10 @@ jobs:
       - name: Sweep open PRs
         run: |
           set -u
+          if [ ! -f skills/review-gate/scripts/approval-refire.sh ]; then
+            echo "::error::skills/review-gate/scripts/approval-refire.sh is missing on the default branch (bootstrap PR? deleted?); sweep aborted"
+            exit 1
+          fi
           # Full pagination (one array per page, slurped flat) — a fixed page
           # limit would silently leave PRs beyond it unswept forever.
           raw_prs="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate)" || {

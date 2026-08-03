@@ -112,6 +112,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: review-gate selftest against this repo's settings
         run: skills/review-gate/scripts/review-predicate-selftest.sh
 
