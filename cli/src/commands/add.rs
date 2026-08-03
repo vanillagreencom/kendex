@@ -223,11 +223,12 @@ fn build_source_options(
         {
             continue;
         }
-        // vstack#1038: stale registry entries pointing at an existing local
-        // dir without vstack source content (a consumer project recorded as
-        // its own source, vstack#1024) are noise in the picker. The source
-        // resolved for THIS run always stays listed — the user chose it.
-        if source != resolved.source && config::is_resolvable_non_source(&source) {
+        // vstack#1038: the current project recorded as its own source without
+        // being one (vstack#1024) is noise in the picker. Only the project's
+        // own self entry is judged — other local entries may be legitimate
+        // minimal sources (#1047 review). The source resolved for THIS run
+        // always stays listed — the user chose it.
+        if source != resolved.source && config::is_project_self_non_source(&source, project_root) {
             continue;
         }
         options.push(tui::RepoOption {
@@ -1424,23 +1425,30 @@ role: engineer
         assert_eq!(harnesses, vec![Harness::Codex]);
     }
 
-    /// vstack#1038: registry entries that expand to an existing local dir
-    /// without vstack source content (a consumer project recorded as its own
-    /// source, vstack#1024) must not appear in the interactive source picker.
-    /// Unresolvable paths are kept — a missing path proves nothing about its
-    /// content.
+    /// vstack#1038, rescoped in the #1047 review: the picker filters ONLY the
+    /// current project's own self entry, and only when the project lacks
+    /// vstack source content (a consumer project recorded as its own source,
+    /// vstack#1024). Other local entries are never judged — a registered
+    /// skills-only source is legitimate (explicit-path adds accept it), and a
+    /// missing path proves nothing about its content.
     #[test]
-    fn source_options_exclude_resolvable_non_source_entries() {
-        let root = tmpdir("picker-non-source");
-        let consumer = root.join("consumer-project");
+    fn source_options_exclude_only_the_current_project_self_entry() {
+        let root = tmpdir("picker-self-only");
+        let project = root.join("consumer-project");
+        let other_project = root.join("other-consumer-project");
+        let skills_only = root.join("skills-only-source");
         let genuine = root.join("genuine-source");
         let missing = root.join("unmounted");
-        std::fs::create_dir_all(&consumer).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&other_project).unwrap();
+        std::fs::create_dir_all(skills_only.join("skills/demo")).unwrap();
         write_canonical_source(&genuine);
 
         let registry = config::SourceRegistry {
             entries: vec![
-                consumer.display().to_string(),
+                project.display().to_string(),
+                other_project.display().to_string(),
+                skills_only.display().to_string(),
                 genuine.display().to_string(),
                 missing.display().to_string(),
                 "owner/custom".to_string(),
@@ -1455,25 +1463,33 @@ role: engineer
             persist: false,
         };
 
-        let options = build_source_options(&registry, &resolved, &root.join("project"));
+        let options = build_source_options(&registry, &resolved, &project);
         let sources: Vec<String> = options.iter().map(|o| o.source.clone()).collect();
 
         assert!(
-            !sources.contains(&consumer.display().to_string()),
-            "resolvable non-source entry must be filtered from the picker: {sources:?}"
+            !sources.contains(&project.display().to_string()),
+            "the current project's non-source self entry must be filtered: {sources:?}"
+        );
+        assert!(
+            sources.contains(&other_project.display().to_string()),
+            "local entries that are not the current project must be kept: {sources:?}"
+        );
+        assert!(
+            sources.contains(&skills_only.display().to_string()),
+            "a registered skills-only source must be kept: {sources:?}"
         );
         assert!(sources.contains(&genuine.display().to_string()));
         assert!(
             sources.contains(&missing.display().to_string()),
-            "unresolvable path entries must be kept: {sources:?}"
+            "missing-path entries must be kept: {sources:?}"
         );
         assert!(sources.contains(&"owner/custom".to_string()));
         let _ = std::fs::remove_dir_all(root);
     }
 
     /// The source resolved for THIS run always stays listed, even when it is
-    /// not a canonical source — the user explicitly chose it (e.g. a
-    /// project-skills-dir self-add, vstack#1024).
+    /// the current project's own non-source root — the user explicitly chose
+    /// it (e.g. a project-skills-dir self-add, vstack#1024).
     #[test]
     fn source_options_keep_the_resolved_source_even_if_non_source() {
         let root = tmpdir("picker-resolved-non-source");
@@ -1492,7 +1508,7 @@ role: engineer
             persist: false,
         };
 
-        let options = build_source_options(&registry, &resolved, &root.join("project"));
+        let options = build_source_options(&registry, &resolved, &consumer);
         assert!(
             options
                 .iter()
@@ -1851,6 +1867,9 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             } else {
                 registry.remember_for_project(&project_root, &resolved.source);
             }
+            // vstack#1038: opportunistic hygiene on the write path — drop a
+            // stale self entry left by an earlier project-local install.
+            registry.prune_project_self_non_source(&project_root);
             registry.save(&config::source_registry_path())?;
         }
         let agents = match agent_filter.as_deref() {
