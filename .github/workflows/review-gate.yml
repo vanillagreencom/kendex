@@ -1,6 +1,9 @@
 # vstack SELF-ADOPTION of its own review-gate engine (VST-10) — the PR-side
-# gate pair in the engine's SAFE posture (REVIEW_GATE_TRUST_PR_WORKFLOWS
-# "false", see skills/review-gate/references/adoption.md):
+# gate pair. REVIEW_GATE_TRUST_PR_WORKFLOWS is declared "true" (the engine's
+# deliberate self-evaluating re-affirmation — see vstack.settings.toml for
+# the full trade), because on pull_request events this DEFINITION rides the
+# PR head; the job split below is kept as defense in depth
+# (skills/review-gate/references/adoption.md):
 #
 #   evaluate  read-only permissions, checks out the PR's BASE revision and
 #             runs the base-revision predicate against the PR head's live
@@ -9,6 +12,9 @@
 #   post      statuses: write, NO checkout at all, posts the verdict as the
 #             gate commit status.
 #
+# Fork PRs: GitHub downgrades their token to read-only, so the post job
+# cannot write and the gate stays fail-closed at pending — this repo's
+# contribution model is collaborator branches (re-push a fork PR in-repo).
 # This job pair is BOTH the latency path (fresh heads get a pending status
 # immediately instead of waiting for the sweep) AND the first-success source:
 # approval-refire.sh deliberately never posts an initial success — it re-runs

@@ -270,14 +270,21 @@ cli/scripts/integration-check.sh         # integration check in a throwaway temp
 ## Merge flow (review-gate self-adoption, VST-10)
 
 - This repo runs its own review-gate engine: `review-gate.yml` is the
-  PR-side gate pair in the safe posture (read-only evaluate on the BASE
-  revision + a no-checkout post job; `REVIEW_GATE_TRUST_PR_WORKFLOWS =
-  "false"`) — it is both the latency path and the first-success source the
-  refire's rerun relies on. The default-branch-defined `approval-rerun.yml`
+  PR-side gate pair (read-only evaluate on the BASE revision + a no-checkout
+  post job) — both the latency path and the first-success source the
+  refire's rerun relies on. `REVIEW_GATE_TRUST_PR_WORKFLOWS = "true"` is the
+  engine's DELIBERATE self-evaluating re-affirmation, declared with eyes
+  open (see the settings comment): pull_request workflow definitions ride
+  the PR head, this is an effectively single-author steward-operated repo,
+  and the bootstrap property is wanted; the base-revision evaluate stays as
+  defense in depth. The default-branch-defined `approval-rerun.yml`
   (event-driven) and `approval-sweep.yml` (scheduled) converge drift and
   remain the writers of record; trust values live in `vstack.settings.toml`.
   `review-gate-queue.yml` posts the context on merge-group shas (queue
-  entries are post-approval by construction).
+  entries are post-approval by construction). Fork PRs: their read-only
+  token cannot post the gate, so they stay fail-closed at pending — this
+  repo's contribution model is collaborator branches; re-push a fork PR as
+  an in-repo branch to gate it.
 - Merge via `github.sh pr-merge` as always. With the merge queue enabled,
   a successful merge returns exit 75 (`QUEUED IN MERGE QUEUE`) and completes
   asynchronously — confirm with `await-mergeable` / `state == MERGED`
