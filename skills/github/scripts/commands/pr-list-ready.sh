@@ -116,9 +116,26 @@ main() {
         unknown_prs=$(echo "$prs" | jq '[.[] | select(.mergeable == "UNKNOWN")] | length')
     done
 
-    # Enrich with ready status
+    # Enrich with ready status.
+    # statusCheckRollup mixes two node shapes: CheckRun nodes carry
+    # .conclusion (empty/null while running), while StatusContext nodes
+    # (classic commit statuses) have NO conclusion at all — their result is
+    # .state (SUCCESS/PENDING/ERROR/FAILURE/EXPECTED). jq reads a missing
+    # field as null, so a conclusion-only predicate counts every
+    # StatusContext — including pending and failing ones — as passing.
+    # Judge each node by its own shape; anything neither passing nor failing
+    # (in-progress runs, PENDING/EXPECTED statuses) classifies as pending.
     local enriched
     enriched=$(echo "$prs" | jq '
+        def is_status_context: .__typename == "StatusContext" or (has("state") and .state != null);
+        def node_passing:
+            if is_status_context then .state == "SUCCESS"
+            else .conclusion == "SUCCESS" or .conclusion == "SKIPPED" or .conclusion == "CANCELLED"
+            end;
+        def node_failing:
+            if is_status_context then .state == "ERROR" or .state == "FAILURE"
+            else .conclusion == "FAILURE"
+            end;
         map({
             number,
             title,
@@ -127,8 +144,8 @@ main() {
             has_approved_review: ([.latestReviews[] | select(.state == "APPROVED")] | length > 0),
             has_changes_requested: ([.latestReviews[] | select(.state == "CHANGES_REQUESTED")] | length > 0),
             ci: (if (.statusCheckRollup | length) == 0 then "no_checks"
-                 elif (.statusCheckRollup | all(.conclusion == "SUCCESS" or .conclusion == "SKIPPED" or .conclusion == "CANCELLED" or .conclusion == null)) then "passing"
-                 elif (.statusCheckRollup | any(.conclusion == "FAILURE")) then "failing"
+                 elif (.statusCheckRollup | all(node_passing)) then "passing"
+                 elif (.statusCheckRollup | any(node_failing)) then "failing"
                  else "pending" end),
             mergeable: .mergeable,
             ready: (
@@ -136,7 +153,7 @@ main() {
                 ([.latestReviews[] | select(.state == "CHANGES_REQUESTED")] | length == 0) and
                 (.reviewDecision == "APPROVED" or ([.latestReviews[] | select(.state == "APPROVED")] | length > 0)) and
                 .mergeable == "MERGEABLE" and
-                ((.statusCheckRollup | length) == 0 or (.statusCheckRollup | all(.conclusion == "SUCCESS" or .conclusion == "SKIPPED" or .conclusion == "CANCELLED" or .conclusion == null)))
+                ((.statusCheckRollup | length) == 0 or (.statusCheckRollup | all(node_passing)))
             )
         })
     ')
