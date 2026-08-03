@@ -363,6 +363,13 @@ CFG_CONTEXTS="mech-ctx"
 checkrun "mech-ctx" success "analysis complete" "github-actions"
 run "github-actions-published check-run under a trusted name is not evidence" awaiting
 
+# Fail closed on provenance too: a check run with NO app slug at all has
+# unprovable provenance and is not evidence either.
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[{name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.json"
+run "check-run with no app slug (unprovable provenance) is not evidence" awaiting
+
 # >100 threads is a SUCCESSFUL read we cannot fully verify: fail closed to
 # threads-open, never open the gate.
 reset

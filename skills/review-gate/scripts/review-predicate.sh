@@ -262,7 +262,7 @@ while IFS= read -r ctx; do
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | [ .check_runs[]
           | select(.name == $ctx and .conclusion == "success")
-          | select((.app.slug // "") != "github-actions")
+          | select(((.app.slug // "") != "") and ((.app.slug // "") != "github-actions"))
           | (((.output.title // "") + " " + (.output.summary // "")) | ascii_downcase) as $text
           | select(([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
         ] | length' <<<"$checkruns_resp")" || {
