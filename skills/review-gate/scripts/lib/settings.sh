@@ -28,6 +28,15 @@
 rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
                # a present-but-unparseable assignment (callers must propagate)
   local name="$1" default="$2" line val file
+  # The name is interpolated into ERE patterns below; constrain it to the
+  # identifier shape every real key has, so a metacharacter can neither
+  # misgrep nor inject pattern syntax.
+  case "$name" in
+    "" | *[!A-Za-z0-9_]*)
+      echo "::error::rg_setting: invalid key name '$name' (A-Za-z0-9_ only)" >&2
+      return 1
+      ;;
+  esac
   # Indirect expansion, not eval: a non-literal NAME must never become code.
   # ${!name+x} tests set-ness of the variable NAMED by $name (Bash 3.2-safe).
   if [ -n "${!name+x}" ]; then

@@ -24,6 +24,9 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 # run_setting FIXTURE-CONTENT NAME DEFAULT -> sets OUT and RC
 run_setting() {
   printf '%s\n' "$1" >"$TMP/settings.toml"
+  # Hermetic: rg_setting resolves a SET env var before the file, so a leaked
+  # variable from the invoking shell would mask every file-parsing case.
+  unset "$2" 2>/dev/null || true
   OUT=""
   RC=0
   OUT="$(REVIEW_GATE_SETTINGS_FILE="$TMP/settings.toml" rg_setting "$2" "$3" 2>"$TMP/err")" || RC=$?
