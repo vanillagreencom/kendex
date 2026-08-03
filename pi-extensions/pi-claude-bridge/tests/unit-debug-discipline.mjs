@@ -78,6 +78,10 @@ function runThrowingArgsProbeChild() {
 		`// the placeholder itself throw without String() around the reason.`,
 		`const symErr = new Error(); symErr.message = Symbol("sym-reason");`,
 		`debug("third-line", undefined, Symbol("naked-symbol"), () => { throw symErr; }, "tail");`,
+		`// JSON.stringify also returns undefined for an object whose toJSON`,
+		`// returns undefined — and that object's own toString can throw, so the`,
+		`// explicit-render fallback needs its own guard too.`,
+		`debug("fourth-line", { toJSON: () => undefined, toString: () => { throw new Error("hostile toString"); } }, "end");`,
 	].join("\n"));
 	const env = { ...process.env, PI_CODING_AGENT_DIR: join(dir, "agent") };
 	env.CLAUDE_BRIDGE_DIAG_PATH = join(dir, "diag.log");
@@ -104,6 +108,9 @@ describe("debug() formatting failures are non-fatal (vstack#1041)", () => {
 		// both — join() must not silently blank the slot), and an Error carrying
 		// a Symbol message cannot make the placeholder interpolation throw.
 		assert.match(log, /third-line undefined Symbol\(naked-symbol\) \[unprintable: Symbol\(sym-reason\)\] tail/);
+		// An object whose toJSON returns undefined reaches the explicit-render
+		// fallback as an arbitrary object; its hostile toString must not escape.
+		assert.match(log, /fourth-line \[unprintable: formatting failed\] end/);
 	});
 });
 

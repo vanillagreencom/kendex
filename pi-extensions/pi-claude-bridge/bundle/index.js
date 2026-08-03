@@ -26986,7 +26986,12 @@ function debug(...args) {
       return `[unprintable: ${reason}]`;
     }
     if (out !== void 0) return out;
-    return typeof a === "function" ? "undefined" : String(a);
+    if (typeof a === "function") return "undefined";
+    try {
+      return String(a);
+    } catch {
+      return "[unprintable: formatting failed]";
+    }
   };
   const msg = args.map(safeFmt).join(" ");
   try {

@@ -73,13 +73,20 @@ export function debug(...args: unknown[]) {
 			} catch { /* keep the constant */ }
 			return `[unprintable: ${reason}]`;
 		}
-		// JSON.stringify returns undefined (not a string) for undefined and
-		// Symbol arguments; render them explicitly instead of letting join()
-		// silently drop the slot. (A non-function arg here can only be
-		// undefined or a Symbol — String() is safe on both; a thunk that
-		// returned one of those renders as plain "undefined".)
+		// JSON.stringify returns undefined (not a string) for undefined,
+		// Symbol, AND objects whose toJSON returns undefined — render the
+		// slot explicitly instead of letting join() silently drop it. That
+		// last shape means `a` can be an arbitrary object here, and its
+		// toString can throw, so this conversion needs the same guard as the
+		// catch path. (A thunk that returned one of these renders as plain
+		// "undefined".)
 		if (out !== undefined) return out;
-		return typeof a === "function" ? "undefined" : String(a);
+		if (typeof a === "function") return "undefined";
+		try {
+			return String(a);
+		} catch {
+			return "[unprintable: formatting failed]";
+		}
 	};
 	const msg = args.map(safeFmt).join(" ");
 	try { appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`, { mode: 0o600 }); } catch { /* debug is best effort */ }
