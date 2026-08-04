@@ -80,7 +80,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
-          set -u
+          set -uo pipefail
           approve() {
             echo "approved=true" >>"$GITHUB_OUTPUT"
             echo "$1"
@@ -104,22 +104,42 @@ jobs:
           # review-gate.yml's read in this same event's runs — that run then
           # posts success, refire never reruns this head (a success already
           # exists), and the heavy jobs would stay skipped forever on an
-          # approved PR. Close it here: wait (bounded) for this head's
-          # "Review gate" runs to finish, then honor a posted success. Every
-          # read below fails toward keeping the explicit closed verdict —
-          # this is a hardening pass, not the decision.
+          # approved PR. Close it here: wait (bounded) for this head's gate
+          # workflow runs to EXIST and finish (matched by workflow PATH, not
+          # display name — rename-proof; and reaching the runs API before
+          # GitHub lists the sibling must not read a stale status), then
+          # honor a posted success. A read FAILURE in this pass routes by
+          # verdict: awaiting/threads-open are convergence-latency states
+          # where a glitch must not skip suites an approved head will never
+          # rerun (fail OPEN); changes-requested is an active objection
+          # (keep the skip).
           . skills/review-gate/scripts/lib/settings.sh
           ctx="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || ctx="Review gate"
+          read_failed() {
+            if [ "$verdict" = "changes-requested" ]; then
+              echo "approved=false" >>"$GITHUB_OUTPUT"
+              echo "review gate closed (changes-requested; $1): heavy jobs skip this attempt"
+              exit 0
+            fi
+            approve "gate closed ($verdict) but $1: failing open"
+          }
+          gate_wf="review-gate.yml"
+          seen=0
           for _ in $(seq 1 18); do
-            in_progress="$(gh api "repos/$GH_REPO/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100" --paginate \
-              | jq -s --arg n "Review gate" \
-                  '[.[].workflow_runs[]? | select(.name == $n and .status != "completed")] | length')" || break
-            [ "$in_progress" -eq 0 ] && break
+            runs_json="$(gh api "repos/$GH_REPO/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100" --paginate)" \
+              || read_failed "the runs listing failed"
+            sibling_total="$(jq -s --arg p "$gate_wf" '[.[].workflow_runs[]? | select(.path | endswith($p))] | length' <<<"$runs_json")" \
+              || read_failed "the runs listing was unparseable"
+            in_progress="$(jq -s --arg p "$gate_wf" '[.[].workflow_runs[]? | select((.path | endswith($p)) and .status != "completed")] | length' <<<"$runs_json")" \
+              || read_failed "the runs listing was unparseable"
+            if [ "$sibling_total" -gt 0 ]; then seen=1; fi
+            if [ "$seen" -eq 1 ] && [ "$in_progress" -eq 0 ]; then break; fi
             sleep 10
           done
-          state="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses" --paginate \
-            | jq -rs --arg ctx "$ctx" \
-                '[add // [] | .[] | select(.context == $ctx)] | (.[0].state // "absent")')" || state="unreadable"
+          statuses_json="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses" --paginate)" \
+            || read_failed "the status read failed"
+          state="$(jq -rs --arg ctx "$ctx" '[add // [] | .[] | select(.context == $ctx)] | (.[0].state // "absent")' <<<"$statuses_json")" \
+            || read_failed "the status payload was unparseable"
           if [ "$state" = "success" ]; then
             approve "posted '$ctx' status is success (the other reader saw newer evidence)"
           fi
