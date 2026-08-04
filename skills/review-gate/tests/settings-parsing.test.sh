@@ -77,5 +77,15 @@ run_setting 'REVIEW_GATE_OK = "x"' 'REVIEW_GATE.DOT' "dflt"
 run_setting '_REVIEW_GATE_U = "u1"' _REVIEW_GATE_U "dflt"
 [[ "$RC" -eq 0 && "$OUT" == "u1" ]] && ok "underscore-prefixed name stays valid (control)" || bad "underscore-prefixed name stays valid (control)" "rc=$RC out=$OUT"
 
+echo "=== dash-prefixed settings path is a filename, never grep options ==="
+# Without `--` before "$file", a relative path like "-e" parses as a grep
+# OPTION: the presence probe errors, and the reader silently falls back to the
+# caller default — fail-open on permissive defaults (hyprtrade#515 review,
+# qodo). Red-first: fails against a build without the -- terminators.
+printf 'REVIEW_GATE_TD = "dashfile"\n' > "$TMP/-e"
+OUT=""; RC=0
+OUT="$(cd "$TMP" && unset REVIEW_GATE_TD 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="-e" rg_setting REVIEW_GATE_TD "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "dashfile" ]] && ok "dash-prefixed settings path reads its value (no option-injection fallback)" || bad "dash-prefixed settings path reads its value (no option-injection fallback)" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

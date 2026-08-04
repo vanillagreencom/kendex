@@ -53,16 +53,16 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     # — anchoring at column one made an indented duplicate bypass the
     # fail-loud guard and an indented sole assignment collapse silently to
     # the built-in default (vstack#1059).
-    if grep -Eq "^[[:space:]]*${name}[[:space:]]*=" "$file"; then
+    if grep -Eq "^[[:space:]]*${name}[[:space:]]*=" -- "$file"; then
       # File-wide matching (header contract) makes a re-assigned name
       # ambiguous — e.g. the same key under two tables. Silently taking the
       # first could read an unrelated table's value on a security-sensitive
       # path, so ambiguity is a configuration error.
-      if [ "$(grep -Ec "^[[:space:]]*${name}[[:space:]]*=" "$file")" -gt 1 ]; then
+      if [ "$(grep -Ec "^[[:space:]]*${name}[[:space:]]*=" -- "$file")" -gt 1 ]; then
         echo "::error::$file: $name is assigned more than once (keys are matched file-wide regardless of TOML table; each name must be unique in the file)" >&2
         return 1
       fi
-      line="$(grep -E "^[[:space:]]*${name}[[:space:]]*=" "$file" | head -n 1)"
+      line="$(grep -E "^[[:space:]]*${name}[[:space:]]*=" -- "$file" | head -n 1)"
       # A PRESENT assignment this parser cannot read (e.g. TOML array syntax
       # for a list key) must fail LOUDLY, never collapse to empty: an empty
       # value can silently widen the gate (empty trusted-logins = any
