@@ -19,6 +19,27 @@ Rules that keep the tags honest:
 
 Same family as the date-stamping rule below — both let a future reader judge how far to trust a line without re-deriving it.
 
+## Mailbox Collection Leaves A Receipt For One Cycle
+
+Agreed 2026-08-04 (memsira proposed, drovr accepted), after a same-hour collection was
+indistinguishable from a lost write: the drovr sender saw its entry vanish twice within
+seconds of writing, read it as a stale-buffer clobber, re-sent, and pinged the receiver
+directly — while the receiver had in fact recorded and acted on every item before the
+first deletion. A fast collector and a clobber look identical from the sender's side,
+and the mailbox file is untracked, so the sender has no history to check.
+
+The rule: **the receiver does not delete an acted entry immediately.** It annotates the
+entry in place with one line — `COLLECTED <date> → <receipts>` (the durable records:
+issue ids, PR numbers, doc paths) — and removes the entry on its NEXT mailbox pass, or
+after 24h, whichever comes first. The sender seeing the annotation knows the mail
+landed; the sender seeing deletion without ever seeing an annotation knows to check
+with the receiver before re-sending. Receipts follow the Recording Facts tags above:
+they name where the durable copy lives, because the annotation itself is about to be
+deleted too.
+
+Everything else about the mailbox (receiver deletes, mail-not-archive, steady state of
+zero-to-two entries) stands as written in the mailbox header.
+
 ## Deciding Which Repo Owns a Change
 
 **Ownership follows the dependency, not the vocabulary.** Ask one question: does this change need anything from another repo? If not, it is yours — however much shared language it borrows. "Shared" is a vibe and cannot be checked; the dependency question can. A mechanism can be upstream in one use and purely local in another; naming both with the same shared label makes the local half read as upstream-blocked and stalls it behind a repo that owes it nothing.
