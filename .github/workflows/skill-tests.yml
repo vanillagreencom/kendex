@@ -125,6 +125,7 @@ jobs:
           }
           gate_wf="review-gate.yml"
           seen=0
+          settled=0
           for _ in $(seq 1 18); do
             runs_json="$(gh api "repos/$GH_REPO/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100" --paginate)" \
               || read_failed "the runs listing failed"
@@ -133,9 +134,15 @@ jobs:
             in_progress="$(jq -s --arg p "$gate_wf" '[.[].workflow_runs[]? | select((.path | endswith($p)) and .status != "completed")] | length' <<<"$runs_json")" \
               || read_failed "the runs listing was unparseable"
             if [ "$sibling_total" -gt 0 ]; then seen=1; fi
-            if [ "$seen" -eq 1 ] && [ "$in_progress" -eq 0 ]; then break; fi
+            if [ "$seen" -eq 1 ] && [ "$in_progress" -eq 0 ]; then settled=1; break; fi
             sleep 10
           done
+          # Budget exhaustion is enforced, not ignored: a sibling that never
+          # appeared or never completed means the posted status below could
+          # be stale — route it like any other unprovable read.
+          if [ "$settled" -ne 1 ]; then
+            read_failed "the sibling gate run did not settle within the wait budget"
+          fi
           statuses_json="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses" --paginate)" \
             || read_failed "the status read failed"
           state="$(jq -rs --arg ctx "$ctx" '[add // [] | .[] | select(.context == $ctx)] | (.[0].state // "absent")' <<<"$statuses_json")" \
