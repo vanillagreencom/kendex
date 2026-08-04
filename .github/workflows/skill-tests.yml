@@ -5,6 +5,10 @@ name: Skill Tests
 # guards, second-opinion artifact gates, doc-contract lint teeth). Upstream
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
+#
+# The two heavy jobs run BEHIND THE REVIEW GATE (#1062) — the tier pattern
+# every consumer already runs, ported home. See the `gate` job below for the
+# full model (live predicate read, refire interplay, fail-open paths).
 
 "on":
   pull_request:
@@ -18,8 +22,119 @@ permissions:
   contents: read
 
 jobs:
+  # HEAVY JOBS RUN BEHIND THE REVIEW GATE (#1062). This job evaluates
+  # skills/review-gate/scripts/review-predicate.sh READ-ONLY (review-gate.yml
+  # and the refire/sweep pair stay the only writers of the "Review gate"
+  # commit status; this job holds no `statuses: write`), and the two heavy
+  # jobs skip while the gate is closed. Merge stays blocked by the pending
+  # gate STATUS, not by the skipped checks — a skipped required check
+  # satisfies rulesets, which is exactly what lets the heavy contexts keep
+  # reporting on every PR head.
+  #
+  # Refire interplay (approval-refire.sh): on the first awaiting→approved
+  # flip it re-runs this head's completed pull_request runs IN PLACE (never a
+  # separate review-triggered run — merge-queue enqueue counts every
+  # check-run on the head), and attempt N+1's copy of this job re-evaluates
+  # the LIVE review state, sees approved, and the heavy jobs execute. A live
+  # predicate read, deliberately NOT a read of the posted status: refire
+  # never posts success before re-running (review-gate.yml's own rerun posts
+  # it, typically a minute later), so at rerun start the posted status still
+  # reads pending and a status-read gate would skip the heavy jobs in exactly
+  # the attempt that must execute them — then never run them at all, because
+  # once success exists refire's re-approval fast path stops rerunning.
+  #
+  # FAIL-OPEN, enumerated — the heavy jobs run on:
+  #   (1) every non-pull_request event: push to main, and merge_group
+  #       entries, which are post-approval by construction (VST-10);
+  #   (2) predicate exit 2 or unparseable output — no verdict was reached
+  #       (transient API failure / broken config);
+  #   (3) this job failing outright: the heavy jobs' `if` skips only on an
+  #       explicit `approved == 'false'`, and `!cancelled()` keeps them
+  #       eligible when this job errors (its output is then empty);
+  #   (4) an approved verdict.
+  # ONLY an explicit awaiting / threads-open / changes-requested verdict
+  # skips them: a gating glitch may waste a run, never block work or merge.
+  gate:
+    name: Read the review gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: read
+      statuses: read
+      actions: read
+    outputs:
+      approved: ${{ steps.gate.outputs.approved }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Evaluate the review predicate (read-only)
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -u
+          approve() {
+            echo "approved=true" >>"$GITHUB_OUTPUT"
+            echo "$1"
+            exit 0
+          }
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            approve "non-PR event (${{ github.event_name }}): heavy jobs always run"
+          fi
+          if line="$(skills/review-gate/scripts/review-predicate.sh)"; then
+            verdict="${line#verdict=}"; verdict="${verdict%% *}"
+          else
+            verdict=""
+          fi
+          case "$verdict" in
+            awaiting|threads-open|changes-requested) ;;
+            approved) approve "review gate open: $line" ;;
+            *) approve "no verdict reached (fail-open): heavy jobs run" ;;
+          esac
+          # Closed verdict. One hole remains between the two independent
+          # predicate readers: evidence can land AFTER this read and BEFORE
+          # review-gate.yml's read in this same event's runs — that run then
+          # posts success, refire never reruns this head (a success already
+          # exists), and the heavy jobs would stay skipped forever on an
+          # approved PR. Close it here: wait (bounded) for this head's
+          # "Review gate" runs to finish, then honor a posted success. Every
+          # read below fails toward keeping the explicit closed verdict —
+          # this is a hardening pass, not the decision.
+          . skills/review-gate/scripts/lib/settings.sh
+          ctx="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || ctx="Review gate"
+          for _ in $(seq 1 18); do
+            in_progress="$(gh api "repos/$GH_REPO/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100" --paginate \
+              | jq -s --arg n "Review gate" \
+                  '[.[].workflow_runs[]? | select(.name == $n and .status != "completed")] | length')" || break
+            [ "$in_progress" -eq 0 ] && break
+            sleep 10
+          done
+          state="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses" --paginate \
+            | jq -rs --arg ctx "$ctx" \
+                '[add // [] | .[] | select(.context == $ctx)] | (.[0].state // "absent")')" || state="unreadable"
+          if [ "$state" = "success" ]; then
+            approve "posted '$ctx' status is success (the other reader saw newer evidence)"
+          fi
+          echo "approved=false" >>"$GITHUB_OUTPUT"
+          echo "review gate closed ($verdict; posted status: $state): heavy jobs skip this attempt — the pending/failing '$ctx' status is what blocks merge"
+
   skill-suites:
     name: Skill suites (shell + node)
+    needs: gate
+    # Job-level gate, not workflow-level `paths`/conditions: a SKIPPED job
+    # still reports its context, so rulesets stay satisfied while the pending
+    # "Review gate" status blocks merge. `!= 'false'` + `!cancelled()` is the
+    # fail-open half: only an explicit closed verdict skips — a failed gate
+    # job leaves `approved` empty and the suites run anyway.
+    if: ${{ !cancelled() && needs.gate.outputs.approved != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -127,6 +242,9 @@ jobs:
 
   cli-tests:
     name: CLI (cargo test + integration check)
+    needs: gate
+    # Same fail-open gate as skill-suites — see the `gate` job's model note.
+    if: ${{ !cancelled() && needs.gate.outputs.approved != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
