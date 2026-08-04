@@ -2,6 +2,10 @@
 
 Cross-harness distribution system for AI coding skills, agents, hooks, and Pi extensions. Installs into Claude Code, Cursor, OpenCode, Codex, and Pi via a Rust CLI.
 
+## Session handoffs
+
+Session handoff files live ONLY in `docs/handoff/` (git-ignored) — exactly one file, pruned each update to the minimum context a fresh session needs (no history/prose). Read it only when the user asks or starts a session from a handoff.
+
 ## Repo Layout
 
 ```

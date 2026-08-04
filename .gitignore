@@ -10,6 +10,8 @@ tmp/
 trees/
 docs/work-in-progress/
 docs/plans/
+# Session handoff files — machine-local steward state, never committed
+docs/handoff/
 
 # Harness install/runtime mirrors; canonical source lives elsewhere.
 # Match files, directories, and symlinks so worktree links stay invisible.
