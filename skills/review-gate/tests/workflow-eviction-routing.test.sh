@@ -68,7 +68,14 @@ check_rerun() {
   assert_grep "$file" 'group: review-gate-writer' "w1[$label]: shared writer group"
   assert_grep "$file" 'cancel-in-progress: false' "w1[$label]: replace, never cancel the executing writer"
   assert_job_level_group "$file" "$label"
-  assert_not_grep "$file" "github.event_name != 'status'" "w2[$label]: no job-level status filter (a skipped run still evicts)"
+  # A guard-skipped run never claims the job-level writer group, so status
+  # terms are priced on API cost, not eviction. The generic success-state
+  # term is REQUIRED (pending/failure statuses converge nothing and would
+  # act before a verdict exists); a CONTEXT-NAME term is FORBIDDEN (names
+  # are repo-specific ADAPT values, and a list that misses a reviewer's
+  # context strands that reviewer's clean path — the #1039 stuck gate).
+  assert_grep "$file" "github.event.state == 'success'" "w2[$label]: status arm filters to success states"
+  assert_not_grep "$file" 'github.event.context ==' "w2[$label]: no context-name filter on the status arm (#1039)"
   assert_grep "$file" 'export ALL_OPEN_PRS=1' "w3[$label]: every executing run converges all open PRs"
   assert_not_grep "$file" 'GITHUB_EVENT_NAME' "w3[$label]: no event-shape routing — every executing run takes the all-PRs path (the bootstrap fallback is the only PR-scoped branch)"
   assert_not_grep "$file" 'trailing all-PRs pass' "w3[$label]: no comment may claim a self-triggered trailing pass"
@@ -83,11 +90,22 @@ assert_job_level_group() {
   local file="$1" label="$2"
   # Order-independent: a top-level `concurrency:` (column one) is forbidden
   # anywhere in the file — YAML allows top-level keys after `jobs:` — and an
-  # indented (job-level) block must exist.
+  # indented (job-level) block must exist. The group line must sit INSIDE
+  # that block by indentation: deeper than the `concurrency:` key, with the
+  # block closed by the first non-comment line at the key's indent or
+  # shallower. A line-distance window accepted a `group:` belonging to a
+  # different job or a different mapping entirely.
   if grep -q '^concurrency:' "$file"; then
     FAIL=$((FAIL + 1))
     printf '  FAIL  w1[%s]: workflow-level concurrency block present (must sit at JOB level)\n' "$label"
-  elif ! awk '/^[[:space:]]+concurrency:/{c=NR} /group: review-gate-writer/{if (c && NR-c<=20) found=1} END{exit !found}' "$file"; then
+  elif ! awk '
+      /^[[:space:]]*(#|$)/ { next }
+      { match($0, /[^[:space:]]/); ind = RSTART - 1 }
+      inblk && ind <= cind { inblk = 0 }
+      inblk && /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/ { found = 1 }
+      /^[[:space:]]+concurrency:[[:space:]]*$/ { inblk = 1; cind = ind }
+      END { exit !found }
+    ' "$file"; then
     FAIL=$((FAIL + 1))
     printf '  FAIL  w1[%s]: the review-gate-writer group is not under a job-level concurrency block\n' "$label"
   else

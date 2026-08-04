@@ -34,8 +34,11 @@
 #     (GitHub suppresses token-authored events), so no later pass exists to
 #     recover the evicted work — the evictor does everything (#1039).
 #   - approval-sweep.yml (scheduled backstop)                 ALL_OPEN_PRS=1
-#     Also the only recovery for evictions by runs the job-level trust
-#     guards skip (which never execute the script at all).
+#     Backstop for transitions that emit no usable workflow event at all
+#     (thread resolution fires no trigger; dismissal residue coalesced away
+#     by pending-slot replacement). NOT an eviction-recovery path: a run the
+#     job-level trust guards skip never claims the job-level writer group,
+#     so it evicts nothing and there is nothing to recover.
 #   Single-PR mode (PR_NUMBER/HEAD_SHA) remains for direct invocation.
 #
 # Env (required): GH_TOKEN (or ambient gh auth), GH_REPO; PR_NUMBER and

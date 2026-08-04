@@ -254,7 +254,7 @@ assert_eq "$rc" "1" "r10: status-history read failure exits 1"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "r10: no action on history read failure"
 
 set +e
-out=$(env PATH="$TMP_ROOT/bin:$PATH" GH_REPO=acme/widgets HEAD_SHA=headsha \
+out=$(env -u PR_NUMBER PATH="$TMP_ROOT/bin:$PATH" GH_REPO=acme/widgets HEAD_SHA=headsha \
   REVIEW_GATE_SETTINGS_FILE=/dev/null \
   STUB_POST_LOG="$POST_LOG" STUB_RERUN_LOG="$RERUN_LOG" \
   STUB_VERDICT_LINE="$AWAITING" bash "$TMP_ROOT/scripts/approval-refire.sh" 2>&1)
@@ -330,12 +330,18 @@ echo "=== all-PRs mode (ALL_OPEN_PRS=1) ==="
 # No PR_NUMBER/HEAD_SHA/PR_AUTHOR: all-PRs mode enumerates them itself. The
 # timeout guard (where available) bounds the damage if the QUIESCE=0 default
 # regresses — a QUIESCE=1 all-PRs pass would sleep 30s per poll.
+# `env -u` scrubs QUIESCE and the single-PR identifiers from the INHERITED
+# environment: `env` alone passes them through, so a leaked QUIESCE from the
+# invoking shell would decide the unset-default cases instead of the
+# production default. Explicit cases still override via "$@" — assignments
+# are applied after removals.
 run_refire_all() {
   : > "$POST_LOG"
   : > "$RERUN_LOG"
   local -a runner=()
   command -v timeout >/dev/null 2>&1 && runner=(timeout 90)
-  env PATH="$TMP_ROOT/bin:$PATH" \
+  env -u QUIESCE -u PR_NUMBER -u HEAD_SHA -u PR_AUTHOR \
+    PATH="$TMP_ROOT/bin:$PATH" \
     GH_REPO=acme/widgets \
     REVIEW_GATE_SETTINGS_FILE=/dev/null \
     STUB_POST_LOG="$POST_LOG" STUB_RERUN_LOG="$RERUN_LOG" \

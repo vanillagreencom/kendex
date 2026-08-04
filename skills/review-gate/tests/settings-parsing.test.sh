@@ -63,5 +63,19 @@ run_setting 'REVIEW_GATE_T8 = ["array"]' REVIEW_GATE_T8 "dflt"
 run_setting '  REVIEW_GATE_T9 = ["array"]' REVIEW_GATE_T9 "dflt"
 [[ "$RC" -ne 0 ]] && grep -q "unsupported syntax" "$TMP/err" && ok "indented array syntax is a config error, not a silent default" || bad "indented array syntax is a config error, not a silent default" "rc=$RC out=$OUT"
 
+echo "=== invalid key names are refused before any interpolation ==="
+# The name reaches indirect expansion and is interpolated into ERE and sed
+# patterns; the identifier-shape rejection is the only thing standing between
+# a metacharacter name and pattern injection. Red-first: both refusal cases
+# fail against a build with the `case` guard deleted.
+run_setting 'REVIEW_GATE_OK = "x"' 9BADNAME "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "invalid key name" "$TMP/err" && ok "leading-digit name is refused" || bad "leading-digit name is refused" "rc=$RC out=$OUT"
+
+run_setting 'REVIEW_GATE_OK = "x"' 'REVIEW_GATE.DOT' "dflt"
+[[ "$RC" -ne 0 ]] && grep -q "invalid key name" "$TMP/err" && ok "regex-metacharacter name is refused (never reaches ERE interpolation)" || bad "regex-metacharacter name is refused (never reaches ERE interpolation)" "rc=$RC out=$OUT"
+
+run_setting '_REVIEW_GATE_U = "u1"' _REVIEW_GATE_U "dflt"
+[[ "$RC" -eq 0 && "$OUT" == "u1" ]] && ok "underscore-prefixed name stays valid (control)" || bad "underscore-prefixed name stays valid (control)" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

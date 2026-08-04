@@ -100,10 +100,14 @@ jobs:
       # event shape either had. No shape keeps a single-PR fast path — the
       # workflow's own token-authored status posts cannot re-trigger it (GitHub
       # suppresses token-authored events), so a "PR-specific survivor + trailing
-      # healing pass" design cannot exist here. The scheduled sweep remains the
-      # only guaranteed backstop for the one residue: a run whose job-level
-      # trust guard skips it still evicts and converges nothing — bounded at
-      # the sweep's 15-minute cadence.
+      # healing pass" design cannot exist here. A run the job-level trust guard
+      # skips never claims this group at all — job concurrency is claimed only
+      # after the job-level `if:` evaluates — so a skip evicts nothing and
+      # needs no recovery. The scheduled sweep remains the backstop for the
+      # transitions that emit no usable workflow event in the first place
+      # (thread resolution fires no trigger; dismissal residue coalesced away
+      # by pending-slot replacement) — bounded at the sweep's 15-minute
+      # cadence.
       group: review-gate-writer
       cancel-in-progress: false
     name: Re-fire CI after review
@@ -114,21 +118,24 @@ jobs:
     # line — same trust model as the predicate: the AUTHOR is what is trusted,
     # the body only narrows which comments are worth a re-fire.
     #
-    # `status` is deliberately ABSENT from this guard (#1039): the workflow
-    # enters the shared writer concurrency group BEFORE any job-level filter,
-    # so a status run skipped here would still have evicted the pending
-    # writer it replaced while converging nothing — an irrelevant status
-    # context could silently drop another PR's changes-requested convergence.
-    # Every run that executes — whatever its event shape — converges ALL
-    # open PRs (the routing below): the workflow's token-authored posts
-    # cannot re-trigger it, so an evicted writer's work is only recovered by
-    # the run that evicted it doing everything. The predicate re-derives
-    # every verdict from scratch, so a loose gate here can never cause a
-    # false approval, only work. The check_run/issue_comment guards stay:
-    # their event volume (every CI job completion, every human comment)
-    # makes running on all of them unaffordable — and with the group at job
-    # level a guard-skipped run never claims the writer slot, so the skip
-    # costs nothing.
+    # `status` carries NO context-name term (#1039), by design rather than
+    # omission: trusted status context names are repo-specific ADAPT values
+    # this expression cannot read from vstack.settings.toml, and a name list
+    # that misses a reviewer's context silently strands that reviewer's
+    # clean path forever — the exact stuck-gate #1039 closed. Filtering on
+    # STATE is a different thing and is kept generic below: clean-analysis
+    # evidence is only ever a `success` status, and converging on `pending`
+    # or `failure` states would act before a verdict exists (CodeRabbit
+    # posts `pending` on the same context mid-review), so the success term
+    # cannot strand anyone and drops the churn shapes. None of this is an
+    # eviction argument: with this group at JOB level, a guard-skipped run
+    # never claims the writer slot (job concurrency is claimed only after
+    # the job-level `if:` evaluates), so every term here is priced on API
+    # cost alone. The predicate re-derives every verdict from scratch, so a
+    # loose guard can never cause a false approval, only work; the
+    # check_run/issue_comment terms stay because their event volume (every
+    # CI job completion, every human comment) makes running on all of them
+    # unaffordable.
     #
     # Cost bound: an executing pass costs one paginated PR listing plus
     # ~6-8 API reads per open PR (the same bill as one scheduled sweep);
@@ -143,6 +150,7 @@ jobs:
     # 'chatgpt-codex-connector[bot]' / 'Reviewed commit' =
     # REVIEW_GATE_COMMENT_REVIEWERS login / binding pattern.
     if: >-
+      (github.event_name != 'status' || github.event.state == 'success') &&
       (github.event_name != 'check_run' || github.event.check_run.name == 'Devin Review') &&
       (github.event_name != 'issue_comment' || (github.event.issue.pull_request != null && github.event.comment.user.login == 'chatgpt-codex-connector[bot]' && contains(github.event.comment.body, 'Reviewed commit')))
     runs-on: ubuntu-latest

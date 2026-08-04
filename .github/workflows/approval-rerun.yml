@@ -91,28 +91,33 @@ jobs:
       # event shape either had. No shape keeps a single-PR fast path — the
       # workflow's own token-authored status posts cannot re-trigger it (GitHub
       # suppresses token-authored events), so a "PR-specific survivor +
-      # trailing healing pass" design cannot exist here. With this repo's
-      # triggers every run executes, so the sweep backstops only external
-      # oddities — bounded at its 15-minute cadence.
+      # trailing healing pass" design cannot exist here. A run the job-level
+      # guard skips never claims this group (job concurrency is claimed only
+      # after the job-level `if:` evaluates), so a skip evicts nothing; the
+      # sweep backstops the transitions that emit no usable event at all —
+      # bounded at its 15-minute cadence.
       group: review-gate-writer
       cancel-in-progress: false
     name: Re-fire CI after review
-    # NO job-level guard (#1039): the only triggers are pull_request_review
-    # (always gate-relevant to its own PR) and status. A status filter here
-    # would run AFTER concurrency slotting — a skipped status run would still
-    # have evicted the pending writer it replaced while converging nothing,
-    # silently dropping another PR's changes-requested convergence. Status
-    # runs therefore always execute — and every executing run, status or
-    # review-shaped, converges ALL open PRs (the routing below): the
-    # workflow's token-authored posts cannot re-trigger it, so an evicted
-    # writer's work is only recovered by the run that evicted it doing
-    # everything. (The group itself sits at job level, claimed only by jobs
-    # that actually run.) The predicate re-derives every verdict from
-    # scratch, so a missing filter can never cause a false approval, only
-    # work. No
-    # comment-form reviewer in this repo (the scaffold's issue_comment
-    # trigger is deliberately dropped, and so is check_run — see the trigger
-    # comment above).
+    # The guard filters status events to `success` STATE only, and nothing
+    # else: pull_request_review is always gate-relevant to its own PR, and
+    # clean-analysis evidence is only ever a success status — converging on
+    # `pending`/`failure` states would act before a verdict exists
+    # (CodeRabbit posts `pending` on the same context mid-review). No
+    # CONTEXT-NAME term, by design (#1039): trusted context names are
+    # config, not workflow-expression inputs, and a name list that misses a
+    # reviewer's context silently strands that reviewer's clean path. None
+    # of this is an eviction argument — the group sits at job level, so a
+    # guard-skipped run never claims the writer slot and the skip costs
+    # nothing; every executing run still converges ALL open PRs (the
+    # routing below), because the workflow's token-authored posts cannot
+    # re-trigger it and the pending slot REPLACES, so the run that
+    # displaced a writer must do everything. The predicate re-derives every
+    # verdict from scratch, so a loose guard can never cause a false
+    # approval, only work. No comment-form reviewer in this repo (the
+    # scaffold's issue_comment trigger is deliberately dropped, and so is
+    # check_run — see the trigger comment above).
+    if: github.event_name != 'status' || github.event.state == 'success'
     #
     # Cost bound: an all-PRs pass costs one paginated PR listing plus ~6-8
     # API reads per open PR (the same bill as one scheduled sweep); rerun
