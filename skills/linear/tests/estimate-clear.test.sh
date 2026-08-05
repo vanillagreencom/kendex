@@ -13,7 +13,13 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ISSUES_SH="$SCRIPT_DIR/../scripts/commands/issues.sh"
 TMP="$(mktemp -d)"
+export TMP
 trap 'rm -rf "$TMP"' EXIT
+# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel, from CWD — the
+# common.sh PROJECT_ROOT recompute overrides any inherited PROJECT_ROOT env
+# var) to this throwaway root. Without this, update_issue's cache
+# write-through lands in the real project's `.cache/linear` (vstack#43).
+git -C "$TMP" init -q -b main
 
 fails=0
 pass() { echo "PASS $*"; }
@@ -30,6 +36,7 @@ run_update() {
     shift
     CAPTURE_FILE="$capture" LINEAR_API_KEY_OVERRIDE=test-token \
         bash -uo pipefail -c '
+            cd "$TMP"
             capture="$CAPTURE_FILE"
             issues_sh="$1"
             shift
@@ -117,6 +124,7 @@ mkdir -p "$cache_dir"
 printf '%s' '[{"id":"uuid-1","identifier":"CC-1","title":"t","estimate":3,"state":{"name":"Todo","type":"unstarted"},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}]' >"$cache_dir/issues.json"
 LINEAR_API_KEY_OVERRIDE=test-token \
     bash -uo pipefail -c '
+        cd "$TMP"
         issues_sh="$1"
         cache_dir="$2"
         # shellcheck disable=SC1090
@@ -141,6 +149,7 @@ cap="$TMP/bulk-clear.json"
 out="$(
     CAPTURE_FILE="$cap" LINEAR_API_KEY_OVERRIDE=test-token \
         bash -uo pipefail -c '
+            cd "$TMP"
             capture="$CAPTURE_FILE"
             issues_sh="$1"
             # shellcheck disable=SC1090
@@ -164,6 +173,7 @@ fi
 out="$(
     LINEAR_API_KEY_OVERRIDE=test-token \
         bash -uo pipefail -c '
+            cd "$TMP"
             issues_sh="$1"
             # shellcheck disable=SC1090
             source "$issues_sh"

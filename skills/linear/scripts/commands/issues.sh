@@ -820,6 +820,10 @@ get_issue() {
 }
 
 create_issue() {
+    if cache_test_isolation_violation; then
+        cache_test_isolation_refusal
+        exit 1
+    fi
     local title=""
     local team=""
     local description=""
@@ -1136,6 +1140,10 @@ create_issue() {
 }
 
 update_issue() {
+    if cache_test_isolation_violation; then
+        cache_test_isolation_refusal
+        exit 1
+    fi
     local issue_id="$1"
     shift
 

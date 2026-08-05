@@ -8,8 +8,12 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
+mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin" "$TMP_ROOT/.cache/linear"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
+# throwaway root — without this, cache writes from `issues create` land in
+# the real project's `.cache/linear` (vstack#43).
+git -C "$TMP_ROOT" init -q -b main
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -85,19 +89,21 @@ run_create() {
   local payload_log="$4"
 
   : >"$payload_log"
-  PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=test-token \
-    CURL_PAYLOAD_LOG="$payload_log" \
-    LINEAR_PARENT_TEST_CASE="$scenario" \
-    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues create \
-      --title child \
-      --team Claude \
-      --project X \
-      --labels agent:rust \
-      --priority 3 \
-      --parent CC-557 \
-      --description c \
-      >"$stdout_file" 2>"$stderr_file"
+  (
+    cd "$TMP_ROOT" && \
+    PATH="$TMP_ROOT/bin:$PATH" \
+      LINEAR_API_KEY_OVERRIDE=test-token \
+      CURL_PAYLOAD_LOG="$payload_log" \
+      LINEAR_PARENT_TEST_CASE="$scenario" \
+      bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues create \
+        --title child \
+        --team Claude \
+        --project X \
+        --labels agent:rust \
+        --priority 3 \
+        --parent CC-557 \
+        --description c
+  ) >"$stdout_file" 2>"$stderr_file"
 }
 
 success_out="$TMP_ROOT/success.out"

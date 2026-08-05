@@ -103,6 +103,48 @@ cache_worktree_repair_script() {
 }
 
 # =============================================================================
+# TEST-FIXTURE POLLUTION GUARD (vstack#43)
+# =============================================================================
+# A test that forgets to isolate PROJECT_ROOT/CACHE_DIR into a throwaway dir
+# resolves the real project's `.cache/linear` instead of a fixture root, and
+# any write-through (create/update) merges synthetic fixture ids into the
+# live cache. That is exactly the vstack#43 incident: fake ids
+# (`child-uuid`/`issue-uuid`/`uuid-1`) landed in the real cache, and Linear's
+# `id: {in: [...]}` existence check rejects the whole `sync` on one
+# non-UUID/non-identifier entry — one unisolated test bricked every sync
+# thereafter.
+#
+# LINEAR_API_KEY_OVERRIDE is the documented test-only inline auth channel
+# (common.sh: "the explicit inline channel. Tests rely on it"). Combined with
+# a CACHE_DIR that resolves inside a real, cloned checkout (a configured git
+# `origin` remote) that already has synced issue data, that combination can
+# only mean an unisolated test about to write fixtures into real data. An
+# isolated test root (`mktemp -d` + `git init`, no remote added) never
+# matches. Fail closed rather than silently pollute.
+cache_test_isolation_violation() {
+    [[ -n "${LINEAR_API_KEY_OVERRIDE:-}" ]] || return 1
+    [[ -f "$CACHE_DIR/issues.json" ]] || return 1
+    local dir="$CACHE_DIR"
+    while [[ ! -d "$dir" && "$dir" != "/" && -n "$dir" ]]; do
+        dir="$(dirname "$dir")"
+    done
+    [[ -n "$dir" && -d "$dir" ]] || return 1
+    git -C "$dir" remote get-url origin >/dev/null 2>&1
+}
+
+cache_test_isolation_refusal() {
+    {
+        echo "Refusing: LINEAR_API_KEY_OVERRIDE is set (the test-only inline auth"
+        echo "channel) and CACHE_DIR resolves inside a real checkout with a"
+        echo "configured git 'origin' remote and existing synced issues (vstack#43):"
+        echo "  CACHE_DIR: $CACHE_DIR"
+        echo "An unisolated test would write fixture data into the real Linear"
+        echo "cache. Isolate PROJECT_ROOT/CACHE_DIR to a throwaway 'mktemp -d' +"
+        echo "'git init' root before invoking linear.sh."
+    } >&2
+}
+
+# =============================================================================
 # DIRECTORY & LIFECYCLE
 # =============================================================================
 

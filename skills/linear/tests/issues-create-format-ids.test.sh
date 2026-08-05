@@ -14,6 +14,10 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
+# throwaway root — without this, cache writes land in the real project's
+# `.cache/linear` (vstack#43).
+git -C "$TMP_ROOT" init -q -b main
 
 # Mocked curl: routes by GraphQL operation. issueCreate returns a fixed issue.
 cat >"$TMP_ROOT/bin/curl" <<'SH'
@@ -41,8 +45,8 @@ chmod +x "$TMP_ROOT/bin/curl"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
 run_create() {
-  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token \
-    bash "$LINEAR" issues create "$@"
+  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token \
+    bash "$LINEAR" issues create "$@")
 }
 
 # --- --format=ids (equals form): accepted, prints ONLY the identifier -----------

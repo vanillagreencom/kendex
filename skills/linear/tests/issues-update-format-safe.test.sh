@@ -17,6 +17,10 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
+# throwaway root — without this, cache writes from `issues update` land in
+# the real project's `.cache/linear` (vstack#43).
+git -C "$TMP_ROOT" init -q -b main
 
 # Mocked curl: routes by GraphQL operation. The updated issue carries a real
 # parent (PROJ-10) and a label so the safe formatter must surface parent_id and
@@ -47,8 +51,8 @@ chmod +x "$TMP_ROOT/bin/curl"
 LINEAR="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
 run_update() {
-  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
-    bash "$LINEAR" issues update "$@"
+  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
+    bash "$LINEAR" issues update "$@")
 }
 
 # --- --format=safe (equals form): accepted, emits safe issue with parent_id ------

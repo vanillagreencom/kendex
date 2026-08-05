@@ -10,6 +10,10 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
+# throwaway root — without this, cache writes land in the real project's
+# `.cache/linear` (vstack#43).
+git -C "$TMP_ROOT" init -q -b main
 
 # Mocked curl: routes by GraphQL operation, logs each request payload for assertions.
 cat >"$TMP_ROOT/bin/curl" <<'SH'
@@ -58,7 +62,7 @@ MD
 # --- create with --description-file --------------------------------------------
 create_log="$TMP_ROOT/create-payloads.jsonl"
 : >"$create_log"
-create_out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$create_log" \
+create_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$create_log" \
   bash "$LINEAR" issues create --title "New task" --team Claude --description-file "$desc_file")"
 
 if ! jq -e '.success == true and .identifier == "PROJ-1"' >/dev/null <<<"$create_out"; then
@@ -82,7 +86,7 @@ fi
 # --- update with --description-file --------------------------------------------
 update_log="$TMP_ROOT/update-payloads.jsonl"
 : >"$update_log"
-update_out="$(PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$update_log" \
+update_out="$(cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam CURL_PAYLOAD_LOG="$update_log" \
   bash "$LINEAR" issues update PROJ-1 --description-file "$desc_file")"
 
 if ! jq -e '.success == true' >/dev/null <<<"$update_out"; then
@@ -108,8 +112,8 @@ assert_fails() {
   local err_file="$TMP_ROOT/err.txt"
   local rc
   set +e
-  PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
-    bash "$LINEAR" "$@" >"$TMP_ROOT/out.txt" 2>"$err_file"
+  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
+    bash "$LINEAR" "$@") >"$TMP_ROOT/out.txt" 2>"$err_file"
   rc=$?
   set -e
   if [[ "$rc" -eq 0 ]]; then

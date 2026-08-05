@@ -12,6 +12,10 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+# Isolate CACHE_DIR resolution (git rev-parse --show-toplevel) to this
+# throwaway root — without this, cache writes land in the real project's
+# `.cache/linear` (vstack#43).
+git -C "$TMP_ROOT" init -q -b main
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -53,11 +57,11 @@ run_complete() {
   local payload_log="$2"
   shift 2
   : >"$payload_log"
-  PATH="$TMP_ROOT/bin:$PATH" \
+  (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
     CURL_PAYLOAD_LOG="$payload_log" \
     LINEAR_COMPLETE_TEST_CASE="$scenario" \
-    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues complete "$@"
+    bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues complete "$@")
 }
 
 # --- --summary-file posts the canonical comment, then transitions

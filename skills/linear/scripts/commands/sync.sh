@@ -414,6 +414,33 @@ reconcile_issues() {
         return
     fi
 
+    # Validate every cached id before it goes into the batch query. Linear's
+    # `id: {in: [...]}` filter validates each entry as UUID-or-identifier and
+    # rejects the WHOLE query on one malformed entry (vstack#43: a handful of
+    # test-fixture ids like `child-uuid` bricked every sync thereafter).
+    # Malformed entries can never be real Linear issues, so they are also
+    # purged from the cache below rather than kept around to re-poison every
+    # future reconcile.
+    local id_shape_regex='^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[A-Za-z][A-Za-z0-9]*-[0-9]+)$'
+    local valid_uuids invalid_uuids invalid_count
+    valid_uuids=$(echo "$cached_uuids" | grep -E "$id_shape_regex" || true)
+    invalid_uuids=$(echo "$cached_uuids" | grep -vE "$id_shape_regex" || true)
+    invalid_count=$(echo "$invalid_uuids" | grep -c . || true)
+    if (( invalid_count > 0 )); then
+        echo "Reconciliation: skipping $invalid_count cached id(s) that are neither a UUID nor a Linear identifier (pruning from cache): $(echo "$invalid_uuids" | tr '\n' ' ')" >&2
+    fi
+    if [[ -z "$valid_uuids" ]]; then
+        # Nothing valid to reconcile against the API, but still purge the
+        # malformed entries so a poisoned cache self-heals.
+        while IFS= read -r bad_id; do
+            [[ -n "$bad_id" ]] || continue
+            cache_remove_issue "$bad_id"
+        done <<<"$invalid_uuids"
+        echo "$invalid_count"
+        return
+    fi
+    cached_uuids="$valid_uuids"
+
     # Build JSON array of UUIDs
     local uuid_array
     uuid_array=$(echo "$cached_uuids" | jq -R . | jq -s .)
@@ -480,6 +507,11 @@ reconcile_issues() {
 
     # Append trashed/archived UUIDs
     echo "$all_nodes" | jq -r '[.[] | select(.trashed == true or .archivedAt != null)] | .[].id' >> "$tmp_deleted"
+
+    # Append the malformed ids skipped above so a poisoned cache self-heals.
+    if (( invalid_count > 0 )); then
+        echo "$invalid_uuids" >> "$tmp_deleted"
+    fi
 
     # Deduplicate and remove
     local remove_count=0
