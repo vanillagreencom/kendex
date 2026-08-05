@@ -116,9 +116,15 @@ jobs:
           set -u
           title="review-gate convergence sweep is failing (rolling incident)"
           body="Sweep run failed or was cancelled: $RUN_URL"
-          num="$(gh api "repos/$GH_REPO/issues?state=open&per_page=100" --paginate \
-            --jq "[.[] | select(.pull_request == null and .title == \"$title\")][0].number // empty" \
-            2>/dev/null | head -n 1)" || num=""
+          # A FAILED lookup must not fall through to "no open incident" — a
+          # transient read failure would then mint a duplicate rolling issue
+          # per failing run. Warn and stop; the next failing sweep retries.
+          if ! nums="$(gh api "repos/$GH_REPO/issues?state=open&per_page=100" --paginate \
+            --jq "[.[] | select(.pull_request == null and .title == \"$title\")][0].number // empty")"; then
+            echo "::warning::could not look up the rolling incident issue; skipping escalation for this run to avoid a duplicate ($RUN_URL)"
+            exit 0
+          fi
+          num="$(head -n 1 <<<"$nums")"
           if [ -n "$num" ]; then
             gh api -X POST "repos/$GH_REPO/issues/$num/comments" -f body="$body" >/dev/null \
               && echo "appended to rolling incident issue #$num" \

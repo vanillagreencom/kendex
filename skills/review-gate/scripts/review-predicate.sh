@@ -532,8 +532,9 @@ fi
 # exists at head and REVIEW_GATE_CARRY_FORWARD enables it, a qualifying
 # review OBJECT at an ancestor commit N still satisfies the evidence term if
 # the N→head diff classifies ENTIRELY into the enabled carry-safe classes:
-#   docs      every changed file is documentation (*.md/*.markdown or under
-#             docs/)
+#   docs      every changed file is documentation BY EXTENSION
+#             (*.md/*.markdown; a docs/-directory rule would carry
+#             executable files like docs/conf.py)
 #   comments  every changed file is a MODIFIED code file whose patch touches
 #             only full-line comments (per a conservative per-extension
 #             comment-token table; unknown extensions refuse)
@@ -636,7 +637,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
         | . as $f
         | (.filename // "") as $fn
         | if (($cl | index("docs")) != null)
-             and ($fn | (test("(^|/)docs/") or test("\\.(md|markdown)$")))
+             and ($fn | test("\\.(md|markdown)$"))
           then "docs"
           elif (($cl | index("comments")) != null)
                and ($f.status == "modified")

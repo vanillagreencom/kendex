@@ -1008,6 +1008,17 @@ CFG_CARRY="docs"
 compare_fix ahead "[$DOCS_DELTA,$CODE_DELTA]"
 run "carry: one non-carry-safe file refuses the whole delta" awaiting
 
+# The docs class is extension-based, never directory-based: docs/conf.py is
+# executable code living under docs/ and must refuse.
+DOCS_DIR_CODE_DELTA="$(delta_file "docs/conf.py" modified '@@ -1 +1 @@
+-extensions = []
++extensions = ["evil"]')"
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$DOCS_DIR_CODE_DELTA]"
+run "carry: a code file under docs/ refuses (extension rule, not directory)" awaiting
+
 reset
 carry_candidate
 CFG_CARRY="comments"
