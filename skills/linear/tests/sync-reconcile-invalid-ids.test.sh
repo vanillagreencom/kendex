@@ -24,7 +24,8 @@ VALID_UUID="11111111-1111-1111-1111-111111111111"
 
 printf '%s' "[
   {\"id\":\"$VALID_UUID\",\"identifier\":\"PROJ-1\",\"title\":\"real issue\",\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"},\"labels\":{\"nodes\":[]},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}},
-  {\"id\":\"child-uuid\",\"identifier\":\"CC-558\",\"title\":\"child\",\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"},\"labels\":{\"nodes\":[]},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}
+  {\"id\":\"child-uuid\",\"identifier\":\"CC-558\",\"title\":\"child\",\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"},\"labels\":{\"nodes\":[]},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}},
+  {\"id\":\"uuid-1\",\"identifier\":\"CC-1\",\"title\":\"t\",\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"},\"labels\":{\"nodes\":[]},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}
 ]" > "$ROOT/.cache/linear/issues.json"
 echo '[]' > "$ROOT/.cache/linear/projects.json"
 
@@ -75,7 +76,7 @@ if [[ $rc -ne 0 ]]; then
   exit 1
 fi
 
-if ! grep -q "skipping 1 cached id" <<<"$err"; then
+if ! grep -q "skipping 2 cached id" <<<"$err"; then
   echo "FAIL missing diagnostic naming the skipped malformed id: $err"
   exit 1
 fi
@@ -88,12 +89,16 @@ if jq -e '.variables.filter.id.in | index("child-uuid")' "$RECONCILE_LOG" >/dev/
   echo "FAIL malformed id 'child-uuid' was sent to the API: $(cat "$RECONCILE_LOG")"
   exit 1
 fi
+if jq -e '.variables.filter.id.in | index("uuid-1")' "$RECONCILE_LOG" >/dev/null 2>&1; then
+  echo "FAIL malformed id 'uuid-1' (lowercase identifier shape) was sent to the API: $(cat "$RECONCILE_LOG")"
+  exit 1
+fi
 if ! jq -e --arg id "$VALID_UUID" '.variables.filter.id.in | index($id)' "$RECONCILE_LOG" >/dev/null 2>&1; then
   echo "FAIL valid uuid was not sent to the API: $(cat "$RECONCILE_LOG")"
   exit 1
 fi
 
-if jq -e '[.[] | select(.id == "child-uuid")] | length == 0' "$ROOT/.cache/linear/issues.json" >/dev/null 2>&1; then
+if jq -e '[.[] | select(.id == "child-uuid" or .id == "uuid-1")] | length == 0' "$ROOT/.cache/linear/issues.json" >/dev/null 2>&1; then
   : # pruned, expected
 else
   echo "FAIL malformed cache entry 'child-uuid' was not pruned: $(cat "$ROOT/.cache/linear/issues.json")"

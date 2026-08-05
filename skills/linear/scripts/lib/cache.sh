@@ -114,15 +114,19 @@ cache_worktree_repair_script() {
 # non-UUID/non-identifier entry — one unisolated test bricked every sync
 # thereafter.
 #
-# LINEAR_API_KEY_OVERRIDE is the documented test-only inline auth channel
-# (common.sh: "the explicit inline channel. Tests rely on it"). Combined with
-# a CACHE_DIR that resolves inside a real, cloned checkout (a configured git
-# `origin` remote) that already has synced issue data, that combination can
-# only mean an unisolated test about to write fixtures into real data. An
-# isolated test root (`mktemp -d` + `git init`, no remote added) never
-# matches. Fail closed rather than silently pollute.
+# LINEAR_API_KEY_OVERRIDE is the inline auth channel tests rely on — but it
+# is also documented for legitimate one-off inline keys, so the combination
+# below is a strong heuristic, not proof: an override key plus a CACHE_DIR
+# that resolves inside a real, cloned checkout (a configured git `origin`
+# remote) that already has synced issue data almost always means an
+# unisolated test about to write fixtures into real data. An isolated test
+# root (`mktemp -d` + `git init`, no remote added) never matches. Fail
+# closed rather than silently pollute; a human running a deliberate inline
+# key against a real checkout sets LINEAR_INLINE_KEY_CACHE_OK=1 (the
+# refusal says so) — a marker no test sets.
 cache_test_isolation_violation() {
     [[ -n "${LINEAR_API_KEY_OVERRIDE:-}" ]] || return 1
+    [[ "${LINEAR_INLINE_KEY_CACHE_OK:-}" != "1" ]] || return 1
     [[ -f "$CACHE_DIR/issues.json" ]] || return 1
     local dir="$CACHE_DIR"
     while [[ ! -d "$dir" && "$dir" != "/" && -n "$dir" ]]; do
@@ -134,13 +138,15 @@ cache_test_isolation_violation() {
 
 cache_test_isolation_refusal() {
     {
-        echo "Refusing: LINEAR_API_KEY_OVERRIDE is set (the test-only inline auth"
-        echo "channel) and CACHE_DIR resolves inside a real checkout with a"
+        echo "Refusing: LINEAR_API_KEY_OVERRIDE is set (the inline auth channel"
+        echo "tests rely on) and CACHE_DIR resolves inside a real checkout with a"
         echo "configured git 'origin' remote and existing synced issues (vstack#43):"
         echo "  CACHE_DIR: $CACHE_DIR"
         echo "An unisolated test would write fixture data into the real Linear"
-        echo "cache. Isolate PROJECT_ROOT/CACHE_DIR to a throwaway 'mktemp -d' +"
-        echo "'git init' root before invoking linear.sh."
+        echo "cache. Tests: isolate PROJECT_ROOT/CACHE_DIR to a throwaway"
+        echo "'mktemp -d' + 'git init' root before invoking linear.sh."
+        echo "Deliberately using an inline key against this real checkout?"
+        echo "Set LINEAR_INLINE_KEY_CACHE_OK=1 to proceed."
     } >&2
 }
 

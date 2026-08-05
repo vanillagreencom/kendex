@@ -421,7 +421,10 @@ reconcile_issues() {
     # Malformed entries can never be real Linear issues, so they are also
     # purged from the cache below rather than kept around to re-poison every
     # future reconcile.
-    local id_shape_regex='^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[A-Za-z][A-Za-z0-9]*-[0-9]+)$'
+    # Identifier arm is UPPERCASE-only: Linear team keys are uppercase, and a
+    # lowercase pattern would re-accept leaked fixture ids shaped like
+    # `uuid-1` — one of the exact values this regression is about.
+    local id_shape_regex='^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[A-Z][A-Z0-9]*-[0-9]+)$'
     local valid_uuids invalid_uuids invalid_count
     valid_uuids=$(echo "$cached_uuids" | grep -E "$id_shape_regex" || true)
     invalid_uuids=$(echo "$cached_uuids" | grep -vE "$id_shape_regex" || true)
