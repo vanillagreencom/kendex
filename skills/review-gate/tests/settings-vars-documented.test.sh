@@ -23,9 +23,20 @@ for v in $vars; do
   # Env-only per-invocation seams, not settings keys — they must not appear
   # as settings assignments (REVIEW_GATE_SETTINGS_FILE overrides the file
   # path in tests; REVIEW_GATE_STATUS_SNAPSHOT_FILE hands one head's
-  # combined-status snapshot in from a converge-style caller).
+  # combined-status snapshot in from a converge-style caller). The absence
+  # is the contract: an assignment in either example would advertise a
+  # per-invocation seam as a repo setting, so it must FAIL here.
   case "$v" in
-    REVIEW_GATE_SETTINGS_FILE|REVIEW_GATE_STATUS_SNAPSHOT_FILE) continue ;;
+    REVIEW_GATE_SETTINGS_FILE|REVIEW_GATE_STATUS_SNAPSHOT_FILE)
+      for example in "$SKILL_DIR/vstack.settings.toml.example" \
+                     "$SKILL_DIR/../../vstack.settings.toml.example"; do
+        [ -f "$example" ] || continue
+        if grep -q "^$v = " "$example"; then
+          echo "FAIL: $v is an env-only per-invocation seam but is assigned in $example"
+          fail=1
+        fi
+      done
+      continue ;;
   esac
   if ! grep -q "^$v = " "$SKILL_DIR/vstack.settings.toml.example"; then
     echo "FAIL: $v missing from the skill's vstack.settings.toml.example"
