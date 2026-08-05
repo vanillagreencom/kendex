@@ -97,7 +97,7 @@ check_rerun() {
   local file="$1" label="$2"
   assert_grep "$file" 'group: review-gate-writer' "w1[$label]: shared writer group"
   assert_grep "$file" 'cancel-in-progress: false' "w1[$label]: replace, never cancel the executing writer"
-  assert_job_level_group "$file" "$label"
+  assert_job_level_group "$file" "$label" "rerun"
   # A guard-skipped run never claims the job-level writer group, so status
   # terms are priced on API cost, not eviction. The generic success-state
   # term is REQUIRED (pending/failure statuses converge nothing and would
@@ -133,31 +133,40 @@ check_rerun() {
   assert_grep "$file" 'status: {}' "w5[$label]: status trigger declared (legacy-status evidence re-fire)"
 }
 
-# The writer group must be claimed at JOB level: job concurrency is claimed
-# only after the job-level `if:` evaluates, so a trust-guard-skipped run
-# never evicts a pending writer. A top-level group would re-open that hole.
+# Scoped exactly like rerun_job_if above: track membership in the NAMED
+# job's own mapping only, so a `group: review-gate-writer` that sits under a
+# sibling job (same file, same indentation shape) cannot satisfy the check.
+# Returns success iff the group is inside a `concurrency:` block that is
+# itself a direct field of that job (not a different job, not a nested step).
+job_level_group_present() {
+  local file="$1" job="$2"
+  awk -v job="$job" '
+    /^[[:space:]]*(#|$)/ { next }
+    { match($0, /[^[:space:]]/); ind = RSTART - 1 }
+    $0 ~ ("^  " job ":[[:space:]]*$") { injob = 1; next }
+    injob && ind <= 2 { injob = 0 }
+    injob && inblk && ind <= cind { inblk = 0 }
+    injob && inblk && /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/ { found = 1 }
+    injob && /^[[:space:]]+concurrency:[[:space:]]*$/ { inblk = 1; cind = ind }
+    END { exit !found }
+  ' "$file"
+}
+
+# The writer group must be claimed at JOB level, and specifically inside the
+# WRITER job itself: job concurrency is claimed only after the job-level
+# `if:` evaluates, so a trust-guard-skipped run never evicts a pending
+# writer. A top-level group would re-open that hole — and so would a
+# job-level group that sits on some OTHER job in the same file, since that
+# job's concurrency claim has nothing to do with this workflow's guarded
+# run.
 assert_job_level_group() {
-  local file="$1" label="$2"
-  # Order-independent: a top-level `concurrency:` (column one) is forbidden
-  # anywhere in the file — YAML allows top-level keys after `jobs:` — and an
-  # indented (job-level) block must exist. The group line must sit INSIDE
-  # that block by indentation: deeper than the `concurrency:` key, with the
-  # block closed by the first non-comment line at the key's indent or
-  # shallower. A line-distance window accepted a `group:` belonging to a
-  # different job or a different mapping entirely.
+  local file="$1" label="$2" job="$3"
   if grep -q '^concurrency:' "$file"; then
     FAIL=$((FAIL + 1))
     printf '  FAIL  w1[%s]: workflow-level concurrency block present (must sit at JOB level)\n' "$label"
-  elif ! awk '
-      /^[[:space:]]*(#|$)/ { next }
-      { match($0, /[^[:space:]]/); ind = RSTART - 1 }
-      inblk && ind <= cind { inblk = 0 }
-      inblk && /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/ { found = 1 }
-      /^[[:space:]]+concurrency:[[:space:]]*$/ { inblk = 1; cind = ind }
-      END { exit !found }
-    ' "$file"; then
+  elif ! job_level_group_present "$file" "$job"; then
     FAIL=$((FAIL + 1))
-    printf '  FAIL  w1[%s]: the review-gate-writer group is not under a job-level concurrency block\n' "$label"
+    printf '  FAIL  w1[%s]: the review-gate-writer group is not inside the %s job'"'"'s own concurrency block\n' "$label" "$job"
   else
     PASS=$((PASS + 1))
     printf '  ok    w1[%s]: concurrency group sits at job level\n' "$label"
@@ -168,7 +177,7 @@ check_sweep() {
   local file="$1" label="$2"
   assert_grep "$file" 'group: review-gate-writer' "w1[$label]: shared writer group"
   assert_grep "$file" 'cancel-in-progress: false' "w1[$label]: replace, never cancel"
-  assert_job_level_group "$file" "$label"
+  assert_job_level_group "$file" "$label" "sweep"
   assert_grep "$file" 'ALL_OPEN_PRS=1' "w7[$label]: sweep delegates to the script's all-PRs mode"
   assert_not_grep "$file" 'pulls?state=open' "w7[$label]: no duplicated enumeration in workflow YAML"
 }
@@ -179,6 +188,44 @@ assert_grep "$TEMPLATES/approval-rerun.yml" 'github.event.check_run.name ==' "w6
 assert_grep "$TEMPLATES/approval-rerun.yml" 'github.event.comment.user.login ==' "w6[template]: issue_comment trust guard retained"
 assert_not_grep "$TEMPLATES/approval-rerun.yml" 'converging all open PRs instead' "w6[template]: no residual single-PR resolution branches"
 check_sweep "$TEMPLATES/approval-sweep.yml" "template"
+
+echo "=== w1 must reject a sibling job's concurrency block (regression teeth) ==="
+# Move the rerun job's concurrency block to a fabricated sibling `decoy:`
+# job in an otherwise-untouched copy of the template. The old scan (any
+# indented `group: review-gate-writer` anywhere in the file) passed this;
+# job_level_group_present must reject it because the group no longer
+# belongs to the `rerun` job's own mapping.
+SIBLING_FIXTURE="$(mktemp)"
+awk '
+  /^  rerun:[[:space:]]*$/ {
+    print
+    print "  decoy:"
+    print "    concurrency:"
+    print "      group: review-gate-writer"
+    print "      cancel-in-progress: false"
+    next
+  }
+  /^    concurrency:[[:space:]]*$/ { skip = 1; next }
+  skip && /^      / { next }
+  { skip = 0 }
+  { print }
+' "$TEMPLATES/approval-rerun.yml" > "$SIBLING_FIXTURE"
+
+if job_level_group_present "$SIBLING_FIXTURE" "rerun"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  w1[negative]: sibling job'"'"'s group must not satisfy the rerun job'"'"'s own check\n'
+else
+  PASS=$((PASS + 1))
+  printf '  ok    w1[negative]: sibling-job concurrency group correctly rejected\n'
+fi
+if job_level_group_present "$SIBLING_FIXTURE" "decoy"; then
+  PASS=$((PASS + 1))
+  printf '  ok    w1[negative]: sanity check — the decoy job'"'"'s own group is still detected\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  w1[negative]: sanity check failed — job_level_group_present missed a group inside its own job\n'
+fi
+rm -f "$SIBLING_FIXTURE"
 
 echo "=== shared script owns the enumeration ==="
 assert_grep "$SKILL_ROOT/scripts/approval-refire.sh" 'pulls?state=open' "w7[script]: open-PR enumeration lives in approval-refire.sh"
