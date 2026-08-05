@@ -711,7 +711,6 @@ current_checkout_path_for_issue() {
   printf '%s\n' "$current_root"
 }
 
-# Symlink a path from main repo into worktree (handles tracked dirs with assume-unchanged)
 # Idempotently append a worktree-relative path to the COMMON git-dir's
 # info/exclude so git treats the symlink we lay down as ignored content.
 # Required because .gitignore patterns with a trailing slash (e.g. `.agents/`)
@@ -800,6 +799,79 @@ atomic_symlink_swap() {
   return 1
 }
 
+# Provision a WORKTREE_SYMLINKS directory entry that shadows tracked paths by
+# linking its UNTRACKED children individually (VST-37). Linking the parent
+# wholesale forced the tracked files underneath it assume-unchanged, so git
+# could no longer WRITE them in the worktree: checkout/merge/cherry-pick
+# touching the tracked subtree failed while `git status` looked clean, and a PR
+# updating that subtree could not be taken in any worktree. Instead the entry
+# stays a REAL directory, tracked paths stay real files git owns, and each
+# untracked child gets the ordinary symlink treatment — recursing into children
+# that mix tracked and untracked content. Same result as hand-enumerating the
+# untracked subpaths in WORKTREE_SYMLINKS, with nothing to maintain per
+# consumer (a newly installed skill is linked on the next create/repair).
+link_untracked_children() {
+  local path="$1" wt="$2" depth="${3:-0}"
+  local src="$PROJECT_ROOT/$path"
+  local dst="$wt/$path"
+  local child="" name="" rel="" shadowed="" f="" unresolved=""
+
+  # Symlinked sources make the tracked/untracked walk cyclic; eight levels is
+  # far beyond any real layout, so deeper nesting is reported, not resolved.
+  if [[ "$depth" -ge 8 ]]; then
+    echo "Warning: WORKTREE_SYMLINKS entry '$path' nests tracked content deeper than 8 levels; its children were not linked." >&2
+    return 0
+  fi
+
+  # A parent link from an earlier run (or an older skill version) hides the
+  # tracked files and holds their assume-unchanged bits: undo both, then
+  # restore only the tracked files that are MISSING — a blanket checkout of
+  # the pathspec would also revert files the branch legitimately modified.
+  shadowed="$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)"
+  if [[ -L "$dst" ]] && ! rm -f "$dst" 2>/dev/null; then
+    echo "Warning: could not replace the '$path' symlink in $wt with a real directory; its tracked files stay shadowed." >&2
+    return 0
+  fi
+  if ! mkdir -p "$dst" 2>/dev/null; then
+    echo "Warning: could not create '$path' in $wt; tracked files under it may be missing." >&2
+    return 0
+  fi
+  if [[ -n "$shadowed" ]]; then
+    printf '%s\n' "$shadowed" | \
+      xargs -r git -C "$wt" update-index --no-assume-unchanged 2>/dev/null || true
+    while IFS= read -r f; do
+      [[ -n "$f" && ! -e "$wt/$f" && ! -L "$wt/$f" ]] || continue
+      git -C "$wt" checkout -- "$f" 2>/dev/null || true
+    done <<<"$shadowed"
+  fi
+
+  for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+    [[ -e "$child" || -L "$child" ]] || continue
+    name="${child##*/}"
+    rel="$path/$name"
+    if [[ -z "$(git -C "$wt" ls-files -- "$rel" "$rel/" 2>/dev/null)" ]]; then
+      # Nothing tracked here: ordinary symlink treatment, own exclude entry.
+      symlink_into_worktree "$rel" "$wt" || unresolved="$unresolved  - $rel (linking failed)"$'\n'
+    elif [[ -d "$child" ]]; then
+      link_untracked_children "$rel" "$wt" $((depth + 1))
+    elif [[ -f "$child" ]]; then
+      # A tracked file: git owns it in the worktree; the checkout's copy stays.
+      :
+    else
+      unresolved="$unresolved  - $rel (tracked, but not a regular file or directory in the main checkout)"$'\n'
+    fi
+  done
+
+  if [[ -n "$unresolved" ]]; then
+    {
+      echo "Warning: WORKTREE_SYMLINKS entry '$path' shadows tracked paths and these children could not be resolved:"
+      printf '%s' "$unresolved"
+      echo "  Tracked paths were left to git; narrow the entry to the untracked subpaths to silence this."
+    } >&2
+  fi
+  return 0
+}
+
 symlink_into_worktree() {
   local path="$1" wt="$2"
   local src="$PROJECT_ROOT/$path"
@@ -846,32 +918,18 @@ symlink_into_worktree() {
     # File/symlink destinations can be replaced by rename with no window at all.
     atomic_symlink_swap "$src" "$dst" || { rm -f "$dst"; ln -s "$src" "$dst"; }
   elif [[ -d "$src" ]]; then
-    # Directory symlink — if tracked by git, also mark files assume-unchanged
-    # to prevent staging issues. (The exclude entry above already hides the
-    # symlink itself; assume-unchanged covers the path's tracked contents.)
-    #
-    # This is right for a project migrating AWAY from committing harness config,
-    # but silently wrong when the project legitimately tracks files under the
-    # symlinked dir: assume-unchanged makes git refuse to write them in this
-    # worktree, so cherry-pick/checkout/merge fail with "local changes would be
-    # overwritten" while `git status` reports clean. Warn with the shadowed
-    # paths so the fix (narrow the symlink to the untracked subpaths) is
-    # obvious. Warn, not error — the migration case above is legitimate.
+    # Directory entry. When this worktree tracks files under it, linking the
+    # parent would shadow them (assume-unchanged left git unable to WRITE them:
+    # cherry-pick/checkout/merge failed while `git status` looked clean, and
+    # tracked files under a symlinked dir are the generator of link clobbering
+    # — a rebase that must write them replaces the symlink with a real
+    # directory). Act on the detection instead (VST-37): keep the entry a real
+    # directory and link only its untracked children.
     local shadowed
     shadowed="$(git -C "$wt" ls-files "$path/" 2>/dev/null)"
     if [[ -n "$shadowed" ]]; then
-      {
-        echo "Warning: WORKTREE_SYMLINKS entry '$path' shadows $(printf '%s\n' "$shadowed" | grep -c .) tracked file(s) in this worktree:"
-        printf '%s\n' "$shadowed" | sed 's/^/  - /'
-        echo "  They are now assume-unchanged here, so git cannot write them in this worktree"
-        echo "  (cherry-pick/checkout/merge will fail while 'git status' looks clean)."
-        echo "  Tracked files under a symlinked dir are the generator of link clobbering:"
-        echo "  a rebase/checkout that must write them WILL replace the '$path' symlink with"
-        echo "  a real directory until they are untracked (git rm --cached) in the project."
-        echo "  If the project still tracks these, narrow the entry to the untracked subpaths."
-      } >&2
-      printf '%s\n' "$shadowed" | \
-        xargs -r git -C "$wt" update-index --assume-unchanged 2>/dev/null
+      link_untracked_children "$path" "$wt"
+      return $?
     fi
 
     mkdir -p "$(dirname "$dst")"
@@ -916,6 +974,9 @@ warn_if_links_materialized() {
     # Only a path that SHOULD be a link and exists as a non-link is damage.
     [[ -e "$PROJECT_ROOT/$path" ]] || continue
     if [[ -e "$wt/$path" && ! -L "$wt/$path" ]]; then
+      # An entry with tracked content underneath is a real directory BY DESIGN
+      # (VST-37): per-child links live inside it, not a parent link.
+      [[ -d "$wt/$path" && -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]] && continue
       materialized="$materialized  - $path"$'\n'
     fi
   done
@@ -1245,6 +1306,16 @@ repair_worktree_links() {
     src="$PROJECT_ROOT/$path"
     dst="$wt/$path"
     [[ -e "$src" ]] || continue
+    # An entry with tracked content underneath never becomes a parent link
+    # (VST-37): its healthy state is a real directory holding per-child links,
+    # and symlink_into_worktree heals that state idempotently (clears stale
+    # assume-unchanged bits, restores missing tracked files, re-links
+    # untracked children). The quarantine path below would misread the child
+    # links as untracked data and refuse forever.
+    if [[ -d "$src" && -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]]; then
+      symlink_into_worktree "$path" "$wt" || blocked=true
+      continue
+    fi
     if [[ -L "$dst" ]]; then
       # Healthy steady state; also covers a link re-pointed at a moved main.
       [[ "$(readlink "$dst" 2>/dev/null || true)" == "$src" ]] && continue
@@ -1314,11 +1385,14 @@ repair_worktree_links() {
 # Undo symlink shadowing so git can check out through the configured paths
 # (#873, #874).
 #
-# `symlink_into_worktree` replaces a configured directory with a symlink and
-# marks the tracked files underneath it --assume-unchanged. Git then refuses any
-# checkout that would rewrite those paths — "Your local changes to the following
-# files would be overwritten by checkout", ending in "could not detach HEAD" —
-# so `git rebase` in the create --reuse/--restack path dies before it starts.
+# Since VST-37 `symlink_into_worktree` no longer links a directory entry with
+# tracked content underneath (it links the untracked children instead), but a
+# worktree provisioned by an older version can still hold the legacy state:
+# the configured directory replaced by a symlink and the tracked files under
+# it marked --assume-unchanged. Git then refuses any checkout that would
+# rewrite those paths — "Your local changes to the following files would be
+# overwritten by checkout", ending in "could not detach HEAD" — so `git
+# rebase` in the create --reuse/--restack path dies before it starts.
 # `git status --porcelain` is empty throughout, because assume-unchanged is
 # exactly what hides them, which is what makes the failure so confusing.
 #

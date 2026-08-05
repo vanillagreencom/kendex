@@ -56,43 +56,61 @@ git init -q --bare "$ROOT/origin.git"
 git -C "$MAIN" remote add origin "$ROOT/origin.git"
 git -C "$MAIN" push -q -u origin main
 
-# harness/ mirrors the real hazard shape: mostly untracked vstack-installed
-# content, with one tracked file underneath that survives materialization.
-mkdir -p "$MAIN/harness/skills"
-printf 'harness/**\n!harness/tracked.md\n' >"$MAIN/.gitignore"
+# Two entries cover both provisioning modes: harness/ mixes untracked
+# vstack-installed content with a tracked file (per-child links since VST-37),
+# runtime/ is untracked-only (plain parent symlink — the shape a rebase can
+# still materialize).
+mkdir -p "$MAIN/harness/skills" "$MAIN/runtime"
+printf 'harness/**\n!harness/tracked.md\nruntime/\n' >"$MAIN/.gitignore"
 printf 'installed\n' >"$MAIN/harness/skills/installed.txt"
 printf 'tracked\n' >"$MAIN/harness/tracked.md"
-printf 'WORKTREE_SYMLINKS="harness"\n' >"$MAIN/.env"
+printf 'state\n' >"$MAIN/runtime/state.json"
+printf 'WORKTREE_SYMLINKS="harness runtime"\n' >"$MAIN/.env"
 git -C "$MAIN" add .gitignore harness/tracked.md
 git -C "$MAIN" commit -q -m harness
 git -C "$MAIN" push -q origin main
 
 WT="$(cd "$MAIN" && "$WORKTREE_SCRIPT" create mat-check 2>/dev/null | tail -1)"
 
-echo "=== baseline: the link exists and push does not cry wolf ==="
-if [[ -L "$WT/harness" ]]; then ok "harness is a symlink after create"; else bad "harness is a symlink after create"; fi
+echo "=== baseline: links exist and push does not cry wolf ==="
+if [[ -L "$WT/runtime" ]]; then ok "runtime is a symlink after create"; else bad "runtime is a symlink after create"; fi
+# The tracked-content entry is a real directory with per-child links (VST-37),
+# and must NOT read as materialization damage.
+if [[ -d "$WT/harness" && ! -L "$WT/harness" && -L "$WT/harness/skills" ]]; then
+  ok "harness is a real dir with per-child links after create"
+else
+  bad "harness is a real dir with per-child links after create"
+fi
 set +e
 clean_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" push mat-check --no-rebase 2>&1)"
 set -e
 assert_lacks "$clean_out" "not symlinks" "no materialization warning on a healthy worktree"
 
-echo "=== push warns when the link has been materialized ==="
-# Exactly what a rebase leaves behind: a real directory with only the tracked
-# file, and the installed content gone.
-rm -f "$WT/harness"
-mkdir -p "$WT/harness"
-printf 'tracked\n' >"$WT/harness/tracked.md"
+echo "=== push warns when a link has been materialized ==="
+# Exactly what a rebase leaves behind: a real directory where the parent
+# symlink belongs, with the installed content gone.
+rm -f "$WT/runtime"
+mkdir -p "$WT/runtime"
 set +e
 warn_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" push mat-check --no-rebase 2>&1)"
 set -e
 assert_contains "$warn_out" "not symlinks" "push reports materialized harness paths"
-assert_contains "$warn_out" "harness" "the warning names the affected path"
+assert_contains "$warn_out" "runtime" "the warning names the affected path"
 assert_contains "$warn_out" "FROM THE MAIN CHECKOUT" "the warning sends the operator to the main checkout"
 assert_contains "$warn_out" "fix-links" "the warning names the recovery command"
 
 echo "=== fix-links from the main checkout restores it ==="
 (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
-if [[ -L "$WT/harness" ]]; then ok "fix-links restores the symlink"; else bad "fix-links restores the symlink"; fi
+if [[ -L "$WT/runtime" ]]; then ok "fix-links restores the symlink"; else bad "fix-links restores the symlink"; fi
+
+echo "=== a deleted per-child link is restored by fix-links ==="
+rm -f "$WT/harness/skills"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
+if [[ -L "$WT/harness/skills" && -f "$WT/harness/skills/installed.txt" ]]; then
+  ok "fix-links restores the per-child link"
+else
+  bad "fix-links restores the per-child link"
+fi
 
 echo "=== a missing support library fails loudly, not with a bare 127 ==="
 # The live incident's actual shape: the script's own lib vanished with the rest

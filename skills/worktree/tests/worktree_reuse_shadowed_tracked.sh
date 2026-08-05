@@ -2,12 +2,10 @@
 # `create --reuse` must be able to rebase a worktree whose WORKTREE_SYMLINKS
 # entries shadow tracked files (vstack #873, #874).
 #
-# Setup marks tracked files under a symlinked dir --assume-unchanged. Git then
-# refuses to check out any tree that changes those paths ("Your local changes to
-# the following files would be overwritten"), so `git rebase` dies before it can
-# detach HEAD — while `git status --porcelain` is empty, because assume-unchanged
-# is exactly what makes status ignore them. The reuse path must reconcile that
-# shadowing itself and restore the links afterwards.
+# Since VST-37 setup provisions such an entry as a REAL directory with only the
+# untracked children symlinked, so git owns the tracked paths and the rebase
+# writes them directly. The reuse path must still succeed, and re-applying
+# setup afterwards must keep the per-child layout intact.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -91,8 +89,13 @@ git -C "$ROOT/main" add -f harness/skills/tool.md other.txt
 git -C "$ROOT/main" commit -q -m 'advance main and touch tracked harness file'
 git -C "$ROOT/main" push -q origin main
 
-# Precondition the issues call out: git status is clean despite the shadowing.
+# The per-child layout: tracked file real, untracked sibling linked, clean status.
 assert_eq "$(git -C "$WT" status --porcelain)" "" "git status is clean before reuse"
+if [[ -e "$WT/harness" && ! -L "$WT/harness" ]]; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "harness is a real directory before reuse"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "harness is a real directory before reuse"
+fi
 
 set +e
 reuse_out="$( (cd "$ROOT/main" && "$WORKTREE_SCRIPT" create reuse-check --reuse) 2>&1 )"
@@ -112,14 +115,25 @@ assert_eq "$ancestor_status" "0" "origin/main is contained after reuse"
 # The branch commit survived the rebase.
 assert_contains "$(git -C "$WT" log --format=%s -3)" "feature work" "branch commit preserved"
 
-# Setup was reapplied: the harness path is a symlink again, not a materialized
-# directory, and it resolves to the main checkout's content.
-if [[ -L "$WT/harness" ]]; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "harness is a symlink again after reuse"
+# Setup was reapplied as the per-child layout: the entry is a real directory,
+# the rebase wrote the tracked file directly, and the untracked runtime child
+# is still a link into the main checkout.
+if [[ -e "$WT/harness" && ! -L "$WT/harness" ]]; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "harness is a real directory after reuse"
 else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "harness is a symlink again after reuse"
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "harness is a real directory after reuse"
 fi
-assert_eq "$(cat "$WT/harness/skills/tool.md" 2>/dev/null)" "v2" "harness resolves to main checkout content"
+if [[ -f "$WT/harness/skills/tool.md" && ! -L "$WT/harness/skills/tool.md" ]]; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "the tracked file is a real file after reuse"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "the tracked file is a real file after reuse"
+fi
+assert_eq "$(cat "$WT/harness/skills/tool.md" 2>/dev/null)" "v2" "the rebase wrote the tracked file"
+if [[ -L "$WT/harness/state.json" ]]; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "the untracked child is still symlinked after reuse"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "the untracked child is still symlinked after reuse"
+fi
 
 # And the worktree is still clean — the reconciliation must not leave the
 # shadowed paths reported as modified.

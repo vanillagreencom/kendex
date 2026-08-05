@@ -94,9 +94,14 @@ if [[ -z "$add_out" ]]; then pass "…with no ignore complaint"; else fail "…w
 assert_eq "$(git -C "$R/main" diff --cached --name-only)" "harness/skills/tool.md" "…and it actually staged"
 git -C "$R/main" reset -q
 
-# The worktree side must be unaffected: its symlink stays invisible.
-assert_eq "$(git -C "$WT" status --porcelain)" "" "worktree stays clean (symlink still ignored)"
-if [[ -L "$WT/harness" ]]; then pass "worktree path is a symlink"; else fail "worktree path is a symlink"; fi
+# The worktree side must be unaffected: the tracked-content entry is a real
+# directory with per-child links (VST-37), all invisible to status.
+assert_eq "$(git -C "$WT" status --porcelain)" "" "worktree stays clean (links still ignored)"
+if [[ -d "$WT/harness" && ! -L "$WT/harness" && -L "$WT/harness/state.json" ]]; then
+  pass "worktree path is a real dir with per-child links"
+else
+  fail "worktree path is a real dir with per-child links"
+fi
 
 # The whole point of the entry: remove must not need --force.
 set +e

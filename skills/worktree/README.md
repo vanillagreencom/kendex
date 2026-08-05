@@ -17,7 +17,7 @@ skills/worktree/
 Route by shape. `git checkout -- .agents` is **never** the recovery: the path holds no tracked content, so the command succeeds and changes nothing while the link stays broken.
 
 - `.agents` missing, or a real directory rather than a symlink (`test -L .agents` fails) → `worktree fix-links <ID|PATH>`, run **from the main checkout** (the worktree's own copy of the script is reached through the broken link).
-- A genuinely modified or corrupt **tracked** file → `git checkout -- <path>`, run in the checkout the file really lives in — the main checkout when the path sits under a configured symlink (a worktree write goes through the link into the main checkout, and `assume-unchanged` keeps `git status` clean in both).
+- A genuinely modified or corrupt **tracked** file → `git checkout -- <path>`, run in the checkout the file really lives in. Since VST-37 a tracked path under a configured directory entry is a real file in the worktree itself; only a legacy worktree still routes such a path through a parent link into the main checkout (with `assume-unchanged` keeping `git status` clean in both) — run `fix-links` first there, then recover at the real path.
 
 `fix-links` is also the repair after anything that can replace a configured symlink with tracked content: a manual rebase, a partially-completed `remove`, or a restack replay. A worktree whose `.agents` is not a symlink cannot be trusted for local verification until it is fixed.
 
@@ -154,7 +154,7 @@ Set non-sensitive project defaults in `vstack.settings.toml` under `[env]`. Exis
 | `BOT_REMOTE_NAME` / `BOT_REMOTE_URL` | Remote for bot pushes |
 
 Include `.env.local` in `WORKTREE_SYMLINKS` only when worktree sessions should share the main checkout's local secrets or personal overrides. Public settings should live in committed `vstack.settings.toml`.
-If a configured symlink path is already tracked in the worktree branch, the script marks that path assume-unchanged before replacing it so `git status` stays clean.
+If a configured symlink path is a tracked file in the worktree branch, the script marks it assume-unchanged before replacing it so `git status` stays clean. A **directory** entry that contains tracked files is not linked wholesale: it stays a real directory, tracked paths stay real files git can write, and only the untracked children are symlinked (see `references/config.md`).
 Configured setup paths (`WORKTREE_SYMLINKS`, `WORKTREE_COPIES`, `WORKTREE_MKDIRS`, and the path side of `WORKTREE_RELATIVE_SYMLINKS`) must be worktree-relative literal paths without `.`, `..`, absolute, backslash, or shell glob metacharacter components (`*`, `?`, `[`, `]`). A configured symlink path cannot also be, contain, or parent another configured setup path, because later mkdir/copy/link operations would follow the symlink target. Existing symlink parents are rejected before writes. Copy and mkdir destinations also reject leaf symlinks. File and relative-symlink destinations may replace an existing leaf symlink or file without following it, but refuse a real directory leaf.
 
 Example for sharing local env plus generated Claude assets while keeping `.claude/CLAUDE.md`

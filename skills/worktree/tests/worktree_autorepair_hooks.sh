@@ -71,13 +71,16 @@ git init -q --bare "$ROOT/origin.git"
 git -C "$MAIN" remote add origin "$ROOT/origin.git"
 git -C "$MAIN" push -q -u origin main
 
-# harness/ mirrors the incident shape: mostly ignored runtime content with one
-# tracked file underneath — the tracked skeleton git re-materializes.
-mkdir -p "$MAIN/harness/skills"
-printf 'harness/**\n!harness/tracked.md\n' >"$MAIN/.gitignore"
+# Two entries cover both provisioning modes: harness/ mixes ignored runtime
+# content with one tracked file (per-child links since VST-37), runtime/ is
+# untracked-only (plain parent symlink — the shape the quarantine machinery
+# still guards).
+mkdir -p "$MAIN/harness/skills" "$MAIN/runtime"
+printf 'harness/**\n!harness/tracked.md\nruntime/\n' >"$MAIN/.gitignore"
 printf 'installed\n' >"$MAIN/harness/skills/installed.txt"
 printf 'tracked\n' >"$MAIN/harness/tracked.md"
-printf 'WORKTREE_SYMLINKS="harness"\n' >"$MAIN/.env"
+printf 'state\n' >"$MAIN/runtime/state.json"
+printf 'WORKTREE_SYMLINKS="harness runtime"\n' >"$MAIN/.env"
 git -C "$MAIN" add .gitignore harness/tracked.md
 git -C "$MAIN" commit -q -m harness
 git -C "$MAIN" push -q origin main
@@ -108,7 +111,11 @@ set +e
 create_err="$( (cd "$MAIN" && "$WORKTREE_SCRIPT" create hook-check >"$TMP_ROOT/create.out") 2>&1)"
 set -e
 WT="$(tail -1 "$TMP_ROOT/create.out")"
-if [[ -L "$WT/harness" ]]; then ok "worktree created with harness symlink"; else bad "worktree created with harness symlink" "WT=$WT"; fi
+if [[ -d "$WT/harness" && ! -L "$WT/harness" && -L "$WT/harness/skills" && -L "$WT/runtime" ]]; then
+  ok "worktree created with per-child harness links and a runtime symlink"
+else
+  bad "worktree created with per-child harness links and a runtime symlink" "WT=$WT"
+fi
 
 if [[ -x "$HOOKS_DIR/$MARKER" ]]; then ok "helper installed and executable"; else bad "helper installed and executable"; fi
 if [[ -x "$HOOKS_DIR/post-checkout" ]]; then ok "post-checkout created executable"; else bad "post-checkout created executable"; fi
@@ -170,28 +177,44 @@ set -e
 if [[ "$failing_rc" -ne 0 ]]; then ok "a consumer hook ending nonzero still exits nonzero"; else bad "a consumer hook ending nonzero still exits nonzero" "rc=0 after composition"; fi
 if [[ "$passing_rc" -eq 0 ]]; then ok "a consumer hook ending zero still exits zero"; else bad "a consumer hook ending zero still exits zero" "rc=$passing_rc"; fi
 
-echo "=== a git operation auto-repairs a materialized tracked-skeleton dir ==="
-rm -f "$WT/harness"
-mkdir -p "$WT/harness"
-printf 'tracked\n' >"$WT/harness/tracked.md"
+echo "=== a git operation auto-repairs a materialized parent link ==="
+# What a checkout leaves for an untracked-only entry: a bare real directory.
+rm -f "$WT/runtime"
+mkdir -p "$WT/runtime"
 set +e
 repair_out="$(git -C "$WT" checkout -q --detach 2>&1; git -C "$WT" checkout -q hook-check 2>&1)"
 set -e
-if [[ -L "$WT/harness" ]]; then ok "post-checkout re-linked the materialized dir"; else bad "post-checkout re-linked the materialized dir" "$repair_out"; fi
-if [[ -f "$WT/harness/skills/installed.txt" ]]; then ok "installed content reachable through the restored link"; else bad "installed content reachable through the restored link"; fi
+if [[ -L "$WT/runtime" ]]; then ok "post-checkout re-linked the materialized dir"; else bad "post-checkout re-linked the materialized dir" "$repair_out"; fi
+if [[ -f "$WT/runtime/state.json" ]]; then ok "installed content reachable through the restored link"; else bad "installed content reachable through the restored link"; fi
 assert_contains "$repair_out" "auto-repair: restored symlink" "the repair is reported"
 
+echo "=== a git operation heals a per-child entry's missing links ==="
+# Damage to the tracked-content entry is a lost CHILD link, not a lost parent.
+rm -f "$WT/harness/skills"
+set +e
+child_out="$(git -C "$WT" checkout -q --detach 2>&1; git -C "$WT" checkout -q hook-check 2>&1)"
+set -e
+if [[ -L "$WT/harness/skills" && -f "$WT/harness/skills/installed.txt" ]]; then
+  ok "post-checkout re-linked the missing child"
+else
+  bad "post-checkout re-linked the missing child" "$child_out"
+fi
+if [[ -f "$WT/harness/tracked.md" && ! -L "$WT/harness/tracked.md" ]]; then
+  ok "the tracked file stays a real file through the heal"
+else
+  bad "the tracked file stays a real file through the heal"
+fi
+
 echo "=== untracked data under a materialized dir is never clobbered ==="
-rm -f "$WT/harness"
-mkdir -p "$WT/harness"
-printf 'tracked\n' >"$WT/harness/tracked.md"
-printf 'precious\n' >"$WT/harness/user-data.txt"
+rm -f "$WT/runtime"
+mkdir -p "$WT/runtime"
+printf 'precious\n' >"$WT/runtime/user-data.txt"
 set +e
 refuse_out="$(git -C "$WT" checkout -q --detach 2>&1; git -C "$WT" checkout -q hook-check 2>&1)"
 set -e
-if [[ -d "$WT/harness" && ! -L "$WT/harness" ]]; then ok "materialized dir with untracked data left in place"; else bad "materialized dir with untracked data left in place"; fi
-if [[ "$(cat "$WT/harness/user-data.txt" 2>/dev/null)" == "precious" ]]; then ok "untracked data intact"; else bad "untracked data intact"; fi
-assert_contains "$refuse_out" "harness/user-data.txt" "the warning names the untracked file"
+if [[ -d "$WT/runtime" && ! -L "$WT/runtime" ]]; then ok "materialized dir with untracked data left in place"; else bad "materialized dir with untracked data left in place"; fi
+if [[ "$(cat "$WT/runtime/user-data.txt" 2>/dev/null)" == "precious" ]]; then ok "untracked data intact"; else bad "untracked data intact"; fi
+assert_contains "$refuse_out" "runtime/user-data.txt" "the warning names the untracked file"
 assert_contains "$refuse_out" "refuses to destroy untracked data" "the warning states the refusal"
 assert_contains "$refuse_out" "fix-links" "the warning names the manual recovery command"
 
@@ -208,12 +231,20 @@ main_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$MAIN" 2>&1)"
 main_rc=$?
 set -e
 if [[ "$main_rc" -eq 0 && -z "$main_out" ]]; then ok "repair-links no-ops quietly for main"; else bad "repair-links no-ops quietly for main" "rc=$main_rc out=$main_out"; fi
-if [[ -d "$MAIN/harness" && ! -L "$MAIN/harness" ]]; then ok "main harness untouched"; else bad "main harness untouched"; fi
+if [[ -d "$MAIN/harness" && ! -L "$MAIN/harness" && ! -L "$MAIN/harness/skills" ]]; then ok "main harness untouched"; else bad "main harness untouched"; fi
+if [[ -d "$MAIN/runtime" && ! -L "$MAIN/runtime" ]]; then ok "main runtime untouched"; else bad "main runtime untouched"; fi
 
 echo "=== manual fix-links remains the way out of the blocked state ==="
+rm -rf "$WT/runtime"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
+if [[ -L "$WT/runtime" ]]; then ok "fix-links restores the link after the data is dealt with"; else bad "fix-links restores the link after the data is dealt with"; fi
 rm -rf "$WT/harness"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
-if [[ -L "$WT/harness" ]]; then ok "fix-links restores the link after the data is dealt with"; else bad "fix-links restores the link after the data is dealt with"; fi
+if [[ -d "$WT/harness" && ! -L "$WT/harness" && -L "$WT/harness/skills" && -f "$WT/harness/tracked.md" ]]; then
+  ok "fix-links rebuilds a deleted per-child entry (tracked file restored, children linked)"
+else
+  bad "fix-links rebuilds a deleted per-child entry (tracked file restored, children linked)"
+fi
 
 echo "=== a '-'-leading configured path cannot bypass the untracked-data guard ==="
 # Config normalization permits an entry beginning with '-'; a bare find would
@@ -225,12 +256,15 @@ git -C "$DASH_MAIN" init -q -b main
 git -C "$DASH_MAIN" config user.email test@example.com
 git -C "$DASH_MAIN" config user.name Test
 git -C "$DASH_MAIN" config commit.gpgsign false
-printf -- '-dash/**\n!-dash/tracked.md\n' >"$DASH_MAIN/.gitignore"
-printf 'tracked\n' >"$DASH_MAIN/-dash/tracked.md"
+# Untracked-only, so the entry keeps the parent-link shape whose quarantine
+# scan the '-' guard protects.
+printf -- '-dash/\n' >"$DASH_MAIN/.gitignore"
+printf 'runtime\n' >"$DASH_MAIN/-dash/runtime.md"
 printf 'WORKTREE_SYMLINKS="-dash"\n' >"$DASH_MAIN/.env"
-git -C "$DASH_MAIN" add .gitignore -- ./-dash/tracked.md
+git -C "$DASH_MAIN" add .gitignore
 git -C "$DASH_MAIN" commit -q -m base
 git -C "$DASH_MAIN" worktree add -q "$TMP_ROOT/dash-wt" -b dash-probe
+mkdir -p "$TMP_ROOT/dash-wt/-dash"
 printf 'precious\n' >"$TMP_ROOT/dash-wt/-dash/user-data.txt"
 set +e
 dash_out="$(cd "$DASH_MAIN" && "$WORKTREE_SCRIPT" repair-links "$TMP_ROOT/dash-wt" 2>&1)"
@@ -247,18 +281,16 @@ else
 fi
 assert_contains "$dash_out" "user-data.txt" "dash-path warning names the untracked file"
 
-echo "=== non-file entries and modified tracked files block the repair ==="
+echo "=== non-file entries block the repair ==="
 # FIFOs/sockets/devices and empty untracked dirs are data the old file-only
-# inventory missed; a tracked file with local edits (hidden from git status
-# by assume-unchanged) is data a name-only comparison missed.
-rm -f "$WT/harness"
-mkdir -p "$WT/harness/empty-sub"
-printf 'tracked\n' >"$WT/harness/tracked.md"
+# inventory missed.
+rm -f "$WT/runtime"
+mkdir -p "$WT/runtime/empty-sub"
 set +e
 empty_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
 empty_rc=$?
 set -e
-if [[ -d "$WT/harness" && ! -L "$WT/harness" && -d "$WT/harness/empty-sub" ]]; then
+if [[ -d "$WT/runtime" && ! -L "$WT/runtime" && -d "$WT/runtime/empty-sub" ]]; then
   ok "empty untracked subdir blocks and survives"
 else
   bad "empty untracked subdir blocks and survives" "$empty_out"
@@ -266,50 +298,51 @@ fi
 assert_contains "$empty_out" "empty untracked directory" "warning names the empty dir"
 if [[ "$empty_rc" -ne 0 ]]; then ok "blocked repair exits nonzero"; else bad "blocked repair exits nonzero" "rc=0"; fi
 
-rm -rf "$WT/harness"
-mkdir -p "$WT/harness"
-printf 'tracked\n' >"$WT/harness/tracked.md"
-if mkfifo "$WT/harness/pipe.fifo" 2>/dev/null; then
+rm -rf "$WT/runtime"
+mkdir -p "$WT/runtime"
+if mkfifo "$WT/runtime/pipe.fifo" 2>/dev/null; then
   set +e
   fifo_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
   set -e
-  if [[ -p "$WT/harness/pipe.fifo" ]]; then ok "FIFO blocks and survives"; else bad "FIFO blocks and survives" "$fifo_out"; fi
+  if [[ -p "$WT/runtime/pipe.fifo" ]]; then ok "FIFO blocks and survives"; else bad "FIFO blocks and survives" "$fifo_out"; fi
   assert_contains "$fifo_out" "pipe.fifo" "warning names the FIFO"
-  rm -f "$WT/harness/pipe.fifo"
+  rm -f "$WT/runtime/pipe.fifo"
 else
   ok "skipped: mkfifo unavailable"
 fi
+rm -rf "$WT/runtime"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
 
+echo "=== the per-child heal never reverts locally edited tracked files ==="
+# Restoration is for MISSING tracked files only; a branch's genuine edit to a
+# tracked file under the entry must ride through the heal untouched.
 printf 'tracked WITH LOCAL EDITS\n' >"$WT/harness/tracked.md"
 set +e
 edit_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
 set -e
 if [[ "$(cat "$WT/harness/tracked.md")" == "tracked WITH LOCAL EDITS" ]]; then
-  ok "locally-edited tracked file blocks and survives"
+  ok "locally-edited tracked file survives the heal"
 else
-  bad "locally-edited tracked file blocks and survives" "$edit_out"
+  bad "locally-edited tracked file survives the heal" "$edit_out"
 fi
-assert_contains "$edit_out" "local edits vs index" "warning names the divergence"
-rm -rf "$WT/harness"
-(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
+git -C "$WT" checkout -q -- harness/tracked.md
 
 echo "=== a newline-named file cannot slip through the line inventory ==="
 # A filename that is (or contains) a newline shreds the line-delimited
 # listing; the NUL-count cross-check must block rather than read it as empty.
-rm -f "$WT/harness"
-mkdir -p "$WT/harness"
-printf 'tracked\n' >"$WT/harness/tracked.md"
-printf 'sneaky\n' >"$WT/harness/"$'\n'
+rm -f "$WT/runtime"
+mkdir -p "$WT/runtime"
+printf 'sneaky\n' >"$WT/runtime/"$'\n'
 set +e
 nl_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
 set -e
-if [[ -d "$WT/harness" && ! -L "$WT/harness" && -f "$WT/harness/"$'\n' ]]; then
+if [[ -d "$WT/runtime" && ! -L "$WT/runtime" && -f "$WT/runtime/"$'\n' ]]; then
   ok "newline-named file blocks and survives"
 else
   bad "newline-named file blocks and survives" "$nl_out"
 fi
 assert_contains "$nl_out" "scan mismatch" "warning names the representation mismatch"
-rm -rf "$WT/harness"
+rm -rf "$WT/runtime"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
 
 echo "=== a failed scan blocks the repair instead of reading as empty ==="
