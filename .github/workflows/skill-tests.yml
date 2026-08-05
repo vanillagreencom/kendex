@@ -223,17 +223,25 @@ jobs:
           fi
           exit "$fail"
 
+      # Same double announcement as the skill suites above (#1029): inline
+      # where it happened, and a FAILED SUITES block at the end so a red
+      # job's tail names the culprits instead of showing only later suites.
       - name: hook suites
         run: |
           set -u
           fail=0
+          failed=""
           for t in hooks/tests/*.sh; do
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
               fail=1
+              failed="$failed $t"
             fi
           done
+          if [ "$fail" -ne 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
           exit "$fail"
 
       - name: deep-research node suite
