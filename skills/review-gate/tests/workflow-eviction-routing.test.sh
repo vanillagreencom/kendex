@@ -267,9 +267,12 @@ echo "=== shared script owns the enumeration ==="
 assert_grep "$SKILL_ROOT/scripts/approval-refire.sh" 'pulls?state=open' "w7[script]: open-PR enumeration lives in approval-refire.sh"
 assert_grep "$SKILL_ROOT/scripts/approval-refire.sh" 'ALL_OPEN_PRS' "w7[script]: all-PRs mode exists"
 
-# Live self-adoption copies: only present in the vstack repo layout.
+# Live self-adoption copies: only present in the vstack repo layout —
+# vendored consumers keep their skill under .agents/skills/, so the
+# ../../.github/workflows probe resolves outside the repo there and the
+# rerun/sweep files are absent.
 LIVE_DIR="$(cd "$SKILL_ROOT/../.." && pwd)/.github/workflows"
-if [ -f "$LIVE_DIR/approval-rerun.yml" ] && [ -d "$SKILL_ROOT/../../skills/review-gate" ]; then
+if [ -f "$LIVE_DIR/approval-rerun.yml" ]; then
   echo "=== live self-adoption copies ==="
   check_rerun "$LIVE_DIR/approval-rerun.yml" "live"
   check_sweep "$LIVE_DIR/approval-sweep.yml" "live"
