@@ -221,12 +221,14 @@ Rust and performance reference material now lives directly in the `rust`, `revie
 |---|---|
 | [`decider`](skills/decider/)* | Architectural decision document management and indexing. |
 | [`deep-research`](skills/deep-research/) | Exa-powered deep research and portable findings report generation. |
+| [`dep-radar`](skills/dep-radar/) | Sweeps pinned versions (SDKs, runtime binaries, npm/cargo deps, vendored forks, model weights), researches upstream, and applies upgrades with their fallout fixed in the same PR. |
 | [`github`](skills/github/)* | Bash CLI over the GitHub API for PR operations: threads, comments, reviews, CI logs, merging, and cross-PR analysis. |
 | [`html-artifact`](skills/html-artifact/) | Standalone HTML artifacts for plans, reports, reviews, explainers, prototypes, and custom editors. |
 | [`dev`](skills/dev/)* | Delegated implementation and review-fix issue workflows for dev agents. |
 | [`linear`](skills/linear/)* | Bash CLI over Linear's GraphQL API with local cache, mutation syncing, and structured output (issues, cycles, milestones, projects). |
 | [`orch`](skills/orch/)* | Primary-agent single work-item orchestration for Linear/GitHub issues: prepare, delegate, review, submit, merge, and launch handoff. Sub-agents do NOT load this directly. |
 | [`project-management`](skills/project-management/)* | TPM-driven planning, audits, roadmaps, and research-backed decomposition. |
+| [`review-gate`](skills/review-gate/)* | Org-wide PR merge gate driven by a single review-evidence predicate (approvals, trusted checks, comment-form passes, outage attestation), with convergence scripts and an offline decision-table selftest. |
 | [`reviewer`](skills/reviewer/)* | Strict code-review, whole-codebase review, and QA-review ethos, scope boundaries, workflows, and canonical finding/verdict JSON schema. Loaded by any `reviewer-*` agent. |
 | [`second-opinion`](skills/second-opinion/) | Cross-model review via the opposite AI CLI (Claude ↔ Codex). |
 | [`worktree`](skills/worktree/)* | Git worktree create/list/remove with env/config symlinks and per-worktree bot identity. |

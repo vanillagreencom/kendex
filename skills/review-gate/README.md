@@ -1,11 +1,57 @@
 # review-gate
 
-Org-wide PR review-gate engine. One vendored predicate script is the single
-source of truth for "is this PR head reviewed?"; a commit status posted from
-its verdict blocks merge without false reds; convergence scripts and two
-scaffold workflows keep the status current as review state changes; an
-offline decision-table selftest is the engine's portable proof, run ungated
-in every consumer's CI.
+Merges gated on real review evidence for the exact PR head — not just green
+CI. Repos whose reviews come from bots and humans that signal in different
+ways (approvals, clean-analysis checks, comment-form passes) get one shared
+predicate that answers "is this PR head reviewed?" and a commit status that
+blocks merge until the answer is yes.
+
+## What it offers
+
+- **One evidence predicate, several accepted forms.** A trusted-reviewer
+  approval is the obvious case, but the gate also accepts a trusted
+  clean-analysis check-run/status succeeding on the exact head, and a
+  comment-form clean pass from a trusted bot whose comment binds to that
+  head's sha — for reviewers that comment but never file a formal approval.
+- **Publisher-identity rejection.** Trust keys on the login GitHub controls
+  (a review's author, a check/status's exact context), never on comment
+  text, so a PR that only holds `statuses:write` can't mint its own passing
+  review evidence.
+- **Outage attestation fallback.** A trusted orchestrator can post a
+  genuine-silence attestation that substitutes for missing evidence — so a
+  credit-exhausted or down reviewer never stalls every PR — but it never
+  overrides an actual `changes-requested` or an unresolved thread.
+- **Fails closed, never flips silently.** Changes-requested and unresolved
+  review threads always block, even with other evidence present. A failed
+  evidence read is loud (exit 2, no verdict) — pending, not a false green.
+- **Convergence and refire.** As review state changes after the gate first
+  posts, convergence scripts keep the status current and can rerun the
+  gated jobs in place on the same head, capped against pathological
+  ping-pong.
+- **Offline decision-table selftest as portable proof.** No network, ~1s,
+  runs ungated in every consumer's CI — a broken predicate reds its own
+  selftest job rather than silently approving everything.
+
+Nothing repo-specific is hard-coded in the engine: consumers vendor
+`scripts/` via `vstack refresh` and configure trust per repo in
+`vstack.settings.toml`.
+
+## Who it's for
+
+Any repo whose merge gate needs to key on real review evidence rather than
+green CI alone — especially org-wide setups mixing bot reviewers (approve,
+comment-only, or check-run-only) with human reviewers. It needs project
+setup: a repo-owned CI gate job, one-time workflow scaffolds, and per-repo
+`REVIEW_GATE_*` settings — see [`SKILL.md`](./SKILL.md) for the status model
+and evidence sources, and [references/adoption.md](references/adoption.md)
+for wiring.
+
+Adoption follows one of three archetypes depending on what the repo already
+has (a from-scratch adopter, a repo with a minimal local predicate, or a
+repo with its own converge-based gate architecture) — `adoption.md` names
+each and states which shape a given adoption PR follows.
+
+## Files
 
 - `SKILL.md` — status model, evidence sources, trust model, settings keys.
 - `scripts/review-predicate.sh` — the predicate (verdict on stdout, exit 2 =
@@ -22,8 +68,7 @@ in every consumer's CI.
 - `references/adoption.md` — CI wiring (both trust postures), branch
   protection, merge-queue notes, per-repo settings, per-consumer adoption
   shapes.
+- `references/settings.md` — full `REVIEW_GATE_*` key table and the
+  security posture behind the trust-model settings.
 - `vstack.settings.toml.example` — commented per-repo defaults merged into a
   project's `vstack.settings.toml` on install/refresh.
-
-Per-repo trust lives in `vstack.settings.toml` (`REVIEW_GATE_*` keys) —
-nothing repo-specific is hard-coded in the engine.
