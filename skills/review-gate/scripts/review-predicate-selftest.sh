@@ -925,13 +925,15 @@ unset GH_SHIM_EMPTY
 # Status-snapshot seam (VST-35): a caller that already holds the combined
 # status hands it in; the predicate must evaluate against it WITHOUT its own
 # combined-status read (proven by failing that endpoint), and an unreadable
-# or malformed snapshot gets the read contract: exit 2.
+# or malformed snapshot gets the read contract: exit 2. The snapshot must be
+# BOUND to this head (top-level sha == HEAD_SHA, VST-71): a snapshot for
+# another head passing shape validation would evaluate stale evidence.
 reset
 CFG_CONTEXTS="mech-ctx"
-jq -n '{statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}' >"$fixtures/snapshot.json"
+jq -n --arg sha "$HEAD" '{sha:$sha,statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}' >"$fixtures/snapshot.json"
 CFG_SNAPSHOT="$fixtures/snapshot.json"
 export GH_SHIM_FAIL=status
-run "snapshot seam: caller-supplied combined status is evaluated, duplicate read skipped" approved
+run "snapshot seam: caller-supplied combined status (sha-bound) is evaluated, duplicate read skipped" approved
 unset GH_SHIM_FAIL
 
 reset
@@ -947,6 +949,37 @@ reset
 printf '[]\n' >"$fixtures/array-snapshot.json"
 CFG_SNAPSHOT="$fixtures/array-snapshot.json"
 run "snapshot seam: snapshot without a statuses array is exit 2" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n --arg sha "$OTHER" '{sha:$sha,statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}' >"$fixtures/stale-snapshot.json"
+CFG_SNAPSHOT="$fixtures/stale-snapshot.json"
+run "snapshot seam: snapshot bound to a DIFFERENT head is exit 2 (never stale evidence)" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}' >"$fixtures/unbound-snapshot.json"
+CFG_SNAPSHOT="$fixtures/unbound-snapshot.json"
+run "snapshot seam: snapshot with NO top-level sha is exit 2 (binding required)" "" 2
+
+# Combined-status page validation (VST-71): a nonempty NON-STATUS page (`{}`,
+# an error object) survives the zero-byte guard, and the old merge collapsed
+# its missing statuses into an empty list — a verdict from broken evidence.
+# Every page must be an object with a statuses array; anything else is a
+# broken read: exit 2, never an empty-evidence verdict.
+reset
+printf '{}\n' >"$fixtures/status.json"
+run "combined-status page without a statuses array is exit 2, not empty evidence" "" 2
+
+reset
+printf '[]\n' >"$fixtures/status.json"
+run "non-object combined-status page is exit 2" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+status_ctx "mech-ctx" success "analysis complete"
+printf '{}\n' >"$fixtures/status.page2.json"
+run "malformed combined-status page 2 poisons the merge: exit 2" "" 2
 
 # Read shapes (VST-35): the reviews and comments endpoints must request
 # per_page=100 — the 30-item default paginates long PRs into pure overhead.

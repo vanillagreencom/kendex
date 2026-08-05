@@ -35,18 +35,25 @@ reserved all the same.
 | `REVIEW_GATE_MAX_RERUN_ATTEMPTS` | `5` | Refire rerun backstop for pathological ping-pong. |
 | `REVIEW_GATE_TRUST_PR_WORKFLOWS` | `false` | Trust posture for the CI gate job (see Security below). Consumed by workflow wiring, not by the scripts. |
 
-Two env-only PER-INVOCATION seams are deliberately NOT settings keys (like
-`REVIEW_GATE_SETTINGS_FILE`, which overrides the settings-file path in
-tests):
+Two env-only PER-INVOCATION seams are deliberately NOT settings keys:
 
+- `REVIEW_GATE_SETTINGS_FILE` — overrides the settings-file path (e.g. in
+  tests, or a caller resolving settings for a different checkout). Which
+  file to resolve from is a property of one invocation, never of the repo
+  the file itself describes — a settings key naming its own settings file
+  would be circular.
 - `REVIEW_GATE_STATUS_SNAPSHOT_FILE` — path to a combined-status snapshot
-  (JSON object with a `statuses` array) the CALLER already holds. When set,
-  the predicate evaluates trusted-context and outage evidence against it
-  instead of fetching the combined status itself — a converge-style sweep
-  that reads the combined status for its own required-status projection
-  stops paying that read twice per head. The snapshot is bound to one head
-  at one moment, which is why it can never be a repo setting. An unreadable
-  or malformed snapshot gets the read contract: exit 2, no verdict.
+  (JSON object with a `statuses` array and a top-level `sha` equal to the
+  invocation's `HEAD_SHA` — the raw combined-status API response carries
+  both) the CALLER already holds. When set, the predicate evaluates
+  trusted-context and outage evidence against it instead of fetching the
+  combined status itself — a converge-style sweep that reads the combined
+  status for its own required-status projection stops paying that read
+  twice per head. The snapshot is bound to one head at one moment, which is
+  why it can never be a repo setting — and the `sha` requirement enforces
+  that binding: a snapshot for another head is refused. An unreadable,
+  malformed, or wrong-head snapshot gets the read contract: exit 2, no
+  verdict.
 
 # Security posture
 
