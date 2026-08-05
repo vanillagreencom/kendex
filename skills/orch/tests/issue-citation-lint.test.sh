@@ -9,9 +9,11 @@
 #
 # This lint scans every `skills/*/SKILL.md` and repo-root `agents/*.md` for:
 #   - `vstack#[0-9]+`               (the explicit-repo citation form)
-#   - a bare parenthetical `(#[0-9]{3,})` (the bare-issue citation form)
+#   - a bare parenthetical `(#[0-9]+)`   (the bare-issue citation form)
 # A parenthetical is required for the bare form so a hex color like
-# `#000000` (digits only, no parens) never false-positives.
+# `#000000` (digits only, no parens) never false-positives — the digit
+# count is not load-bearing for that, so short citations like `(#42)` are
+# still caught.
 #
 # Teeth: an offender injected into a copy of a scanned file must be flagged.
 set -euo pipefail
@@ -30,7 +32,7 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; }
 # scan <file> — prints "file:line: match" for every citation violation.
 scan() {
   local f="$1" hit
-  hit="$(grep -noE 'vstack#[0-9]+|\(#[0-9]{3,}\)' "$f" 2>/dev/null || true)"
+  hit="$(grep -noE 'vstack#[0-9]+|\(#[0-9]+\)' "$f" 2>/dev/null || true)"
   [[ -z "$hit" ]] && return 0
   while IFS=: read -r line match; do
     printf '%s:%s: %s\n' "$f" "$line" "$match"
@@ -38,11 +40,17 @@ scan() {
 }
 
 list_files() {
-  find "$REPO_ROOT/skills" -maxdepth 2 -name 'SKILL.md'
-  find "$REPO_ROOT/agents" -maxdepth 1 -name '*.md'
+  [[ -d "$REPO_ROOT/skills" ]] && find "$REPO_ROOT/skills" -maxdepth 2 -name 'SKILL.md'
+  [[ -d "$REPO_ROOT/agents" ]] && find "$REPO_ROOT/agents" -maxdepth 1 -name '*.md'
+  return 0
 }
 
 echo "=== issue-citation lint (skill/agent always-loaded markdown) ==="
+
+if [[ ! -d "$REPO_ROOT/skills" && ! -d "$REPO_ROOT/agents" ]]; then
+  echo "FAIL  neither $REPO_ROOT/skills nor $REPO_ROOT/agents exists — nothing to scan" >&2
+  exit 2
+fi
 
 offenders=""
 while IFS= read -r f; do
@@ -77,6 +85,15 @@ if [[ -n "$(scan "$SCRATCH")" ]]; then
   pass "lint flags an injected bare (#NNN) citation"
 else
   fail "lint MISSED an injected bare (#NNN) citation (no teeth)"
+fi
+
+SCRATCH="$TMP_ROOT/inject-short-bare-cite.md"
+cp "$REPO_ROOT/skills/orch/SKILL.md" "$SCRATCH"
+printf '\nSame command-shape class as before (#42).\n' >> "$SCRATCH"
+if [[ -n "$(scan "$SCRATCH")" ]]; then
+  pass "lint flags an injected short bare (#N) citation"
+else
+  fail "lint MISSED an injected short bare (#N) citation (no teeth)"
 fi
 
 SCRATCH="$TMP_ROOT/hex-color-false-positive.md"

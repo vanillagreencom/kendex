@@ -13,10 +13,14 @@ blocks merge until the answer is yes.
   clean-analysis check-run/status succeeding on the exact head, and a
   comment-form clean pass from a trusted bot whose comment binds to that
   head's sha — for reviewers that comment but never file a formal approval.
-- **Publisher-identity rejection.** Trust keys on the login GitHub controls
-  (a review's author, a check/status's exact context), never on comment
-  text, so a PR that only holds `statuses:write` can't mint its own passing
-  review evidence.
+- **Publisher-identity trust, opt-in status reject-list.** Trust keys on the
+  login GitHub controls (a review's author, a check/status's exact
+  context), never on comment text. Check-run evidence from `github-actions`
+  is already unforgeable by PR content. Commit-status evidence is not: with
+  the shipped defaults (`REVIEW_GATE_STATUS_PUBLISHER_REJECT` empty), a PR
+  workflow holding `statuses:write` can mint a passing status under a
+  trusted context. Repos where outage attestation isn't itself
+  Actions-posted should set that reject-list to close the gap.
 - **Outage attestation fallback.** A trusted orchestrator can post a
   genuine-silence attestation that substitutes for missing evidence — so a
   credit-exhausted or down reviewer never stalls every PR — but it never
