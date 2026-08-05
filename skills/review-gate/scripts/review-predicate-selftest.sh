@@ -951,6 +951,11 @@ CFG_SNAPSHOT="$fixtures/array-snapshot.json"
 run "snapshot seam: snapshot without a statuses array is exit 2" "" 2
 
 reset
+: >"$fixtures/empty-snapshot.json"
+CFG_SNAPSHOT="$fixtures/empty-snapshot.json"
+run "snapshot seam: EMPTY snapshot file is exit 2 (jq emits nothing yet exits 0)" "" 2
+
+reset
 CFG_CONTEXTS="mech-ctx"
 jq -n --arg sha "$OTHER" '{sha:$sha,statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}' >"$fixtures/stale-snapshot.json"
 CFG_SNAPSHOT="$fixtures/stale-snapshot.json"

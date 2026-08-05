@@ -31,7 +31,9 @@ for v in $vars; do
       for example in "$SKILL_DIR/vstack.settings.toml.example" \
                      "$SKILL_DIR/../../vstack.settings.toml.example"; do
         [ -f "$example" ] || continue
-        if grep -q "^$v = " "$example"; then
+        # Whitespace/quote-tolerant: any TOML spelling of an assignment for
+        # this name must fail, not just the canonical `KEY = ` shape.
+        if grep -qE "^[[:space:]]*(\"?${v}\"?|'${v}')[[:space:]]*=" "$example"; then
           echo "FAIL: $v is an env-only per-invocation seam but is assigned in $example"
           fail=1
         fi

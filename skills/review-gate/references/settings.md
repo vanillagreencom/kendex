@@ -44,8 +44,10 @@ Two env-only PER-INVOCATION seams are deliberately NOT settings keys:
   would be circular.
 - `REVIEW_GATE_STATUS_SNAPSHOT_FILE` — path to a combined-status snapshot
   (JSON object with a `statuses` array and a top-level `sha` equal to the
-  invocation's `HEAD_SHA` — the raw combined-status API response carries
-  both) the CALLER already holds. When set, the predicate evaluates
+  invocation's `HEAD_SHA` — a single-page raw combined-status API response
+  carries both; a caller that paginated merges every page's statuses into
+  the one array first, since a first-page-only snapshot silently drops
+  later-page evidence) the CALLER already holds. When set, the predicate evaluates
   trusted-context and outage evidence against it instead of fetching the
   combined status itself — a converge-style sweep that reads the combined
   status for its own required-status projection stops paying that read
