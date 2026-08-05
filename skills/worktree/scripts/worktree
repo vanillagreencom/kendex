@@ -799,6 +799,30 @@ atomic_symlink_swap() {
   return 1
 }
 
+# Sets $CIE_EXACT and $CIE_DESCENDANTS (non-empty = true) for whether $rel is
+# tracked as an exact leaf entry (file, symlink, or gitlink), or has tracked
+# descendants beneath it, in $repo's index.
+#
+# NUL-delimited throughout (#875): git's default `ls-files` output quotes
+# names containing quotes, backslashes, tabs, or non-ASCII bytes (e.g. prints
+# `"a\"b"` for a file literally named `a"b`), so comparing that display form
+# against the raw filesystem name with `grep -Fx` silently mismatches those
+# names — misclassifying a tracked leaf as untracked and symlinking over it.
+# `-z` output is never quoted, so the NUL-split entries can be compared
+# byte-for-byte against $rel.
+classify_index_entry() {
+  local repo="$1" rel="$2" hit=""
+  CIE_EXACT=""
+  CIE_DESCENDANTS=""
+  while IFS= read -r -d '' hit; do
+    if [[ "$hit" == "$rel" ]]; then
+      CIE_EXACT=1
+    else
+      CIE_DESCENDANTS=1
+    fi
+  done < <(git -C "$repo" ls-files -z -- "$rel" 2>/dev/null)
+}
+
 # Provision a WORKTREE_SYMLINKS directory entry that shadows tracked paths by
 # linking its UNTRACKED children individually (VST-37). Linking the parent
 # wholesale forced the tracked files underneath it assume-unchanged, so git
@@ -814,7 +838,7 @@ link_untracked_children() {
   local path="$1" wt="$2" depth="${3:-0}"
   local src="$PROJECT_ROOT/$path"
   local dst="$wt/$path"
-  local child="" name="" rel="" f="" unresolved=""
+  local child="" name="" rel="" f="" unresolved="" restore_failed=false
   local -a shadowed=()
 
   # Symlinked sources make the tracked/untracked walk cyclic; eight levels is
@@ -844,10 +868,20 @@ link_untracked_children() {
     return 1
   fi
   if [[ ${#shadowed[@]} -gt 0 ]]; then
-    git -C "$wt" update-index --no-assume-unchanged -- "${shadowed[@]}" 2>/dev/null || true
+    # Failures here are not swallowed (#850): a locked index or unwritable
+    # destination must surface as a blocked repair, not a silent success —
+    # callers (repair_worktree_links, the auto-repair hooks) key their own
+    # success reporting off this function's return value.
+    if ! git -C "$wt" update-index --no-assume-unchanged -- "${shadowed[@]}" 2>/dev/null; then
+      echo "Warning: could not clear the assume-unchanged bit on tracked file(s) under '$path' in $wt; they may still be hidden from git writes." >&2
+      restore_failed=true
+    fi
     for f in "${shadowed[@]}"; do
       [[ ! -e "$wt/$f" && ! -L "$wt/$f" ]] || continue
-      git -C "$wt" checkout -- "$f" 2>/dev/null || true
+      if ! git -C "$wt" checkout -- "$f" 2>/dev/null; then
+        echo "Warning: could not restore tracked file '$f' under '$path' in $wt from the index; it may be missing." >&2
+        restore_failed=true
+      fi
     done
   fi
 
@@ -865,14 +899,16 @@ link_untracked_children() {
     # absence of an exact entry alongside tracked descendants means $rel is a
     # real tracked directory worth recursing into.
     #
-    # `ls-files -- "$rel"` alone is NOT an exact-match query: git's pathspec
-    # matching treats a bare directory path as a prefix, so it also returns
-    # every tracked file BENEATH $rel (identical to `ls-files -- "$rel/"`).
-    # The line must be filtered for literal equality with $rel to tell "$rel
-    # itself is a tracked leaf" apart from "$rel is an untracked directory
-    # with tracked descendants".
-    exact="$(git -C "$wt" ls-files -- "$rel" 2>/dev/null | grep -Fx -- "$rel" || true)"
-    descendants="$(git -C "$wt" ls-files -- "$rel/" 2>/dev/null)"
+    # Ask BOTH indexes (#964 above does the same for the top-level shape
+    # decision): a worktree branch that predates the commit which started
+    # tracking $rel on main sees nothing in its own index, and would otherwise
+    # be classified as untracked and get a symlink laid down right where the
+    # eventual merge needs to write a real tracked entry, obstructing it.
+    classify_index_entry "$wt" "$rel"
+    exact="$CIE_EXACT"; descendants="$CIE_DESCENDANTS"
+    classify_index_entry "$PROJECT_ROOT" "$rel"
+    [[ -n "$CIE_EXACT" ]] && exact=1
+    [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
     if [[ -z "$exact" && -z "$descendants" ]]; then
       # Nothing tracked here: ordinary symlink treatment, own exclude entry.
       # Quarantine-checked (#1317): this child may have materialized as a real
@@ -881,14 +917,21 @@ link_untracked_children() {
       # would rm -rf/overwrite that data on the direct call this replaces.
       quarantine_and_relink_path "$wt" "$rel" || unresolved="$unresolved  - $rel (linking failed or blocked — see warning above)"$'\n'
     elif [[ -n "$exact" ]]; then
-      # A tracked leaf: git owns it in the worktree; the checkout's copy stays.
+      # A tracked leaf (in this branch, or on main and not yet merged here):
+      # leave it to git — a symlink here would collide with either the
+      # checkout's own copy or the merge that will introduce one.
       :
     else
-      link_untracked_children "$rel" "$wt" $((depth + 1)) || unresolved="$unresolved  - $rel (nested link failure — see warning above)"$'\n'
+      local nest_reason="nested link failure"
+      [[ $((depth + 1)) -ge 8 ]] && nest_reason="nested past the 8-level depth limit"
+      link_untracked_children "$rel" "$wt" $((depth + 1)) || unresolved="$unresolved  - $rel ($nest_reason — see warning above)"$'\n'
     fi
   done
 
-  if [[ -n "$unresolved" ]]; then
+  if [[ -n "$unresolved" || "$restore_failed" == true ]]; then
+    if [[ -z "$unresolved" ]]; then
+      return 1
+    fi
     {
       echo "Warning: WORKTREE_SYMLINKS entry '$path' shadows tracked paths and these children could not be resolved:"
       printf '%s' "$unresolved"
@@ -1011,15 +1054,31 @@ symlink_into_worktree() {
 collect_materialized_child_links() {
   local path="$1" wt="$2" depth="${3:-0}"
   local src="$PROJECT_ROOT/$path" child="" name="" rel="" exact="" descendants=""
-  [[ "$depth" -lt 8 ]] || return 0
+  # Depth-capped like link_untracked_children (#846), but this function
+  # reports rather than repairs: silently returning "no damage found" here
+  # (as opposed to link_untracked_children's warning + nonzero return) gave
+  # warn_if_links_materialized a false-negative "healthy" verdict for a
+  # subtree nested past the cap, even when a materialized child sits there.
+  # Emit a line the caller folds into its own warning instead.
+  if [[ "$depth" -ge 8 ]]; then
+    printf '%s (nests deeper than 8 levels — not inspected)\n' "$path"
+    return 1
+  fi
   for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
     [[ -e "$child" || -L "$child" ]] || continue
     name="${child##*/}"
     rel="$path/$name"
-    # See link_untracked_children (#856) for why this must be a literal-equal
-    # filter: a bare directory pathspec also matches every tracked descendant.
-    exact="$(git -C "$wt" ls-files -- "$rel" 2>/dev/null | grep -Fx -- "$rel" || true)"
-    descendants="$(git -C "$wt" ls-files -- "$rel/" 2>/dev/null)"
+    # See link_untracked_children (#856, #964) for why this must be a
+    # literal-equal filter checked against BOTH indexes: a bare directory
+    # pathspec also matches every tracked descendant, and a child tracked
+    # only on main (branch predates it) must classify the same way here as it
+    # does when links are created/repaired, or this diagnostic disagrees with
+    # what the repair path actually considers healthy.
+    classify_index_entry "$wt" "$rel"
+    exact="$CIE_EXACT"; descendants="$CIE_DESCENDANTS"
+    classify_index_entry "$PROJECT_ROOT" "$rel"
+    [[ -n "$CIE_EXACT" ]] && exact=1
+    [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
     if [[ -z "$exact" && -z "$descendants" ]]; then
       [[ -e "$wt/$rel" && ! -L "$wt/$rel" ]] && printf '%s\n' "$rel"
     elif [[ -z "$exact" ]]; then
@@ -1463,7 +1522,16 @@ repair_worktree_links() {
     # assume-unchanged bits, restores missing tracked files, re-links
     # untracked children — through the same quarantine as any other child,
     # since link_untracked_children calls quarantine_and_relink_path too).
-    if [[ -d "$src" && -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]]; then
+    #
+    # Ask BOTH indexes (#964): checking only $wt here means a branch that
+    # predates a path becoming tracked on main takes the quarantine branch
+    # below instead. If $dst is already a healthy symlink from an earlier run,
+    # quarantine_and_relink_path returns success on sight without ever
+    # re-deciding the shape, so the entry never converts to the per-child
+    # layout main's tracked content now requires.
+    if [[ -d "$src" ]] &&
+       { [[ -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]] ||
+         [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- "$path/" 2>/dev/null || true)" ]]; }; then
       symlink_into_worktree "$path" "$wt" || blocked=true
       continue
     fi

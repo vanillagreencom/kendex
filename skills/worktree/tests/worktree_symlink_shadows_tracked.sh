@@ -200,5 +200,124 @@ assert_eq "$clean_status" "0" "create succeeds for the untracked entry"
 assert_symlink "$CLEAN_WT/runtime" "an entry with no tracked files is still one parent symlink"
 assert_lacks "$(cat "$CLEAN_ROOT/err")" "shadows" "no warning when the entry tracks nothing"
 
+echo "=== a tracked leaf name containing a quote is not turned into a link (#875) ==="
+
+# git's default (non -z) ls-files output quotes names with special bytes, so
+# comparing that display form against the raw filesystem name misclassifies
+# a tracked leaf as untracked and replaces it with a symlink.
+QUOTE_ROOT="$TMP_ROOT/quote"
+make_repo "$QUOTE_ROOT"
+mkdir -p "$QUOTE_ROOT/main/.agents"
+printf 'a\n' >"$QUOTE_ROOT/main/.agents/normal.md"
+printf 'q\n' >"$QUOTE_ROOT/main/.agents/weird\"quote.md"
+printf 'WORKTREE_SYMLINKS=".agents"\n' >"$QUOTE_ROOT/main/.env"
+git -C "$QUOTE_ROOT/main" add .agents
+git -C "$QUOTE_ROOT/main" commit -q -m quoted
+push_main "$QUOTE_ROOT"
+
+set +e
+QUOTE_WT="$( (cd "$QUOTE_ROOT/main" && "$WORKTREE_SCRIPT" create quote-check) 2>"$QUOTE_ROOT/err" )"
+quote_status=$?
+set -e
+
+assert_eq "$quote_status" "0" "create succeeds for the quoted-name entry"
+assert_real "$QUOTE_WT/.agents/weird\"quote.md" "the quoted tracked leaf stays a real file, not a link"
+assert_eq "$(cat "$QUOTE_WT/.agents/weird\"quote.md")" "q" "the quoted tracked leaf has the branch's content"
+
+echo "=== a child tracked only on main (branch predates it) is not linked over (#964) ==="
+
+# Top-level provisioning already checks both indexes for the parent's shape;
+# this proves the per-child walk inside a shadowed entry does the same, so a
+# path that only main tracks so far is left to the eventual merge instead of
+# being symlinked out from under it.
+PREDATE_ROOT="$TMP_ROOT/predate"
+make_repo "$PREDATE_ROOT"
+mkdir -p "$PREDATE_ROOT/main/.agents/skills"
+printf 'anchor\n' >"$PREDATE_ROOT/main/.agents/skills/anchor.md"
+printf 'WORKTREE_SYMLINKS=".agents"\n' >"$PREDATE_ROOT/main/.env"
+git -C "$PREDATE_ROOT/main" add .agents/skills/anchor.md
+git -C "$PREDATE_ROOT/main" commit -q -m anchor
+push_main "$PREDATE_ROOT"
+
+set +e
+PREDATE_WT="$( (cd "$PREDATE_ROOT/main" && "$WORKTREE_SCRIPT" create predate-check) 2>"$PREDATE_ROOT/err" )"
+predate_status=$?
+set -e
+assert_eq "$predate_status" "0" "create succeeds before the new child is tracked"
+
+# Advance MAIN only: a new file lands under the shadowed entry and becomes
+# tracked there, but the worktree branch does not have it yet.
+printf 'late\n' >"$PREDATE_ROOT/main/.agents/skills/late.md"
+git -C "$PREDATE_ROOT/main" add .agents/skills/late.md
+git -C "$PREDATE_ROOT/main" commit -q -m late
+push_main "$PREDATE_ROOT"
+
+set +e
+(cd "$PREDATE_ROOT/main" && "$WORKTREE_SCRIPT" repair-links "$PREDATE_WT") >/dev/null 2>"$PREDATE_ROOT/err2"
+predate_repair_status=$?
+set -e
+assert_eq "$predate_repair_status" "0" "repair-links succeeds while the child is main-only"
+
+if [[ ! -e "$PREDATE_WT/.agents/skills/late.md" && ! -L "$PREDATE_WT/.agents/skills/late.md" ]]; then
+  assert_ok "a child tracked only on main is left absent, not symlinked"
+else
+  assert_fail "a child tracked only on main is left absent, not symlinked" \
+    "found: $(ls -la "$PREDATE_WT/.agents/skills/late.md" 2>&1)"
+fi
+
+set +e
+git -C "$PREDATE_WT" fetch -q origin
+merge_out2="$(git -C "$PREDATE_WT" merge --no-edit origin/main 2>&1)"
+merge_status2=$?
+set -e
+assert_eq "$merge_status2" "0" "the merge that introduces the tracked child succeeds"
+assert_real "$PREDATE_WT/.agents/skills/late.md" "the merge wrote the newly-tracked child as a real file"
+
+echo "=== a locked index during legacy heal reports failure, not a swallowed success (#850) ==="
+
+# The old code discarded failures from --no-assume-unchanged and the missing-
+# file checkout with `|| true`, so a locked index or unwritable destination
+# left tracked paths missing/unwritable while the heal still reported success.
+LOCK_ROOT="$TMP_ROOT/lock"
+make_repo "$LOCK_ROOT"
+mkdir -p "$LOCK_ROOT/main/.agents"
+printf 'engine\n' >"$LOCK_ROOT/main/.agents/engine.md"
+printf 'WORKTREE_SYMLINKS=".agents"\n' >"$LOCK_ROOT/main/.env"
+git -C "$LOCK_ROOT/main" add .agents/engine.md
+git -C "$LOCK_ROOT/main" commit -q -m engine
+push_main "$LOCK_ROOT"
+
+set +e
+LOCK_WT="$( (cd "$LOCK_ROOT/main" && "$WORKTREE_SCRIPT" create lock-check) 2>"$LOCK_ROOT/err" )"
+lock_status=$?
+set -e
+assert_eq "$lock_status" "0" "create succeeds for the lock scenario"
+
+# Model the legacy parent-link state once more so the shadowed-restore path
+# (clear assume-unchanged, checkout missing tracked files) actually runs.
+rm -rf "$LOCK_WT/.agents"
+ln -s "$LOCK_ROOT/main/.agents" "$LOCK_WT/.agents"
+git -C "$LOCK_WT" update-index --assume-unchanged .agents/engine.md
+
+LOCKFILE="$(git -C "$LOCK_WT" rev-parse --git-path index.lock)"
+: >"$LOCKFILE"
+
+set +e
+lock_out="$(cd "$LOCK_ROOT/main" && "$WORKTREE_SCRIPT" repair-links "$LOCK_WT" 2>&1)"
+lock_repair_status=$?
+set -e
+rm -f "$LOCKFILE"
+
+if [[ "$lock_repair_status" -ne 0 ]]; then
+  assert_ok "a locked index makes the heal report failure instead of success"
+else
+  assert_fail "a locked index makes the heal report failure instead of success" "exit status was 0: $lock_out"
+fi
+if grep -qF -- "could not" <<<"$lock_out"; then
+  assert_ok "the failure names what could not be healed"
+else
+  assert_fail "the failure names what could not be healed" "output: $lock_out"
+fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
