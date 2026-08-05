@@ -50,6 +50,9 @@ ACTIVE_PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" |
 ACTIVE_TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 1
 ACTIVE_MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 1
 ACTIVE_GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
+ACTIVE_THREADS="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 1
+ACTIVE_API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
+ACTIVE_API_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -63,14 +66,26 @@ shim="$work/bin"
 mkdir -p "$fixtures" "$shim"
 
 # The shim: dispatch on the request, honour --jq, and obey a failure switch so
-# the fail-loud path is testable too.
+# the fail-loud path is testable too. Extras the retry/pagination cases need:
+#   GH_SHIM_FAIL_TIMES=N   with GH_SHIM_FAIL: fail only the first N calls for
+#                          that endpoint (counter file), then serve — drives
+#                          the bounded in-predicate retries
+#   GH_SHIM_EMPTY=name     exit 0 with ZERO output bytes for that endpoint —
+#                          the broken-producer shape the zero-byte guard
+#                          refuses
+#   <name>.page2.json      with --paginate: served CONCATENATED after the
+#                          first page, exactly gh's multi-page output shape,
+#                          so the `jq -s` page merges are actually driven
+# Every request URL is appended to .urls.log so cases can pin read shapes
+# (per_page, endpoints skipped).
 cat >"$shim/gh" <<'SHIM'
 #!/usr/bin/env bash
 set -u
-url=""; filter=""
+url=""; filter=""; paginate=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    api|--paginate|--slurp) ;;
+    api|--slurp) ;;
+    --paginate) paginate=1 ;;
     -f|-F) shift ;;
     --jq) shift; filter="$1" ;;
     graphql) url="graphql" ;;
@@ -88,13 +103,31 @@ case "$url" in
   *"/pulls/"*)   name=pull ;;
   *) echo "shim: unexpected request: $url" >&2; exit 90 ;;
 esac
+echo "$url" >>"$GH_SHIM_FIXTURES/.urls.log"
 if [ -n "${GH_SHIM_FAIL:-}" ] && [ "$GH_SHIM_FAIL" = "$name" ]; then
-  echo "shim: simulated API failure for $name" >&2
-  exit 1
+  if [ -n "${GH_SHIM_FAIL_TIMES:-}" ]; then
+    count=0
+    counter="$GH_SHIM_FIXTURES/.failcount.$name"
+    [ -f "$counter" ] && count="$(cat "$counter")"
+    if [ "$count" -lt "$GH_SHIM_FAIL_TIMES" ]; then
+      echo $((count + 1)) >"$counter"
+      echo "shim: simulated API failure for $name ($((count + 1))/$GH_SHIM_FAIL_TIMES)" >&2
+      exit 1
+    fi
+  else
+    echo "shim: simulated API failure for $name" >&2
+    exit 1
+  fi
+fi
+if [ -n "${GH_SHIM_EMPTY:-}" ] && [ "$GH_SHIM_EMPTY" = "$name" ]; then
+  exit 0
 fi
 file="$GH_SHIM_FIXTURES/$name.json"
 [ -f "$file" ] || { echo "shim: no fixture $file" >&2; exit 91; }
 if [ -n "$filter" ]; then jq -r "$filter" <"$file"; else cat "$file"; fi
+if [ "$paginate" = "1" ] && [ -f "$GH_SHIM_FIXTURES/$name.page2.json" ] && [ -z "$filter" ]; then
+  cat "$GH_SHIM_FIXTURES/$name.page2.json"
+fi
 SHIM
 chmod +x "$shim/gh"
 
@@ -155,7 +188,11 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
     REVIEW_GATE_REVIEW_OBJECT_MIN_STATE="$CFG_MIN_STATE" \
     REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" \
-    GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$AUTHOR" \
+    REVIEW_GATE_THREADS="$CFG_THREADS" \
+    REVIEW_GATE_API_ATTEMPTS="$CFG_API_ATTEMPTS" \
+    REVIEW_GATE_API_RETRY_DELAY_SECONDS="$CFG_API_DELAY" \
+    REVIEW_GATE_STATUS_SNAPSHOT_FILE="$CFG_SNAPSHOT" \
+    GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)"
   rc=$?
   verdict="${line#verdict=}"; verdict="${verdict%% *}"
@@ -178,7 +215,13 @@ reset() {
   printf '{"statuses":[]}\n' >"$fixtures/status.json"
   threads >"$fixtures/graphql.json"
   jq -n --arg a "$AUTHOR" '{user:{login:$a}}' >"$fixtures/pull.json"
-  unset GH_SHIM_FAIL || true
+  rm -f "$fixtures"/*.page2.json "$fixtures"/.failcount.* "$fixtures"/.urls.log
+  unset GH_SHIM_FAIL GH_SHIM_FAIL_TIMES GH_SHIM_EMPTY || true
+  CFG_THREADS="$ACTIVE_THREADS"
+  CFG_API_ATTEMPTS="$ACTIVE_API_ATTEMPTS"
+  CFG_API_DELAY="$ACTIVE_API_DELAY"
+  CFG_SNAPSHOT=""
+  CFG_PR_AUTHOR="$AUTHOR"
   CFG_CONTEXTS="$ACTIVE_CONTEXTS"
   CFG_SKIPS="$ACTIVE_SKIPS"
   CFG_REVIEWERS="$ACTIVE_REVIEWERS"
@@ -252,12 +295,18 @@ comment_battery() { # login, pattern, floor
   run "[$login] comment with a sub-floor sha prefix" awaiting
 
   # Evidence-present is not evidence-approves-everything: the carve-out
-  # substitutes for MISSING evidence only.
+  # substitutes for MISSING evidence only. On a repo that disables the CI
+  # thread term (REVIEW_GATE_THREADS=off, server-side ruleset is the
+  # enforcement point) the same fixture must read approved instead.
   reset
   CFG_REVIEWERS="$login:$pattern"; CFG_FLOOR="$floor"
   comment "$login" "$pattern \`$prefix\`" >"$fixtures/comments.json"
   threads false >"$fixtures/graphql.json"
-  run "[$login] clean comment + an unresolved thread" threads-open
+  if [ "$CFG_THREADS" = "off" ]; then
+    run "[$login] clean comment + an unresolved thread (threads=off)" approved
+  else
+    run "[$login] clean comment + an unresolved thread" threads-open
+  fi
 
   reset
   CFG_REVIEWERS="$login:$pattern"; CFG_FLOOR="$floor"
@@ -358,7 +407,7 @@ unset GH_SHIM_FAIL
 
 reset
 status_ctx "mech-ctx" success "analysis complete"
-CFG_CONTEXTS="mech-ctx"
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
 export GH_SHIM_FAIL=graphql
 run "thread read failure (with evidence present)" "" 2
 unset GH_SHIM_FAIL
@@ -415,7 +464,7 @@ run "publisher filter unset: github-actions-minted status counts (default unchan
 # >100 threads is a SUCCESSFUL read we cannot fully verify: fail closed to
 # threads-open, never open the gate.
 reset
-CFG_CONTEXTS="mech-ctx"
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
 status_ctx "mech-ctx" success "analysis complete"
 jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true},nodes:[]}}}}}' \
   >"$fixtures/graphql.json"
@@ -424,7 +473,7 @@ run "thread overflow (>100) fails closed" threads-open
 # A thread node whose isResolved is not a boolean (null/missing) must never
 # count as resolved — that direction is a false approval on a merge gate.
 reset
-CFG_CONTEXTS="mech-ctx"
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
 status_ctx "mech-ctx" success "analysis complete"
 jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[{isResolved:null},{isResolved:true}]}}}}}' \
   >"$fixtures/graphql.json"
@@ -625,7 +674,7 @@ status_ctx "mech-outage" pending "attempting"
 run "non-success outage status is not evidence" awaiting
 
 reset
-CFG_OUTAGE="mech-outage"
+CFG_OUTAGE="mech-outage"; CFG_THREADS="enforce"
 status_ctx "mech-outage" success "reviewer outage attested"
 threads false >"$fixtures/graphql.json"
 run "outage attestation + unresolved thread stays closed" threads-open
@@ -696,6 +745,211 @@ reset
 CFG_GATE_CONTEXT=""
 run "explicitly empty gate context is a config error" "" 2
 
+# DISMISSED rows, both directions (VST-35): a dismissed review at head must
+# not count as evidence, and a dismissed CHANGES_REQUESTED must not stand —
+# GitHub rewrites a dismissed row's state to DISMISSED, and both filters
+# must actually be able to fail.
+reset
+CFG_TRUSTED_LOGINS=""
+reviews_set "$(review "reviewer" DISMISSED)"
+run "a DISMISSED review at head is not evidence" awaiting
+
+reset
+CFG_TRUSTED_LOGINS=""
+reviews_set "$(review "objector" DISMISSED "2026-08-02T18:00:00Z")" \
+            "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")"
+run "a dismissed CHANGES_REQUESTED does not stand (reduction skips DISMISSED)" approved
+
+# Thread-term configurability (REVIEW_GATE_THREADS, VST-35): `off` never
+# emits threads-open AND skips the GraphQL read entirely — proven by making
+# the endpoint fail, which must not matter when the read is skipped.
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="off"
+status_ctx "mech-ctx" success "analysis complete"
+threads false >"$fixtures/graphql.json"
+run "threads=off: unresolved thread does not close the gate" approved
+
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="off"
+status_ctx "mech-ctx" success "analysis complete"
+export GH_SHIM_FAIL=graphql
+run "threads=off: the reviewThreads read is skipped entirely (failing endpoint cannot matter)" approved
+unset GH_SHIM_FAIL
+cases=$((cases + 1))
+if grep -q '^graphql$' "$fixtures/.urls.log" 2>/dev/null; then
+  echo "FAIL  threads=off issued a reviewThreads read anyway" >&2
+  failures=$((failures + 1))
+else
+  echo "ok    threads=off issues no reviewThreads read (url log)"
+fi
+
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
+status_ctx "mech-ctx" success "analysis complete"
+threads false >"$fixtures/graphql.json"
+run "threads=enforce (the default): unresolved thread still fails closed" threads-open
+
+reset
+CFG_THREADS="sometimes"
+run "unknown REVIEW_GATE_THREADS value is a config error" "" 2
+
+# Bounded evidence-read retries (REVIEW_GATE_API_ATTEMPTS /
+# REVIEW_GATE_API_RETRY_DELAY_SECONDS, VST-35): a transient failure within
+# the budget still reaches a verdict; the default single attempt does not
+# retry; failing through every attempt keeps the exit-2 contract.
+reset
+CFG_API_ATTEMPTS=3; CFG_API_DELAY=0; CFG_TRUSTED_LOGINS=""
+reviews_set "$(review "reviewer" APPROVED)"
+export GH_SHIM_FAIL=reviews GH_SHIM_FAIL_TIMES=2
+run "retries: a read succeeding on attempt 3 of 3 reaches a verdict" approved
+unset GH_SHIM_FAIL GH_SHIM_FAIL_TIMES
+
+reset
+CFG_API_ATTEMPTS=1; CFG_API_DELAY=0; CFG_TRUSTED_LOGINS=""
+reviews_set "$(review "reviewer" APPROVED)"
+export GH_SHIM_FAIL=reviews GH_SHIM_FAIL_TIMES=1
+run "retries: the default single attempt does not retry (today's behavior)" "" 2
+unset GH_SHIM_FAIL GH_SHIM_FAIL_TIMES
+
+reset
+CFG_API_ATTEMPTS=2; CFG_API_DELAY=0
+export GH_SHIM_FAIL=reviews
+run "retries: failing through every attempt is still exit 2 (no verdict)" "" 2
+unset GH_SHIM_FAIL
+
+reset
+CFG_API_ATTEMPTS=0
+run "zero API attempts is a config error" "" 2
+
+reset
+CFG_API_ATTEMPTS="lots"
+run "non-numeric API attempts is a config error" "" 2
+
+reset
+CFG_API_DELAY="-1"
+run "negative retry delay is a config error" "" 2
+
+# Multi-page pagination merges (VST-35): the shim serves <name>.page2.json
+# concatenated after page 1 under --paginate, so the `jq -s` page merges are
+# driven with real multi-page shapes — evidence beyond page 1 must count and
+# a standing CR beyond page 1 must still block.
+reset
+CFG_TRUSTED_LOGINS=""
+jq -n --argjson r "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER")" '[$r]' >"$fixtures/reviews.json"
+jq -n --argjson r "$(review "reviewer" APPROVED "2026-01-02T00:00:00Z")" '[$r]' >"$fixtures/reviews.page2.json"
+run "pagination: review evidence on page 2 counts (page merge)" approved
+
+reset
+CFG_TRUSTED_LOGINS=""
+jq -n --argjson r "$(review "reviewer" APPROVED)" '[$r]' >"$fixtures/reviews.json"
+jq -n --argjson r "$(review "objector" CHANGES_REQUESTED)" '[$r]' >"$fixtures/reviews.page2.json"
+run "pagination: a standing CR on page 2 still fails closed" changes-requested
+
+reset
+CFG_REVIEWERS="mech-bot[bot]:Reviewed commit:"; CFG_FLOOR=7
+comment "mech-bot[bot]" "no binding line on page 1" >"$fixtures/comments.json"
+comment "mech-bot[bot]" "Reviewed commit: \`${HEAD:0:7}\`" >"$fixtures/comments.page2.json"
+run "pagination: comment-form evidence on page 2 counts" approved
+
+reset
+CFG_CONTEXTS="mech-ctx"
+status_ctx "unrelated-ctx" success "someone else's status"
+jq -n '{statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}' >"$fixtures/status.page2.json"
+run "pagination: trusted status on combined-status page 2 counts" approved
+
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[{name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.page2.json"
+run "pagination: trusted check-run on page 2 counts" approved
+
+# PR_AUTHOR resolution (VST-35): every other case passes PR_AUTHOR
+# explicitly; an EMPTY PR_AUTHOR must resolve from pulls/N (.user.login) —
+# and the resolved author is excluded like an explicit one; a failed
+# resolution read is exit 2.
+reset
+CFG_PR_AUTHOR=""
+reviews_set "$(review "$AUTHOR" APPROVED)"
+run "empty PR_AUTHOR: author resolves from pulls/N — own review is not evidence" awaiting
+
+reset
+CFG_PR_AUTHOR=""; CFG_TRUSTED_LOGINS=""
+reviews_set "$(review "reviewer" APPROVED)"
+run "empty PR_AUTHOR: non-author review still counts after resolution" approved
+
+reset
+CFG_PR_AUTHOR=""
+export GH_SHIM_FAIL=pull
+run "empty PR_AUTHOR: author-resolution read failure is exit 2" "" 2
+unset GH_SHIM_FAIL
+
+# Zero-byte producers (VST-46): a paginated read whose producer exits 0 with
+# ZERO output bytes is a broken read, never an empty page set — the reviews
+# case is the dangerous one (an erased standing CR while other evidence
+# satisfies the positive side would be a false approved). A real empty page
+# set is a non-empty `[]` body and stays valid (pinned by every reset case).
+reset
+export GH_SHIM_EMPTY=reviews
+run "zero-byte reviews producer is a failed read (exit 2), not empty evidence" "" 2
+unset GH_SHIM_EMPTY
+
+reset
+export GH_SHIM_EMPTY=status
+run "zero-byte combined-status producer is a failed read" "" 2
+unset GH_SHIM_EMPTY
+
+reset
+CFG_CONTEXTS="mech-ctx"
+export GH_SHIM_EMPTY=checkruns
+run "zero-byte check-runs producer is a failed read" "" 2
+unset GH_SHIM_EMPTY
+
+reset
+CFG_REVIEWERS="mech-bot[bot]:Reviewed commit:"
+export GH_SHIM_EMPTY=comments
+run "zero-byte comments producer is a failed read" "" 2
+unset GH_SHIM_EMPTY
+
+# Status-snapshot seam (VST-35): a caller that already holds the combined
+# status hands it in; the predicate must evaluate against it WITHOUT its own
+# combined-status read (proven by failing that endpoint), and an unreadable
+# or malformed snapshot gets the read contract: exit 2.
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}' >"$fixtures/snapshot.json"
+CFG_SNAPSHOT="$fixtures/snapshot.json"
+export GH_SHIM_FAIL=status
+run "snapshot seam: caller-supplied combined status is evaluated, duplicate read skipped" approved
+unset GH_SHIM_FAIL
+
+reset
+CFG_SNAPSHOT="$fixtures/no-such-snapshot.json"
+run "snapshot seam: unreadable snapshot file is exit 2" "" 2
+
+reset
+printf 'not json\n' >"$fixtures/bad-snapshot.json"
+CFG_SNAPSHOT="$fixtures/bad-snapshot.json"
+run "snapshot seam: malformed snapshot is exit 2" "" 2
+
+reset
+printf '[]\n' >"$fixtures/array-snapshot.json"
+CFG_SNAPSHOT="$fixtures/array-snapshot.json"
+run "snapshot seam: snapshot without a statuses array is exit 2" "" 2
+
+# Read shapes (VST-35): the reviews and comments endpoints must request
+# per_page=100 — the 30-item default paginates long PRs into pure overhead.
+reset
+CFG_REVIEWERS="mech-bot[bot]:Reviewed commit:"; CFG_FLOOR=7
+comment "mech-bot[bot]" "Reviewed commit: \`${HEAD:0:7}\`" >"$fixtures/comments.json"
+run "read-shape pin: evidence still evaluates (per_page probe)" approved
+cases=$((cases + 1))
+if grep -q 'reviews?per_page=100' "$fixtures/.urls.log" 2>/dev/null \
+   && grep -q 'comments?per_page=100' "$fixtures/.urls.log" 2>/dev/null; then
+  echo "ok    reviews and comments reads carry per_page=100 (url log)"
+else
+  echo "FAIL  reviews/comments reads must carry per_page=100" >&2
+  failures=$((failures + 1))
+fi
+
 # ================================================================ configured ===
 # The same discipline against THIS repo's resolved trust settings.
 echo "--- configured layer (this repo's REVIEW_GATE_* settings)"
@@ -723,6 +977,30 @@ while IFS= read -r pair; do
 done <<EOF
 $(list_items "$ACTIVE_REVIEWERS")
 EOF
+
+# The repo's thread-term posture: enforce keeps the fail-closed thread term;
+# off must never emit threads-open (server-side ruleset is the enforcement
+# point of record there).
+reset
+reviews_set "$(review "$(trusted_reviewer)" APPROVED)"
+threads false >"$fixtures/graphql.json"
+if [ "$ACTIVE_THREADS" = "off" ]; then
+  run "configured: threads=off — unresolved thread does not close the gate" approved
+else
+  run "configured: unresolved thread fails closed (threads=enforce)" threads-open
+fi
+
+# The repo's retry budget: a read failing (attempts - 1) times must still
+# reach a verdict. Delay is forced to 0 — the budget, not the pause, is the
+# behavior under test.
+if [ "$ACTIVE_API_ATTEMPTS" -gt 1 ] 2>/dev/null; then
+  reset
+  CFG_API_DELAY=0
+  reviews_set "$(review "$(trusted_reviewer)" APPROVED)"
+  export GH_SHIM_FAIL=reviews GH_SHIM_FAIL_TIMES=$((ACTIVE_API_ATTEMPTS - 1))
+  run "configured: a transient read failure survives the repo's retry budget ($ACTIVE_API_ATTEMPTS attempts)" approved
+  unset GH_SHIM_FAIL GH_SHIM_FAIL_TIMES
+fi
 
 if [ -n "$ACTIVE_OUTAGE" ]; then
   reset

@@ -28,8 +28,24 @@ reserved all the same.
 | `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | (empty) | Commit-status creator logins that are never evidence, on both the trusted-context and outage-context reads (typically `github-actions[bot]` — the publisher PR content can wield where PR workflows hold `statuses:write`). App-posted statuses serialize creator as null and are never rejected by a login entry. Empty disables — legitimate outage attestation is Actions-posted on some repos, so rejection is opt-in per repo. |
 | `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | (empty) | Review-object trust list. Empty = any non-author (compatible default). |
 | `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` | `any` counts any accepted review row; `approved` requires an APPROVED not withdrawn by a later CHANGES_REQUESTED from the same login. |
+| `REVIEW_GATE_THREADS` | `enforce` | `enforce` fails closed on unresolved review threads; `off` skips the reviewThreads GraphQL read entirely and never emits `threads-open` — for repos whose thread hygiene is a server-side zero-bypass ruleset (`required_review_thread_resolution`), where the CI-side term is a latency optimization, not the enforcement point of record. Only the thread term is disabled; evidence and changes-requested still fail closed. |
+| `REVIEW_GATE_API_ATTEMPTS` | `1` | Bounded retries per evidence read in the predicate, and for throttled rerun POSTs in the refire. Default = single attempt (today's behavior); failing through every attempt is still exit 2 (no verdict). |
+| `REVIEW_GATE_API_RETRY_DELAY_SECONDS` | `2` | Pause between retry attempts. |
 | `REVIEW_GATE_MAX_RERUN_ATTEMPTS` | `5` | Refire rerun backstop for pathological ping-pong. |
 | `REVIEW_GATE_TRUST_PR_WORKFLOWS` | `false` | Trust posture for the CI gate job (see Security below). Consumed by workflow wiring, not by the scripts. |
+
+Two env-only PER-INVOCATION seams are deliberately NOT settings keys (like
+`REVIEW_GATE_SETTINGS_FILE`, which overrides the settings-file path in
+tests):
+
+- `REVIEW_GATE_STATUS_SNAPSHOT_FILE` — path to a combined-status snapshot
+  (JSON object with a `statuses` array) the CALLER already holds. When set,
+  the predicate evaluates trusted-context and outage evidence against it
+  instead of fetching the combined status itself — a converge-style sweep
+  that reads the combined status for its own required-status projection
+  stops paying that read twice per head. The snapshot is bound to one head
+  at one moment, which is why it can never be a repo setting. An unreadable
+  or malformed snapshot gets the read contract: exit 2, no verdict.
 
 # Security posture
 

@@ -69,8 +69,15 @@ Evidence for the CURRENT head is any of:
 
 Changes-requested and unresolved threads always fail closed, even with
 evidence present. Every evidence read fails LOUD (exit 2, no verdict) — a
-transient API error must never flip a healthy PR's merge state. More than
+transient API error must never flip a healthy PR's merge state; reads retry
+in-process up to `REVIEW_GATE_API_ATTEMPTS` (default 1) before failing, and
+a zero-byte producer is a failed read, never an empty page set. More than
 100 review threads reports overflow and fails closed to `threads-open`.
+Repos whose thread hygiene is a server-side zero-bypass ruleset can set
+`REVIEW_GATE_THREADS = "off"` to skip the thread read (never emits
+`threads-open`); a converge-style caller can hand in its combined-status
+snapshot via `REVIEW_GATE_STATUS_SNAPSHOT_FILE` to kill the duplicate read
+(see [references/settings.md](references/settings.md)).
 
 **Trust model.** Trust keys on names only GitHub controls: the author login
 of a review or comment (exact match on the bot login) or the exact

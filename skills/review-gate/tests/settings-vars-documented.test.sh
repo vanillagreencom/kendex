@@ -20,11 +20,13 @@ for v in $vars; do
     echo "FAIL: $v is read by the engine but documented in none of SKILL.md, references/adoption.md, references/settings.md"
     fail=1
   fi
-  # REVIEW_GATE_SETTINGS_FILE is an env-only test/dev override, not a
-  # settings key — it must not appear as a settings assignment.
-  if [ "$v" = "REVIEW_GATE_SETTINGS_FILE" ]; then
-    continue
-  fi
+  # Env-only per-invocation seams, not settings keys — they must not appear
+  # as settings assignments (REVIEW_GATE_SETTINGS_FILE overrides the file
+  # path in tests; REVIEW_GATE_STATUS_SNAPSHOT_FILE hands one head's
+  # combined-status snapshot in from a converge-style caller).
+  case "$v" in
+    REVIEW_GATE_SETTINGS_FILE|REVIEW_GATE_STATUS_SNAPSHOT_FILE) continue ;;
+  esac
   if ! grep -q "^$v = " "$SKILL_DIR/vstack.settings.toml.example"; then
     echo "FAIL: $v missing from the skill's vstack.settings.toml.example"
     fail=1

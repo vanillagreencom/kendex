@@ -60,6 +60,8 @@ REVIEW_GATE_OUTAGE_CONTEXT = "acme-outage"
 REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
 REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "acme-reviewer[bot];human-lead"
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "approved"
+REVIEW_GATE_THREADS = "off"
+REVIEW_GATE_API_ATTEMPTS = "2"
 EOF
 if ! (cd "$work/configured" && "$SELFTEST") >"$work/configured.out" 2>&1; then
   cat "$work/configured.out"
@@ -88,6 +90,12 @@ grep -q '\[Acme Review\] status minted by a rejected publisher is not evidence' 
   || note "configured publisher reject-list near-miss not exercised"
 grep -q "outage attestation from a rejected publisher is not evidence" "$work/configured.out" \
   || note "configured outage publisher reject-list near-miss not exercised"
+grep -q "configured: threads=off" "$work/configured.out" \
+  || note "configured threads=off posture not exercised"
+grep -q "configured: a transient read failure survives the repo's retry budget" "$work/configured.out" \
+  || note "configured retry budget not exercised"
+grep -q "configured: unresolved thread fails closed" "$work/defaults.out" \
+  || note "default threads=enforce posture not exercised"
 
 if [ "$fail" -ne 0 ]; then
   echo "review-predicate-selftest.test: FAIL"

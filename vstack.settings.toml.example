@@ -254,6 +254,22 @@ REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 # (an APPROVED at head not withdrawn by a LATER CHANGES_REQUESTED from the
 # same login; a trailing COMMENTED never supersedes an approval).
 
+REVIEW_GATE_THREADS = "enforce"
+# Used by: review-gate (`review-predicate.sh`). "enforce" evaluates
+# unresolved review threads CI-side and fails closed; "off" skips the
+# reviewThreads GraphQL read entirely and never emits threads-open — for
+# repos whose thread hygiene is a server-side zero-bypass ruleset (the
+# CI-side term is a latency optimization there, not the enforcement point).
+
+REVIEW_GATE_API_ATTEMPTS = "1"
+# Used by: review-gate (`review-predicate.sh`, `approval-refire.sh`).
+# Bounded retries per evidence read (default = single attempt, today's
+# behavior); a read failing through every attempt is still exit 2.
+
+REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
+# Used by: review-gate (`review-predicate.sh`, `approval-refire.sh`). Pause
+# between retry attempts.
+
 REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
 # Used by: review-gate (`approval-refire.sh`). Rerun backstop for
 # pathological evidence ping-pong, not normal review cycles.

@@ -55,9 +55,29 @@
 #   REVIEW_GATE_REVIEW_OBJECT_MIN_STATE       (a) "any" (any review row) or "approved"
 #                                             (an APPROVED row not withdrawn by a later
 #                                             CHANGES_REQUESTED from the same login)
+#   REVIEW_GATE_THREADS                       "enforce" (default) or "off": "off" skips
+#                                             the reviewThreads GraphQL read entirely and
+#                                             never emits threads-open — for repos whose
+#                                             thread hygiene is a server-side zero-bypass
+#                                             ruleset (the CI-side term is a latency
+#                                             optimization there, not the enforcement
+#                                             point of record)
+#   REVIEW_GATE_API_ATTEMPTS                  bounded in-predicate retries for every
+#                                             evidence read (default 1 = single attempt);
+#                                             a read failing through the retries is still
+#                                             exit 2 — the fail-loud contract is unchanged
+#   REVIEW_GATE_API_RETRY_DELAY_SECONDS       delay between retry attempts (default 2)
 #
 # Env (required): GH_TOKEN (or ambient gh auth), GH_REPO, PR_NUMBER, HEAD_SHA
 # Env (optional): PR_AUTHOR — resolved from the PR when empty.
+# Env (optional): REVIEW_GATE_STATUS_SNAPSHOT_FILE — path to a combined-status
+#   snapshot (JSON object with a `statuses` array) supplied by the CALLER; when
+#   set, the predicate evaluates trusted-context and outage evidence against it
+#   instead of fetching the combined status itself. A converge-style caller that
+#   already read the combined status for its own projection hands it in here and
+#   the duplicate per-head read disappears. Per-invocation env seam (like
+#   REVIEW_GATE_SETTINGS_FILE), never a settings key: the snapshot is bound to
+#   one head at one moment. An unreadable/malformed snapshot is exit 2.
 #
 # Output: one machine-readable line on stdout:
 #   verdict=approved|awaiting|threads-open|changes-requested detail=<human text>
@@ -82,6 +102,9 @@ OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage"
 PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 2
 TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 2
 MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 2
+THREADS_MODE="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
+API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 2
+API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 2
 
 # Configuration errors are exit 2 (no verdict), same contract as a failed
 # evidence read: a typo in trust config must never quietly widen or narrow
@@ -103,6 +126,47 @@ case "$MIN_STATE" in
     exit 2
     ;;
 esac
+case "$THREADS_MODE" in
+  enforce|off) ;;
+  *)
+    echo "::error::review-predicate: REVIEW_GATE_THREADS must be 'enforce' or 'off', got '$THREADS_MODE'" >&2
+    exit 2
+    ;;
+esac
+case "$API_ATTEMPTS" in
+  ''|*[!0-9]*|0)
+    echo "::error::review-predicate: REVIEW_GATE_API_ATTEMPTS must be an integer >= 1, got '$API_ATTEMPTS'" >&2
+    exit 2
+    ;;
+esac
+case "$API_RETRY_DELAY" in
+  ''|*[!0-9]*)
+    echo "::error::review-predicate: REVIEW_GATE_API_RETRY_DELAY_SECONDS must be a non-negative integer, got '$API_RETRY_DELAY'" >&2
+    exit 2
+    ;;
+esac
+
+# Every evidence read goes through here: up to REVIEW_GATE_API_ATTEMPTS tries
+# with REVIEW_GATE_API_RETRY_DELAY_SECONDS between them, so a single transient
+# 5xx can survive in-process instead of deferring the verdict to the caller's
+# next pass. The default (1 attempt) is exactly today's single try, and a read
+# that fails through every attempt still returns nonzero — callers keep the
+# fail-loud exit-2 contract unchanged.
+gh_read() {
+  gh_read_attempt=1
+  while :; do
+    if gh_read_out="$(gh api "$@")"; then
+      printf '%s' "$gh_read_out"
+      return 0
+    fi
+    if [ "$gh_read_attempt" -ge "$API_ATTEMPTS" ]; then
+      return 1
+    fi
+    gh_read_attempt=$((gh_read_attempt + 1))
+    echo "::warning::review-predicate: read failed; retry $gh_read_attempt/$API_ATTEMPTS after ${API_RETRY_DELAY}s" >&2
+    sleep "$API_RETRY_DELAY"
+  done
+}
 
 # The gate's own posted status must never be review evidence: with
 # REVIEW_GATE_CONTEXT listed as a trusted status context (or naming the
@@ -140,20 +204,34 @@ for required in GH_REPO PR_NUMBER HEAD_SHA; do
 done
 
 if [ -z "${PR_AUTHOR:-}" ]; then
-  PR_AUTHOR="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq .user.login)" || {
+  PR_AUTHOR="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq .user.login)" || {
     echo "::error::could not resolve PR #$PR_NUMBER author" >&2
     exit 2
   }
+  if [ -z "$PR_AUTHOR" ]; then
+    echo "::error::PR #$PR_NUMBER author resolved to an empty login" >&2
+    exit 2
+  fi
 fi
 
 # Two steps, not a pipe: `--paginate` emits ONE ARRAY PER PAGE, which the
 # count filters below would evaluate per-array (multi-line counts that can
 # never equal "0" past 100 reviews), and a mid-pipe gh failure must fail
-# loudly rather than hand jq a truncated page set.
-raw_reviews="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER/reviews" --paginate)" || {
+# loudly rather than hand jq a truncated page set. ZERO BYTES from a
+# successful producer is a broken read too (truncated stream, empty response
+# body): `jq -s 'add // []'` would silently turn it into [], and for the
+# reviews read specifically an empty result can erase a standing
+# CHANGES_REQUESTED while other evidence still satisfies the positive side —
+# a false approved. An intentionally empty page set from a real API response
+# is a NON-EMPTY `[]` body, so only a bytes-empty producer is refused.
+raw_reviews="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER/reviews?per_page=100" --paginate)" || {
   echo "::error::could not read reviews for PR #$PR_NUMBER" >&2
   exit 2
 }
+if [ -z "$raw_reviews" ]; then
+  echo "::error::reviews read for PR #$PR_NUMBER produced zero bytes (broken read, not an empty page set)" >&2
+  exit 2
+fi
 reviews="$(jq -s 'add // []' <<<"$raw_reviews")" || {
   echo "::error::could not parse reviews for PR #$PR_NUMBER" >&2
   exit 2
@@ -223,15 +301,35 @@ got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
 # snapshot — each trusted context and the outage attestation below evaluate
 # against it. Fetch and merge are SEPARATE steps for the same reason as the
 # check-runs read: a pipe would replace gh's exit status with jq's and turn a
-# read failure into an empty-success (fail-open).
-status_pages="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/status?per_page=100" --paginate)" || {
-  echo "::error::could not read the combined commit status for $HEAD_SHA" >&2
-  exit 2
-}
-status_resp="$(jq -s '{statuses: (map(.statuses) | add // [])}' <<<"$status_pages")" || {
-  echo "::error::could not merge the combined commit status pages for $HEAD_SHA" >&2
-  exit 2
-}
+# read failure into an empty-success (fail-open). A caller that already holds
+# the combined status (a converge-style sweep projecting required statuses
+# per head) hands it in via REVIEW_GATE_STATUS_SNAPSHOT_FILE instead, and
+# this read is skipped entirely.
+if [ -n "${REVIEW_GATE_STATUS_SNAPSHOT_FILE:-}" ]; then
+  # The snapshot substitutes for a READ, so it gets the read contract: not a
+  # file, zero bytes, unparseable, or missing the statuses array is exit 2 —
+  # never an empty-evidence verdict.
+  status_resp="$(jq 'if (type == "object") and ((.statuses | type) == "array")
+                     then {statuses: .statuses}
+                     else error("not a combined-status snapshot") end' \
+                    "$REVIEW_GATE_STATUS_SNAPSHOT_FILE" 2>/dev/null)" || {
+    echo "::error::REVIEW_GATE_STATUS_SNAPSHOT_FILE '$REVIEW_GATE_STATUS_SNAPSHOT_FILE' is not a readable combined-status snapshot (JSON object with a statuses array)" >&2
+    exit 2
+  }
+else
+  status_pages="$(gh_read "repos/$GH_REPO/commits/$HEAD_SHA/status?per_page=100" --paginate)" || {
+    echo "::error::could not read the combined commit status for $HEAD_SHA" >&2
+    exit 2
+  }
+  if [ -z "$status_pages" ]; then
+    echo "::error::combined-status read for $HEAD_SHA produced zero bytes (broken read)" >&2
+    exit 2
+  fi
+  status_resp="$(jq -s '{statuses: (map(.statuses) | add // [])}' <<<"$status_pages")" || {
+    echo "::error::could not merge the combined commit status pages for $HEAD_SHA" >&2
+    exit 2
+  }
+fi
 check=0
 while IFS= read -r ctx; do
   ctx="$(printf '%s' "$ctx" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -242,10 +340,14 @@ while IFS= read -r ctx; do
   # (a missed run strands the gate at awaiting — wrong direction to lose).
   # Fetch and merge are SEPARATE steps: a pipe would replace gh's exit status
   # with jq's and turn a read failure into an empty-success (fail-open).
-  checkruns_pages="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/check-runs?check_name=$ctx_uri&per_page=100" --paginate)" || {
+  checkruns_pages="$(gh_read "repos/$GH_REPO/commits/$HEAD_SHA/check-runs?check_name=$ctx_uri&per_page=100" --paginate)" || {
     echo "::error::could not read '$ctx' check-runs" >&2
     exit 2
   }
+  if [ -z "$checkruns_pages" ]; then
+    echo "::error::'$ctx' check-runs read produced zero bytes (broken read)" >&2
+    exit 2
+  fi
   checkruns_resp="$(jq -s '{check_runs: (map(.check_runs) | add // [])}' <<<"$checkruns_pages")" || {
     echo "::error::could not merge '$ctx' check-run pages" >&2
     exit 2
@@ -317,12 +419,16 @@ EOF
 # binding pattern immediately preceding the sha slot, not the quoting.
 comment_hits=0
 if [ -n "$COMMENT_REVIEWERS" ]; then
-  # Two steps, not a pipe — same pagination/fail-loud reason as the reviews
-  # read above.
-  raw_comments="$(gh api "repos/$GH_REPO/issues/$PR_NUMBER/comments" --paginate)" || {
+  # Two steps, not a pipe — same pagination/fail-loud/zero-byte reasons as
+  # the reviews read above.
+  raw_comments="$(gh_read "repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" --paginate)" || {
     echo "::error::could not read issue comments for PR #$PR_NUMBER" >&2
     exit 2
   }
+  if [ -z "$raw_comments" ]; then
+    echo "::error::issue-comments read for PR #$PR_NUMBER produced zero bytes (broken read, not an empty page set)" >&2
+    exit 2
+  fi
   comments="$(jq -s 'add // []' <<<"$raw_comments")" || {
     echo "::error::could not parse issue comments for PR #$PR_NUMBER" >&2
     exit 2
@@ -395,7 +501,18 @@ fi
 # threads-open. Same posture for a thread node whose isResolved is not a
 # boolean ("malformed"): null/missing nodes must never count as resolved —
 # that direction is a false approval on a merge gate.
-unresolved="$(gh api graphql \
+#
+# REVIEW_GATE_THREADS=off skips this read ENTIRELY and the predicate never
+# emits threads-open: on repos whose thread hygiene is a server-side
+# zero-bypass ruleset (required_review_thread_resolution), the CI-side term
+# is a latency optimization that costs a GraphQL read per evaluation for a
+# verdict the merge-time gate already enforces — and forces every caller to
+# reinterpret threads-open in its own adapter. The narrowing is bounded:
+# only the thread term is disabled; evidence and changes-requested still
+# fail closed exactly as before.
+unresolved=0
+if [ "$THREADS_MODE" = "enforce" ]; then
+unresolved="$(gh_read graphql \
   -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved}}}}}' \
   -F owner="${GH_REPO%/*}" -F repo="${GH_REPO#*/}" -F number="$PR_NUMBER" \
   --jq 'if .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage then "overflow"
@@ -404,8 +521,9 @@ unresolved="$(gh api graphql \
   echo "::error::could not read review threads" >&2
   exit 2
 }
+fi
 
-echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok changes-requested=$cr unresolved-threads=$unresolved" >&2
+echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok changes-requested=$cr unresolved-threads=$unresolved (threads=$THREADS_MODE)" >&2
 
 if [ "$cr" != "0" ]; then
   echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
