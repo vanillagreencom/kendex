@@ -121,7 +121,38 @@ args="$*"
 case "$args" in
   *"/rerun"*)
     id="$(sed -n 's|.*actions/runs/\([0-9]*\)/rerun.*|\1|p' <<<"$args")"
-    echo "rerun:$id" >> "${STUB_RERUN_LOG:?}"
+    # STUB_RERUN_MODE: ok (default) | refuse (unqualified 403) | throttle
+    # (403 + retry-after/x-ratelimit-remaining:0) | throttle_then_ok |
+    # server_error (502). Non-ok modes log each attempt to
+    # STUB_RERUN_ATTEMPT_LOG so retry bounds are assertable.
+    mode="${STUB_RERUN_MODE:-ok}"
+    if [[ "$mode" == "throttle_then_ok" ]]; then
+      if [[ -s "${STUB_RERUN_ATTEMPT_LOG:-/dev/null}" ]]; then mode=ok; else mode=throttle; fi
+    fi
+    case "$mode" in
+      ok)
+        echo "rerun:$id" >> "${STUB_RERUN_LOG:?}"
+        ;;
+      refuse)
+        echo "attempt:$id" >> "${STUB_RERUN_ATTEMPT_LOG:?}"
+        printf 'HTTP/2.0 403 Forbidden\r\ncontent-type: application/json\r\n\r\n{"message":"This workflow run cannot be re-run"}\n'
+        echo "gh: This workflow run cannot be re-run (HTTP 403)" >&2
+        exit 1
+        ;;
+      throttle)
+        echo "attempt:$id" >> "${STUB_RERUN_ATTEMPT_LOG:?}"
+        printf 'HTTP/2.0 403 Forbidden\r\nretry-after: 1\r\nx-ratelimit-remaining: 0\r\n\r\n{"message":"You have exceeded a secondary rate limit."}\n'
+        echo "gh: You have exceeded a secondary rate limit. (HTTP 403)" >&2
+        exit 1
+        ;;
+      server_error)
+        echo "attempt:$id" >> "${STUB_RERUN_ATTEMPT_LOG:?}"
+        printf 'HTTP/2.0 502 Bad Gateway\r\n\r\n'
+        echo "gh: HTTP 502" >&2
+        exit 1
+        ;;
+      *) echo "unknown STUB_RERUN_MODE" >&2; exit 1 ;;
+    esac
     ;;
   "-X POST "*"/statuses/"*)
     echo "post:$args" >> "${STUB_POST_LOG:?}"
@@ -167,13 +198,16 @@ chmod +x "$TMP_ROOT/bin/gh"
 # REVIEW_GATE_SETTINGS_FILE to exercise the file layer.
 POST_LOG="$TMP_ROOT/post.log"
 RERUN_LOG="$TMP_ROOT/rerun.log"
+ATTEMPT_LOG="$TMP_ROOT/rerun-attempts.log"
 run_refire() {
   : > "$POST_LOG"
   : > "$RERUN_LOG"
+  : > "$ATTEMPT_LOG"
   env PATH="$TMP_ROOT/bin:$PATH" \
     GH_REPO=acme/widgets PR_NUMBER=7 HEAD_SHA=headsha PR_AUTHOR=pr-author \
     REVIEW_GATE_SETTINGS_FILE=/dev/null \
     STUB_POST_LOG="$POST_LOG" STUB_RERUN_LOG="$RERUN_LOG" \
+    STUB_RERUN_ATTEMPT_LOG="$ATTEMPT_LOG" \
     "$@" bash "$TMP_ROOT/scripts/approval-refire.sh" 2>&1
 }
 
@@ -236,6 +270,50 @@ rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
 assert_eq "$rc" "0" "r8: in-progress head under QUIESCE=0 exits 0"
 assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r8: in-progress run is left to finish"
 assert_contains "$out" "still in progress" "r8: says why"
+
+echo "=== rerun POST: stuck vs malfunction, throttle vs refusal (VST-36) ==="
+
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RERUN_MODE=refuse) || rc=$?
+assert_eq "$rc" "0" "r20: rerun refusal (unqualified 4xx) exits 0 — stuck, not malfunction"
+assert_contains "$out" "cannot be advanced by convergence" "r20: names the stuck outcome"
+assert_eq "$(grep -c 'attempt:111' "$ATTEMPT_LOG")" "1" "r20: a refusal is never retried (each retry feeds the same limit)"
+
+set +e
+out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RERUN_MODE=throttle)
+rc=$?
+set -e
+assert_eq "$rc" "1" "r21: throttled through the default single-attempt budget exits 1"
+assert_contains "$out" "throttled" "r21: a throttled 403 is named throttle, never stuck"
+
+set +e
+out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RERUN_MODE=throttle REVIEW_GATE_API_ATTEMPTS=3 REVIEW_GATE_API_RETRY_DELAY_SECONDS=0)
+rc=$?
+set -e
+assert_eq "$rc" "1" "r22: still throttled after the configured budget exits 1"
+assert_eq "$(grep -c 'attempt:111' "$ATTEMPT_LOG")" "3" "r22: throttles retry to the 3-attempt bound"
+
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RERUN_MODE=throttle_then_ok REVIEW_GATE_API_ATTEMPTS=2 REVIEW_GATE_API_RETRY_DELAY_SECONDS=0) || rc=$?
+assert_eq "$rc" "0" "r23: a throttle clearing within the budget exits 0"
+assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "r23: the rerun eventually lands"
+
+set +e
+out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RERUN_MODE=server_error)
+rc=$?
+set -e
+assert_eq "$rc" "1" "r24: a rerun 5xx exits 1 (malfunction)"
+assert_contains "$out" "malfunction" "r24: names the malfunction"
+assert_eq "$(grep -c 'attempt:111' "$ATTEMPT_LOG")" "1" "r24: no in-process retry on 5xx — the sweep is the retry"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "r24: never a status write on the failure path"
+
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RUNS_MODE=empty) || rc=$?
+assert_eq "$rc" "0" "r25: a head with no completed pull_request runs exits 0 (stuck: nothing can re-run)"
+assert_contains "$out" "no completed pull_request runs" "r25: says why"
 
 echo "=== fail loud, act never ==="
 
@@ -338,6 +416,7 @@ echo "=== all-PRs mode (ALL_OPEN_PRS=1) ==="
 run_refire_all() {
   : > "$POST_LOG"
   : > "$RERUN_LOG"
+  : > "$ATTEMPT_LOG"
   local -a runner=()
   command -v timeout >/dev/null 2>&1 && runner=(timeout 90)
   env -u QUIESCE -u PR_NUMBER -u HEAD_SHA -u PR_AUTHOR \
@@ -345,6 +424,7 @@ run_refire_all() {
     GH_REPO=acme/widgets \
     REVIEW_GATE_SETTINGS_FILE=/dev/null \
     STUB_POST_LOG="$POST_LOG" STUB_RERUN_LOG="$RERUN_LOG" \
+    STUB_RERUN_ATTEMPT_LOG="$ATTEMPT_LOG" \
     ALL_OPEN_PRS=1 \
     "$@" "${runner[@]+"${runner[@]}"}" bash "$TMP_ROOT/scripts/approval-refire.sh" 2>&1
 }

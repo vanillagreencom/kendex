@@ -63,6 +63,36 @@
 #                 Attempts only grow on the first awaiting→approved flip per
 #                 head, so the cap exists for pathological ping-pong, not
 #                 normal review cycles. Legacy MAX_ATTEMPTS env is honored.
+#   REVIEW_GATE_API_ATTEMPTS / REVIEW_GATE_API_RETRY_DELAY_SECONDS
+#                 bounded retry budget for THROTTLED rerun POSTs (default 1 =
+#                 no retry). Only throttles retry; refusals and server errors
+#                 never do.
+#
+# CONVERGENCE PROPERTIES (VST-36; consumer-proven, earned through production
+# incidents on the archetype-C reference implementation):
+#   1. NEVER WRITE ON A FAILURE PATH. A failed read leaves the head exactly
+#      as found — no defensive pending posts (once a sweep runs per open
+#      head, one transient outage would de-green every open PR, each
+#      recovery a full in-place rerun). The scheduled sweep is the universal
+#      retry. In all-PRs mode a failed head is reported (::error) and the
+#      pass continues; the failure reddens the run without touching the head.
+#   2. STUCK vs MALFUNCTION are distinct outcomes. "This head cannot be
+#      advanced by convergence" (GitHub refuses the rerun with an
+#      unqualified 4xx; or the head has no completed pull_request run at
+#      all, so nothing can re-run) WARNS and keeps the run green;
+#      "convergence malfunctioned" (read/projection failure, rerun 5xx,
+#      throttled through the budget) REDDENS the run so escalation can fire.
+#      Folding them either reddens the health signal forever on one
+#      long-lived PR, or hides a repository-wide fault behind a warning.
+#   3. THROTTLE vs REFUSAL on the rerun POST. GitHub answers 403 for a run
+#      refusal AND for the secondary rate limit; classifying by code alone
+#      fails open (a throttled 403 read as "stuck" leaves the sweep green
+#      while convergence has stopped for every head). The discriminator
+#      reads the RESPONSE (gh api -i): a retry-after header, an exhausted
+#      x-ratelimit-remaining, or HTTP 429 is a throttle — retried to the
+#      REVIEW_GATE_API_ATTEMPTS bound, then escalated as malfunction. The
+#      first non-throttle 4xx stops retrying (each retry feeds the same
+#      limit) and is a refusal (stuck).
 #
 # Read errors fail LOUDLY (exit 1) without taking any action: treating a
 # transient API failure as absent evidence could flip a healthy PR's state.
@@ -81,10 +111,24 @@ fi
 # that is a configuration error to surface, never an empty value to act on.
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-$(rg_setting REVIEW_GATE_MAX_RERUN_ATTEMPTS "5")}" || exit 1
 GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
+API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
+API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
 
 case "$MAX_ATTEMPTS" in
   ''|*[!0-9]*)
     echo "::error::approval-refire: REVIEW_GATE_MAX_RERUN_ATTEMPTS must be an integer, got '$MAX_ATTEMPTS'"
+    exit 1
+    ;;
+esac
+case "$API_ATTEMPTS" in
+  ''|*[!0-9]*|0)
+    echo "::error::approval-refire: REVIEW_GATE_API_ATTEMPTS must be an integer >= 1, got '$API_ATTEMPTS'"
+    exit 1
+    ;;
+esac
+case "$API_RETRY_DELAY" in
+  ''|*[!0-9]*)
+    echo "::error::approval-refire: REVIEW_GATE_API_RETRY_DELAY_SECONDS must be a non-negative integer, got '$API_RETRY_DELAY'"
     exit 1
     ;;
 esac
@@ -240,6 +284,42 @@ if [ "$total" -eq 0 ]; then
   exit 0
 fi
 
+# Rerun POST with outcome classification (header properties 2 and 3). The
+# response is read with `gh api -i` so the throttle discriminator can see
+# the headers: retry-after / exhausted x-ratelimit-remaining / HTTP 429 is a
+# THROTTLE (retried to the REVIEW_GATE_API_ATTEMPTS bound); any other 4xx is
+# a REFUSAL — the first one stops retrying (each retry feeds the same
+# limit); anything else (5xx/transport) is a malfunction with NO in-process
+# retry — the sweep is the universal retry.
+rerun_run() { # run id -> 0 ok; 1 throttled through the budget; 2 refusal; 3 malfunction
+  rr_id="$1"
+  rr_attempt=1
+  while :; do
+    if rr_out="$(gh api -i -X POST "repos/$GH_REPO/actions/runs/$rr_id/rerun" 2>&1)"; then
+      return 0
+    fi
+    rr_resp="$(printf '%s\n' "$rr_out" | tr -d '\r')"
+    rr_code="$(printf '%s\n' "$rr_resp" | sed -n 's|^HTTP/[0-9.]* \([0-9][0-9][0-9]\).*|\1|p' | head -n 1)"
+    rr_throttle=0
+    [ "$rr_code" = "429" ] && rr_throttle=1
+    printf '%s\n' "$rr_resp" | grep -qi '^retry-after:' && rr_throttle=1
+    printf '%s\n' "$rr_resp" | grep -qi '^x-ratelimit-remaining:[[:space:]]*0[[:space:]]*$' && rr_throttle=1
+    if [ "$rr_throttle" = "1" ]; then
+      if [ "$rr_attempt" -ge "$API_ATTEMPTS" ]; then
+        return 1
+      fi
+      rr_attempt=$((rr_attempt + 1))
+      echo "::warning::rerun POST for run $rr_id throttled; retry $rr_attempt/$API_ATTEMPTS after ${API_RETRY_DELAY}s"
+      sleep "$API_RETRY_DELAY"
+      continue
+    fi
+    case "$rr_code" in
+      4[0-9][0-9]) return 2 ;;
+    esac
+    return 3
+  done
+}
+
 exit_code=0
 # `name` reads last: run names contain spaces.
 while read -r id run_attempt name; do
@@ -249,9 +329,26 @@ while read -r id run_attempt name; do
     continue
   fi
   echo "rerun (open the review gate): run $id ($name)"
-  gh api -X POST "repos/$GH_REPO/actions/runs/$id/rerun" || {
-    echo "::warning::could not rerun run $id"
-    exit_code=1
-  }
+  rerun_run "$id"
+  case "$?" in
+    0) ;;
+    2)
+      # STUCK, not malfunction: GitHub refuses this rerun (unqualified 4xx —
+      # e.g. the run is no longer re-runnable). Convergence cannot advance
+      # this head; the head is left as found and the run stays green so one
+      # long-lived PR cannot redden the health signal forever.
+      echo "::warning::GitHub refused the rerun of run $id ($name): this head cannot be advanced by convergence (stuck, not malfunction) - gh run rerun to retry manually"
+      ;;
+    1)
+      # Throttled through the retry budget: convergence has STOPPED for
+      # every head, not just this one — malfunction, never "stuck".
+      echo "::error::rerun POST for run $id ($name) rate-limited through the retry budget ($API_ATTEMPTS attempt(s)): convergence is throttled"
+      exit_code=1
+      ;;
+    *)
+      echo "::error::rerun POST for run $id ($name) failed (server/transport): convergence malfunction; the scheduled sweep is the retry"
+      exit_code=1
+      ;;
+  esac
 done < <(jq -r '.[] | "\(.id) \(.run_attempt) \(.name)"' <<<"$runs")
 exit "$exit_code"

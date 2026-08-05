@@ -41,8 +41,10 @@ permissions:
   actions: write
   # PR list + reviews (gate predicate)
   pull-requests: read
-  # PR conversation comments (comment-form clean-pass evidence)
-  issues: read
+  # PR conversation comments (comment-form clean-pass evidence) are READ;
+  # WRITE is for the sustained-failure escalation step's rolling incident
+  # issue only (VST-36).
+  issues: write
   # clean-analysis evidence reads
   checks: read
   # read the current gate status + POST the converged one
@@ -77,6 +79,10 @@ jobs:
           persist-credentials: false
 
       - name: Sweep open PRs
+        # Bounded strictly under the job's timeout-minutes so the escalation
+        # step below still executes when this step overruns (a job killed by
+        # its own timeout is CANCELLED, which the step guard covers).
+        timeout-minutes: 12
         run: |
           set -u
           if [ ! -f .agents/skills/review-gate/scripts/approval-refire.sh ]; then
@@ -88,3 +94,37 @@ jobs:
           # workflow's eviction-prone event path (#1039).
           export ALL_OPEN_PRS=1
           exec .agents/skills/review-gate/scripts/approval-refire.sh
+
+      # Sustained-failure escalation (VST-36): the scheduled sweep is the
+      # only arm guaranteed to reach a downward transition (a dismissal
+      # fires no usable trigger), so its own sustained failure must not be
+      # silent. `failure() || cancelled()` — cancelled() because a job
+      # killed by its own timeout-minutes is cancelled, and the converge
+      # step above is bounded under the job budget so this step still runs.
+      # The incident is a ROLLING issue: one open issue found by exact
+      # title (label-free — labels may not exist on a consumer repo),
+      # appended per failure, closed by a human when the fault is fixed.
+      # Escalation failure itself only warns: it must never mask the red
+      # sweep result it is reporting.
+      - name: Escalate sustained sweep failure
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -u
+          title="review-gate convergence sweep is failing (rolling incident)"
+          body="Sweep run failed or was cancelled: $RUN_URL"
+          num="$(gh api "repos/$GH_REPO/issues?state=open&per_page=100" --paginate \
+            --jq "[.[] | select(.pull_request == null and .title == \"$title\")][0].number // empty" \
+            2>/dev/null | head -n 1)" || num=""
+          if [ -n "$num" ]; then
+            gh api -X POST "repos/$GH_REPO/issues/$num/comments" -f body="$body" >/dev/null \
+              && echo "appended to rolling incident issue #$num" \
+              || echo "::warning::could not append to rolling incident issue #$num"
+          else
+            gh api -X POST "repos/$GH_REPO/issues" -f title="$title" -f body="$body" >/dev/null \
+              && echo "opened the rolling incident issue" \
+              || echo "::warning::could not open a rolling incident issue"
+          fi
