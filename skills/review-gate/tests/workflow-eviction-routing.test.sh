@@ -136,18 +136,24 @@ check_rerun() {
 # Scoped exactly like rerun_job_if above: track membership in the NAMED
 # job's own mapping only, so a `group: review-gate-writer` that sits under a
 # sibling job (same file, same indentation shape) cannot satisfy the check.
-# Returns success iff the group is inside a `concurrency:` block that is
-# itself a direct field of that job (not a different job, not a nested step).
+# The `concurrency:` key must be a DIRECT field of the job (exactly one
+# indent level below the job name) — a nested mapping under env:/steps: is
+# not job concurrency and GitHub would not serialize on it — and both the
+# group and cancel-in-progress: false must sit as its direct children.
+# Pass which="group" or which="cancel" to select the property asserted.
 job_level_group_present() {
-  local file="$1" job="$2"
-  awk -v job="$job" '
+  local file="$1" job="$2" which="${3:-group}"
+  awk -v job="$job" -v which="$which" '
     /^[[:space:]]*(#|$)/ { next }
     { match($0, /[^[:space:]]/); ind = RSTART - 1 }
     $0 ~ ("^  " job ":[[:space:]]*$") { injob = 1; next }
     injob && ind <= 2 { injob = 0 }
-    injob && inblk && ind <= cind { inblk = 0 }
-    injob && inblk && /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/ { found = 1 }
-    injob && /^[[:space:]]+concurrency:[[:space:]]*$/ { inblk = 1; cind = ind }
+    injob && inblk && ind <= 4 { inblk = 0 }
+    injob && inblk && ind == 6 && which == "group" \
+      && /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/ { found = 1 }
+    injob && inblk && ind == 6 && which == "cancel" \
+      && /^[[:space:]]*cancel-in-progress:[[:space:]]*false[[:space:]]*$/ { found = 1 }
+    injob && ind == 4 && /^[[:space:]]*concurrency:[[:space:]]*$/ { inblk = 1 }
     END { exit !found }
   ' "$file"
 }
@@ -164,12 +170,15 @@ assert_job_level_group() {
   if grep -q '^concurrency:' "$file"; then
     FAIL=$((FAIL + 1))
     printf '  FAIL  w1[%s]: workflow-level concurrency block present (must sit at JOB level)\n' "$label"
-  elif ! job_level_group_present "$file" "$job"; then
+  elif ! job_level_group_present "$file" "$job" group; then
     FAIL=$((FAIL + 1))
-    printf '  FAIL  w1[%s]: the review-gate-writer group is not inside the %s job'"'"'s own concurrency block\n' "$label" "$job"
+    printf '  FAIL  w1[%s]: the review-gate-writer group is not a direct child of the %s job'"'"'s own concurrency block\n' "$label" "$job"
+  elif ! job_level_group_present "$file" "$job" cancel; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  w1[%s]: cancel-in-progress: false is not a direct child of the %s job'"'"'s own concurrency block\n' "$label" "$job"
   else
     PASS=$((PASS + 1))
-    printf '  ok    w1[%s]: concurrency group sits at job level\n' "$label"
+    printf '  ok    w1[%s]: concurrency group + cancel-in-progress sit on the %s job itself\n' "$label" "$job"
   fi
 }
 
@@ -226,6 +235,33 @@ else
   printf '  FAIL  w1[negative]: sanity check failed — job_level_group_present missed a group inside its own job\n'
 fi
 rm -f "$SIBLING_FIXTURE"
+
+echo "=== w1 must reject a NESTED concurrency mapping inside the writer job ==="
+# A concurrency mapping nested under a step/env inside the rerun job is not
+# job concurrency — GitHub would not serialize on it — so the direct-field
+# rule must reject it even though it sits inside the right job's mapping.
+NESTED_FIXTURE="$(mktemp)"
+awk '
+  /^    concurrency:[[:space:]]*$/ { skip = 1; next }
+  skip && /^      / { next }
+  { skip = 0 }
+  /^    runs-on:/ {
+    print "    env:"
+    print "      concurrency:"
+    print "        group: review-gate-writer"
+    print "        cancel-in-progress: false"
+  }
+  { print }
+' "$TEMPLATES/approval-rerun.yml" > "$NESTED_FIXTURE"
+
+if job_level_group_present "$NESTED_FIXTURE" "rerun"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  w1[negative]: a concurrency mapping nested under env: must not satisfy the direct-field rule\n'
+else
+  PASS=$((PASS + 1))
+  printf '  ok    w1[negative]: nested (non-job-field) concurrency mapping correctly rejected\n'
+fi
+rm -f "$NESTED_FIXTURE"
 
 echo "=== shared script owns the enumeration ==="
 assert_grep "$SKILL_ROOT/scripts/approval-refire.sh" 'pulls?state=open' "w7[script]: open-PR enumeration lives in approval-refire.sh"
