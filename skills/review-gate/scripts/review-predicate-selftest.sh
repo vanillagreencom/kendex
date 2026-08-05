@@ -1103,6 +1103,30 @@ export GH_SHIM_EMPTY=compare
 run "carry: a zero-byte compare producer is exit 2" "" 2
 unset GH_SHIM_EMPTY
 
+# A healthy compare response ALWAYS carries a files array; a parseable
+# response without one is malformed/truncated, and defaulting it to []
+# would carry as an "identical tree" — a broken read must never approve.
+reset
+carry_candidate
+CFG_CARRY="docs"
+jq -n '{status:"ahead"}' >"$fixtures/compare.json"
+run "carry: an ahead compare with NO files array is exit 2, never an identical-tree guess" "" 2
+
+# The compare API caps its file list at 300 entries: AT the cap the list
+# cannot prove the delta is complete (an omitted file could be code), so
+# the carry refuses; one below the cap is a complete list and carries.
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "$(jq -n '[range(300) | {filename:("docs/f\(.).md"),status:"modified",patch:"@@ -1 +1 @@\n-a\n+b"}]')"
+run "carry: a file list AT the 300-entry compare cap refuses (completeness unprovable)" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "$(jq -n '[range(299) | {filename:("docs/f\(.).md"),status:"modified",patch:"@@ -1 +1 @@\n-a\n+b"}]')"
+run "carry: 299 docs-only files (below the cap) still carries" approved
+
 reset
 CFG_CARRY="everything"
 run "carry: an unknown carry class is a config error" "" 2

@@ -156,11 +156,23 @@ jobs:
           # (pending/failure) never defer — overwriting toward closed is the
           # safe direction and the sweep converges any staleness. A failed
           # re-read also defers: withholding success is the fail-safe side.
+          # Fetch and filter are SEPARATE steps: a pipe would replace gh's
+          # exit status with jq's, so a failed or truncated re-read could
+          # slurp to an empty array and report newer=0 — the exact
+          # stale-success fail-open this guard closes. And `>=`, not `>`:
+          # both timestamps have one-second resolution, so a non-success
+          # write landing later within the evaluation second compares
+          # EQUAL — deferring on equality is the fail-safe side and
+          # self-heals via the refire/sweep.
           if [ "$state" = "success" ]; then
-            newer="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate \
-              | jq -rs --arg ctx "$GATE_CONTEXT" --arg since "${EVALUATED_AT:-}" \
+            newer=""
+            if status_pages="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate)" \
+               && [ -n "$status_pages" ]; then
+              newer="$(jq -rs --arg ctx "$GATE_CONTEXT" --arg since "${EVALUATED_AT:-}" \
                   '[add // [] | .[] | select(.context == $ctx and .state != "success"
-                    and (($since | length) > 0) and ((.created_at // "") > $since))] | length')" || newer=""
+                    and (($since | length) > 0) and ((.created_at // "") >= $since))] | length' \
+                  <<<"$status_pages")" || newer=""
+            fi
             if [ "$newer" != "0" ]; then
               echo "::warning::deferring the success post: $GATE_CONTEXT was re-written (or unreadable) after this run's evaluation at ${EVALUATED_AT:-?} — a newer writer's verdict stands; the refire/sweep converges"
               exit 0

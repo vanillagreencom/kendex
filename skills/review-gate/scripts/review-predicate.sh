@@ -586,8 +586,16 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
       echo "::error::comparison $base...$HEAD_SHA produced zero bytes (broken read)" >&2
       exit 2
     fi
-    cmp="$(jq -s '{status: (.[0].status // ""), files: (map(.files // []) | add // [])}' <<<"$cmp_pages")" || {
-      echo "::error::could not merge the comparison pages for $base...$HEAD_SHA" >&2
+    # The first page of a healthy compare response ALWAYS carries a files
+    # array (possibly empty); its absence is a malformed or truncated
+    # response, and defaulting it to [] would read as an identical tree on
+    # the "ahead" path below — a carried approval from a broken read. Same
+    # exit-2 contract as every other evidence read.
+    cmp="$(jq -s 'if ((.[0].files // null) | type) != "array"
+                  then error("no files array")
+                  else {status: (.[0].status // ""), files: (map(.files // []) | add)} end' \
+              <<<"$cmp_pages" 2>/dev/null)" || {
+      echo "::error::could not merge the comparison pages for $base...$HEAD_SHA (missing or malformed files array)" >&2
       exit 2
     }
     cmp_status="$(jq -r .status <<<"$cmp")"
@@ -599,9 +607,20 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
       ahead) ;;
       *) continue ;;
     esac
-    if [ "$(jq '.files | length' <<<"$cmp")" = "0" ]; then
+    cmp_file_count="$(jq '.files | length' <<<"$cmp")"
+    if [ "$cmp_file_count" = "0" ]; then
       # Ahead by commits that change no file: the trees are equal.
       carried=1; carry_base="$base"; carry_kind="identical tree"
+      break
+    fi
+    # The compare API caps the returned file list at 300 entries, so a list
+    # AT the cap cannot prove the delta is complete — an omitted 301st file
+    # could be code, and classifying only what was returned would be the
+    # fail-open this predicate exists to prevent. The read itself is
+    # healthy, so this refuses the carry (fresh review required) rather
+    # than exit 2; older candidates' deltas are supersets, so stop walking.
+    if [ "$cmp_file_count" -ge 300 ]; then
+      echo "::warning::compare $base...$HEAD_SHA returned $cmp_file_count files (the API caps the list at 300): the delta cannot be proven complete; refusing carry-forward" >&2
       break
     fi
     # Classify every changed file into an ENABLED class; anything else —

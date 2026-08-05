@@ -263,8 +263,10 @@ REVIEW_GATE_THREADS = "enforce"
 
 REVIEW_GATE_API_ATTEMPTS = "1"
 # Used by: review-gate (`review-predicate.sh`, `approval-refire.sh`).
-# Bounded retries per evidence read (default = single attempt, today's
-# behavior); a read failing through every attempt is still exit 2.
+# Bounded attempts per predicate evidence read AND per THROTTLED rerun POST
+# in the refire (non-throttle rerun failures never retry). Default = single
+# attempt, today's behavior; a read failing through every attempt is still
+# exit 2.
 
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 # Used by: review-gate (`review-predicate.sh`, `approval-refire.sh`). Pause
@@ -276,6 +278,10 @@ REVIEW_GATE_CARRY_FORWARD = ""
 # ancestor commit extends to head when the delta is entirely docs-only /
 # comment-only (or an identical tree). Never a waiver: code changes always
 # require fresh evidence; changes-requested and threads still fail closed.
+# CAVEAT: the "comments" classifier is line-lexical — it cannot see an
+# enclosing heredoc or multiline string, where a full-line `#`/`//`-prefixed
+# change is data, not a comment. Enable "comments" only on repos where that
+# residual carry risk is acceptable; "docs" has no such caveat.
 
 REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
 # Used by: review-gate (`approval-refire.sh`). Rerun backstop for

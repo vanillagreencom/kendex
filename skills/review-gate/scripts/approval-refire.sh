@@ -80,8 +80,9 @@
 #      advanced by convergence" (GitHub refuses the rerun with an
 #      unqualified 4xx; or the head has no completed pull_request run at
 #      all, so nothing can re-run) WARNS and keeps the run green;
-#      "convergence malfunctioned" (read/projection failure, rerun 5xx,
-#      throttled through the budget) REDDENS the run so escalation can fire.
+#      "convergence malfunctioned" (read/projection failure, rerun 5xx or
+#      401 — bad credentials stop every head, not one —, throttled through
+#      the budget) REDDENS the run so escalation can fire.
 #      Folding them either reddens the health signal forever on one
 #      long-lived PR, or hides a repository-wide fault behind a warning.
 #   3. THROTTLE vs REFUSAL on the rerun POST. GitHub answers 403 for a run
@@ -287,10 +288,10 @@ fi
 # Rerun POST with outcome classification (header properties 2 and 3). The
 # response is read with `gh api -i` so the throttle discriminator can see
 # the headers: retry-after / exhausted x-ratelimit-remaining / HTTP 429 is a
-# THROTTLE (retried to the REVIEW_GATE_API_ATTEMPTS bound); any other 4xx is
-# a REFUSAL — the first one stops retrying (each retry feeds the same
-# limit); anything else (5xx/transport) is a malfunction with NO in-process
-# retry — the sweep is the universal retry.
+# THROTTLE (retried to the REVIEW_GATE_API_ATTEMPTS bound); any other 4xx
+# EXCEPT 401 is a REFUSAL — the first one stops retrying (each retry feeds
+# the same limit); a 401 and anything else (5xx/transport) is a malfunction
+# with NO in-process retry — the sweep is the universal retry.
 rerun_run() { # run id -> 0 ok; 1 throttled through the budget; 2 refusal; 3 malfunction
   rr_id="$1"
   rr_attempt=1
@@ -314,6 +315,14 @@ rerun_run() { # run id -> 0 ok; 1 throttled through the budget; 2 refusal; 3 mal
       continue
     fi
     case "$rr_code" in
+      # 401 is never a per-run condition: the token itself is bad, so
+      # convergence has stopped for EVERY head — malfunction, not "stuck"
+      # (a stuck-green 401 would silence the sweep's escalation exactly
+      # when the whole arm is down). 403 stays a refusal: GitHub uses it
+      # for per-run non-rerunnable states (expired log retention, "cannot
+      # be re-run"), and a genuine repo-wide permission fault also breaks
+      # the sweep's other reads/writes, which already redden the run.
+      401) return 3 ;;
       4[0-9][0-9]) return 2 ;;
     esac
     return 3
@@ -346,7 +355,7 @@ while read -r id run_attempt name; do
       exit_code=1
       ;;
     *)
-      echo "::error::rerun POST for run $id ($name) failed (server/transport): convergence malfunction; the scheduled sweep is the retry"
+      echo "::error::rerun POST for run $id ($name) failed (server/transport/credentials): convergence malfunction; the scheduled sweep is the retry"
       exit_code=1
       ;;
   esac

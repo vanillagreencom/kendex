@@ -119,7 +119,7 @@ by `REVIEW_GATE_MAX_RERUN_ATTEMPTS`. Convergence properties (see the script
 header): it never writes on a failure path (a failed read leaves the head as
 found; the scheduled sweep is the universal retry); "stuck" (GitHub refuses
 the rerun, or no run exists to re-run) warns and stays green while
-"malfunction" (read failure, rerun 5xx, throttled through the retry budget)
+"malfunction" (read failure, rerun 5xx or 401, throttled through the retry budget)
 reddens the run; and the rerun POST discriminates throttle from refusal by
 response headers, retrying only throttles (bounded by
 `REVIEW_GATE_API_ATTEMPTS`). The sweep template escalates its own sustained

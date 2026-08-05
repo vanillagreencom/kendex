@@ -111,7 +111,11 @@ REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 # SECURITY: never a waiver — real evidence must exist and only EXTENDS
 # across a delta review would not re-examine; code changes always require
 # fresh evidence, and changes-requested / unresolved threads still fail
-# closed with carried evidence.
+# closed with carried evidence. CAVEAT: the "comments" classifier is
+# line-lexical — it cannot see an enclosing heredoc or multiline string,
+# where a full-line `#`/`//`-prefixed change is data, not a comment. Enable
+# "comments" only on repos where that residual carry risk is acceptable;
+# "docs" has no such caveat.
 REVIEW_GATE_CARRY_FORWARD = ""
 
 # Rerun backstop for approval-refire.sh: runs at/above this attempt count

@@ -95,11 +95,19 @@ status is what blocks merge.
           # never overwrite a NEWER non-success gate write with a stale
           # success — defer and let the refire/sweep converge. A failed
           # re-read also defers (withholding success is the fail-safe side).
+          # Fetch and filter are SEPARATE steps (a pipe would replace gh's
+          # exit status with jq's and turn a broken re-read into newer=0),
+          # and `>=` because both timestamps have one-second resolution: a
+          # write landing later within the evaluation second compares EQUAL,
+          # and deferring on equality is fail-safe and self-healing.
           if [ "$state" = "success" ]; then
-            newer="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate \
-              | jq -rs --arg ctx "$CTX" --arg since "$EVAL_AT" \
+            newer=""
+            if status_pages="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate)" \
+               && [ -n "$status_pages" ]; then
+              newer="$(jq -rs --arg ctx "$CTX" --arg since "$EVAL_AT" \
                   '[add // [] | .[] | select(.context == $ctx and .state != "success"
-                    and ((.created_at // "") > $since))] | length')" || newer=""
+                    and ((.created_at // "") >= $since))] | length' <<<"$status_pages")" || newer=""
+            fi
             if [ "$newer" != "0" ]; then
               echo "deferring the success post: a newer '$CTX' write landed after evaluation at $EVAL_AT; the refire/sweep converges"
               state=deferred
@@ -127,8 +135,8 @@ one pending run per group and replaces it, so a sweep that reruns every
 approved PR's workflows would queue all their gate runs into that single
 slot and starve first-success posts fleet-wide. The rule consumers inherit
 instead: **a gate job re-reads the current gate status before posting
-`success` and defers when a non-success entry was created after its own
-evaluation** (that writer saw newer review state; the refire/sweep — which
+`success` and defers when a non-success entry was created at or after its
+own evaluation second** (that writer saw newer review state; the refire/sweep — which
 always re-read live state — converge the head, so deferring is self-healing
 and the stale write never lands). Downward posts (`pending`/`failure`) never
 defer: overwriting toward closed is the safe direction and the sweep

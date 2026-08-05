@@ -123,8 +123,8 @@ case "$args" in
     id="$(sed -n 's|.*actions/runs/\([0-9]*\)/rerun.*|\1|p' <<<"$args")"
     # STUB_RERUN_MODE: ok (default) | refuse (unqualified 403) | throttle
     # (403 + retry-after/x-ratelimit-remaining:0) | throttle_then_ok |
-    # server_error (502). Non-ok modes log each attempt to
-    # STUB_RERUN_ATTEMPT_LOG so retry bounds are assertable.
+    # auth_error (401) | server_error (502). Non-ok modes log each attempt
+    # to STUB_RERUN_ATTEMPT_LOG so retry bounds are assertable.
     mode="${STUB_RERUN_MODE:-ok}"
     if [[ "$mode" == "throttle_then_ok" ]]; then
       if [[ -s "${STUB_RERUN_ATTEMPT_LOG:-/dev/null}" ]]; then mode=ok; else mode=throttle; fi
@@ -143,6 +143,12 @@ case "$args" in
         echo "attempt:$id" >> "${STUB_RERUN_ATTEMPT_LOG:?}"
         printf 'HTTP/2.0 403 Forbidden\r\nretry-after: 1\r\nx-ratelimit-remaining: 0\r\n\r\n{"message":"You have exceeded a secondary rate limit."}\n'
         echo "gh: You have exceeded a secondary rate limit. (HTTP 403)" >&2
+        exit 1
+        ;;
+      auth_error)
+        echo "attempt:$id" >> "${STUB_RERUN_ATTEMPT_LOG:?}"
+        printf 'HTTP/2.0 401 Unauthorized\r\ncontent-type: application/json\r\n\r\n{"message":"Bad credentials"}\n'
+        echo "gh: Bad credentials (HTTP 401)" >&2
         exit 1
         ;;
       server_error)
@@ -299,6 +305,15 @@ rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
   STUB_RERUN_MODE=throttle_then_ok REVIEW_GATE_API_ATTEMPTS=2 REVIEW_GATE_API_RETRY_DELAY_SECONDS=0) || rc=$?
 assert_eq "$rc" "0" "r23: a throttle clearing within the budget exits 0"
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "r23: the rerun eventually lands"
+
+set +e
+out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RERUN_MODE=auth_error)
+rc=$?
+set -e
+assert_eq "$rc" "1" "r24a: a rerun 401 exits 1 (malfunction — bad credentials stop convergence for EVERY head, never stuck-green)"
+assert_contains "$out" "malfunction" "r24a: a 401 is named malfunction, not a per-run refusal"
+assert_eq "$(grep -c 'attempt:111' "$ATTEMPT_LOG")" "1" "r24a: a 401 is never retried in-process"
 
 set +e
 out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
