@@ -53,8 +53,11 @@ name: Approval CI re-fire
   # Some reviewers publish their clean-analysis evidence as a legacy commit
   # STATUS instead of a check-run, and a status update is a `status` event -
   # not check_run. Without this trigger the clean path still cannot re-fire
-  # the gate here. Status events run UNFILTERED and converge all open PRs —
-  # see the event routing in the job (#1039).
+  # the gate here. Status events carry NO context-name filter (#1039) but
+  # ARE restricted to success states by the job's if: — clean-analysis
+  # evidence is only ever a `success` status; pending/failure/error states
+  # converge nothing. Executing runs converge all open PRs — see the event
+  # routing in the job.
   status: {}
   # Comment-form reviewers post NEITHER a review object NOR a check/status on
   # a clean pass — only an ISSUE COMMENT on the PR. Its evidence is accepted
@@ -120,13 +123,13 @@ jobs:
     #
     # `status` carries NO context-name term (#1039), by design rather than
     # omission: trusted status context names are repo-specific ADAPT values
-    # this expression cannot read from vstack.settings.toml, and a name list
+    # this expression cannot read from the settings file, and a name list
     # that misses a reviewer's context silently strands that reviewer's
     # clean path forever — the exact stuck-gate #1039 closed. Filtering on
     # STATE is a different thing and is kept generic below: clean-analysis
     # evidence is only ever a `success` status, and converging on `pending`
-    # or `failure` states would act before a verdict exists (CodeRabbit
-    # posts `pending` on the same context mid-review), so the success term
+    # or `failure` states would act before a verdict exists (a reviewer may
+    # post `pending` on the same context mid-review), so the success term
     # cannot strand anyone and drops the churn shapes. None of this is an
     # eviction argument: with this group at JOB level, a guard-skipped run
     # never claims the writer slot (job concurrency is claimed only after

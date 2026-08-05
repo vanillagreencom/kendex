@@ -254,7 +254,7 @@ assert_eq "$rc" "1" "r10: status-history read failure exits 1"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "r10: no action on history read failure"
 
 set +e
-out=$(env -u PR_NUMBER PATH="$TMP_ROOT/bin:$PATH" GH_REPO=acme/widgets HEAD_SHA=headsha \
+out=$(env -u PR_NUMBER -u ALL_OPEN_PRS -u QUIESCE PATH="$TMP_ROOT/bin:$PATH" GH_REPO=acme/widgets HEAD_SHA=headsha \
   REVIEW_GATE_SETTINGS_FILE=/dev/null \
   STUB_POST_LOG="$POST_LOG" STUB_RERUN_LOG="$RERUN_LOG" \
   STUB_VERDICT_LINE="$AWAITING" bash "$TMP_ROOT/scripts/approval-refire.sh" 2>&1)

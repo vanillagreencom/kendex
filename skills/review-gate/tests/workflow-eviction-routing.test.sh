@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # Pins the eviction-safe event routing of the review-gate writer workflows
 # (#1039). Both rerun workflows (shipped template + vstack's live
-# self-adoption copy) enter the repo-wide `review-gate-writer` concurrency
-# group at the WORKFLOW level, before any job-level filter; with
-# cancel-in-progress:false GitHub keeps ONE pending run per group and
-# REPLACES it, so an arriving run EVICTS whatever writer was pending. The
-# invariants pinned here make that replacement lossless:
+# self-adoption copy) claim the repo-wide `review-gate-writer` concurrency
+# group at the JOB level — job concurrency is claimed only after the
+# job-level `if:` evaluates, so a guard-skipped run never touches the
+# writer slot. With cancel-in-progress:false GitHub keeps ONE pending run
+# per group and REPLACES it, so an arriving EXECUTING run EVICTS whatever
+# writer was pending. The invariants pinned here make that replacement
+# lossless:
 #
-#   w1. every writer workflow shares the single group with
-#       cancel-in-progress: false (the out-of-order-writer race guard)
-#   w2. `status` events are NOT filtered at the job level — a skipped
-#       status job would still evict the pending writer while converging
-#       nothing
+#   w1. every writer workflow claims the single shared group at JOB level
+#       with cancel-in-progress: false (the out-of-order-writer race
+#       guard); a workflow-level group would let guard-skipped runs evict
+#   w2. the `status` arm filters on STATE only (success — clean-analysis
+#       evidence is only ever a `success` status; pending/failure converge
+#       nothing) and never on CONTEXT NAME (names are repo-specific ADAPT
+#       values; a list that misses a reviewer's context strands that
+#       reviewer's clean path — the #1039 stuck gate). With the group at
+#       job level the filter is priced on API cost, not eviction.
 #   w3. EVERY executing run routes to ALL_OPEN_PRS=1 (sweep-style full
 #       convergence: surviving in the slot subsumes whatever was evicted).
 #       No single-PR fast path exists: the workflows run on GITHUB_TOKEN,
@@ -22,8 +28,8 @@
 #   w5. the `status` trigger stays declared — legacy-status reviewer
 #       evidence has no other re-fire signal
 #   w6. the scaffold keeps its check_run / issue_comment trust guards
-#       (volume control; a guard-skipped run's eviction is recovered only
-#       by the scheduled sweep, and the comments must say so)
+#       (volume control; a guard-skipped run claims no slot and evicts
+#       nothing, so the guards cost only run starts)
 #   w7. both sweep workflows delegate enumeration to the shared script's
 #       all-PRs mode — no duplicated open-PR listing in workflow YAML; the
 #       script is the single source of truth for it
@@ -63,6 +69,29 @@ assert_not_grep() {
   fi
 }
 
+# Extract the rerun job's `if:` condition — single-line (`if: expr`) or
+# block-scalar (`if: >-` + indented lines) form — with comments stripped.
+# The w2 terms are asserted against THIS text only: a comment or another
+# job mentioning the success term must not satisfy the check, and any
+# `github.event.context` reference in the condition (equality OR
+# contains()) must fail it.
+rerun_job_if() {
+  local file="$1"
+  awk '
+    /^[[:space:]]*#/ { next }
+    /^  rerun:[[:space:]]*$/ { injob = 1; next }
+    injob && /^  [^[:space:]]/ { injob = 0 }
+    injob && /^    if:/ {
+      line = $0
+      sub(/^    if:[[:space:]]*/, "", line)
+      if (line !~ /^(>-?|\|-?)?[[:space:]]*$/) print line
+      inif = 1; next
+    }
+    inif && /^      / { print; next }
+    inif { inif = 0 }
+  ' "$file"
+}
+
 check_rerun() {
   local file="$1" label="$2"
   assert_grep "$file" 'group: review-gate-writer' "w1[$label]: shared writer group"
@@ -74,8 +103,28 @@ check_rerun() {
   # act before a verdict exists); a CONTEXT-NAME term is FORBIDDEN (names
   # are repo-specific ADAPT values, and a list that misses a reviewer's
   # context strands that reviewer's clean path — the #1039 stuck gate).
-  assert_grep "$file" "github.event.state == 'success'" "w2[$label]: status arm filters to success states"
-  assert_not_grep "$file" 'github.event.context ==' "w2[$label]: no context-name filter on the status arm (#1039)"
+  # Both terms are checked inside the rerun job's own if: condition.
+  local rerun_if
+  rerun_if="$(rerun_job_if "$file")"
+  if [ -z "$rerun_if" ]; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  w2[%s]: rerun job has no if: condition\n' "$label"
+  else
+    if printf '%s\n' "$rerun_if" | grep -qF "github.event.state == 'success'"; then
+      PASS=$((PASS + 1))
+      printf '  ok    w2[%s]: rerun if: filters status arm to success states\n' "$label"
+    else
+      FAIL=$((FAIL + 1))
+      printf '  FAIL  w2[%s]: rerun if: missing the success-state status term\n' "$label"
+    fi
+    if printf '%s\n' "$rerun_if" | grep -q 'github\.event\.context'; then
+      FAIL=$((FAIL + 1))
+      printf '  FAIL  w2[%s]: rerun if: references github.event.context — no context-name filter on the status arm (#1039)\n' "$label"
+    else
+      PASS=$((PASS + 1))
+      printf '  ok    w2[%s]: no context-name reference in the rerun if: (#1039)\n' "$label"
+    fi
+  fi
   assert_grep "$file" 'export ALL_OPEN_PRS=1' "w3[$label]: every executing run converges all open PRs"
   assert_not_grep "$file" 'GITHUB_EVENT_NAME' "w3[$label]: no event-shape routing — every executing run takes the all-PRs path (the bootstrap fallback is the only PR-scoped branch)"
   assert_not_grep "$file" 'trailing all-PRs pass' "w3[$label]: no comment may claim a self-triggered trailing pass"
