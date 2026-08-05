@@ -820,7 +820,7 @@ classify_index_entry() {
     else
       CIE_DESCENDANTS=1
     fi
-  done < <(git -C "$repo" ls-files -z -- "$rel" 2>/dev/null)
+  done < <(git -C "$repo" ls-files -z -- ":(literal)$rel" 2>/dev/null)
 }
 
 # Provision a WORKTREE_SYMLINKS directory entry that shadows tracked paths by
@@ -885,6 +885,16 @@ link_untracked_children() {
     done
   fi
 
+  # A failed tracked-restore leaves this entry's git-owned state unknown;
+  # proceeding to (re)link children around it would layer new writes on a
+  # worktree the heal could not bring to a known-good base. Leave the entry
+  # exactly as found (the warnings above name what failed) and re-signal —
+  # repair-links is the retry.
+  if [[ "$restore_failed" == true ]]; then
+    echo "Warning: skipping child linking under '$path' in $wt until the tracked restore above succeeds; re-run repair-links." >&2
+    return 1
+  fi
+
   local exact="" descendants=""
   for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
     [[ -e "$child" || -L "$child" ]] || continue
@@ -928,10 +938,8 @@ link_untracked_children() {
     fi
   done
 
-  if [[ -n "$unresolved" || "$restore_failed" == true ]]; then
-    if [[ -z "$unresolved" ]]; then
-      return 1
-    fi
+  # restore_failed returned early above; only unresolved children reach here.
+  if [[ -n "$unresolved" ]]; then
     {
       echo "Warning: WORKTREE_SYMLINKS entry '$path' shadows tracked paths and these children could not be resolved:"
       printf '%s' "$unresolved"
@@ -1003,8 +1011,8 @@ symlink_into_worktree() {
     # still reads only the worktree's own index — main's content isn't checked
     # out here yet.
     local shadowed=false
-    if [[ -n "$(git -C "$wt" ls-files "$path/" 2>/dev/null)" ]] ||
-       [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- "$path/" 2>/dev/null || true)" ]]; then
+    if [[ -n "$(git -C "$wt" ls-files -- ":(literal)$path/" 2>/dev/null)" ]] ||
+       [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- ":(literal)$path/" 2>/dev/null || true)" ]]; then
       shadowed=true
     fi
     if [[ "$shadowed" == true ]]; then
@@ -1053,7 +1061,7 @@ symlink_into_worktree() {
 # per-child walk to surface.
 collect_materialized_child_links() {
   local path="$1" wt="$2" depth="${3:-0}"
-  local src="$PROJECT_ROOT/$path" child="" name="" rel="" exact="" descendants=""
+  local src="$PROJECT_ROOT/$path" child="" name="" rel="" exact="" descendants="" capped=""
   # Depth-capped like link_untracked_children (#846), but this function
   # reports rather than repairs: silently returning "no damage found" here
   # (as opposed to link_untracked_children's warning + nonzero return) gave
@@ -1082,9 +1090,13 @@ collect_materialized_child_links() {
     if [[ -z "$exact" && -z "$descendants" ]]; then
       [[ -e "$wt/$rel" && ! -L "$wt/$rel" ]] && printf '%s\n' "$rel"
     elif [[ -z "$exact" ]]; then
-      collect_materialized_child_links "$rel" "$wt" $((depth + 1))
+      # `|| capped=1`: a depth-capped deeper subtree must not abort this
+      # loop under set -e — siblings still get inspected; the cap outcome
+      # is re-signaled once at the end.
+      collect_materialized_child_links "$rel" "$wt" $((depth + 1)) || capped=1
     fi
   done
+  [[ -z "$capped" ]]
 }
 
 warn_if_links_materialized() {
@@ -1102,7 +1114,12 @@ warn_if_links_materialized() {
       # (VST-37): per-child links live inside it, not a parent link — but its
       # untracked children still need to be actual links (#979).
       if [[ -d "$wt/$path" && -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]]; then
-        child_damage="$(collect_materialized_child_links "$path" "$wt")"
+        # `|| true`: the collector returns nonzero when a depth-capped
+        # subtree could not be fully inspected — that is a REPORTING
+        # outcome folded into the warning below, and under set -e an
+        # unguarded substitution would abort the whole command (push) over
+        # a warning-grade condition.
+        child_damage="$(collect_materialized_child_links "$path" "$wt")" || true
         if [[ -n "$child_damage" ]]; then
           while IFS= read -r rel; do
             [[ -n "$rel" ]] || continue

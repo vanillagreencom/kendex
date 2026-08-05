@@ -142,6 +142,7 @@ set +e
 git -C "$WT" fetch -q origin
 merge_out="$(git -C "$WT" merge --no-edit origin/main 2>&1)"
 merge_status=$?
+[[ "$merge_status" -eq 0 ]] || printf 'merge output:\n%s\n' "$merge_out" >&2
 set -e
 assert_eq "$merge_status" "0" "a merge updating the tracked subtree succeeds"
 assert_eq "$(cat "$WT/.agents/skills/review-gate/engine.md")" "engine v2" "the merge wrote the tracked file"
@@ -269,6 +270,7 @@ set +e
 git -C "$PREDATE_WT" fetch -q origin
 merge_out2="$(git -C "$PREDATE_WT" merge --no-edit origin/main 2>&1)"
 merge_status2=$?
+[[ "$merge_status2" -eq 0 ]] || printf 'merge output:\n%s\n' "$merge_out2" >&2
 set -e
 assert_eq "$merge_status2" "0" "the merge that introduces the tracked child succeeds"
 assert_real "$PREDATE_WT/.agents/skills/late.md" "the merge wrote the newly-tracked child as a real file"
