@@ -313,6 +313,40 @@ fi
 rm -rf "$WT/runtime"
 (cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
 
+echo "=== a materialized PER-CHILD link is quarantined, not deleted (#1317) ==="
+# The child-link path never had its own quarantine: link_untracked_children
+# called symlink_into_worktree directly for each untracked child, and that
+# function's directory branch does an unconditional rm -rf on a materialized
+# destination. A rebase or checkout that leaves harness/skills materialized
+# with untracked user data underneath must be reported and left in place, the
+# same as a materialized top-level entry — never silently deleted.
+rm -f "$WT/harness/skills"
+mkdir -p "$WT/harness/skills"
+printf 'precious\n' >"$WT/harness/skills/user-data.txt"
+set +e
+child_out="$(cd "$MAIN" && "$WORKTREE_SCRIPT" repair-links "$WT" 2>&1)"
+child_rc=$?
+set -e
+if [[ -d "$WT/harness/skills" && ! -L "$WT/harness/skills" ]]; then
+  ok "materialized per-child link left in place"
+else
+  bad "materialized per-child link left in place" "$child_out"
+fi
+if [[ "$(cat "$WT/harness/skills/user-data.txt" 2>/dev/null)" == "precious" ]]; then
+  ok "per-child untracked data intact"
+else
+  bad "per-child untracked data intact"
+fi
+assert_contains "$child_out" "user-data.txt" "warning names the untracked child file"
+if [[ "$child_rc" -ne 0 ]]; then ok "blocked child repair exits nonzero"; else bad "blocked child repair exits nonzero" "rc=0"; fi
+rm -rf "$WT/harness/skills"
+(cd "$MAIN" && "$WORKTREE_SCRIPT" fix-links "$WT" >/dev/null 2>&1)
+if [[ -L "$WT/harness/skills" && -f "$WT/harness/skills/installed.txt" ]]; then
+  ok "per-child link restored after quarantine test"
+else
+  bad "per-child link restored after quarantine test"
+fi
+
 echo "=== the per-child heal never reverts locally edited tracked files ==="
 # Restoration is for MISSING tracked files only; a branch's genuine edit to a
 # tracked file under the entry must ride through the heal untouched.

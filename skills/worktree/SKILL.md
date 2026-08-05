@@ -80,16 +80,20 @@ Some execution policies reject top-level `git rebase` porcelain outright (Codex 
 
 ## Recovering a broken `.agents` link
 
-The configured symlinks (`WORKTREE_SYMLINKS`, typically `.agents`) point from a worktree back into the main checkout, so a large harness library is shared rather than copied per branch. When one goes missing or turns into a real directory, **route the recovery by shape**.
+The configured symlinks (`WORKTREE_SYMLINKS`, typically `.agents`) point from a worktree back into the main checkout, so a large harness library is shared rather than copied per branch. **The healthy shape depends on whether the entry has tracked content underneath, so route the recovery by shape — not by whether `test -L .agents` passes.**
 
-**`git checkout -- .agents` is never the recovery.** The path holds no tracked content, so there is nothing for git to restore; the command succeeds and changes nothing, which reads as "recovered" while the link is still broken.
+- **Untracked-only entry** (the common case): the entry must be a symlink. Missing, or a real directory, means the link is broken.
+- **Entry with tracked content underneath** (a consumer still committing some files under `.agents`): a real directory is the correct steady state, not damage — the entry holds the tracked files git owns, plus one symlink per untracked child. Check the untracked children instead of the parent's shape.
+
+**`git checkout -- .agents` is never the recovery for an untracked-only entry.** The path holds no tracked content, so there is nothing for git to restore; the command succeeds and changes nothing, which reads as "recovered" while the link is still broken.
 
 | Symptom | Recovery |
 |---|---|
-| `.agents` missing, or a real directory instead of a symlink (`test -L .agents` fails) | `worktree fix-links <ID\|PATH>` — **from the main checkout** |
+| Untracked-only entry missing, or a real directory instead of a symlink | `worktree fix-links <ID\|PATH>` — **from the main checkout** |
+| Tracked-content entry present, but an untracked child underneath is missing its link or is itself a real path | `worktree fix-links <ID\|PATH>` — **from the main checkout** (heals per child; never overwrites a child holding data git does not track — reported instead) |
 | A genuinely modified or corrupt **tracked** file | `git checkout -- <path>` — run in the checkout the file really lives in |
 
-A directory entry that contains tracked files is provisioned per child: the entry stays a real directory, tracked paths stay real files git can write, and only the untracked children are symlinked. A legacy worktree that still holds a parent link over tracked content (where `git checkout` writes through the link into the main checkout while `assume-unchanged` keeps `git status` clean in both) heals on the next `fix-links` or hook repair ([references/config.md](references/config.md)).
+A directory entry that contains tracked files is provisioned per child, as above: `fix-links` and hook-driven repair keep the parent real, restore any missing tracked file from the index, and re-link any untracked child that has gone missing or been replaced. A legacy worktree that still holds a parent link over tracked content (where `git checkout` writes through the link into the main checkout while `assume-unchanged` keeps `git status` clean in both) heals the same way on the next `fix-links` or hook repair ([references/config.md](references/config.md)).
 
 Most of the time the links now heal themselves: `create` and `fix-links` install shared `post-checkout`/`post-merge`/`post-rewrite` hooks in the main checkout's hooks dir (worktrees resolve hooks there, so one install covers every worktree and every harness) that re-assert the configured symlinks after the git operations that clobber them. The auto-repair refuses to touch a materialized path holding data git does not track — it warns loudly and leaves the manual `fix-links` as the way out — and it is skipped entirely when `core.hooksPath` is set ([references/hooks.md](references/hooks.md)).
 

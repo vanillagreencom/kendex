@@ -814,51 +814,77 @@ link_untracked_children() {
   local path="$1" wt="$2" depth="${3:-0}"
   local src="$PROJECT_ROOT/$path"
   local dst="$wt/$path"
-  local child="" name="" rel="" shadowed="" f="" unresolved=""
+  local child="" name="" rel="" f="" unresolved=""
+  local -a shadowed=()
 
   # Symlinked sources make the tracked/untracked walk cyclic; eight levels is
   # far beyond any real layout, so deeper nesting is reported, not resolved.
   if [[ "$depth" -ge 8 ]]; then
     echo "Warning: WORKTREE_SYMLINKS entry '$path' nests tracked content deeper than 8 levels; its children were not linked." >&2
-    return 0
+    return 1
   fi
 
   # A parent link from an earlier run (or an older skill version) hides the
   # tracked files and holds their assume-unchanged bits: undo both, then
   # restore only the tracked files that are MISSING — a blanket checkout of
   # the pathspec would also revert files the branch legitimately modified.
-  shadowed="$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)"
+  # NUL-delimited throughout (#846): a line-oriented list, or piping it through
+  # xargs, breaks on filenames with spaces, tabs, or quotes, silently leaving
+  # their assume-unchanged bit set. `xargs -r` is also GNU-only and unavailable
+  # on the BSD userland this script supports.
+  while IFS= read -r -d '' f; do
+    shadowed[${#shadowed[@]}]="$f"
+  done < <(git -C "$wt" ls-files -z -- "$path/" 2>/dev/null)
   if [[ -L "$dst" ]] && ! rm -f "$dst" 2>/dev/null; then
     echo "Warning: could not replace the '$path' symlink in $wt with a real directory; its tracked files stay shadowed." >&2
-    return 0
+    return 1
   fi
   if ! mkdir -p "$dst" 2>/dev/null; then
     echo "Warning: could not create '$path' in $wt; tracked files under it may be missing." >&2
-    return 0
+    return 1
   fi
-  if [[ -n "$shadowed" ]]; then
-    printf '%s\n' "$shadowed" | \
-      xargs -r git -C "$wt" update-index --no-assume-unchanged 2>/dev/null || true
-    while IFS= read -r f; do
-      [[ -n "$f" && ! -e "$wt/$f" && ! -L "$wt/$f" ]] || continue
+  if [[ ${#shadowed[@]} -gt 0 ]]; then
+    git -C "$wt" update-index --no-assume-unchanged -- "${shadowed[@]}" 2>/dev/null || true
+    for f in "${shadowed[@]}"; do
+      [[ ! -e "$wt/$f" && ! -L "$wt/$f" ]] || continue
       git -C "$wt" checkout -- "$f" 2>/dev/null || true
-    done <<<"$shadowed"
+    done
   fi
 
+  local exact="" descendants=""
   for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
     [[ -e "$child" || -L "$child" ]] || continue
     name="${child##*/}"
     rel="$path/$name"
-    if [[ -z "$(git -C "$wt" ls-files -- "$rel" "$rel/" 2>/dev/null)" ]]; then
+    # Decide from the INDEX, not the filesystem type of $child: [[ -d ]]
+    # follows symlinks, so a tracked symlink whose target happens to be a
+    # directory would otherwise be misread as a mixed tracked directory and
+    # recursed into, and the recursive call would then replace that tracked
+    # symlink with a real one (#856). An exact index entry for $rel — file,
+    # symlink, or gitlink alike — is always a leaf git owns outright; only the
+    # absence of an exact entry alongside tracked descendants means $rel is a
+    # real tracked directory worth recursing into.
+    #
+    # `ls-files -- "$rel"` alone is NOT an exact-match query: git's pathspec
+    # matching treats a bare directory path as a prefix, so it also returns
+    # every tracked file BENEATH $rel (identical to `ls-files -- "$rel/"`).
+    # The line must be filtered for literal equality with $rel to tell "$rel
+    # itself is a tracked leaf" apart from "$rel is an untracked directory
+    # with tracked descendants".
+    exact="$(git -C "$wt" ls-files -- "$rel" 2>/dev/null | grep -Fx -- "$rel" || true)"
+    descendants="$(git -C "$wt" ls-files -- "$rel/" 2>/dev/null)"
+    if [[ -z "$exact" && -z "$descendants" ]]; then
       # Nothing tracked here: ordinary symlink treatment, own exclude entry.
-      symlink_into_worktree "$rel" "$wt" || unresolved="$unresolved  - $rel (linking failed)"$'\n'
-    elif [[ -d "$child" ]]; then
-      link_untracked_children "$rel" "$wt" $((depth + 1))
-    elif [[ -f "$child" ]]; then
-      # A tracked file: git owns it in the worktree; the checkout's copy stays.
+      # Quarantine-checked (#1317): this child may have materialized as a real
+      # file or directory holding untracked user data since the last repair,
+      # and symlink_into_worktree itself has no quarantine of its own — it
+      # would rm -rf/overwrite that data on the direct call this replaces.
+      quarantine_and_relink_path "$wt" "$rel" || unresolved="$unresolved  - $rel (linking failed or blocked — see warning above)"$'\n'
+    elif [[ -n "$exact" ]]; then
+      # A tracked leaf: git owns it in the worktree; the checkout's copy stays.
       :
     else
-      unresolved="$unresolved  - $rel (tracked, but not a regular file or directory in the main checkout)"$'\n'
+      link_untracked_children "$rel" "$wt" $((depth + 1)) || unresolved="$unresolved  - $rel (nested link failure — see warning above)"$'\n'
     fi
   done
 
@@ -868,6 +894,7 @@ link_untracked_children() {
       printf '%s' "$unresolved"
       echo "  Tracked paths were left to git; narrow the entry to the untracked subpaths to silence this."
     } >&2
+    return 1
   fi
   return 0
 }
@@ -925,9 +952,19 @@ symlink_into_worktree() {
     # — a rebase that must write them replaces the symlink with a real
     # directory). Act on the detection instead (VST-37): keep the entry a real
     # directory and link only its untracked children.
-    local shadowed
-    shadowed="$(git -C "$wt" ls-files "$path/" 2>/dev/null)"
-    if [[ -n "$shadowed" ]]; then
+    # Ask BOTH indexes (#899 above does the same for the exclude-entry shape):
+    # a worktree branch that predates the commit which started tracking this
+    # path sees nothing in its own index, but main tracking it is still enough
+    # reason to reserve the real-directory shape now, before the merge that
+    # brings the tracked content into this branch lands. Restoring files below
+    # still reads only the worktree's own index — main's content isn't checked
+    # out here yet.
+    local shadowed=false
+    if [[ -n "$(git -C "$wt" ls-files "$path/" 2>/dev/null)" ]] ||
+       [[ -n "$(git -C "$PROJECT_ROOT" ls-files -- "$path/" 2>/dev/null || true)" ]]; then
+      shadowed=true
+    fi
+    if [[ "$shadowed" == true ]]; then
       link_untracked_children "$path" "$wt"
       return $?
     fi
@@ -963,8 +1000,36 @@ symlink_into_worktree() {
 # stays as the backstop for repos where the hooks could not be installed.
 # `core.hooksPath` remains the wrong mechanism either way: it replaces the
 # hooks directory wholesale and would disable the consumer's own hooks.
+# Recurse through a tracked-content WORKTREE_SYMLINKS entry the same way
+# link_untracked_children does, printing (one per line) any untracked child
+# that should be a symlink but is a real path instead. warn_if_links_
+# materialized's parent-only check (#979) treats "real directory with tracked
+# content underneath" as proof the whole entry is healthy, but a rebase or
+# checkout can materialize just an untracked CHILD several levels down while
+# leaving the tracked files at the top untouched — that damage needs the same
+# per-child walk to surface.
+collect_materialized_child_links() {
+  local path="$1" wt="$2" depth="${3:-0}"
+  local src="$PROJECT_ROOT/$path" child="" name="" rel="" exact="" descendants=""
+  [[ "$depth" -lt 8 ]] || return 0
+  for child in "$src"/* "$src"/.[!.]* "$src"/..?*; do
+    [[ -e "$child" || -L "$child" ]] || continue
+    name="${child##*/}"
+    rel="$path/$name"
+    # See link_untracked_children (#856) for why this must be a literal-equal
+    # filter: a bare directory pathspec also matches every tracked descendant.
+    exact="$(git -C "$wt" ls-files -- "$rel" 2>/dev/null | grep -Fx -- "$rel" || true)"
+    descendants="$(git -C "$wt" ls-files -- "$rel/" 2>/dev/null)"
+    if [[ -z "$exact" && -z "$descendants" ]]; then
+      [[ -e "$wt/$rel" && ! -L "$wt/$rel" ]] && printf '%s\n' "$rel"
+    elif [[ -z "$exact" ]]; then
+      collect_materialized_child_links "$rel" "$wt" $((depth + 1))
+    fi
+  done
+}
+
 warn_if_links_materialized() {
-  local wt="$1" path="" materialized=""
+  local wt="$1" path="" materialized="" rel="" child_damage=""
   [[ -n "$wt" && -d "$wt" ]] || return 0
   validate_worktree_setup_config >/dev/null 2>&1 || return 0
 
@@ -975,8 +1040,18 @@ warn_if_links_materialized() {
     [[ -e "$PROJECT_ROOT/$path" ]] || continue
     if [[ -e "$wt/$path" && ! -L "$wt/$path" ]]; then
       # An entry with tracked content underneath is a real directory BY DESIGN
-      # (VST-37): per-child links live inside it, not a parent link.
-      [[ -d "$wt/$path" && -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]] && continue
+      # (VST-37): per-child links live inside it, not a parent link — but its
+      # untracked children still need to be actual links (#979).
+      if [[ -d "$wt/$path" && -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]]; then
+        child_damage="$(collect_materialized_child_links "$path" "$wt")"
+        if [[ -n "$child_damage" ]]; then
+          while IFS= read -r rel; do
+            [[ -n "$rel" ]] || continue
+            materialized="$materialized  - $rel"$'\n'
+          done <<<"$child_damage"
+        fi
+        continue
+      fi
       materialized="$materialized  - $path"$'\n'
     fi
   done
@@ -1284,10 +1359,15 @@ worktree_tracked_entry_mismatch() {
   esac
 }
 
-# Re-assert configured WORKTREE_SYMLINKS in one worktree. Cheap on the healthy
-# path (one readlink per entry); repair is the existing fix-links logic
-# (symlink_into_worktree). A materialized path holding data git does not track
-# is never clobbered — it is reported loudly with the manual way out instead.
+# Re-link a single WORKTREE_SYMLINKS-managed path, refusing to destroy any
+# materialized data that git does not track or that differs from its index
+# record. Shared by repair_worktree_links (top-level configured entries) and
+# link_untracked_children (untracked children inside a shadowed/tracked-
+# content parent, #1317): a materialized CHILD is exactly where a hook racing
+# a cache sync, or a rebase, could otherwise silently drop untracked user data
+# via symlink_into_worktree's unconditional rm -rf/mv — that function has no
+# quarantine of its own, by design, so every call site that might see
+# materialized data must quarantine-check before calling it.
 #
 # The materialized path is atomically renamed aside BEFORE inspection: a
 # writer racing the scan by path lands in a freshly-created directory (or
@@ -1296,8 +1376,79 @@ worktree_tracked_entry_mismatch() {
 # can still lose post-scan writes — that residual window is unclosable
 # without never deleting at all; the by-path race (the incident class: a
 # cache sync creating files while the hook runs) is what the rename closes.
+#
+# Sets QUARANTINE_RELINK_CHANGED=true when this call actually restored the
+# link, so callers can distinguish "already healthy" from "just repaired" for
+# their own summary reporting. Returns 0 when the path is correctly linked
+# (or already was); 1 when blocked, with a warning already printed to stderr
+# explaining why and how to repair manually.
+QUARANTINE_RELINK_CHANGED=false
+quarantine_and_relink_path() {
+  local wt="$1" path="$2" src="$PROJECT_ROOT/$2" dst="$wt/$2" qdir="" extras="" extra_count=0
+  QUARANTINE_RELINK_CHANGED=false
+
+  if [[ -L "$dst" ]]; then
+    # Healthy steady state; also covers a link re-pointed at a moved main.
+    [[ "$(readlink "$dst" 2>/dev/null || true)" == "$src" ]] && return 0
+  elif [[ -e "$dst" ]]; then
+    qdir="$dst.vstack-repair.$$"
+    if ! mv "$dst" "$qdir" 2>/dev/null; then
+      echo "Warning: '$path' in $wt is materialized but could not be moved aside for inspection; leaving it untouched. Repair manually: cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
+      return 1
+    fi
+    extras="$(worktree_quarantine_unsafe_entries "$wt" "$path" "$qdir")"
+    if [[ -n "$extras" ]]; then
+      if ! mv "$qdir" "$dst" 2>/dev/null; then
+        echo "CRITICAL: '$path' data is preserved at '$qdir' but could not be moved back to '$dst' — restore it manually before anything else." >&2
+      fi
+      extra_count="$(printf '%s\n' "$extras" | grep -c .)"
+      {
+        echo "Warning: '$path' in $wt should be a symlink to '$src' but is a real path holding $extra_count entr(y/ies) git does not track or that differ from the index:"
+        printf '%s\n' "$extras" | head -n 10 | sed 's/^/  - /'
+        if [[ "$extra_count" -gt 10 ]]; then
+          echo "  ... and $((extra_count - 10)) more"
+        fi
+        echo "  Auto-repair refuses to destroy untracked data. Move it into '$src' (or delete it),"
+        echo "  then restore the link from the main checkout:"
+        echo "    cd '$PROJECT_ROOT' && $0 fix-links '$wt'"
+      } >&2
+      return 1
+    fi
+    # An active by-path writer may have recreated the path while the old
+    # tree was inspected; linking now would delete that fresh data inside
+    # symlink_into_worktree. Leave the newcomer for the next hook firing.
+    # The quarantined copy is proven index-identical, so discarding it
+    # loses nothing git cannot restore.
+    if [[ -e "$dst" || -L "$dst" ]]; then
+      rm -rf "$qdir"
+      echo "Warning: '$path' in $wt reappeared while its materialized copy was being inspected (an active writer?); leaving the new path alone. The next git operation will re-attempt the repair." >&2
+      return 1
+    fi
+    # The quarantined copy is deleted only after the link is in place —
+    # a failed relink restores it instead of leaving the path absent.
+    if symlink_into_worktree "$path" "$wt"; then
+      rm -rf "$qdir"
+      QUARANTINE_RELINK_CHANGED=true
+      return 0
+    fi
+    if [[ ! -e "$dst" && ! -L "$dst" ]] && mv "$qdir" "$dst" 2>/dev/null; then
+      echo "Warning: relinking '$path' in $wt failed; the materialized copy was restored. Repair manually: cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
+    else
+      echo "CRITICAL: relinking '$path' in $wt failed and the copy could not be restored — its content is preserved at '$qdir'." >&2
+    fi
+    return 1
+  fi
+  if symlink_into_worktree "$path" "$wt"; then
+    QUARANTINE_RELINK_CHANGED=true
+    return 0
+  fi
+  return 1
+}
+
+# Re-assert configured WORKTREE_SYMLINKS in one worktree. Cheap on the healthy
+# path (one readlink per entry); repair is quarantine_and_relink_path above.
 repair_worktree_links() {
-  local wt="$1" path="" src="" dst="" qdir="" extras="" extra_count=0 repaired="" blocked=false
+  local wt="$1" path="" src="" dst="" repaired="" blocked=false
   validate_worktree_setup_config || return 1
 
   split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
@@ -1310,69 +1461,16 @@ repair_worktree_links() {
     # (VST-37): its healthy state is a real directory holding per-child links,
     # and symlink_into_worktree heals that state idempotently (clears stale
     # assume-unchanged bits, restores missing tracked files, re-links
-    # untracked children). The quarantine path below would misread the child
-    # links as untracked data and refuse forever.
+    # untracked children — through the same quarantine as any other child,
+    # since link_untracked_children calls quarantine_and_relink_path too).
     if [[ -d "$src" && -n "$(git -C "$wt" ls-files -- "$path/" 2>/dev/null)" ]]; then
       symlink_into_worktree "$path" "$wt" || blocked=true
       continue
     fi
-    if [[ -L "$dst" ]]; then
-      # Healthy steady state; also covers a link re-pointed at a moved main.
-      [[ "$(readlink "$dst" 2>/dev/null || true)" == "$src" ]] && continue
-    elif [[ -e "$dst" ]]; then
-      qdir="$dst.vstack-repair.$$"
-      if ! mv "$dst" "$qdir" 2>/dev/null; then
-        blocked=true
-        echo "Warning: '$path' in $wt is materialized but could not be moved aside for inspection; leaving it untouched. Repair manually: cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
-        continue
-      fi
-      extras="$(worktree_quarantine_unsafe_entries "$wt" "$path" "$qdir")"
-      if [[ -n "$extras" ]]; then
-        blocked=true
-        if ! mv "$qdir" "$dst" 2>/dev/null; then
-          echo "CRITICAL: '$path' data is preserved at '$qdir' but could not be moved back to '$dst' — restore it manually before anything else." >&2
-        fi
-        extra_count="$(printf '%s\n' "$extras" | grep -c .)"
-        {
-          echo "Warning: '$path' in $wt should be a symlink to '$src' but is a real path holding $extra_count entr(y/ies) git does not track or that differ from the index:"
-          printf '%s\n' "$extras" | head -n 10 | sed 's/^/  - /'
-          if [[ "$extra_count" -gt 10 ]]; then
-            echo "  ... and $((extra_count - 10)) more"
-          fi
-          echo "  Auto-repair refuses to destroy untracked data. Move it into '$src' (or delete it),"
-          echo "  then restore the link from the main checkout:"
-          echo "    cd '$PROJECT_ROOT' && $0 fix-links '$wt'"
-        } >&2
-        continue
-      fi
-      # An active by-path writer may have recreated the path while the old
-      # tree was inspected; linking now would delete that fresh data inside
-      # symlink_into_worktree. Leave the newcomer for the next hook firing.
-      # The quarantined copy is proven index-identical, so discarding it
-      # loses nothing git cannot restore.
-      if [[ -e "$dst" || -L "$dst" ]]; then
-        blocked=true
-        rm -rf "$qdir"
-        echo "Warning: '$path' in $wt reappeared while its materialized copy was being inspected (an active writer?); leaving the new path alone. The next git operation will re-attempt the repair." >&2
-        continue
-      fi
-      # The quarantined copy is deleted only after the link is in place —
-      # a failed relink restores it instead of leaving the path absent.
-      if symlink_into_worktree "$path" "$wt"; then
-        rm -rf "$qdir"
-        repaired="$repaired $path"
-      else
-        blocked=true
-        if [[ ! -e "$dst" && ! -L "$dst" ]] && mv "$qdir" "$dst" 2>/dev/null; then
-          echo "Warning: relinking '$path' in $wt failed; the materialized copy was restored. Repair manually: cd '$PROJECT_ROOT' && $0 fix-links '$wt'" >&2
-        else
-          echo "CRITICAL: relinking '$path' in $wt failed and the copy could not be restored — its content is preserved at '$qdir'." >&2
-        fi
-      fi
-      continue
-    fi
-    if symlink_into_worktree "$path" "$wt"; then
-      repaired="$repaired $path"
+    if quarantine_and_relink_path "$wt" "$path"; then
+      [[ "$QUARANTINE_RELINK_CHANGED" == true ]] && repaired="$repaired $path"
+    else
+      blocked=true
     fi
   done
 
@@ -1404,21 +1502,26 @@ repair_worktree_links() {
 # No-op unless a configured entry actually shadows tracked files, so the
 # ordinary runtime-only symlink case is left completely alone.
 unshadow_tracked_symlink_paths() {
-  local wt="$1" path="" tracked="" checkout_err=""
-  local -a shadowed=()
+  local wt="$1" path="" f="" checkout_err=""
+  local -a shadowed=() tracked=()
   [[ -n "$wt" && -d "$wt" ]] || return 0
   validate_worktree_setup_config >/dev/null 2>&1 || return 0
 
   split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
   for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
-    tracked="$(git -C "$wt" ls-files -- "$path" "$path/" 2>/dev/null || true)"
-    [[ -n "$tracked" ]] || continue
+    # NUL-delimited (#844): a line-oriented list piped through xargs breaks on
+    # filenames with spaces, tabs, or quotes, silently leaving their
+    # assume-unchanged bit set; `xargs -r` is also GNU-only.
+    tracked=()
+    while IFS= read -r -d '' f; do
+      tracked[${#tracked[@]}]="$f"
+    done < <(git -C "$wt" ls-files -z -- "$path" "$path/" 2>/dev/null)
+    [[ ${#tracked[@]} -gt 0 ]] || continue
 
     # Clear the bit first: while it is set, git will not write these paths even
     # once the link is gone.
-    printf '%s\n' "$tracked" | \
-      xargs -r git -C "$wt" update-index --no-assume-unchanged 2>/dev/null || true
+    git -C "$wt" update-index --no-assume-unchanged -- "${tracked[@]}" 2>/dev/null || true
 
     # Only a symlink needs removing. A real directory here means a previous
     # rebase already materialized it (#856); its tracked content is genuine and

@@ -14,10 +14,11 @@ skills/worktree/
 
 ## Recovering a broken `.agents` link
 
-Route by shape. `git checkout -- .agents` is **never** the recovery: the path holds no tracked content, so the command succeeds and changes nothing while the link stays broken.
+Route by shape — an entry with tracked content underneath is a real directory BY DESIGN, so `test -L .agents` failing is not itself proof of damage. `git checkout -- .agents` is **never** the recovery for an untracked-only entry: the path holds no tracked content, so the command succeeds and changes nothing while the link stays broken.
 
-- `.agents` missing, or a real directory rather than a symlink (`test -L .agents` fails) → `worktree fix-links <ID|PATH>`, run **from the main checkout** (the worktree's own copy of the script is reached through the broken link).
-- A genuinely modified or corrupt **tracked** file → `git checkout -- <path>`, run in the checkout the file really lives in. Since VST-37 a tracked path under a configured directory entry is a real file in the worktree itself; only a legacy worktree still routes such a path through a parent link into the main checkout (with `assume-unchanged` keeping `git status` clean in both) — run `fix-links` first there, then recover at the real path.
+- Untracked-only entry missing, or a real directory rather than a symlink → `worktree fix-links <ID|PATH>`, run **from the main checkout** (the worktree's own copy of the script is reached through the broken link).
+- Entry with tracked content underneath, real directory as expected, but an untracked child inside it is missing its link or is itself a real path → same command, same caveat; it heals per child and never overwrites a child holding data git does not track.
+- A genuinely modified or corrupt **tracked** file → `git checkout -- <path>`, run in the checkout the file really lives in. A tracked path under a configured directory entry is a real file in the worktree itself; only a legacy worktree still routes such a path through a parent link into the main checkout (with `assume-unchanged` keeping `git status` clean in both) — run `fix-links` first there, then recover at the real path.
 
 `fix-links` is also the repair after anything that can replace a configured symlink with tracked content: a manual rebase, a partially-completed `remove`, or a restack replay. A worktree whose `.agents` is not a symlink cannot be trusted for local verification until it is fixed.
 
