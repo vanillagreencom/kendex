@@ -84,10 +84,11 @@ rerun_job_if() {
     injob && /^    if:/ {
       line = $0
       sub(/^    if:[[:space:]]*/, "", line)
+      sub(/[[:space:]]#.*$/, "", line)
       if (line !~ /^(>-?|\|-?)?[[:space:]]*$/) print line
       inif = 1; next
     }
-    inif && /^      / { print; next }
+    inif && /^      / { line = $0; sub(/[[:space:]]#.*$/, "", line); print line; next }
     inif { inif = 0 }
   ' "$file"
 }
