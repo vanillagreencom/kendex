@@ -1285,11 +1285,13 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 				...(options ?? {}),
 				[ROTATION_STATE_KEY]: rotationState,
 			} as BridgeStreamOptions);
-			try {
-				for await (const event of retryStream) stream.push(event);
-			} finally {
-				stream.end();
-			}
+			// End exactly once per outcome (VST-53). Ending in a `finally` ran on
+			// the throw path too, BEFORE the .catch below could push its error
+			// event — and EventStream.push is a silent no-op after end, so a failed
+			// rotation ended the turn with no error event at all. Success ends
+			// here; every throw ends in the .catch, after the error is pushed.
+			for await (const event of retryStream) stream.push(event);
+			stream.end();
 		})
 		.catch((error) => {
 			debug("provider: account retry pipeline failed:", error);

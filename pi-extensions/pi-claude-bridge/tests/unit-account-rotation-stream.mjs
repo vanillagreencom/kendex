@@ -410,6 +410,49 @@ describe("managed account stream rotation", () => {
 		assert.equal(last?.reason, "aborted");
 	});
 
+	it("surfaces a mid-retry throw as an error event instead of ending the stream silently", async () => {
+		// VST-53: the retry drain used to end the stream in a `finally`, so a
+		// throw while forwarding the rotated attempt's events ended the stream
+		// FIRST and the pipeline .catch then pushed its error event into an
+		// already-ended stream — a silent drop. The consumer read a failed
+		// rotation as a normal completion.
+		const observed = observedState();
+		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
+		let calls = 0;
+		__testSetSdkQueryFactory(() => {
+			calls += 1;
+			return calls === 1
+				? fakeSdkQuery([
+					{ type: "system", subtype: "init", session_id: "session-a" },
+					new Error("socket timeout before response"),
+				], "a", observed)
+				: fakeSdkQuery([
+					{ type: "system", subtype: "init", session_id: "session-b" },
+					...STREAMED_TEXT("from-b"),
+					{ type: "result", subtype: "success", result: "from-b" },
+				], "b", observed);
+		});
+
+		const stream = streamClaudeAgentSdk(model, context, { sessionId: "mid-retry-throw" });
+		// Model the transport dying mid-retry: the first visible event forwarded
+		// from the rotated attempt blows up inside the retry drain loop.
+		const push = stream.push.bind(stream);
+		let armed = true;
+		stream.push = (event) => {
+			if (armed && event.type === "text_delta") {
+				armed = false;
+				throw new Error("mid-retry transport failure");
+			}
+			return push(event);
+		};
+
+		const events = await collect(stream);
+		assert.equal(calls, 2, "the rotation retry started");
+		const errors = events.filter((event) => event.type === "error");
+		assert.equal(errors.length, 1, "the failed rotation must surface an error event");
+		assert.match(errors[0].error.errorMessage, /mid-retry transport failure/);
+	});
+
 	it("treats an Extra Usage rejection as a model limit and rotates accounts", async () => {
 		const observed = observedState();
 		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);

@@ -46788,11 +46788,8 @@ function streamClaudeAgentSdk(model, context, options) {
       ...options ?? {},
       [ROTATION_STATE_KEY]: rotationState
     });
-    try {
-      for await (const event of retryStream) stream.push(event);
-    } finally {
-      stream.end();
-    }
+    for await (const event of retryStream) stream.push(event);
+    stream.end();
   }).catch((error51) => {
     debug("provider: account retry pipeline failed:", error51);
     if (abortCtx.turnOutput) {

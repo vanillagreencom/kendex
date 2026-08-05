@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 3.1.6
+
+Found while reviewing drovr's 3.1.4 re-vendor (VST-53), same shape in the 3.1.5 source.
+
+- **A failed account rotation now surfaces an error event instead of ending the turn silently.** The account-retry continuation drained the rotated attempt inside a `try`/`finally { stream.end() }`, so when the drain threw the stream ended FIRST and the pipeline's `.catch` then pushed its error event into an already-ended stream — a silent drop (`EventStream.push` is a no-op after end). The consumer read a failed rotation as a normal completion. The stream now ends exactly once per outcome: after a successful drain on the success path, and in the `.catch` AFTER the error event is pushed on every throw path. Only reachable with an account router published under `Symbol.for("vstack.pi.claude-account-router.v1")`; consumers without one never enter this branch.
+
 ### 3.1.5
 
 Two follow-ons from the 3.1.4 release (vstack#1041), verified against the shipped bundle.
