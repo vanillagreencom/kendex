@@ -60,6 +60,7 @@ jobs:
       verdict: ${{ steps.eval.outputs.verdict }}
       detail: ${{ steps.eval.outputs.detail }}
       context: ${{ steps.eval.outputs.context }}
+      evaluated_at: ${{ steps.eval.outputs.evaluated_at }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
@@ -90,6 +91,10 @@ jobs:
             echo "::error::REVIEW_GATE_CONTEXT must not be empty"
             exit 1
           fi
+          # Stamped BEFORE the predicate reads: any gate status created after
+          # this instant may reflect newer review state than this evaluation
+          # (the post job's regression guard compares against it — VST-65).
+          printf 'evaluated_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$GITHUB_OUTPUT"
           # Predicate exit 2 = no verdict (read/config failure): fail the job
           # WITHOUT posting — acting on a transient failure could flip a
           # healthy PR's merge state.
@@ -120,6 +125,7 @@ jobs:
       VERDICT: ${{ needs.evaluate.outputs.verdict }}
       DETAIL: ${{ needs.evaluate.outputs.detail }}
       GATE_CONTEXT: ${{ needs.evaluate.outputs.context }}
+      EVALUATED_AT: ${{ needs.evaluate.outputs.evaluated_at }}
     steps:
       - name: Post the verdict as the gate commit status
         run: |
@@ -133,6 +139,33 @@ jobs:
               exit 1
               ;;
           esac
+          # POST-ORDERING REGRESSION GUARD (VST-65). This job posts OUTSIDE
+          # the refire/sweep writers' shared `review-gate-writer` concurrency
+          # group — joining it is not an option (a sweep rerunning every
+          # approved PR's workflows would queue all their gate runs into the
+          # group's single pending slot and starve first-success reruns
+          # fleet-wide; see the concurrency comment above). So the interleave
+          # is closed on the write side instead: before posting SUCCESS,
+          # re-read the current gate status and DEFER when a non-success
+          # entry was created after this run's evaluation — that writer saw
+          # newer review state (e.g. a changes-requested refire landed in the
+          # evaluate→post gap), and overwriting it with a stale approved
+          # would open the gate until the next writer pass. Deferring is
+          # self-healing: the refire/sweep re-reads live state and reruns
+          # this workflow for the real first-success post. Downward posts
+          # (pending/failure) never defer — overwriting toward closed is the
+          # safe direction and the sweep converges any staleness. A failed
+          # re-read also defers: withholding success is the fail-safe side.
+          if [ "$state" = "success" ]; then
+            newer="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate \
+              | jq -rs --arg ctx "$GATE_CONTEXT" --arg since "${EVALUATED_AT:-}" \
+                  '[add // [] | .[] | select(.context == $ctx and .state != "success"
+                    and (($since | length) > 0) and ((.created_at // "") > $since))] | length')" || newer=""
+            if [ "$newer" != "0" ]; then
+              echo "::warning::deferring the success post: $GATE_CONTEXT was re-written (or unreadable) after this run's evaluation at ${EVALUATED_AT:-?} — a newer writer's verdict stands; the refire/sweep converges"
+              exit 0
+            fi
+          fi
           gh api -X POST "repos/$GH_REPO/statuses/$HEAD_SHA" \
             -f state="$state" -f context="$GATE_CONTEXT" \
             -f description="${DETAIL:0:140}" \

@@ -58,6 +58,9 @@ status is what blocks merge.
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           CTX="$(. .agents/skills/review-gate/scripts/lib/settings.sh && rg_setting REVIEW_GATE_CONTEXT "Review gate")"
+          # Stamped BEFORE the predicate reads — the writer-ordering guard
+          # below compares gate-status creation times against it.
+          EVAL_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           post() {
             gh api -X POST "repos/$GH_REPO/statuses/$1" \
               -f state="$2" -f context="$CTX" \
@@ -88,13 +91,48 @@ status is what blocks merge.
             changes-requested)     state=failure ;;
             awaiting|threads-open|error) state=pending ;;
           esac
-          post "$HEAD_SHA" "$state" "$detail"
+          # Writer-ordering regression guard (see "Writer ordering" below):
+          # never overwrite a NEWER non-success gate write with a stale
+          # success — defer and let the refire/sweep converge. A failed
+          # re-read also defers (withholding success is the fail-safe side).
+          if [ "$state" = "success" ]; then
+            newer="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate \
+              | jq -rs --arg ctx "$CTX" --arg since "$EVAL_AT" \
+                  '[add // [] | .[] | select(.context == $ctx and .state != "success"
+                    and ((.created_at // "") > $since))] | length')" || newer=""
+            if [ "$newer" != "0" ]; then
+              echo "deferring the success post: a newer '$CTX' write landed after evaluation at $EVAL_AT; the refire/sweep converges"
+              state=deferred
+            fi
+          fi
+          if [ "$state" != "deferred" ]; then
+            post "$HEAD_SHA" "$state" "$detail"
+          fi
           if [ "$verdict" = "approved" ]; then
             echo "approved=true" >> "$GITHUB_OUTPUT"
           else
             echo "approved=false" >> "$GITHUB_OUTPUT"
           fi
 ```
+
+### Writer ordering — the gate job posts outside the writer group
+
+The refire and sweep serialize their status writes in the single job-level
+`review-gate-writer` concurrency group, but the CI gate job above posts the
+same context OUTSIDE that group, so this interleave is possible: the gate
+job evaluates `approved`, a changes-requested refire posts `failure`, then
+the gate job's stale `approved` posts afterward and overwrites it until the
+next writer pass. The gate job must NOT join the writer group — GitHub keeps
+one pending run per group and replaces it, so a sweep that reruns every
+approved PR's workflows would queue all their gate runs into that single
+slot and starve first-success posts fleet-wide. The rule consumers inherit
+instead: **a gate job re-reads the current gate status before posting
+`success` and defers when a non-success entry was created after its own
+evaluation** (that writer saw newer review state; the refire/sweep — which
+always re-read live state — converge the head, so deferring is self-healing
+and the stale write never lands). Downward posts (`pending`/`failure`) never
+defer: overwriting toward closed is the safe direction and the sweep
+converges any staleness within its cadence.
 
 ### Trust posture (`REVIEW_GATE_TRUST_PR_WORKFLOWS`)
 
