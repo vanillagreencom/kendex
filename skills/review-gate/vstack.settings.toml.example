@@ -101,6 +101,19 @@ REVIEW_GATE_THREADS = "enforce"
 REVIEW_GATE_API_ATTEMPTS = "1"
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
+# Evidence carry-forward across carry-safe deltas: classes ("docs",
+# "comments"; ';' or '|' separated; empty = off, exact-head evidence only).
+# When NO evidence exists at head, a qualifying review object at an ancestor
+# commit N still satisfies the evidence term if the N→head diff classifies
+# ENTIRELY into the enabled classes — docs-only files, or comment-only
+# changes to code files (conservative per-extension comment-token table;
+# unknown extensions refuse) — or the trees are identical (rebase residue).
+# SECURITY: never a waiver — real evidence must exist and only EXTENDS
+# across a delta review would not re-examine; code changes always require
+# fresh evidence, and changes-requested / unresolved threads still fail
+# closed with carried evidence.
+REVIEW_GATE_CARRY_FORWARD = ""
+
 # Rerun backstop for approval-refire.sh: runs at/above this attempt count
 # are left alone (gh run rerun retries manually). The cap exists for
 # pathological evidence ping-pong, not normal review cycles.

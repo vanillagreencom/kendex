@@ -53,6 +53,7 @@ ACTIVE_GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
 ACTIVE_THREADS="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 1
 ACTIVE_API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
 ACTIVE_API_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
+ACTIVE_CARRY="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 1
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -95,6 +96,7 @@ while [ $# -gt 0 ]; do
 done
 case "$url" in
   *"/check-runs"*) name=checkruns ;;
+  *"/compare/"*) name=compare ;;
   *"/reviews"*)  name=reviews ;;
   *"/statuses"*) name=statuses ;;
   *"/status"*)   name=status ;;
@@ -163,6 +165,14 @@ checkrun() { # name, conclusion, summary, [app slug] -> checkruns.json
     '{check_runs:[{name:$name,conclusion:$conclusion,app:{slug:$app},output:{title:null,summary:$summary}}]}' \
     >"$fixtures/checkruns.json"
 }
+compare_fix() { # status, [files JSON array] -> compare.json (the N...head delta)
+  jq -n --arg status "$1" --argjson files "${2:-[]}" '{status:$status,files:$files}' \
+    >"$fixtures/compare.json"
+}
+delta_file() { # filename, status, patch -> one compare files[] entry
+  jq -n --arg fn "$1" --arg status "$2" --arg patch "$3" \
+    '{filename:$fn,status:$status,patch:$patch}'
+}
 status_ctx() { # context, state, description, [creator login] -> status.json
   # GitHub App statuses serialize creator as null (the default here); a
   # status posted by a workflow or user carries its creator login — pass one
@@ -192,6 +202,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_API_ATTEMPTS="$CFG_API_ATTEMPTS" \
     REVIEW_GATE_API_RETRY_DELAY_SECONDS="$CFG_API_DELAY" \
     REVIEW_GATE_STATUS_SNAPSHOT_FILE="$CFG_SNAPSHOT" \
+    REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)"
   rc=$?
@@ -220,7 +231,9 @@ reset() {
   CFG_THREADS="$ACTIVE_THREADS"
   CFG_API_ATTEMPTS="$ACTIVE_API_ATTEMPTS"
   CFG_API_DELAY="$ACTIVE_API_DELAY"
+  CFG_CARRY="$ACTIVE_CARRY"
   CFG_SNAPSHOT=""
+  rm -f "$fixtures/compare.json"
   CFG_PR_AUTHOR="$AUTHOR"
   CFG_CONTEXTS="$ACTIVE_CONTEXTS"
   CFG_SKIPS="$ACTIVE_SKIPS"
@@ -950,6 +963,150 @@ else
   failures=$((failures + 1))
 fi
 
+# Evidence carry-forward across carry-safe deltas (VST-57): evidence at an
+# ancestor N extends to head ONLY when carry-forward is enabled AND the
+# N→head delta classifies entirely into the enabled classes (or the trees
+# are identical). Never a waiver: code deltas refuse, changes-requested and
+# unresolved threads still fail closed, and the off default keeps today's
+# exact-head behavior.
+DOCS_DELTA="$(delta_file "README.md" modified '@@ -1 +1 @@
+-old prose
++new prose')"
+CODE_DELTA="$(delta_file "src/thing.sh" modified '@@ -1 +1 @@
+-do_the_thing
++do_the_other_thing')"
+COMMENT_DELTA="$(delta_file "src/thing.sh" modified '@@ -1,2 +1,2 @@
+-# old comment
++# newer comment
+   untouched_code_line')"
+carry_candidate() { # an accepted review object at the OTHER (ancestor) sha
+  CFG_TRUSTED_LOGINS=""
+  reviews_set "$(review "reviewer" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
+}
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$DOCS_DELTA]"
+run "carry: docs-only delta from a reviewed ancestor carries" approved
+
+reset
+carry_candidate
+CFG_CARRY=""
+compare_fix ahead "[$DOCS_DELTA]"
+run "carry off (default): the same docs delta does NOT carry" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$CODE_DELTA]"
+run "carry: a code delta refuses (fresh evidence required)" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$DOCS_DELTA,$CODE_DELTA]"
+run "carry: one non-carry-safe file refuses the whole delta" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="comments"
+compare_fix ahead "[$COMMENT_DELTA]"
+run "carry: comment-only change to a code file carries under 'comments'" approved
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$COMMENT_DELTA]"
+run "carry: comment-only delta does NOT carry when only 'docs' is enabled" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs|comments"
+compare_fix ahead "[$DOCS_DELTA,$COMMENT_DELTA]"
+run "carry: '|' separator — mixed docs+comment delta carries with both classes" approved
+
+reset
+carry_candidate
+CFG_CARRY="comments"
+compare_fix ahead "[$(delta_file "src/thing.unknownext" modified '@@ -1 +1 @@
+-# a
++# b')]"
+run "carry: unknown extension refuses even a comment-looking delta" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="comments"
+compare_fix ahead "[$(delta_file "src/new.sh" added '@@ -0,0 +1 @@
++# new file of comments')]"
+run "carry: an ADDED file refuses under 'comments' (modified-only)" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix identical
+run "carry: identical tree (rebase residue) carries once any class is enabled" approved
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead
+run "carry: ahead with zero changed files is an identical tree — carries" approved
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix diverged "[$DOCS_DELTA]"
+run "carry: a non-ancestor candidate (diverged) never carries" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$DOCS_DELTA]"
+reviews_set "$(review "reviewer" APPROVED "2026-01-01T00:00:00Z" "$OTHER")" \
+            "$(review "objector" CHANGES_REQUESTED "2026-01-02T00:00:00Z" "$OTHER")"
+run "carry never waives a standing changes-requested" changes-requested
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_THREADS="enforce"
+compare_fix ahead "[$DOCS_DELTA]"
+threads false >"$fixtures/graphql.json"
+run "carry never waives an unresolved thread" threads-open
+
+reset
+CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""
+reviews_set "$(review "reviewer" DISMISSED "2026-01-01T00:00:00Z" "$OTHER")"
+run "carry: a DISMISSED ancestor review is not a carry candidate" awaiting
+
+reset
+CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""
+reviews_set "$(review "$AUTHOR" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
+run "carry: the author's own ancestor review is not a carry candidate" awaiting
+
+reset
+CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="approved"
+reviews_set "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER")"
+run "carry: min_state=approved refuses a COMMENTED-only ancestor candidate" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+export GH_SHIM_FAIL=compare
+run "carry: a failed compare read is exit 2, never a guessed carry" "" 2
+unset GH_SHIM_FAIL
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+export GH_SHIM_EMPTY=compare
+run "carry: a zero-byte compare producer is exit 2" "" 2
+unset GH_SHIM_EMPTY
+
+reset
+CFG_CARRY="everything"
+run "carry: an unknown carry class is a config error" "" 2
+
 # ================================================================ configured ===
 # The same discipline against THIS repo's resolved trust settings.
 echo "--- configured layer (this repo's REVIEW_GATE_* settings)"
@@ -988,6 +1145,23 @@ if [ "$ACTIVE_THREADS" = "off" ]; then
   run "configured: threads=off — unresolved thread does not close the gate" approved
 else
   run "configured: unresolved thread fails closed (threads=enforce)" threads-open
+fi
+
+# The repo's carry-forward posture: with classes enabled, an identical tree
+# must carry and a code delta must still refuse (the conservative floor no
+# class configuration may widen).
+if [ -n "$ACTIVE_CARRY" ]; then
+  reset
+  CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
+  reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
+  compare_fix identical
+  run "configured: carry-forward ($ACTIVE_CARRY) — identical tree carries" approved
+
+  reset
+  CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
+  reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
+  compare_fix ahead "[$CODE_DELTA]"
+  run "configured: carry-forward — a code delta still refuses" awaiting
 fi
 
 # The repo's retry budget: a read failing (attempts - 1) times must still

@@ -270,6 +270,13 @@ REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 # Used by: review-gate (`review-predicate.sh`, `approval-refire.sh`). Pause
 # between retry attempts.
 
+REVIEW_GATE_CARRY_FORWARD = ""
+# Used by: review-gate (`review-predicate.sh`). Carry-safe delta classes
+# ("docs", "comments"; ';' or '|' separated; empty = off). Evidence at an
+# ancestor commit extends to head when the delta is entirely docs-only /
+# comment-only (or an identical tree). Never a waiver: code changes always
+# require fresh evidence; changes-requested and threads still fail closed.
+
 REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
 # Used by: review-gate (`approval-refire.sh`). Rerun backstop for
 # pathological evidence ping-pong, not normal review cycles.

@@ -62,6 +62,7 @@ REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "acme-reviewer[bot];human-lead"
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "approved"
 REVIEW_GATE_THREADS = "off"
 REVIEW_GATE_API_ATTEMPTS = "2"
+REVIEW_GATE_CARRY_FORWARD = "docs"
 EOF
 if ! (cd "$work/configured" && "$SELFTEST") >"$work/configured.out" 2>&1; then
   cat "$work/configured.out"
@@ -96,6 +97,10 @@ grep -q "configured: a transient read failure survives the repo's retry budget" 
   || note "configured retry budget not exercised"
 grep -q "configured: unresolved thread fails closed" "$work/defaults.out" \
   || note "default threads=enforce posture not exercised"
+grep -q "configured: carry-forward (docs) — identical tree carries" "$work/configured.out" \
+  || note "configured carry-forward posture not exercised"
+grep -q "carry off (default): the same docs delta does NOT carry" "$work/defaults.out" \
+  || note "carry-forward off-default near-miss missing"
 
 if [ "$fail" -ne 0 ]; then
   echo "review-predicate-selftest.test: FAIL"

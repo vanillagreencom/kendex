@@ -67,6 +67,13 @@ Evidence for the CURRENT head is any of:
    orchestrator's status posted only on genuine total reviewer silence.
    Substitutes for MISSING evidence only.
 
+With `REVIEW_GATE_CARRY_FORWARD` enabled (off by default), evidence at an
+ancestor commit carries to head when the delta is provably in a class review
+would not re-examine (docs-only, comment-only, identical tree) — never a
+waiver: real evidence must exist, code changes always require fresh
+evidence, and the fail-closed terms below still apply
+(see [references/settings.md](references/settings.md)).
+
 Changes-requested and unresolved threads always fail closed, even with
 evidence present. Every evidence read fails LOUD (exit 2, no verdict) — a
 transient API error must never flip a healthy PR's merge state; reads retry
