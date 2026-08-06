@@ -702,6 +702,7 @@ async function runSingleAgentAttempt(
 			const timeoutMs = bgTaskTimeoutMs(cwd ?? defaultCwd);
 			const timeoutDeadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined;
 			let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+			let timeoutGeneration = 0;
 			let killEscalationTimer: ReturnType<typeof setTimeout> | undefined;
 			let settledShutdownTimer: ReturnType<typeof setTimeout> | undefined;
 			let settledCloseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -710,6 +711,7 @@ async function runSingleAgentAttempt(
 			const settledShutdownGraceMs = bgSettledShutdownGraceMsForTests ?? BG_SETTLED_SHUTDOWN_GRACE_MS;
 
 			const clearTimeoutTimer = () => {
+				timeoutGeneration++;
 				if (!timeoutTimer) return;
 				clearTimeout(timeoutTimer);
 				timeoutTimer = undefined;
@@ -867,8 +869,8 @@ async function runSingleAgentAttempt(
 				currentResult.stderr = [currentResult.stderr, diagnostic].filter(Boolean).join("\n");
 			};
 
-			const handleTimeout = async () => {
-				if (resolved || processClosed || timedOut || wasAborted) return;
+			const handleTimeout = async (generation: number) => {
+				if (generation !== timeoutGeneration || resolved || processClosed || timedOut || wasAborted || settledShutdownOwnsLifecycle) return;
 				timedOut = true;
 				settledShutdownOwnsLifecycle = false;
 				deliveredSettledSignals.clear();
@@ -877,30 +879,46 @@ async function runSingleAgentAttempt(
 				clearSettledCloseTimer();
 				const message = `Agent ${agent.name} exceeded bg task timeout (${formatDurationMs(timeoutMs)}) without completing; marking it unresponsive and terminating the child process group.`;
 				const timeoutDiagnostics = [message];
-				currentResult.status = "failed";
-				currentResult.stopReason = "unresponsive_timeout";
-				currentResult.errorMessage = message;
-				currentResult.stderr = [currentResult.stderr, message].filter(Boolean).join("\n");
-				appendResultDiagnostic(currentResult, message);
-				appendTranscript({ type: "timeout", reason: "bg-task-timeout", timeoutMs, attempt });
-				flushFilteredMessageUpdate("timeout");
-				emitUpdate();
-				const termOutcomes = signalProcessGroupOrChild(proc, "SIGTERM");
-				appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGTERM: ${formatSignalOutcomes(termOutcomes)}`);
-				await new Promise((resume) => setTimeout(resume, killGraceMs));
-				if (resolved) return;
-				if (!processClosed) {
-					const killOutcomes = signalProcessGroupOrChild(proc, "SIGKILL");
-					appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGKILL: ${formatSignalOutcomes(killOutcomes)}`);
-					appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination unconfirmed: child process did not emit close within ${formatDurationMs(killGraceMs)} after SIGTERM.`);
+				const recordTimeoutError = (label: string, error: unknown) => {
+					appendTimeoutDiagnostic(timeoutDiagnostics, `${label}: ${stringifyError(error)}`);
+				};
+				try {
+					currentResult.status = "failed";
+					currentResult.stopReason = "unresponsive_timeout";
+					currentResult.errorMessage = message;
+					currentResult.stderr = [currentResult.stderr, message].filter(Boolean).join("\n");
+					appendResultDiagnostic(currentResult, message);
+					appendTranscript({ type: "timeout", reason: "bg-task-timeout", timeoutMs, attempt });
+					flushFilteredMessageUpdate("timeout");
+					emitUpdate();
+				} catch (error) {
+					recordTimeoutError("Timeout update callback failed", error);
+				} finally {
+					try {
+						const termOutcomes = signalProcessGroupOrChild(proc, "SIGTERM");
+						appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGTERM: ${formatSignalOutcomes(termOutcomes)}`);
+						await new Promise((resume) => setTimeout(resume, killGraceMs));
+						if (!resolved && !processClosed) {
+							const killOutcomes = signalProcessGroupOrChild(proc, "SIGKILL");
+							appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGKILL: ${formatSignalOutcomes(killOutcomes)}`);
+							appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination unconfirmed: child process did not emit close within ${formatDurationMs(killGraceMs)} after SIGTERM.`);
+						}
+					} catch (error) {
+						recordTimeoutError("Timeout termination failed", error);
+					} finally {
+						resolveOnce(1);
+					}
 				}
-				resolveOnce(1);
 			};
 
 			const armTimeoutTimer = () => {
 				if (timeoutDeadline === undefined || resolved || processClosed || timedOut || wasAborted) return;
 				clearTimeoutTimer();
-				timeoutTimer = setTimeout(() => void handleTimeout(), Math.max(0, timeoutDeadline - Date.now()));
+				const generation = timeoutGeneration;
+				timeoutTimer = setTimeout(() => {
+					timeoutTimer = undefined;
+					void handleTimeout(generation);
+				}, Math.max(0, timeoutDeadline - Date.now()));
 				timeoutTimer.unref?.();
 			};
 

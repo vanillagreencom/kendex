@@ -30,6 +30,10 @@ function restoreEnv(name: string, value: string | undefined): void {
 	else process.env[name] = value;
 }
 
+function waitForTimerTurn(): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function runRateLimitScopeCase(childOwnsVisiblePane: boolean): Promise<{
 	lifecycleEvents: Array<{ name: string; payload: unknown }>;
 	sendCalls: string[];
@@ -116,7 +120,7 @@ async function runRateLimitScopeCase(childOwnsVisiblePane: boolean): Promise<{
 		if (childOwnsVisiblePane) {
 			for (const handler of handlers.get("message_end") ?? []) await handler(HEALTHY_MESSAGE_END, ctx);
 		}
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await waitForTimerTurn();
 	} finally {
 		restoreEnv("PI_SUBAGENT_CHILD_AGENT", previousEnv.childAgent);
 		restoreEnv("PI_SUBAGENT_CHILD_PANE", previousEnv.childPane);
