@@ -421,6 +421,7 @@ export default function (pi: ExtensionAPI) {
 	let childPollInFlight = false;
 	let childCurrentTaskFile: string | undefined;
 	let agentCommandCompletions: Array<{ value: string; label: string; description: string; pane: boolean }> = [];
+	const liveUsageTranscriptFingerprints = new Map<string, string>();
 
 	// Missing-completion watchdog (vstack#66): rides on `pi.on("agent_settled")`
 	// for tasks delivered without an inbox file (bridge follow-ups). The handler
@@ -1226,6 +1227,7 @@ export default function (pi: ExtensionAPI) {
 		if (completionPoller) clearInterval(completionPoller);
 		if (childInboxPoller) clearInterval(childInboxPoller);
 		if (childTitlePoller) clearInterval(childTitlePoller);
+		liveUsageTranscriptFingerprints.clear();
 
 		const runtimeRoot = runtimeDirForContext(ctx);
 
@@ -1330,11 +1332,10 @@ export default function (pi: ExtensionAPI) {
 						? await backfillTaskSummaryFromTranscript(runtimeRoot, refreshed.record)
 						: { record: refreshed.record, updated: false };
 					updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
-					if (backfilled.record.transcriptPath && (backfilled.record.status === "completed" || backfilled.record.status === "failed" || backfilled.record.status === "blocked")) {
+					if (!backfilled.record.usage && backfilled.record.transcriptPath && (backfilled.record.status === "completed" || backfilled.record.status === "failed" || backfilled.record.status === "blocked")) {
 						const capturedTaskId = backfilled.record.taskId;
-						parseTranscriptUsage(backfilled.record.transcriptPath)
-							.then((parsed) => patchDashboardUsage(runtimeRoot, capturedTaskId, parsed))
-							.catch(() => undefined);
+						const parsed = await parseTranscriptUsage(backfilled.record.transcriptPath).catch(() => undefined);
+						patchDashboardUsage(runtimeRoot, capturedTaskId, parsed);
 					}
 				}
 			});
@@ -1345,12 +1346,20 @@ export default function (pi: ExtensionAPI) {
 		if (!ctx.hasUI) return;
 		const refreshLiveUsage = async () => {
 			const snapshot = Object.values(dashboardState.items).filter((item) => {
-				if (item.status === "failed" || item.status === "blocked") return false;
-				if (!item.transcriptPath) return false;
-				return true;
+				return item.status === "running" && Boolean(item.transcriptPath);
 			});
 			for (const item of snapshot) {
+				const transcriptPath = item.transcriptPath!;
+				let fingerprint: string;
+				try {
+					const stat = await fs.promises.stat(transcriptPath);
+					fingerprint = `${stat.size}:${stat.mtimeMs}`;
+				} catch {
+					continue;
+				}
+				if (liveUsageTranscriptFingerprints.get(transcriptPath) === fingerprint) continue;
 				const parsed = await parseTranscriptUsage(item.transcriptPath).catch(() => undefined);
+				liveUsageTranscriptFingerprints.set(transcriptPath, fingerprint);
 				patchDashboardUsage(runtimeRoot, item.taskId, parsed);
 			}
 		};
@@ -1529,6 +1538,7 @@ export default function (pi: ExtensionAPI) {
 		completionPoller = undefined;
 		childInboxPoller = undefined;
 		dashboardCtx = undefined;
+		liveUsageTranscriptFingerprints.clear();
 
 		idleStallWatchdog.stop();
 		currentRuntimeRoot = undefined;
