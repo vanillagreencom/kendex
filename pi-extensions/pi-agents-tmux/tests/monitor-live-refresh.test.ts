@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
 	buildMonitorSessionGroups,
@@ -7,8 +10,9 @@ import {
 	monitorTreeRows,
 	restoreMonitorSelectionByKey,
 } from "../extensions/subagent/browser.js";
+import { patchTaskRecordUsage, refreshTranscriptUsage, taskNeedsTranscriptUsageRestore, transcriptUsageRefreshSnapshot } from "../extensions/subagent/index.js";
 import { sortedMonitorRecords } from "../extensions/subagent/task-records.js";
-import type { AgentBrowserUiState, PaneTaskRecord, PaneTaskRegistry, SubagentDashboardItem } from "../extensions/subagent/types.js";
+import type { AgentBrowserUiState, PaneTaskRecord, PaneTaskRegistry, SubagentDashboardItem, UsageStats } from "../extensions/subagent/types.js";
 
 function record(agent: string, taskId: string, createdAt: string, extra: Partial<PaneTaskRecord> = {}): PaneTaskRecord {
 	return { agent, createdAt, status: "running", task: `${agent} work`, taskId, ...extra };
@@ -86,6 +90,73 @@ test("Live dashboard signature changes on lifecycle moves and is stable otherwis
 	// Order is not part of the fingerprint; only the lifecycle content is.
 	const pair = [running, item("scout", "scout-2", "2026-05-14T05:01:00.000Z")];
 	assert.equal(liveDashboardSignature([...pair].reverse()), liveDashboardSignature(pair));
+});
+
+test("transcript usage refresh keeps terminal tasks and evicts pruned fingerprints", () => {
+	const transcriptPath = "/runtime/shared-pane.jsonl";
+	const fingerprints = new Map([
+		["planner-1", "planner-fingerprint"],
+		["reviewer-2", "reviewer-fingerprint"],
+		["stale-3", "stale-fingerprint"],
+	]);
+	const snapshot = transcriptUsageRefreshSnapshot(
+		[
+			item("planner", "planner-1", "2026-05-14T05:00:00.000Z", { transcriptPath }),
+			item("reviewer", "reviewer-2", "2026-05-14T05:02:00.000Z", { status: "completed", transcriptPath }),
+		],
+		fingerprints,
+	);
+
+	assert.deepEqual(snapshot.map(({ item: entry }) => entry.taskId), ["planner-1", "reviewer-2"]);
+	assert.deepEqual([...fingerprints.keys()], ["planner-1", "reviewer-2"]);
+});
+
+test("terminal transcript usage restore does not trust an existing partial total", () => {
+	const partialUsage: UsageStats = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 1 };
+	assert.equal(taskNeedsTranscriptUsageRestore({ status: "completed", transcriptPath: "/runtime/task.jsonl", usage: partialUsage }), true);
+	assert.equal(taskNeedsTranscriptUsageRestore({ status: "running", transcriptPath: "/runtime/task.jsonl" }), false);
+});
+
+test("usage persistence remains retryable until the task record exists", () => {
+	const usage: UsageStats = { input: 2, output: 3, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 5, turns: 1 };
+	const registry = registryOf();
+	assert.equal(patchTaskRecordUsage(registry, "planner-1", { usage }), false);
+
+	registry["planner-1"] = record("planner", "planner-1", "2026-05-14T05:00:00.000Z");
+	assert.equal(patchTaskRecordUsage(registry, "planner-1", { usage, model: "test-model" }), true);
+	assert.deepEqual(registry["planner-1"]?.usage, usage);
+	assert.equal(registry["planner-1"]?.model, "test-model");
+});
+
+test("terminal usage refresh retries failed persistence and reparses appended final usage", async () => {
+	const runtimeRoot = mkdtempSync(join(tmpdir(), "subagent-usage-refresh-"));
+	const transcriptPath = join(runtimeRoot, "task.jsonl");
+	const completed = item("planner", "planner-1", "2026-05-14T05:02:00.000Z", { status: "completed", transcriptPath });
+	const fingerprints = new Map([["stale-2", "stale-fingerprint"]]);
+	const persistedInputs: number[] = [];
+	let allowPersistence = false;
+	const persistUsage = async (_taskId: string, parsed: { usage: UsageStats }) => {
+		persistedInputs.push(parsed.usage.input);
+		return allowPersistence;
+	};
+	try {
+		writeFileSync(transcriptPath, JSON.stringify({ event: { type: "message_end", message: { usage: { input: 2, output: 3 } } } }));
+		await refreshTranscriptUsage([completed], fingerprints, persistUsage);
+		assert.deepEqual(persistedInputs, [2]);
+		assert.equal(fingerprints.has("planner-1"), false);
+		assert.equal(fingerprints.has("stale-2"), false);
+
+		allowPersistence = true;
+		await refreshTranscriptUsage([completed], fingerprints, persistUsage);
+		assert.deepEqual(persistedInputs, [2, 2]);
+		assert.equal(fingerprints.has("planner-1"), true);
+
+		appendFileSync(transcriptPath, `\n${JSON.stringify({ event: { type: "message_end", message: { usage: { input: 5, output: 7 } } } })}`);
+		await refreshTranscriptUsage([completed], fingerprints, persistUsage);
+		assert.deepEqual(persistedInputs, [2, 2, 7]);
+	} finally {
+		rmSync(runtimeRoot, { force: true, recursive: true });
+	}
 });
 
 test("Monitor selection stays on the same task when a refresh inserts rows above it", () => {

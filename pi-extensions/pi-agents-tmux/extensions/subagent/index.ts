@@ -383,6 +383,56 @@ function appendRuntimeDiagnostic(runtimeRoot: string | undefined, source: string
 	void fs.promises.appendFile(logFile, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 }).catch(() => undefined);
 }
 
+export function transcriptUsageRefreshSnapshot(
+	items: Iterable<SubagentDashboardItem>,
+	fingerprintsByTask: Map<string, string>,
+): Array<{ item: SubagentDashboardItem; transcriptPath: string }> {
+	const snapshot = Array.from(items).flatMap((item) => (item.transcriptPath ? [{ item, transcriptPath: item.transcriptPath }] : []));
+	const retainedTaskIds = new Set(snapshot.map(({ item }) => item.taskId));
+	for (const taskId of fingerprintsByTask.keys()) {
+		if (!retainedTaskIds.has(taskId)) fingerprintsByTask.delete(taskId);
+	}
+	return snapshot;
+}
+
+export function taskNeedsTranscriptUsageRestore<T extends Pick<PaneTaskRecord, "status" | "transcriptPath" | "usage">>(record: T): record is T & { transcriptPath: string } {
+	return Boolean(record.transcriptPath) && isTerminalTaskStatus(record.status);
+}
+
+export function patchTaskRecordUsage(
+	records: PaneTaskRegistry,
+	taskId: string,
+	parsed: { usage: UsageStats; model?: string },
+): boolean {
+	const existing = records[taskId];
+	if (!existing) return false;
+	records[taskId] = { ...existing, usage: parsed.usage, model: parsed.model ?? existing.model };
+	return true;
+}
+
+async function transcriptUsageFingerprint(transcriptPath: string): Promise<string | undefined> {
+	try {
+		const stat = await fs.promises.stat(transcriptPath);
+		return `${transcriptPath}\0${stat.size}:${stat.mtimeMs}`;
+	} catch {
+		return undefined;
+	}
+}
+
+export async function refreshTranscriptUsage(
+	items: Iterable<SubagentDashboardItem>,
+	fingerprintsByTask: Map<string, string>,
+	persistUsage: (taskId: string, parsed: { usage: UsageStats; model?: string }) => Promise<boolean>,
+): Promise<void> {
+	const snapshot = transcriptUsageRefreshSnapshot(items, fingerprintsByTask);
+	for (const { item, transcriptPath } of snapshot) {
+		const fingerprint = await transcriptUsageFingerprint(transcriptPath);
+		if (!fingerprint || fingerprintsByTask.get(item.taskId) === fingerprint) continue;
+		const parsed = await parseTranscriptUsage(transcriptPath).catch(() => undefined);
+		if (!parsed || (await persistUsage(item.taskId, parsed))) fingerprintsByTask.set(item.taskId, fingerprint);
+	}
+}
+
 export default function (pi: ExtensionAPI) {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[INSTALL_SYMBOL]) return;
@@ -421,7 +471,7 @@ export default function (pi: ExtensionAPI) {
 	let childPollInFlight = false;
 	let childCurrentTaskFile: string | undefined;
 	let agentCommandCompletions: Array<{ value: string; label: string; description: string; pane: boolean }> = [];
-	const liveUsageTranscriptFingerprints = new Map<string, string>();
+	const usageTranscriptFingerprintsByTask = new Map<string, string>();
 
 	// Missing-completion watchdog (vstack#66): rides on `pi.on("agent_settled")`
 	// for tasks delivered without an inbox file (bridge follow-ups). The handler
@@ -813,14 +863,18 @@ export default function (pi: ExtensionAPI) {
 		updateDashboard({ ...existing, ...patch, updatedAt: new Date().toISOString() });
 	};
 
-	const patchDashboardUsage = (runtimeRoot: string, taskId: string | undefined, parsed: { usage: UsageStats; model?: string } | undefined) => {
-		if (!taskId || !parsed) return;
+	const patchDashboardUsage = async (runtimeRoot: string, taskId: string | undefined, parsed: { usage: UsageStats; model?: string } | undefined): Promise<boolean> => {
+		if (!taskId || !parsed) return false;
 		patchDashboard(taskId, { usage: parsed.usage, model: parsed.model });
-		void updateTaskRegistry(runtimeRoot, (records) => {
-			const existing = records[taskId];
-			if (!existing) return;
-			records[taskId] = { ...existing, usage: parsed.usage, model: parsed.model ?? existing.model };
-		}).catch(() => undefined);
+		try {
+			let updated = false;
+			await updateTaskRegistry(runtimeRoot, (records) => {
+				updated = patchTaskRecordUsage(records, taskId, parsed);
+			});
+			return updated;
+		} catch {
+			return false;
+		}
 	};
 
 	const removeDashboardAgent = (agentName: string | undefined) => {
@@ -1106,9 +1160,12 @@ export default function (pi: ExtensionAPI) {
 			effort: eventEffort,
 		});
 		if (transcriptPath && runtimeRoot) {
-			parseTranscriptUsage(transcriptPath)
-				.then((parsed) => patchDashboardUsage(runtimeRoot, taskId, parsed))
-				.catch(() => undefined);
+			void (async () => {
+				const fingerprint = await transcriptUsageFingerprint(transcriptPath);
+				const parsed = await parseTranscriptUsage(transcriptPath).catch(() => undefined);
+				const persisted = await patchDashboardUsage(runtimeRoot, taskId, parsed);
+				if (dashboardCtx?.hasUI && fingerprint && (!parsed || persisted)) usageTranscriptFingerprintsByTask.set(taskId, fingerprint);
+			})().catch(() => undefined);
 		}
 	};
 
@@ -1227,7 +1284,7 @@ export default function (pi: ExtensionAPI) {
 		if (completionPoller) clearInterval(completionPoller);
 		if (childInboxPoller) clearInterval(childInboxPoller);
 		if (childTitlePoller) clearInterval(childTitlePoller);
-		liveUsageTranscriptFingerprints.clear();
+		usageTranscriptFingerprintsByTask.clear();
 
 		const runtimeRoot = runtimeDirForContext(ctx);
 
@@ -1332,10 +1389,12 @@ export default function (pi: ExtensionAPI) {
 						? await backfillTaskSummaryFromTranscript(runtimeRoot, refreshed.record)
 						: { record: refreshed.record, updated: false };
 					updateDashboardFromTaskRecord(backfilled.record, runtimeRoot);
-					if (!backfilled.record.usage && backfilled.record.transcriptPath && (backfilled.record.status === "completed" || backfilled.record.status === "failed" || backfilled.record.status === "blocked")) {
+					if (taskNeedsTranscriptUsageRestore(backfilled.record)) {
 						const capturedTaskId = backfilled.record.taskId;
+						const fingerprint = await transcriptUsageFingerprint(backfilled.record.transcriptPath);
 						const parsed = await parseTranscriptUsage(backfilled.record.transcriptPath).catch(() => undefined);
-						patchDashboardUsage(runtimeRoot, capturedTaskId, parsed);
+						const persisted = await patchDashboardUsage(runtimeRoot, capturedTaskId, parsed);
+						if (ctx.hasUI && fingerprint && (!parsed || persisted)) usageTranscriptFingerprintsByTask.set(capturedTaskId, fingerprint);
 					}
 				}
 			});
@@ -1343,25 +1402,12 @@ export default function (pi: ExtensionAPI) {
 			// Dashboard is best-effort; registry lookup may fail before first pane task.
 		}
 		syncDashboard(ctx);
-		if (!ctx.hasUI) return;
+		if (!ctx.hasUI) {
+			usageTranscriptFingerprintsByTask.clear();
+			return;
+		}
 		const refreshLiveUsage = async () => {
-			const snapshot = Object.values(dashboardState.items).filter((item) => {
-				return item.status === "running" && Boolean(item.transcriptPath);
-			});
-			for (const item of snapshot) {
-				const transcriptPath = item.transcriptPath!;
-				let fingerprint: string;
-				try {
-					const stat = await fs.promises.stat(transcriptPath);
-					fingerprint = `${stat.size}:${stat.mtimeMs}`;
-				} catch {
-					continue;
-				}
-				if (liveUsageTranscriptFingerprints.get(transcriptPath) === fingerprint) continue;
-				const parsed = await parseTranscriptUsage(item.transcriptPath).catch(() => undefined);
-				liveUsageTranscriptFingerprints.set(transcriptPath, fingerprint);
-				patchDashboardUsage(runtimeRoot, item.taskId, parsed);
-			}
+			await refreshTranscriptUsage(Object.values(dashboardState.items), usageTranscriptFingerprintsByTask, (taskId, parsed) => patchDashboardUsage(runtimeRoot, taskId, parsed));
 		};
 		const poll = () => {
 			if (completionPollInFlight) return;
@@ -1538,7 +1584,7 @@ export default function (pi: ExtensionAPI) {
 		completionPoller = undefined;
 		childInboxPoller = undefined;
 		dashboardCtx = undefined;
-		liveUsageTranscriptFingerprints.clear();
+		usageTranscriptFingerprintsByTask.clear();
 
 		idleStallWatchdog.stop();
 		currentRuntimeRoot = undefined;
