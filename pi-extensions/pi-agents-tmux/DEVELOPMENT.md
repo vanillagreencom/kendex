@@ -162,7 +162,7 @@ Retry timing flows through an import-free decision module plus a lazy provider-n
 
 Each row shows agent name, kind (`pane`/`bg`), turn count, input/output tokens, cost, and (for working agents) a live tail of the latest tool/message truncated to card width.
 
-Usage refresh streams each retained task transcript and fingerprints it by task. Running and terminal rows are refreshed when their transcript changes so completion cannot freeze a partial final usage total, while fingerprints for dashboard-pruned tasks are evicted during the same poll.
+Usage refresh streams each retained task transcript and fingerprints it by task. Running and terminal rows are refreshed when their transcript changes so completion cannot freeze a partial final usage total, while fingerprints for dashboard-pruned tasks are evicted during the same poll. Session shutdown drains completion-triggered usage writes before dashboard state is cleared.
 
 Rows are bucketed for stability: queued/running/waiting agents stay above attention states; attention stays above completed. Within each bucket, rows preserve start-time order so token/usage updates do not reshuffle the list. The header always shows completed and working counts even when one side is zero. Missing pane artifacts render as `stale`; stale bg-only records are dropped (bg agents do not use pane handoff files).
 

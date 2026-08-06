@@ -472,6 +472,17 @@ export default function (pi: ExtensionAPI) {
 	let childCurrentTaskFile: string | undefined;
 	let agentCommandCompletions: Array<{ value: string; label: string; description: string; pane: boolean }> = [];
 	const usageTranscriptFingerprintsByTask = new Map<string, string>();
+	const pendingTranscriptUsagePersistences = new Set<Promise<void>>();
+	const trackTranscriptUsagePersistence = (work: Promise<void>) => {
+		let tracked: Promise<void>;
+		tracked = work.catch(() => undefined).finally(() => pendingTranscriptUsagePersistences.delete(tracked));
+		pendingTranscriptUsagePersistences.add(tracked);
+	};
+	const drainTranscriptUsagePersistences = async () => {
+		while (pendingTranscriptUsagePersistences.size > 0) {
+			await Promise.allSettled([...pendingTranscriptUsagePersistences]);
+		}
+	};
 
 	// Missing-completion watchdog (vstack#66): rides on `pi.on("agent_settled")`
 	// for tasks delivered without an inbox file (bridge follow-ups). The handler
@@ -1160,12 +1171,12 @@ export default function (pi: ExtensionAPI) {
 			effort: eventEffort,
 		});
 		if (transcriptPath && runtimeRoot) {
-			void (async () => {
+			trackTranscriptUsagePersistence((async () => {
 				const fingerprint = await transcriptUsageFingerprint(transcriptPath);
 				const parsed = await parseTranscriptUsage(transcriptPath).catch(() => undefined);
 				const persisted = await patchDashboardUsage(runtimeRoot, taskId, parsed);
 				if (dashboardCtx?.hasUI && fingerprint && (!parsed || persisted)) usageTranscriptFingerprintsByTask.set(taskId, fingerprint);
-			})().catch(() => undefined);
+			})());
 		}
 	};
 
@@ -1577,9 +1588,10 @@ export default function (pi: ExtensionAPI) {
 
 	registerSettledHandler(pi, handleChildSettled);
 
-	pi.on("session_shutdown", () => {
+	pi.on("session_shutdown", async () => {
 		if (completionPoller) clearInterval(completionPoller);
 		if (childInboxPoller) clearInterval(childInboxPoller);
+		await drainTranscriptUsagePersistences();
 		if (dashboardCtx) setMiniDashboardWidget(dashboardCtx, SUBAGENT_WIDGET_KEY, MINI_DASHBOARD_RANK.AGENTS, undefined);
 		completionPoller = undefined;
 		childInboxPoller = undefined;

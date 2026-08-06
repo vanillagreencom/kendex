@@ -1,9 +1,11 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
+import { acquireFileLock } from "../extensions/subagent/file-lock.js";
 import subagentExtension from "../extensions/subagent/index.js";
+import { taskRegistryPath } from "../extensions/subagent/paths.js";
 import { readTaskRegistry, writeTaskRegistry } from "../extensions/subagent/tasks.js";
 
 function tempRuntime(): string {
@@ -78,6 +80,77 @@ describe("subagent lifecycle event persistence", () => {
 			expect(record?.diagnostics?.join("\n")).not.toContain("\u001b");
 			expect(record?.diagnostics?.join("\n")).not.toContain("```");
 		} finally {
+			rmSync(runtimeRoot, { force: true, recursive: true });
+		}
+	});
+
+	test("session shutdown drains in-flight completion usage persistence", async () => {
+		const runtimeRoot = tempRuntime();
+		const transcriptPath = join(runtimeRoot, "completion.jsonl");
+		let releaseLock: (() => Promise<void>) | undefined;
+		try {
+			writeFileSync(transcriptPath, JSON.stringify({ event: { type: "message_end", message: { usage: { input: 7, output: 3 } } } }));
+			await writeTaskRegistry(runtimeRoot, {
+				"task-usage": {
+					agent: "rust",
+					createdAt: "2026-05-20T00:00:00.000Z",
+					kind: "oneshot",
+					status: "running",
+					task: "Do work",
+					taskId: "task-usage",
+					transcriptPath,
+				},
+			});
+			releaseLock = await acquireFileLock(taskRegistryPath(runtimeRoot));
+
+			const bus = new EventEmitter();
+			const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
+			const pi = {
+				appendEntry: () => undefined,
+				events: { emit: bus.emit.bind(bus), on: bus.on.bind(bus) },
+				getActiveTools: () => [],
+				getThinkingLevel: () => undefined,
+				on: (name: string, handler: (event: any, ctx: any) => unknown) => {
+					const registered = handlers.get(name) ?? [];
+					registered.push(handler);
+					handlers.set(name, registered);
+				},
+				registerCommand: () => undefined,
+				registerMessageRenderer: () => undefined,
+				registerShortcut: () => undefined,
+				registerTool: () => undefined,
+				sendMessage: () => undefined,
+				sendUserMessage: async () => undefined,
+			} as any;
+			subagentExtension(pi);
+
+			bus.emit("subagents:completed", {
+				agent: "rust",
+				mode: "oneshot",
+				runtimeRoot,
+				status: "completed",
+				taskId: "task-usage",
+				transcriptPath,
+			});
+
+			const shutdown = handlers.get("session_shutdown")?.[0];
+			expect(shutdown).toBeDefined();
+			let shutdownSettled = false;
+			const shutdownPromise = Promise.resolve(shutdown?.({ reason: "quit" }, {})).then(() => {
+				shutdownSettled = true;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(shutdownSettled).toBeFalse();
+
+			await releaseLock();
+			releaseLock = undefined;
+			await shutdownPromise;
+
+			const record = (await readTaskRegistry(runtimeRoot))["task-usage"];
+			expect(record?.usage?.input).toBe(7);
+			expect(record?.usage?.output).toBe(3);
+		} finally {
+			await releaseLock?.();
 			rmSync(runtimeRoot, { force: true, recursive: true });
 		}
 	});
