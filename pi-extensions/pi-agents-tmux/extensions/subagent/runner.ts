@@ -61,10 +61,16 @@ const MAX_RESULT_DIAGNOSTICS = 12;
 const BG_EXCLUDED_TOOLS = ["complete_subagent"];
 const BG_EXCLUDED_TOOL_SET = new Set(BG_EXCLUDED_TOOLS.map(normalizedPiToolName));
 const BG_TIMEOUT_KILL_GRACE_MS = 5_000;
+const BG_SETTLED_SHUTDOWN_GRACE_MS = 250;
 let bgTimeoutKillGraceMsForTests: number | undefined;
+let bgSettledShutdownGraceMsForTests: number | undefined;
 
 export function setBgTimeoutKillGraceMsForTests(ms?: number): void {
 	bgTimeoutKillGraceMsForTests = ms;
+}
+
+export function setBgSettledShutdownGraceMsForTests(ms?: number): void {
+	bgSettledShutdownGraceMsForTests = ms;
 }
 
 export function setSingleAgentSpawnForTests(spawner?: SpawnProcess): void {
@@ -89,12 +95,6 @@ function transcriptFullStreamEnabled(): boolean {
 
 function activeToolsForBgAgent(activeTools: string[]): string[] {
 	return activeTools.filter((tool) => !BG_EXCLUDED_TOOL_SET.has(normalizedPiToolName(tool)));
-}
-
-function streamEventName(event: any): string | undefined {
-	if (typeof event?.event === "string") return event.event;
-	if (typeof event?.type === "string") return event.type;
-	return undefined;
 }
 
 function shouldAppendTranscriptEvent(eventName: string | undefined, fullStream = transcriptFullStreamEnabled()): boolean {
@@ -208,9 +208,23 @@ function signalProcessGroupOrChild(proc: ReturnType<SpawnProcess>, signal: NodeJ
 
 function formatSignalOutcomes(outcomes: SignalOutcome[]): string {
 	return outcomes.map((outcome) => {
-		const status = outcome.ok ? "delivered" : `failed${outcome.error ? `: ${outcome.error}` : ""}`;
-		return `${outcome.signal} ${outcome.target} ${status}`;
+		if (outcome.ok) return `${outcome.signal} ${outcome.target} delivered`;
+		const failedSuffix = outcome.error ? `: ${outcome.error}` : "";
+		return `${outcome.signal} ${outcome.target} failed${failedSuffix}`;
 	}).join("; ");
+}
+
+function matchesDeliveredSettledSignalExit(
+	code: number | null,
+	signalName: NodeJS.Signals | undefined,
+	deliveredSignals: ReadonlySet<NodeJS.Signals>,
+): boolean {
+	return (
+		(signalName === "SIGTERM" && deliveredSignals.has("SIGTERM")) ||
+		(signalName === "SIGKILL" && deliveredSignals.has("SIGKILL")) ||
+		(!signalName && code === 143 && deliveredSignals.has("SIGTERM")) ||
+		(!signalName && code === 137 && deliveredSignals.has("SIGKILL"))
+	);
 }
 
 export function formatTruncationNotice(
@@ -679,12 +693,21 @@ async function runSingleAgentAttempt(
 			let sawSessionCompact = false;
 			let compactThenEmptyAgentEnd = false;
 			let postCompactAssistantHasText = false;
+			let agentGeneration = 0;
+			let latestEndedGeneration: number | undefined;
+			let agentActive = false;
+			let settledShutdownOwnsLifecycle = false;
+			const deliveredSettledSignals = new Set<NodeJS.Signals>();
 			let latestFilteredMessageUpdate: any;
 			const timeoutMs = bgTaskTimeoutMs(cwd ?? defaultCwd);
+			const timeoutDeadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined;
 			let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 			let killEscalationTimer: ReturnType<typeof setTimeout> | undefined;
+			let settledShutdownTimer: ReturnType<typeof setTimeout> | undefined;
+			let settledCloseTimer: ReturnType<typeof setTimeout> | undefined;
 			let abortListener: (() => void) | undefined;
 			const killGraceMs = bgTimeoutKillGraceMsForTests ?? BG_TIMEOUT_KILL_GRACE_MS;
+			const settledShutdownGraceMs = bgSettledShutdownGraceMsForTests ?? BG_SETTLED_SHUTDOWN_GRACE_MS;
 
 			const clearTimeoutTimer = () => {
 				if (!timeoutTimer) return;
@@ -698,21 +721,130 @@ async function runSingleAgentAttempt(
 				killEscalationTimer = undefined;
 			};
 
+			const clearSettledShutdownTimer = () => {
+				if (!settledShutdownTimer) return;
+				clearTimeout(settledShutdownTimer);
+				settledShutdownTimer = undefined;
+			};
+
+			const clearSettledCloseTimer = () => {
+				if (!settledCloseTimer) return;
+				clearTimeout(settledCloseTimer);
+				settledCloseTimer = undefined;
+			};
+
 			const resolveOnce = (code: number) => {
 				if (resolved) return;
 				resolved = true;
 				clearTimeoutTimer();
+				clearKillEscalationTimer();
+				clearSettledShutdownTimer();
+				clearSettledCloseTimer();
 				if (signal && abortListener) signal.removeEventListener("abort", abortListener);
 				Promise.allSettled(transcriptWrites).finally(() => resolve(code));
 			};
 
-			const scheduleKillEscalation = () => {
+			const scheduleKillEscalation = (onSignal?: (outcomes: SignalOutcome[]) => void) => {
 				if (killEscalationTimer) return;
 				killEscalationTimer = setTimeout(() => {
 					if (processClosed) return;
-					signalProcessGroupOrChild(proc, "SIGKILL");
+					const outcomes = signalProcessGroupOrChild(proc, "SIGKILL");
+					onSignal?.(outcomes);
 				}, killGraceMs);
 				killEscalationTimer.unref?.();
+			};
+
+			const recordSettledSignalDelivery = (signalName: NodeJS.Signals, outcomes: SignalOutcome[]) => {
+				if (outcomes.some((outcome) => outcome.ok)) deliveredSettledSignals.add(signalName);
+			};
+
+			const failSettledShutdown = (diagnostic: string) => {
+				if (resolved || processClosed || !settledShutdownOwnsLifecycle) return;
+				settledShutdownOwnsLifecycle = false;
+				appendResultDiagnostic(currentResult, diagnostic);
+				currentResult.errorMessage = diagnostic;
+				currentResult.stderr = [currentResult.stderr, diagnostic].filter(Boolean).join("\n");
+				appendTranscript({ type: "settled_shutdown_failed", diagnostic, attempt });
+				proc.stdout.destroy?.();
+				proc.stderr.destroy?.();
+				proc.unref?.();
+				resolveOnce(1);
+			};
+
+			const scheduleSettledCloseFailure = () => {
+				clearSettledCloseTimer();
+				settledCloseTimer = setTimeout(() => {
+					settledCloseTimer = undefined;
+					failSettledShutdown(`Settled shutdown failed: child process did not emit close within ${formatDurationMs(killGraceMs)} after SIGKILL.`);
+				}, killGraceMs);
+				settledCloseTimer.unref?.();
+			};
+
+			const scheduleSettledShutdown = () => {
+				if (resolved || processClosed || timedOut || wasAborted) return;
+				if (settledShutdownOwnsLifecycle && deliveredSettledSignals.size > 0) return;
+				settledShutdownOwnsLifecycle = true;
+				deliveredSettledSignals.clear();
+				clearTimeoutTimer();
+				clearSettledShutdownTimer();
+				clearSettledCloseTimer();
+				settledShutdownTimer = setTimeout(() => {
+					settledShutdownTimer = undefined;
+					if (resolved || processClosed || timedOut || wasAborted || !settledShutdownOwnsLifecycle) return;
+					const outcomes = signalProcessGroupOrChild(proc, "SIGTERM");
+					recordSettledSignalDelivery("SIGTERM", outcomes);
+					appendTranscript({
+						type: "settled_shutdown",
+						reason: "agent_settled",
+						signal: "SIGTERM",
+						graceMs: settledShutdownGraceMs,
+						outcomes,
+						attempt,
+					});
+					scheduleKillEscalation((killOutcomes) => {
+						if (resolved || processClosed || !settledShutdownOwnsLifecycle) return;
+						recordSettledSignalDelivery("SIGKILL", killOutcomes);
+						appendTranscript({ type: "settled_shutdown_escalation", signal: "SIGKILL", outcomes: killOutcomes, attempt });
+						if (deliveredSettledSignals.size === 0) {
+							failSettledShutdown(`Settled shutdown failed: ${formatSignalOutcomes([...outcomes, ...killOutcomes])}`);
+							return;
+						}
+						scheduleSettledCloseFailure();
+					});
+				}, Math.max(0, settledShutdownGraceMs));
+				settledShutdownTimer.unref?.();
+			};
+
+			const handleAgentSettled = () => {
+				if (settledShutdownOwnsLifecycle && deliveredSettledSignals.size > 0) {
+					appendTranscript({
+						type: "settled_shutdown_skipped",
+						reason: "signal_delivered",
+						signals: [...deliveredSettledSignals],
+						agentGeneration,
+						attempt,
+					});
+					return;
+				}
+				if (agentActive || latestEndedGeneration === undefined || latestEndedGeneration !== agentGeneration) {
+					let reason: "missing_agent_end" | "agent_active" | "newer_agent_generation";
+					if (latestEndedGeneration === undefined) {
+						reason = "missing_agent_end";
+					} else if (agentActive) {
+						reason = "agent_active";
+					} else {
+						reason = "newer_agent_generation";
+					}
+					appendTranscript({
+						type: "settled_shutdown_skipped",
+						reason,
+						...(latestEndedGeneration === undefined ? {} : { latestEndedGeneration }),
+						agentGeneration,
+						attempt,
+					});
+					return;
+				}
+				scheduleSettledShutdown();
 			};
 
 			const flushFilteredMessageUpdate = (reason: "nonzero_exit" | "process_error" | "timeout") => {
@@ -735,6 +867,64 @@ async function runSingleAgentAttempt(
 				currentResult.stderr = [currentResult.stderr, diagnostic].filter(Boolean).join("\n");
 			};
 
+			const handleTimeout = async () => {
+				if (resolved || processClosed || timedOut || wasAborted) return;
+				timedOut = true;
+				settledShutdownOwnsLifecycle = false;
+				deliveredSettledSignals.clear();
+				clearSettledShutdownTimer();
+				clearKillEscalationTimer();
+				clearSettledCloseTimer();
+				const message = `Agent ${agent.name} exceeded bg task timeout (${formatDurationMs(timeoutMs)}) without completing; marking it unresponsive and terminating the child process group.`;
+				const timeoutDiagnostics = [message];
+				currentResult.status = "failed";
+				currentResult.stopReason = "unresponsive_timeout";
+				currentResult.errorMessage = message;
+				currentResult.stderr = [currentResult.stderr, message].filter(Boolean).join("\n");
+				appendResultDiagnostic(currentResult, message);
+				appendTranscript({ type: "timeout", reason: "bg-task-timeout", timeoutMs, attempt });
+				flushFilteredMessageUpdate("timeout");
+				emitUpdate();
+				const termOutcomes = signalProcessGroupOrChild(proc, "SIGTERM");
+				appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGTERM: ${formatSignalOutcomes(termOutcomes)}`);
+				await new Promise((resume) => setTimeout(resume, killGraceMs));
+				if (resolved) return;
+				if (!processClosed) {
+					const killOutcomes = signalProcessGroupOrChild(proc, "SIGKILL");
+					appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGKILL: ${formatSignalOutcomes(killOutcomes)}`);
+					appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination unconfirmed: child process did not emit close within ${formatDurationMs(killGraceMs)} after SIGTERM.`);
+				}
+				resolveOnce(1);
+			};
+
+			const armTimeoutTimer = () => {
+				if (timeoutDeadline === undefined || resolved || processClosed || timedOut || wasAborted) return;
+				clearTimeoutTimer();
+				timeoutTimer = setTimeout(() => void handleTimeout(), Math.max(0, timeoutDeadline - Date.now()));
+				timeoutTimer.unref?.();
+			};
+
+			const cancelSettledShutdownForActivity = () => {
+				if (!settledShutdownOwnsLifecycle) return;
+				if (deliveredSettledSignals.size > 0) {
+					appendTranscript({
+						type: "settled_shutdown_cancellation_skipped",
+						reason: "signal_delivered",
+						signals: [...deliveredSettledSignals],
+						agentGeneration,
+						attempt,
+					});
+					return;
+				}
+				settledShutdownOwnsLifecycle = false;
+				deliveredSettledSignals.clear();
+				clearSettledShutdownTimer();
+				clearKillEscalationTimer();
+				clearSettledCloseTimer();
+				appendTranscript({ type: "settled_shutdown_cancelled", reason: "agent_activity", agentGeneration, attempt });
+				armTimeoutTimer();
+			};
+
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
 				let event: any;
@@ -755,6 +945,17 @@ async function runSingleAgentAttempt(
 				}
 				const payload = normalized.payload;
 
+				if (eventName === "agent_start") {
+					agentGeneration++;
+					cancelSettledShutdownForActivity();
+					agentActive = true;
+				}
+				if (eventName === "turn_start") {
+					cancelSettledShutdownForActivity();
+					agentActive = true;
+				}
+				if (eventName === "agent_settled") handleAgentSettled();
+
 				if (eventName === "session_compact") {
 					sawSessionCompact = true;
 					compactThenEmptyAgentEnd = false;
@@ -762,6 +963,8 @@ async function runSingleAgentAttempt(
 				}
 
 				if (eventName === "agent_end") {
+					agentActive = false;
+					latestEndedGeneration = agentGeneration;
 					const malformedDiagnostic = malformedAgentEndContentDiagnostic(payload);
 					if (malformedDiagnostic) appendResultDiagnostic(currentResult, malformedDiagnostic);
 					compactThenEmptyAgentEnd = sawSessionCompact && !postCompactAssistantHasText && agentEndHasTextlessContent(payload);
@@ -825,14 +1028,32 @@ async function runSingleAgentAttempt(
 			proc.on("close", (code, closeSignal) => {
 				processClosed = true;
 				clearKillEscalationTimer();
+				clearSettledShutdownTimer();
+				clearSettledCloseTimer();
 				if (resolved) return;
 				if (buffer.trim()) processLine(buffer);
 				if (compactThenEmptyAgentEnd) currentResult.needsCompletionReason = "compact-then-empty";
 				const signalName = typeof closeSignal === "string" && closeSignal ? closeSignal : undefined;
-				const exitCode = signalName || wasAborted || timedOut ? (code && code !== 0 ? code : 1) : (code ?? 0);
-				if (signalName && !currentResult.errorMessage) currentResult.errorMessage = `Agent process terminated by signal ${signalName}`;
+				const normalZeroExit = !signalName && (code ?? 0) === 0;
+				const expectedSettledSignalExit = matchesDeliveredSettledSignalExit(code, signalName, deliveredSettledSignals);
+				const settledShutdownExit = settledShutdownOwnsLifecycle && !wasAborted && !timedOut && (normalZeroExit || expectedSettledSignalExit);
+				let exitCode: number;
+				if (settledShutdownExit) {
+					exitCode = 0;
+				} else if (signalName || wasAborted || timedOut) {
+					exitCode = code && code !== 0 ? code : 1;
+				} else {
+					exitCode = code ?? 0;
+				}
+				if (signalName && !settledShutdownExit && !currentResult.errorMessage) currentResult.errorMessage = `Agent process terminated by signal ${signalName}`;
 				if (exitCode !== 0) flushFilteredMessageUpdate("nonzero_exit");
-				appendTranscript({ type: "exit", code: exitCode, ...(signalName ? { signal: signalName } : {}), attempt });
+				appendTranscript({
+					type: "exit",
+					code: exitCode,
+					...(signalName ? { signal: signalName } : {}),
+					...(settledShutdownExit ? { semanticCompletion: "agent_settled" } : {}),
+					attempt,
+				});
 				resolveOnce(exitCode);
 			});
 
@@ -847,6 +1068,12 @@ async function runSingleAgentAttempt(
 			if (signal) {
 				const killProc = () => {
 					wasAborted = true;
+					settledShutdownOwnsLifecycle = false;
+					deliveredSettledSignals.clear();
+					clearTimeoutTimer();
+					clearKillEscalationTimer();
+					clearSettledShutdownTimer();
+					clearSettledCloseTimer();
 					signalProcessGroupOrChild(proc, "SIGTERM");
 					scheduleKillEscalation();
 				};
@@ -857,33 +1084,7 @@ async function runSingleAgentAttempt(
 				}
 			}
 
-			if (timeoutMs > 0) {
-				timeoutTimer = setTimeout(async () => {
-					if (resolved || processClosed) return;
-					timedOut = true;
-					const message = `Agent ${agent.name} exceeded bg task timeout (${formatDurationMs(timeoutMs)}) without completing; marking it unresponsive and terminating the child process group.`;
-					const timeoutDiagnostics = [message];
-					currentResult.status = "failed";
-					currentResult.stopReason = "unresponsive_timeout";
-					currentResult.errorMessage = message;
-					currentResult.stderr = [currentResult.stderr, message].filter(Boolean).join("\n");
-					appendResultDiagnostic(currentResult, message);
-					appendTranscript({ type: "timeout", reason: "bg-task-timeout", timeoutMs, attempt });
-					flushFilteredMessageUpdate("timeout");
-					emitUpdate();
-					const termOutcomes = signalProcessGroupOrChild(proc, "SIGTERM");
-					appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGTERM: ${formatSignalOutcomes(termOutcomes)}`);
-					await new Promise((resume) => setTimeout(resume, killGraceMs));
-					if (resolved) return;
-					if (!resolved && !processClosed) {
-						const killOutcomes = signalProcessGroupOrChild(proc, "SIGKILL");
-						appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGKILL: ${formatSignalOutcomes(killOutcomes)}`);
-						appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination unconfirmed: child process did not emit close within ${formatDurationMs(killGraceMs)} after SIGTERM.`);
-					}
-					resolveOnce(1);
-				}, timeoutMs);
-				timeoutTimer.unref?.();
-			}
+			armTimeoutTimer();
 		});
 
 		currentResult.exitCode = exitCode;

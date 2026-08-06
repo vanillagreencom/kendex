@@ -1385,7 +1385,7 @@ export default function (pi: ExtensionAPI) {
 	// pane runs its own Pi instance with a single in-pane child so a
 	// per-agent counter is the right granularity.
 	pi.on("message_end", async (event: any) => {
-		if (!childAgentName) return;
+		if (!childAgentName || !childOwnsVisiblePane) return;
 		try {
 			const taskId = childCurrentTaskFile
 				? path.basename(childCurrentTaskFile, path.extname(childCurrentTaskFile))

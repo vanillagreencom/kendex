@@ -138,6 +138,10 @@ The detector is mutually exclusive with the context-overflow throw-path retry fr
 
 For vstack#336, bg one-shot child processes have a hard deadline from `bgTaskTimeoutMs` (default 30 minutes; `0` disables). This covers the case where the child process wedges mid tool-use loop and never emits `agent_end` or exits, so pane/outbox watchdogs cannot run. When the deadline fires, `runner.ts` records `stopReason: "unresponsive_timeout"`, appends timeout diagnostics to the transcript/result, emits the normal `subagents:failed` lifecycle event, resolves the parent worker with a failed `SingleResult`, and sends `SIGTERM` followed by `SIGKILL` to the child process group. This lets the parallel worker pool continue and prevents orphaned bg children from lingering indefinitely.
 
+## Bg one-shot settled shutdown
+
+Pi JSON/print-mode children can emit `agent_settled` while their process remains alive on an idle HTTP connection. Pi emits one settlement after the latest low-level run in a retry, compaction, or queued-continuation chain, so the bg runner accepts settlement only when the latest observed `agent_end` matches the current generation and no agent is active. An accepted settlement takes ownership from the task timeout and waits 250ms for normal print-mode shutdown. Activity during that grace period cancels shutdown and restores the original timeout deadline. After `SIGTERM` delivery succeeds, shutdown is irreversible because Pi disposes its runtime and exits 143; disposal-time lifecycle activity cannot cancel escalation or semantic shutdown classification. Unconfirmed shutdown is bounded after `SIGKILL`; a forced exit receives logical exit code 0 only when its close signal or 137/143 exit status matches a signal delivered by the settled path. Normal zero exits, assistant `stopReason: "error"`, context-overflow retry, and compact-then-empty classification still apply normally. Older Pi versions without `agent_settled` keep the process-exit and timeout behavior.
+
 ## Settled-run missing-completion watchdog (vstack#66)
 
 Fallback for the silent-abandonment case where a child agent fully settles but no `complete_subagent` outbox JSON was written. Pi 0.80.4's `agent_settled` event is the lifecycle boundary: unlike `agent_end`, it waits until automatic retries, compaction retries, and queued continuations are exhausted. This avoids marking a task incomplete during a run Pi still intends to continue.
@@ -191,7 +195,7 @@ Broker publication is isolated in `extensions/subagent/activity.ts` and must sta
 
 - `tab` / `shift+tab` switches between **Agents** and **Monitor**.
 - `↑/↓`, `-/=`, `home/end` navigate. `←/→` switches tree/detail focus and cycles task-detail subtabs. `enter` expands/collapses Monitor Active/Completed/session rows or opens task detail.
-- `enter` inserts `Use agent <name> to: ` into the editor.
+- `enter` inserts `Use agent <name> to:` into the editor.
 - `alt+g` edits the selected agent's frontmatter.
 - Pane agents: `alt+p`/`ctrl+p` start or reuse, `alt+o`/`ctrl+o` attach, `alt+x`/`ctrl+x` stop.
 - `esc` closes.

@@ -23,6 +23,7 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Stop kills the tmux process but preserves the session — next launch resumes it.
 - Bg agents get fresh sessions per call by default; opt into shared memory with an explicit `sessionKey`.
 - Bg one-shot agents have a configurable timeout so one stalled child does not block the rest of a parallel run.
+- Bg one-shot completion follows Pi's `agent_settled` lifecycle boundary and gracefully stops print-mode children that linger on idle HTTP connections.
 - Inventory-aware launch guard rejects unknown agent names with the available list.
 - Large parallel calls run through a flat worker pool capped at `maxConcurrency`; callers do not need to split requests. Pane idle waits use `wait_for_subagent_idle`.
 - Persistent panes can auto-resume after detected provider rate limits.
