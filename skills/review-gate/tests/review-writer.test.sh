@@ -284,6 +284,7 @@ case "$args" in
     case "${STUB_JOBS:-none}" in
       none) echo '{"jobs":[{"name":"gate","conclusion":"success"},{"name":"heavy","conclusion":"success"}]}' ;;
       skipped) echo '{"jobs":[{"name":"gate","conclusion":"success"},{"name":"heavy","conclusion":"skipped"}]}' ;;
+      cancelled_job) echo '{"jobs":[{"name":"gate","conclusion":"success"},{"name":"heavy","conclusion":"cancelled"}]}' ;;
       fail) echo "HTTP 500" >&2; exit 1 ;;
       malformed) echo '{"message":"Not Found"}' ;;
       *) echo "unknown STUB_JOBS" >&2; exit 1 ;;
@@ -305,6 +306,8 @@ case "$args" in
         # One run AT the cap (5) plus a rerunnable one (1) — the shape that
         # wedged the head when the marker floor was taken across every run.
         echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"},{"id":333,"name":"capped lane","status":"completed","conclusion":"success","event":"pull_request","run_attempt":5,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
+      cancelled_proof)
+        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"cancelled","event":"pull_request","run_attempt":2,"run_started_at":"2020-06-02T00:00:00Z"}]}' ;;
       two_lanes)
         echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"},{"id":444,"name":"second lane","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
       *) echo "unknown STUB_RUNS_MODE" >&2; exit 1 ;;
@@ -493,6 +496,22 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
   EVENT_NAME=pull_request_review STUB_RUNS_MODE=two_lanes STUB_RERUN_MODE=refuse) || rc=$?
 assert_eq "$rc" "0" "w8j: refused reruns exit 0 (stuck, not malfunction)"
 assert_not_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w8j: no marker when every rerun was refused"
+
+# A CANCELLED run reports status=completed. Counting it as proof would post
+# success with the heavy jobs never having run, and would also swallow the
+# stall recovery (the head would look proven). It must fall through instead.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
+  EVENT_NAME=workflow_run STUB_RUNS_MODE=cancelled_proof) || rc=$?
+assert_eq "$rc" "0" "w35: a cancelled proof attempt exits 0"
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "w35: a CANCELLED attempt is not proof (completed != executed)"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
+  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=cancelled_proof) || rc=$?
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "w36: the ordering fast path also refuses a cancelled attempt"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
+  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed STUB_JOBS=cancelled_job) || rc=$?
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "w37: a CANCELLED job is as withheld as a skipped one"
 
 echo "=== bounded waiting: a wait is only correct while the signal can arrive ==="
 
@@ -697,8 +716,8 @@ assert_contains "$out" "still in progress" "w19: says why"
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
   STUB_RUNS_MODE=empty) || rc=$?
 assert_eq "$rc" "0" "w20: a head with no completed pull_request runs exits 0 (waits, not stuck)"
-assert_contains "$out" "no completed pull_request runs" "w20: says why"
-assert_contains "$out" "workflow_run completion leg" "w20: names the leg that will converge it"
+assert_contains "$(cat "$POST_LOG")" "waiting for a CI run" "w20: a head with no gate entry gets the waiting status, which also STARTS the stall clock"
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "w20: and never a success"
 
 echo "=== fail loud, act never ==="
 

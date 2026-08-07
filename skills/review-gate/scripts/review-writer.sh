@@ -370,6 +370,7 @@ fi
 MARKER_PREFIX="approved: proof CI attempt re-running"
 MARKER_SUFFIX="; success posts on its completion"
 STALL_PREFIX="STALLED:"
+WAITING_DETAIL="approved: waiting for a CI run to prove it"
 
 # BOUNDED WAITING (the "signal that never arrives" class). Several branches
 # below park the head and wait for an event. Each is correct only while the
@@ -446,8 +447,17 @@ if [ "$marker_present" = "1" ]; then
   # truncated description): fall back to the >= 2 rule rather than wedge.
   marker_floor="$(sed -n 's/^'"$MARKER_PREFIX"' (above attempt \([0-9][0-9]*\)).*/\1/p' <<<"$current_desc")"
   [ -z "$marker_floor" ] && marker_floor=1
+  # EXECUTED, not merely "completed": GitHub reports a CANCELLED run as
+  # status=completed, and a cancelled proof attempt ran none (or only some)
+  # of its jobs. Counting it as proof would post success with the heavy CI
+  # never having run — the exact invariant this branch exists to protect —
+  # and would also swallow the stall recovery below, since the head would
+  # look proven. Only a run that reached a real verdict counts; anything
+  # else (cancelled, timed_out, stale, action_required) falls through to
+  # the recovery path, which re-issues the rerun.
   proof_completed="$(jq --argjson floor "$marker_floor" \
-    '[.[] | select(.status == "completed" and ((.run_attempt // 0) > $floor) and ((.run_attempt // 0) >= 2))] | length' <<<"$runs")"
+    '[.[] | select(.status == "completed" and ((.run_attempt // 0) > $floor) and ((.run_attempt // 0) >= 2)
+                   and ((.conclusion // "") == "success" or (.conclusion // "") == "failure"))] | length' <<<"$runs")"
   if [ "$proof_completed" -gt 0 ]; then
     # The approved attempt has RUN (red or green — 10b: a red required
     # check blocks merge on its own; gate red means reviewer objection,
@@ -497,6 +507,16 @@ if [ "$total" -eq 0 ]; then
     post_status pending "$STALL_PREFIX no CI run exists for this head; the gate cannot converge until one does"
     exit 1
   fi
+  if [ "$current_state" = "absent" ]; then
+    # No gate entry yet means no clock: stall_age_minutes cannot measure a
+    # head that was approved on its very first pass (carry-forward, an
+    # override, or evidence that landed before any writer run), so without
+    # this the bound would never engage and the head would wait forever —
+    # the same defect one layer up. Posting the waiting state starts the
+    # clock AND tells a reader why an approved PR is still pending.
+    post_status pending "$WAITING_DETAIL"
+    exit 0
+  fi
   echo "::warning::no completed pull_request runs exist on head $HEAD_SHA; nothing to re-run yet — the workflow_run completion leg converges when one completes"
   exit 0
 fi
@@ -541,16 +561,22 @@ fi
 # heavy jobs on any path, marker included) — the required heavy contexts are
 # what actually gate the merge.
 if [ -n "$evidence_at" ]; then
+  # Same "completed != executed" trap as the marker branch: a cancelled run
+  # reports status=completed, so candidates are restricted to runs that
+  # reached a real verdict.
   ordered_ids="$(jq -r --arg ev "$evidence_at" \
-    '[.[] | select(.status == "completed" and ((.run_started_at // "") != "") and (.run_started_at > $ev))]
+    '[.[] | select(.status == "completed" and ((.run_started_at // "") != "") and (.run_started_at > $ev)
+                   and ((.conclusion // "") == "success" or (.conclusion // "") == "failure"))]
      | sort_by(.run_started_at) | reverse | .[] | .id' <<<"$runs")"
   for candidate_id in $ordered_ids; do
     # Fetch and filter separately, and require the jobs array: a failed or
     # malformed read must refuse the fast path, never read as "no skips".
     jobs_pages="$(gh api "repos/$GH_REPO/actions/runs/$candidate_id/jobs?per_page=100" --paginate)" || continue
     [ -n "$jobs_pages" ] || continue
+    # CANCELLED counts as withheld too: a job killed before it ran proves
+    # nothing, exactly like a skipped one.
     skipped="$(jq -s 'if (length > 0) and all(type == "object" and ((.jobs | type) == "array"))
-                      then [.[].jobs[] | select(.conclusion == "skipped")] | length
+                      then [.[].jobs[] | select(.conclusion == "skipped" or .conclusion == "cancelled")] | length
                       else error("malformed jobs page") end' <<<"$jobs_pages" 2>/dev/null)" || continue
     if [ "$skipped" = "0" ]; then
       echo "ordering fast path: run $candidate_id started after the evidence at $evidence_at and skipped no jobs — its gated jobs ran"
