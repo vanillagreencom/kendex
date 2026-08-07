@@ -170,6 +170,16 @@ case "$args" in
     fi
     printf '%s\n' "${STUB_GATE_HISTORY:-[]}"
     ;;
+  *"/pulls/"[0-9]*)
+    # Single-PR read used by the fork detection on the success path
+    # (vstack#1094). STUB_HEAD_REPO overrides; default is the base repo
+    # (same-repo head). "null" yields a deleted-fork null head repo.
+    if [[ "${STUB_HEAD_REPO:-acme/widgets}" == "null" ]]; then
+      printf '{"head":{"repo":null}}\n'
+    else
+      printf '{"head":{"repo":{"full_name":"%s"}}}\n' "${STUB_HEAD_REPO:-acme/widgets}"
+    fi
+    ;;
   *"pulls?state=open"*)
     if [[ "${STUB_OPEN_PRS:-[]}" == "fail" ]]; then
       echo "HTTP 500" >&2
@@ -261,6 +271,30 @@ rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' STUB
 assert_eq "$rc" "0" "r6: first approved flip exits 0"
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "r6: full rerun of the completed pull_request run only (never the push run)"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "r6: no direct success without proof"
+
+# Fork heads (vstack#1094): the rerun path can never land success — the
+# PR-side post job holds a read-only fork token — so approved posts
+# directly from the write-capable convergence run instead of rerunning.
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RUNS_MODE=completed STUB_HEAD_REPO=contributor/widgets) || rc=$?
+assert_eq "$rc" "0" "r20: approved fork head exits 0"
+assert_contains "$(cat "$POST_LOG")" "state=success" "r20: fork head gets a direct success post"
+assert_contains "$(cat "$POST_LOG")" "fork head cannot self-post" "r20: post says why it was direct"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r20: fork head never takes the rerun path"
+
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RUNS_MODE=completed STUB_HEAD_REPO=null) || rc=$?
+assert_eq "$rc" "0" "r21: deleted-fork null head repo exits 0"
+assert_contains "$(cat "$POST_LOG")" "state=success" "r21: null head repo is treated as a fork (direct post)"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "r21: null head repo never takes the rerun path"
+
+# Same-repo heads must be unaffected: case-differing spellings of the base
+# repo still take the rerun path, not the fork direct post.
+rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  STUB_RUNS_MODE=completed STUB_HEAD_REPO=Acme/Widgets) || rc=$?
+assert_eq "$rc" "0" "r22: case-differing same-repo head exits 0"
+assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "r22: case-differing same-repo head still reruns"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "r22: case-differing same-repo head gets no direct post"
 
 rc=0; out=$(run_refire STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=high_attempt) || rc=$?
 assert_eq "$rc" "0" "r7: attempt cap exits 0"

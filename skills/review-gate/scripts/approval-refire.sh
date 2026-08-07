@@ -245,6 +245,26 @@ if [ "$ever_succeeded" -gt 0 ]; then
   exit 0
 fi
 
+# Fork heads cannot self-post: a pull_request run from a fork holds a
+# read-only GITHUB_TOKEN, so the PR-side post job 403s and the rerun loop
+# below could never land the success status (vstack#1094). The predicate
+# just evaluated approved HERE, in a write-capable run — post directly.
+# CI job contexts are unaffected: they already execute on fork heads; only
+# the status write is privilege-gated. A null head repo (deleted fork) is
+# treated as a fork for the same reason.
+pr_resp="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")" || {
+  echo "::error::could not read PR #$PR_NUMBER to determine its head repo; taking no action"
+  exit 1
+}
+head_repo="$(jq -r '.head.repo.full_name // ""' <<<"$pr_resp")" || {
+  echo "::error::could not parse the head repo for PR #$PR_NUMBER; taking no action"
+  exit 1
+}
+if [ "$(printf '%s' "$head_repo" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$GH_REPO" | tr '[:upper:]' '[:lower:]')" ]; then
+  post_status success "$detail — posted by convergence (fork head cannot self-post)"
+  exit 0
+fi
+
 # First awaiting→approved flip for this head: rerun its completed
 # pull_request runs so the new attempt opens the gate and executes the jobs.
 # A run cannot be rerun while in progress; in QUIESCE mode wait (bounded) for
