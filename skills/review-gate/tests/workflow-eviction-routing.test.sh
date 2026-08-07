@@ -152,20 +152,27 @@ check_rerun() {
 job_level_group_present() {
   local file="$1" job="$2"
   awk -v job="$job" '
+    BEGIN {
+      # YAML keys may be quoted ("group": / '"'"'group'"'"':) and still mean the
+      # same key — quoted duplicates must count too (vstack#1092). Build the
+      # optional-quote atom dynamically so this single-quoted program never
+      # needs a literal apostrophe in a regex constant.
+      q = sprintf("%c", 39)
+      Q = "[\"" q "]?"
+      conc_re   = "^[[:space:]]*" Q "concurrency" Q ":[[:space:]]*$"
+      group_re  = "^[[:space:]]*" Q "group" Q ":"
+      group_ok  = "^[[:space:]]*" Q "group" Q ":[[:space:]]*review-gate-writer[[:space:]]*$"
+      cancel_re = "^[[:space:]]*" Q "cancel-in-progress" Q ":"
+      cancel_ok = "^[[:space:]]*" Q "cancel-in-progress" Q ":[[:space:]]*false[[:space:]]*$"
+    }
     /^[[:space:]]*(#|$)/ { next }
     { match($0, /[^[:space:]]/); ind = RSTART - 1 }
     $0 ~ ("^  " job ":[[:space:]]*$") { injob = 1; next }
     injob && ind <= 2 { injob = 0 }
     injob && inblk && ind <= 4 { inblk = 0 }
-    injob && inblk && ind == 6 && /^[[:space:]]*group:/ {
-      gk++
-      if ($0 ~ /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/) g = 1
-    }
-    injob && inblk && ind == 6 && /^[[:space:]]*cancel-in-progress:/ {
-      ck++
-      if ($0 ~ /^[[:space:]]*cancel-in-progress:[[:space:]]*false[[:space:]]*$/) c = 1
-    }
-    injob && ind == 4 && /^[[:space:]]*concurrency:[[:space:]]*$/ { blocks++; inblk = 1; g = 0; c = 0; gk = 0; ck = 0 }
+    injob && inblk && ind == 6 && $0 ~ group_re { gk++; if ($0 ~ group_ok) g = 1 }
+    injob && inblk && ind == 6 && $0 ~ cancel_re { ck++; if ($0 ~ cancel_ok) c = 1 }
+    injob && ind == 4 && $0 ~ conc_re { blocks++; inblk = 1; g = 0; c = 0; gk = 0; ck = 0 }
     END { exit !(blocks == 1 && gk == 1 && ck == 1 && g && c) }
   ' "$file"
 }
@@ -301,6 +308,55 @@ else
   printf '  ok    w1[negative]: in-block duplicate group: key correctly rejected\n'
 fi
 rm -f "$INBLOCK_DUP_FIXTURE"
+
+echo "=== w1 must reject QUOTED duplicate keys inside the sole block ==="
+# Same later-wins hazard with YAML quoted keys: "group": names the same key
+# as group:, so a quoted duplicate must increment the same counter
+# (vstack#1092). Fixture: safe bare pair plus a quoted duplicate group.
+QUOTED_DUP_FIXTURE="$(mktemp)"
+awk '
+  /^    concurrency:[[:space:]]*$/ {
+    print "    concurrency:"
+    print "      group: review-gate-writer"
+    print "      \"group\": other-group"
+    print "      cancel-in-progress: false"
+    skip = 1; next
+  }
+  skip && /^      / { next }
+  { skip = 0 }
+  { print }
+' "$TEMPLATES/approval-rerun.yml" > "$QUOTED_DUP_FIXTURE"
+
+if job_level_group_present "$QUOTED_DUP_FIXTURE" "rerun"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  w1[negative]: a QUOTED duplicate "group": key inside the sole block must not pass\n'
+else
+  PASS=$((PASS + 1))
+  printf '  ok    w1[negative]: quoted duplicate group key correctly rejected\n'
+fi
+
+# Sanity: an all-quoted but otherwise-correct block still passes (quoting
+# alone is not a failure — only duplication or wrong values are).
+awk '
+  /^    concurrency:[[:space:]]*$/ {
+    print "    \"concurrency\":"
+    print "      \"group\": review-gate-writer"
+    print "      \"cancel-in-progress\": false"
+    skip = 1; next
+  }
+  skip && /^      / { next }
+  { skip = 0 }
+  { print }
+' "$TEMPLATES/approval-rerun.yml" > "$QUOTED_DUP_FIXTURE"
+
+if job_level_group_present "$QUOTED_DUP_FIXTURE" "rerun"; then
+  PASS=$((PASS + 1))
+  printf '  ok    w1[negative]: sanity check — fully quoted correct block still detected\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  w1[negative]: sanity check failed — quoted correct block must still pass\n'
+fi
+rm -f "$QUOTED_DUP_FIXTURE"
 
 echo "=== w1 must reject a NESTED concurrency mapping inside the writer job ==="
 # A concurrency mapping nested under a step/env inside the rerun job is not

@@ -1005,6 +1005,19 @@ reset
 printf '\n   \n' >"$fixtures/status.json"
 run "whitespace-only combined-status response is exit 2, not a vacuous empty status set (vstack#1086)" "" 2
 
+# Non-array statuses values (vstack#1092): the shape guards require
+# (.statuses | type) == "array" in BOTH validation paths — prove each
+# rejects an object-valued statuses field, not just a missing one.
+reset
+printf '{"statuses":{}}\n' >"$fixtures/status.json"
+run "combined-status page with non-array statuses is exit 2" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n --arg sha "$HEAD" '{sha:$sha,statuses:{}}' >"$fixtures/objstat-snapshot.json"
+CFG_SNAPSHOT="$fixtures/objstat-snapshot.json"
+run "snapshot seam: snapshot with non-array statuses is exit 2" "" 2
+
 reset
 CFG_CONTEXTS="mech-ctx"
 status_ctx "mech-ctx" success "analysis complete"

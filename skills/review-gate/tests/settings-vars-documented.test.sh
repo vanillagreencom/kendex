@@ -79,6 +79,21 @@ REVIEW_GATE_SETTINGS_FILE="x"
 'REVIEW_GATE_SETTINGS_FILE' = "x"
    REVIEW_GATE_SETTINGS_FILE = "x"
 SPELLINGS
+
+# And the reverse direction: spellings that are NOT assignments of the key
+# must NOT match — an over-broad matcher would flag innocent example text
+# (vstack#1092).
+while IFS= read -r spelling; do
+  printf '%s\n' "$spelling" >"$matcher_fixture"
+  if forbidden_assignment_matches "REVIEW_GATE_SETTINGS_FILE" "$matcher_fixture"; then
+    echo "FAIL: forbidden-assignment matcher falsely matched: $spelling"
+    fail=1
+  fi
+done <<'NON_MATCHING'
+# REVIEW_GATE_SETTINGS_FILE = "x"
+REVIEW_GATE_SETTINGS_FILE_EXTRA = "x"
+REVIEW_GATE_SETTINGS_FILE overrides the file path in tests
+NON_MATCHING
 rm -f "$matcher_fixture"
 
 if [ "$fail" -ne 0 ]; then
