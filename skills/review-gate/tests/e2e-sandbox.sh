@@ -20,6 +20,10 @@
 #     counts (author exclusion); fork scenarios use this identity's fork.
 #   - GitHub Actions may create PRs (repo/org/enterprise setting), and the
 #     repo allows auto-merge (`allow_auto_merge`) so scenario 1 can enqueue.
+#   - Scenario 5 (true fork PR) additionally needs a FORK of the sandbox in
+#     another namespace. A private repo in an org that forbids private
+#     forking cannot provide one; s5 then SKIPS loudly rather than failing.
+#     Use a public sandbox for that scenario, or create the fork by hand.
 #
 # Scenario selection: E2E_SCENARIOS="s1 s2 ..." (default: all). Scenarios
 # are independent; each opens its own PR(s) and closes them on exit.
@@ -56,7 +60,10 @@ b64() { # stdin -> base64 with no line wrapping, GNU and BSD alike
 iso_epoch() { # ISO-8601 Z instant -> epoch seconds (GNU date, then BSD date)
   date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
 }
-note "driver identity: $ME (repo $REPO)"
+# Stamped once: every cross-cutting check in sfinal is bounded to runs
+# created after the driver started, so prior sessions never colour a result.
+REPLAY_SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+note "driver identity: $ME (repo $REPO); replay window starts $REPLAY_SINCE"
 
 # ---------------------------------------------------------------- helpers ---
 
@@ -385,9 +392,23 @@ s4() { # push discards evidence -> re-review -> docs-only push CARRIES with
 s5() { # true fork PR: no special-casing; the pull_request_review-triggered
        # writer run no-ops GREEN; status-form evidence converges the head
   CURRENT=s5
-  gh repo fork "$REPO" --clone=false >/dev/null 2>&1 || true
-  sleep 5
+  # PREREQUISITE, not a defect when absent: a true fork PR needs a fork in
+  # another namespace. A PRIVATE sandbox in an org that forbids private
+  # forking (the vanillagreencom default) cannot be forked at all, and
+  # loosening that org/enterprise policy to run a test is the wrong trade.
+  # Run this scenario against a PUBLIC sandbox, or fork manually and re-run
+  # with the fork already in place. Skipping is loud and never silent — the
+  # fork path has NO special-casing by design (that is the point of v2), and
+  # the read-only-token no-op is pinned offline by w24.
   local fork="$ME/${REPO#*/}" br=s5-fork pr sha base
+  if ! gh api "repos/$fork" --jq .id >/dev/null 2>&1; then
+    gh repo fork "$REPO" --clone=false >/dev/null 2>&1 || true
+    sleep 5
+  fi
+  if ! gh api "repos/$fork" --jq .id >/dev/null 2>&1; then
+    note "SKIP s5: no fork at $fork and this repo cannot be forked (private repo + org policy). Run against a public sandbox, or create the fork manually first."
+    return
+  fi
   # Sync the fork's main, then branch on the fork.
   gh api -X POST "repos/$fork/merge-upstream" -f branch=main >/dev/null 2>&1 || true
   base="$(gh api "repos/$fork/git/ref/heads/main" --jq .object.sha)"
@@ -597,9 +618,14 @@ s10d() { # cap exhaustion: a head already at MAX_RERUN_ATTEMPTS is left
 sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
            # of any leg red'd during the replay
   CURRENT=sfinal
-  local reds evicted killed id started
+  local reds evicted killed unknown id started
+  # Bounded to THIS replay: an unbounded window would drag in runs from
+  # earlier sessions (including deliberately-broken engine versions) and
+  # either fail a healthy replay or hide a fresh regression behind old runs.
+  # REPLAY_SINCE is stamped at driver start.
   reds="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit 200 \
-    --json conclusion --jq '[.[] | select(.conclusion == "failure")] | length')"
+    --json conclusion,createdAt \
+    --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and .conclusion == "failure")] | length')"
   if [ "${reds:-0}" = "0" ]; then
     ok "no writer run of ANY leg failed during the replay"
   else
@@ -612,17 +638,35 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
   # VST-36 escalation exists for). Tell them apart by whether any step ran.
   evicted=0
   killed=0
+  unknown=0
   for id in $(gh run list -R "$REPO" --workflow "Review gate writer" --limit 200 \
-      --json databaseId,conclusion --jq '.[] | select(.conclusion == "cancelled") | .databaseId'); do
-    started="$(gh api "repos/$REPO/actions/runs/$id/jobs" \
-      --jq '[.jobs[] | .steps[]? | select(.conclusion != "skipped" and (.started_at // "") != "")] | length' 2>/dev/null)"
-    if [ "${started:-0}" -gt 0 ]; then
-      killed=$((killed + 1))
-      note "cancelled run $id executed steps before dying — investigate"
-    else
-      evicted=$((evicted + 1))
+      --json databaseId,conclusion,createdAt \
+      --jq '.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and .conclusion == "cancelled") | .databaseId'); do
+    # An UNREADABLE jobs list is not evidence of a harmless eviction — it is
+    # no evidence at all. Separate the read failure from the verdict so a
+    # transient 5xx or a permission fault cannot launder a killed run into
+    # the benign bucket.
+    if ! started="$(gh api "repos/$REPO/actions/runs/$id/jobs" \
+        --jq '[.jobs[] | .steps[]? | select(.conclusion != "skipped" and (.started_at // "") != "")] | length')"; then
+      unknown=$((unknown + 1))
+      note "cancelled run $id: jobs list unreadable — cannot classify"
+      continue
     fi
+    case "$started" in
+      ''|*[!0-9]*)
+        unknown=$((unknown + 1))
+        note "cancelled run $id: unparseable jobs response — cannot classify"
+        ;;
+      0) evicted=$((evicted + 1)) ;;
+      *)
+        killed=$((killed + 1))
+        note "cancelled run $id executed steps before dying — investigate"
+        ;;
+    esac
   done
+  if [ "$unknown" -gt 0 ]; then
+    bad "$unknown cancelled writer run(s) could not be classified (jobs list unreadable)"
+  fi
   note "concurrency evictions during the replay: $evicted (harmless: converge-all means the surviving run covers those heads)"
   if [ "$killed" = "0" ]; then
     ok "no writer run was killed mid-work (evictions only)"
@@ -632,15 +676,35 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
   if [ "$evicted" -gt 0 ]; then
     ok "eviction actually occurred ($evicted runs) and no scenario stranded — converge-all (binding F2) proven live, not theoretically"
   fi
-  local sched
-  sched="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit 100 \
-    --json event,conclusion \
-    --jq '[.[] | select(.event == "schedule")] | {n: length, green: [.[] | select(.conclusion == "success")] | length}')"
-  note "schedule-leg runs: $sched"
-  if [ "$(jq -r .n <<<"$sched")" -ge 1 ] && [ "$(jq -r .n <<<"$sched")" = "$(jq -r .green <<<"$sched")" ]; then
-    ok "cron floor: schedule-leg writer runs exist and are all green"
+  # The cron leg is a LIVENESS check, not a replay-window one: the schedule
+  # fires every 15 minutes (best-effort), so a short replay can legitimately
+  # contain zero ticks. Assert instead that a tick landed recently and that
+  # every recent tick was green — which is what "the floor is alive" means.
+  local recent now newest_age green_recent n_recent
+  # --event filters SERVER-SIDE: a client-side filter over the newest N runs
+  # finds nothing on a busy repo, where event-leg runs fill the whole slice.
+  recent="$(gh run list -R "$REPO" --workflow "Review gate writer" \
+    --event schedule --limit 5 \
+    --json conclusion,createdAt --jq 'sort_by(.createdAt) | reverse')"
+  n_recent="$(jq length <<<"$recent")"
+  if [ "${n_recent:-0}" -eq 0 ]; then
+    bad "cron floor: no schedule-leg writer runs exist at all (is the schedule trigger disabled?)"
+    return
+  fi
+  now="$(date -u +%s)"
+  newest_age=$(( now - $(iso_epoch "$(jq -r '.[0].createdAt' <<<"$recent")") ))
+  # 40 minutes: two 15-minute ticks plus slack for GitHub's best-effort
+  # delivery, which can slip 10-20+ minutes under load.
+  if [ "$newest_age" -le 2400 ]; then
+    ok "cron floor: a schedule tick landed ${newest_age}s ago (the floor is alive)"
   else
-    bad "cron floor: missing or red schedule-leg runs ($sched)"
+    bad "cron floor: newest schedule tick is ${newest_age}s old — the schedule may be disabled or slipping"
+  fi
+  green_recent="$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$recent")"
+  if [ "$green_recent" = "$n_recent" ]; then
+    ok "cron floor: all $n_recent recent schedule ticks are green"
+  else
+    bad "cron floor: only $green_recent of $n_recent recent schedule ticks are green"
   fi
 }
 
