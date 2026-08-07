@@ -633,6 +633,61 @@ s10d() { # cap exhaustion: a head already at MAX_RERUN_ATTEMPTS is left
   close_pr "$pr" "$br"
 }
 
+s11() { # THE QUEUE BACKSTOP (architecture probe, not a v2 regression test).
+        # Claim under test: on a queue-backed repo the merge queue re-runs
+        # heavy CI on the MERGE COMMIT and blocks the merge on it, so a PR
+        # whose head-attempt skipped the heavy jobs still cannot merge
+        # untested. If true, the writer's post-approval proof rerun is
+        # redundant for merge PROTECTION on such repos, and heavy CI need
+        # only run once — in the queue, on the code actually being merged.
+  CURRENT=s11
+  local br=s11-queue-backstop pr sha head_heavy queue_heavy
+  # A branch whose heavy job FAILS: if the queue is a real backstop, this
+  # PR must not merge even with a green gate and a skipped head attempt.
+  mkbranch "$br" ".sandbox-heavy-fail" "the heavy job fails in the queue"
+  pr="$(open_pr "$br" "s11 queue backstop probe")" || { bad "open PR"; return; }
+  sha="$(head_sha "$pr")"
+  assert_gate "$sha" pending 300 "awaiting" "probe: fresh head pends (heavy jobs skip)"
+  await_ci_settled "$sha" 300 || note "head CI did not settle"
+  head_heavy="$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" \
+    --jq '[.check_runs[] | select(.name == "heavy")] | sort_by(.completed_at) | last | .conclusion // "absent"')"
+  if [ "$head_heavy" = "skipped" ] || [ "$head_heavy" = "absent" ]; then
+    ok "probe: the head attempt did NOT run the heavy job (conclusion=$head_heavy)"
+  else
+    bad "probe: expected the head's heavy job to skip, saw $head_heavy"
+  fi
+  # Open the gate WITHOUT any proof rerun — exactly what a queue-backed
+  # writer would do if it posted the review verdict and nothing more.
+  post_status "$sha" "$GATE_CTX" success "probe: review verdict only, no proof rerun"
+  sleep 5
+  gh pr merge "$pr" -R "$REPO" --squash --auto >/dev/null 2>&1 || true
+  # Watch the queue: it must RUN the heavy job on the merge-group sha and
+  # refuse the merge because that run is red.
+  local waited=0 merged="" mg_heavy="absent"
+  while [ "$waited" -le 600 ]; do
+    merged="$(gh api "repos/$REPO/pulls/$pr" --jq .merged)"
+    [ "$merged" = "true" ] && break
+    mg_heavy="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
+      --json conclusion,createdAt --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'")] | sort_by(.createdAt) | last | .conclusion // "absent"')"
+    [ "$mg_heavy" = "failure" ] && break
+    sleep 20; waited=$((waited + 20))
+  done
+  if [ "$merged" = "true" ]; then
+    bad "probe: the PR MERGED with heavy CI never having run — the queue is NOT a backstop on this repo"
+  else
+    ok "probe: the queue refused the merge (merge-group CI conclusion=$mg_heavy)"
+  fi
+  queue_heavy="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
+    --json createdAt --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'")] | length')"
+  if [ "${queue_heavy:-0}" -ge 1 ]; then
+    ok "probe: the queue RAN CI on the merge commit ($queue_heavy run(s)) — heavy CI is enforced there, not on the head"
+  else
+    bad "probe: no merge_group CI run observed; the queue does not re-run CI on this repo"
+  fi
+  gh pr merge "$pr" -R "$REPO" --disable-auto >/dev/null 2>&1 || true
+  close_pr "$pr" "$br"
+}
+
 sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
            # of any leg red'd during the replay
   CURRENT=sfinal
