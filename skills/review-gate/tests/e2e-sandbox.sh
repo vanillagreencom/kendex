@@ -45,11 +45,16 @@ set -uo pipefail
 # LIVE driver, opt-in by design: it drives a real GitHub repo through real
 # PR lifecycles, so it must never run as part of the offline skill-suite
 # sweep (which executes every skills/*/tests/*.sh). Setting E2E_REPO is the
-# opt-in. Reaching this line still proves the file parses, so the sweep keeps
-# catching syntax errors in it.
+# opt-in. Bash parses a script INCREMENTALLY, so exiting here would leave
+# everything below unparsed — the sweep must still catch a malformed driver,
+# hence the explicit syntax check before the skip.
 if [ -z "${E2E_REPO:-}" ]; then
-  echo "e2e-sandbox: LIVE Layer-2 driver — skipped (set E2E_REPO=<owner>/<repo> to run against a sandbox)"
-  exit 0
+  if bash -n "${BASH_SOURCE[0]}"; then
+    echo "e2e-sandbox: LIVE Layer-2 driver — syntax OK; skipped (set E2E_REPO=<owner>/<repo> to run against a sandbox)"
+    exit 0
+  fi
+  echo "e2e-sandbox: SYNTAX ERROR in the replay driver (above)" >&2
+  exit 1
 fi
 REPO="$E2E_REPO"
 SCENARIOS="${E2E_SCENARIOS:-s1 s2 s3 s4 s5 s6 s7 s9 s10a s10b s10d sfinal}"
