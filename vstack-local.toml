@@ -165,9 +165,11 @@ synced issue into its project:
 | `docs` | workspace | Docs & Onboarding |
 | `chore` | workspace | Tech Debt & Bugs |
 
-`vstack report` stamps one automatically on vstack-targeted issues (derived from the asset
-selector, overridable with `--area`). Hand-filed issues should carry one too; anything
-unlabeled stays parked in Linear Triage until a human or the TPM audit routes it.
+`vstack report` stamps one automatically on issues filed to the canonical
+`vanillagreencom/vstack` (derived from the asset selector, overridable with `--area`);
+project-local reports and `--upstream` fork redirects carry none. Hand-filed issues
+should carry one too; anything unlabeled stays parked in Linear Triage until a human
+or the TPM audit routes it.
 
 A routing label is not a classification: pair it with the type labels (`bug`, `feature`,
 `refactor`, `test`, `security`) as usual. Before adding a new one, read the four-step

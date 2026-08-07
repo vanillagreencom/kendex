@@ -303,7 +303,7 @@ enum Commands {
         /// Upstream repo for vstack-owned issues (default: vanillagreencom/vstack).
         #[arg(long)]
         upstream: Option<String>,
-        /// Surface area for the `area:*` routing label on vstack-owned issues:
+        /// Surface for the flat routing label on vstack-owned issues:
         /// cli | skills | harness | review-gate | docs | tech-debt. Derived from
         /// the asset selector when omitted.
         #[arg(long)]

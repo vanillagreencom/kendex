@@ -66,8 +66,11 @@ wins over its kind, hooks and pi-extensions are harness, skills and agents are s
 and `--area <name>` overrides the derivation. `--area` accepts either vocabulary
 (`review-gate` or `ci-infra`).
 
-Project-local reports never carry one: these labels live on `vanillagreencom/vstack` and
-team VST, so attaching one to a consuming repo's issue would fail the `gh` call outright.
+Only reports filed to the canonical `vanillagreencom/vstack` carry one. Project-local
+reports never do — these labels live on `vanillagreencom/vstack` and team VST, so
+attaching one to a consuming repo's issue would fail the `gh` call outright — and the
+same applies when `--upstream` redirects a vstack-owned report to a fork, which does
+not inherit the canonical repo's labels.
 
 **Hand-filed issues** should carry one too. Anything unlabeled stays parked in Linear
 Triage until a human or the TPM audit workflow routes it — which is the intended
