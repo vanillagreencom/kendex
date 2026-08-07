@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Layer-2 E2E replay for the v2 single writer against a LIVE sandbox repo
-# (docs/plans/review-gate-v2-single-writer.md, "Validation and cutover").
+# (the v2 single-writer plan's "Validation and cutover" section — vanillagreencom/vstack#1099).
 # Drives the end-to-end PR lifecycles observed on hyprtrade/drovr through the
 # real GitHub API — real events, real merge queue, real branch protection —
 # and asserts the posted gate state after each step. This is the durable
@@ -18,7 +18,8 @@
 #     NOT github-actions): scenario PRs are opened by github-actions[bot]
 #     via the open-pr dispatch so review-object evidence from this identity
 #     counts (author exclusion); fork scenarios use this identity's fork.
-#   - GitHub Actions may create PRs (repo/org/enterprise setting).
+#   - GitHub Actions may create PRs (repo/org/enterprise setting), and the
+#     repo allows auto-merge (`allow_auto_merge`) so scenario 1 can enqueue.
 #
 # Scenario selection: E2E_SCENARIOS="s1 s2 ..." (default: all). Scenarios
 # are independent; each opens its own PR(s) and closes them on exit.
@@ -47,6 +48,14 @@ ok()   { PASS=$((PASS + 1)); note "ok    $*"; }
 bad()  { FAIL=$((FAIL + 1)); note "FAIL  $*"; }
 
 ME="$(gh api user --jq .login)" || { echo "gh auth required"; exit 1; }
+
+b64() { # stdin -> base64 with no line wrapping, GNU and BSD alike
+  base64 | tr -d '\n'
+}
+
+iso_epoch() { # ISO-8601 Z instant -> epoch seconds (GNU date, then BSD date)
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
+}
 note "driver identity: $ME (repo $REPO)"
 
 # ---------------------------------------------------------------- helpers ---
@@ -100,7 +109,7 @@ put_file() { # branch path content message  (create or update, driver-authored)
   existing="$(gh api "repos/$REPO/contents/$path?ref=$branch" --jq .sha 2>/dev/null)" && sha_arg=(-f sha="$existing")
   gh api -X PUT "repos/$REPO/contents/$path" \
     -f message="$message" -f branch="$branch" \
-    -f content="$(printf '%s\n' "$content" | base64 -w0)" \
+    -f content="$(printf '%s\n' "$content" | b64)" \
     "${sha_arg[@]+"${sha_arg[@]}"}" >/dev/null
 }
 
@@ -281,7 +290,11 @@ s1() { # per-profile: open PR -> bot reviews at head -> gate opens; qodo's PR
   assert_gate "$sha" pending 300 "awaiting" "qodo: fresh head pends awaiting"
   review "$pr" APPROVE
   await_proof_success "$sha" "qodo APPROVED profile"
-  gh pr merge "$pr" -R "$REPO" --squash --auto >/dev/null 2>&1 || bad "queue: enqueue failed"
+  # --auto enqueues under a merge queue. gh reports "the merge strategy for
+  # main is set by the merge queue" as a nonzero exit even when the enqueue
+  # SUCCEEDS, so the enqueue is verified by observing the merge below rather
+  # than by this exit status. (Repo prerequisite: allow_auto_merge.)
+  gh pr merge "$pr" -R "$REPO" --squash --auto >/dev/null 2>&1 || true
   local waited=0 merged=""
   while [ "$waited" -le 600 ]; do
     merged="$(gh api "repos/$REPO/pulls/$pr" --jq .merged)"
@@ -374,7 +387,7 @@ s5() { # true fork PR: no special-casing; the pull_request_review-triggered
   gh api -X POST "repos/$fork/git/refs" -f ref="refs/heads/$br" -f sha="$base" >/dev/null 2>&1 || true
   gh api -X PUT "repos/$fork/contents/scenario/$br.txt" \
     -f message="seed $br" -f branch="$br" \
-    -f content="$(printf 'fork scenario line\n' | base64 -w0)" >/dev/null
+    -f content="$(printf 'fork scenario line\n' | b64)" >/dev/null
   pr="$(gh pr create -R "$REPO" --base main --head "$ME:$br" \
     --title "s5 true fork PR" --body "fork scenario (driver-authored)" 2>/dev/null | grep -o '[0-9]*$')"
   [ -n "$pr" ] || { bad "fork PR creation"; return; }
@@ -488,8 +501,10 @@ s10a() { # approval mid-CI (the modal bot timing) + 10c temporal proof + 10e
   local success_at attempt2_start
   success_at="$(gh api "repos/$REPO/commits/$sha/statuses?per_page=100" --paginate \
     | jq -rs --arg ctx "$GATE_CTX" '[add // [] | .[] | select(.context == $ctx and .state == "success")] | sort_by(.created_at) | first | .created_at // ""')"
+  # The runs API is NEWEST-FIRST, so `last` would pick attempt 1 and make
+  # this assertion pass even when success preceded the proof attempt.
   attempt2_start="$(gh api "repos/$REPO/actions/runs?head_sha=$sha&per_page=100" \
-    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI")] | last | .run_started_at // ""')"
+    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI")] | max_by(.run_attempt) | .run_started_at // ""')"
   if [ -n "$success_at" ] && [ -n "$attempt2_start" ] && [[ "$success_at" > "$attempt2_start" ]]; then
     ok "10c: first success ($success_at) postdates the proof attempt's start ($attempt2_start)"
   else
@@ -499,9 +514,11 @@ s10a() { # approval mid-CI (the modal bot timing) + 10c temporal proof + 10e
   # path's claimed bound (seconds-to-minutes), not the cron window.
   local attempt2_end delta
   attempt2_end="$(gh api "repos/$REPO/actions/runs?head_sha=$sha&per_page=100" \
-    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI")] | last | .updated_at // ""')"
-  delta=$(( $(date -d "$success_at" +%s) - $(date -d "$attempt2_end" +%s) ))
-  if [ "$delta" -le 300 ]; then
+    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI")] | max_by(.run_attempt) | .updated_at // ""')"
+  delta=$(( $(iso_epoch "$success_at") - $(iso_epoch "$attempt2_end") ))
+  # `>= 0` too: a NEGATIVE delta is a success that predates the completion —
+  # the very thing 10c forbids — and must not read as "fast".
+  if [ "$delta" -ge 0 ] && [ "$delta" -le 300 ]; then
     ok "10e: success arrived ${delta}s after the proof attempt completed (event path, not cron)"
   else
     bad "10e: success took ${delta}s after completion (silent degradation to the cron floor?)"
@@ -570,9 +587,18 @@ s10d() { # cap exhaustion: a head already at MAX_RERUN_ATTEMPTS is left
   close_pr "$pr" "$br"
 }
 
-sfinal() { # cross-cutting: the cron leg is alive and green; no writer run
-           # has red'd unexpectedly during the whole replay
+sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
+           # of any leg red'd during the replay
   CURRENT=sfinal
+  local reds
+  reds="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit 200 \
+    --json event,conclusion \
+    --jq '[.[] | select(.conclusion == "failure" or .conclusion == "cancelled")] | length')"
+  if [ "${reds:-0}" = "0" ]; then
+    ok "no writer run of ANY leg failed during the replay"
+  else
+    bad "$reds writer run(s) failed or were cancelled during the replay"
+  fi
   local sched
   sched="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit 100 \
     --json event,conclusion \

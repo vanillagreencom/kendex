@@ -1,6 +1,6 @@
 # SCAFFOLD from the vstack review-gate skill (templates/review-gate-writer.yml)
-# — the v2 SINGLE WRITER (docs/plans/review-gate-v2-single-writer.md, Change
-# 1/1b). Copy once into .github/workflows/ in the adoption PR; the file is
+# — the v2 SINGLE WRITER (review-gate v2 single-writer plan, Change 1/1b;
+# vanillagreencom/vstack#1099). Copy once into .github/workflows/ in the adoption PR; the file is
 # REPO-OWNED after the copy — `vstack refresh` does not sync workflow YAML.
 # Lines marked ADAPT are per-repo values. This one workflow replaces the old
 # four-workflow mesh (the PR-side gate pair, approval-rerun, approval-sweep,

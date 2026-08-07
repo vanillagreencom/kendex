@@ -45,7 +45,14 @@ ACTIVE_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "")" || exit 1
 ACTIVE_SKIPS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")" || exit 1
 ACTIVE_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 1
 ACTIVE_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 1
-ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 1
+# Mirrors the predicate's own resolution (v2 key wins over the legacy name):
+# a repo that follows the shipped example and sets only
+# REVIEW_GATE_OVERRIDE_CONTEXT must have its OWN override context tested, not
+# the legacy default.
+ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "__unset__")" || exit 1
+if [ "$ACTIVE_OUTAGE" = "__unset__" ]; then
+  ACTIVE_OUTAGE="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 1
+fi
 ACTIVE_PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 1
 ACTIVE_TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 1
 ACTIVE_MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 1
@@ -1399,10 +1406,13 @@ echo "--- evidence_at output (v2 writer ordering fast path)"
 # for the single writer: a too-early instant lets the writer certify a CI
 # attempt whose live gate read did NOT approve, so LATEST-across-contributing
 # rows and the missing-timestamp poison rule are pinned here.
-run_ev() { # case-name, expected evidence_at value ("<absent>" = no line)
-  local name="$1" want="$2" out got
+run_ev() { # case-name, expected evidence_at value ("<absent>" = file not written)
+  local name="$1" want="$2" got ev_file
   cases=$((cases + 1))
-  out="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
+  ev_file="$work/evidence_at.out"
+  rm -f "$ev_file"
+  PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
+    REVIEW_GATE_EVIDENCE_AT_FILE="$ev_file" \
     REVIEW_GATE_SETTINGS_FILE=/dev/null \
     REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="$CFG_CONTEXTS" \
     REVIEW_GATE_CHECKRUN_SKIP_PATTERNS="$CFG_SKIPS" \
@@ -1419,9 +1429,9 @@ run_ev() { # case-name, expected evidence_at value ("<absent>" = no line)
     REVIEW_GATE_STATUS_SNAPSHOT_FILE="$CFG_SNAPSHOT" \
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
-    "$predicate" 2>/dev/null)"
-  if printf '%s\n' "$out" | grep -q '^evidence_at='; then
-    got="$(printf '%s\n' "$out" | sed -n 's/^evidence_at=//p' | head -n 1)"
+    "$predicate" >/dev/null 2>&1
+  if [ -f "$ev_file" ]; then
+    got="$(head -n 1 "$ev_file")"
   else
     got="<absent>"
   fi
@@ -1519,7 +1529,7 @@ compare_fix identical
 run_ev "evidence_at: carried evidence carries the BASE review's submitted_at" "2026-05-01T00:00:00Z"
 
 reset
-run_ev "evidence_at: never emitted on a non-approved verdict" "<absent>"
+run_ev "evidence_at: empty on a non-approved verdict (never a stale instant)" ""
 
 if [ "$failures" -ne 0 ]; then
   echo "review-predicate selftest: $failures of $cases case(s) FAILED" >&2

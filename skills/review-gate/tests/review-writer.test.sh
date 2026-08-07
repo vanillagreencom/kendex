@@ -160,7 +160,7 @@ cat > "$TMP_ROOT/scripts/review-predicate.sh" <<'EOF'
 #!/usr/bin/env bash
 # Predicate stub: STUB_PREDICATE_RC != 0 simulates an evidence-read failure
 # (no verdict); otherwise STUB_VERDICT_LINE is the authoritative verdict and
-# STUB_EVIDENCE_AT (when set) is emitted as the additive evidence_at line.
+# STUB_EVIDENCE_AT is written to the REVIEW_GATE_EVIDENCE_AT_FILE seam.
 # STUB_PREDICATE_FAIL_PR fails only that PR's evaluation (containment
 # cases). STUB_PREDICATE_ENV_LOG records the outage-context env the writer
 # hands down (the OVERRIDE_CONTEXT alias cases).
@@ -176,8 +176,8 @@ if [[ -n "${STUB_PREDICATE_FAIL_PR:-}" && "${STUB_PREDICATE_FAIL_PR}" == "${PR_N
   exit 2
 fi
 printf '%s\n' "${STUB_VERDICT_LINE:?}"
-if [[ -n "${STUB_EVIDENCE_AT:-}" ]]; then
-  printf 'evidence_at=%s\n' "$STUB_EVIDENCE_AT"
+if [[ -n "${REVIEW_GATE_EVIDENCE_AT_FILE:-}" ]]; then
+  printf '%s\n' "${STUB_EVIDENCE_AT:-}" > "$REVIEW_GATE_EVIDENCE_AT_FILE"
 fi
 EOF
 chmod +x "$TMP_ROOT/scripts/review-predicate.sh" "$TMP_ROOT/scripts/review-writer.sh"
@@ -277,6 +277,18 @@ case "$args" in
     printf '%s\n' "${STUB_OPEN_PRS:-[]}"
     if [[ -n "${STUB_OPEN_PRS_PAGE2:-}" ]]; then printf '%s\n' "$STUB_OPEN_PRS_PAGE2"; fi
     ;;
+  *"/actions/runs/"*"/jobs"*)
+    # The fast path's skipped-jobs proof. STUB_JOBS: none (default, zero
+    # skipped) | skipped (one skipped job — an attempt that ran gate-closed)
+    # | fail (read failure) | malformed (no jobs array).
+    case "${STUB_JOBS:-none}" in
+      none) echo '{"jobs":[{"name":"gate","conclusion":"success"},{"name":"heavy","conclusion":"success"}]}' ;;
+      skipped) echo '{"jobs":[{"name":"gate","conclusion":"success"},{"name":"heavy","conclusion":"skipped"}]}' ;;
+      fail) echo "HTTP 500" >&2; exit 1 ;;
+      malformed) echo '{"message":"Not Found"}' ;;
+      *) echo "unknown STUB_JOBS" >&2; exit 1 ;;
+    esac
+    ;;
   *"/actions/runs?"*)
     case "${STUB_RUNS_MODE:-completed}" in
       completed)
@@ -289,6 +301,12 @@ case "$args" in
         echo '{"workflow_runs":[]}' ;;
       high_attempt)
         echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":5,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
+      mixed_attempt)
+        # One run AT the cap (5) plus a rerunnable one (1) — the shape that
+        # wedged the head when the marker floor was taken across every run.
+        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"},{"id":333,"name":"capped lane","status":"completed","conclusion":"success","event":"pull_request","run_attempt":5,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
+      two_lanes)
+        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"},{"id":444,"name":"second lane","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
       *) echo "unknown STUB_RUNS_MODE" >&2; exit 1 ;;
     esac
     ;;
@@ -444,6 +462,31 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
   EVENT_NAME=pull_request_review STUB_RUNS_MODE=high_attempt REVIEW_GATE_MAX_RERUN_ATTEMPTS=9) || rc=$?
 assert_contains "$(cat "$POST_LOG")" "above attempt 5" "w8g: the marker records the attempt floor that existed when the rerun was issued"
 
+# The floor comes from the runs THIS pass actually re-ran. Taking it across
+# every run would record 5 while only attempt 1 was re-run (to 2), so no
+# completion could ever satisfy the floor — the head wedges at pending.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  EVENT_NAME=pull_request_review STUB_RUNS_MODE=mixed_attempt) || rc=$?
+assert_eq "$rc" "0" "w8h: mixed capped/rerunnable head exits 0"
+assert_contains "$out" "cap 5" "w8h: the capped run is left alone"
+assert_not_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w8h: a PARTIAL rerun posts NO marker (a sibling completion must not certify the un-rerun lane)"
+assert_contains "$out" "could be re-run" "w8h: says why the marker was withheld"
+assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "w8h: the rerunnable lane is still re-run"
+
+# Every candidate re-run: the marker posts, and its floor is the highest
+# attempt among the runs re-run.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  EVENT_NAME=pull_request_review STUB_RUNS_MODE=two_lanes) || rc=$?
+assert_eq "$rc" "0" "w8i: two rerunnable lanes exit 0"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "2" "w8i: both lanes re-run"
+assert_contains "$(cat "$POST_LOG")" "above attempt 1" "w8i: the marker posts once every candidate re-ran"
+
+# A REFUSED sibling must not let the successful sibling's completion certify.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  EVENT_NAME=pull_request_review STUB_RUNS_MODE=two_lanes STUB_RERUN_MODE=refuse) || rc=$?
+assert_eq "$rc" "0" "w8j: refused reruns exit 0 (stuck, not malfunction)"
+assert_not_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w8j: no marker when every rerun was refused"
+
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
   EVENT_NAME=workflow_run) || rc=$?
 assert_eq "$rc" "0" "w9: completion pass with an unapproved head exits 0"
@@ -470,18 +513,35 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
 assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1c: no evidence_at line -> never the fast path"
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1c: rerun path instead"
 
+# THE decisive conjunct: an attempt whose live gate read refused is exactly
+# an attempt whose gated jobs SKIPPED. This is the reproduced-bypass shape —
+# a blocker that was active while the attempt ran but left no datable trace
+# (thread resolution and CR dismissal are eventless, and an evicted writer
+# run may never have posted the blocker at all).
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
+  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed STUB_JOBS=skipped) || rc=$?
+assert_eq "$rc" "0" "f1d: attempt with a skipped job exits 0"
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1d: an attempt that SKIPPED a job never certifies (its gated jobs were withheld)"
+assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1d: proof rerun instead"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
+  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed STUB_JOBS=fail) || rc=$?
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1e: an unreadable jobs list refuses the fast path (fail-safe)"
+assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1e: proof rerun instead"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
+  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed STUB_JOBS=malformed) || rc=$?
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1i: a malformed jobs response refuses the fast path (never read as no-skips)"
+
+# The proof comes from the ATTEMPT, not from the writer's posted history: a
+# head that once pended on threads still takes the fast path when the
+# completed attempt withheld nothing. (The history is not evidence either
+# way — an evicted run may never have posted the blocker.)
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
   STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"2 unresolved review thread(s)","created_at":"2020-03-01T00:00:00Z"}]' \
   STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "f1d: post-evidence closed verdict exits 0"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1d: a non-success gate entry after evidence_at blocks the fast path (a post-evidence live read still refused)"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1d: rerun path instead"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"unknown age"}]' \
-  STUB_RUNS_MODE=completed) || rc=$?
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1e: an entry with no created_at cannot be ordered and blocks the fast path"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1e: rerun path instead"
+assert_contains "$(cat "$POST_LOG")" "state=success" "f1h: a past threads-open entry does not block when the attempt skipped nothing"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "f1h: and still spares the rerun"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
   STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed \
@@ -498,41 +558,6 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-06-0
 assert_eq "$rc" "0" "f1g: equal-second evidence exits 0"
 assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1g: run_started_at == evidence_at cannot be ordered -> never certified"
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1g: proof rerun instead"
-
-# The reproduced bypass (pre-PR review, both reviewers): a threads-open entry
-# posted BEFORE the evidence arrived, then suppressed on re-evaluation by the
-# idempotent no-op, leaves no trace after evidence_at — yet the attempt that
-# started after the evidence still ran with the gate closed (thread
-# resolution and CR dismissal are eventless and undatable). The blocker rule
-# is history-wide, not time-windowed.
-THREADS_ENTRY='{"context":"Review gate","state":"pending","description":"2 unresolved review thread(s)","created_at":"2020-04-01T00:00:00Z"}'
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-05-01T00:00:00Z" \
-  STUB_GATE_HISTORY="[$THREADS_ENTRY]" STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "f1h: pre-evidence threads-open entry exits 0"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1h: a threads-open entry ANYWHERE in history blocks the fast path (the attempt may have run gate-closed)"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1h: proof rerun instead"
-
-CR_ENTRY='{"context":"Review gate","state":"failure","description":"standing review changes requested","created_at":"2020-04-01T00:00:00Z"}'
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-05-01T00:00:00Z" \
-  STUB_GATE_HISTORY="[$CR_ENTRY]" STUB_RUNS_MODE=completed) || rc=$?
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1i: a pre-evidence changes-requested entry blocks the fast path too (dismissal is eventless)"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1i: proof rerun instead"
-
-# Awaiting-class pending is the ONE closed state evidence_at can order (it
-# means evidence was missing, and the evidence instant is exactly what
-# resolved it) — so it must NOT block, or every head that ever pended would
-# pay a redundant rerun and F1's cost goal dies.
-AWAITING_ENTRY='{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"2020-04-01T00:00:00Z"}'
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-05-01T00:00:00Z" \
-  STUB_GATE_HISTORY="[$AWAITING_ENTRY]" STUB_RUNS_MODE=completed) || rc=$?
-assert_contains "$(cat "$POST_LOG")" "state=success" "f1j: an awaiting-class entry does NOT block the fast path"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "f1j: and still spares the rerun"
-
-# Unknown descriptions fail toward the rerun path.
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-05-01T00:00:00Z" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"something a future engine posted","created_at":"2020-04-01T00:00:00Z"}]' \
-  STUB_RUNS_MODE=completed) || rc=$?
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1k: an unrecognized pending description counts as a blocker (unknown states fail safe)"
 
 echo "=== VST-65 ordering guard on every success post ==="
 

@@ -99,19 +99,22 @@
 #   is bound to one head at one moment, and the `sha` requirement enforces
 #   that binding. An unreadable/malformed/wrong-head snapshot is exit 2.
 #
+# Env (optional): REVIEW_GATE_EVIDENCE_AT_FILE — path the predicate writes the
+#   evaluated evidence's creation instant to (v2 writer, plan code-review
+#   finding F1). Written on APPROVED verdicts as one ISO-8601 instant: the
+#   LATEST creation instant across every evidence source that CONTRIBUTED to
+#   the approval (latest, not earliest — a row withdrawn and later restored
+#   must not backdate the approval), and EMPTY whenever any contributing row
+#   lacks its timestamp. Callers must treat empty as "evidence cannot be
+#   ordered against CI attempts" and never fast-path on it. A per-invocation
+#   FILE seam, like REVIEW_GATE_STATUS_SNAPSHOT_FILE and for the same reason
+#   this is not a second stdout line: every consumer parses stdout
+#   positionally (`detail="${line#*detail=}"`), so an extra line would land
+#   inside their posted status description on every repo that has not cut
+#   over yet.
+#
 # Output: one machine-readable line on stdout:
 #   verdict=approved|awaiting|threads-open|changes-requested detail=<human text>
-# and, on APPROVED verdicts only, a second ADDITIVE line (v2 writer, plan
-# code-review finding F1):
-#   evidence_at=<ISO-8601 creation instant of the evaluated evidence, or empty>
-# The timestamp is the LATEST creation instant across every evidence source
-# that contributed to the approval (latest, not earliest: a source row that
-# was later withdrawn and restored must not backdate the approval), and it is
-# EMPTY whenever any contributing row lacks its timestamp — callers must
-# treat empty as "cannot order evidence against CI attempts" and never
-# fast-path on it. A separate line, deliberately: the verdict line's detail=
-# field is positional for existing parsers, and key=value lines after the
-# first pass through $GITHUB_OUTPUT captures as independent keys.
 # (diagnostic detail also echoed for logs). Exit codes:
 #   0 — evaluated (verdict line is authoritative)
 #   2 — an evidence read failed or the configuration is invalid; NO verdict
@@ -868,23 +871,40 @@ else
   fi
 fi
 [ "$evidence_at_missing" = "1" ] && evidence_at=""
-
 if [ "$cr" != "0" ]; then
-  echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
+  verdict_line="verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
 elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
-  echo "verdict=awaiting detail=awaiting a non-author review for $HEAD_SHA"
+  verdict_line="verdict=awaiting detail=awaiting a non-author review for $HEAD_SHA"
 elif [ "$unresolved" != "0" ]; then
-  echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
+  verdict_line="verdict=threads-open detail=$unresolved unresolved review thread(s)"
 elif [ "$carried" = "1" ]; then
-  echo "verdict=approved detail=review evidence at $carry_base carried to head across a $carry_kind"
-  echo "evidence_at=$evidence_at"
+  verdict_line="verdict=approved detail=review evidence at $carry_base carried to head across a $carry_kind"
 elif [ "$outageok" != "0" ] && [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ]; then
   # The override is SUBSTITUTING for missing evidence (its only sanctioned
   # use), so the attested reason is the verdict — it belongs in the gate
-  # status where a reader sees why this PR merged without a review.
-  echo "verdict=approved detail=operator override ($OUTAGE_CONTEXT): $outage_reason"
-  echo "evidence_at=$evidence_at"
+  # status where a reader sees why this PR merged without a review. The
+  # reason is operator-supplied text landing in a one-line status
+  # description and in this one-line verdict contract, so newlines/tabs and
+  # carriage returns collapse to spaces before it travels.
+  outage_reason_flat="$(printf '%s' "$outage_reason" | tr '\n\r\t' '   ')"
+  verdict_line="verdict=approved detail=operator override ($OUTAGE_CONTEXT): $outage_reason_flat"
 else
-  echo "verdict=approved detail=reviewed at head with no unresolved threads"
-  echo "evidence_at=$evidence_at"
+  verdict_line="verdict=approved detail=reviewed at head with no unresolved threads"
 fi
+
+# The evidence_at file seam (header contract). Written for EVERY verdict, and
+# EMPTY on any non-approved one — a stale instant left by a previous
+# invocation must never be read as this evaluation's. A caller that does not
+# set the variable pays nothing.
+if [ -n "${REVIEW_GATE_EVIDENCE_AT_FILE:-}" ]; then
+  case "$verdict_line" in
+    verdict=approved*) : ;;
+    *) evidence_at="" ;;
+  esac
+  printf '%s\n' "$evidence_at" > "$REVIEW_GATE_EVIDENCE_AT_FILE" || {
+    echo "::error::could not write REVIEW_GATE_EVIDENCE_AT_FILE '$REVIEW_GATE_EVIDENCE_AT_FILE'" >&2
+    exit 2
+  }
+fi
+
+printf '%s\n' "$verdict_line"
