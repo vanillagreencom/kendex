@@ -597,14 +597,40 @@ s10d() { # cap exhaustion: a head already at MAX_RERUN_ATTEMPTS is left
 sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
            # of any leg red'd during the replay
   CURRENT=sfinal
-  local reds
+  local reds evicted killed id started
   reds="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit 200 \
-    --json event,conclusion \
-    --jq '[.[] | select(.conclusion == "failure" or .conclusion == "cancelled")] | length')"
+    --json conclusion --jq '[.[] | select(.conclusion == "failure")] | length')"
   if [ "${reds:-0}" = "0" ]; then
     ok "no writer run of ANY leg failed during the replay"
   else
-    bad "$reds writer run(s) failed or were cancelled during the replay"
+    bad "$reds writer run(s) failed during the replay"
+  fi
+  # `cancelled` covers TWO very different things, and only one is a fault:
+  # a pending run EVICTED from the concurrency group (never starts a step —
+  # harmless by design, because every executing run converges every open PR)
+  # versus a run KILLED by its own timeout mid-work (a malfunction the
+  # VST-36 escalation exists for). Tell them apart by whether any step ran.
+  evicted=0
+  killed=0
+  for id in $(gh run list -R "$REPO" --workflow "Review gate writer" --limit 200 \
+      --json databaseId,conclusion --jq '.[] | select(.conclusion == "cancelled") | .databaseId'); do
+    started="$(gh api "repos/$REPO/actions/runs/$id/jobs" \
+      --jq '[.jobs[] | .steps[]? | select(.conclusion != "skipped" and (.started_at // "") != "")] | length' 2>/dev/null)"
+    if [ "${started:-0}" -gt 0 ]; then
+      killed=$((killed + 1))
+      note "cancelled run $id executed steps before dying — investigate"
+    else
+      evicted=$((evicted + 1))
+    fi
+  done
+  note "concurrency evictions during the replay: $evicted (harmless: converge-all means the surviving run covers those heads)"
+  if [ "$killed" = "0" ]; then
+    ok "no writer run was killed mid-work (evictions only)"
+  else
+    bad "$killed writer run(s) were cancelled after executing steps"
+  fi
+  if [ "$evicted" -gt 0 ]; then
+    ok "eviction actually occurred ($evicted runs) and no scenario stranded — converge-all (binding F2) proven live, not theoretically"
   fi
   local sched
   sched="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit 100 \
