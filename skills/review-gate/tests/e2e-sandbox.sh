@@ -31,6 +31,8 @@
 #
 # Scenario selection: E2E_SCENARIOS="s1 s2 ..." (default: all). Scenarios
 # are independent; each opens its own PR(s) and closes them on exit.
+# E2E_CI_WORKFLOW names the sandbox's CI workflow (default "CI"); set it when
+# replaying against a sandbox whose workflow is named differently (drovr: "ci").
 #
 # Bot fixture profiles (recorded shapes from live fleet PRs, 2026-08):
 #   copilot     COMMENTED review object at head, never approves
@@ -60,6 +62,11 @@ REPO="$E2E_REPO"
 SCENARIOS="${E2E_SCENARIOS:-s1 s2 s3 s4 s5 s6 s7 s9 s10a s10b s11 sfinal}"
 GATE_CTX="Review gate"
 OVERRIDE_CTX="vstack-reviewer-outage"
+# The sandbox's CI workflow NAME — parameterized because consumers differ
+# (the vstack sandbox names it "CI"; drovr's is lowercase "ci"). A hardcoded
+# name would silently find zero runs on a differently-named sandbox and turn
+# every CI-observing probe into a false verdict.
+CI_WORKFLOW="${E2E_CI_WORKFLOW:-CI}"
 
 PASS=0
 FAIL=0
@@ -231,23 +238,43 @@ dispatch_writer() { # fire a writer pass and wait for it to complete
 
 ci_attempts() { # sha -> highest run_attempt among CI pull_request runs
   gh api "repos/$REPO/actions/runs?head_sha=$1&per_page=100" \
-    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI") | .run_attempt] | max // 0'
+    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "'"$CI_WORKFLOW"'") | .run_attempt] | max // 0'
 }
 
 ci_run_id() { # sha -> newest CI pull_request run id
   gh api "repos/$REPO/actions/runs?head_sha=$1&per_page=100" \
-    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI")] | sort_by(.id) | last | .id // empty'
+    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "'"$CI_WORKFLOW"'")] | sort_by(.id) | last | .id // empty'
 }
 
 await_ci_settled() { # sha timeout — wait until no CI pull_request run is in flight (and >=1 exists)
   local sha="$1" timeout="$2" waited=0 st
   while [ "$waited" -le "$timeout" ]; do
     st="$(gh api "repos/$REPO/actions/runs?head_sha=$sha&per_page=100" \
-      --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI")] | if length == 0 then "none" elif any(.status != "completed") then "running" else "settled" end')"
+      --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "'"$CI_WORKFLOW"'")] | if length == 0 then "none" elif any(.status != "completed") then "running" else "settled" end')"
     [ "$st" = "settled" ] && return 0
     sleep 10; waited=$((waited + 10))
   done
   return 1
+}
+
+# Merge-group runs are correlated to THEIR PR, not just to the replay window:
+# the queue's ephemeral branch is named gh-readonly-queue/<base>/pr-<N>-<sha>,
+# so "/pr-<N>-" identifies the queue entry. Without this, an EARLIER
+# scenario's queue run (s1 merges through the queue) satisfies a later
+# scenario's probe and the probe proves nothing.
+queue_ci_conclusion() { # pr -> conclusion of this PR's newest merge-group CI run
+  gh run list -R "$REPO" --workflow "$CI_WORKFLOW" --event merge_group --limit 10 \
+    --json conclusion,createdAt,headBranch \
+    --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and ((.headBranch // "") | contains("/pr-'"$1"'-")))] | sort_by(.createdAt) | last | .conclusion // "absent"'
+}
+
+queue_ci_terminal_runs() { # pr -> count of this PR's merge-group CI runs that REACHED
+                           # a real conclusion. Created/queued/in-progress runs prove
+                           # nothing (a probe timing out mid-queue must not pass), and
+                           # cancelled covers evictions, which never executed the suite.
+  gh run list -R "$REPO" --workflow "$CI_WORKFLOW" --event merge_group --limit 10 \
+    --json conclusion,createdAt,headBranch \
+    --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and ((.headBranch // "") | contains("/pr-'"$1"'-")) and (.conclusion // "") != "" and .conclusion != "cancelled")] | length'
 }
 
 close_pr() { # pr branch
@@ -258,15 +285,27 @@ close_pr() { # pr branch
 # the gate, and the writer re-runs NOTHING. Whether the tests passed is the
 # required checks' business, enforced by the merge queue (scenario 11).
 await_review_success() { # sha label [timeout]
-  local sha="$1" label="$2" timeout="${3:-420}" before after
+  local sha="$1" label="$2" timeout="${3:-420}" before after waited=0
+  # Snapshot the attempt baseline only AFTER the head's first CI run exists:
+  # snapshotting earlier would count the first run's natural appearance as a
+  # writer-triggered rerun and fail the scenario spuriously.
   before="$(ci_attempts "$sha")"
+  while [ "${before:-0}" -eq 0 ] && [ "$waited" -le 180 ]; do
+    sleep 5; waited=$((waited + 5))
+    before="$(ci_attempts "$sha")"
+  done
   if await_gate "$sha" success "$timeout"; then
     ok "$label: gate opens on the review verdict"
   else
     bad "$label: gate opens on the review verdict"; return 1
   fi
   after="$(ci_attempts "$sha")"
-  if [ "${after:-0}" -le "${before:-0}" ]; then
+  if [ "${before:-0}" -eq 0 ]; then
+    # No baseline, no verdict: with zero runs ever observed the rerun claim
+    # is unprovable in either direction, and the gate assertion above already
+    # carries the scenario.
+    note "$label: no CI run appeared within 180s; the zero-rerun check has no baseline and is skipped"
+  elif [ "${after:-0}" -le "${before:-0}" ]; then
     ok "$label: and the writer re-ran nothing (attempts $before -> $after)"
   else
     bad "$label: the writer re-ran CI (attempts $before -> $after); it must not"
@@ -535,7 +574,7 @@ s10a() { # approval landing WHILE CI is in flight (the modal bot-review
   sha="$(head_sha "$pr")"
   while [ "$waited" -le 180 ]; do
     st="$(gh api "repos/$REPO/actions/runs?head_sha=$sha&per_page=100" \
-      --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI" and .status != "completed")] | length')"
+      --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "'"$CI_WORKFLOW"'" and .status != "completed")] | length')"
     [ "${st:-0}" -ge 1 ] && break
     sleep 5; waited=$((waited + 5))
   done
@@ -562,8 +601,7 @@ s10b() { # a FAILING test suite must not affect the gate, and must still
   while [ "$waited" -le 420 ]; do
     merged="$(gh api "repos/$REPO/pulls/$pr" --jq .merged)"
     [ "$merged" = "true" ] && break
-    heavy="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
-      --json conclusion,createdAt --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'")] | sort_by(.createdAt) | last | .conclusion // "absent"')"
+    heavy="$(queue_ci_conclusion "$pr")"
     [ "$heavy" = "failure" ] && break
     sleep 20; waited=$((waited + 20))
   done
@@ -603,22 +641,25 @@ s11() { # THE SAFETY SCENARIO. The gate no longer proves anything about CI,
   while [ "$waited" -le 600 ]; do
     merged="$(gh api "repos/$REPO/pulls/$pr" --jq .merged)"
     [ "$merged" = "true" ] && break
-    mg="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
-      --json conclusion,createdAt --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'")] | sort_by(.createdAt) | last | .conclusion // "absent"')"
+    mg="$(queue_ci_conclusion "$pr")"
     [ "$mg" = "failure" ] && break
     sleep 20; waited=$((waited + 20))
   done
+  # Three-way, not two-way: "did not merge" alone is NOT proof the queue
+  # refused — a probe timing out while the queue entry is still pending
+  # would pass vacuously. The backstop claim requires the failed run itself.
   if [ "$merged" = "true" ]; then
     bad "THE PR MERGED WITH ITS SUITE NEVER HAVING RUN — this repo has no backstop"
+  elif [ "$mg" = "failure" ]; then
+    ok "the queue refused the merge (merge-group CI=failure) — the backstop holds"
   else
-    ok "the queue refused the merge (merge-group CI=$mg) — the backstop holds"
+    bad "inconclusive: the PR did not merge but PR #$pr's merge-group CI never concluded failure (last=$mg)"
   fi
-  queue_runs="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
-    --json createdAt --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'")] | length')"
+  queue_runs="$(queue_ci_terminal_runs "$pr")"
   if [ "${queue_runs:-0}" -ge 1 ]; then
-    ok "the queue RAN the suite on the merge commit ($queue_runs run(s)) — once, on the code that ships"
+    ok "the queue RAN the suite on the merge commit ($queue_runs terminal run(s)) — once, on the code that ships"
   else
-    bad "no merge_group CI run observed; this repo's queue does not re-run the suite"
+    bad "no terminal merge_group CI run for PR #$pr observed; the queue did not actually execute the suite"
   fi
   gh pr merge "$pr" -R "$REPO" --disable-auto >/dev/null 2>&1 || true
   close_pr "$pr" "$br"
