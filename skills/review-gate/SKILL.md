@@ -19,9 +19,8 @@ The gate answers ONE question: **has this exact PR head been reviewed?** It
 posts that answer as a commit status the repo's branch rules require.
 
 It does not check CI, re-run anything, or reason about jobs. Whether untested
-code can reach the default branch is branch protection's job. That separation
-is deliberate — v2 deleted the CI-proving machinery, which was ~450 lines and
-the source of every correctness defect the design review found.
+code can reach the default branch is branch protection's job — see the
+adoption precondition below.
 
 ## Decision table
 
@@ -92,8 +91,11 @@ read only to BIND evidence to a commit, so a stale comment cannot vouch for a
 later push. Where PR workflows hold `statuses:write`, the opt-in
 `REVIEW_GATE_STATUS_PUBLISHER_REJECT` list rejects statuses minted by a
 forgeable creator (typically `github-actions[bot]`) on both the
-trusted-context and override reads; App-posted statuses (creator null) are
-never rejected by a login entry.
+trusted-context and override reads. Statuses are read from the per-commit
+statuses LIST endpoint, where every real publisher — GitHub Apps included —
+carries a creator login; while the reject list is configured, a status with
+no creator login is an anomaly and is not evidence (with the list empty, the
+default, the filter is off entirely).
 
 ## The writer (`scripts/review-writer.sh`)
 
@@ -104,9 +106,10 @@ nothing else.
 - **Converge-all on every leg.** Every invocation converges EVERY open PR,
   so a run evicted from the concurrency group strands nothing (8 evictions
   observed in one sandbox replay, zero stranded).
-- **Write ordering (VST-65).** Before any `success` post it re-reads the
-  status and defers when a non-success entry was created at/after this run's
-  evaluation instant; a failed re-read defers too. Downward posts never
+- **Write ordering.** Before any `success` post it re-reads the status and
+  defers when any gate entry was created at/after this run's evaluation
+  instant — a newer run's state AND description (which carries the audit
+  detail) both stand; a failed re-read defers too. Downward posts never
   defer.
 - **Idempotent.** When the current entry already matches state + description
   it no-ops, so idle cron ticks append nothing.

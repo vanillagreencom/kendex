@@ -574,7 +574,11 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
   # the highest-value status to forge, so a listed creator (typically
   # github-actions[bot] where PR workflows hold statuses:write) must not be
   # able to mint it. Same null-creator semantics as the trusted-context
-  # read above: App-posted statuses are never rejected by a login entry.
+  # read above: on the LIST endpoint every real publisher (Apps included)
+  # carries a creator login, so while the reject list is configured a
+  # status with NO login is an anomaly and is not evidence — trusting
+  # anomalies is the fail-open direction. List empty (the default) = filter
+  # off = unchanged behavior.
   # The REASON is mandatory (plan Change 2, finding 9, carried from the
   # outage semantics): an override with an empty description is not an
   # attestation, it is an unexplained relaxation — and it is the

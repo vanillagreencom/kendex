@@ -18,7 +18,7 @@ keeping the two separate is what makes this small enough to trust.
               │                                       │
      ╔════════▼═════════╗                    ╔════════▼═════════╗
      ║  YOUR CI         ║                    ║  YOUR REVIEWERS  ║
-     ║  runs your tests ║                    ║  bots + humans   ║
+     ║ runs your checks ║                    ║  bots + humans   ║
      ╚════════╤═════════╝                    ╚════════╤═════════╝
               │                                       │
               │                          approval, or a clean-analysis
@@ -58,6 +58,14 @@ keeping the two separate is what makes this small enough to trust.
 
 The two columns are independent on purpose. The gate never inspects your CI,
 and your CI never waits on the gate. Your branch rules require both.
+
+**Where the CI savings come from:** the left column does not have to be your
+full test suite. The recommended shape runs only fast, cheap checks on each
+push — so multiple rounds of bot review never re-bill the expensive tests —
+and lets the merge queue run the full suite exactly once, on the merged
+result, after review is done. Repos that want maximum signal per push can
+still run everything on every push; that is a per-repo CI choice this engine
+deliberately stays out of.
 
 ## What the gate accepts as "reviewed"
 
