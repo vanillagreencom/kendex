@@ -57,7 +57,7 @@ if [ -z "${E2E_REPO:-}" ]; then
   exit 1
 fi
 REPO="$E2E_REPO"
-SCENARIOS="${E2E_SCENARIOS:-s1 s2 s3 s4 s5 s6 s7 s9 s10a s10b s10d sfinal}"
+SCENARIOS="${E2E_SCENARIOS:-s1 s2 s3 s4 s5 s6 s7 s9 s10a s10b s11 sfinal}"
 GATE_CTX="Review gate"
 OVERRIDE_CTX="vstack-reviewer-outage"
 
@@ -254,23 +254,22 @@ close_pr() { # pr branch
   gh pr close "$1" -R "$REPO" --delete-branch >/dev/null 2>&1 || true
 }
 
-# The standard proof-cycle assertion: after approval evidence lands on a head
-# whose attempt 1 ran gate-closed, the writer must (1) never post success
-# before a proof attempt (>= 2) exists, (2) rerun exactly once, (3) post
-# success after the proof attempt completes.
-await_proof_success() { # sha label [timeout]
-  local sha="$1" label="$2" timeout="${3:-600}"
+# The standard assertion under the simplified engine: review evidence opens
+# the gate, and the writer re-runs NOTHING. Whether the tests passed is the
+# required checks' business, enforced by the merge queue (scenario 11).
+await_review_success() { # sha label [timeout]
+  local sha="$1" label="$2" timeout="${3:-420}" before after
+  before="$(ci_attempts "$sha")"
   if await_gate "$sha" success "$timeout"; then
-    ok "$label: gate success"
+    ok "$label: gate opens on the review verdict"
   else
-    bad "$label: gate success"; return 1
+    bad "$label: gate opens on the review verdict"; return 1
   fi
-  local attempts
-  attempts="$(ci_attempts "$sha")"
-  if [ "$attempts" -ge 2 ]; then
-    ok "$label: proof attempt exists (attempt $attempts)"
+  after="$(ci_attempts "$sha")"
+  if [ "${after:-0}" -le "${before:-0}" ]; then
+    ok "$label: and the writer re-ran nothing (attempts $before -> $after)"
   else
-    bad "$label: expected a proof rerun (attempt >= 2), saw attempt $attempts"
+    bad "$label: the writer re-ran CI (attempts $before -> $after); it must not"
   fi
 }
 
@@ -286,7 +285,7 @@ s1() { # per-profile: open PR -> bot reviews at head -> gate opens; qodo's PR
   sha="$(head_sha "$pr")"
   assert_gate "$sha" pending 300 "awaiting" "copilot: fresh head pends awaiting (event-fast)"
   review "$pr" COMMENT "Pull request overview: looks fine overall."
-  await_proof_success "$sha" "copilot COMMENTED-only profile"
+  await_review_success "$sha" "copilot COMMENTED-only profile"
   close_pr "$pr" "$br"
 
   # --- coderabbit profile: rate-limited status is NOT evidence; the real
@@ -305,7 +304,7 @@ s1() { # per-profile: open PR -> bot reviews at head -> gate opens; qodo's PR
   fi
   review "$pr" COMMENT "CodeRabbit review round"
   post_status "$sha" "CodeRabbit" success "Reviewed and clean"
-  await_proof_success "$sha" "coderabbit review+status profile"
+  await_review_success "$sha" "coderabbit review+status profile"
   close_pr "$pr" "$br"
 
   # --- qodo profile: plain APPROVED review; ride it through the merge queue
@@ -314,7 +313,7 @@ s1() { # per-profile: open PR -> bot reviews at head -> gate opens; qodo's PR
   sha="$(head_sha "$pr")"
   assert_gate "$sha" pending 300 "awaiting" "qodo: fresh head pends awaiting"
   review "$pr" APPROVE
-  await_proof_success "$sha" "qodo APPROVED profile"
+  await_review_success "$sha" "qodo APPROVED profile"
   # --auto enqueues under a merge queue. gh reports "the merge strategy for
   # main is set by the merge queue" as a nonzero exit even when the enqueue
   # SUCCEEDS, so the enqueue is verified by observing the merge below rather
@@ -351,7 +350,7 @@ s2() { # findings -> threads -> resolve -> gate opens (the no-webhook case:
   assert_gate "$sha" pending 300 "unresolved review thread" "review with findings pends threads-open (event-fast)"
   resolve_all_threads "$pr"
   dispatch_writer || true
-  await_proof_success "$sha" "thread resolution (no webhook; floor tick converges)"
+  await_review_success "$sha" "thread resolution (no webhook; floor tick converges)"
   close_pr "$pr" "$br"
 }
 
@@ -366,7 +365,7 @@ s3() { # changes-requested -> gate red -> dismiss -> gate opens
   gh api -X PUT "repos/$REPO/pulls/$pr/reviews/$rid/dismissals" \
     -f message="objection addressed" -f event="DISMISS" >/dev/null
   review "$pr" APPROVE
-  await_proof_success "$sha" "dismiss + re-approve"
+  await_review_success "$sha" "dismiss + re-approve"
   close_pr "$pr" "$br"
 }
 
@@ -377,13 +376,13 @@ s4() { # push discards evidence -> re-review -> docs-only push CARRIES with
   mkbranch "$br"; pr="$(open_pr "$br" "s4 carry-forward")" || { bad "open PR"; return; }
   shaA="$(head_sha "$pr")"
   review "$pr" APPROVE
-  await_proof_success "$shaA" "initial approval"
+  await_review_success "$shaA" "initial approval"
   # Code push: evidence is head-bound, so the gate must close on the new head.
   put_file "$br" "scenario/$br.txt" "scenario $br line one CHANGED" "code delta"
   shaB="$(await_new_head "$pr" "$shaA")" || bad "code push never surfaced a new head"
   assert_gate "$shaB" pending 300 "awaiting" "code push closes the gate (evidence head-bound)"
   review "$pr" APPROVE "re-review after the code push"
-  await_proof_success "$shaB" "re-review"
+  await_review_success "$shaB" "re-review"
   # Docs-only push: carry-forward (docs class) keeps the gate open WITHOUT
   # re-review, and F1's ordering fast path must spare the redundant rerun.
   put_file "$br" "docs/note-$br.md" "just a doc line" "docs-only delta"
@@ -400,7 +399,7 @@ s4() { # push discards evidence -> re-review -> docs-only push CARRIES with
   fi
   attempts="$(ci_attempts "$shaC")"
   if [ "$attempts" = "1" ]; then
-    ok "carry push ran heavy CI exactly ONCE (zero-rerun, binding F1)"
+    ok "carry push ran the suite exactly once (the writer never re-runs)"
   else
     bad "carry push must not rerun heavy CI (attempts=$attempts, wanted 1)"
   fi
@@ -456,7 +455,7 @@ s5() { # true fork PR: no special-casing; the pull_request_review-triggered
   fi
   # Status-form evidence (no author exclusion) opens the fork gate.
   post_status "$sha" "CodeRabbit" success "Reviewed and clean"
-  await_proof_success "$sha" "fork PR via status evidence" 900
+  await_review_success "$sha" "fork PR via status evidence" 900
   close_pr "$pr" "$br"
   gh api -X DELETE "repos/$fork/git/refs/heads/$br" >/dev/null 2>&1 || true
 }
@@ -468,7 +467,7 @@ s6() { # operator override opens; a workflow-minted override is REJECTED
   sha="$(head_sha "$pr")"
   assert_gate "$sha" pending 240 "awaiting" "fresh head pends"
   post_status "$sha" "$OVERRIDE_CTX" success "internal review recorded: loop run clean (driver attestation)"
-  await_proof_success "$sha" "operator override (PAT-posted, reason carried)"
+  await_review_success "$sha" "operator override (PAT-posted, reason carried)"
   close_pr "$pr" "$br"
 
   br=s6-minted; mkbranch "$br"; pr="$(open_pr "$br" "s6 minted override (must not open)")" || { bad "open PR"; return; }
@@ -524,15 +523,16 @@ s9() { # idle-tick idempotence: two writer passes with no events append nothing
   close_pr "$pr" "$br"
 }
 
-s10a() { # approval mid-CI (the modal bot timing) + 10c temporal proof + 10e
-         # completion-signal latency
+s10a() { # approval landing WHILE CI is in flight (the modal bot-review
+         # timing). Under the simplified engine this is unremarkable: the
+         # gate reflects the review verdict whatever CI is doing, and the
+         # queue decides whether the code may merge. Kept because it was
+         # the hardest case for the old proof-based design.
   CURRENT=s10a
-  local br=s10a-midci pr sha
+  local br=s10a-midci pr sha waited=0 st=""
   mkbranch "$br" ".sandbox-slow-gate" "widen the in-flight window"
   pr="$(open_pr "$br" "s10a approval mid-CI")" || { bad "open PR"; return; }
   sha="$(head_sha "$pr")"
-  # Wait for attempt 1 to be IN FLIGHT, then land the approval inside it.
-  local waited=0 st=""
   while [ "$waited" -le 180 ]; do
     st="$(gh api "repos/$REPO/actions/runs?head_sha=$sha&per_page=100" \
       --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI" and .status != "completed")] | length')"
@@ -540,149 +540,37 @@ s10a() { # approval mid-CI (the modal bot timing) + 10c temporal proof + 10e
     sleep 5; waited=$((waited + 5))
   done
   [ "${st:-0}" -ge 1 ] || bad "attempt 1 never appeared in flight"
-  review "$pr" APPROVE "approved while attempt 1 is in flight"
-  await_proof_success "$sha" "approval mid-CI (10a)" 900
-  # 10c: temporal assertion — the success postdates the proof attempt's
-  # start, and no success exists from before the rerun was issued.
-  local success_at attempt2_start
-  success_at="$(gh api "repos/$REPO/commits/$sha/statuses?per_page=100" --paginate \
-    | jq -rs --arg ctx "$GATE_CTX" '[add // [] | .[] | select(.context == $ctx and .state == "success")] | sort_by(.created_at) | first | .created_at // ""')"
-  # The runs API is NEWEST-FIRST, so `last` would pick attempt 1 and make
-  # this assertion pass even when success preceded the proof attempt.
-  attempt2_start="$(gh api "repos/$REPO/actions/runs?head_sha=$sha&per_page=100" \
-    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI")] | max_by(.run_attempt) | .run_started_at // ""')"
-  if [ -n "$success_at" ] && [ -n "$attempt2_start" ] && [[ "$success_at" > "$attempt2_start" ]]; then
-    ok "10c: first success ($success_at) postdates the proof attempt's start ($attempt2_start)"
-  else
-    bad "10c: success/rerun ordering violated (success=$success_at, attempt-start=$attempt2_start)"
-  fi
-  # 10e: completion-signal latency — success must arrive within the event
-  # path's claimed bound (seconds-to-minutes), not the cron window.
-  local attempt2_end delta
-  attempt2_end="$(gh api "repos/$REPO/actions/runs?head_sha=$sha&per_page=100" \
-    --jq '[.workflow_runs[] | select(.event == "pull_request" and .name == "CI")] | max_by(.run_attempt) | .updated_at // ""')"
-  delta=$(( $(iso_epoch "$success_at") - $(iso_epoch "$attempt2_end") ))
-  # `>= 0` too: a NEGATIVE delta is a success that predates the completion —
-  # the very thing 10c forbids — and must not read as "fast".
-  if [ "$delta" -ge 0 ] && [ "$delta" -le 300 ]; then
-    ok "10e: success arrived ${delta}s after the proof attempt completed (event path, not cron)"
-  else
-    bad "10e: success took ${delta}s after completion (silent degradation to the cron floor?)"
-  fi
+  review "$pr" APPROVE "approved while CI is in flight"
+  await_review_success "$sha" "approval mid-CI" 600
   close_pr "$pr" "$br"
 }
 
-s10b() { # red proof attempt: gate posts success once the attempt has RUN;
-         # the red required check blocks merge on its own
+s10b() { # a FAILING test suite must not affect the gate, and must still
+         # block the merge. Gate red means "a reviewer objects" and nothing
+         # else; build failure is the required checks' business.
   CURRENT=s10b
-  local br=s10b-red pr sha
+  local br=s10b-red pr sha heavy
   mkbranch "$br" ".sandbox-heavy-fail" "fail the heavy job"
-  pr="$(open_pr "$br" "s10b red proof attempt")" || { bad "open PR"; return; }
+  pr="$(open_pr "$br" "s10b failing suite")" || { bad "open PR"; return; }
   sha="$(head_sha "$pr")"
   assert_gate "$sha" pending 300 "awaiting" "fresh head pends"
   review "$pr" APPROVE
-  await_proof_success "$sha" "red-attempt semantics (gate success once the attempt RAN)" 900
-  local heavy
-  heavy="$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" \
-    --jq '[.check_runs[] | select(.name == "heavy")] | sort_by(.completed_at) | last | .conclusion // "none"')"
-  if [ "$heavy" = "failure" ]; then
-    ok "the heavy check itself is red (blocks merge as its own required check)"
-  else
-    bad "expected the proof attempt's heavy job to fail (saw $heavy)"
-  fi
-  close_pr "$pr" "$br"
-}
-
-s10d() { # cap exhaustion: a head already at MAX_RERUN_ATTEMPTS is left
-         # alone — gate stays non-success, writer run stays green (stuck,
-         # not malfunction)
-  CURRENT=s10d
-  local br=s10d-cap pr sha rid i
-  mkbranch "$br"; pr="$(open_pr "$br" "s10d rerun cap")" || { bad "open PR"; return; }
-  sha="$(head_sha "$pr")"
-  assert_gate "$sha" pending 300 "awaiting" "fresh head pends"
-  await_ci_settled "$sha" 300 || bad "attempt 1 never settled"
-  rid="$(ci_run_id "$sha")"
-  for i in 2 3 4 5; do
-    gh run rerun "$rid" -R "$REPO" >/dev/null 2>&1 || note "manual rerun $i refused"
-    await_ci_settled "$sha" 300 || note "attempt $i never settled"
-  done
-  local attempts
-  attempts="$(ci_attempts "$sha")"
-  note "head is at attempt $attempts (cap is 5)"
-  local before
-  before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  review "$pr" APPROVE "approval at the cap"
-  sleep 60
-  dispatch_writer || true
-  local line state
-  line="$(gate_read "$sha")"; state="${line%%$'\t'*}"
-  if [ "$state" != "success" ]; then
-    ok "10d: gate stays non-success at the rerun cap (state=$state), never silently open"
-  else
-    bad "10d: gate opened at the cap without a fresh proof attempt"
-  fi
-  local reds
-  reds="$(gh run list -R "$REPO" --workflow "Review gate writer" --json conclusion,createdAt \
-    --jq '[.[] | select(.createdAt >= "'"$before"'" and .conclusion == "failure")] | length')"
-  if [ "${reds:-0}" = "0" ]; then
-    ok "10d: cap exhaustion is STUCK, not malfunction (no red writer runs)"
-  else
-    bad "10d: writer runs redded on a stuck head ($reds red runs)"
-  fi
-  close_pr "$pr" "$br"
-}
-
-s11() { # THE QUEUE BACKSTOP (architecture probe, not a v2 regression test).
-        # Claim under test: on a queue-backed repo the merge queue re-runs
-        # heavy CI on the MERGE COMMIT and blocks the merge on it, so a PR
-        # whose head-attempt skipped the heavy jobs still cannot merge
-        # untested. If true, the writer's post-approval proof rerun is
-        # redundant for merge PROTECTION on such repos, and heavy CI need
-        # only run once — in the queue, on the code actually being merged.
-  CURRENT=s11
-  local br=s11-queue-backstop pr sha head_heavy queue_heavy
-  # A branch whose heavy job FAILS: if the queue is a real backstop, this
-  # PR must not merge even with a green gate and a skipped head attempt.
-  mkbranch "$br" ".sandbox-heavy-fail" "the heavy job fails in the queue"
-  pr="$(open_pr "$br" "s11 queue backstop probe")" || { bad "open PR"; return; }
-  sha="$(head_sha "$pr")"
-  assert_gate "$sha" pending 300 "awaiting" "probe: fresh head pends (heavy jobs skip)"
-  await_ci_settled "$sha" 300 || note "head CI did not settle"
-  head_heavy="$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" \
-    --jq '[.check_runs[] | select(.name == "heavy")] | sort_by(.completed_at) | last | .conclusion // "absent"')"
-  if [ "$head_heavy" = "skipped" ] || [ "$head_heavy" = "absent" ]; then
-    ok "probe: the head attempt did NOT run the heavy job (conclusion=$head_heavy)"
-  else
-    bad "probe: expected the head's heavy job to skip, saw $head_heavy"
-  fi
-  # Open the gate WITHOUT any proof rerun — exactly what a queue-backed
-  # writer would do if it posted the review verdict and nothing more.
-  post_status "$sha" "$GATE_CTX" success "probe: review verdict only, no proof rerun"
-  sleep 5
+  await_review_success "$sha" "a failing suite does not close the review gate" 600
+  # And the failure is visible where it belongs — on the check itself.
   gh pr merge "$pr" -R "$REPO" --squash --auto >/dev/null 2>&1 || true
-  # Watch the queue: it must RUN the heavy job on the merge-group sha and
-  # refuse the merge because that run is red.
-  local waited=0 merged="" mg_heavy="absent"
-  while [ "$waited" -le 600 ]; do
+  local waited=0 merged=""
+  while [ "$waited" -le 420 ]; do
     merged="$(gh api "repos/$REPO/pulls/$pr" --jq .merged)"
     [ "$merged" = "true" ] && break
-    mg_heavy="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
+    heavy="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
       --json conclusion,createdAt --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'")] | sort_by(.createdAt) | last | .conclusion // "absent"')"
-    [ "$mg_heavy" = "failure" ] && break
+    [ "$heavy" = "failure" ] && break
     sleep 20; waited=$((waited + 20))
   done
   if [ "$merged" = "true" ]; then
-    bad "probe: the PR MERGED with heavy CI never having run — the queue is NOT a backstop on this repo"
+    bad "a PR with a failing suite MERGED — the required checks are not blocking"
   else
-    ok "probe: the queue refused the merge (merge-group CI conclusion=$mg_heavy)"
-  fi
-  queue_heavy="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
-    --json createdAt --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'")] | length')"
-  if [ "${queue_heavy:-0}" -ge 1 ]; then
-    ok "probe: the queue RAN CI on the merge commit ($queue_heavy run(s)) — heavy CI is enforced there, not on the head"
-  else
-    bad "probe: no merge_group CI run observed; the queue does not re-run CI on this repo"
+    ok "the failing suite blocks the merge (queue CI conclusion=${heavy:-pending})"
   fi
   gh pr merge "$pr" -R "$REPO" --disable-auto >/dev/null 2>&1 || true
   close_pr "$pr" "$br"
