@@ -165,6 +165,9 @@ case "$args" in
       echo "HTTP 500" >&2
       exit 1
     fi
+    # "emptybytes": a SUCCESSFUL call producing zero bytes — the broken-read
+    # shape the writer must fail loud on, distinct from the empty page `[]`.
+    if [[ "${STUB_GATE_HISTORY:-[]}" == "emptybytes" ]]; then exit 0; fi
     printf '%s\n' "${STUB_GATE_HISTORY:-[]}"
     if [[ -n "${STUB_GATE_HISTORY_PAGE2:-}" ]]; then printf '%s\n' "$STUB_GATE_HISTORY_PAGE2"; fi
     ;;
@@ -173,6 +176,7 @@ case "$args" in
       echo "HTTP 500" >&2
       exit 1
     fi
+    if [[ "${STUB_OPEN_PRS:-[]}" == "emptybytes" ]]; then exit 0; fi
     printf '%s\n' "${STUB_OPEN_PRS:-[]}"
     if [[ -n "${STUB_OPEN_PRS_PAGE2:-}" ]]; then printf '%s\n' "$STUB_OPEN_PRS_PAGE2"; fi
     ;;
@@ -329,6 +333,16 @@ set -e
 assert_eq "$rc" "1" "w22: status-history read failure exits 1"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))$(( $(wc -l < "$RERUN_LOG") ))" "00" "w22: no action on history read failure"
 
+# A SUCCESSFUL read that produced zero bytes is a broken read, not an empty
+# page (`[]`) — slurped silently it would misread current state (here) or
+# report a green zero-PR convergence (w22c below).
+set +e
+out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY=emptybytes)
+rc=$?
+set -e
+assert_eq "$rc" "1" "w22b: zero-byte status-history read exits 1"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22b: no POST past a zero-byte read"
+
 set +e
 out=$(env -u HEAD_SHA PATH="$TMP_ROOT/bin:$PATH" \
   GH_REPO=acme/widgets PR_NUMBER=7 EVENT_NAME=pull_request_target \
@@ -412,6 +426,14 @@ rc=0; out=$(run_writer_all workflow_run STUB_VERDICT_LINE="$APPROVED" STUB_OPEN_
 assert_eq "$rc" "0" "w29: zero open PRs exits 0"
 assert_contains "$out" "converging 0 open PR(s)" "w29: names the empty pass"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w29: posts nothing (a superseded sha's completion converges nothing, naturally)"
+
+# w22c: the empty-page case above is exactly why zero BYTES must fail loud —
+# the two are adjacent shapes with opposite meanings (`[]` = truly no open
+# PRs; nothing at all = a broken read that would strand every gate green).
+rc=0; out=$(run_writer_all workflow_run STUB_VERDICT_LINE="$APPROVED" STUB_OPEN_PRS=emptybytes 2>&1) || rc=$?
+assert_eq "$rc" "1" "w22c: zero-byte open-PR listing exits 1"
+assert_contains "$out" "zero bytes" "w22c: names the broken read"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22c: posts nothing on a broken listing"
 
 # A ghost-authored PR (user serialized null) enumerates with an empty
 # author; the predicate resolves the real author itself downstream.

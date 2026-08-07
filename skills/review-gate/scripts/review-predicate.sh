@@ -498,7 +498,12 @@ while IFS= read -r ctx; do
           | (.creator.login // "") as $cl
           | select(($rj | length) == 0 or ($cl != "" and ($rj | index($cl)) == null))
         ]
-      | sort_by(.created_at // "") | last
+      # FIRST accepted row, not sort_by(created_at)|last: the API lists
+      # statuses newest-first (the writer and driver already rely on it),
+      # and created_at has one-second precision — jq sort is stable, so two
+      # rows tied within a second would sort with the OLDER one last and
+      # reintroduce exactly the stale-evidence read this projection closes.
+      | first
       | if . == null then 0
         elif .state == "success"
              and ((((.description // "") | ascii_downcase) as $text
@@ -614,7 +619,9 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
         | (.creator.login // "") as $cl
         | select(($rj | length) == 0 or ($cl != "" and ($rj | index($cl)) == null))
       ]
-    | sort_by(.created_at // "") | last
+    # FIRST accepted row — same newest-first API-order reliance and
+    # second-precision tie rationale as the trusted-context read above.
+    | first
     | if . == null then "0\t"
       elif .state == "success"
            and (((.description // "") | gsub("^\\s+|\\s+$"; "") | length) > 0)

@@ -373,20 +373,23 @@ context_battery() { # context
   run "[$ctx] non-success status" awaiting
 
   # THE NEWEST ROW DECIDES. The statuses LIST endpoint returns the full
-  # history — an older success must never outlive a newer non-success on
-  # the same context (a reviewer opening a fresh round posts pending over
-  # its own earlier success), and the reverse order must still count.
+  # history NEWEST-FIRST (fixtures model that order — the predicate takes
+  # the first accepted row, because created_at ties at one-second
+  # precision and a sort would be stable the wrong way): an older success
+  # must never outlive a newer non-success on the same context (a reviewer
+  # opening a fresh round posts pending over its own earlier success), and
+  # the reverse order must still count.
   reset
   jq -n --arg ctx "$ctx" '[
-    {context:$ctx,state:"success",description:"analysis complete",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}},
-    {context:$ctx,state:"failure",description:"issues found",created_at:"2026-01-02T00:00:00Z",creator:{login:"trusted-publisher"}}
+    {context:$ctx,state:"failure",description:"issues found",created_at:"2026-01-02T00:00:00Z",creator:{login:"trusted-publisher"}},
+    {context:$ctx,state:"success",description:"analysis complete",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}}
   ]' >"$fixtures/statuses.json"
   run "[$ctx] older success under a NEWER failure (stale history is not evidence)" awaiting
 
   reset
   jq -n --arg ctx "$ctx" '[
-    {context:$ctx,state:"failure",description:"issues found",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}},
-    {context:$ctx,state:"success",description:"analysis complete",created_at:"2026-01-02T00:00:00Z",creator:{login:"trusted-publisher"}}
+    {context:$ctx,state:"success",description:"analysis complete",created_at:"2026-01-02T00:00:00Z",creator:{login:"trusted-publisher"}},
+    {context:$ctx,state:"failure",description:"issues found",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}}
   ]' >"$fixtures/statuses.json"
   run "[$ctx] newest success over an older failure still counts" approved
 
@@ -719,12 +722,12 @@ status_ctx "mech-outage" pending "attempting"
 run "non-success outage status is not evidence" awaiting
 
 # Withdrawal must work: an operator posting pending over their own earlier
-# override retracts it — the newest row decides on the history endpoint.
+# override retracts it — the newest row (listed first; API order) decides.
 reset
 CFG_OUTAGE="mech-outage"
 jq -n '[
-  {context:"mech-outage",state:"success",description:"outage attested",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}},
-  {context:"mech-outage",state:"pending",description:"withdrawn",created_at:"2026-01-02T00:00:00Z",creator:{login:"trusted-publisher"}}
+  {context:"mech-outage",state:"pending",description:"withdrawn",created_at:"2026-01-02T00:00:00Z",creator:{login:"trusted-publisher"}},
+  {context:"mech-outage",state:"success",description:"outage attested",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}}
 ]' >"$fixtures/statuses.json"
 run "override withdrawn by a newer non-success row is not evidence" awaiting
 
