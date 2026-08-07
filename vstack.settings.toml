@@ -25,7 +25,7 @@ PR_REVIEW_NUDGE_SECS = "600"
 PR_REVIEW_NUDGE = ""
 # Outage attestation WRITER key (orch approval-wait posts this context when
 # proceeding past genuine reviewer silence); must match the review-gate
-# reader (REVIEW_GATE_OUTAGE_CONTEXT below) or the attestation never lands.
+# reader (REVIEW_GATE_OVERRIDE_CONTEXT below) or the attestation never lands.
 PR_REVIEW_OUTAGE_CONTEXT = "vstack-reviewer-outage"
 # Copilot publishes its analysis as the "copilot-pull-request-reviewer"
 # check-run; a success of that exact name on the current head satisfies the
@@ -50,19 +50,12 @@ WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
 WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .pi/agents .pi/APPEND_SYSTEM.md .claude/settings.json .claude/agents .claude/hooks .claude/skills .cache"
 
 # REVIEW GATE — this repo's SELF-ADOPTION of its own shared engine (VST-10;
-# skills/review-gate is the canonical source here, so workflows reference
-# tracked script paths). review-gate.yml is the PR-side gate pair — the
-# latency path and first-success source; the default-branch-defined
-# rerun/sweep workflows are the writers of record and correct any drift
-# within one sweep interval. TRUST_PR_WORKFLOWS is the engine's DELIBERATE
-# self-evaluating re-affirmation, set "true" with eyes open: this is an
-# effectively single-author steward-operated repo, pull_request workflow
-# DEFINITIONS ride the PR head (so a write-capable PR-side post job is
-# PR-editable regardless of what it checks out), and the bootstrap property
-# (a PR fixing a broken predicate can open its own gate) is wanted here.
-# The evaluate job is self-evaluating (PR merge ref) per this posture, so
-# a predicate-repair PR can open its own gate; the read-only/write job
-# split and the default-branch sweep (writer of record) are the controls.
+# skills/review-gate is the canonical source here, so the writer workflow
+# references tracked script paths). One writer
+# (.github/workflows/review-gate-writer.yml) evaluates the predicate and
+# posts the gate status on every leg; it always runs the DEFAULT-branch
+# engine, so a PR cannot influence its own gate evaluation. A PR that
+# repairs the engine itself merges via the ruleset's bypass actor.
 # Review-object trust is pinned to the reviewer bots + the owner
 # (closes the any-collaborator-COMMENTED gap). qodo posts review objects
 # as qodo-code-review[bot]; trusted early as a review source ahead of the
@@ -75,8 +68,11 @@ REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
 REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
 REVIEW_GATE_COMMENT_REVIEWERS = ""
 REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
-REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
+REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
 REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];bmethod"
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
-REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
-REVIEW_GATE_TRUST_PR_WORKFLOWS = "true"
+# PR-triggered workflows must not be able to mint trusted contexts or the
+# operator override: statuses created by github-actions[bot] are never
+# evidence. Safe here because the override is operator-PAT-posted under v2
+# (the old Actions-posted sweep attestation is gone).
+REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"

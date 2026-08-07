@@ -290,19 +290,6 @@ REVIEW_GATE_CARRY_FORWARD = ""
 # change is data, not a comment. Enable "comments" only on repos where that
 # residual carry risk is acceptable; "docs" has no such caveat.
 
-REVIEW_GATE_MAX_RERUN_ATTEMPTS = "5"
-# Used by: review-gate (`approval-refire.sh`). Rerun backstop for
-# pathological evidence ping-pong, not normal review cycles.
-
-REVIEW_GATE_TRUST_PR_WORKFLOWS = "false"
-# Used by: review-gate (workflow WIRING, not the scripts — see
-# references/adoption.md). SECURITY: "false" (default, safe) = the gate job
-# runs the predicate from the BASE revision with a read-only token and posts
-# the status from a separate minimal-permission step. "true" = deliberately
-# self-evaluating (a gate-fix PR can open its own gate) — defensible only on
-# private, effectively single-author repos; this key makes that choice
-# explicit.
-
 # SECOND OPINION
 
 SECOND_OPINION_TARGET = "codex"

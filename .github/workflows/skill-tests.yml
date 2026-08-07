@@ -1,14 +1,19 @@
 name: Skill Tests
 
-# Runs every skill's own test suite on every PR and main push — the same
-# suites fix cycles run locally (orch gate machinery, linear cache, worktree
-# guards, second-opinion artifact gates, doc-contract lint teeth). Upstream
-# gating here is what lets consuming repos drop tracked vendoring: quality is
-# proven at the source, not re-proven per consumer.
+# Runs every skill's own test suite — the same suites fix cycles run locally
+# (orch gate machinery, linear cache, worktree guards, second-opinion
+# artifact gates, doc-contract lint teeth). Upstream gating here is what lets
+# consuming repos drop tracked vendoring: quality is proven at the source,
+# not re-proven per consumer.
 #
-# The two heavy jobs run BEHIND THE REVIEW GATE (#1062) — the tier pattern
-# every consumer already runs, ported home. See the `gate` job below for the
-# full model (live predicate read, refire interplay, fail-open paths).
+# THE FAST/FULL SPLIT: the two heavy suite jobs run ONLY in the merge queue
+# (and on main pushes) — on PR pushes they report `skipped`, which satisfies
+# the ruleset's required contexts while the pending "Review gate" status is
+# what actually blocks merge. A PR therefore bills zero heavy runner-minutes
+# through every round of bot review; the queue runs the full suite exactly
+# once, on the merged result, after review is done. The review gate never
+# conditions CI (it answers review-only; see the review-gate skill) — there
+# is no gate job here and nothing reads the predicate.
 
 "on":
   pull_request:
@@ -22,146 +27,14 @@ permissions:
   contents: read
 
 jobs:
-  # HEAVY JOBS RUN BEHIND THE REVIEW GATE (#1062). This job evaluates
-  # skills/review-gate/scripts/review-predicate.sh READ-ONLY (review-gate.yml
-  # and the refire/sweep pair stay the only writers of the "Review gate"
-  # commit status; this job holds no `statuses: write`), and the two heavy
-  # jobs skip while the gate is closed. Merge stays blocked by the pending
-  # gate STATUS, not by the skipped checks — a skipped required check
-  # satisfies rulesets, which is exactly what lets the heavy contexts keep
-  # reporting on every PR head.
-  #
-  # Refire interplay (approval-refire.sh): on the first awaiting→approved
-  # flip it re-runs this head's completed pull_request runs IN PLACE (never a
-  # separate review-triggered run — merge-queue enqueue counts every
-  # check-run on the head), and attempt N+1's copy of this job re-evaluates
-  # the LIVE review state, sees approved, and the heavy jobs execute. A live
-  # predicate read, deliberately NOT a read of the posted status: refire
-  # never posts success before re-running (review-gate.yml's own rerun posts
-  # it, typically a minute later), so at rerun start the posted status still
-  # reads pending and a status-read gate would skip the heavy jobs in exactly
-  # the attempt that must execute them — then never run them at all, because
-  # once success exists refire's re-approval fast path stops rerunning.
-  #
-  # FAIL-OPEN, enumerated — the heavy jobs run on:
-  #   (1) every non-pull_request event: push to main, and merge_group
-  #       entries, which are post-approval by construction (VST-10);
-  #   (2) predicate exit 2 or unparseable output — no verdict was reached
-  #       (transient API failure / broken config);
-  #   (3) this job failing outright: the heavy jobs' `if` skips only on an
-  #       explicit `approved == 'false'`, and `!cancelled()` keeps them
-  #       eligible when this job errors (its output is then empty);
-  #   (4) an approved verdict.
-  # ONLY an explicit awaiting / threads-open / changes-requested verdict
-  # skips them: a gating glitch may waste a run, never block work or merge.
-  gate:
-    name: Read the review gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: read
-      issues: read
-      checks: read
-      statuses: read
-      actions: read
-    outputs:
-      approved: ${{ steps.gate.outputs.approved }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Evaluate the review predicate (read-only)
-        id: gate
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: |
-          set -uo pipefail
-          approve() {
-            echo "approved=true" >>"$GITHUB_OUTPUT"
-            echo "$1"
-            exit 0
-          }
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            approve "non-PR event (${{ github.event_name }}): heavy jobs always run"
-          fi
-          if line="$(skills/review-gate/scripts/review-predicate.sh)"; then
-            verdict="${line#verdict=}"; verdict="${verdict%% *}"
-          else
-            verdict=""
-          fi
-          case "$verdict" in
-            awaiting|threads-open|changes-requested) ;;
-            approved) approve "review gate open: $line" ;;
-            *) approve "no verdict reached (fail-open): heavy jobs run" ;;
-          esac
-          # Closed verdict. One hole remains between the two independent
-          # predicate readers: evidence can land AFTER this read and BEFORE
-          # review-gate.yml's read in this same event's runs — that run then
-          # posts success, refire never reruns this head (a success already
-          # exists), and the heavy jobs would stay skipped forever on an
-          # approved PR. Close it here: wait (bounded) for this head's gate
-          # workflow runs to EXIST and finish (matched by workflow PATH, not
-          # display name — rename-proof; and reaching the runs API before
-          # GitHub lists the sibling must not read a stale status), then
-          # honor a posted success. A read FAILURE in this pass routes by
-          # verdict: awaiting/threads-open are convergence-latency states
-          # where a glitch must not skip suites an approved head will never
-          # rerun (fail OPEN); changes-requested is an active objection
-          # (keep the skip).
-          . skills/review-gate/scripts/lib/settings.sh
-          ctx="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || ctx="Review gate"
-          read_failed() {
-            if [ "$verdict" = "changes-requested" ]; then
-              echo "approved=false" >>"$GITHUB_OUTPUT"
-              echo "review gate closed (changes-requested; $1): heavy jobs skip this attempt"
-              exit 0
-            fi
-            approve "gate closed ($verdict) but $1: failing open"
-          }
-          gate_wf="review-gate.yml"
-          seen=0
-          settled=0
-          for _ in $(seq 1 18); do
-            runs_json="$(gh api "repos/$GH_REPO/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100" --paginate)" \
-              || read_failed "the runs listing failed"
-            sibling_total="$(jq -s --arg p "$gate_wf" '[.[].workflow_runs[]? | select(.path | endswith($p))] | length' <<<"$runs_json")" \
-              || read_failed "the runs listing was unparseable"
-            in_progress="$(jq -s --arg p "$gate_wf" '[.[].workflow_runs[]? | select((.path | endswith($p)) and .status != "completed")] | length' <<<"$runs_json")" \
-              || read_failed "the runs listing was unparseable"
-            if [ "$sibling_total" -gt 0 ]; then seen=1; fi
-            if [ "$seen" -eq 1 ] && [ "$in_progress" -eq 0 ]; then settled=1; break; fi
-            sleep 10
-          done
-          # Budget exhaustion is enforced, not ignored: a sibling that never
-          # appeared or never completed means the posted status below could
-          # be stale — route it like any other unprovable read.
-          if [ "$settled" -ne 1 ]; then
-            read_failed "the sibling gate run did not settle within the wait budget"
-          fi
-          statuses_json="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses" --paginate)" \
-            || read_failed "the status read failed"
-          state="$(jq -rs --arg ctx "$ctx" '[add // [] | .[] | select(.context == $ctx)] | (.[0].state // "absent")' <<<"$statuses_json")" \
-            || read_failed "the status payload was unparseable"
-          if [ "$state" = "success" ]; then
-            approve "posted '$ctx' status is success (the other reader saw newer evidence)"
-          fi
-          echo "approved=false" >>"$GITHUB_OUTPUT"
-          echo "review gate closed ($verdict; posted status: $state): heavy jobs skip this attempt — the pending/failing '$ctx' status is what blocks merge"
-
   skill-suites:
     name: Skill suites (shell + node)
-    needs: gate
-    # Job-level gate, not workflow-level `paths`/conditions: a SKIPPED job
-    # still reports its context, so rulesets stay satisfied while the pending
-    # "Review gate" status blocks merge. `!= 'false'` + `!cancelled()` is the
-    # fail-open half: only an explicit closed verdict skips — a failed gate
-    # job leaves `approved` empty and the suites run anyway.
-    if: ${{ !cancelled() && needs.gate.outputs.approved != 'false' }}
+    # Merge-queue + main-push only (the fast/full split — see the header).
+    # A job-level if:, not workflow-level `paths`/conditions: a SKIPPED job
+    # still reports its context, so the ruleset's required contexts stay
+    # satisfied on PR heads while the pending "Review gate" status blocks
+    # merge until review is done.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -277,9 +150,8 @@ jobs:
 
   cli-tests:
     name: CLI (cargo test + integration check)
-    needs: gate
-    # Same fail-open gate as skill-suites — see the `gate` job's model note.
-    if: ${{ !cancelled() && needs.gate.outputs.approved != 'false' }}
+    # Merge-queue + main-push only — same split as skill-suites above.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
