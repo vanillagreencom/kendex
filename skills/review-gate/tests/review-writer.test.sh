@@ -51,9 +51,12 @@
 #                                               be ordered)
 #   f1f. the VST-65 guard applies to the     -> defers on a newer
 #        fast-path post too                     non-success write
+#   f1g. run_started_at == evidence_at       -> never certified (one-second
+#        (equal-second boundary)                resolution cannot order it)
 # VST-65 ordering guard on every success post:
 #   w10. guard re-read shows a non-success   -> defers (exit 0, no POST)
 #        entry at/after evaluated_at
+#   w10b. same-second non-success write      -> still defers (>=, not >)
 #   w11. guard re-read FAILS                 -> defers (fail-safe side)
 #   w12. guard also protects the prior-      -> defers the fast-path post
 #        success fast path
@@ -90,6 +93,15 @@
 #                                               leg, so evicted pending runs
 #                                               strand nothing
 #   w29. zero open PRs                       -> clean no-op pass
+#   w26c. ghost-authored PR (user null)      -> converges with empty author
+#   wp1-wp3. pagination merges               -> page-two PRs enumerate; a
+#                                               page-two prior success
+#                                               proves; a page-two guard
+#                                               entry defers
+# Template pins (tpl:*): grep-pins on review-gate-writer.yml for the
+# workflow-level expressions offline runs cannot execute (F4's billing
+# behavior is a Layer-2 sandbox observation: push/merge-group completions
+# surface as SKIPPED writer runs).
 # Settings:
 #   w30. REVIEW_GATE_OVERRIDE_CONTEXT alias  -> exported to the predicate as
 #                                               REVIEW_GATE_OUTAGE_CONTEXT;
@@ -239,12 +251,15 @@ case "$args" in
   *"/commits/"*"/statuses?per_page=100"*)
     # The VST-65 guard's re-read — distinguishable from the projection read
     # by its explicit per_page, so the two can fail independently.
+    # STUB_GUARD_HISTORY_PAGE2 emits a second page (gh --paginate emits one
+    # array per page, concatenated) so first-page-only merges are catchable.
     guard="${STUB_GUARD_HISTORY:-${STUB_GATE_HISTORY:-[]}}"
     if [[ "$guard" == "fail" ]]; then
       echo "HTTP 500" >&2
       exit 1
     fi
     printf '%s\n' "$guard"
+    if [[ -n "${STUB_GUARD_HISTORY_PAGE2:-}" ]]; then printf '%s\n' "$STUB_GUARD_HISTORY_PAGE2"; fi
     ;;
   *"/commits/"*"/statuses"*)
     if [[ "${STUB_GATE_HISTORY:-[]}" == "fail" ]]; then
@@ -252,6 +267,7 @@ case "$args" in
       exit 1
     fi
     printf '%s\n' "${STUB_GATE_HISTORY:-[]}"
+    if [[ -n "${STUB_GATE_HISTORY_PAGE2:-}" ]]; then printf '%s\n' "$STUB_GATE_HISTORY_PAGE2"; fi
     ;;
   *"pulls?state=open"*)
     if [[ "${STUB_OPEN_PRS:-[]}" == "fail" ]]; then
@@ -259,6 +275,7 @@ case "$args" in
       exit 1
     fi
     printf '%s\n' "${STUB_OPEN_PRS:-[]}"
+    if [[ -n "${STUB_OPEN_PRS_PAGE2:-}" ]]; then printf '%s\n' "$STUB_OPEN_PRS_PAGE2"; fi
     ;;
   *"/actions/runs?"*)
     case "${STUB_RUNS_MODE:-completed}" in
@@ -282,6 +299,19 @@ case "$args" in
 esac
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
+
+# `date` shim: STUB_DATE_FIXED pins the writer's evaluated_at stamp so
+# equal-second cases against a status entry's created_at are constructible;
+# unset, the real date answers.
+cat > "$TMP_ROOT/bin/date" <<'EOF'
+#!/usr/bin/env bash
+if [[ -n "${STUB_DATE_FIXED:-}" ]]; then
+  printf '%s\n' "$STUB_DATE_FIXED"
+else
+  exec /bin/date "$@"
+fi
+EOF
+chmod +x "$TMP_ROOT/bin/date"
 
 # run_writer [ENV=val ...] — runs the writer under the stubs in the
 # single-head recursive contract (PR_NUMBER + HEAD_SHA set) with fresh
@@ -445,6 +475,15 @@ assert_eq "$rc" "0" "f1f: guarded fast path exits 0"
 assert_contains "$out" "deferring the success post" "f1f: the VST-65 guard protects the ordering fast path too"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "f1f: deferred fast path posts nothing"
 
+# Equal-second boundary: one-second timestamp resolution cannot order an
+# attempt whose run_started_at EQUALS evidence_at, so it must never be
+# certified (strict >; falling to the rerun path is the fail-safe side).
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-06-01T00:00:00Z" \
+  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed) || rc=$?
+assert_eq "$rc" "0" "f1g: equal-second evidence exits 0"
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1g: run_started_at == evidence_at cannot be ordered -> never certified"
+assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1g: proof rerun instead"
+
 echo "=== VST-65 ordering guard on every success post ==="
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
@@ -453,6 +492,17 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER
 assert_eq "$rc" "0" "w10: stale success defers with exit 0"
 assert_contains "$out" "deferring the success post" "w10: names the deferral"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w10: deferred success posts nothing"
+
+# Equality deferral: created_at and evaluated_at have one-second resolution,
+# so a non-success write within the evaluation second compares EQUAL and
+# must still defer (`>=`, not `>`). STUB_DATE_FIXED pins evaluated_at.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
+  EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed \
+  STUB_DATE_FIXED="2026-06-15T12:00:00Z" \
+  STUB_GUARD_HISTORY='[{"context":"Review gate","state":"pending","description":"same-second write","created_at":"2026-06-15T12:00:00Z"}]') || rc=$?
+assert_eq "$rc" "0" "w10b: same-second non-success write exits 0"
+assert_contains "$out" "deferring the success post" "w10b: equality defers (one-second resolution)"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w10b: no post on the equal-second boundary"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
   EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed STUB_GUARD_HISTORY=fail) || rc=$?
@@ -627,6 +677,39 @@ assert_eq "$rc" "0" "w29: zero open PRs exits 0"
 assert_contains "$out" "converging 0 open PR(s)" "w29: names the empty pass"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w29: posts nothing (a superseded sha's completion converges nothing, naturally)"
 
+# A ghost-authored PR (user serialized null) enumerates with an empty
+# author; the predicate resolves the real author itself downstream.
+rc=0; out=$(run_writer_all schedule STUB_VERDICT_LINE="$AWAITING" \
+  STUB_OPEN_PRS='[{"number":9,"head":{"sha":"sha9"},"user":null}]' \
+  STUB_GATE_HISTORY='[]') || rc=$?
+assert_eq "$rc" "0" "w26c: ghost-authored PR exits 0"
+assert_contains "$(cat "$POST_LOG")" "statuses/sha9" "w26c: ghost-authored PR still converges (empty PR_AUTHOR handed down)"
+
+echo "=== pagination merges (one array per page; page limits strand state) ==="
+
+rc=0; out=$(run_writer_all schedule STUB_VERDICT_LINE="$AWAITING" \
+  STUB_OPEN_PRS='[{"number":7,"head":{"sha":"sha7"},"user":{"login":"alice"}}]' \
+  STUB_OPEN_PRS_PAGE2='[{"number":8,"head":{"sha":"sha8"},"user":{"login":"bob"}}]' \
+  STUB_GATE_HISTORY='[]') || rc=$?
+assert_eq "$rc" "0" "wp1: paginated enumeration exits 0"
+assert_contains "$out" "converging 2 open PR(s)" "wp1: PRs beyond page one are enumerated (never stranded)"
+assert_contains "$(cat "$POST_LOG")" "statuses/sha8" "wp1: the page-two PR is converged"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"x","created_at":"'"$OLD"'"}]' \
+  STUB_GATE_HISTORY_PAGE2='[{"context":"Review gate","state":"success","description":"ok","created_at":"'"$OLD"'"}]') || rc=$?
+assert_eq "$rc" "0" "wp2: paginated projection exits 0"
+assert_contains "$(cat "$POST_LOG")" "state=success" "wp2: a prior success on page two still proves the approved attempt"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "wp2: and spares the rerun"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
+  EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed \
+  STUB_GUARD_HISTORY='[]' \
+  STUB_GUARD_HISTORY_PAGE2='[{"context":"Review gate","state":"failure","description":"newer","created_at":"'"$FUTURE"'"}]') || rc=$?
+assert_eq "$rc" "0" "wp3: paginated guard re-read exits 0"
+assert_contains "$out" "deferring the success post" "wp3: a newer non-success entry on page two still defers (no first-page-only fail-open)"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "wp3: no post past the paginated guard"
+
 echo "=== settings: the OVERRIDE_CONTEXT alias (Change 2) ==="
 
 ENV_LOG="$TMP_ROOT/predicate-env.log"
@@ -645,6 +728,32 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
   STUB_PREDICATE_ENV_LOG="$ENV_LOG") || rc=$?
 assert_eq "$rc" "0" "w30b: absent override key exits 0"
 assert_contains "$(cat "$ENV_LOG")" "OUTAGE=<unset>" "w30b: absent key leaves the predicate's own outage resolution untouched"
+
+echo "=== workflow template pins (review-gate-writer.yml) ==="
+
+# Grep-pins on the shipped template (precedent: workflow-eviction-routing
+# pins approval-rerun.yml). Runtime behavior of workflow-level expressions
+# is offline-untestable — the job-level if: evaluates on GitHub — so F4's
+# billing behavior is asserted in Layer 2 (the sandbox observes push/
+# merge-group completions as SKIPPED writer runs); these pins keep the
+# expressions from being silently dropped or reworded.
+TEMPLATE="$SKILL_ROOT/templates/review-gate-writer.yml"
+pin() { # needle, name
+  if grep -qF -- "$1" "$TEMPLATE"; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "$2"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        missing from template: %s\n' "$2" "$1"
+  fi
+}
+pin "github.event.workflow_run.event == 'pull_request'" "tpl: F4 workflow_run pull_request-only job filter"
+pin "github.event.state == 'success'" "tpl: status events act on success state only"
+pin "github.event_name != 'merge_group'" "tpl: the write job excludes the merge_group event"
+pin "cancel-in-progress: false" "tpl: pending writer runs are never cancelled mid-write"
+pin "group: review-gate-writer" "tpl: single writer concurrency group"
+pin "github.event.pull_request.head.repo.full_name != github.repository" "tpl: fork pull_request_review read-only flag"
+pin "if: failure() || cancelled()" "tpl: VST-36 escalation covers timeout-cancelled jobs"
+pin "persist-credentials: false" "tpl: checkouts drop credentials"
+pin 'ref: ${{ github.event.repository.default_branch }}' "tpl: engine runs from the default branch"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -1399,6 +1399,61 @@ jq -n '{statuses:[{context:"trusted-bot/review",state:"success",description:"cle
 run_ev "evidence_at: status-context evidence carries its created_at" "2026-04-01T00:00:00Z"
 
 reset
+CFG_CONTEXTS="trusted-bot/review"
+jq -n '{statuses:[{context:"trusted-bot/review",state:"success",description:"clean",creator:null}]}' \
+  >"$fixtures/status.json"
+run_ev "evidence_at: a contributing status with NO created_at poisons the output" ""
+
+reset
+CFG_CONTEXTS="trusted-bot/review"
+jq -n '{check_runs:[{name:"trusted-bot/review",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:""},completed_at:"2026-06-01T00:00:00Z"}]}' \
+  >"$fixtures/checkruns.json"
+run_ev "evidence_at: check-run evidence carries its completed_at" "2026-06-01T00:00:00Z"
+
+reset
+CFG_CONTEXTS="trusted-bot/review"
+jq -n '{check_runs:[{name:"trusted-bot/review",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:""}}]}' \
+  >"$fixtures/checkruns.json"
+run_ev "evidence_at: a contributing check-run with NO completed_at poisons the output" ""
+
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_CONTEXTS="trusted-bot/review"
+reviews_set "$(review reviewer APPROVED 2026-02-01T00:00:00Z)"
+jq -n '{statuses:[{context:"trusted-bot/review",state:"success",description:"clean",creator:null,created_at:"2026-06-01T00:00:00Z"}]}' \
+  >"$fixtures/status.json"
+run_ev "evidence_at: LATEST across CONTRIBUTING SOURCES wins (review + later status)" "2026-06-01T00:00:00Z"
+
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_CONTEXTS="trusted-bot/review"
+reviews_set "$(review reviewer APPROVED 2026-02-01T00:00:00Z)"
+jq -n '{statuses:[{context:"trusted-bot/review",state:"success",description:"clean",creator:null}]}' \
+  >"$fixtures/status.json"
+run_ev "evidence_at: one untimestamped contributing source poisons the whole output" ""
+
+# min_state=approved keys the timestamp to the last APPROVED per login — a
+# trailing COMMENTED row must not shift it (it is not the accepted evidence).
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE="approved"
+reviews_set "$(review reviewer APPROVED 2026-02-01T00:00:00Z)" \
+            "$(review reviewer COMMENTED 2026-03-01T00:00:00Z)"
+run_ev "evidence_at: min_state=approved keys to the last APPROVED, not a trailing COMMENTED" "2026-02-01T00:00:00Z"
+
+reset
+jq -n --arg ctx "$ACTIVE_OUTAGE" '{statuses:[{context:$ctx,state:"success",description:"attested",creator:null,created_at:"2026-07-01T00:00:00Z"}]}' \
+  >"$fixtures/status.json"
+run_ev "evidence_at: outage/override attestation carries its created_at" "2026-07-01T00:00:00Z"
+
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_CARRY="docs"
+reviews_set "$(jq -n --arg sha "$OTHER" '{commit_id:$sha,state:"APPROVED",user:{login:"clockless"}}')"
+compare_fix identical
+run_ev "evidence_at: an untimestamped BASE review poisons the carried output" ""
+
+reset
 CFG_TRUSTED_LOGINS=""
 CFG_CARRY="docs"
 reviews_set "$(review reviewer APPROVED 2026-05-01T00:00:00Z "$OTHER")"
