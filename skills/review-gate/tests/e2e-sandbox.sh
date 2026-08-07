@@ -576,6 +576,54 @@ s10b() { # a FAILING test suite must not affect the gate, and must still
   close_pr "$pr" "$br"
 }
 
+s11() { # THE SAFETY SCENARIO. The gate no longer proves anything about CI,
+        # so this is what stands between a reviewed-but-broken PR and main:
+        # the merge queue runs the suite on the MERGED result and refuses
+        # the merge if it fails. If this scenario ever fails on a repo, that
+        # repo does not satisfy the adoption precondition and untested code
+        # can reach its default branch.
+  CURRENT=s11
+  local br=s11-queue-backstop pr sha head_heavy queue_runs
+  mkbranch "$br" ".sandbox-heavy-fail" "the suite fails in the queue"
+  pr="$(open_pr "$br" "s11 queue backstop")" || { bad "open PR"; return; }
+  sha="$(head_sha "$pr")"
+  assert_gate "$sha" pending 300 "awaiting" "fresh head pends (suite held back)"
+  await_ci_settled "$sha" 300 || note "head CI did not settle"
+  head_heavy="$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" \
+    --jq '[.check_runs[] | select(.name == "heavy")] | sort_by(.completed_at) | last | .conclusion // "absent"')"
+  if [ "$head_heavy" = "skipped" ] || [ "$head_heavy" = "absent" ]; then
+    ok "the head attempt did NOT run the suite (conclusion=$head_heavy)"
+  else
+    bad "expected the head's suite to be held back, saw $head_heavy"
+  fi
+  review "$pr" APPROVE
+  assert_gate "$sha" success 420 "" "the gate opens on review alone, proving nothing about CI"
+  gh pr merge "$pr" -R "$REPO" --squash --auto >/dev/null 2>&1 || true
+  local waited=0 merged="" mg="absent"
+  while [ "$waited" -le 600 ]; do
+    merged="$(gh api "repos/$REPO/pulls/$pr" --jq .merged)"
+    [ "$merged" = "true" ] && break
+    mg="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
+      --json conclusion,createdAt --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'")] | sort_by(.createdAt) | last | .conclusion // "absent"')"
+    [ "$mg" = "failure" ] && break
+    sleep 20; waited=$((waited + 20))
+  done
+  if [ "$merged" = "true" ]; then
+    bad "THE PR MERGED WITH ITS SUITE NEVER HAVING RUN — this repo has no backstop"
+  else
+    ok "the queue refused the merge (merge-group CI=$mg) — the backstop holds"
+  fi
+  queue_runs="$(gh run list -R "$REPO" --workflow CI --event merge_group --limit 5 \
+    --json createdAt --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'")] | length')"
+  if [ "${queue_runs:-0}" -ge 1 ]; then
+    ok "the queue RAN the suite on the merge commit ($queue_runs run(s)) — once, on the code that ships"
+  else
+    bad "no merge_group CI run observed; this repo's queue does not re-run the suite"
+  fi
+  gh pr merge "$pr" -R "$REPO" --disable-auto >/dev/null 2>&1 || true
+  close_pr "$pr" "$br"
+}
+
 sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
            # of any leg red'd during the replay
   CURRENT=sfinal

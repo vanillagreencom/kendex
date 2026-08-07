@@ -1,6 +1,6 @@
 ---
 name: review-gate
-description: "Org-wide PR review-gate engine: a commit-status merge gate driven by a single review-evidence predicate (review objects, trusted clean-analysis checks, comment-form clean passes, outage attestation), convergence scripts, an offline decision-table selftest, and one-time CI workflow scaffolds. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
+description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override), one writer posts it as a merge-blocking commit status, plus an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
 license: MIT
 user-invocable: true
 metadata:
@@ -8,154 +8,172 @@ metadata:
   source: vstack
   repository: "https://github.com/vanillagreencom/vstack"
   bugs: "https://github.com/vanillagreencom/vstack/issues"
-  version: "1.0.0"
+  version: "2.0.0"
 ---
 
 # Review Gate
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-A shared merge gate for repos whose reviews come from bots and humans that
-signal in different ways. One predicate script is the single source of truth
-for "is this PR head reviewed?"; a commit status posted from its verdict
-blocks merge; convergence scripts and workflows keep that status current as
-review state changes. Consumers vendor `scripts/` via `vstack refresh` and
-configure trust per repo in `vstack.settings.toml` — nothing repo-specific is
-hard-coded in the engine.
+The gate answers ONE question: **has this exact PR head been reviewed?** It
+posts that answer as a commit status the repo's branch rules require.
 
-## Status model
+It does not check CI, re-run anything, or reason about jobs. Whether untested
+code can reach the default branch is branch protection's job. That separation
+is deliberate — v2 deleted the CI-proving machinery, which was ~450 lines and
+the source of every correctness defect the design review found.
 
-The gate posts one commit status (context: `REVIEW_GATE_CONTEXT`, default
-`Review gate`) on the PR head. It is a required context, so `pending` blocks
-merge without painting the PR red.
+## Decision table
 
 | Verdict | Status | Meaning |
 |---|---|---|
+| `approved` | `success` | Evidence exists for this head; no standing objection; no unresolved threads. |
 | `awaiting` | `pending` | No review evidence for this head yet. |
-| `threads-open` | `pending` | Evidence exists but review threads are unresolved. |
-| `changes-requested` | `failure` | A reviewer objects to the current head. Red means a human/bot objection (or a genuinely broken build) — nothing else. |
-| `approved` | `success` | Only from a run attempt whose gate evaluated open (the attempt that actually executes the heavy jobs), or the refire's prior-success fast path. |
-| (exit 2, no verdict) | `pending` | An evidence read failed or config is invalid; take no action, retry later. |
+| `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
+| `changes-requested` | `failure` | A reviewer objects. Red means objection — never a build failure. |
+| (exit 2, no verdict) | *unchanged* | A read failed or config is invalid. Take NO action; retry next pass. |
 
-Zero-bypass compatible: while the gate is closed the heavy jobs SKIP (a
-skipped required check satisfies rulesets — safe precisely because the
-pending gate status is what blocks the merge), and nothing ever posts
-`success` without proof an approved attempt ran on that exact sha.
+## ADOPTION PRECONDITION — check this first
+
+A repo must satisfy one, or untested code can merge and this engine will not
+stop it:
+
+1. **A merge queue** whose required contexts include the repo's test
+   aggregate (recommended — the suite runs once, on the merged result).
+2. **No held-back jobs** — every required check runs on every push.
+
+The hazard: held-back jobs report as `skipped`, and GitHub counts skipped as
+satisfied. Hold jobs back with no queue and a reviewed PR merges untested.
+Proven live in the sandbox (`tests/e2e-sandbox.sh` scenario 11); that
+scenario is the safety claim and must pass on every adopting repo.
 
 ## Evidence sources (`scripts/review-predicate.sh`)
 
 Evidence for the CURRENT head is any of:
 
 1. **Review object** at the exact head from a non-author, non-dismissed
-   login — restricted to `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` when
-   set, and to APPROVED reviews when
-   `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "approved"`. Approval is never
-   superseded by a later COMMENTED from the same reviewer; only a later
-   CHANGES_REQUESTED withdraws it.
+   login — restricted to `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` when set,
+   and to APPROVED reviews when `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE =
+   "approved"`. An approval is never superseded by a later COMMENTED from the
+   same reviewer; only a later CHANGES_REQUESTED withdraws it.
 2. **Trusted clean-analysis check-run or commit status**
    (`REVIEW_GATE_TRUSTED_STATUS_CONTEXTS`) succeeding on this head — but a
-   "pass" must prove analysis ran: a success whose output/description
-   matches `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` (e.g. "rate limited") is
-   NOT-EVIDENCE, never a failure — it is silence, and silence is what the
-   `awaiting` path already handles.
+   pass must prove analysis RAN: a success matching
+   `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` (e.g. "rate limited") is
+   NOT-EVIDENCE, never a failure. It is silence, which `awaiting` handles.
 3. **Comment-form clean pass** (`REVIEW_GATE_COMMENT_REVIEWERS`): an issue
-   comment by a trusted bot login — never the PR author, even if configured
-   — whose body binds the evidence to this head's sha (full sha or a short
-   prefix, bare or backtick-quoted; floor
+   comment by a trusted bot login — never the PR author, even if configured —
+   binding the evidence to this head's sha (floor
    `REVIEW_GATE_SHA_PREFIX_FLOOR`).
-4. **Reviewer-outage attestation** (`REVIEW_GATE_OUTAGE_CONTEXT`): a trusted
-   orchestrator's status posted only on genuine total reviewer silence.
-   Substitutes for MISSING evidence only.
+4. **Operator override** (`REVIEW_GATE_OVERRIDE_CONTEXT`, legacy name
+   `REVIEW_GATE_OUTAGE_CONTEXT`): a trusted operator's status carrying a
+   NON-EMPTY reason, which is enforced and surfaced in the gate detail.
+   Substitutes for MISSING evidence ONLY — it can never override a
+   changes-requested or an unresolved thread, so the internal review must fix
+   findings and resolve threads first, then attest.
 
-With `REVIEW_GATE_CARRY_FORWARD` enabled (off by default), evidence at an
-ancestor commit carries to head when the delta is provably in a class review
-would not re-examine (docs-only, comment-only, identical tree) — never a
-waiver: real evidence must exist, code changes always require fresh
-evidence, and the fail-closed terms below still apply
-(see [references/settings.md](references/settings.md)).
+With `REVIEW_GATE_CARRY_FORWARD` (off by default), evidence at an ancestor
+carries to head when the delta is provably in a class review would not
+re-examine — docs-only, comment-only, identical tree. Never a waiver: real
+evidence must exist, code changes always require fresh evidence, and the
+fail-closed terms still apply.
 
-Changes-requested and unresolved threads always fail closed, even with
-evidence present. Every evidence read fails LOUD (exit 2, no verdict) — a
-transient API error must never flip a healthy PR's merge state; reads retry
-in-process up to `REVIEW_GATE_API_ATTEMPTS` (default 1) before failing, and
-a zero-byte producer is a failed read, never an empty page set. More than
-100 review threads reports overflow and fails closed to `threads-open`.
-Repos whose thread hygiene is a server-side zero-bypass ruleset can set
-`REVIEW_GATE_THREADS = "off"` to skip the thread read (never emits
-`threads-open`); a converge-style caller can hand in its combined-status
-snapshot via `REVIEW_GATE_STATUS_SNAPSHOT_FILE` to kill the duplicate read
-(see [references/settings.md](references/settings.md)).
+Changes-requested and unresolved threads always fail closed. Every evidence
+read fails LOUD (exit 2, no verdict) — a transient API error must never flip
+a healthy PR's state; reads retry in-process up to `REVIEW_GATE_API_ATTEMPTS`
+(default 1), and a zero-byte producer is a failed read, not an empty page
+set. Over 100 review threads reports overflow and fails closed to
+`threads-open`.
 
 **Trust model.** Trust keys on names only GitHub controls: the author login
-of a review or comment (exact match on the bot login) or the exact
-check/status context on repos where every publisher is trusted. A comment
-body is never trusted to establish trust — it is read only to BIND evidence
-to a commit, so a stale comment cannot vouch for a later push. Where PR
-workflows hold `statuses:write`, the opt-in
+of a review or comment, or the exact check/status context on repos where
+every publisher is trusted. A comment body never establishes trust — it is
+read only to BIND evidence to a commit, so a stale comment cannot vouch for a
+later push. Where PR workflows hold `statuses:write`, the opt-in
 `REVIEW_GATE_STATUS_PUBLISHER_REJECT` list rejects statuses minted by a
-forgeable creator login (typically `github-actions[bot]`) on both the
-trusted-context and outage-context reads; App-posted statuses (creator
-null) are never rejected by a login entry, and the empty default leaves
-behavior unchanged.
+forgeable creator (typically `github-actions[bot]`) on both the
+trusted-context and override reads; App-posted statuses (creator null) are
+never rejected by a login entry.
+
+## The writer (`scripts/review-writer.sh`)
+
+One workflow, defined on the default branch, is the only thing that writes
+the gate status. It evaluates the predicate and converges the status —
+nothing else.
+
+- **Converge-all on every leg.** Every invocation converges EVERY open PR,
+  so a run evicted from the concurrency group strands nothing (8 evictions
+  observed in one sandbox replay, zero stranded).
+- **Write ordering (VST-65).** Before any `success` post it re-reads the
+  status and defers when a non-success entry was created at/after this run's
+  evaluation instant; a failed re-read defers too. Downward posts never
+  defer.
+- **Idempotent.** When the current entry already matches state + description
+  it no-ops, so idle cron ticks append nothing.
+- **Forks need no special case** — every leg holds a write-capable
+  default-branch token. The one exception is `pull_request_review` on a fork
+  PR, whose token GitHub downgrades to read-only: that run exits green as a
+  no-op and the cron floor converges it.
+- **`pull_request_target` safety**: the job never executes PR-controlled
+  code. Every checkout pins the default branch with credentials dropped.
 
 ## Scripts
 
 ```bash
-# verdict for one PR head (env: GH_REPO, PR_NUMBER, HEAD_SHA[, PR_AUTHOR])
+# verdict for one head (env: GH_REPO, PR_NUMBER, HEAD_SHA[, PR_AUTHOR])
 .agents/skills/review-gate/scripts/review-predicate.sh
 
-# converge the gate status + rerun-in-place for one head (same env; QUIESCE=0|1)
-.agents/skills/review-gate/scripts/approval-refire.sh
+# converge every open PR's gate status (env: GH_REPO)
+.agents/skills/review-gate/scripts/review-writer.sh
 
-# offline decision-table selftest (~1s, no network); run it from the repo root
+# offline decision-table selftest (~1s, no network), run from the repo root
 .agents/skills/review-gate/scripts/review-predicate-selftest.sh
+
+# live replay against a throwaway sandbox repo — before any engine change
+E2E_REPO=<owner>/<repo> .agents/skills/review-gate/tests/e2e-sandbox.sh
 ```
 
-`approval-refire.sh` posts pending/failure directly (pending blocks on its
-own, no check-run churn) and opens the gate only by re-running the head's
-completed `pull_request` runs — or a direct `success` post when a prior gate
-success proves an approved attempt already ran on that sha. Reruns are capped
-by `REVIEW_GATE_MAX_RERUN_ATTEMPTS`. Convergence properties (see the script
-header): it never writes on a failure path (a failed read leaves the head as
-found; the scheduled sweep is the universal retry); "stuck" (GitHub refuses
-the rerun, or no run exists to re-run) warns and stays green while
-"malfunction" (read failure, rerun 5xx or 401, throttled through the retry budget)
-reddens the run; and the rerun POST discriminates throttle from refusal by
-response headers, retrying only throttles (bounded by
-`REVIEW_GATE_API_ATTEMPTS`). The sweep template escalates its own sustained
-failure to a rolling incident issue.
+## Operations
+
+**Reviewers are down / nothing is reviewing.** Run the internal review loop:
+fix findings, resolve every thread, then post the override status with a real
+reason. It cannot bypass an objection or an open thread — that is the point.
+
+**A PR that repairs the gate itself.** The writer always runs the merged
+engine, so a broken predicate cannot open its own repair PR's gate. Merge it
+with the ruleset's bypass actor (every fleet repo has one configured) and say
+so in the commit message.
+
+**A settings-change PR** is judged by the OLD config — a PR adding a trusted
+login cannot have its own gate honor it. Merge via normal review or the
+bypass actor.
 
 ## Settings
 
 Every per-repo value is a `REVIEW_GATE_*` key (env > `vstack.settings.toml` >
-default). Full key table with per-repo values, and the workflow trust posture
-(read-only evaluate job, no-checkout post job, `persist-credentials: false`):
+default). Full table and the security reasoning:
 [references/settings.md](references/settings.md).
 
 ## Selftest — the engine's portable proof
 
 `scripts/review-predicate-selftest.sh` pins the decision table offline: a
-`gh` shim on PATH answers from fixtures and applies `--jq` through real jq,
-so the real predicate runs unmodified — no network, ~1s. Every case ending
-`approved` is paired with a near-miss that must not. Two layers: a mechanism
-layer with forced configurations pinning every engine behavior, and a
-configured layer that re-derives the approve/near-miss battery from the
-invoking repo's own resolved `REVIEW_GATE_*` values — a repo trusting a
-different bot tests its own trust list, not someone else's defaults.
+`gh` shim answers from fixtures and applies `--jq` through real jq, so the
+real predicate runs unmodified. Every case ending `approved` is paired with a
+near-miss that must not. Two layers: a mechanism layer with forced
+configurations, and a configured layer that re-derives the battery from the
+invoking repo's own resolved settings — so a repo trusting a different bot
+tests its own trust list.
 
 Every consumer's CI must run it as a deliberately **ungated** job (own job,
-no `needs`, no approval condition): a broken predicate approves nothing, so
-a selftest behind the gate could never run when it matters; a separate job
-reds the build without stopping the gate status from posting.
+no `needs`): a broken predicate approves nothing, so a selftest behind the
+gate could never run when it matters.
 
 ## Adoption
 
-`templates/approval-rerun.yml` and `templates/approval-sweep.yml` are
-one-time scaffolds copied into `.github/workflows/` by a repo's adoption PR
-(repo-owned after copy; workflow YAML is not synced by `vstack refresh`).
-The repo's own CI wires a gate job that evaluates the predicate and posts
-the status, plus the ungated selftest job. Full wiring, branch-protection
-steps, merge-queue notes, and per-repo values:
+Copy `templates/review-gate-writer.yml` into `.github/workflows/` (repo-owned
+after copy; `vstack refresh` does not sync workflow YAML), set the repo's
+`REVIEW_GATE_*` values, add the ungated selftest job, and require the gate
+context in the ruleset alongside the test aggregate. Full wiring:
 [references/adoption.md](references/adoption.md). An adoption PR deletes the
-local copies it supersedes in the same PR — a redesign removes what it
+local machinery it supersedes in the same PR — a redesign removes what it
 replaces, never leaves it dormant.
