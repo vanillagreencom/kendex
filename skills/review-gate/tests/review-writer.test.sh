@@ -25,6 +25,10 @@
 #   w10. guard re-read shows a non-success   -> defers (exit 0, no POST)
 #        entry at/after evaluated_at
 #   w10b. same-second non-success write      -> still defers (>=, not >)
+#   w10c. newer SUCCESS entry                -> ALSO defers: the description
+#                                               carries the audit detail
+#                                               (override reason), so a stale
+#                                               run must not overwrite it
 #   w11. guard re-read FAILS                 -> defers (fail-safe side)
 #   w12. downward posts never consult it     -> failure posts over a newer
 #                                               entry without deferring
@@ -291,6 +295,12 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING
 assert_eq "$rc" "0" "w10b: same-second non-success write exits 0"
 assert_contains "$out" "deferring the success post" "w10b: equality defers (one-second resolution)"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w10b: no post on the equal-second boundary"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING_OLD" \
+  STUB_GUARD_HISTORY='[{"context":"Review gate","state":"success","description":"operator override (ctx) : real reason","created_at":"'"$FUTURE"'"}]') || rc=$?
+assert_eq "$rc" "0" "w10c: a newer SUCCESS entry also defers (exit 0)"
+assert_contains "$out" "deferring the success post" "w10c: names the deferral"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w10c: the stale run must not overwrite the newer success's description"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING_OLD" \
   STUB_GUARD_HISTORY=fail) || rc=$?

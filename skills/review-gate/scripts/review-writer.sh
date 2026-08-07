@@ -41,10 +41,11 @@
 #
 # WRITE DISCIPLINE (VST-65): two writer runs can interleave on one head, so
 # before ANY success post the current gate status is RE-READ and the post is
-# DEFERRED when a non-success entry was created at/after this run's
-# evaluation instant (that run saw newer review state); a failed re-read
-# defers too, because withholding success is the fail-safe side. Downward
-# posts never defer — moving toward closed is always safe. Writes are
+# DEFERRED when any gate entry was created at/after this run's evaluation
+# instant (that run evaluated newer state — deferring protects both the
+# state and the description, which carries the audit detail); a failed
+# re-read defers too, because withholding success is the fail-safe side.
+# Downward posts never defer — moving toward closed is always safe. Writes are
 # idempotent: when the current entry already matches state + description the
 # writer no-ops, so idle cron ticks append nothing.
 #
@@ -215,22 +216,30 @@ if [ "$desired" != "success" ]; then
 fi
 
 # POST-ORDERING GUARD (VST-65). Before posting SUCCESS, re-read the current
-# gate status and DEFER when a non-success entry was created at/after this
-# run's evaluation — that run saw newer review state (a changes-requested
-# post landing in the evaluate→post gap), and overwriting it with a stale
-# approved would open the gate until the next pass. Deferring self-heals:
-# the next event or cron tick re-reads live state. Fetch and filter are
-# SEPARATE steps: a pipe would replace gh's exit status with jq's, so a
-# failed or truncated re-read could slurp to an empty array and report
-# newer=0 — the exact stale-success fail-open this guard closes. A failed
-# re-read defers too. And `>=`, not `>`: both timestamps have one-second
-# resolution, so a non-success write landing later within the evaluation
+# gate status and DEFER when ANY gate entry was created at/after this run's
+# evaluation — that run evaluated newer state than this one, and overwriting
+# its post would regress either the gate state (a changes-requested landing
+# in the evaluate→post gap becoming a stale approved) or its description
+# (a newer success's operator-override reason replaced by a stale detail —
+# the audit trail rides in the description, so it is protected like the
+# state). Deferring self-heals: the next event or cron tick re-reads live
+# state. Fetch and filter are SEPARATE steps: a pipe would replace gh's exit
+# status with jq's, so a failed or truncated re-read could slurp to an empty
+# array and report newer=0 — the exact stale-success fail-open this guard
+# closes. A failed re-read defers too. And `>=`, not `>`: both timestamps
+# have one-second resolution, so a write landing later within the evaluation
 # second compares EQUAL — deferring on equality self-heals.
+#
+# The re-read deliberately uses bare `gh api`, not a retry wrapper (the
+# predicate's gh_read is predicate-internal): every failure mode here lands
+# on the fail-safe side — a failed read defers, and the next pass retries
+# from live state. In-process retries would only shave deferral latency, and
+# the writer stays minimal by design.
 guard_newer=""
 if guard_pages="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate)" \
    && [ -n "$guard_pages" ]; then
   guard_newer="$(jq -rs --arg ctx "$GATE_CONTEXT" --arg since "$evaluated_at" \
-      '[add // [] | .[] | select(.context == $ctx and .state != "success"
+      '[add // [] | .[] | select(.context == $ctx
         and (($since | length) > 0) and ((.created_at // "") >= $since))] | length' \
       <<<"$guard_pages")" || guard_newer=""
 fi
