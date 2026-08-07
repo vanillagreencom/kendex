@@ -364,8 +364,15 @@ s4() { # push discards evidence -> re-review -> docs-only push CARRIES with
   put_file "$br" "docs/note-$br.md" "just a doc line" "docs-only delta"
   shaC="$(await_new_head "$pr" "$shaB")" || bad "docs push never surfaced a new head"
   assert_gate "$shaC" success 480 "carried" "docs-only push carries WITHOUT re-review"
-  if await_ci_settled "$shaC" 120; then :; fi
+  # A budget expiry must FAIL the scenario, not pass vacuously: an attempt
+  # still in flight also reports ci_attempts=1, so an unsettled head would
+  # "prove" the zero-rerun claim without proving anything.
   local attempts
+  if ! await_ci_settled "$shaC" 300; then
+    bad "carry push: CI never settled, so the zero-rerun claim is unproven"
+    close_pr "$pr" "$br"
+    return
+  fi
   attempts="$(ci_attempts "$shaC")"
   if [ "$attempts" = "1" ]; then
     ok "carry push ran heavy CI exactly ONCE (zero-rerun, binding F1)"

@@ -1407,10 +1407,14 @@ echo "--- evidence_at output (v2 writer ordering fast path)"
 # attempt whose live gate read did NOT approve, so LATEST-across-contributing
 # rows and the missing-timestamp poison rule are pinned here.
 run_ev() { # case-name, expected evidence_at value ("<absent>" = file not written)
-  local name="$1" want="$2" got ev_file
+           #   Third arg "seed" pre-fills the file with a stale instant, so a
+           #   predicate that FAILS TO CLEAR it is caught (deleting the file
+           #   first would make the empty-on-non-approved case vacuous).
+  local name="$1" want="$2" seed="${3:-}" got ev_file rc
   cases=$((cases + 1))
   ev_file="$work/evidence_at.out"
   rm -f "$ev_file"
+  [ -n "$seed" ] && printf '%s\n' "$seed" > "$ev_file"
   PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
     REVIEW_GATE_EVIDENCE_AT_FILE="$ev_file" \
     REVIEW_GATE_SETTINGS_FILE=/dev/null \
@@ -1430,6 +1434,13 @@ run_ev() { # case-name, expected evidence_at value ("<absent>" = file not writte
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" >/dev/null 2>&1
+  rc=$?
+  # A predicate that never reached a verdict says nothing about evidence_at.
+  if [ "$rc" != "0" ]; then
+    echo "FAIL  $name: predicate exited $rc (no verdict)" >&2
+    failures=$((failures + 1))
+    return
+  fi
   if [ -f "$ev_file" ]; then
     got="$(head -n 1 "$ev_file")"
   else
@@ -1529,7 +1540,7 @@ compare_fix identical
 run_ev "evidence_at: carried evidence carries the BASE review's submitted_at" "2026-05-01T00:00:00Z"
 
 reset
-run_ev "evidence_at: empty on a non-approved verdict (never a stale instant)" ""
+run_ev "evidence_at: empty on a non-approved verdict (clears a stale instant)" "" "2019-01-01T00:00:00Z"
 
 if [ "$failures" -ne 0 ]; then
   echo "review-predicate selftest: $failures of $cases case(s) FAILED" >&2

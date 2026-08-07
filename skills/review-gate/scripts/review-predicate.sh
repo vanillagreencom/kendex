@@ -643,11 +643,19 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
       ]
     | [ length,
         (map(.created_at // "") | if any(. == "") then "" else (max // "") end),
-        (if length == 0 then "" else (sort_by(.created_at // "") | last | .description // "") end) ]
+        # Flattened HERE, at the source: the reason is API-derived text, and
+        # a newline or tab in it would break this very tab-separated record
+        # apart before any later sanitization could run.
+        (if length == 0 then ""
+         else (sort_by(.created_at // "") | last | (.description // "") | gsub("[\n\r\t]"; " ")) end) ]
     | "\(.[0])\t\(.[1])\t\(.[2])"' <<<"$status_resp")" || {
     echo "::error::could not evaluate the operator-override status" >&2
     exit 2
   }
+  # One record by construction (the jq above flattens the only free-text
+  # field), and `head -n 1` keeps a surprise second line from turning these
+  # into multi-line values that no downstream comparison would match.
+  outageok_out="$(head -n 1 <<<"$outageok_out")"
   outageok="$(cut -f1 <<<"$outageok_out")"
   outage_at="$(cut -f2 <<<"$outageok_out")"
   outage_reason="$(cut -f3- <<<"$outageok_out")"

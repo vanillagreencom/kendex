@@ -373,8 +373,9 @@ assert_contains "$(cat "$POST_LOG")" "state=pending" "w1: awaiting posts pending
 assert_contains "$(cat "$POST_LOG")" "context=Review gate" "w1: post carries the default gate context"
 assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w1: no rerun on a downward transition"
 
-out=$(run_writer STUB_VERDICT_LINE="$AWAITING" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]')
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]') || rc=$?
+assert_eq "$rc" "0" "w2: the idempotent no-op exits 0"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w2: second evaluation of an unchanged state posts nothing (one entry total)"
 assert_contains "$out" "nothing to do" "w2: reports the no-op"
 
