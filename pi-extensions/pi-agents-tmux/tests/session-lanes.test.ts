@@ -839,13 +839,17 @@ test("bg one-shot activity after agent_settled restores task timeout ownership",
 
 test("bg one-shot settled cancellation re-arms at the ORIGINAL deadline, not a fresh window", async () => {
 	const cwd = tempRuntime();
-	writeSettings(cwd, { bgTaskTimeoutMs: 60 });
+	writeSettings(cwd, { bgTaskTimeoutMs: 300 });
 	// Grace far beyond the test window: settlement suspends the timeout but
 	// never delivers its SIGTERM, so the only kill can come from the timeout.
 	setBgSettledShutdownGraceMsForTests(10_000);
 	setBgTimeoutKillGraceMsForTests(1);
+	// Margins are deliberately wide (>=140ms between every ordered pair) so
+	// only an extreme event-loop stall could reorder them: the immediate
+	// re-armed timeout at ~320ms races the 460ms close, and the 460ms close
+	// must land before a fresh-window mutant's 620ms deadline.
 	const calls = installLifecycleMockSpawn({
-		closeAfterMs: 110,
+		closeAfterMs: 460,
 		closeOnSignal: "SIGTERM",
 		stdout: bridgeStdout([
 			bridgeEvent("agent_start"),
@@ -853,7 +857,7 @@ test("bg one-shot settled cancellation re-arms at the ORIGINAL deadline, not a f
 		]),
 		stdoutChunks: [
 			{ delayMs: 10, text: bridgeStdout([bridgeEvent("agent_settled")]) },
-			{ delayMs: 80, text: bridgeStdout([bridgeEvent("agent_start"), bridgeEvent("turn_start")]) },
+			{ delayMs: 320, text: bridgeStdout([bridgeEvent("agent_start"), bridgeEvent("turn_start")]) },
 		],
 	});
 	try {
@@ -872,11 +876,11 @@ test("bg one-shot settled cancellation re-arms at the ORIGINAL deadline, not a f
 			undefined,
 			makeDetails,
 		);
-		// Settlement at 10ms suspends the 60ms deadline; the continuation at
-		// 80ms re-arms AGAINST THAT ORIGINAL deadline, which has already
-		// passed, so the timeout fires immediately — before the 110ms close.
-		// A fresh-window re-arm (80ms + 60ms) would let close(0) at 110ms win
-		// and report success.
+		// Settlement at 10ms suspends the 300ms deadline; the continuation at
+		// 320ms re-arms AGAINST THAT ORIGINAL deadline, which has already
+		// passed, so the timeout fires immediately — before the 460ms close.
+		// A fresh-window re-arm (320ms + 300ms = 620ms) would let close(0) at
+		// 460ms win and report success.
 		assert.equal(result.exitCode, 1);
 		assert.equal(result.stopReason, "unresponsive_timeout");
 		assert.deepEqual(calls[0]?.kills, ["SIGTERM"]);
