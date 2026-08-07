@@ -113,8 +113,10 @@ impl Area {
     /// a triage-rule miss the TPM audit corrects, whereas no label at all leaves
     /// the issue parked in Linear Triage.
     ///
-    /// A report with no selector is a CLI report — `vstack report` with no
-    /// `--skill`/`--agent`/`--hook`/`--asset` is filed about the command itself.
+    /// A selector-less report resolves project-local (`resolve_ownership`
+    /// rule 4) and project-local plans never carry a label, so the `Cli`
+    /// fallback below is computed and then discarded — it exists only to keep
+    /// the derivation total.
     fn derive(selector: Option<&AssetSelector>, kind_label: &str) -> Self {
         let Some(sel) = selector else {
             return Area::Cli;
@@ -438,7 +440,7 @@ fn build_plan(
         Ownership::Vstack => {
             let marker = marker_line(name.unwrap_or("unknown"), kind_label);
             let body_with_marker = format!("{body}{marker}");
-            let gh_args = vec![
+            let mut gh_args = vec![
                 "issue".to_string(),
                 "create".to_string(),
                 "--repo".to_string(),
@@ -447,15 +449,21 @@ fn build_plan(
                 title.to_string(),
                 "--body".to_string(),
                 body_with_marker.clone(),
-                "--label".to_string(),
-                area.label().to_string(),
             ];
+            // The routing labels exist only on the canonical repo; forks do
+            // not inherit labels, so an `--upstream` override must not carry
+            // one or `gh issue create` fails with "label not found".
+            let labeled = config::github_slug_eq(upstream, DEFAULT_UPSTREAM);
+            if labeled {
+                gh_args.push("--label".to_string());
+                gh_args.push(area.label().to_string());
+            }
             ReportPlan {
                 ownership,
                 target: Target::Upstream(upstream.to_string()),
                 gh_args,
                 body_with_marker,
-                area: Some(area),
+                area: labeled.then_some(area),
             }
         }
         Ownership::ProjectLocal => {
@@ -1290,6 +1298,10 @@ mod tests {
         assert_eq!(plan.target, Target::Upstream("myorg/fork".to_string()));
         let repo_idx = plan.gh_args.iter().position(|a| a == "--repo").unwrap();
         assert_eq!(plan.gh_args[repo_idx + 1], "myorg/fork");
+        // Routing labels exist only on the canonical repo — a fork override
+        // must not carry one, or `gh issue create` fails with an unknown label.
+        assert!(!plan.gh_args.iter().any(|a| a == "--label"));
+        assert_eq!(plan.area_label(), None);
     }
 
     // --- area routing label ---------------------------------------------------

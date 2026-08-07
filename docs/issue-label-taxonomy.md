@@ -61,7 +61,7 @@ labelled issue into Tech Debt or Docs.
 ## How the label gets applied
 
 **`vstack report`** stamps exactly one on vstack-targeted issues. The surface is derived
-from the asset selector — no selector means a CLI report, a `review-gate`-named asset
+from the asset selector — a `review-gate`-named asset
 wins over its kind, hooks and pi-extensions are harness, skills and agents are skills —
 and `--area <name>` overrides the derivation. `--area` accepts either vocabulary
 (`review-gate` or `ci-infra`).
