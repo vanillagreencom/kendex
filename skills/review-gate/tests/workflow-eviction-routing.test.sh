@@ -141,20 +141,25 @@ check_rerun() {
 # not job concurrency and GitHub would not serialize on it — and both the
 # group and cancel-in-progress: false must sit as its direct children.
 # Pass which="group" or which="cancel" to select the property asserted.
+# True only when the job carries exactly ONE direct concurrency block and
+# BOTH properties sit inside it. Separate per-property scans were satisfiable
+# by different duplicate concurrency: mappings in the same job — YAML GitHub
+# cannot combine (duplicate key: invalid, or later-wins drops the group) —
+# so the block count and both memberships are one verdict (vstack#1088).
 job_level_group_present() {
-  local file="$1" job="$2" which="${3:-group}"
-  awk -v job="$job" -v which="$which" '
+  local file="$1" job="$2"
+  awk -v job="$job" '
     /^[[:space:]]*(#|$)/ { next }
     { match($0, /[^[:space:]]/); ind = RSTART - 1 }
     $0 ~ ("^  " job ":[[:space:]]*$") { injob = 1; next }
     injob && ind <= 2 { injob = 0 }
     injob && inblk && ind <= 4 { inblk = 0 }
-    injob && inblk && ind == 6 && which == "group" \
-      && /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/ { found = 1 }
-    injob && inblk && ind == 6 && which == "cancel" \
-      && /^[[:space:]]*cancel-in-progress:[[:space:]]*false[[:space:]]*$/ { found = 1 }
-    injob && ind == 4 && /^[[:space:]]*concurrency:[[:space:]]*$/ { inblk = 1 }
-    END { exit !found }
+    injob && inblk && ind == 6 \
+      && /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/ { g = 1 }
+    injob && inblk && ind == 6 \
+      && /^[[:space:]]*cancel-in-progress:[[:space:]]*false[[:space:]]*$/ { c = 1 }
+    injob && ind == 4 && /^[[:space:]]*concurrency:[[:space:]]*$/ { blocks++; inblk = 1; g = 0; c = 0 }
+    END { exit !(blocks == 1 && g && c) }
   ' "$file"
 }
 
@@ -170,12 +175,9 @@ assert_job_level_group() {
   if grep -q '^concurrency:' "$file"; then
     FAIL=$((FAIL + 1))
     printf '  FAIL  w1[%s]: workflow-level concurrency block present (must sit at JOB level)\n' "$label"
-  elif ! job_level_group_present "$file" "$job" group; then
+  elif ! job_level_group_present "$file" "$job"; then
     FAIL=$((FAIL + 1))
-    printf '  FAIL  w1[%s]: the review-gate-writer group is not a direct child of the %s job'"'"'s own concurrency block\n' "$label" "$job"
-  elif ! job_level_group_present "$file" "$job" cancel; then
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  w1[%s]: cancel-in-progress: false is not a direct child of the %s job'"'"'s own concurrency block\n' "$label" "$job"
+    printf '  FAIL  w1[%s]: the %s job needs exactly one direct concurrency block carrying both group: review-gate-writer and cancel-in-progress: false\n' "$label" "$job"
   else
     PASS=$((PASS + 1))
     printf '  ok    w1[%s]: concurrency group + cancel-in-progress sit on the %s job itself\n' "$label" "$job"
@@ -235,6 +237,35 @@ else
   printf '  FAIL  w1[negative]: sanity check failed — job_level_group_present missed a group inside its own job\n'
 fi
 rm -f "$SIBLING_FIXTURE"
+
+echo "=== w1 must reject DUPLICATE concurrency blocks split across properties ==="
+# Replace the rerun job's single concurrency block with two duplicate
+# mappings — the first carrying only the group, a later one carrying only
+# cancel-in-progress. GitHub cannot combine these (duplicate key: invalid
+# YAML, or later-wins drops the group), so the sole-block rule must reject
+# what the old per-property scans each accepted (vstack#1088).
+DUP_FIXTURE="$(mktemp)"
+awk '
+  /^    concurrency:[[:space:]]*$/ {
+    print "    concurrency:"
+    print "      group: review-gate-writer"
+    print "    concurrency:"
+    print "      cancel-in-progress: false"
+    skip = 1; next
+  }
+  skip && /^      / { next }
+  { skip = 0 }
+  { print }
+' "$TEMPLATES/approval-rerun.yml" > "$DUP_FIXTURE"
+
+if job_level_group_present "$DUP_FIXTURE" "rerun"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  w1[negative]: duplicate concurrency blocks split across group/cancel must not pass the sole-block rule\n'
+else
+  PASS=$((PASS + 1))
+  printf '  ok    w1[negative]: duplicate split concurrency blocks correctly rejected\n'
+fi
+rm -f "$DUP_FIXTURE"
 
 echo "=== w1 must reject a NESTED concurrency mapping inside the writer job ==="
 # A concurrency mapping nested under a step/env inside the rerun job is not
