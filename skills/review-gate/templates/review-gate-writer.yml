@@ -74,6 +74,15 @@ jobs:
   # merge-group sha. Kept as its own job — it needs neither the writer
   # concurrency group nor the writer's wider permissions, and a queue entry
   # must never wait behind a sweep pass.
+  #
+  # HONEST BOUNDARY: merge_group runs execute the workflow DEFINITION from
+  # the synthetic merge ref (GitHub's model), so a PR already admitted to
+  # the queue could edit this job. Admission requires the gate plus every
+  # required check at head, and a gate-workflow edit is a review-visible
+  # policy-surface diff — the same documented residual every queue-stage
+  # workflow with write permissions has (v1's review-gate-queue.yml
+  # included). Routing this signal through a default-branch relay would
+  # re-add indirection machinery for a post-review threat; declined.
   merge-group:
     name: Post the gate context on the merge-group sha
     if: github.event_name == 'merge_group'
@@ -122,14 +131,12 @@ jobs:
       group: review-gate-writer
       cancel-in-progress: false
     name: Evaluate and write the review gate
-    # status events act on `success` STATE only: clean-analysis evidence is
-    # only ever a success status; pending/failure/error states converge
-    # nothing (a reviewer may post `pending` on the same context
-    # mid-review). No context-name term — see the status trigger comment
-    # (#1039). Every other declared event is always gate-relevant.
-    if: >-
-      github.event_name != 'merge_group' &&
-      (github.event_name != 'status' || github.event.state == 'success')
+    # EVERY status state converges, not only success: under newest-row
+    # evidence semantics a trusted status moving success→pending/failure is
+    # a WITHDRAWAL, and it must close the gate event-fast rather than wait
+    # for the cron floor. No context-name term — see the status trigger
+    # comment (#1039).
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
