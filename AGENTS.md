@@ -287,14 +287,20 @@ cli/scripts/integration-check.sh         # integration check in a throwaway temp
 - The gate answers review-only; CI is branch protection's job. The heavy
   suite jobs run only in the merge queue (fast/full split — see
   `.github/workflows/skill-tests.yml`); the queue runs the full suite once,
-  on the merged result, and refuses the merge if it fails.
+  on the merged result, and refuses the merge if it fails. The refusal is
+  enforced by the queue ruleset's required contexts: `Review gate`,
+  `CLI (cargo test + integration check)`, and
+  `Skill suites (shell + node)`.
 - Merge via `github.sh pr-merge` as always. With the merge queue enabled,
   a successful merge returns exit 75 (`QUEUED IN MERGE QUEUE`) and completes
   asynchronously — confirm with `await-mergeable` / `state == MERGED`
   before propagation, and never force past a queue refusal.
-- A fresh head has no gate status until a trusted reviewer's evidence event
-  or the writer's next cron tick converges it (fail-closed latency, not an
-  error).
+- A fresh head normally gets its pending gate status within moments — the
+  writer runs event-fast on every push (`pull_request_target`). The cron
+  tick is the FLOOR for transitions with no event (thread resolution, fork
+  review evidence). A head still missing its gate status after several
+  minutes means a failed or skipped writer run — investigate the runs, do
+  not wait out the cron.
   Ruleset/branch-protection changes (required checks, queue enablement,
   Copilot auto-review toggle) are owner actions.
 

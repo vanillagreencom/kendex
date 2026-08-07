@@ -15,8 +15,10 @@ will not stop it:
 
 Held-back jobs report `skipped`, and GitHub counts skipped as satisfied;
 with no queue, a reviewed PR merges untested. The live replay
-(`tests/e2e-sandbox.sh`) exercises the queue-backstop scenario — run it
-against a repo-shaped sandbox before trusting an adoption.
+(`.agents/skills/review-gate/tests/e2e-sandbox.sh` from a consumer root;
+`skills/review-gate/tests/e2e-sandbox.sh` in the catalog repo) exercises
+the queue-backstop scenario — run it against a repo-shaped sandbox before
+trusting an adoption.
 
 ## What an adoption PR contains
 
