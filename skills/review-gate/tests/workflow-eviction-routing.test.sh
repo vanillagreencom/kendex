@@ -140,12 +140,15 @@ check_rerun() {
 # indent level below the job name) — a nested mapping under env:/steps: is
 # not job concurrency and GitHub would not serialize on it — and both the
 # group and cancel-in-progress: false must sit as its direct children.
-# Pass which="group" or which="cancel" to select the property asserted.
-# True only when the job carries exactly ONE direct concurrency block and
-# BOTH properties sit inside it. Separate per-property scans were satisfiable
-# by different duplicate concurrency: mappings in the same job — YAML GitHub
-# cannot combine (duplicate key: invalid, or later-wins drops the group) —
-# so the block count and both memberships are one verdict (vstack#1088).
+# True only when the job carries exactly ONE direct concurrency block, that
+# block carries exactly ONE group: and ONE cancel-in-progress: key, and both
+# hold the expected values. Separate per-property scans were satisfiable by
+# different duplicate concurrency: mappings in the same job (vstack#1088),
+# and first-match-wins scans blessed a later-wins duplicate KEY inside the
+# sole block — group: review-gate-writer followed by group: other — which
+# GitHub rejects or resolves to the unsafe final value (vstack#1090). Every
+# key occurrence is counted; duplicates of either key fail regardless of
+# value order.
 job_level_group_present() {
   local file="$1" job="$2"
   awk -v job="$job" '
@@ -154,12 +157,16 @@ job_level_group_present() {
     $0 ~ ("^  " job ":[[:space:]]*$") { injob = 1; next }
     injob && ind <= 2 { injob = 0 }
     injob && inblk && ind <= 4 { inblk = 0 }
-    injob && inblk && ind == 6 \
-      && /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/ { g = 1 }
-    injob && inblk && ind == 6 \
-      && /^[[:space:]]*cancel-in-progress:[[:space:]]*false[[:space:]]*$/ { c = 1 }
-    injob && ind == 4 && /^[[:space:]]*concurrency:[[:space:]]*$/ { blocks++; inblk = 1; g = 0; c = 0 }
-    END { exit !(blocks == 1 && g && c) }
+    injob && inblk && ind == 6 && /^[[:space:]]*group:/ {
+      gk++
+      if ($0 ~ /^[[:space:]]*group:[[:space:]]*review-gate-writer[[:space:]]*$/) g = 1
+    }
+    injob && inblk && ind == 6 && /^[[:space:]]*cancel-in-progress:/ {
+      ck++
+      if ($0 ~ /^[[:space:]]*cancel-in-progress:[[:space:]]*false[[:space:]]*$/) c = 1
+    }
+    injob && ind == 4 && /^[[:space:]]*concurrency:[[:space:]]*$/ { blocks++; inblk = 1; g = 0; c = 0; gk = 0; ck = 0 }
+    END { exit !(blocks == 1 && gk == 1 && ck == 1 && g && c) }
   ' "$file"
 }
 
@@ -266,6 +273,34 @@ else
   printf '  ok    w1[negative]: duplicate split concurrency blocks correctly rejected\n'
 fi
 rm -f "$DUP_FIXTURE"
+
+echo "=== w1 must reject later-wins duplicate keys INSIDE the sole block ==="
+# One concurrency block, but the safe group is followed by a duplicate
+# group: key with another value — GitHub rejects the duplicate key or
+# later-wins replaces the writer group. First-match-wins scans blessed
+# this; the exactly-one-key-per-property rule must not (vstack#1090).
+INBLOCK_DUP_FIXTURE="$(mktemp)"
+awk '
+  /^    concurrency:[[:space:]]*$/ {
+    print "    concurrency:"
+    print "      group: review-gate-writer"
+    print "      group: other-group"
+    print "      cancel-in-progress: false"
+    skip = 1; next
+  }
+  skip && /^      / { next }
+  { skip = 0 }
+  { print }
+' "$TEMPLATES/approval-rerun.yml" > "$INBLOCK_DUP_FIXTURE"
+
+if job_level_group_present "$INBLOCK_DUP_FIXTURE" "rerun"; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  w1[negative]: a later-wins duplicate group: key inside the sole block must not pass\n'
+else
+  PASS=$((PASS + 1))
+  printf '  ok    w1[negative]: in-block duplicate group: key correctly rejected\n'
+fi
+rm -f "$INBLOCK_DUP_FIXTURE"
 
 echo "=== w1 must reject a NESTED concurrency mapping inside the writer job ==="
 # A concurrency mapping nested under a step/env inside the rerun job is not
