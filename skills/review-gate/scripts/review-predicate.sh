@@ -382,26 +382,35 @@ if [ -n "${REVIEW_GATE_STATUS_SNAPSHOT_FILE:-}" ]; then
     exit 2
   }
 else
-  status_pages="$(gh_read "repos/$GH_REPO/commits/$HEAD_SHA/status?per_page=100" --paginate)" || {
-    echo "::error::could not read the combined commit status for $HEAD_SHA" >&2
+  # THE STATUSES LIST, NOT THE COMBINED STATUS — this is a security
+  # requirement, not a style choice. The combined endpoint
+  # (/commits/<sha>/status) serializes `creator` as NULL for every
+  # App-posted status, and GITHUB_TOKEN in any PR workflow IS the GitHub
+  # Actions app. Reading it made REVIEW_GATE_STATUS_PUBLISHER_REJECT
+  # inert: PR-controlled code could mint a trusted context (or the operator
+  # override) and no login entry could ever match it. The LIST endpoint
+  # (/commits/<sha>/statuses) reports the real creator login, so the
+  # reject-list works as documented. Caught live by sandbox scenario 6.
+  status_pages="$(gh_read "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate)" || {
+    echo "::error::could not read commit statuses for $HEAD_SHA" >&2
     exit 2
   }
   if [ -z "$status_pages" ]; then
-    echo "::error::combined-status read for $HEAD_SHA produced zero bytes (broken read)" >&2
+    echo "::error::commit-statuses read for $HEAD_SHA produced zero bytes (broken read)" >&2
     exit 2
   fi
-  # Validate every page BEFORE merging: a nonempty non-status page (an error
-  # object, `{}`, a truncated body) would survive the zero-byte guard, then
-  # `map(.statuses) | add // []` collapses its null into an empty status list
-  # and the predicate reaches a verdict on broken evidence. A broken read is
-  # exit 2, never an empty-evidence verdict. `length > 0` guards the vacuous
-  # case: a whitespace-only response passes the -z check yet slurps to [],
-  # where all(...) is trivially true (vstack#1086).
-  status_resp="$(jq -s 'if (length > 0) and all(type == "object" and ((.statuses | type) == "array"))
-                        then {statuses: (map(.statuses) | add // [])}
-                        else error("not a combined-status page") end' \
+  # Validate every page BEFORE merging: a nonempty non-array page (an error
+  # object, a truncated body) would survive the zero-byte guard and then
+  # collapse to an empty status list, letting the predicate reach a verdict
+  # on broken evidence. A broken read is exit 2, never an empty-evidence
+  # verdict. `length > 0` guards the vacuous case: a whitespace-only
+  # response passes the -z check yet slurps to [], where all(...) is
+  # trivially true (vstack#1086).
+  status_resp="$(jq -s 'if (length > 0) and all(type == "array")
+                        then {statuses: (add // [])}
+                        else error("not a statuses page") end' \
                     <<<"$status_pages" 2>/dev/null)" || {
-    echo "::error::could not merge the combined commit status pages for $HEAD_SHA (each page must be an object with a statuses array)" >&2
+    echo "::error::could not merge the commit-status pages for $HEAD_SHA (each page must be a JSON array)" >&2
     exit 2
   }
 fi
@@ -450,25 +459,31 @@ while IFS= read -r ctx; do
     echo "::error::could not evaluate '$ctx' check-runs" >&2
     exit 2
   }
-  # Legacy commit statuses carry no app slug to reject on, but they do carry
-  # a creator: on repos whose PR-triggered workflows hold statuses:write, PR
-  # content can mint a status under ANY context through github-actions[bot] —
-  # the one publisher identity PR code can wield. The OPT-IN
-  # REVIEW_GATE_STATUS_PUBLISHER_REJECT list is the status-side mirror of the
-  # check-run app rejection above: a status whose creator login is listed is
-  # never evidence. It is a reject-list for the forgeable identity, NOT a
-  # provenance requirement — GitHub App statuses serialize creator as null,
-  # and null is not the forgeable identity, so a login entry never rejects
-  # it (deliberately unlike the no-app-slug check-run case, which fails
-  # closed). Empty (the shipped default) disables the filter: legitimate
-  # outage attestation is Actions-posted on some repos, so rejection is a
-  # per-repo choice.
+  # Commit statuses carry no app slug to reject on, but the LIST endpoint
+  # carries a real creator login (the combined endpoint does not — see the
+  # read above). On repos whose PR-triggered workflows hold statuses:write,
+  # PR content can mint a status under ANY context through
+  # github-actions[bot] — the one publisher identity PR code can wield. The
+  # OPT-IN REVIEW_GATE_STATUS_PUBLISHER_REJECT list is the status-side
+  # mirror of the check-run app rejection above: a status whose creator
+  # login is listed is never evidence.
+  #
+  # A status with NO creator login is not evidence either WHEN THE LIST IS
+  # CONFIGURED: on this endpoint every real publisher has a login, so a
+  # missing one is an anomaly, and treating anomalies as trusted is the
+  # fail-open direction this engine exists to avoid. With the list empty
+  # (the shipped default) the filter is off entirely and behavior is
+  # unchanged.
   check_status="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" --arg reject "$PUBLISHER_REJECT" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
       | [ .statuses[]
           | select(.context == $ctx and .state == "success")
-          | select((.creator.login // "") as $l | ($rj | index($l)) == null)
+          # Bind the login BEFORE index(): inside index(...) the dot rebinds
+          # to $rj, so `.creator` would index the reject ARRAY, not the
+          # status. Same rebinding trap the comment-form matcher documents.
+          | (.creator.login // "") as $cl
+          | select(($rj | length) == 0 or ($cl != "" and ($rj | index($cl)) == null))
           | ((.description // "") | ascii_downcase) as $text
           | select(([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
         ] | length' <<<"$status_resp")" || {
@@ -571,7 +586,8 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
     ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
     | [ .statuses[]
         | select(.context == $ctx and .state == "success")
-        | select((.creator.login // "") as $l | ($rj | index($l)) == null)
+        | (.creator.login // "") as $cl
+        | select(($rj | length) == 0 or ($cl != "" and ($rj | index($cl)) == null))
         | select(((.description // "") | gsub("^\\s+|\\s+$"; "") | length) > 0)
       ]
     | [ length,

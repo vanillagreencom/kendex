@@ -180,13 +180,16 @@ delta_file() { # filename, status, patch -> one compare files[] entry
   jq -n --arg fn "$1" --arg status "$2" --arg patch "$3" \
     '{filename:$fn,status:$status,patch:$patch}'
 }
-status_ctx() { # context, state, description, [creator login] -> status.json
-  # GitHub App statuses serialize creator as null (the default here); a
-  # status posted by a workflow or user carries its creator login — pass one
-  # for the publisher-filter cases.
-  jq -n --arg ctx "$1" --arg state "$2" --arg desc "${3:-}" --arg creator "${4:-}" \
-    '{statuses:[{context:$ctx,state:$state,description:$desc,
-      creator:(if $creator == "" then null else {login:$creator} end)}]}' >"$fixtures/status.json"
+status_ctx() { # context, state, description, [creator login] -> statuses.json
+  # The predicate reads the STATUSES LIST endpoint, which returns a bare
+  # array and — unlike the combined endpoint — carries the real creator
+  # login. The default models a normal publisher; pass "" explicitly for the
+  # anomalous no-login case the reject-list must not trust. `${4-...}` and
+  # NOT `${4:-...}`: the colon form would substitute the default for an
+  # explicitly-empty argument, silently turning that case into its opposite.
+  jq -n --arg ctx "$1" --arg state "$2" --arg desc "${3:-}" --arg creator "${4-trusted-publisher}" \
+    '[{context:$ctx,state:$state,description:$desc,created_at:"2026-01-01T00:00:00Z",
+      creator:(if $creator == "" then null else {login:$creator} end)}]' >"$fixtures/statuses.json"
 }
 
 cases=0
@@ -230,7 +233,7 @@ reset() {
   printf '[]\n' >"$fixtures/reviews.json"
   printf '[]\n' >"$fixtures/comments.json"
   printf '{"check_runs":[]}\n' >"$fixtures/checkruns.json"
-  printf '{"statuses":[]}\n' >"$fixtures/status.json"
+  printf '[]\n' >"$fixtures/statuses.json"
   threads >"$fixtures/graphql.json"
   jq -n --arg a "$AUTHOR" '{user:{login:$a}}' >"$fixtures/pull.json"
   rm -f "$fixtures"/*.page2.json "$fixtures"/.failcount.* "$fixtures"/.urls.log
@@ -413,8 +416,8 @@ run "review read failure" "" 2
 unset GH_SHIM_FAIL
 
 reset
-export GH_SHIM_FAIL=status
-run "combined-status read failure" "" 2
+export GH_SHIM_FAIL=statuses
+run "commit-statuses read failure" "" 2
 unset GH_SHIM_FAIL
 
 reset
@@ -458,9 +461,13 @@ run "check-run with no app slug (unprovable provenance) is not evidence" awaitin
 # whose PR workflows hold statuses:write, PR content can mint one under any
 # context through github-actions[bot]. The OPT-IN publisher reject-list
 # (REVIEW_GATE_STATUS_PUBLISHER_REJECT) must drop a listed creator's status
-# while an unlisted login and an App-posted status (creator null — NOT the
-# forgeable identity, deliberately unlike the no-app-slug check-run case)
-# stay evidence, and the shipped default (empty) must change nothing.
+# while an unlisted login stays evidence. A status with NO creator login is
+# ALSO dropped while the list is configured: the predicate reads the statuses
+# LIST endpoint, where every real publisher carries a login, so a missing one
+# is an anomaly and trusting anomalies is the fail-open direction. (The
+# COMBINED endpoint nulls every App-posted creator, which made this filter
+# inert — vstack#1099, caught live by sandbox scenario 6.) The shipped
+# default (empty list) must change nothing.
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
 status_ctx "mech-ctx" success "analysis complete" "github-actions[bot]"
@@ -473,8 +480,8 @@ run "publisher filter set: unlisted creator login is still evidence" approved
 
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
-status_ctx "mech-ctx" success "analysis complete"
-run "publisher filter set: App-posted status (creator null) is still evidence" approved
+status_ctx "mech-ctx" success "analysis complete" ""
+run "publisher filter set: a status with NO creator login is not evidence" awaiting
 
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT=""
@@ -719,14 +726,14 @@ status_ctx "mech-outage" success "reviewer outage attested" "trusted-orchestrato
 run "publisher filter set: unlisted-login outage attestation still counts" approved
 
 # The outage read is a separate jq implementation, so its null/default
-# semantics need their own pins: an App-posted attestation (creator null) is
-# never rejected by a login entry, and the empty default stays publisher-blind
+# semantics need their own pins: a creator-less attestation is not evidence
+# while the list is configured, and the empty default stays publisher-blind
 # even for github-actions — Actions-posted attestation is legitimate on some
 # repos (vstack's own sweep/refire included).
 reset
 CFG_OUTAGE="mech-outage"; CFG_PUBLISHER_REJECT="github-actions[bot]"
-status_ctx "mech-outage" success "reviewer outage attested"
-run "publisher filter set: App-posted outage attestation (creator null) still counts" approved
+status_ctx "mech-outage" success "reviewer outage attested" ""
+run "publisher filter set: an outage attestation with NO creator login is not evidence" awaiting
 
 reset
 CFG_OUTAGE="mech-outage"; CFG_PUBLISHER_REJECT=""
@@ -880,8 +887,8 @@ run "pagination: comment-form evidence on page 2 counts" approved
 reset
 CFG_CONTEXTS="mech-ctx"
 status_ctx "unrelated-ctx" success "someone else's status"
-jq -n '{statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}' >"$fixtures/status.page2.json"
-run "pagination: trusted status on combined-status page 2 counts" approved
+jq -n '[{context:"mech-ctx",state:"success",description:"analysis complete",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}}]' >"$fixtures/statuses.page2.json"
+run "pagination: trusted status on statuses page 2 counts" approved
 
 reset
 CFG_CONTEXTS="mech-ctx"
@@ -919,8 +926,8 @@ run "zero-byte reviews producer is a failed read (exit 2), not empty evidence" "
 unset GH_SHIM_EMPTY
 
 reset
-export GH_SHIM_EMPTY=status
-run "zero-byte combined-status producer is a failed read" "" 2
+export GH_SHIM_EMPTY=statuses
+run "zero-byte commit-statuses producer is a failed read" "" 2
 unset GH_SHIM_EMPTY
 
 reset
@@ -943,9 +950,9 @@ unset GH_SHIM_EMPTY
 # another head passing shape validation would evaluate stale evidence.
 reset
 CFG_CONTEXTS="mech-ctx"
-jq -n --arg sha "$HEAD" '{sha:$sha,statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}' >"$fixtures/snapshot.json"
+jq -n --arg sha "$HEAD" '{sha:$sha,statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}}]}' >"$fixtures/snapshot.json"
 CFG_SNAPSHOT="$fixtures/snapshot.json"
-export GH_SHIM_FAIL=status
+export GH_SHIM_FAIL=statuses
 run "snapshot seam: caller-supplied combined status (sha-bound) is evaluated, duplicate read skipped" approved
 unset GH_SHIM_FAIL
 
@@ -1001,29 +1008,22 @@ printf '{"sha":"%s","statuses":[]}\n{"sha":"%s","statuses":[]}\n' "$HEAD" "$HEAD
 CFG_SNAPSHOT="$fixtures/multi-snapshot.json"
 run "snapshot seam: multi-value snapshot with NO trusted contexts is exit 2 (was approved on zero evidence)" "" 2
 
-# Combined-status page validation (VST-71): a nonempty NON-STATUS page (`{}`,
-# an error object) survives the zero-byte guard, and the old merge collapsed
-# its missing statuses into an empty list — a verdict from broken evidence.
-# Every page must be an object with a statuses array; anything else is a
-# broken read: exit 2, never an empty-evidence verdict.
+# Statuses-page validation (VST-71): a nonempty NON-ARRAY page (`{}`, an
+# error object) survives the zero-byte guard, and a lax merge would collapse
+# it into an empty list — a verdict from broken evidence. Every page must be
+# a JSON array; anything else is a broken read: exit 2, never an
+# empty-evidence verdict.
 reset
-printf '{}\n' >"$fixtures/status.json"
-run "combined-status page without a statuses array is exit 2, not empty evidence" "" 2
+printf '{}\n' >"$fixtures/statuses.json"
+run "statuses page that is not an array is exit 2, not empty evidence" "" 2
 
 reset
-printf '[]\n' >"$fixtures/status.json"
-run "non-object combined-status page is exit 2" "" 2
+printf '{"statuses":[]}\n' >"$fixtures/statuses.json"
+run "combined-status SHAPE served to the list read is exit 2 (wrong endpoint shape)" "" 2
 
 reset
-printf '\n   \n' >"$fixtures/status.json"
-run "whitespace-only combined-status response is exit 2, not a vacuous empty status set (vstack#1086)" "" 2
-
-# Non-array statuses values (vstack#1092): the shape guards require
-# (.statuses | type) == "array" in BOTH validation paths — prove each
-# rejects an object-valued statuses field, not just a missing one.
-reset
-printf '{"statuses":{}}\n' >"$fixtures/status.json"
-run "combined-status page with non-array statuses is exit 2" "" 2
+printf '\n   \n' >"$fixtures/statuses.json"
+run "whitespace-only statuses response is exit 2, not a vacuous empty status set (vstack#1086)" "" 2
 
 reset
 CFG_CONTEXTS="mech-ctx"
@@ -1034,8 +1034,8 @@ run "snapshot seam: snapshot with non-array statuses is exit 2" "" 2
 reset
 CFG_CONTEXTS="mech-ctx"
 status_ctx "mech-ctx" success "analysis complete"
-printf '{}\n' >"$fixtures/status.page2.json"
-run "malformed combined-status page 2 poisons the merge: exit 2" "" 2
+printf '{}\n' >"$fixtures/statuses.page2.json"
+run "malformed statuses page 2 poisons the merge: exit 2" "" 2
 
 # Read shapes (VST-35): the reviews and comments endpoints must request
 # per_page=100 — the 30-item default paginates long PRs into pure overhead.
