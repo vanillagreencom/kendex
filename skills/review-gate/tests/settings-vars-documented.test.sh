@@ -33,6 +33,25 @@ for v in $vars; do
   # is the contract: an assignment in either example would advertise a
   # per-invocation seam as a repo setting, so it must FAIL here.
   case "$v" in
+    # Legacy alias TARGET (v2, plan Change 2 / finding F6): still read by
+    # the predicate so old installs keep working, but the examples model
+    # the v2 posture and assign ONLY REVIEW_GATE_OVERRIDE_CONTEXT — two
+    # live keys for one knob invites drift. Documented in
+    # references/settings.md; deliberately NOT assigned in either example.
+    REVIEW_GATE_OUTAGE_CONTEXT)
+      if ! grep -q "$v" "$SKILL_DIR/references/settings.md"; then
+        echo "FAIL: $v (legacy alias target) must stay documented in references/settings.md"
+        fail=1
+      fi
+      for example in "$SKILL_DIR/vstack.settings.toml.example" \
+                     "$SKILL_DIR/../../vstack.settings.toml.example"; do
+        [ -f "$example" ] || continue
+        if forbidden_assignment_matches "$v" "$example"; then
+          echo "FAIL: $v is the legacy alias target; the example must assign REVIEW_GATE_OVERRIDE_CONTEXT instead ($example)"
+          fail=1
+        fi
+      done
+      continue ;;
     REVIEW_GATE_SETTINGS_FILE|REVIEW_GATE_STATUS_SNAPSHOT_FILE)
       for example in "$SKILL_DIR/vstack.settings.toml.example" \
                      "$SKILL_DIR/../../vstack.settings.toml.example"; do

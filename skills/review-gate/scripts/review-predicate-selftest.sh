@@ -1335,6 +1335,79 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
   fi
 fi
 
+echo "--- evidence_at output (v2 writer ordering fast path)"
+
+# The additive second output line on approved verdicts. Safety-load-bearing
+# for the single writer: a too-early instant lets the writer certify a CI
+# attempt whose live gate read did NOT approve, so LATEST-across-contributing
+# rows and the missing-timestamp poison rule are pinned here.
+run_ev() { # case-name, expected evidence_at value ("<absent>" = no line)
+  local name="$1" want="$2" out got
+  cases=$((cases + 1))
+  out="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
+    REVIEW_GATE_SETTINGS_FILE=/dev/null \
+    REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="$CFG_CONTEXTS" \
+    REVIEW_GATE_CHECKRUN_SKIP_PATTERNS="$CFG_SKIPS" \
+    REVIEW_GATE_COMMENT_REVIEWERS="$CFG_REVIEWERS" \
+    REVIEW_GATE_SHA_PREFIX_FLOOR="$CFG_FLOOR" \
+    REVIEW_GATE_OUTAGE_CONTEXT="$CFG_OUTAGE" \
+    REVIEW_GATE_STATUS_PUBLISHER_REJECT="$CFG_PUBLISHER_REJECT" \
+    REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
+    REVIEW_GATE_REVIEW_OBJECT_MIN_STATE="$CFG_MIN_STATE" \
+    REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" \
+    REVIEW_GATE_THREADS="$CFG_THREADS" \
+    REVIEW_GATE_API_ATTEMPTS="$CFG_API_ATTEMPTS" \
+    REVIEW_GATE_API_RETRY_DELAY_SECONDS="$CFG_API_DELAY" \
+    REVIEW_GATE_STATUS_SNAPSHOT_FILE="$CFG_SNAPSHOT" \
+    REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
+    GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
+    "$predicate" 2>/dev/null)"
+  if printf '%s\n' "$out" | grep -q '^evidence_at='; then
+    got="$(printf '%s\n' "$out" | sed -n 's/^evidence_at=//p' | head -n 1)"
+  else
+    got="<absent>"
+  fi
+  if [ "$got" != "$want" ]; then
+    echo "FAIL  $name: evidence_at='$got', wanted '$want'" >&2
+    failures=$((failures + 1))
+    return
+  fi
+  echo "ok    $name (evidence_at=$want)"
+}
+
+reset
+CFG_TRUSTED_LOGINS=""
+reviews_set "$(review reviewer APPROVED 2026-02-01T00:00:00Z)"
+run_ev "evidence_at: single review approval carries its submitted_at" "2026-02-01T00:00:00Z"
+
+reset
+CFG_TRUSTED_LOGINS=""
+reviews_set "$(review reviewer APPROVED 2026-02-01T00:00:00Z)" \
+            "$(review other-reviewer APPROVED 2026-03-01T00:00:00Z)"
+run_ev "evidence_at: LATEST accepted row wins (never the earliest)" "2026-03-01T00:00:00Z"
+
+reset
+CFG_TRUSTED_LOGINS=""
+reviews_set "$(review reviewer APPROVED 2026-02-01T00:00:00Z)" \
+            "$(jq -n --arg sha "$HEAD" '{commit_id:$sha,state:"APPROVED",user:{login:"clockless"}}')"
+run_ev "evidence_at: an accepted row with no timestamp poisons the output (empty, never a partial max)" ""
+
+reset
+CFG_CONTEXTS="trusted-bot/review"
+jq -n '{statuses:[{context:"trusted-bot/review",state:"success",description:"clean",creator:null,created_at:"2026-04-01T00:00:00Z"}]}' \
+  >"$fixtures/status.json"
+run_ev "evidence_at: status-context evidence carries its created_at" "2026-04-01T00:00:00Z"
+
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_CARRY="docs"
+reviews_set "$(review reviewer APPROVED 2026-05-01T00:00:00Z "$OTHER")"
+compare_fix identical
+run_ev "evidence_at: carried evidence carries the BASE review's submitted_at" "2026-05-01T00:00:00Z"
+
+reset
+run_ev "evidence_at: never emitted on a non-approved verdict" "<absent>"
+
 if [ "$failures" -ne 0 ]; then
   echo "review-predicate selftest: $failures of $cases case(s) FAILED" >&2
   exit 1

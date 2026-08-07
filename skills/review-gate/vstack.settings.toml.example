@@ -50,13 +50,21 @@ REVIEW_GATE_COMMENT_REVIEWERS = ""
 # git's short-sha default. A degenerate prefix must not match every head.
 REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 
-# Reviewer-outage attestation: commit-status context a trusted orchestrator
-# posts on the head ONLY on genuine total reviewer silence. Substitutes for
-# MISSING review evidence only — changes-requested and unresolved threads
-# still fail closed. SECURITY: a deliberate, bounded relaxation with the
-# same trusted-publisher model as REVIEW_GATE_TRUSTED_STATUS_CONTEXTS; name
-# it only where every status publisher is trusted. Empty disables.
-REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
+# Operator override status (v2; the outage attestation generalized beyond
+# outages): commit-status context a trusted operator posts on the head when
+# review evidence is MISSING — a recorded internal-review outcome, or genuine
+# total reviewer silence. Substitutes for MISSING review evidence only —
+# changes-requested and unresolved threads still fail closed, and the status
+# description must carry a non-empty reason. SECURITY: a deliberate, bounded
+# relaxation with the same trusted-publisher model as
+# REVIEW_GATE_TRUSTED_STATUS_CONTEXTS; name it only where every status
+# publisher is trusted. Empty disables. Implemented as an ALIAS over the
+# legacy key REVIEW_GATE_OUTAGE_CONTEXT: when this key is present its value
+# is handed to the predicate as REVIEW_GATE_OUTAGE_CONTEXT (and wins over a
+# file-level assignment of that name); when absent the predicate's own
+# outage-context resolution applies unchanged, so existing repos that still
+# set the legacy key need no edit. Set ONLY this key in new installs.
+REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
 
 # Status publisher reject-list: creator logins whose commit statuses are
 # never evidence, applied to BOTH the trusted-context and outage-context

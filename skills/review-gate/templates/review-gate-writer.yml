@@ -1,0 +1,237 @@
+# SCAFFOLD from the vstack review-gate skill (templates/review-gate-writer.yml)
+# — the v2 SINGLE WRITER (docs/plans/review-gate-v2-single-writer.md, Change
+# 1/1b). Copy once into .github/workflows/ in the adoption PR; the file is
+# REPO-OWNED after the copy — `vstack refresh` does not sync workflow YAML.
+# Lines marked ADAPT are per-repo values. This one workflow replaces the old
+# four-workflow mesh (the PR-side gate pair, approval-rerun, approval-sweep,
+# review-gate-queue): exactly one writer, default-branch-defined, evaluates
+# review-predicate.sh and posts the gate commit status on every leg.
+#
+# SECURITY (the pull_request_target posture): a write-capable token is only
+# safe while the job NEVER executes PR-controlled code. Every checkout below
+# pins the DEFAULT branch with credentials dropped, and PR data is read only
+# through the API — stricter than the old TRUST_PR_WORKFLOWS="true" posture,
+# in which PR-editable workflow definitions held the pen.
+#
+# Anti-loop: the writer's own status posts and the reruns it issues are
+# GITHUB_TOKEN-authored, and GitHub suppresses workflow runs for
+# token-authored events — with ONE deliberate platform exception this design
+# leans on: a token-issued RE-RUN of a completed run still delivers that
+# run's `workflow_run: completed` event (spike-proven, execution step 0),
+# which is the completion→success leg below.
+name: Review gate writer
+
+"on":
+  # Every push, including fork PRs, with a write-capable token (the job
+  # never checks out PR code — see the security note above).
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  # Review-object evidence. Fork caveat (plan finding F2): on fork PRs this
+  # event's token is READ-ONLY; the write job flags that case and the script
+  # exits GREEN as a no-op — fork review evidence converges on the cron
+  # floor. Same-repo PRs stay event-fast.
+  pull_request_review:
+    types: [submitted, dismissed]
+  # Status-context evidence (e.g. CodeRabbit; memsira's "Devin Review" is
+  # also a STATUS context) — and the operator's override status, which is
+  # PAT-authored and therefore converges event-fast through this trigger
+  # too: do not later "optimize" this into a bots-only filter. Filtered to
+  # success STATES by the job-level if: below; NO context-name filter, by
+  # design (#1039): trusted context names are settings, not
+  # workflow-expression inputs, and a name list that misses a reviewer's
+  # context silently strands that reviewer's clean path.
+  status: {}
+  # The completion→success leg (plan Change 1b, mechanism 1, SPIKE-PROVEN):
+  # fires when a listed workflow's run COMPLETES — including the second
+  # completion delivered for a writer-issued re-run — so the writer can
+  # evaluate the approved attempt and post the first success
+  # (success-needs-proof). Also catches approval landing while the initial
+  # attempt was still in flight: the writer acts when it finishes.
+  # ADAPT: list the repo's CI workflow names (every pull_request workflow
+  # whose completion should re-evaluate the gate).
+  workflow_run:
+    types: [completed]
+    workflows: ["CI"]
+  # The queue leg (plan finding 4): merge-queue entries are post-approval by
+  # construction; the ephemeral merge-group sha gets an unconditional
+  # success for the gate context. Replaces review-gate-queue.yml.
+  merge_group: {}
+  # The floor for transitions GitHub emits no event for (thread resolution
+  # has NO webhook; fork review evidence rides here too). Best-effort
+  # delivery — can slip 10-20+ min under load; scheduled workflows also
+  # auto-disable after ~60 days of repo inactivity, which is why the
+  # sustained-failure escalation step below exists.
+  schedule:
+    - cron: "*/15 * * * *"
+  # Manual kick stays possible but should never be required.
+  workflow_dispatch: {}
+  # NO check_run trigger here, deliberately — per-repo OPT-IN only (plan
+  # round-2 finding R3): every ordinary CI job completion fires
+  # check_run.completed, and an early-exit that needs the settings file
+  # needs a checkout, which bills the 1-minute minimum per run on private
+  # repos. A repo whose reviewer publishes check-runs AND NOTHING ELSE adds:
+  #   check_run:
+  #     types: [completed]
+  # plus a job-level guard on the write job's if: matching the reviewer's
+  # check name literally (the file is repo-owned after copy, so the
+  # hardcoded name is config); a job-level skip bills nothing.
+
+permissions:
+  contents: read
+
+jobs:
+  # Ported from review-gate-queue.yml: unconditional success on the
+  # merge-group sha. Kept as its own job — it needs neither the writer
+  # concurrency group nor the writer's wider permissions, and a queue entry
+  # must never wait behind a sweep pass.
+  merge-group:
+    name: Post the gate context on the merge-group sha
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      EVENT_NAME: merge_group
+      HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+    steps:
+      # Checkout only to resolve the CONFIGURABLE gate context from
+      # vstack.settings.toml — pinned to the DEFAULT branch: the ruleset
+      # requires whatever context name MAIN's config declares, and nothing
+      # queued may run under this job's write-capable token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Post success (queue entries are post-approval by construction)
+        run: |
+          set -u
+          if [ ! -f .agents/skills/review-gate/scripts/review-writer.sh ]; then
+            echo "::error::.agents/skills/review-gate/scripts/review-writer.sh is missing on the default branch (bootstrap PR? deleted?); no action taken"
+            exit 1
+          fi
+          exec .agents/skills/review-gate/scripts/review-writer.sh
+
+  write:
+    # ONE job-level writer group, cancel-in-progress: false. This is a
+    # WASTE reducer, not the correctness mechanism: single-writer runs can
+    # still interleave on one head (GitHub keeps one pending run per group
+    # and replaces it), and the VST-65 write-ordering guard inside
+    # review-writer.sh — stamp evaluated_at before reading; re-read before
+    # any success post and defer to a newer non-success entry; downward
+    # posts never defer — does the correctness work. Eviction of a PENDING
+    # run by a newer arrival is HARMLESS by design: every executing run
+    # converges every open PR (converge-all, plan binding finding F2), so
+    # whichever run survives a burst converges the evicted events' heads
+    # too. Job level, not workflow level, so a run the if: below skips
+    # never claims the slot.
+    concurrency:
+      group: review-gate-writer
+      cancel-in-progress: false
+    name: Evaluate and write the review gate
+    # status events act on `success` STATE only: clean-analysis evidence is
+    # only ever a success status; pending/failure/error states converge
+    # nothing (a reviewer may post `pending` on the same context
+    # mid-review). No context-name term — see the status trigger comment
+    # (#1039). workflow_run completions count only for pull_request runs
+    # (binding finding F4): the listed workflows also complete for push and
+    # merge-group events, and each of those completions would bill a no-op
+    # writer run — a job-level skip bills nothing. Every other declared
+    # event is always gate-relevant.
+    if: >-
+      github.event_name != 'merge_group' &&
+      (github.event_name != 'status' || github.event.state == 'success') &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # rerun of the head's pull_request runs (the approval flip)
+      actions: write
+      # the gate predicate reads (reviews, PR author)
+      pull-requests: read
+      # READ for predicate evidence; WRITE only for the sustained-failure
+      # escalation step's rolling incident issue (VST-36)
+      issues: write
+      # clean-analysis evidence reads
+      checks: read
+      # read the current gate status + POST the converged one
+      statuses: write
+      # checkout of the default-branch engine
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      # EVENT_NAME's only scripted role is merge_group-or-not; it rides
+      # along here for the run log. EVERY leg converges EVERY open PR
+      # (converge-all, binding finding F2) — no single-head identifiers, no
+      # sha→PR resolution: the payload sha is deliberately unused, so an
+      # evicted pending run can never strand its event's head.
+      EVENT_NAME: ${{ github.event_name }}
+      # Plan finding 2: pull_request_review on a FORK PR carries a
+      # read-only token; the script exits green as a no-op (never a red
+      # run) and the cron floor converges fork review evidence.
+      WRITER_READ_ONLY: ${{ (github.event_name == 'pull_request_review' && github.event.pull_request.head.repo.full_name != github.repository) && '1' || '0' }}
+    steps:
+      # DEFAULT branch, credentials dropped — on every leg, including
+      # pull_request_target: the writer runs the merged engine exclusively
+      # and reads PR data only through the API (see the security note).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Evaluate and converge the gate
+        # Bounded strictly under the job's timeout-minutes so the
+        # escalation step below still executes when this step overruns (a
+        # job killed by its own timeout is CANCELLED, which the step guard
+        # covers).
+        timeout-minutes: 12
+        run: |
+          set -u
+          if [ ! -f .agents/skills/review-gate/scripts/review-writer.sh ]; then
+            echo "::error::.agents/skills/review-gate/scripts/review-writer.sh is missing on the default branch (bootstrap PR? deleted?); no action taken"
+            exit 1
+          fi
+          exec .agents/skills/review-gate/scripts/review-writer.sh
+
+      # Sustained-failure escalation (VST-36, ported from the old sweep):
+      # the writer is now the only arm that reaches every transition, so
+      # its own sustained failure must not be silent — and the schedule
+      # trigger auto-disabling after repo inactivity makes this the only
+      # visibility for a dead cron. `failure() || cancelled()` — cancelled()
+      # because a job killed by its own timeout-minutes is cancelled, and
+      # the converge step above is bounded under the job budget so this
+      # step still runs. The incident is a ROLLING issue: one open issue
+      # found by exact title (label-free — labels may not exist on a
+      # consumer repo), appended per failure, closed by a human when the
+      # fault is fixed. Escalation failure itself only warns: it must never
+      # mask the red writer result it is reporting.
+      - name: Escalate sustained writer failure
+        if: failure() || cancelled()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -u
+          title="review-gate writer is failing (rolling incident)"
+          body="Writer run failed or was cancelled: $RUN_URL"
+          # A FAILED lookup must not fall through to "no open incident" — a
+          # transient read failure would then mint a duplicate rolling issue
+          # per failing run. Warn and stop; the next failing run retries.
+          if ! nums="$(gh api "repos/$GH_REPO/issues?state=open&per_page=100" --paginate \
+            --jq "[.[] | select(.pull_request == null and .title == \"$title\")][0].number // empty")"; then
+            echo "::warning::could not look up the rolling incident issue; skipping escalation for this run to avoid a duplicate ($RUN_URL)"
+            exit 0
+          fi
+          num="$(head -n 1 <<<"$nums")"
+          if [ -n "$num" ]; then
+            gh api -X POST "repos/$GH_REPO/issues/$num/comments" -f body="$body" >/dev/null \
+              && echo "appended to rolling incident issue #$num" \
+              || echo "::warning::could not append to rolling incident issue #$num"
+          else
+            gh api -X POST "repos/$GH_REPO/issues" -f title="$title" -f body="$body" >/dev/null \
+              && echo "opened the rolling incident issue" \
+              || echo "::warning::could not open a rolling incident issue"
+          fi

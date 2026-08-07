@@ -224,12 +224,16 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 # Used by: review-gate (`review-predicate.sh`). Shortest sha prefix (4–40) a
 # comment-form reviewer may bind evidence to.
 
-REVIEW_GATE_OUTAGE_CONTEXT = "vstack-reviewer-outage"
-# Used by: review-gate (`review-predicate.sh`) — and orch's
-# PR_REVIEW_OUTAGE_CONTEXT is the writer side of the same context.
-# Reviewer-outage attestation status; substitutes for MISSING review
-# evidence only. SECURITY: same trusted-publisher model as
-# REVIEW_GATE_TRUSTED_STATUS_CONTEXTS. Empty disables.
+REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
+# Used by: review-gate (`review-writer.sh`, handed to `review-predicate.sh`)
+# — and orch's PR_REVIEW_OUTAGE_CONTEXT is the writer side of the same
+# context. Operator override status (v2; the outage attestation generalized):
+# substitutes for MISSING review evidence only, with a non-empty reason in
+# the status description. SECURITY: same trusted-publisher model as
+# REVIEW_GATE_TRUSTED_STATUS_CONTEXTS. Empty disables. ALIAS over the legacy
+# key REVIEW_GATE_OUTAGE_CONTEXT (still read by the predicate when this key
+# is absent — existing repos need no edit); set ONLY this key in new
+# installs.
 
 REVIEW_GATE_STATUS_PUBLISHER_REJECT = ""
 # Used by: review-gate (`review-predicate.sh`). Creator logins whose commit
