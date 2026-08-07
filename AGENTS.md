@@ -277,21 +277,24 @@ cli/scripts/integration-check.sh         # integration check in a throwaway temp
 - This repo runs its own review-gate engine through ONE writer:
   `.github/workflows/review-gate-writer.yml` evaluates
   `skills/review-gate/scripts/review-predicate.sh` and posts the "Review
-  gate" commit status on every leg (PR events, review events, status
-  events, merge-group, a 15-minute cron floor). It always runs the
+  gate" commit status on its event legs (PR events, review events, status
+  events, a 15-minute cron floor). The separate merge-group leg posts an
+  unconditional success on queue shas — queue entries are post-approval by
+  construction, so no predicate runs there. The writer always runs the
   DEFAULT-branch engine, so a PR cannot influence its own gate — a PR that
   repairs the engine itself merges via the ruleset's bypass actor, stated
   in the merge commit. Trust values live in `vstack.settings.toml`.
-- The gate answers review-only; CI is branch protection's job. Heavy suite
-  jobs run only in the merge queue (fast/full split — see
-  `.github/workflows/skill-tests.yml`); the queue runs the full suite on
-  the merged result and refuses the merge if it fails.
+- The gate answers review-only; CI is branch protection's job. The heavy
+  suite jobs run only in the merge queue (fast/full split — see
+  `.github/workflows/skill-tests.yml`); the queue runs the full suite once,
+  on the merged result, and refuses the merge if it fails.
 - Merge via `github.sh pr-merge` as always. With the merge queue enabled,
   a successful merge returns exit 75 (`QUEUED IN MERGE QUEUE`) and completes
   asynchronously — confirm with `await-mergeable` / `state == MERGED`
   before propagation, and never force past a queue refusal.
 - A fresh head has no gate status until a trusted reviewer's evidence event
-  or the next sweep converges it (fail-closed latency, not an error).
+  or the writer's next cron tick converges it (fail-closed latency, not an
+  error).
   Ruleset/branch-protection changes (required checks, queue enablement,
   Copilot auto-review toggle) are owner actions.
 

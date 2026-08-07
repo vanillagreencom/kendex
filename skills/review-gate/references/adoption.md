@@ -14,8 +14,8 @@ will not stop it:
 2. **No held-back jobs** — every required check runs on every push.
 
 Held-back jobs report `skipped`, and GitHub counts skipped as satisfied;
-with no queue, a reviewed PR merges untested. Proven live by the sandbox
-replay's queue-backstop scenario (`tests/e2e-sandbox.sh`, s11) — run it
+with no queue, a reviewed PR merges untested. The live replay
+(`tests/e2e-sandbox.sh`) exercises the queue-backstop scenario — run it
 against a repo-shaped sandbox before trusting an adoption.
 
 ## What an adoption PR contains
@@ -43,13 +43,14 @@ against a repo-shaped sandbox before trusting an adoption.
 With the queue as the CI backstop, PR-push CI does not need to be the full
 suite. The recommended split: cheap fast checks (lint, typecheck, unit) run
 on every push unconditionally; the heavy suite jobs carry
-`if: github.event_name != 'pull_request'` so they run only on `merge_group`
-(and default-branch push) while still reporting `skipped` contexts on PR
-heads — which satisfies rulesets while the pending gate status blocks the
-merge. Review rounds then bill zero heavy runner-minutes, and the full
-suite runs exactly once, on the merged result, after review is done. Jobs
-must NOT read the predicate to decide whether to run — that coupling is the
-v1 machinery this engine deleted.
+`if: github.event_name == 'merge_group'` so they run only in the queue
+while still reporting `skipped` contexts everywhere else — which satisfies
+rulesets while the pending gate status blocks the merge. Review rounds then
+bill zero heavy runner-minutes, and the full suite runs exactly once, on
+the merged result, after review is done (a default-branch push re-run would
+re-test the exact sha the queue just tested). Jobs must NOT read the
+predicate to decide whether to run — that coupling is the v1 machinery this
+engine deleted.
 
 ## The ungated selftest job
 

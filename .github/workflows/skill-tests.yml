@@ -7,13 +7,17 @@ name: Skill Tests
 # not re-proven per consumer.
 #
 # THE FAST/FULL SPLIT: the two heavy suite jobs run ONLY in the merge queue
-# (and on main pushes) — on PR pushes they report `skipped`, which satisfies
-# the ruleset's required contexts while the pending "Review gate" status is
-# what actually blocks merge. A PR therefore bills zero heavy runner-minutes
-# through every round of bot review; the queue runs the full suite exactly
-# once, on the merged result, after review is done. The review gate never
-# conditions CI (it answers review-only; see the review-gate skill) — there
-# is no gate job here and nothing reads the predicate.
+# — on PR pushes and main pushes they report `skipped`, which satisfies the
+# ruleset's required contexts while the pending "Review gate" status is what
+# actually blocks merge. A PR bills zero heavy runner-minutes through every
+# round of bot review, and the queue runs the full suite exactly once, on
+# the merged result, after review is done — main-push runs would re-test
+# the exact sha the queue just tested, so they are skipped too. The
+# accepted residual: a bypass-actor merge (gate-repair PRs) skips the queue
+# and lands without a heavy run — the operator runs the suites locally and
+# says so in the merge commit. The review gate never conditions CI (it
+# answers review-only; see the review-gate skill) — there is no gate job
+# here and nothing reads the predicate.
 
 "on":
   pull_request:
@@ -29,12 +33,12 @@ permissions:
 jobs:
   skill-suites:
     name: Skill suites (shell + node)
-    # Merge-queue + main-push only (the fast/full split — see the header).
-    # A job-level if:, not workflow-level `paths`/conditions: a SKIPPED job
-    # still reports its context, so the ruleset's required contexts stay
-    # satisfied on PR heads while the pending "Review gate" status blocks
-    # merge until review is done.
-    if: github.event_name != 'pull_request'
+    # Merge-queue only (the fast/full split — see the header). A job-level
+    # if:, not workflow-level `paths`/conditions: a SKIPPED job still
+    # reports its context, so the ruleset's required contexts stay satisfied
+    # on PR heads while the pending "Review gate" status blocks merge until
+    # review is done.
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -150,8 +154,8 @@ jobs:
 
   cli-tests:
     name: CLI (cargo test + integration check)
-    # Merge-queue + main-push only — same split as skill-suites above.
-    if: github.event_name != 'pull_request'
+    # Merge-queue only — same split as skill-suites above.
+    if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
