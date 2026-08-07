@@ -621,14 +621,15 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
       echo "::error::comparison $base...$HEAD_SHA produced zero bytes (broken read)" >&2
       exit 2
     fi
-    # The first page of a healthy compare response ALWAYS carries a files
-    # array (possibly empty); its absence is a malformed or truncated
-    # response, and defaulting it to [] would read as an identical tree on
-    # the "ahead" path below — a carried approval from a broken read. Same
+    # EVERY page of a healthy compare response carries a files array
+    # (possibly empty); any page without one is a malformed or truncated
+    # response, and defaulting it to [] would hide that page's files from
+    # classification — a carried approval from a broken read (vstack#1097
+    # closed the later-page half of this; page 1 was always checked). Same
     # exit-2 contract as every other evidence read.
-    cmp="$(jq -s 'if ((.[0].files // null) | type) != "array"
-                  then error("no files array")
-                  else {status: (.[0].status // ""), files: (map(.files // []) | add)} end' \
+    cmp="$(jq -s 'if (length > 0) and all(type == "object" and ((.files | type) == "array"))
+                  then {status: (.[0].status // ""), files: (map(.files) | add)}
+                  else error("malformed compare page") end' \
               <<<"$cmp_pages" 2>/dev/null)" || {
       echo "::error::could not merge the comparison pages for $base...$HEAD_SHA (missing or malformed files array)" >&2
       exit 2
@@ -671,6 +672,8 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
         | . as $f
         | (.filename // "") as $fn
         | if (($cl | index("docs")) != null)
+             and ($f.status != "renamed")
+             and (($f.previous_filename // "") == "")
              and ($fn | test("\\.(md|markdown)$"))
           then "docs"
           elif (($cl | index("comments")) != null)
@@ -682,7 +685,8 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
                     | map(select(test("^[+-]")))
                     | map(sub("^[+-][[:space:]]*"; ""))
                     | map(select(length > 0))) as $chg
-                 | if ($chg | all(startswith($tok))) then "comments" else "refuse" end )
+                 | if ($chg | all(startswith($tok) and (startswith("#!") | not)))
+                   then "comments" else "refuse" end )
           else "refuse" end
       ] | all(. != "refuse")' <<<"$cmp")" || {
       echo "::error::could not classify the $base...$HEAD_SHA delta" >&2

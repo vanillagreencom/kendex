@@ -789,7 +789,13 @@ export GH_SHIM_FAIL=graphql
 run "threads=off: the reviewThreads read is skipped entirely (failing endpoint cannot matter)" approved
 unset GH_SHIM_FAIL
 cases=$((cases + 1))
-if grep -q '^graphql$' "$fixtures/.urls.log" 2>/dev/null; then
+# Fail-closed on the instrument itself: a missing/empty url log proves
+# nothing about the read being skipped (vstack#1097) — the run above made
+# other API reads, so the log must exist and be non-empty.
+if [ ! -s "$fixtures/.urls.log" ]; then
+  echo "FAIL  threads=off url log missing or empty - cannot prove the read was skipped" >&2
+  failures=$((failures + 1))
+elif grep -q '^graphql$' "$fixtures/.urls.log"; then
   echo "FAIL  threads=off issued a reviewThreads read anyway" >&2
   failures=$((failures + 1))
 else
@@ -1127,6 +1133,36 @@ CFG_CARRY="comments"
 compare_fix ahead "[$(delta_file "src/new.sh" added '@@ -0,0 +1 @@
 +# new file of comments')]"
 run "carry: an ADDED file refuses under 'comments' (modified-only)" awaiting
+
+# vstack#1097 negative controls: shebang lines, renames into .md, and
+# malformed later compare pages must all refuse or fail loud.
+reset
+carry_candidate
+CFG_CARRY="comments"
+compare_fix ahead "[$(delta_file "src/thing.sh" modified '@@ -1 +1 @@
+-#!/usr/bin/env bash
++#!/usr/bin/env dash')]"
+run "carry: a changed shebang line is an interpreter change, not a comment" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$(jq -n '{filename:"notes.md",previous_filename:"src/thing.sh",status:"renamed",patch:"@@ -1 +1 @@\n-do_the_thing\n+do_the_thing"}')]"
+run "carry: a code file RENAMED to a .md name refuses under 'docs'" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$DOCS_DELTA]"
+printf '{}\n' >"$fixtures/compare.page2.json"
+run "carry: a malformed later compare page is exit 2, never a partial classification" "" 2
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$DOCS_DELTA]"
+jq -n --argjson f "[$DOCS_DELTA]" '{status:"ahead",files:$f}' >"$fixtures/compare.page2.json"
+run "carry: a healthy later compare page merges into the classification" approved
 
 reset
 carry_candidate
