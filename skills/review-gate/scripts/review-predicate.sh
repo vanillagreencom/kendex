@@ -99,20 +99,6 @@
 #   is bound to one head at one moment, and the `sha` requirement enforces
 #   that binding. An unreadable/malformed/wrong-head snapshot is exit 2.
 #
-# Env (optional): REVIEW_GATE_EVIDENCE_AT_FILE — path the predicate writes the
-#   evaluated evidence's creation instant to (v2 writer, plan code-review
-#   finding F1). Written on APPROVED verdicts as one ISO-8601 instant: the
-#   LATEST creation instant across every evidence source that CONTRIBUTED to
-#   the approval (latest, not earliest — a row withdrawn and later restored
-#   must not backdate the approval), and EMPTY whenever any contributing row
-#   lacks its timestamp. Callers must treat empty as "evidence cannot be
-#   ordered against CI attempts" and never fast-path on it. A per-invocation
-#   FILE seam, like REVIEW_GATE_STATUS_SNAPSHOT_FILE and for the same reason
-#   this is not a second stdout line: every consumer parses stdout
-#   positionally (`detail="${line#*detail=}"`), so an extra line would land
-#   inside their posted status description on every repo that has not cut
-#   over yet.
-#
 # Output: one machine-readable line on stdout:
 #   verdict=approved|awaiting|threads-open|changes-requested detail=<human text>
 # (diagnostic detail also echoed for logs). Exit codes:
@@ -321,12 +307,7 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # login contributes evidence when its newest APPROVED at head is not followed
 # by a newer CHANGES_REQUESTED from that same login — a trailing COMMENTED
 # never withdraws an approval.
-# Alongside the count, the LATEST submitted_at among the accepted rows (the
-# evidence_at term): empty when any accepted row lacks its timestamp — a
-# partial max could backdate the approval past a row whose real instant is
-# unknown, and the fail-safe direction for the ordering fast path is "no
-# timestamp, no fast path".
-got_out="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
+got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS" --arg minstate "$MIN_STATE" '
   ($trusted | split("[;,\n]+"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
   | [ .[]
@@ -344,17 +325,13 @@ got_out="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
                 ([.[] | select(.state == "CHANGES_REQUESTED")] | last | .submitted_at // ""))
           )
         ))
-      | [length, (map([.[] | select(.state == "APPROVED")] | last | .submitted_at // "")
-                  | if any(. == "") then "" else (max // "") end)]
+      | length
     else
-      [length, (map(.submitted_at // "")
-                | if any(. == "") then "" else (max // "") end)]
-    end | "\(.[0])\t\(.[1])"' <<<"$reviews")" || {
+      length
+    end' <<<"$reviews")" || {
   echo "::error::could not evaluate review-object evidence for PR #$PR_NUMBER" >&2
   exit 2
 }
-got="${got_out%%$'\t'*}"
-got_at="${got_out#*$'\t'}"
 
 # Clean-analysis evidence: bots that submit a review OBJECT only when they
 # have findings pass their trusted check on a clean re-analysis and post no
@@ -429,16 +406,6 @@ else
   }
 fi
 check=0
-check_at=""
-check_at_missing=0
-# ts_max_into VAR ts — VAR keeps the lexicographically larger ISO instant
-# (ISO-8601 Z timestamps order lexicographically).
-ts_max_into() {
-  eval "ts_cur=\${$1}"
-  if [ -z "$ts_cur" ] || [ "$2" \> "$ts_cur" ]; then
-    eval "$1=\"\$2\""
-  fi
-}
 while IFS= read -r ctx; do
   ctx="$(printf '%s' "$ctx" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   [ -z "$ctx" ] && continue
@@ -472,22 +439,17 @@ while IFS= read -r ctx; do
   # therefore never clean-analysis evidence (VST-19); rejecting it here is
   # the mechanical half of the settings doc's "only names produced by
   # trusted bots" precondition.
-  check_runs_out="$(jq -r --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" '
+  check_runs="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | [ .check_runs[]
           | select(.name == $ctx and .conclusion == "success")
           | select(((.app.slug // "") != "") and ((.app.slug // "") != "github-actions"))
           | (((.output.title // "") + " " + (.output.summary // "")) | ascii_downcase) as $text
           | select(([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
-        ]
-      | [length, (map(.completed_at // "")
-                  | if any(. == "") then "" else (max // "") end)]
-      | "\(.[0])\t\(.[1])"' <<<"$checkruns_resp")" || {
+        ] | length' <<<"$checkruns_resp")" || {
     echo "::error::could not evaluate '$ctx' check-runs" >&2
     exit 2
   }
-  check_runs="${check_runs_out%%$'\t'*}"
-  check_runs_at="${check_runs_out#*$'\t'}"
   # Legacy commit statuses carry no app slug to reject on, but they do carry
   # a creator: on repos whose PR-triggered workflows hold statuses:write, PR
   # content can mint a status under ANY context through github-actions[bot] —
@@ -501,7 +463,7 @@ while IFS= read -r ctx; do
   # closed). Empty (the shipped default) disables the filter: legitimate
   # outage attestation is Actions-posted on some repos, so rejection is a
   # per-repo choice.
-  check_status_out="$(jq -r --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" --arg reject "$PUBLISHER_REJECT" '
+  check_status="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" --arg reject "$PUBLISHER_REJECT" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
       | [ .statuses[]
@@ -509,22 +471,11 @@ while IFS= read -r ctx; do
           | select((.creator.login // "") as $l | ($rj | index($l)) == null)
           | ((.description // "") | ascii_downcase) as $text
           | select(([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
-        ]
-      | [length, (map(.created_at // "")
-                  | if any(. == "") then "" else (max // "") end)]
-      | "\(.[0])\t\(.[1])"' <<<"$status_resp")" || {
+        ] | length' <<<"$status_resp")" || {
     echo "::error::could not evaluate '$ctx' commit status" >&2
     exit 2
   }
-  check_status="${check_status_out%%$'\t'*}"
-  check_status_at="${check_status_out#*$'\t'}"
   check=$((check + check_runs + check_status))
-  if [ "$check_runs" != "0" ]; then
-    if [ -z "$check_runs_at" ]; then check_at_missing=1; else ts_max_into check_at "$check_runs_at"; fi
-  fi
-  if [ "$check_status" != "0" ]; then
-    if [ -z "$check_status_at" ]; then check_at_missing=1; else ts_max_into check_at "$check_status_at"; fi
-  fi
 done <<EOF
 $(printf '%s' "$TRUSTED_CONTEXTS" | tr ';' '\n')
 EOF
@@ -542,8 +493,6 @@ EOF
 # match every head. The trust anchor is the author login plus the LITERAL
 # binding pattern immediately preceding the sha slot, not the quoting.
 comment_hits=0
-comment_at=""
-comment_at_missing=0
 if [ -n "$COMMENT_REVIEWERS" ]; then
   # Two steps, not a pipe — same pagination/fail-loud/zero-byte reasons as
   # the reviews read above.
@@ -570,41 +519,27 @@ if [ -n "$COMMENT_REVIEWERS" ]; then
     fi
     # The binding pattern is a LITERAL prefix (regex-quoted here), not a
     # regex: trust config must not be able to smuggle in a permissive match.
-    hits_out="$(jq -r --arg sha "$HEAD_SHA" --arg bot "$login" --arg author "$PR_AUTHOR" \
+    hits="$(jq --arg sha "$HEAD_SHA" --arg bot "$login" --arg author "$PR_AUTHOR" \
                --arg pat "$pattern" --arg floor "$SHA_FLOOR" '
       def requote: gsub("(?<c>[.^$|?*+()\\[\\]{}\\\\-])"; "\\" + .c);
       (($pat | requote) + "[^0-9a-fA-F]*([0-9a-fA-F]{" + $floor + ",40})") as $re
       | [ .[]
           | select(.user.login == $bot and .user.login != $author)
-          # An EDITED comment has its edit time as the evidence instant, not
-          # its creation time: a rolling comment edited to add the binding
-          # line is evidence from the edit onward, and dating it to creation
-          # would backdate it past attempts that ran before the edit (the
-          # v2 writer ordering fast path keys on this instant).
-          | . + {evidence_instant: ([(.updated_at // ""), (.created_at // "")] | max)}
+          | (.body // "")
+          | scan($re)
           # Bind the claimed sha BEFORE comparing. Piping the head into
           # startswith and referring to the scanned value as dot rebinds dot
           # to the head inside that pipe, so every comment matches itself and
           # ANY sha is accepted. That is a false approved, the only direction
           # of this gate that fails silently; the different-sha case in the
           # selftest is what caught it.
-          | select([ (.body // "") | scan($re)
-                     | (.[0] | ascii_downcase) as $claimed
-                     | select(($sha | ascii_downcase) | startswith($claimed))
-                   ] | length > 0)
-        ]
-      | [length, (map(.evidence_instant // "")
-                  | if any(. == "") then "" else (max // "") end)]
-      | "\(.[0])\t\(.[1])"' <<<"$comments")" || {
+          | (.[0] | ascii_downcase) as $claimed
+          | select(($sha | ascii_downcase) | startswith($claimed))
+        ] | length' <<<"$comments")" || {
       echo "::error::could not evaluate '$login' review comments for PR #$PR_NUMBER" >&2
       exit 2
     }
-    hits="${hits_out%%$'\t'*}"
-    hits_at="${hits_out#*$'\t'}"
     comment_hits=$((comment_hits + hits))
-    if [ "$hits" != "0" ]; then
-      if [ -z "$hits_at" ]; then comment_at_missing=1; else ts_max_into comment_at "$hits_at"; fi
-    fi
   done <<EOF
 $(printf '%s' "$COMMENT_REVIEWERS" | tr ';' '\n')
 EOF
@@ -618,22 +553,20 @@ fi
 # relaxation; trusted-publisher model identical to the trusted status
 # contexts above. See orch DEVELOPMENT.md "Reviewer-outage recognition".
 outageok=0
-outage_at=""
 outage_reason=""
-outage_at_missing=0
 if [ -n "$OUTAGE_CONTEXT" ]; then
   # The publisher reject-list applies here too — the outage relaxation is
   # the highest-value status to forge, so a listed creator (typically
   # github-actions[bot] where PR workflows hold statuses:write) must not be
   # able to mint it. Same null-creator semantics as the trusted-context
   # read above: App-posted statuses are never rejected by a login entry.
-  # The REASON is mandatory (plan Change 2, finding 9, carried verbatim from
-  # the outage semantics): an override with an empty description is not an
+  # The REASON is mandatory (plan Change 2, finding 9, carried from the
+  # outage semantics): an override with an empty description is not an
   # attestation, it is an unexplained relaxation — and it is the
   # highest-value status in the system to forge. Enforced here, not merely
-  # documented, so the settings docs describe a mechanism rather than a
-  # convention. The reason rides out in the verdict detail below, which the
-  # writer puts in the gate status.
+  # documented. The reason rides out in the verdict detail below, flattened
+  # at the source because it is API text travelling through a one-line
+  # contract and a one-line status description.
   outageok_out="$(jq -r --arg ctx "$OUTAGE_CONTEXT" --arg reject "$PUBLISHER_REJECT" '
     ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
     | [ .statuses[]
@@ -642,24 +575,15 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
         | select(((.description // "") | gsub("^\\s+|\\s+$"; "") | length) > 0)
       ]
     | [ length,
-        (map(.created_at // "") | if any(. == "") then "" else (max // "") end),
-        # Flattened HERE, at the source: the reason is API-derived text, and
-        # a newline or tab in it would break this very tab-separated record
-        # apart before any later sanitization could run.
         (if length == 0 then ""
          else (sort_by(.created_at // "") | last | (.description // "") | gsub("[\n\r\t]"; " ")) end) ]
-    | "\(.[0])\t\(.[1])\t\(.[2])"' <<<"$status_resp")" || {
+    | "\(.[0])\t\(.[1])"' <<<"$status_resp")" || {
     echo "::error::could not evaluate the operator-override status" >&2
     exit 2
   }
-  # One record by construction (the jq above flattens the only free-text
-  # field), and `head -n 1` keeps a surprise second line from turning these
-  # into multi-line values that no downstream comparison would match.
   outageok_out="$(head -n 1 <<<"$outageok_out")"
   outageok="$(cut -f1 <<<"$outageok_out")"
-  outage_at="$(cut -f2 <<<"$outageok_out")"
-  outage_reason="$(cut -f3- <<<"$outageok_out")"
-  [ "$outageok" != "0" ] && [ -z "$outage_at" ] && outage_at_missing=1
+  outage_reason="$(cut -f2- <<<"$outageok_out")"
 fi
 
 # Evidence carry-forward across carry-safe deltas (VST-57). Evidence is
@@ -803,27 +727,6 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
 $carry_candidates
 EOF_CARRY
 fi
-# The carried evidence's creation instant (evidence_at term): the latest
-# submitted_at among the accepted rows AT the carry base — same trust and
-# min-state filter the candidate walk applied. Empty (fail-safe: no ordering
-# fast path) when any such row lacks its timestamp.
-carry_at=""
-if [ "$carried" = "1" ]; then
-  carry_at="$(jq -r --arg base "$carry_base" --arg author "$PR_AUTHOR" \
-      --arg trusted "$TRUSTED_LOGINS" --arg minstate "$MIN_STATE" '
-    ($trusted | split("[;,\n]+"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
-    | [ .[]
-        | select(.state != "DISMISSED" and .state != "PENDING" and .user.login != $author)
-        | select(($t | length) == 0 or (.user.login as $l | ($t | index($l)) != null))
-        | select($minstate != "approved" or .state == "APPROVED")
-        | select((.commit_id // "") == $base)
-      ]
-    | map(.submitted_at // "")
-    | if any(. == "") then "" else (max // "") end' <<<"$reviews")" || {
-    echo "::error::could not derive the carried evidence timestamp for PR #$PR_NUMBER" >&2
-    exit 2
-  }
-fi
 
 # A genuine GraphQL failure must NOT fall through as unresolved threads — fail
 # loudly instead. `pageInfo.hasNextPage` (>100 threads) is a SUCCESSFUL read
@@ -855,64 +758,19 @@ fi
 
 echo "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried changes-requested=$cr unresolved-threads=$unresolved (threads=$THREADS_MODE)" >&2
 
-# The evidence_at output (header contract): latest creation instant across
-# every source that CONTRIBUTED to this approval, empty when any contributing
-# source's instant is unknown. Latest, not earliest: a row withdrawn and
-# later restored must not backdate the approval to before its withdrawal.
-evidence_at=""
-evidence_at_missing=0
-if [ "$carried" = "1" ]; then
-  evidence_at="$carry_at"
-  [ -z "$carry_at" ] && evidence_at_missing=1
-else
-  if [ "$got" != "0" ]; then
-    if [ -z "$got_at" ]; then evidence_at_missing=1; else ts_max_into evidence_at "$got_at"; fi
-  fi
-  if [ "$check" != "0" ]; then
-    if [ "$check_at_missing" = "1" ] || [ -z "$check_at" ]; then evidence_at_missing=1; else ts_max_into evidence_at "$check_at"; fi
-  fi
-  if [ "$comment_hits" != "0" ]; then
-    if [ "$comment_at_missing" = "1" ] || [ -z "$comment_at" ]; then evidence_at_missing=1; else ts_max_into evidence_at "$comment_at"; fi
-  fi
-  if [ "$outageok" != "0" ]; then
-    if [ "$outage_at_missing" = "1" ] || [ -z "$outage_at" ]; then evidence_at_missing=1; else ts_max_into evidence_at "$outage_at"; fi
-  fi
-fi
-[ "$evidence_at_missing" = "1" ] && evidence_at=""
 if [ "$cr" != "0" ]; then
-  verdict_line="verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
+  echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
 elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
-  verdict_line="verdict=awaiting detail=awaiting a non-author review for $HEAD_SHA"
+  echo "verdict=awaiting detail=awaiting a non-author review for $HEAD_SHA"
 elif [ "$unresolved" != "0" ]; then
-  verdict_line="verdict=threads-open detail=$unresolved unresolved review thread(s)"
+  echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
 elif [ "$carried" = "1" ]; then
-  verdict_line="verdict=approved detail=review evidence at $carry_base carried to head across a $carry_kind"
+  echo "verdict=approved detail=review evidence at $carry_base carried to head across a $carry_kind"
 elif [ "$outageok" != "0" ] && [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ]; then
   # The override is SUBSTITUTING for missing evidence (its only sanctioned
   # use), so the attested reason is the verdict — it belongs in the gate
-  # status where a reader sees why this PR merged without a review. The
-  # reason is operator-supplied text landing in a one-line status
-  # description and in this one-line verdict contract, so newlines/tabs and
-  # carriage returns collapse to spaces before it travels.
-  outage_reason_flat="$(printf '%s' "$outage_reason" | tr '\n\r\t' '   ')"
-  verdict_line="verdict=approved detail=operator override ($OUTAGE_CONTEXT): $outage_reason_flat"
+  # status, where a reader sees why this PR merged without a review.
+  echo "verdict=approved detail=operator override ($OUTAGE_CONTEXT): $outage_reason"
 else
-  verdict_line="verdict=approved detail=reviewed at head with no unresolved threads"
+  echo "verdict=approved detail=reviewed at head with no unresolved threads"
 fi
-
-# The evidence_at file seam (header contract). Written for EVERY verdict, and
-# EMPTY on any non-approved one — a stale instant left by a previous
-# invocation must never be read as this evaluation's. A caller that does not
-# set the variable pays nothing.
-if [ -n "${REVIEW_GATE_EVIDENCE_AT_FILE:-}" ]; then
-  case "$verdict_line" in
-    verdict=approved*) : ;;
-    *) evidence_at="" ;;
-  esac
-  printf '%s\n' "$evidence_at" > "$REVIEW_GATE_EVIDENCE_AT_FILE" || {
-    echo "::error::could not write REVIEW_GATE_EVIDENCE_AT_FILE '$REVIEW_GATE_EVIDENCE_AT_FILE'" >&2
-    exit 2
-  }
-fi
-
-printf '%s\n' "$verdict_line"

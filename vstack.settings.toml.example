@@ -237,13 +237,6 @@ REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
 # is absent — existing repos need no edit); set ONLY this key in new
 # installs.
 
-REVIEW_GATE_STALL_MINUTES = "120"
-# Used by: review-gate (`review-writer.sh`). How long a head may sit in one
-# waiting disposition before the writer stops waiting (minutes; 0 disables).
-# Past the bound it re-issues a proof rerun whose attempt never completed,
-# and escalates once (STALLED status + red run) for a head that has no CI
-# run at all. Fail-closed either way: a stalled head is reported, never
-# opened.
 
 REVIEW_GATE_STATUS_PUBLISHER_REJECT = ""
 # Used by: review-gate (`review-predicate.sh`). Creator logins whose commit

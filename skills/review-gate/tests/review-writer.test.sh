@@ -1,113 +1,54 @@
 #!/usr/bin/env bash
 # Behavioral tests for the SHIPPED skills/review-gate/scripts/review-writer.sh
-# — the v2 single-writer orchestration (Layer 1 of the plan's validation:
-# stubbed GitHub API, every leg driven offline). Clones the
-# approval-refire.test.sh harness: the writer runs against a STUBBED
-# review-predicate.sh placed next to it plus a parametrized `gh` stub with
-# POST/rerun logs.
+# — the single writer, whose entire job is to converge the gate commit
+# status to the predicate's verdict. Stubbed GitHub API, every leg driven
+# offline.
 #
-# Single-head passes (the enumeration's recursive contract):
-#   w1.  awaiting, no gate status            -> posts pending, no rerun
+# The writer no longer polices CI (that is branch protection's job — see the
+# script header's adoption precondition), so there is no proof chain here to
+# test: no rerun, no provenance marker, no attempt floor, no evidence
+# ordering, no stall recovery. What remains is the decision table, the write
+# discipline, and leg routing.
+#
+# Verdict -> status:
+#   w1.  awaiting, no gate status            -> posts pending
 #   w2.  awaiting, already pending w/ same   -> no-op: two evaluations leave
-#        description (second run)               ONE status entry (idempotence)
-#   w3.  changes-requested with a NEWER      -> posts failure directly —
-#        success entry in history               downward posts never defer
-#   w4.  threads-open                        -> posts pending (downward path)
-#   w5.  approved, current status success    -> no-op (no POST, no rerun)
-#   w6.  approved, PRIOR success on the sha  -> direct success post through
-#        (current pending)                      the guard, NO rerun
-#   w7.  approved flip, no prior success,    -> reruns the head's completed
-#        no evidence_at                         pull_request runs and posts
-#                                               the provenance MARKER; NO
-#                                               success (success-needs-proof)
-#   w8.  marker-less completion (10a)        -> the completing attempt ran
-#                                               gate-closed: proof rerun +
-#                                               marker, NEVER success
-#   w8b. marker + completed attempt >= 2     -> posts the FIRST success
-#   w8c. same, on the schedule leg           -> the cron floor also posts it
-#                                               (missed events converge)
-#   w8d. marker + attempt still in flight    -> posts nothing, waits
-#   w8e. marker + completed ATTEMPT-1 ONLY   -> keeps waiting (binding F3:
-#                                               the marker is only posted
-#                                               after a rerun was issued, so
-#                                               proof completions have
-#                                               attempt >= 2; an attempt-1
-#                                               snapshot is a stale read)
-#   w9.  awaiting on a completion pass       -> posts pending, never success
-# Ordering fast path (binding F1: evidence_at):
-#   f1a. approved, evidence_at BEFORE a      -> direct success, ZERO rerun
-#        completed attempt's start, clean       (the carry-forward push cost
-#        gate history                           requirement)
-#   f1b. evidence_at AFTER the attempt       -> no direct success; proof
-#        started (status-form late landing)     rerun + marker instead
-#   f1c. no evidence_at line at all          -> never the fast path
-#   f1d. qualifying attempt but a            -> no direct success (a closed
-#        non-success gate entry at/after        verdict recorded after the
-#        evidence_at                            evidence proves a
-#                                               post-evidence live read still
-#                                               refused; hardening beyond
-#                                               F1's literal rule)
-#   f1e. entry with MISSING created_at       -> blocks the fast path (cannot
-#                                               be ordered)
-#   f1f. the VST-65 guard applies to the     -> defers on a newer
-#        fast-path post too                     non-success write
-#   f1g. run_started_at == evidence_at       -> never certified (one-second
-#        (equal-second boundary)                resolution cannot order it)
-# VST-65 ordering guard on every success post:
+#        description                            ONE entry (idempotence)
+#   w3.  changes-requested over a NEWER      -> posts failure directly —
+#        success entry                          downward posts never defer
+#   w4.  threads-open                        -> posts pending
+#   w5.  approved, already success           -> no-op
+#   w6.  approved, currently pending         -> posts success
+#   w7.  approved, currently failure         -> posts success (a dismissed
+#                                               objection reopens the gate)
+# Write discipline (VST-65 ordering guard, success posts only):
 #   w10. guard re-read shows a non-success   -> defers (exit 0, no POST)
 #        entry at/after evaluated_at
 #   w10b. same-second non-success write      -> still defers (>=, not >)
 #   w11. guard re-read FAILS                 -> defers (fail-safe side)
-#   w12. guard also protects the prior-      -> defers the fast-path post
-#        success fast path
-# Rerun disposition (stuck vs malfunction, ported semantics):
-#   w13. rerun refusal (unqualified 4xx)     -> warns, exit 0, no POST
-#   w14. throttled through the budget        -> exit 1 (malfunction red for
-#                                               VST-36); gate left pending
-#   w15. throttle clearing within budget     -> exit 0, rerun lands
-#   w16. rerun 401                           -> exit 1 (malfunction)
-#   w17. rerun 5xx                           -> exit 1 (malfunction), no POST
-#   w18. run at MAX_ATTEMPTS cap             -> exit 0, no rerun, no POST
-#                                               (cap exhaustion leaves the
-#                                               gate pending)
-#   w19. runs still in progress              -> exit 0, left to finish (the
-#                                               completion leg converges)
-#   w20. no completed runs                   -> exit 0, warns and waits for
-#                                               the workflow_run leg
+#   w12. downward posts never consult it     -> failure posts over a newer
+#                                               entry without deferring
 # Fail loud, act never:
-#   w21. predicate read failure              -> exit 1, NO POST, NO rerun
-#   w22. status-history read failure         -> exit 1, NO POST, NO rerun
+#   w21. predicate read failure              -> exit 1, NO POST
+#   w22. status-history read failure         -> exit 1, NO POST
 #   w23. PR_NUMBER without HEAD_SHA          -> exit 1 (recursive contract)
-# Leg routing (converge-all, binding F2):
-#   w24. WRITER_READ_ONLY=1 (fork            -> exit 0, posts nothing, never
+#   w24. unknown verdict                     -> exit 1, NO POST
+# Leg routing (converge-all):
+#   w25. WRITER_READ_ONLY=1 (fork            -> exit 0, posts nothing, never
 #        pull_request_review no-op)             consults the predicate (a
 #                                               broken predicate proves it)
-#   w25. merge_group leg                     -> unconditional success post,
+#   w26. merge_group leg                     -> unconditional success post,
 #                                               predicate never consulted
-#   w26. schedule pass, two open PRs         -> converges BOTH heads
-#   w26b. schedule pass, approved heads      -> reruns + markers, never a
-#                                               first success without proof
-#   w27. one PR failing                      -> exit 1, other PR converged
-#   w28. EVENT leg (workflow_run) with no    -> ALSO enumerates every open
-#        identifiers                            PR — converge-all on every
-#                                               leg, so evicted pending runs
-#                                               strand nothing
-#   w29. zero open PRs                       -> clean no-op pass
-#   w26c. ghost-authored PR (user null)      -> converges with empty author
+#   w27. schedule pass, two open PRs         -> converges BOTH heads
+#   w28. one PR failing                      -> exit 1, other PR converged
+#   w29. EVENT leg with no identifiers       -> ALSO enumerates every open
+#                                               PR, so an evicted pending
+#                                               run strands nothing
+#   w30. zero open PRs / ghost author        -> clean pass
 #   wp1-wp3. pagination merges               -> page-two PRs enumerate; a
-#                                               page-two prior success
-#                                               proves; a page-two guard
-#                                               entry defers
+#                                               page-two guard entry defers
 # Template pins (tpl:*): grep-pins on review-gate-writer.yml for the
-# workflow-level expressions offline runs cannot execute (F4's billing
-# behavior is a Layer-2 sandbox observation: push/merge-group completions
-# surface as SKIPPED writer runs).
-# Settings:
-#   w30. REVIEW_GATE_OVERRIDE_CONTEXT alias  -> exported to the predicate as
-#                                               REVIEW_GATE_OUTAGE_CONTEXT;
-#                                               absent key leaves the
-#                                               predicate's own resolution
-#                                               untouched
+# workflow-level expressions offline runs cannot execute.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -189,14 +130,9 @@ chmod +x "$TMP_ROOT/scripts/review-predicate.sh" "$TMP_ROOT/scripts/review-write
 #   STUB_GUARD_HISTORY  answered for the guard's RE-read (the per_page=100
 #                       URL); defaults to STUB_GATE_HISTORY; "fail" fails
 #                       only the re-read
-#   STUB_RUNS_MODE      completed|proof_completed|in_progress|empty|
-#                       high_attempt — the actions/runs?head_sha= listing.
-#                       Attempt-1 rows carry run_started_at=RUN_START
-#                       (2020-06-01) so evidence_at anchors can order
-#                       against them.
 #   STUB_OPEN_PRS       JSON array answered for pulls?state=open
 #   STUB_POST_LOG       file collecting every status POST's args
-#   STUB_RERUN_LOG      file collecting every rerun POST's run id
+#   (No runs/jobs/rerun stubs: the writer never touches those APIs.)
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -u
@@ -204,47 +140,6 @@ set -u
 shift
 args="$*"
 case "$args" in
-  *"/rerun"*)
-    id="$(sed -n 's|.*actions/runs/\([0-9]*\)/rerun.*|\1|p' <<<"$args")"
-    # STUB_RERUN_MODE: ok (default) | refuse (unqualified 403) | throttle
-    # (403 + retry-after/x-ratelimit-remaining:0) | throttle_then_ok |
-    # auth_error (401) | server_error (502). Non-ok modes log each attempt
-    # to STUB_RERUN_ATTEMPT_LOG so retry bounds are assertable.
-    mode="${STUB_RERUN_MODE:-ok}"
-    if [[ "$mode" == "throttle_then_ok" ]]; then
-      if [[ -s "${STUB_RERUN_ATTEMPT_LOG:-/dev/null}" ]]; then mode=ok; else mode=throttle; fi
-    fi
-    case "$mode" in
-      ok)
-        echo "rerun:$id" >> "${STUB_RERUN_LOG:?}"
-        ;;
-      refuse)
-        echo "attempt:$id" >> "${STUB_RERUN_ATTEMPT_LOG:?}"
-        printf 'HTTP/2.0 403 Forbidden\r\ncontent-type: application/json\r\n\r\n{"message":"This workflow run cannot be re-run"}\n'
-        echo "gh: This workflow run cannot be re-run (HTTP 403)" >&2
-        exit 1
-        ;;
-      throttle)
-        echo "attempt:$id" >> "${STUB_RERUN_ATTEMPT_LOG:?}"
-        printf 'HTTP/2.0 403 Forbidden\r\nretry-after: 1\r\nx-ratelimit-remaining: 0\r\n\r\n{"message":"You have exceeded a secondary rate limit."}\n'
-        echo "gh: You have exceeded a secondary rate limit. (HTTP 403)" >&2
-        exit 1
-        ;;
-      auth_error)
-        echo "attempt:$id" >> "${STUB_RERUN_ATTEMPT_LOG:?}"
-        printf 'HTTP/2.0 401 Unauthorized\r\ncontent-type: application/json\r\n\r\n{"message":"Bad credentials"}\n'
-        echo "gh: Bad credentials (HTTP 401)" >&2
-        exit 1
-        ;;
-      server_error)
-        echo "attempt:$id" >> "${STUB_RERUN_ATTEMPT_LOG:?}"
-        printf 'HTTP/2.0 502 Bad Gateway\r\n\r\n'
-        echo "gh: HTTP 502" >&2
-        exit 1
-        ;;
-      *) echo "unknown STUB_RERUN_MODE" >&2; exit 1 ;;
-    esac
-    ;;
   "-X POST "*"/statuses/"*)
     echo "post:$args" >> "${STUB_POST_LOG:?}"
     ;;
@@ -276,42 +171,6 @@ case "$args" in
     fi
     printf '%s\n' "${STUB_OPEN_PRS:-[]}"
     if [[ -n "${STUB_OPEN_PRS_PAGE2:-}" ]]; then printf '%s\n' "$STUB_OPEN_PRS_PAGE2"; fi
-    ;;
-  *"/actions/runs/"*"/jobs"*)
-    # The fast path's skipped-jobs proof. STUB_JOBS: none (default, zero
-    # skipped) | skipped (one skipped job — an attempt that ran gate-closed)
-    # | fail (read failure) | malformed (no jobs array).
-    case "${STUB_JOBS:-none}" in
-      none) echo '{"jobs":[{"name":"gate","conclusion":"success"},{"name":"heavy","conclusion":"success"}]}' ;;
-      skipped) echo '{"jobs":[{"name":"gate","conclusion":"success"},{"name":"heavy","conclusion":"skipped"}]}' ;;
-      cancelled_job) echo '{"jobs":[{"name":"gate","conclusion":"success"},{"name":"heavy","conclusion":"cancelled"}]}' ;;
-      fail) echo "HTTP 500" >&2; exit 1 ;;
-      malformed) echo '{"message":"Not Found"}' ;;
-      *) echo "unknown STUB_JOBS" >&2; exit 1 ;;
-    esac
-    ;;
-  *"/actions/runs?"*)
-    case "${STUB_RUNS_MODE:-completed}" in
-      completed)
-        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"},{"id":222,"name":"push run","status":"completed","conclusion":"success","event":"push","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
-      proof_completed)
-        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":2,"run_started_at":"2020-06-02T00:00:00Z"}]}' ;;
-      in_progress)
-        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"in_progress","conclusion":null,"event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
-      empty)
-        echo '{"workflow_runs":[]}' ;;
-      high_attempt)
-        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":5,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
-      mixed_attempt)
-        # One run AT the cap (5) plus a rerunnable one (1) — the shape that
-        # wedged the head when the marker floor was taken across every run.
-        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"},{"id":333,"name":"capped lane","status":"completed","conclusion":"success","event":"pull_request","run_attempt":5,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
-      cancelled_proof)
-        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"cancelled","event":"pull_request","run_attempt":2,"run_started_at":"2020-06-02T00:00:00Z"}]}' ;;
-      two_lanes)
-        echo '{"workflow_runs":[{"id":111,"name":"ci","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"},{"id":444,"name":"second lane","status":"completed","conclusion":"success","event":"pull_request","run_attempt":1,"run_started_at":"2020-06-01T00:00:00Z"}]}' ;;
-      *) echo "unknown STUB_RUNS_MODE" >&2; exit 1 ;;
-    esac
     ;;
   *)
     echo "unexpected gh api call: $args" >&2
@@ -399,325 +258,50 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$THREADS" STUB_GATE_HISTORY='[]') || r
 assert_eq "$rc" "0" "w4: threads-open exits 0"
 assert_contains "$(cat "$POST_LOG")" "state=pending" "w4: threads-open posts pending"
 
-echo "=== upward flip: success needs proof ==="
+echo "=== approved converges to success ==="
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success","description":"ok","created_at":"'"$OLD"'"}]') || rc=$?
-assert_eq "$rc" "0" "w5: approved with current success exits 0"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w5: current success posts nothing"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w5: current success reruns nothing"
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success","description":"reviewed at head with no unresolved threads","created_at":"'"$OLD"'"}]') || rc=$?
+assert_eq "$rc" "0" "w5: approved with the same success entry exits 0"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w5: unchanged success posts nothing (idempotent)"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"x","created_at":"'"$OLD"'"},{"context":"Review gate","state":"success","description":"ok","created_at":"'"$OLD"'"}]') || rc=$?
-assert_eq "$rc" "0" "w6: prior-success fast path exits 0"
-assert_contains "$(cat "$POST_LOG")" "state=success" "w6: prior success on the sha allows a direct success post"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w6: proof fast path never reruns"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  EVENT_NAME=pull_request_review STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "w7: first approved flip exits 0"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "w7: reruns the completed pull_request run only (never the push run)"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "w7: no direct success without proof"
-assert_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w7: posts the provenance marker after issuing the rerun"
-
-# 10a pin: a completion with NO provenance marker is the PRE-approval
-# attempt finishing after approval landed mid-flight — its heavy jobs ran
-# gate-closed, so the writer must issue the proof rerun, never success.
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "w8/10a: marker-less completion exits 0"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "w8/10a: marker-less completion NEVER posts success (heavy jobs ran gate-closed)"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "w8/10a: marker-less completion issues the proof rerun instead"
-assert_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w8/10a: and records the marker"
-
-MARKER_ENTRY='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 1); success posts on its completion","created_at":"'"$RECENT"'"}'
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed) || rc=$?
-assert_eq "$rc" "0" "w8b: marker + completed proof attempt exits 0"
-assert_contains "$(cat "$POST_LOG")" "state=success" "w8b: first success posts on the marked completion"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w8b: no second rerun on the marked completion"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
-  EVENT_NAME=schedule STUB_RUNS_MODE=proof_completed) || rc=$?
-assert_contains "$(cat "$POST_LOG")" "state=success" "w8c: the cron floor also posts the marked success (missed events converge)"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=in_progress) || rc=$?
-assert_eq "$rc" "0" "w8d: marker with the proof attempt still in flight exits 0"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w8d: nothing posts while the proof attempt runs"
-
-# Binding finding F3: between the rerun POST being accepted and the runs API
-# listing the new attempt, a concurrent pass can see marker + only the
-# completed gate-closed attempt 1. Certifying it would green the gate over
-# skipped heavy jobs — the proof completion always has run_attempt >= 2.
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "w8e: marker + attempt-1-only snapshot exits 0"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w8e: attempt-1-only snapshot never posts success (stale runs read)"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w8e: and never re-issues the rerun (the marker says one is underway)"
-assert_contains "$out" "no completion above the floor" "w8e: says why it waits"
-
-# F3 hardened: run_attempt >= 2 alone is satisfiable by a MANUAL
-# pre-approval rerun that ran gate-closed, so the marker records the attempt
-# floor that existed when the proof rerun was issued and only completions
-# ABOVE it certify.
-MARKER_FLOOR2='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 2); success posts on its completion","created_at":"'"$RECENT"'"}'
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_FLOOR2]" \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed) || rc=$?
-assert_eq "$rc" "0" "w8f: marker floor above the visible attempt exits 0"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w8f: a completed attempt 2 does NOT certify a marker whose floor is 2 (manual pre-approval rerun)"
-assert_contains "$out" "above the floor" "w8f: says it is waiting on the floor"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  EVENT_NAME=pull_request_review STUB_RUNS_MODE=high_attempt REVIEW_GATE_MAX_RERUN_ATTEMPTS=9) || rc=$?
-assert_contains "$(cat "$POST_LOG")" "above attempt 5" "w8g: the marker records the attempt floor that existed when the rerun was issued"
-
-# The floor comes from the runs THIS pass actually re-ran. Taking it across
-# every run would record 5 while only attempt 1 was re-run (to 2), so no
-# completion could ever satisfy the floor — the head wedges at pending.
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  EVENT_NAME=pull_request_review STUB_RUNS_MODE=mixed_attempt) || rc=$?
-assert_eq "$rc" "0" "w8h: mixed capped/rerunnable head exits 0"
-assert_contains "$out" "cap 5" "w8h: the capped run is left alone"
-assert_not_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w8h: a PARTIAL rerun posts NO marker (a sibling completion must not certify the un-rerun lane)"
-assert_contains "$out" "could be re-run" "w8h: says why the marker was withheld"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "w8h: the rerunnable lane is still re-run"
-
-# Every candidate re-run: the marker posts, and its floor is the highest
-# attempt among the runs re-run.
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  EVENT_NAME=pull_request_review STUB_RUNS_MODE=two_lanes) || rc=$?
-assert_eq "$rc" "0" "w8i: two rerunnable lanes exit 0"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "2" "w8i: both lanes re-run"
-assert_contains "$(cat "$POST_LOG")" "above attempt 1" "w8i: the marker posts once every candidate re-ran"
-
-# A REFUSED sibling must not let the successful sibling's completion certify.
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  EVENT_NAME=pull_request_review STUB_RUNS_MODE=two_lanes STUB_RERUN_MODE=refuse) || rc=$?
-assert_eq "$rc" "0" "w8j: refused reruns exit 0 (stuck, not malfunction)"
-assert_not_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w8j: no marker when every rerun was refused"
-
-# A CANCELLED run reports status=completed. Counting it as proof would post
-# success with the heavy jobs never having run, and would also swallow the
-# stall recovery (the head would look proven). It must fall through instead.
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=cancelled_proof) || rc=$?
-assert_eq "$rc" "0" "w35: a cancelled proof attempt exits 0"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "w35: a CANCELLED attempt is not proof (completed != executed)"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=cancelled_proof) || rc=$?
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "w36: the ordering fast path also refuses a cancelled attempt"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed STUB_JOBS=cancelled_job) || rc=$?
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "w37: a CANCELLED job is as withheld as a skipped one"
-
-echo "=== bounded waiting: a wait is only correct while the signal can arrive ==="
-
-# A marker whose proof attempt was cancelled/evicted leaves this branch
-# waiting for a completion above the floor that is never coming — and the
-# marker branch never re-issues on its own, so it CANNOT self-heal. Past the
-# stall bound the writer stops waiting and issues a fresh proof rerun. No
-# double-bill: the attempt it replaces produced no completion.
-STALE_MARKER='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 1); success posts on its completion","created_at":"'"$OLD"'"}'
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$STALE_MARKER]" \
-  EVENT_NAME=schedule STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "w31: a stalled marker exits 0"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "w31: past the stall bound the writer RE-ISSUES the proof rerun (the livelock cannot persist)"
-assert_contains "$out" "is not coming" "w31: says why it stopped waiting"
-assert_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w31: and records a fresh marker"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "w31: still never a success without proof"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$STALE_MARKER]" \
-  EVENT_NAME=schedule STUB_RUNS_MODE=completed REVIEW_GATE_STALL_MINUTES=0) || rc=$?
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w31b: REVIEW_GATE_STALL_MINUTES=0 disables the bound (waits as before)"
-
-# A head that never produces a pull_request run has no completion coming
-# either, and the writer cannot manufacture one — so it escalates ONCE:
-# a distinctive STALLED status plus a red run for the VST-36 incident.
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]' \
-  STUB_RUNS_MODE=empty) || rc=$?
-assert_eq "$rc" "1" "w32: a head with no CI run at all REDS past the bound (VST-36 sees it)"
-assert_contains "$(cat "$POST_LOG")" "STALLED:" "w32: and marks the gate status so the PR shows why"
-assert_contains "$out" "has EVER existed" "w32: names the condition"
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]') || rc=$?
+assert_eq "$rc" "0" "w6: approved over pending exits 0"
+assert_contains "$(cat "$POST_LOG")" "state=success" "w6: a reviewed head opens the gate"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w6: the writer never re-runs CI (branch protection owns that)"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"STALLED: no CI run exists for this head; the gate cannot converge until one does","created_at":"'"$OLD"'"}]' \
-  STUB_RUNS_MODE=empty) || rc=$?
-assert_eq "$rc" "0" "w33: an already-reported stall stays quiet (exit 0)"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w33: and posts nothing — one escalation per stall, never a spam loop"
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"failure","description":"standing review changes requested","created_at":"'"$OLD"'"}]') || rc=$?
+assert_contains "$(cat "$POST_LOG")" "state=success" "w7: a dismissed objection reopens the gate"
 
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$RECENT"'"}]' \
-  STUB_RUNS_MODE=empty) || rc=$?
-assert_eq "$rc" "0" "w34: inside the bound it still just waits (no premature escalation)"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w34: and posts nothing"
+echo "=== VST-65 ordering guard (success posts only) ==="
 
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
-  EVENT_NAME=workflow_run) || rc=$?
-assert_eq "$rc" "0" "w9: completion pass with an unapproved head exits 0"
-assert_contains "$(cat "$POST_LOG")" "state=pending" "w9: unapproved completion posts pending"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "w9: success only when the predicate approves at head"
+PENDING_OLD='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]'
 
-echo "=== ordering fast path (binding F1: evidence_at) ==="
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "f1a: ordered evidence exits 0"
-assert_contains "$(cat "$POST_LOG")" "state=success" "f1a: attempt started after the evidence -> direct success"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "f1a: ZERO reruns (the carry-forward push burns heavy CI once)"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$LATE" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "f1b: late-landing evidence exits 0"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1b: evidence created after the attempt started never certifies it (the F1 unsafe-shortcut case)"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1b: the proof rerun runs instead"
-assert_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "f1b: with its marker"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed) || rc=$?
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1c: no evidence_at line -> never the fast path"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1c: rerun path instead"
-
-# THE decisive conjunct: an attempt whose live gate read refused is exactly
-# an attempt whose gated jobs SKIPPED. This is the reproduced-bypass shape —
-# a blocker that was active while the attempt ran but left no datable trace
-# (thread resolution and CR dismissal are eventless, and an evicted writer
-# run may never have posted the blocker at all).
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed STUB_JOBS=skipped) || rc=$?
-assert_eq "$rc" "0" "f1d: attempt with a skipped job exits 0"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1d: an attempt that SKIPPED a job never certifies (its gated jobs were withheld)"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1d: proof rerun instead"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed STUB_JOBS=fail) || rc=$?
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1e: an unreadable jobs list refuses the fast path (fail-safe)"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1e: proof rerun instead"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed STUB_JOBS=malformed) || rc=$?
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1i: a malformed jobs response refuses the fast path (never read as no-skips)"
-
-# The proof comes from the ATTEMPT, not from the writer's posted history: a
-# head that once pended on threads still takes the fast path when the
-# completed attempt withheld nothing. (The history is not evidence either
-# way — an evicted run may never have posted the blocker.)
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"2 unresolved review thread(s)","created_at":"2020-03-01T00:00:00Z"}]' \
-  STUB_RUNS_MODE=completed) || rc=$?
-assert_contains "$(cat "$POST_LOG")" "state=success" "f1h: a past threads-open entry does not block when the attempt skipped nothing"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "f1h: and still spares the rerun"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="$OLD" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed \
-  STUB_GUARD_HISTORY='[{"context":"Review gate","state":"pending","description":"newer writer run","created_at":"'"$FUTURE"'"}]') || rc=$?
-assert_eq "$rc" "0" "f1f: guarded fast path exits 0"
-assert_contains "$out" "deferring the success post" "f1f: the VST-65 guard protects the ordering fast path too"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "f1f: deferred fast path posts nothing"
-
-# Equal-second boundary: one-second timestamp resolution cannot order an
-# attempt whose run_started_at EQUALS evidence_at, so it must never be
-# certified (strict >; falling to the rerun path is the fail-safe side).
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-06-01T00:00:00Z" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "f1g: equal-second evidence exits 0"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1g: run_started_at == evidence_at cannot be ordered -> never certified"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1g: proof rerun instead"
-
-echo "=== VST-65 ordering guard on every success post ==="
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed \
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING_OLD" \
   STUB_GUARD_HISTORY='[{"context":"Review gate","state":"pending","description":"newer writer run","created_at":"'"$FUTURE"'"}]') || rc=$?
 assert_eq "$rc" "0" "w10: stale success defers with exit 0"
 assert_contains "$out" "deferring the success post" "w10: names the deferral"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w10: deferred success posts nothing"
 
-# Equality deferral: created_at and evaluated_at have one-second resolution,
-# so a non-success write within the evaluation second compares EQUAL and
-# must still defer (`>=`, not `>`). STUB_DATE_FIXED pins evaluated_at.
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed \
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING_OLD" \
   STUB_DATE_FIXED="2026-06-15T12:00:00Z" \
   STUB_GUARD_HISTORY='[{"context":"Review gate","state":"pending","description":"same-second write","created_at":"2026-06-15T12:00:00Z"}]') || rc=$?
 assert_eq "$rc" "0" "w10b: same-second non-success write exits 0"
 assert_contains "$out" "deferring the success post" "w10b: equality defers (one-second resolution)"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w10b: no post on the equal-second boundary"
 
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed STUB_GUARD_HISTORY=fail) || rc=$?
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING_OLD" \
+  STUB_GUARD_HISTORY=fail) || rc=$?
 assert_eq "$rc" "0" "w11: failed guard re-read defers with exit 0 (fail-safe side)"
 assert_contains "$out" "deferring the success post" "w11: names the deferral"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w11: no post on an unreadable re-read"
 
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
-  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"x","created_at":"'"$OLD"'"},{"context":"Review gate","state":"success","description":"ok","created_at":"'"$OLD"'"}]' \
-  STUB_GUARD_HISTORY='[{"context":"Review gate","state":"failure","description":"newer","created_at":"'"$FUTURE"'"}]') || rc=$?
-assert_eq "$rc" "0" "w12: guarded fast path exits 0"
-assert_contains "$out" "deferring the success post" "w12: the prior-success fast path defers to a newer non-success write"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w12: deferred fast path posts nothing"
-
-echo "=== rerun POST: stuck vs malfunction, throttle vs refusal (VST-36) ==="
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  STUB_RERUN_MODE=refuse) || rc=$?
-assert_eq "$rc" "0" "w13: rerun refusal (unqualified 4xx) exits 0 — stuck, not malfunction"
-assert_contains "$out" "cannot be advanced by the writer" "w13: names the stuck outcome"
-assert_eq "$(grep -c 'attempt:111' "$ATTEMPT_LOG")" "1" "w13: a refusal is never retried (each retry feeds the same limit)"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w13: gate left as found (pending)"
-
-set +e
-out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  STUB_RERUN_MODE=throttle)
-rc=$?
-set -e
-assert_eq "$rc" "1" "w14: throttled through the default single-attempt budget exits 1"
-assert_contains "$out" "throttled" "w14: a throttled 403 is named throttle, never stuck"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w14: cap exhaustion leaves the gate pending (no post)"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  STUB_RERUN_MODE=throttle_then_ok REVIEW_GATE_API_ATTEMPTS=2 REVIEW_GATE_API_RETRY_DELAY_SECONDS=0) || rc=$?
-assert_eq "$rc" "0" "w15: a throttle clearing within the budget exits 0"
-assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "w15: the rerun eventually lands"
-
-set +e
-out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  STUB_RERUN_MODE=auth_error)
-rc=$?
-set -e
-assert_eq "$rc" "1" "w16: a rerun 401 exits 1 (malfunction — bad credentials stop every head)"
-assert_contains "$out" "malfunction" "w16: a 401 is named malfunction, not a per-run refusal"
-
-set +e
-out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  STUB_RERUN_MODE=server_error)
-rc=$?
-set -e
-assert_eq "$rc" "1" "w17: a rerun 5xx exits 1 (malfunction)"
-assert_contains "$out" "malfunction" "w17: names the malfunction"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w17: never a status write on the failure path"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  STUB_RUNS_MODE=high_attempt) || rc=$?
-assert_eq "$rc" "0" "w18: attempt cap exits 0"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w18: run at MAX_ATTEMPTS is left alone"
-assert_contains "$out" "cap 5" "w18: warns about the cap"
-assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w18: gate stays pending at the cap"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  STUB_RUNS_MODE=in_progress) || rc=$?
-assert_eq "$rc" "0" "w19: in-progress head exits 0"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w19: in-progress run is left to finish"
-assert_contains "$out" "still in progress" "w19: says why"
-
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
-  STUB_RUNS_MODE=empty) || rc=$?
-assert_eq "$rc" "0" "w20: a head with no completed pull_request runs exits 0 (waits, not stuck)"
-assert_contains "$(cat "$POST_LOG")" "waiting for a CI run" "w20: a head with no gate entry gets the waiting status, which also STARTS the stall clock"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "w20: and never a success"
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$CR" STUB_GATE_HISTORY="$PENDING_OLD" \
+  STUB_GUARD_HISTORY='[{"context":"Review gate","state":"pending","description":"newer","created_at":"'"$FUTURE"'"}]') || rc=$?
+assert_contains "$(cat "$POST_LOG")" "state=failure" "w12: downward posts never consult the guard"
+assert_not_contains "$out" "deferring" "w12: and never defer"
 
 echo "=== fail loud, act never ==="
 
@@ -790,11 +374,10 @@ assert_contains "$(cat "$POST_LOG")" "statuses/sha7" "w26: converged PR #7's hea
 assert_contains "$(cat "$POST_LOG")" "statuses/sha8" "w26: converged PR #8's head"
 
 rc=0; out=$(run_writer_all schedule STUB_VERDICT_LINE="$APPROVED" STUB_OPEN_PRS="$OPEN2" \
-  STUB_GATE_HISTORY='[]' STUB_RUNS_MODE=completed) || rc=$?
-assert_eq "$rc" "0" "w26b: all-PRs approved pass exits 0"
-assert_eq "$(grep -c 'rerun:111' "$RERUN_LOG")" "2" "w26b: the pass reruns approved heads"
-assert_not_contains "$(cat "$POST_LOG")" "state=success" "w26b: never a first success without the marker"
-assert_eq "$(grep -c 'proof CI attempt re-running' "$POST_LOG")" "2" "w26b: each rerun head gets its provenance marker"
+  STUB_GATE_HISTORY='[]') || rc=$?
+assert_eq "$rc" "0" "w27b: all-PRs approved pass exits 0"
+assert_eq "$(grep -c 'state=success' "$POST_LOG")" "2" "w27b: both approved heads open"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w27b: and the writer re-runs nothing"
 
 set +e
 out=$(run_writer_all schedule STUB_VERDICT_LINE="$AWAITING" STUB_OPEN_PRS="$OPEN2" \
@@ -842,11 +425,10 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
   STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"x","created_at":"'"$OLD"'"}]' \
   STUB_GATE_HISTORY_PAGE2='[{"context":"Review gate","state":"success","description":"ok","created_at":"'"$OLD"'"}]') || rc=$?
 assert_eq "$rc" "0" "wp2: paginated projection exits 0"
-assert_contains "$(cat "$POST_LOG")" "state=success" "wp2: a prior success on page two still proves the approved attempt"
-assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "wp2: and spares the rerun"
+assert_contains "$(cat "$POST_LOG")" "state=success" "wp2: the projection merges every page before deciding"
 
-rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
-  EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed \
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]' \
   STUB_GUARD_HISTORY='[]' \
   STUB_GUARD_HISTORY_PAGE2='[{"context":"Review gate","state":"failure","description":"newer","created_at":"'"$FUTURE"'"}]') || rc=$?
 assert_eq "$rc" "0" "wp3: paginated guard re-read exits 0"
@@ -891,7 +473,6 @@ pin() { # needle, name
     FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        missing from template: %s\n' "$2" "$1"
   fi
 }
-pin "github.event.workflow_run.event == 'pull_request'" "tpl: F4 workflow_run pull_request-only job filter"
 pin "github.event.state == 'success'" "tpl: status events act on success state only"
 pin "github.event_name != 'merge_group'" "tpl: the write job excludes the merge_group event"
 pin "cancel-in-progress: false" "tpl: pending writer runs are never cancelled mid-write"
@@ -899,6 +480,11 @@ pin "group: review-gate-writer" "tpl: single writer concurrency group"
 pin "github.event.pull_request.head.repo.full_name != github.repository" "tpl: fork pull_request_review read-only flag"
 pin "if: failure() || cancelled()" "tpl: VST-36 escalation covers timeout-cancelled jobs"
 pin "persist-credentials: false" "tpl: checkouts drop credentials"
+if grep -qF -- "actions: write" "$TEMPLATE"; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: template must NOT request actions:write (the writer never re-runs CI)"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: no actions:write — the writer never re-runs CI"
+fi
 pin 'ref: ${{ github.event.repository.default_branch }}' "tpl: engine runs from the default branch"
 
 echo

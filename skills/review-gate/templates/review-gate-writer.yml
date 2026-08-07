@@ -13,12 +13,13 @@
 # through the API — stricter than the old TRUST_PR_WORKFLOWS="true" posture,
 # in which PR-editable workflow definitions held the pen.
 #
-# Anti-loop: the writer's own status posts and the reruns it issues are
-# GITHUB_TOKEN-authored, and GitHub suppresses workflow runs for
-# token-authored events — with ONE deliberate platform exception this design
-# leans on: a token-issued RE-RUN of a completed run still delivers that
-# run's `workflow_run: completed` event (spike-proven, execution step 0),
-# which is the completion→success leg below.
+# Anti-loop: the writer's own status posts are GITHUB_TOKEN-authored, and
+# GitHub suppresses workflow runs for token-authored events, so the status
+# trigger below cannot re-trigger this workflow.
+#
+# The gate answers ONE question — is this head reviewed? — and never
+# re-runs CI. Whether untested code can merge is branch protection's job;
+# see the adoption precondition in scripts/review-writer.sh.
 name: Review gate writer
 
 "on":
@@ -41,17 +42,6 @@ name: Review gate writer
   # workflow-expression inputs, and a name list that misses a reviewer's
   # context silently strands that reviewer's clean path.
   status: {}
-  # The completion→success leg (plan Change 1b, mechanism 1, SPIKE-PROVEN):
-  # fires when a listed workflow's run COMPLETES — including the second
-  # completion delivered for a writer-issued re-run — so the writer can
-  # evaluate the approved attempt and post the first success
-  # (success-needs-proof). Also catches approval landing while the initial
-  # attempt was still in flight: the writer acts when it finishes.
-  # ADAPT: list the repo's CI workflow names (every pull_request workflow
-  # whose completion should re-evaluate the gate).
-  workflow_run:
-    types: [completed]
-    workflows: ["CI"]
   # The queue leg (plan finding 4): merge-queue entries are post-approval by
   # construction; the ephemeral merge-group sha gets an unconditional
   # success for the gate context. Replaces review-gate-queue.yml.
@@ -136,20 +126,13 @@ jobs:
     # only ever a success status; pending/failure/error states converge
     # nothing (a reviewer may post `pending` on the same context
     # mid-review). No context-name term — see the status trigger comment
-    # (#1039). workflow_run completions count only for pull_request runs
-    # (binding finding F4): the listed workflows also complete for push and
-    # merge-group events, and each of those completions would bill a no-op
-    # writer run — a job-level skip bills nothing. Every other declared
-    # event is always gate-relevant.
+    # (#1039). Every other declared event is always gate-relevant.
     if: >-
       github.event_name != 'merge_group' &&
-      (github.event_name != 'status' || github.event.state == 'success') &&
-      (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request')
+      (github.event_name != 'status' || github.event.state == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      # rerun of the head's pull_request runs (the approval flip)
-      actions: write
       # the gate predicate reads (reviews, PR author)
       pull-requests: read
       # READ for predicate evidence; WRITE only for the sustained-failure

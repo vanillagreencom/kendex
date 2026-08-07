@@ -68,19 +68,6 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 # set the legacy key need no edit. Set ONLY this key in new installs.
 REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
 
-# How long a head may sit in ONE waiting disposition before the writer stops
-# waiting (minutes; 0 disables the bound). Every wait in the writer is
-# correct only while the awaited event CAN still arrive — and two shapes
-# exist where it cannot: a head that never produces a pull_request run at
-# all (path filters, a disabled workflow) has no completion coming, and a
-# proof attempt CANCELLED before finishing leaves the marker branch waiting
-# for a completion that will never exist. Past this bound the writer acts
-# where it can (re-issuing the proof rerun, which cannot double-bill because
-# the attempt it replaces produced no completion) and escalates ONCE where
-# it cannot (a distinctive STALLED gate status plus a red run, so the
-# sustained-failure incident sees it). Both directions stay fail-closed: a
-# stalled head is never opened, only reported.
-REVIEW_GATE_STALL_MINUTES = "120"
 
 # Status publisher reject-list: creator logins whose commit statuses are
 # never evidence, applied to BOTH the trusted-context and outage-context

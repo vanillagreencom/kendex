@@ -29,9 +29,7 @@ for v in $vars; do
   # Env-only per-invocation seams, not settings keys — they must not appear
   # as settings assignments (REVIEW_GATE_SETTINGS_FILE overrides the file
   # path in tests; REVIEW_GATE_STATUS_SNAPSHOT_FILE hands one head's
-  # combined-status snapshot in from a converge-style caller;
-  # REVIEW_GATE_EVIDENCE_AT_FILE is where the predicate writes the evaluated
-  # evidence instant back to the v2 writer). The absence is the contract: an
+  # combined-status snapshot in from a converge-style caller). The absence is the contract: an
   # assignment in either example would advertise a per-invocation seam as a
   # repo setting, so it must FAIL here.
   case "$v" in
@@ -54,7 +52,7 @@ for v in $vars; do
         fi
       done
       continue ;;
-    REVIEW_GATE_SETTINGS_FILE|REVIEW_GATE_STATUS_SNAPSHOT_FILE|REVIEW_GATE_EVIDENCE_AT_FILE)
+    REVIEW_GATE_SETTINGS_FILE|REVIEW_GATE_STATUS_SNAPSHOT_FILE)
       for example in "$SKILL_DIR/vstack.settings.toml.example" \
                      "$SKILL_DIR/../../vstack.settings.toml.example"; do
         [ -f "$example" ] || continue
