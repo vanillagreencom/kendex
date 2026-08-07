@@ -513,7 +513,14 @@ pin() { # needle, name
 # all fails (catches quote variants and inverted filters alike). Grep's
 # exit code is branched explicitly — 1 is the passing absence; anything
 # else (2 = read error) fails rather than laundering into a pass.
-pin "    if: github.event_name != 'merge_group'" "tpl: the write job's if: is exactly the merge_group exclusion"
+# Scoped to the write job's block (it is the template's last job): a
+# template-wide search could be satisfied by a condition on some other job.
+write_block="$(sed -n '/^  write:/,$p' "$TEMPLATE")"
+if grep -qF -- "    if: github.event_name != 'merge_group'" <<<"$write_block"; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: the write job's if: is exactly the merge_group exclusion"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: the write job's if: is exactly the merge_group exclusion"
+fi
 rc=0; grep -qF -- "github.event.state" "$TEMPLATE" || rc=$?
 case "$rc" in
   1) PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: no status state filter of any spelling" ;;
