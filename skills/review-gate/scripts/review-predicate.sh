@@ -474,19 +474,36 @@ while IFS= read -r ctx; do
   # fail-open direction this engine exists to avoid. With the list empty
   # (the shipped default) the filter is off entirely and behavior is
   # unchanged.
+  # NEWEST ROW DECIDES, per context. The LIST endpoint returns the full
+  # status HISTORY, not the combined endpoint's latest-per-context
+  # projection — filtering for "any success" would let an old success
+  # outlive a NEWER pending/failure on the same context and open the gate
+  # on stale evidence (a reviewer starting a fresh round posts pending over
+  # its own earlier success). Publisher-rejected rows are dropped BEFORE
+  # choosing the newest — a rejected creator is "not evidence either way",
+  # and letting a minted row mask real rows would hand PR content a
+  # close-the-gate lever it should not have (only toward closed, but still
+  # not its call). The newest ACCEPTED row must then itself be a clean
+  # success: a newest row that is pending/failure, or a skip-filtered
+  # success ("rate limited"), is silence — exactly what the combined
+  # endpoint's projection used to yield.
   check_status="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" --arg reject "$PUBLISHER_REJECT" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
       | [ .statuses[]
-          | select(.context == $ctx and .state == "success")
+          | select(.context == $ctx)
           # Bind the login BEFORE index(): inside index(...) the dot rebinds
           # to $rj, so `.creator` would index the reject ARRAY, not the
           # status. Same rebinding trap the comment-form matcher documents.
           | (.creator.login // "") as $cl
           | select(($rj | length) == 0 or ($cl != "" and ($rj | index($cl)) == null))
-          | ((.description // "") | ascii_downcase) as $text
-          | select(([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
-        ] | length' <<<"$status_resp")" || {
+        ]
+      | sort_by(.created_at // "") | last
+      | if . == null then 0
+        elif .state == "success"
+             and ((((.description // "") | ascii_downcase) as $text
+                   | [ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
+        then 1 else 0 end' <<<"$status_resp")" || {
     echo "::error::could not evaluate '$ctx' commit status" >&2
     exit 2
   }
@@ -586,18 +603,23 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
   # documented. The reason rides out in the verdict detail below, flattened
   # at the source because it is API text travelling through a one-line
   # contract and a one-line status description.
+  # Same newest-accepted-row semantics as the trusted-context read above
+  # (the LIST endpoint is a history): an operator withdrawing an override
+  # by posting pending/failure on the same context must actually withdraw
+  # it — an older success may not outlive the newer row.
   outageok_out="$(jq -r --arg ctx "$OUTAGE_CONTEXT" --arg reject "$PUBLISHER_REJECT" '
     ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
     | [ .statuses[]
-        | select(.context == $ctx and .state == "success")
+        | select(.context == $ctx)
         | (.creator.login // "") as $cl
         | select(($rj | length) == 0 or ($cl != "" and ($rj | index($cl)) == null))
-        | select(((.description // "") | gsub("^\\s+|\\s+$"; "") | length) > 0)
       ]
-    | [ length,
-        (if length == 0 then ""
-         else (sort_by(.created_at // "") | last | (.description // "") | gsub("[\n\r\t]"; " ")) end) ]
-    | "\(.[0])\t\(.[1])"' <<<"$status_resp")" || {
+    | sort_by(.created_at // "") | last
+    | if . == null then "0\t"
+      elif .state == "success"
+           and (((.description // "") | gsub("^\\s+|\\s+$"; "") | length) > 0)
+      then "1\t\((.description // "") | gsub("[\n\r\t]"; " "))"
+      else "0\t" end' <<<"$status_resp")" || {
     echo "::error::could not evaluate the operator-override status" >&2
     exit 2
   }

@@ -129,6 +129,14 @@ if [ -z "${PR_NUMBER:-}" ]; then
     echo "::error::could not list open PRs"
     exit 1
   }
+  # A SUCCESSFUL call that produced zero bytes is a broken read, not an
+  # empty repo — a truly-empty PR list is the two-byte page `[]`. Slurping
+  # nothing to [] would report "converging 0 open PR(s)" and exit green,
+  # silently stranding every gate until the next pass.
+  if [ -z "$raw_prs" ]; then
+    echo "::error::open-PR listing produced zero bytes (broken read); taking no action"
+    exit 1
+  fi
   prs="$(jq -s '[add // [] | .[] | {number, headRefOid: .head.sha, author: {login: (.user.login // "")}}]' <<<"$raw_prs")" || {
     echo "::error::could not parse the open-PR list"
     exit 1
@@ -184,6 +192,13 @@ raw_statuses="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses" --paginate)" 
   echo "::error::could not read commit statuses for $HEAD_SHA; taking no action"
   exit 1
 }
+# Zero bytes from a successful read is broken, not "no statuses" (that is
+# `[]`): slurped to an empty list it would read as gate-absent and trigger
+# a redundant post at best, a misread current state at worst.
+if [ -z "$raw_statuses" ]; then
+  echo "::error::commit-statuses read for $HEAD_SHA produced zero bytes (broken read); taking no action"
+  exit 1
+fi
 gate_statuses="$(jq -s --arg ctx "$GATE_CONTEXT" '[add // [] | .[] | select(.context == $ctx)]' <<<"$raw_statuses")" || {
   echo "::error::could not parse commit statuses for $HEAD_SHA; taking no action"
   exit 1
