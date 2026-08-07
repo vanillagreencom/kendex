@@ -351,22 +351,25 @@ if [ -n "${REVIEW_GATE_STATUS_SNAPSHOT_FILE:-}" ]; then
   # head sha at top level and satisfies the binding as-is; paginating
   # callers must merge all pages' statuses into the one array first (a
   # first-page-only snapshot silently drops later-page evidence).
-  status_resp="$(jq --arg sha "$HEAD_SHA" '
-                     if (type == "object") and ((.statuses | type) == "array")
-                        and (.sha == $sha)
-                     then {statuses: .statuses}
-                     else error("not a combined-status snapshot for this head") end' \
+  #
+  # Slurped, requiring exactly ONE value: a caller that hands over
+  # concatenated page responses would otherwise yield one normalized object
+  # per value, and every downstream per-value jq read would emit multi-line
+  # counts ("0\n0") that fail the string comparisons in the verdict logic —
+  # with no trusted contexts configured that fell through to an approval
+  # with zero evidence (vstack#1086). Slurping also makes a zero-value
+  # (empty or whitespace-only) file hit the error branch instead of jq's
+  # silent empty-output success.
+  status_resp="$(jq -s --arg sha "$HEAD_SHA" '
+                     if (length == 1) and (.[0]
+                        | (type == "object") and ((.statuses | type) == "array")
+                          and (.sha == $sha))
+                     then {statuses: .[0].statuses}
+                     else error("not a single combined-status snapshot for this head") end' \
                     "$REVIEW_GATE_STATUS_SNAPSHOT_FILE" 2>/dev/null)" || {
-    echo "::error::REVIEW_GATE_STATUS_SNAPSHOT_FILE '$REVIEW_GATE_STATUS_SNAPSHOT_FILE' is not a readable combined-status snapshot bound to $HEAD_SHA (JSON object with a statuses array and top-level sha == HEAD_SHA)" >&2
+    echo "::error::REVIEW_GATE_STATUS_SNAPSHOT_FILE '$REVIEW_GATE_STATUS_SNAPSHOT_FILE' is not a readable combined-status snapshot bound to $HEAD_SHA (exactly one JSON object with a statuses array and top-level sha == HEAD_SHA)" >&2
     exit 2
   }
-  # A zero-value input (empty file) makes jq exit 0 WITHOUT output — the
-  # error() branch never runs because there is no value to run it on — so
-  # emptiness is checked on the result, same contract as the fetched path.
-  if [ -z "$status_resp" ]; then
-    echo "::error::REVIEW_GATE_STATUS_SNAPSHOT_FILE '$REVIEW_GATE_STATUS_SNAPSHOT_FILE' contains no JSON value (empty snapshot — broken caller handoff)" >&2
-    exit 2
-  fi
 else
   status_pages="$(gh_read "repos/$GH_REPO/commits/$HEAD_SHA/status?per_page=100" --paginate)" || {
     echo "::error::could not read the combined commit status for $HEAD_SHA" >&2
@@ -380,8 +383,10 @@ else
   # object, `{}`, a truncated body) would survive the zero-byte guard, then
   # `map(.statuses) | add // []` collapses its null into an empty status list
   # and the predicate reaches a verdict on broken evidence. A broken read is
-  # exit 2, never an empty-evidence verdict.
-  status_resp="$(jq -s 'if all(type == "object" and ((.statuses | type) == "array"))
+  # exit 2, never an empty-evidence verdict. `length > 0` guards the vacuous
+  # case: a whitespace-only response passes the -z check yet slurps to [],
+  # where all(...) is trivially true (vstack#1086).
+  status_resp="$(jq -s 'if (length > 0) and all(type == "object" and ((.statuses | type) == "array"))
                         then {statuses: (map(.statuses) | add // [])}
                         else error("not a combined-status page") end' \
                     <<<"$status_pages" 2>/dev/null)" || {

@@ -967,6 +967,27 @@ jq -n '{statuses:[{context:"mech-ctx",state:"success",description:"analysis comp
 CFG_SNAPSHOT="$fixtures/unbound-snapshot.json"
 run "snapshot seam: snapshot with NO top-level sha is exit 2 (binding required)" "" 2
 
+# Multi-value snapshots (vstack#1086): a caller that concatenates page
+# responses instead of merging their statuses used to yield one normalized
+# object per value; downstream per-value jq reads then emitted multi-line
+# counts ("0\n0") that dodge every string comparison — with no trusted
+# contexts that fell through to verdict=approved on zero evidence. The
+# snapshot contract is exactly ONE head-bound object; anything else is a
+# broken caller handoff.
+reset
+CFG_CONTEXTS="mech-ctx"
+{ jq -n --arg sha "$HEAD" '{sha:$sha,statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",creator:null}]}'
+  jq -n --arg sha "$HEAD" '{sha:$sha,statuses:[]}'; } >"$fixtures/multi-snapshot.json"
+CFG_SNAPSHOT="$fixtures/multi-snapshot.json"
+run "snapshot seam: multi-value snapshot (concatenated pages) is exit 2" "" 2
+
+reset
+CFG_CONTEXTS=""
+CFG_OUTAGE="mech-outage"
+printf '{"sha":"%s","statuses":[]}\n{"sha":"%s","statuses":[]}\n' "$HEAD" "$HEAD" >"$fixtures/multi-snapshot.json"
+CFG_SNAPSHOT="$fixtures/multi-snapshot.json"
+run "snapshot seam: multi-value snapshot with NO trusted contexts is exit 2 (was approved on zero evidence)" "" 2
+
 # Combined-status page validation (VST-71): a nonempty NON-STATUS page (`{}`,
 # an error object) survives the zero-byte guard, and the old merge collapsed
 # its missing statuses into an empty list — a verdict from broken evidence.
@@ -979,6 +1000,10 @@ run "combined-status page without a statuses array is exit 2, not empty evidence
 reset
 printf '[]\n' >"$fixtures/status.json"
 run "non-object combined-status page is exit 2" "" 2
+
+reset
+printf '\n   \n' >"$fixtures/status.json"
+run "whitespace-only combined-status response is exit 2, not a vacuous empty status set (vstack#1086)" "" 2
 
 reset
 CFG_CONTEXTS="mech-ctx"

@@ -11,6 +11,12 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 
 fail=0
 
+# Shared by the forbidden-assignment guard below and its failing-direction
+# self-check, so the self-check exercises the real matcher, not a copy.
+forbidden_assignment_matches() { # key, file
+  grep -qE "^[[:space:]]*(\"?${1}\"?|'${1}')[[:space:]]*=" "$2"
+}
+
 vars="$(grep -rhoE 'REVIEW_GATE_[A-Z_]+' \
   "$SKILL_DIR/scripts" "$SKILL_DIR/templates" | sort -u)"
 [ -n "$vars" ] || { echo "FAIL: no REVIEW_GATE_* variables found in scripts/"; exit 1; }
@@ -33,7 +39,7 @@ for v in $vars; do
         [ -f "$example" ] || continue
         # Whitespace/quote-tolerant: any TOML spelling of an assignment for
         # this name must fail, not just the canonical `KEY = ` shape.
-        if grep -qE "^[[:space:]]*(\"?${v}\"?|'${v}')[[:space:]]*=" "$example"; then
+        if forbidden_assignment_matches "$v" "$example"; then
           echo "FAIL: $v is an env-only per-invocation seam but is assigned in $example"
           fail=1
         fi
@@ -54,6 +60,26 @@ for key in $(sed -n 's/^\(REVIEW_GATE_[A-Z_]*\) = .*/\1/p' "$SKILL_DIR/vstack.se
     fail=1
   fi
 done
+
+# Failing-direction self-check: the forbidden-assignment guard above only
+# ever runs against examples where the keys are absent, so it would stay
+# green even if the matcher stopped recognizing assignments. Prove each
+# TOML spelling actually trips the matcher (vstack#1086).
+matcher_fixture="$(mktemp)"
+while IFS= read -r spelling; do
+  printf '%s\n' "$spelling" >"$matcher_fixture"
+  if ! forbidden_assignment_matches "REVIEW_GATE_SETTINGS_FILE" "$matcher_fixture"; then
+    echo "FAIL: forbidden-assignment matcher misses spelling: $spelling"
+    fail=1
+  fi
+done <<'SPELLINGS'
+REVIEW_GATE_SETTINGS_FILE = "x"
+REVIEW_GATE_SETTINGS_FILE="x"
+"REVIEW_GATE_SETTINGS_FILE" = "x"
+'REVIEW_GATE_SETTINGS_FILE' = "x"
+   REVIEW_GATE_SETTINGS_FILE = "x"
+SPELLINGS
+rm -f "$matcher_fixture"
 
 if [ "$fail" -ne 0 ]; then
   echo "settings-vars-documented: FAIL"
