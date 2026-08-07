@@ -362,6 +362,12 @@ THREADS="verdict=threads-open detail=2 unresolved review thread(s)"
 # 2020-06-01) and every evaluation instant; LATE lands after RUN_START but
 # before now; FUTURE postdates every evaluation instant.
 OLD="2020-01-01T00:00:00Z"
+# RECENT is five minutes ago: inside the stall bound (so markers dated with
+# it exercise the WAITING path) but strictly BEFORE this run's evaluation
+# instant, so it does not also trip the VST-65 ordering guard. Markers dated
+# OLD are past the bound and exercise the self-heal path.
+RECENT="$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u -v-5M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
 LATE="2020-12-31T00:00:00Z"
 FUTURE="2999-01-01T00:00:00Z"
 
@@ -421,7 +427,7 @@ assert_not_contains "$(cat "$POST_LOG")" "state=success" "w8/10a: marker-less co
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "w8/10a: marker-less completion issues the proof rerun instead"
 assert_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w8/10a: and records the marker"
 
-MARKER_ENTRY='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 1); success posts on its completion","created_at":"'"$OLD"'"}'
+MARKER_ENTRY='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 1); success posts on its completion","created_at":"'"$RECENT"'"}'
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
   EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed) || rc=$?
 assert_eq "$rc" "0" "w8b: marker + completed proof attempt exits 0"
@@ -452,7 +458,7 @@ assert_contains "$out" "no completion above the floor" "w8e: says why it waits"
 # pre-approval rerun that ran gate-closed, so the marker records the attempt
 # floor that existed when the proof rerun was issued and only completions
 # ABOVE it certify.
-MARKER_FLOOR2='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 2); success posts on its completion","created_at":"'"$OLD"'"}'
+MARKER_FLOOR2='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 2); success posts on its completion","created_at":"'"$RECENT"'"}'
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_FLOOR2]" \
   EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed) || rc=$?
 assert_eq "$rc" "0" "w8f: marker floor above the visible attempt exits 0"
@@ -487,6 +493,48 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
   EVENT_NAME=pull_request_review STUB_RUNS_MODE=two_lanes STUB_RERUN_MODE=refuse) || rc=$?
 assert_eq "$rc" "0" "w8j: refused reruns exit 0 (stuck, not malfunction)"
 assert_not_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w8j: no marker when every rerun was refused"
+
+echo "=== bounded waiting: a wait is only correct while the signal can arrive ==="
+
+# A marker whose proof attempt was cancelled/evicted leaves this branch
+# waiting for a completion above the floor that is never coming — and the
+# marker branch never re-issues on its own, so it CANNOT self-heal. Past the
+# stall bound the writer stops waiting and issues a fresh proof rerun. No
+# double-bill: the attempt it replaces produced no completion.
+STALE_MARKER='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 1); success posts on its completion","created_at":"'"$OLD"'"}'
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$STALE_MARKER]" \
+  EVENT_NAME=schedule STUB_RUNS_MODE=completed) || rc=$?
+assert_eq "$rc" "0" "w31: a stalled marker exits 0"
+assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "w31: past the stall bound the writer RE-ISSUES the proof rerun (the livelock cannot persist)"
+assert_contains "$out" "is not coming" "w31: says why it stopped waiting"
+assert_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w31: and records a fresh marker"
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "w31: still never a success without proof"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$STALE_MARKER]" \
+  EVENT_NAME=schedule STUB_RUNS_MODE=completed REVIEW_GATE_STALL_MINUTES=0) || rc=$?
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w31b: REVIEW_GATE_STALL_MINUTES=0 disables the bound (waits as before)"
+
+# A head that never produces a pull_request run has no completion coming
+# either, and the writer cannot manufacture one — so it escalates ONCE:
+# a distinctive STALLED status plus a red run for the VST-36 incident.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$OLD"'"}]' \
+  STUB_RUNS_MODE=empty) || rc=$?
+assert_eq "$rc" "1" "w32: a head with no CI run at all REDS past the bound (VST-36 sees it)"
+assert_contains "$(cat "$POST_LOG")" "STALLED:" "w32: and marks the gate status so the PR shows why"
+assert_contains "$out" "has EVER existed" "w32: names the condition"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"STALLED: no CI run exists for this head; the gate cannot converge until one does","created_at":"'"$OLD"'"}]' \
+  STUB_RUNS_MODE=empty) || rc=$?
+assert_eq "$rc" "0" "w33: an already-reported stall stays quiet (exit 0)"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w33: and posts nothing — one escalation per stall, never a spam loop"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"'"$RECENT"'"}]' \
+  STUB_RUNS_MODE=empty) || rc=$?
+assert_eq "$rc" "0" "w34: inside the bound it still just waits (no premature escalation)"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w34: and posts nothing"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
   EVENT_NAME=workflow_run) || rc=$?

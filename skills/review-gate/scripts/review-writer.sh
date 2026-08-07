@@ -109,6 +109,10 @@
 #                 bounded retry budget for THROTTLED rerun POSTs (default 1 =
 #                 no retry). Only throttles retry; refusals and server errors
 #                 never do.
+#   REVIEW_GATE_STALL_MINUTES       how long a head may sit in one waiting
+#                 disposition before the writer stops waiting (default 120;
+#                 0 disables). Waits are only correct while the awaited
+#                 event CAN still arrive — see BOUNDED WAITING below.
 #
 # STUCK vs MALFUNCTION (VST-36, ported from the refire/sweep — plan Change
 # 1b's disposition, exactly): "GitHub refuses the rerun" (unqualified 4xx)
@@ -144,6 +148,7 @@ MAX_ATTEMPTS="$(rg_setting REVIEW_GATE_MAX_RERUN_ATTEMPTS "5")" || exit 1
 GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
 API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
 API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
+STALL_MINUTES="$(rg_setting REVIEW_GATE_STALL_MINUTES "120")" || exit 1
 
 case "$MAX_ATTEMPTS" in
   ''|*[!0-9]*)
@@ -160,6 +165,12 @@ esac
 case "$API_RETRY_DELAY" in
   ''|*[!0-9]*)
     echo "::error::review-writer: REVIEW_GATE_API_RETRY_DELAY_SECONDS must be a non-negative integer, got '$API_RETRY_DELAY'"
+    exit 1
+    ;;
+esac
+case "$STALL_MINUTES" in
+  ''|*[!0-9]*)
+    echo "::error::review-writer: REVIEW_GATE_STALL_MINUTES must be a non-negative integer, got '$STALL_MINUTES'"
     exit 1
     ;;
 esac
@@ -358,6 +369,43 @@ fi
 # floor: a missed completion event converges on the next tick.
 MARKER_PREFIX="approved: proof CI attempt re-running"
 MARKER_SUFFIX="; success posts on its completion"
+STALL_PREFIX="STALLED:"
+
+# BOUNDED WAITING (the "signal that never arrives" class). Several branches
+# below park the head and wait for an event. Each is correct only while the
+# awaited event CAN still happen — and two of them have shapes where it
+# cannot: a head that never produces a pull_request run at all (path
+# filters, disabled workflows) has no completion coming, and a proof attempt
+# that is CANCELLED before finishing leaves the marker branch waiting for a
+# completion above the floor that will never exist. The marker branch never
+# re-issues a rerun (that is what stops double-billing), so on its own it
+# cannot self-heal. Both fail CLOSED — the gate stays pending and nothing
+# untested merges — but "quietly pending forever" is not convergence, and it
+# is invisible because these passes exit 0.
+#
+# So every wait is bounded by REVIEW_GATE_STALL_MINUTES, measured from the
+# CURRENT gate status's own created_at (no new state to store):
+#   - where the writer CAN act, it acts: a stalled marker re-issues the
+#     proof rerun. That cannot double-bill, because the attempt it replaces
+#     produced no completion, and MAX_RERUN_ATTEMPTS still bounds it.
+#   - where it CANNOT (no runs exist at all), it says so ONCE: it posts a
+#     distinctive STALLED description and reds that run so the VST-36
+#     escalation opens the rolling incident. Subsequent passes see their own
+#     STALLED marker and stay quiet, so a long-dead PR cannot spam the
+#     incident or redden the health signal forever.
+stall_age_minutes() { # -> whole minutes since the current gate entry, or -1
+  sam_at="$(jq -r '.[0].created_at // ""' <<<"$gate_statuses")"
+  [ -z "$sam_at" ] && { printf '%s' -1; return; }
+  sam_then="$(date -u -d "$sam_at" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$sam_at" +%s 2>/dev/null)"
+  [ -z "$sam_then" ] && { printf '%s' -1; return; }
+  printf '%s' $(( ( $(date -u +%s) - sam_then ) / 60 ))
+}
+stalled() { # -> 0 when the head has waited past the bound (0 disables)
+  [ "$STALL_MINUTES" = "0" ] && return 1
+  st_age="$(stall_age_minutes)"
+  [ "$st_age" -lt 0 ] && return 1
+  [ "$st_age" -ge "$STALL_MINUTES" ]
+}
 
 # One runs read serves every branch. Paginated + slurped like every other
 # list read: repeated reopen/ready transitions can push a head past one
@@ -407,12 +455,20 @@ if [ "$marker_present" = "1" ]; then
     post_success_guarded "$detail"
     exit 0
   fi
-  if [ "$completed" -gt 0 ]; then
+  if stalled; then
+    # The proof attempt is provably never arriving (cancelled, evicted, or
+    # deleted), and this branch never re-issues on its own — so fall through
+    # to the rerun path and issue a fresh one. Safe against double-billing:
+    # the attempt being replaced produced no completion, and the cap still
+    # bounds how many attempts a head can accumulate.
+    echo "::warning::proof marker on $HEAD_SHA is $(stall_age_minutes)m old with no completion above attempt $marker_floor; the issued attempt is not coming — re-issuing the proof rerun"
+  elif [ "$completed" -gt 0 ]; then
     echo "proof marker present (floor: attempt $marker_floor) but no completion above the floor is visible yet (the issued rerun is not yet listed); waiting — the proof attempt's completion converges this head"
     exit 0
+  else
+    echo "::warning::proof marker present but no pull_request runs visible on $HEAD_SHA (deleted or expired runs?); leaving the gate pending — the cron floor re-examines"
+    exit 0
   fi
-  echo "::warning::proof marker present but no pull_request runs visible on $HEAD_SHA (deleted or expired runs?); leaving the gate pending — the cron floor re-examines"
-  exit 0
 fi
 
 # No marker: first awaiting→approved handling for this head. A run cannot
@@ -425,8 +481,22 @@ if [ "$in_progress" -ne 0 ]; then
 fi
 
 if [ "$total" -eq 0 ]; then
-  # Not stuck under the workflow_run mechanism: when a run appears and
-  # completes, the writer converges this head (Change 1b).
+  # Normally not stuck: when a run appears and completes, the writer
+  # converges this head (Change 1b). But if NO pull_request run ever appears
+  # — path filters, a disabled workflow, a repo with no PR CI — the awaited
+  # completion is never coming and this head would pend forever in silence.
+  # The writer cannot manufacture a run, so it escalates ONCE.
+  case "$current_desc" in
+    "$STALL_PREFIX"*)
+      echo "::warning::head $HEAD_SHA is still stalled with no pull_request runs; already reported — staying quiet"
+      exit 0
+      ;;
+  esac
+  if stalled; then
+    echo "::error::no pull_request run has EVER existed on head $HEAD_SHA after $(stall_age_minutes)m; the completion leg has nothing to wait for and this head cannot converge without a workflow that runs on this PR"
+    post_status pending "$STALL_PREFIX no CI run exists for this head; the gate cannot converge until one does"
+    exit 1
+  fi
   echo "::warning::no completed pull_request runs exist on head $HEAD_SHA; nothing to re-run yet — the workflow_run completion leg converges when one completes"
   exit 0
 fi
