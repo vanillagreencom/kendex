@@ -25,6 +25,10 @@
 #     forking cannot provide one; s5 then SKIPS loudly rather than failing.
 #     Use a public sandbox for that scenario, or create the fork by hand.
 #
+# Invocation: E2E_REPO=<owner>/<repo> bash tests/e2e-sandbox.sh
+# Without E2E_REPO the driver SKIPS — it is a live driver, and the repo's
+# offline skill-suite sweep runs every tests/*.sh.
+#
 # Scenario selection: E2E_SCENARIOS="s1 s2 ..." (default: all). Scenarios
 # are independent; each opens its own PR(s) and closes them on exit.
 #
@@ -38,7 +42,16 @@
 #   qodo        plain APPROVED review object
 set -uo pipefail
 
-REPO="${E2E_REPO:-vanillagreencom/review-gate-sandbox}"
+# LIVE driver, opt-in by design: it drives a real GitHub repo through real
+# PR lifecycles, so it must never run as part of the offline skill-suite
+# sweep (which executes every skills/*/tests/*.sh). Setting E2E_REPO is the
+# opt-in. Reaching this line still proves the file parses, so the sweep keeps
+# catching syntax errors in it.
+if [ -z "${E2E_REPO:-}" ]; then
+  echo "e2e-sandbox: LIVE Layer-2 driver — skipped (set E2E_REPO=<owner>/<repo> to run against a sandbox)"
+  exit 0
+fi
+REPO="$E2E_REPO"
 SCENARIOS="${E2E_SCENARIOS:-s1 s2 s3 s4 s5 s6 s7 s9 s10a s10b s10d sfinal}"
 GATE_CTX="Review gate"
 OVERRIDE_CTX="vstack-reviewer-outage"
