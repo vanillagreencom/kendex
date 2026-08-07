@@ -129,7 +129,18 @@ TRUSTED_CONTEXTS="$(rg_setting REVIEW_GATE_TRUSTED_STATUS_CONTEXTS "")" || exit 
 SKIP_PATTERNS="$(rg_setting REVIEW_GATE_CHECKRUN_SKIP_PATTERNS "rate limited;skipped;queued")" || exit 2
 COMMENT_REVIEWERS="$(rg_setting REVIEW_GATE_COMMENT_REVIEWERS "")" || exit 2
 SHA_FLOOR="$(rg_setting REVIEW_GATE_SHA_PREFIX_FLOOR "7")" || exit 2
-OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 2
+# Operator override context, v2 name, resolved HERE (not only in the writer):
+# every live gate read — the writer, consumers' heavy-job gate jobs, the
+# selftest — goes through this predicate, so an adopter who sets only the v2
+# key must not silently lose their override. Presence is detected with a
+# sentinel default: a key set nowhere leaves the legacy resolution untouched;
+# a key set anywhere (even to the empty string, which disables the source)
+# wins over the legacy name.
+override_sentinel="__review-gate-override-unset__"
+OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "$override_sentinel")" || exit 2
+if [ "$OUTAGE_CONTEXT" = "$override_sentinel" ]; then
+  OUTAGE_CONTEXT="$(rg_setting REVIEW_GATE_OUTAGE_CONTEXT "vstack-reviewer-outage")" || exit 2
+fi
 PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 2
 TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 2
 MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 2
@@ -562,6 +573,12 @@ if [ -n "$COMMENT_REVIEWERS" ]; then
       (($pat | requote) + "[^0-9a-fA-F]*([0-9a-fA-F]{" + $floor + ",40})") as $re
       | [ .[]
           | select(.user.login == $bot and .user.login != $author)
+          # An EDITED comment has its edit time as the evidence instant, not
+          # its creation time: a rolling comment edited to add the binding
+          # line is evidence from the edit onward, and dating it to creation
+          # would backdate it past attempts that ran before the edit (the
+          # v2 writer ordering fast path keys on this instant).
+          | . + {evidence_instant: ([(.updated_at // ""), (.created_at // "")] | max)}
           # Bind the claimed sha BEFORE comparing. Piping the head into
           # startswith and referring to the scanned value as dot rebinds dot
           # to the head inside that pipe, so every comment matches itself and
@@ -573,7 +590,7 @@ if [ -n "$COMMENT_REVIEWERS" ]; then
                      | select(($sha | ascii_downcase) | startswith($claimed))
                    ] | length > 0)
         ]
-      | [length, (map(.created_at // "")
+      | [length, (map(.evidence_instant // "")
                   | if any(. == "") then "" else (max // "") end)]
       | "\(.[0])\t\(.[1])"' <<<"$comments")" || {
       echo "::error::could not evaluate '$login' review comments for PR #$PR_NUMBER" >&2
@@ -599,6 +616,7 @@ fi
 # contexts above. See orch DEVELOPMENT.md "Reviewer-outage recognition".
 outageok=0
 outage_at=""
+outage_reason=""
 outage_at_missing=0
 if [ -n "$OUTAGE_CONTEXT" ]; then
   # The publisher reject-list applies here too — the outage relaxation is
@@ -606,20 +624,30 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
   # github-actions[bot] where PR workflows hold statuses:write) must not be
   # able to mint it. Same null-creator semantics as the trusted-context
   # read above: App-posted statuses are never rejected by a login entry.
+  # The REASON is mandatory (plan Change 2, finding 9, carried verbatim from
+  # the outage semantics): an override with an empty description is not an
+  # attestation, it is an unexplained relaxation — and it is the
+  # highest-value status in the system to forge. Enforced here, not merely
+  # documented, so the settings docs describe a mechanism rather than a
+  # convention. The reason rides out in the verdict detail below, which the
+  # writer puts in the gate status.
   outageok_out="$(jq -r --arg ctx "$OUTAGE_CONTEXT" --arg reject "$PUBLISHER_REJECT" '
     ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
     | [ .statuses[]
         | select(.context == $ctx and .state == "success")
         | select((.creator.login // "") as $l | ($rj | index($l)) == null)
+        | select(((.description // "") | gsub("^\\s+|\\s+$"; "") | length) > 0)
       ]
-    | [length, (map(.created_at // "")
-                | if any(. == "") then "" else (max // "") end)]
-    | "\(.[0])\t\(.[1])"' <<<"$status_resp")" || {
-    echo "::error::could not evaluate the reviewer-outage status" >&2
+    | [ length,
+        (map(.created_at // "") | if any(. == "") then "" else (max // "") end),
+        (if length == 0 then "" else (sort_by(.created_at // "") | last | .description // "") end) ]
+    | "\(.[0])\t\(.[1])\t\(.[2])"' <<<"$status_resp")" || {
+    echo "::error::could not evaluate the operator-override status" >&2
     exit 2
   }
-  outageok="${outageok_out%%$'\t'*}"
-  outage_at="${outageok_out#*$'\t'}"
+  outageok="$(cut -f1 <<<"$outageok_out")"
+  outage_at="$(cut -f2 <<<"$outageok_out")"
+  outage_reason="$(cut -f3- <<<"$outageok_out")"
   [ "$outageok" != "0" ] && [ -z "$outage_at" ] && outage_at_missing=1
 fi
 
@@ -849,6 +877,12 @@ elif [ "$unresolved" != "0" ]; then
   echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
 elif [ "$carried" = "1" ]; then
   echo "verdict=approved detail=review evidence at $carry_base carried to head across a $carry_kind"
+  echo "evidence_at=$evidence_at"
+elif [ "$outageok" != "0" ] && [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ]; then
+  # The override is SUBSTITUTING for missing evidence (its only sanctioned
+  # use), so the attested reason is the verdict — it belongs in the gate
+  # status where a reader sees why this PR merged without a review.
+  echo "verdict=approved detail=operator override ($OUTAGE_CONTEXT): $outage_reason"
   echo "evidence_at=$evidence_at"
 else
   echo "verdict=approved detail=reviewed at head with no unresolved threads"

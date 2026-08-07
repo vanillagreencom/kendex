@@ -220,8 +220,11 @@ jobs:
           # A FAILED lookup must not fall through to "no open incident" — a
           # transient read failure would then mint a duplicate rolling issue
           # per failing run. Warn and stop; the next failing run retries.
+          # Author-constrained: an exact-title match alone is squattable —
+          # anyone who can open an issue could pre-create this title and
+          # collect every future failure comment on an issue they own.
           if ! nums="$(gh api "repos/$GH_REPO/issues?state=open&per_page=100" --paginate \
-            --jq "[.[] | select(.pull_request == null and .title == \"$title\")][0].number // empty")"; then
+            --jq "[.[] | select(.pull_request == null and .title == \"$title\" and .user.login == \"github-actions[bot]\")][0].number // empty")"; then
             echo "::warning::could not look up the rolling incident issue; skipping escalation for this run to avoid a duplicate ($RUN_URL)"
             exit 0
           fi

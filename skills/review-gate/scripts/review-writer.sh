@@ -95,13 +95,10 @@
 #                 and converge every open PR.
 # Settings (lib/settings.sh — env > vstack.settings.toml > default):
 #   REVIEW_GATE_CONTEXT             gate commit-status context (default "Review gate")
-#   REVIEW_GATE_OVERRIDE_CONTEXT    v2 name for the operator override status
-#                 context (plan Change 2). Implemented as an ALIAS: when the
-#                 key is present (env or settings file) its value is
-#                 exported to the predicate as REVIEW_GATE_OUTAGE_CONTEXT;
-#                 when absent, the predicate's own REVIEW_GATE_OUTAGE_CONTEXT
-#                 resolution applies unchanged — existing repos keep working
-#                 without edits.
+#                 (REVIEW_GATE_OVERRIDE_CONTEXT — the v2 name for the
+#                 operator override status, plan Change 2 — is resolved by
+#                 review-predicate.sh itself, so EVERY live gate read honors
+#                 it, not just this writer.)
 #   REVIEW_GATE_MAX_RERUN_ATTEMPTS  rerun backstop (default 5): runs at/above
 #                 the cap are left alone (gh run rerun retries manually).
 #                 Legacy MAX_ATTEMPTS env is honored.
@@ -166,18 +163,6 @@ esac
 if [ -z "$GATE_CONTEXT" ]; then
   echo "::error::review-writer: REVIEW_GATE_CONTEXT must not be empty"
   exit 1
-fi
-
-# The REVIEW_GATE_OVERRIDE_CONTEXT alias (header note): presence is detected
-# with a sentinel default — a key that resolves to the sentinel was set
-# nowhere and leaves the predicate's own outage-context resolution alone.
-# When present (even explicitly empty, which disables the override source),
-# the value is exported as REVIEW_GATE_OUTAGE_CONTEXT for the child
-# predicate, so the OVERRIDE name wins over a file-level OUTAGE assignment.
-override_sentinel="__review-gate-override-unset__"
-override_ctx="$(rg_setting REVIEW_GATE_OVERRIDE_CONTEXT "$override_sentinel")" || exit 1
-if [ "$override_ctx" != "$override_sentinel" ]; then
-  export REVIEW_GATE_OUTAGE_CONTEXT="$override_ctx"
 fi
 
 if [ -z "${GH_REPO:-}" ]; then
@@ -361,7 +346,8 @@ fi
 # when that marker is present and the attempt has completed. Keying on the
 # MARKER (not on the triggering event) also keeps the cron leg a true
 # floor: a missed completion event converges on the next tick.
-MARKER_DETAIL="approved: proof CI attempt re-running; success posts on its completion"
+MARKER_PREFIX="approved: proof CI attempt re-running"
+MARKER_SUFFIX="; success posts on its completion"
 
 # One runs read serves every branch. Paginated + slurped like every other
 # list read: repeated reopen/ready transitions can push a head past one
@@ -378,21 +364,32 @@ in_progress="$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")"
 total="$(jq length <<<"$runs")"
 completed=$((total - in_progress))
 
-if [ "$current_state" = "pending" ] && [ "$current_desc" = "${MARKER_DETAIL:0:140}" ]; then
+case "$current_state:$current_desc" in
+  "pending:$MARKER_PREFIX"*) marker_present=1 ;;
+  *) marker_present=0 ;;
+esac
+if [ "$marker_present" = "1" ]; then
   # Marker present: the proof attempt was issued post-approval.
   if [ "$in_progress" -ne 0 ]; then
     echo "proof attempt still in progress on $HEAD_SHA; its completion re-triggers the writer (workflow_run leg)"
     exit 0
   fi
-  # The marker is only ever posted after a rerun was ISSUED, so the proof
-  # completion always carries run_attempt >= 2 (binding finding F3). A
-  # snapshot showing only a completed attempt 1 is the pre-rerun attempt
-  # surfacing through a stale runs read — between the rerun POST being
-  # accepted and the runs API reporting the new attempt there is a small
-  # window where certifying attempt 1 would green the gate over skipped
-  # heavy jobs. Those snapshots keep waiting; the real completion (or the
-  # next cron tick) converges them.
-  proof_completed="$(jq '[.[] | select(.status == "completed" and ((.run_attempt // 0) >= 2))] | length' <<<"$runs")"
+  # The proof completion must be an attempt this writer's rerun created, so
+  # it must sit ABOVE the attempt floor the marker recorded — the highest
+  # attempt that already existed when the rerun was issued (binding finding
+  # F3, hardened per the pre-PR review). Keying on run_attempt >= 2 alone is
+  # not enough: a MANUAL pre-approval rerun (routine on flaky CI) leaves a
+  # completed attempt 2 that ran gate-closed, which a concurrent pass on a
+  # stale runs read would certify. Timestamps cannot substitute here — the
+  # rerun is issued a moment BEFORE the marker is posted, so the legitimate
+  # proof attempt can start before the marker's own created_at.
+  #
+  # A marker without a parsable floor is a pre-hardening marker (or a
+  # truncated description): fall back to the >= 2 rule rather than wedge.
+  marker_floor="$(sed -n 's/^'"$MARKER_PREFIX"' (above attempt \([0-9][0-9]*\)).*/\1/p' <<<"$current_desc")"
+  [ -z "$marker_floor" ] && marker_floor=1
+  proof_completed="$(jq --argjson floor "$marker_floor" \
+    '[.[] | select(.status == "completed" and ((.run_attempt // 0) > $floor) and ((.run_attempt // 0) >= 2))] | length' <<<"$runs")"
   if [ "$proof_completed" -gt 0 ]; then
     # The approved attempt has RUN (red or green — 10b: a red required
     # check blocks merge on its own; gate red means reviewer objection,
@@ -401,7 +398,7 @@ if [ "$current_state" = "pending" ] && [ "$current_desc" = "${MARKER_DETAIL:0:14
     exit 0
   fi
   if [ "$completed" -gt 0 ]; then
-    echo "proof marker present but only attempt-1 completions are visible (the issued rerun is not yet listed); waiting — the proof attempt's completion converges this head"
+    echo "proof marker present (floor: attempt $marker_floor) but no completion above the floor is visible yet (the issued rerun is not yet listed); waiting — the proof attempt's completion converges this head"
     exit 0
   fi
   echo "::warning::proof marker present but no pull_request runs visible on $HEAD_SHA (deleted or expired runs?); leaving the gate pending — the cron floor re-examines"
@@ -431,24 +428,51 @@ fi
 # can post directly, sparing the redundant rerun. This is what keeps a
 # carry-forward push at ONE heavy CI bill (the owner's trivial-push cost
 # requirement) and removes the redundant rerun when a review lands just
-# before an unrelated push. Two conjuncts, both fail-safe toward the rerun
-# path:
+# before an unrelated push.
+#
+# THE EVIDENCE TERM IS NOT THE ONLY CLOSED VERDICT (pre-PR review, both
+# reviewers, reproduced). "Evidence predates the attempt" only implies the
+# attempt's live read approved when evidence was the ONLY thing that could
+# have closed the gate. Unresolved threads and a standing changes-requested
+# close it for reasons that carry NO timestamp anywhere in the API: a thread
+# resolution and a review dismissal are both eventless and undatable. So an
+# attempt can start well after the evidence and still have run with the gate
+# closed — heavy jobs skipped — and no later entry proves it, because the
+# writer's own idempotent no-op suppresses a re-post of an unchanged closed
+# verdict. A time-windowed blocker test (the first cut here) therefore
+# certifies exactly that attempt.
+#
+# The rule that holds instead: take the fast path only on a head the writer
+# has NEVER observed in a blocker state. Concretely both conjuncts:
 #   1. a completed pull_request attempt with run_started_at > evidence_at
 #      (strict: equal seconds cannot be ordered);
-#   2. ZERO non-success gate entries created at/after evidence_at — a closed
-#      verdict recorded after the evidence existed proves some post-evidence
-#      live read still refused (threads unresolved, changes-requested
-#      standing) and only cleared later with no timestamp to order by, so
-#      timestamps alone cannot certify the attempt (hardening beyond F1's
-#      literal rule; entries with a missing created_at block for the same
-#      reason). Falling to the rerun path costs one rerun, never
-#      correctness.
+#   2. the head's gate history contains NO blocker-class entry AT ALL,
+#      regardless of when it was created. Blocker-class is everything except
+#      success, the awaiting-class pending (missing evidence — the one
+#      closed state evidence_at CAN order), and this writer's own marker.
+#      Unrecognized descriptions count as blockers: unknown states fail
+#      toward the rerun path, which is always sound.
+# Both conjuncts fail safe: falling through costs one rerun, never
+# correctness. Heads that never pended on threads or an objection — the
+# carry-forward push and the review-lands-just-before-push cases F1 exists
+# for — still take it.
+#
+# Residual, deliberately not addressed here: on a fork PR the pull_request
+# workflow set is fork-defined, so the "completed attempt" can be a workflow
+# the fork authored. That is inherent to PR-defined CI (a fork can neuter its
+# own heavy jobs on any path, marker included), and the required heavy
+# contexts are what actually gate the merge.
+AWAITING_PREFIX="awaiting a non-author review"
 if [ -n "$evidence_at" ]; then
   ordered_attempts="$(jq --arg ev "$evidence_at" \
     '[.[] | select(.status == "completed" and ((.run_started_at // "") != "") and (.run_started_at > $ev))] | length' <<<"$runs")"
-  blocking_entries="$(jq --arg ev "$evidence_at" \
-    '[.[] | select(.state != "success") | select(((.created_at // "") == "") or ((.created_at // "") >= $ev))] | length' <<<"$gate_statuses")"
-  if [ "$ordered_attempts" -gt 0 ] && [ "$blocking_entries" = "0" ]; then
+  blocker_entries="$(jq --arg awaiting "$AWAITING_PREFIX" --arg marker "$MARKER_PREFIX" \
+    '[.[] | select(.state != "success")
+          | select(((.state != "pending"))
+                   or (((.description // "") | startswith($awaiting)) | not)
+                      and (((.description // "") | startswith($marker)) | not))
+     ] | length' <<<"$gate_statuses")"
+  if [ "$ordered_attempts" -gt 0 ] && [ "$blocker_entries" = "0" ]; then
     post_success_guarded "$detail"
     exit 0
   fi
@@ -501,11 +525,18 @@ rerun_run() { # run id -> 0 ok; 1 throttled through the budget; 2 refusal; 3 mal
 
 exit_code=0
 issued=0
-# `name` reads last: run names contain spaces.
-while read -r id run_attempt name; do
+# The attempt floor recorded in the marker: the highest attempt that already
+# existed when this rerun was issued, so the completion pass can tell the
+# proof attempt from a manual pre-approval rerun (finding F3, hardened).
+attempt_floor="$(jq '[.[] | (.run_attempt // 0)] | max // 0' <<<"$runs")"
+# @tsv, not string interpolation: a workflow display NAME is PR-defined on
+# fork PRs, and a newline inside it would split one record into two — the
+# synthesized record's first field then feeds a rerun POST for an arbitrary
+# run id. @tsv escapes embedded newlines/tabs, keeping one record per line.
+while IFS=$'\t' read -r id run_attempt name; do
   [ -z "$id" ] && continue
   if [ "$run_attempt" -ge "$MAX_ATTEMPTS" ]; then
-    echo "::warning::run $id ($name) is at attempt $run_attempt (cap $MAX_ATTEMPTS); leaving it alone - gh run rerun to retry manually"
+    echo "::warning::run $id ($name) is at attempt $run_attempt (cap $MAX_ATTEMPTS); leaving it alone — no proof attempt can be issued for this head, so the gate stays pending until a new push, newer evidence, or a raised REVIEW_GATE_MAX_RERUN_ATTEMPTS"
     continue
   fi
   echo "rerun (open the review gate): run $id ($name)"
@@ -531,14 +562,15 @@ while read -r id run_attempt name; do
       exit_code=1
       ;;
   esac
-done < <(jq -r '.[] | "\(.id) \(.run_attempt) \(.name)"' <<<"$runs")
+done < <(jq -r '.[] | [.id, .run_attempt, .name] | @tsv' <<<"$runs")
 
 if [ "$issued" -gt 0 ]; then
-  # At least one proof rerun is underway: record the provenance marker so
-  # the completion pass (event or cron) can post the first success. Posted
+  # At least one proof rerun is underway: record the provenance marker —
+  # carrying the attempt floor — so the completion pass (event or cron) can
+  # tell the proof attempt from any attempt that already existed. Posted
   # even when a sibling run's rerun malfunctioned (exit_code=1 still
   # surfaces to VST-36) — the proof attempt exists either way. The marker
   # is a downward-direction post (pending), so it never defers.
-  post_status pending "$MARKER_DETAIL"
+  post_status pending "$MARKER_PREFIX (above attempt $attempt_floor)$MARKER_SUFFIX"
 fi
 exit "$exit_code"

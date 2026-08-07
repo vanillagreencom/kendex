@@ -55,7 +55,9 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 # review evidence is MISSING — a recorded internal-review outcome, or genuine
 # total reviewer silence. Substitutes for MISSING review evidence only —
 # changes-requested and unresolved threads still fail closed, and the status
-# description must carry a non-empty reason. SECURITY: a deliberate, bounded
+# description must carry a REASON, which is ENFORCED: an empty or
+# whitespace-only description is not evidence, and the reason it does carry
+# rides out in the gate status detail. SECURITY: a deliberate, bounded
 # relaxation with the same trusted-publisher model as
 # REVIEW_GATE_TRUSTED_STATUS_CONTEXTS; name it only where every status
 # publisher is trusted. Empty disables. Implemented as an ALIAS over the

@@ -1328,6 +1328,64 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
   status_ctx "$ACTIVE_OUTAGE" success "reviewer outage attested"
   run "configured: outage attestation ($ACTIVE_OUTAGE)" approved
 
+  # The REASON is enforced, not merely documented: an override with an empty
+  # (or whitespace-only) description is an unexplained relaxation of the one
+  # manual escape hatch the engine keeps.
+  reset
+  status_ctx "$ACTIVE_OUTAGE" success ""
+  run "configured: override with an EMPTY reason is not evidence" awaiting
+
+  reset
+  status_ctx "$ACTIVE_OUTAGE" success "   "
+  run "configured: override with a whitespace-only reason is not evidence" awaiting
+
+  # And the attested reason rides out in the verdict detail, so the gate
+  # status says why this PR merged without a review.
+  reset
+  status_ctx "$ACTIVE_OUTAGE" success "internal review loop clean (attested by the operator)"
+  cases=$((cases + 1))
+  detail_line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
+    REVIEW_GATE_SETTINGS_FILE=/dev/null \
+    REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="$CFG_CONTEXTS" \
+    REVIEW_GATE_COMMENT_REVIEWERS="$CFG_REVIEWERS" \
+    REVIEW_GATE_OUTAGE_CONTEXT="$CFG_OUTAGE" \
+    REVIEW_GATE_STATUS_PUBLISHER_REJECT="$CFG_PUBLISHER_REJECT" \
+    REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
+    REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" REVIEW_GATE_THREADS="$CFG_THREADS" \
+    REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
+    GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
+    "$predicate" 2>/dev/null | head -n 1)"
+  case "$detail_line" in
+    *"operator override"*"internal review loop clean"*)
+      echo "ok    configured: the override reason rides out in the verdict detail (approved)" ;;
+    *)
+      echo "FAIL  configured: override reason missing from the detail: $detail_line" >&2
+      failures=$((failures + 1)) ;;
+  esac
+
+  # The v2 key name is resolved by the PREDICATE (every live gate read
+  # honors it), not only by the writer — an adopter setting just the v2 key
+  # must not silently lose their override.
+  reset
+  CFG_OUTAGE="legacy-name"
+  status_ctx "v2-override-name" success "attested via the v2 key"
+  cases=$((cases + 1))
+  alias_line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
+    REVIEW_GATE_SETTINGS_FILE=/dev/null \
+    REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
+    REVIEW_GATE_OUTAGE_CONTEXT="legacy-name" \
+    REVIEW_GATE_OVERRIDE_CONTEXT="v2-override-name" \
+    REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="" REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" \
+    REVIEW_GATE_THREADS="$CFG_THREADS" REVIEW_GATE_CARRY_FORWARD="" \
+    GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
+    "$predicate" 2>/dev/null | head -n 1)"
+  case "$alias_line" in
+    verdict=approved*) echo "ok    configured: REVIEW_GATE_OVERRIDE_CONTEXT wins over the legacy key in the predicate itself (approved)" ;;
+    *) echo "FAIL  configured: the v2 override key was not honored by the predicate: $alias_line" >&2
+       failures=$((failures + 1)) ;;
+  esac
+  CFG_OUTAGE="$ACTIVE_OUTAGE"
+
   if [ -n "$ACTIVE_PUBLISHER_REJECT" ]; then
     reset
     status_ctx "$ACTIVE_OUTAGE" success "reviewer outage attested" "$(first_item "$ACTIVE_PUBLISHER_REJECT")"

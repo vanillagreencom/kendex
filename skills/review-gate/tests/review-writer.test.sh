@@ -402,7 +402,7 @@ assert_not_contains "$(cat "$POST_LOG")" "state=success" "w8/10a: marker-less co
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "w8/10a: marker-less completion issues the proof rerun instead"
 assert_contains "$(cat "$POST_LOG")" "proof CI attempt re-running" "w8/10a: and records the marker"
 
-MARKER_ENTRY='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running; success posts on its completion","created_at":"'"$OLD"'"}'
+MARKER_ENTRY='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 1); success posts on its completion","created_at":"'"$OLD"'"}'
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_ENTRY]" \
   EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed) || rc=$?
 assert_eq "$rc" "0" "w8b: marker + completed proof attempt exits 0"
@@ -427,7 +427,22 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER
 assert_eq "$rc" "0" "w8e: marker + attempt-1-only snapshot exits 0"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w8e: attempt-1-only snapshot never posts success (stale runs read)"
 assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "w8e: and never re-issues the rerun (the marker says one is underway)"
-assert_contains "$out" "only attempt-1 completions" "w8e: says why it waits"
+assert_contains "$out" "no completion above the floor" "w8e: says why it waits"
+
+# F3 hardened: run_attempt >= 2 alone is satisfiable by a MANUAL
+# pre-approval rerun that ran gate-closed, so the marker records the attempt
+# floor that existed when the proof rerun was issued and only completions
+# ABOVE it certify.
+MARKER_FLOOR2='{"context":"Review gate","state":"pending","description":"approved: proof CI attempt re-running (above attempt 2); success posts on its completion","created_at":"'"$OLD"'"}'
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="[$MARKER_FLOOR2]" \
+  EVENT_NAME=workflow_run STUB_RUNS_MODE=proof_completed) || rc=$?
+assert_eq "$rc" "0" "w8f: marker floor above the visible attempt exits 0"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w8f: a completed attempt 2 does NOT certify a marker whose floor is 2 (manual pre-approval rerun)"
+assert_contains "$out" "above the floor" "w8f: says it is waiting on the floor"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='[]' \
+  EVENT_NAME=pull_request_review STUB_RUNS_MODE=high_attempt REVIEW_GATE_MAX_RERUN_ATTEMPTS=9) || rc=$?
+assert_contains "$(cat "$POST_LOG")" "above attempt 5" "w8g: the marker records the attempt floor that existed when the rerun was issued"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
   EVENT_NAME=workflow_run) || rc=$?
@@ -483,6 +498,41 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-06-0
 assert_eq "$rc" "0" "f1g: equal-second evidence exits 0"
 assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1g: run_started_at == evidence_at cannot be ordered -> never certified"
 assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1g: proof rerun instead"
+
+# The reproduced bypass (pre-PR review, both reviewers): a threads-open entry
+# posted BEFORE the evidence arrived, then suppressed on re-evaluation by the
+# idempotent no-op, leaves no trace after evidence_at — yet the attempt that
+# started after the evidence still ran with the gate closed (thread
+# resolution and CR dismissal are eventless and undatable). The blocker rule
+# is history-wide, not time-windowed.
+THREADS_ENTRY='{"context":"Review gate","state":"pending","description":"2 unresolved review thread(s)","created_at":"2020-04-01T00:00:00Z"}'
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-05-01T00:00:00Z" \
+  STUB_GATE_HISTORY="[$THREADS_ENTRY]" STUB_RUNS_MODE=completed) || rc=$?
+assert_eq "$rc" "0" "f1h: pre-evidence threads-open entry exits 0"
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1h: a threads-open entry ANYWHERE in history blocks the fast path (the attempt may have run gate-closed)"
+assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1h: proof rerun instead"
+
+CR_ENTRY='{"context":"Review gate","state":"failure","description":"standing review changes requested","created_at":"2020-04-01T00:00:00Z"}'
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-05-01T00:00:00Z" \
+  STUB_GATE_HISTORY="[$CR_ENTRY]" STUB_RUNS_MODE=completed) || rc=$?
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1i: a pre-evidence changes-requested entry blocks the fast path too (dismissal is eventless)"
+assert_eq "$(cat "$RERUN_LOG")" "rerun:111" "f1i: proof rerun instead"
+
+# Awaiting-class pending is the ONE closed state evidence_at can order (it
+# means evidence was missing, and the evidence instant is exactly what
+# resolved it) — so it must NOT block, or every head that ever pended would
+# pay a redundant rerun and F1's cost goal dies.
+AWAITING_ENTRY='{"context":"Review gate","state":"pending","description":"awaiting a non-author review for headsha","created_at":"2020-04-01T00:00:00Z"}'
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-05-01T00:00:00Z" \
+  STUB_GATE_HISTORY="[$AWAITING_ENTRY]" STUB_RUNS_MODE=completed) || rc=$?
+assert_contains "$(cat "$POST_LOG")" "state=success" "f1j: an awaiting-class entry does NOT block the fast path"
+assert_eq "$(( $(wc -l < "$RERUN_LOG") ))" "0" "f1j: and still spares the rerun"
+
+# Unknown descriptions fail toward the rerun path.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_EVIDENCE_AT="2020-05-01T00:00:00Z" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending","description":"something a future engine posted","created_at":"2020-04-01T00:00:00Z"}]' \
+  STUB_RUNS_MODE=completed) || rc=$?
+assert_not_contains "$(cat "$POST_LOG")" "state=success" "f1k: an unrecognized pending description counts as a blocker (unknown states fail safe)"
 
 echo "=== VST-65 ordering guard on every success post ==="
 
@@ -710,8 +760,11 @@ assert_eq "$rc" "0" "wp3: paginated guard re-read exits 0"
 assert_contains "$out" "deferring the success post" "wp3: a newer non-success entry on page two still defers (no first-page-only fail-open)"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "wp3: no post past the paginated guard"
 
-echo "=== settings: the OVERRIDE_CONTEXT alias (Change 2) ==="
+echo "=== settings: the writer never rewrites the override context ==="
 
+# The OVERRIDE_CONTEXT alias lives in review-predicate.sh (so EVERY live gate
+# read honors it, not just this writer — pre-PR review finding 4); the
+# writer must not export a competing REVIEW_GATE_OUTAGE_CONTEXT on top of it.
 ENV_LOG="$TMP_ROOT/predicate-env.log"
 cat > "$TMP_ROOT/override-settings.toml" <<'EOF'
 REVIEW_GATE_OVERRIDE_CONTEXT = "ops-override"
@@ -721,13 +774,13 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
   REVIEW_GATE_SETTINGS_FILE="$TMP_ROOT/override-settings.toml" \
   STUB_PREDICATE_ENV_LOG="$ENV_LOG") || rc=$?
 assert_eq "$rc" "0" "w30: override-context settings file exits 0"
-assert_contains "$(cat "$ENV_LOG")" "OUTAGE=ops-override" "w30: OVERRIDE_CONTEXT is exported to the predicate as REVIEW_GATE_OUTAGE_CONTEXT"
+assert_contains "$(cat "$ENV_LOG")" "OUTAGE=<unset>" "w30: the writer leaves the override alias entirely to the predicate (one mechanism, honored by every reader)"
 
 : > "$ENV_LOG"
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
   STUB_PREDICATE_ENV_LOG="$ENV_LOG") || rc=$?
 assert_eq "$rc" "0" "w30b: absent override key exits 0"
-assert_contains "$(cat "$ENV_LOG")" "OUTAGE=<unset>" "w30b: absent key leaves the predicate's own outage resolution untouched"
+assert_contains "$(cat "$ENV_LOG")" "OUTAGE=<unset>" "w30b: absent key leaves the predicate's own resolution untouched"
 
 echo "=== workflow template pins (review-gate-writer.yml) ==="
 
