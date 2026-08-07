@@ -36,8 +36,10 @@ name: Review gate writer
   # Status-context evidence (e.g. CodeRabbit; memsira's "Devin Review" is
   # also a STATUS context) — and the operator's override status, which is
   # PAT-authored and therefore converges event-fast through this trigger
-  # too: do not later "optimize" this into a bots-only filter. Filtered to
-  # success STATES by the job-level if: below; NO context-name filter, by
+  # too: do not later "optimize" this into a bots-only filter. EVERY status
+  # state converges (no state filter anywhere — under newest-row evidence
+  # semantics a success→pending/failure transition is a withdrawal and
+  # must close the gate event-fast); NO context-name filter either, by
   # design (#1039): trusted context names are settings, not
   # workflow-expression inputs, and a name list that misses a reviewer's
   # context silently strands that reviewer's clean path.

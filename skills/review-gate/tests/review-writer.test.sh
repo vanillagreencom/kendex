@@ -505,16 +505,21 @@ pin() { # needle, name
     FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        missing from template: %s\n' "$2" "$1"
   fi
 }
-# Every status STATE converges (no success filter): under newest-row
-# evidence semantics a success→pending/failure transition is a withdrawal
-# and must close the gate event-fast. The absence pin guards the filter's
-# return.
-if grep -qF -- "github.event.state == 'success'" "$TEMPLATE"; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: a status state filter returned — withdrawals would wait for the cron floor"
-else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: every status state converges (no success-only filter)"
-fi
-pin "github.event_name != 'merge_group'" "tpl: the write job excludes the merge_group event"
+# Every status STATE converges (no state filter of ANY spelling): under
+# newest-row evidence semantics a success→pending/failure transition is a
+# withdrawal and must close the gate event-fast. Two teeth: the write
+# job's if: is pinned as the complete exact line (an equivalent filter
+# cannot hide in a rewrite), and any `github.event.state` reference at
+# all fails (catches quote variants and inverted filters alike). Grep's
+# exit code is branched explicitly — 1 is the passing absence; anything
+# else (2 = read error) fails rather than laundering into a pass.
+pin "    if: github.event_name != 'merge_group'" "tpl: the write job's if: is exactly the merge_group exclusion"
+rc=0; grep -qF -- "github.event.state" "$TEMPLATE" || rc=$?
+case "$rc" in
+  1) PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: no status state filter of any spelling" ;;
+  0) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: a status state filter returned — withdrawals would wait for the cron floor" ;;
+  *) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: the template could not be read (grep error)" ;;
+esac
 pin "cancel-in-progress: false" "tpl: pending writer runs are never cancelled mid-write"
 pin "group: review-gate-writer" "tpl: single writer concurrency group"
 pin "github.event.pull_request.head.repo.full_name != github.repository" "tpl: fork pull_request_review read-only flag"
