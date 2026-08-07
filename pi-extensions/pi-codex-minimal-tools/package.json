@@ -174,9 +174,9 @@
     "undici": "^7.25.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.75.0",
-    "@earendil-works/pi-coding-agent": "^0.75.0",
-    "@earendil-works/pi-tui": "^0.75.0",
+    "@earendil-works/pi-ai": "^0.79.0",
+    "@earendil-works/pi-coding-agent": "^0.79.0",
+    "@earendil-works/pi-tui": "^0.79.0",
     "@types/node": "^24.10.1",
     "tsx": "^4.20.6",
     "typebox": "^1.1.24",
