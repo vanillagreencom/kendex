@@ -147,7 +147,10 @@ orch = ""
 project-management = """
 ## vstack issue-label taxonomy
 
-Full taxonomy: `docs/issue-label-taxonomy.md` (tracked). Summary:
+Full taxonomy: `docs/issue-label-taxonomy.md` (tracked). It holds the complete
+register: every live workspace/team label is either registered there with its role or
+listed never-use for this repo — consult it before applying any non-routing label.
+Summary:
 
 Labels are flat bare words — no prefix, no parent group — matching memsira and hyprtrade.
 `agent:*` is the workspace's only grouped-and-prefixed set. Reuse a workspace label

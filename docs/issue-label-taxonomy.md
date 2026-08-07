@@ -76,6 +76,85 @@ not inherit the canonical repo's labels.
 Triage until a human or the TPM audit workflow routes it — which is the intended
 fallback, not a failure.
 
+## Full label register
+
+Every label live in the workspace or on team VST is either registered below with its
+role for this repo, or listed under [Never-use for this repo](#never-use-for-this-repo).
+There is no third state: a new live label that appears in neither place means this file
+is stale and must be updated. Last verified against the live inventory
+(`.agents/skills/linear/scripts/linear.sh cache labels list`, 42 labels): 2026-08-06.
+
+The six routing labels above are part of this register. The rest:
+
+### Type labels (workspace)
+
+Classify what the work *is*; pair one with the routing label.
+
+| Label | Role here |
+|-------|-----------|
+| `bug` | Defect in shipped behavior |
+| `feature` | New capability or product behavior |
+| `refactor` | Restructure/migration/cleanup, behavior mostly unchanged |
+| `test` | Testing: coverage, harnesses, fixtures, flakes |
+| `security` | Security-relevant surface or hardening work |
+| `research` | Spike whose primary output is findings/decision support |
+
+### Workflow and state labels (workspace)
+
+| Label | Role here |
+|-------|-----------|
+| `blocked` | External blocker (vendor/access/manual dependency); internal deps use issue relations |
+| `needs-research` | Blocked on unresolved research; prefer a blocking relation to a research issue |
+| `needs-review` | Explicit review gate required before execution, merge, or close |
+| `critical-path` | Blocks or enables major project progress; align priority |
+| `owner-gated` | Needs an owner decision or owner-only action to proceed |
+
+### Steward labels (team VST)
+
+| Label | Role here |
+|-------|-----------|
+| `needs-ownership-check` | Possibly a project-local asset misfiled here; see `vstack report` |
+| `ci-nightly` | Automated nightly CI failure requiring triage |
+| `enhancement` | GitHub-sync twin of workspace `feature`: GitHub's stock `enhancement` label had no same-named workspace label, so the GH→Linear sync minted a team-scoped copy. It arrives on synced issues; never hand-apply it in Linear — use `feature` |
+
+`enhancement` is the one sanctioned exception to the "never create a team-scoped twin
+of a workspace label" rule, because the sync created it, not us.
+
+### Agent ownership group (workspace, exclusive)
+
+`Agent` is the workspace's only exclusive prefixed group: exactly one `agent:*` label
+per issue, naming which agent role owns it.
+
+| Label | Role here |
+|-------|-----------|
+| `agent:generalist` | Maintenance, docs, tooling/workflow, mixed low-risk work |
+| `agent:rust` | Rust systems work — for vstack, the CLI codebase |
+| `agent:researcher` | Research issues owned by the deep-research workflow |
+| `agent:multi` | Bundle/coordination issue spanning two or more agent domains |
+| `agent:human` | Manual/owner work, or work intentionally not delegated to an agent |
+
+(`agent:iced` completes the group but has no vstack surface — see below.)
+
+## Never-use for this repo
+
+These workspace labels exist for other projects' surfaces and structurally cannot
+apply to vstack. Never apply one to a vstack issue; if a synced issue arrives wearing
+one, it is a routing smell — check whether the issue belongs to another repo.
+
+| Label | Why it cannot apply |
+|-------|---------------------|
+| `Platform` group: `ios`, `macos`, `windows`, `linux`, `cross-platform` | Target-platform labels for shipped end-user products; vstack is agent tooling with no per-platform product surface |
+| `frontend` | UI-surface work; vstack has no UI |
+| `iced` | Iced app/storybook implementation; no Iced code here |
+| `component` | Design-system component/widget work; no component library here |
+| `design` | Design-system/UX/visual-language specification; no design surface here |
+| `rust-core` | Trading-engine core architecture (IPC, market data, execution, risk); vstack's Rust surface is the CLI, which `cli` covers |
+| `hardware-blocked` | Blocked on physical hardware or device access; vstack has no hardware dependencies |
+| `baseline` | Benchmark fixture / golden-data / pre-optimization reference; no benchmark workflow here |
+| `needs-perf-test` | Benchmark/profiling gate before acceptance; no performance-validation gate here |
+| `needs-safety-audit` | Unsafe code, lock-free, memory/thread-safety validation; the CLI ships no unsafe or concurrency-critical code. If that ever changes, move this to the register |
+| `agent:iced` | Agent-ownership label for Iced work, which vstack has none of |
+
 ## Adding a surface
 
 Adding one means four coordinated changes; a partial rollout silently drops issues into
