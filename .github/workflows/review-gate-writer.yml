@@ -1,3 +1,8 @@
+# VSTACK SELF-ADOPTION of templates/review-gate-writer.yml. The one ADAPT:
+# script paths are the tracked skills/review-gate/scripts/ (this repo IS the
+# catalog; .agents/ here is an untracked local symlink absent from CI
+# checkouts — a consumer keeps the template's .agents/ vendored path).
+#
 # SCAFFOLD from the vstack review-gate skill (templates/review-gate-writer.yml)
 # — the v2 SINGLE WRITER (review-gate v2 single-writer plan, Change 1/1b;
 # vanillagreencom/vstack#1099). Copy once into .github/workflows/ in the adoption PR; the file is
@@ -99,11 +104,11 @@ jobs:
       - name: Post success (queue entries are post-approval by construction)
         run: |
           set -u
-          if [ ! -f .agents/skills/review-gate/scripts/review-writer.sh ]; then
-            echo "::error::.agents/skills/review-gate/scripts/review-writer.sh is missing on the default branch (bootstrap PR? deleted?); no action taken"
+          if [ ! -f skills/review-gate/scripts/review-writer.sh ]; then
+            echo "::error::skills/review-gate/scripts/review-writer.sh is missing on the default branch (bootstrap PR? deleted?); no action taken"
             exit 1
           fi
-          exec .agents/skills/review-gate/scripts/review-writer.sh
+          exec skills/review-gate/scripts/review-writer.sh
 
   write:
     # ONE job-level writer group, cancel-in-progress: false. This is a
@@ -174,11 +179,11 @@ jobs:
         timeout-minutes: 12
         run: |
           set -u
-          if [ ! -f .agents/skills/review-gate/scripts/review-writer.sh ]; then
-            echo "::error::.agents/skills/review-gate/scripts/review-writer.sh is missing on the default branch (bootstrap PR? deleted?); no action taken"
+          if [ ! -f skills/review-gate/scripts/review-writer.sh ]; then
+            echo "::error::skills/review-gate/scripts/review-writer.sh is missing on the default branch (bootstrap PR? deleted?); no action taken"
             exit 1
           fi
-          exec .agents/skills/review-gate/scripts/review-writer.sh
+          exec skills/review-gate/scripts/review-writer.sh
 
       # Sustained-failure escalation (VST-36, ported from the old sweep):
       # the writer is now the only arm that reaches every transition, so

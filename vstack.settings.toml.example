@@ -192,9 +192,9 @@ VSTACK_GITHUB_PR_VIEW_TIMEOUT = "30"
 # separators. Full reference: review-gate SKILL.md / references/adoption.md.
 
 REVIEW_GATE_CONTEXT = "Review gate"
-# Used by: review-gate (`approval-refire.sh`, the CI gate job). Commit-status
-# context the gate posts on PR heads — the required check name in branch
-# protection. Keep it stable.
+# Used by: review-gate (`review-writer.sh`). Commit-status context the
+# writer posts on PR heads — the required check name in branch protection.
+# Keep it stable.
 
 REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = ""
 # Used by: review-gate (`review-predicate.sh`). Exact names of the trusted
@@ -241,14 +241,15 @@ REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
 REVIEW_GATE_STATUS_PUBLISHER_REJECT = ""
 # Used by: review-gate (`review-predicate.sh`). Creator logins whose commit
 # statuses are never evidence — applied to BOTH the trusted-context and
-# outage-context status reads. SECURITY: where PR-triggered workflows hold
+# override status reads. SECURITY: where PR-triggered workflows hold
 # statuses:write, PR content can mint a status under any context through
-# github-actions[bot]; listing it closes that mint. Reject-list, not a
-# provenance requirement: App-posted statuses (creator null) are never
-# rejected by a login entry. Empty (default) disables — legitimate outage
-# attestation is Actions-posted on some repos. Recommended
-# "github-actions[bot]" for repos wanting the protection whose outage
-# attestation is NOT Actions-posted.
+# github-actions[bot]; listing it closes that mint. Statuses are read from
+# the per-commit statuses LIST endpoint, where every real publisher (GitHub
+# Apps included) carries a creator login; while this list is configured, a
+# status with NO creator login is an anomaly and is not evidence. Empty
+# (default) disables. Recommended "github-actions[bot]" wherever PR
+# workflows hold statuses:write — requires the operator override to be
+# posted by a non-Actions identity (operator PAT), the v2 posture.
 
 REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
 # Used by: review-gate (`review-predicate.sh`). Logins whose review objects
@@ -269,15 +270,13 @@ REVIEW_GATE_THREADS = "enforce"
 # CI-side term is a latency optimization there, not the enforcement point).
 
 REVIEW_GATE_API_ATTEMPTS = "1"
-# Used by: review-gate (`review-predicate.sh`, `approval-refire.sh`).
-# Bounded attempts per predicate evidence read AND per THROTTLED rerun POST
-# in the refire (non-throttle rerun failures never retry). Default = single
-# attempt, today's behavior; a read failing through every attempt is still
-# exit 2.
+# Used by: review-gate (`review-predicate.sh`). Bounded attempts per
+# predicate evidence read. Default = single attempt, today's behavior; a
+# read failing through every attempt is still exit 2.
 
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
-# Used by: review-gate (`review-predicate.sh`, `approval-refire.sh`). Pause
-# between retry attempts.
+# Used by: review-gate (`review-predicate.sh`). Pause between retry
+# attempts.
 
 REVIEW_GATE_CARRY_FORWARD = ""
 # Used by: review-gate (`review-predicate.sh`). Carry-safe delta classes
