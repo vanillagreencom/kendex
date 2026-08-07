@@ -680,7 +680,7 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
   # fires every 15 minutes (best-effort), so a short replay can legitimately
   # contain zero ticks. Assert instead that a tick landed recently and that
   # every recent tick was green — which is what "the floor is alive" means.
-  local recent now newest_age green_recent n_recent
+  local recent now newest_age n_recent
   # --event filters SERVER-SIDE: a client-side filter over the newest N runs
   # finds nothing on a busy repo, where event-leg runs fill the whole slice.
   recent="$(gh run list -R "$REPO" --workflow "Review gate writer" \
@@ -700,11 +700,23 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
   else
     bad "cron floor: newest schedule tick is ${newest_age}s old — the schedule may be disabled or slipping"
   fi
-  green_recent="$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$recent")"
-  if [ "$green_recent" = "$n_recent" ]; then
-    ok "cron floor: all $n_recent recent schedule ticks are green"
+  # Only SETTLED ticks can be judged: a tick still running has no conclusion
+  # yet, and a `cancelled` one is a concurrency eviction — harmless, and
+  # already accounted for by the global classifier above. Counting either
+  # against greenness would fail a perfectly healthy replay. Genuine
+  # failures, timeout kills, and unclassifiable cancellations are caught by
+  # the global checks; this one asks only "are the ticks that finished
+  # normally green?".
+  local settled n_settled green_recent
+  settled="$(jq '[.[] | select((.conclusion // "") != "" and .conclusion != "cancelled")]' <<<"$recent")"
+  n_settled="$(jq length <<<"$settled")"
+  green_recent="$(jq '[.[] | select(.conclusion == "success")] | length' <<<"$settled")"
+  if [ "${n_settled:-0}" -eq 0 ]; then
+    note "cron floor: no settled schedule ticks in the recent window (all active or evicted) — liveness above is the signal"
+  elif [ "$green_recent" = "$n_settled" ]; then
+    ok "cron floor: all $n_settled settled schedule ticks are green"
   else
-    bad "cron floor: only $green_recent of $n_recent recent schedule ticks are green"
+    bad "cron floor: only $green_recent of $n_settled settled schedule ticks are green"
   fi
 }
 
