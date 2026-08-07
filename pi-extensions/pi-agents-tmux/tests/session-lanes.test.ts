@@ -837,6 +837,106 @@ test("bg one-shot activity after agent_settled restores task timeout ownership",
 	}
 });
 
+test("bg one-shot settled cancellation re-arms at the ORIGINAL deadline, not a fresh window", async () => {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { bgTaskTimeoutMs: 60 });
+	// Grace far beyond the test window: settlement suspends the timeout but
+	// never delivers its SIGTERM, so the only kill can come from the timeout.
+	setBgSettledShutdownGraceMsForTests(10_000);
+	setBgTimeoutKillGraceMsForTests(1);
+	const calls = installLifecycleMockSpawn({
+		closeAfterMs: 110,
+		closeOnSignal: "SIGTERM",
+		stdout: bridgeStdout([
+			bridgeEvent("agent_start"),
+			bridgeEvent("agent_end", { content: [{ type: "text", text: "first response" }] }),
+		]),
+		stdoutChunks: [
+			{ delayMs: 10, text: bridgeStdout([bridgeEvent("agent_settled")]) },
+			{ delayMs: 80, text: bridgeStdout([bridgeEvent("agent_start"), bridgeEvent("turn_start")]) },
+		],
+	});
+	try {
+		const result = await runSingleAgent(
+			cwd,
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"cancel settled shutdown after the original deadline passed",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents([]),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		// Settlement at 10ms suspends the 60ms deadline; the continuation at
+		// 80ms re-arms AGAINST THAT ORIGINAL deadline, which has already
+		// passed, so the timeout fires immediately — before the 110ms close.
+		// A fresh-window re-arm (80ms + 60ms) would let close(0) at 110ms win
+		// and report success.
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.stopReason, "unresponsive_timeout");
+		assert.deepEqual(calls[0]?.kills, ["SIGTERM"]);
+	} finally {
+		setBgSettledShutdownGraceMsForTests();
+		setBgTimeoutKillGraceMsForTests();
+		setSingleAgentSpawnForTests();
+	}
+});
+
+test("bg one-shot abort during settled grace clears the pending settled SIGTERM", async () => {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { bgTaskTimeoutMs: 0 });
+	setBgSettledShutdownGraceMsForTests(60);
+	setBgTimeoutKillGraceMsForTests(10_000);
+	const controller = new AbortController();
+	const calls = installLifecycleMockSpawn({
+		closeAfterMs: 100,
+		stdout: bridgeStdout([
+			bridgeEvent("agent_start"),
+			bridgeEvent("agent_end", { content: [{ type: "text", text: "done" }] }),
+		]),
+		stdoutChunks: [
+			{ delayMs: 5, text: bridgeStdout([bridgeEvent("agent_settled")]) },
+		],
+	});
+	setTimeout(() => controller.abort(), 25);
+	try {
+		// The abort at 25ms lands inside the settled grace window (armed at
+		// 5ms, SIGTERM due at 65ms). Abort must take over the lifecycle: the
+		// run rejects as aborted — never a settled semantic completion — and
+		// exactly one SIGTERM is delivered by the abort path; a surviving
+		// settled grace timer would deliver a second one at 65ms before the
+		// 100ms close.
+		await assert.rejects(
+			runSingleAgent(
+				cwd,
+				tempRuntime(),
+				[testAgent()],
+				"reviewer-test",
+				"abort while a settled shutdown is pending",
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				mockPiEvents([]),
+				controller.signal,
+				undefined,
+				makeDetails,
+			),
+			/Agent was aborted/,
+		);
+		assert.deepEqual(calls[0]?.kills, ["SIGTERM"]);
+	} finally {
+		setBgSettledShutdownGraceMsForTests();
+		setBgTimeoutKillGraceMsForTests();
+		setSingleAgentSpawnForTests();
+	}
+});
+
 test("bg one-shot activity emitted after delivered settled SIGTERM cannot cancel shutdown", async () => {
 	const cwd = tempRuntime();
 	writeSettings(cwd, { bgTaskTimeoutMs: 0 });

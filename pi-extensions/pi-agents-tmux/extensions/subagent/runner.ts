@@ -706,6 +706,7 @@ async function runSingleAgentAttempt(
 			let killEscalationTimer: ReturnType<typeof setTimeout> | undefined;
 			let settledShutdownTimer: ReturnType<typeof setTimeout> | undefined;
 			let settledCloseTimer: ReturnType<typeof setTimeout> | undefined;
+			let abortCloseTimer: ReturnType<typeof setTimeout> | undefined;
 			let abortListener: (() => void) | undefined;
 			const killGraceMs = bgTimeoutKillGraceMsForTests ?? BG_TIMEOUT_KILL_GRACE_MS;
 			const settledShutdownGraceMs = bgSettledShutdownGraceMsForTests ?? BG_SETTLED_SHUTDOWN_GRACE_MS;
@@ -735,6 +736,35 @@ async function runSingleAgentAttempt(
 				settledCloseTimer = undefined;
 			};
 
+			const clearAbortCloseTimer = () => {
+				if (!abortCloseTimer) return;
+				clearTimeout(abortCloseTimer);
+				abortCloseTimer = undefined;
+			};
+
+			// The abort path's analogue of scheduleSettledCloseFailure: once the
+			// abort SIGKILL escalation has fired, a child that still never emits
+			// `close` (unkillable D-state, EPERM on both targets) must not hang
+			// the attempt forever — the settled path got this bound, and the old
+			// code relied on the bg timeout timer, which killProc now clears.
+			const scheduleAbortCloseFailure = () => {
+				clearAbortCloseTimer();
+				abortCloseTimer = setTimeout(() => {
+					abortCloseTimer = undefined;
+					if (resolved || processClosed) return;
+					const diagnostic = `Abort termination unconfirmed: child process did not emit close within ${formatDurationMs(killGraceMs)} after SIGKILL; releasing the worker.`;
+					appendResultDiagnostic(currentResult, diagnostic);
+					if (!currentResult.errorMessage) currentResult.errorMessage = diagnostic;
+					currentResult.stderr = [currentResult.stderr, diagnostic].filter(Boolean).join("\n");
+					appendTranscript({ type: "abort_close_timeout", diagnostic, attempt });
+					proc.stdout.destroy?.();
+					proc.stderr.destroy?.();
+					proc.unref?.();
+					resolveOnce(1);
+				}, killGraceMs);
+				abortCloseTimer.unref?.();
+			};
+
 			const resolveOnce = (code: number) => {
 				if (resolved) return;
 				resolved = true;
@@ -742,6 +772,7 @@ async function runSingleAgentAttempt(
 				clearKillEscalationTimer();
 				clearSettledShutdownTimer();
 				clearSettledCloseTimer();
+				clearAbortCloseTimer();
 				if (signal && abortListener) signal.removeEventListener("abort", abortListener);
 				Promise.allSettled(transcriptWrites).finally(() => resolve(code));
 			};
@@ -1048,6 +1079,7 @@ async function runSingleAgentAttempt(
 				clearKillEscalationTimer();
 				clearSettledShutdownTimer();
 				clearSettledCloseTimer();
+				clearAbortCloseTimer();
 				if (resolved) return;
 				if (buffer.trim()) processLine(buffer);
 				if (compactThenEmptyAgentEnd) currentResult.needsCompletionReason = "compact-then-empty";
@@ -1093,7 +1125,7 @@ async function runSingleAgentAttempt(
 					clearSettledShutdownTimer();
 					clearSettledCloseTimer();
 					signalProcessGroupOrChild(proc, "SIGTERM");
-					scheduleKillEscalation();
+					scheduleKillEscalation(() => scheduleAbortCloseFailure());
 				};
 				if (signal.aborted) killProc();
 				else {

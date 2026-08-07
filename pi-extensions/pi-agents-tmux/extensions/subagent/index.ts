@@ -429,7 +429,12 @@ export async function refreshTranscriptUsage(
 		const fingerprint = await transcriptUsageFingerprint(transcriptPath);
 		if (!fingerprint || fingerprintsByTask.get(item.taskId) === fingerprint) continue;
 		const parsed = await parseTranscriptUsage(transcriptPath).catch(() => undefined);
-		if (!parsed || (await persistUsage(item.taskId, parsed))) fingerprintsByTask.set(item.taskId, fingerprint);
+		// Fingerprint only a parse that persisted: `parsed === undefined` also
+		// covers a transient read failure (EMFILE, permission blip), and a
+		// terminal task's file never changes again — fingerprinting the
+		// failure would permanently skip a recoverable transcript. Re-parsing
+		// a genuinely usage-less transcript each poll matches main's cost.
+		if (parsed && (await persistUsage(item.taskId, parsed))) fingerprintsByTask.set(item.taskId, fingerprint);
 	}
 }
 
@@ -1175,7 +1180,8 @@ export default function (pi: ExtensionAPI) {
 				const fingerprint = await transcriptUsageFingerprint(transcriptPath);
 				const parsed = await parseTranscriptUsage(transcriptPath).catch(() => undefined);
 				const persisted = await patchDashboardUsage(runtimeRoot, taskId, parsed);
-				if (dashboardCtx?.hasUI && fingerprint && (!parsed || persisted)) usageTranscriptFingerprintsByTask.set(taskId, fingerprint);
+				// Only a persisted parse is fingerprinted — see refreshTranscriptUsage.
+				if (dashboardCtx?.hasUI && fingerprint && parsed && persisted) usageTranscriptFingerprintsByTask.set(taskId, fingerprint);
 			})());
 		}
 	};
@@ -1405,7 +1411,8 @@ export default function (pi: ExtensionAPI) {
 						const fingerprint = await transcriptUsageFingerprint(backfilled.record.transcriptPath);
 						const parsed = await parseTranscriptUsage(backfilled.record.transcriptPath).catch(() => undefined);
 						const persisted = await patchDashboardUsage(runtimeRoot, capturedTaskId, parsed);
-						if (ctx.hasUI && fingerprint && (!parsed || persisted)) usageTranscriptFingerprintsByTask.set(capturedTaskId, fingerprint);
+						// Only a persisted parse is fingerprinted — see refreshTranscriptUsage.
+						if (ctx.hasUI && fingerprint && parsed && persisted) usageTranscriptFingerprintsByTask.set(capturedTaskId, fingerprint);
 					}
 				}
 			});
@@ -1423,15 +1430,23 @@ export default function (pi: ExtensionAPI) {
 		const poll = () => {
 			if (completionPollInFlight) return;
 			completionPollInFlight = true;
-			pollPaneCompletions(runtimeRoot, pi, true)
-				.then(async () => {
-					await syncDashboardFromTaskRegistry(ctx, runtimeRoot);
-					await refreshLiveUsage();
-				})
-				.catch((error) => warnBestEffortRegistryFailure("pane completion poll", error))
-				.finally(() => {
-					completionPollInFlight = false;
-				});
+			// Tracked so session_shutdown's drain also awaits an IN-FLIGHT poll:
+			// completions emitted mid-poll register their own persistence
+			// promises synchronously, and the drain re-checks the set after
+			// every settled batch — without this, a poll started just before
+			// shutdown could emit subagents:completed after the drain's final
+			// empty check and lose the terminal usage write.
+			trackTranscriptUsagePersistence(
+				pollPaneCompletions(runtimeRoot, pi, true)
+					.then(async () => {
+						await syncDashboardFromTaskRegistry(ctx, runtimeRoot);
+						await refreshLiveUsage();
+					})
+					.catch((error) => warnBestEffortRegistryFailure("pane completion poll", error))
+					.finally(() => {
+						completionPollInFlight = false;
+					}),
+			);
 		};
 		poll();
 		completionPoller = setInterval(poll, Math.max(500, Math.floor(settingNumber("completionPollMs", 2000, ctx.cwd))));
