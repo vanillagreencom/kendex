@@ -135,8 +135,9 @@ nothing else.
 # needs-attention reducer over open PRs (env: GH_REPO) — exit 0 nothing,
 # 1 attention lines on stdout, 2 read errors. Flags: --heal (one writer
 # dispatch on gate-stale), --no-evaluate (predicate-skipping mode: thread,
-# queue, and gate-status reads still run, so threads-open and disarmed
-# both fire), --awaiting-after SECS (default: PR_REVIEW_WAIT_SECS)
+# queue, and gate-status reads still run, so threads-open, disarmed, and
+# the threads-driven gate-stale form all fire; verdict-driven forms need
+# the predicate), --awaiting-after SECS (default: PR_REVIEW_WAIT_SECS)
 .agents/skills/review-gate/scripts/pr-watch.sh [PR# ...]
 
 # offline decision-table selftest (~1s, no network), run from the repo root

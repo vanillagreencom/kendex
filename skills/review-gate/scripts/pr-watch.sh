@@ -50,8 +50,11 @@
 #   PR# ...            watch only these PRs (default: every open PR)
 #   --no-evaluate      cheap mode: skips ONLY the predicate (the expensive
 #                      multi-read evaluation) — the thread, queue, and
-#                      gate-status reads still run, so threads-open and
-#                      disarmed both fire; gate-stale / changes-requested /
+#                      gate-status reads still run, so threads-open,
+#                      disarmed, and the threads-driven gate-stale (a green
+#                      gate over open threads under enforced threads — no
+#                      predicate needed) all fire; the verdict-driven
+#                      gate-stale forms, changes-requested, and
 #                      awaiting-stale need the predicate and do not
 #   --heal             on gate-stale, dispatch the writer workflow once per
 #                      invocation (name: PR_WATCH_WRITER_WORKFLOW, default
