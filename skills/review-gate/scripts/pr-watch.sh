@@ -315,7 +315,10 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
       # over the raced-in thread must heal, not wait for the cron floor.
       emit "$number" "$head" threads-open "$detail$queued"
       attention=1
-      if [ "$gate_state" = "success" ]; then
+      # THREADS_TERM guard is belt-and-braces here: the predicate never
+      # returns threads-open under off today, but a predicate/config
+      # inconsistency must not become false stale alerts + dispatch churn.
+      if [ "$THREADS_TERM" != "off" ] && [ "$gate_state" = "success" ]; then
         emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
         heal "$number" "$head"
       fi
