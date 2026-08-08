@@ -61,6 +61,7 @@ ACTIVE_THREADS="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 1
 ACTIVE_API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
 ACTIVE_API_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
 ACTIVE_CARRY="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 1
+ACTIVE_CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 1
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -213,6 +214,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_API_RETRY_DELAY_SECONDS="$CFG_API_DELAY" \
     REVIEW_GATE_STATUS_SNAPSHOT_FILE="$CFG_SNAPSHOT" \
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
+    REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$CFG_CARRY_EXCLUDE" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)"
   rc=$?
@@ -242,6 +244,7 @@ reset() {
   CFG_API_ATTEMPTS="$ACTIVE_API_ATTEMPTS"
   CFG_API_DELAY="$ACTIVE_API_DELAY"
   CFG_CARRY="$ACTIVE_CARRY"
+  CFG_CARRY_EXCLUDE="$ACTIVE_CARRY_EXCLUDE"
   CFG_SNAPSHOT=""
   rm -f "$fixtures/compare.json"
   CFG_PR_AUTHOR="$AUTHOR"
@@ -1386,6 +1389,67 @@ CFG_CARRY="docs"
 compare_fix diverged "[$DOCS_DELTA]"
 run "carry: a non-ancestor candidate (diverged) never carries" awaiting
 
+# Path exclusions (vstack#1115): policy-bearing markdown classifies "docs"
+# by extension, so REVIEW_GATE_CARRY_FORWARD_EXCLUDE globs disqualify any
+# carry whose delta touches an excluded path — surgical (non-matching deltas
+# still carry), '*' crosses '/', and inert for identical trees (no delta).
+AGENTS_DELTA="$(delta_file "AGENTS.md" modified '@@ -1 +1 @@
+-old instruction
++new instruction')"
+NESTED_AGENTS_DELTA="$(delta_file "skills/foo/AGENTS.md" modified '@@ -1 +1 @@
+-old instruction
++new instruction')"
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE=""
+compare_fix ahead "[$AGENTS_DELTA]"
+run "carry-exclude unset (default): policy markdown still carries as docs" approved
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="*AGENTS.md"
+compare_fix ahead "[$AGENTS_DELTA]"
+run "carry-exclude: an excluded path in the delta refuses the carry" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="*AGENTS.md"
+compare_fix ahead "[$NESTED_AGENTS_DELTA]"
+run "carry-exclude: '*' crosses '/' — a nested AGENTS.md is excluded too" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="*AGENTS.md"
+compare_fix ahead "[$DOCS_DELTA]"
+run "carry-exclude: a non-matching docs delta still carries (surgical)" approved
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE=".github/*; *AGENTS.md"
+compare_fix ahead "[$DOCS_DELTA,$AGENTS_DELTA]"
+run "carry-exclude: one excluded file refuses the WHOLE delta (2nd glob, spaces trimmed)" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE=".github/*"
+compare_fix ahead "[$(delta_file ".github/copilot-instructions.md" modified '@@ -1 +1 @@
+-a
++b')]"
+run "carry-exclude: a directory glob catches instruction files under .github/" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="*AGENTS.md"
+compare_fix identical
+run "carry-exclude: identical tree still carries (no delta to exclude)" approved
+
+reset
+carry_candidate
+CFG_CARRY="comments"; CFG_CARRY_EXCLUDE="src/thing.sh"
+compare_fix ahead "[$COMMENT_DELTA]"
+run "carry-exclude: applies to the comments class too (literal path)" awaiting
+
 reset
 carry_candidate
 CFG_CARRY="docs"
@@ -1558,6 +1622,7 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
     REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" REVIEW_GATE_THREADS="$CFG_THREADS" \
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
+    REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$CFG_CARRY_EXCLUDE" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>/dev/null)" || detail_rc=$?
   detail_line="$(head -n 1 <<<"$detail_line")"

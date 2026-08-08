@@ -298,6 +298,18 @@ REVIEW_GATE_CARRY_FORWARD = ""
 # change is data, not a comment. Enable "comments" only on repos where that
 # residual carry risk is acceptable; "docs" has no such caveat.
 
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
+# Used by: review-gate (`review-predicate.sh`). Path globs (';'-separated,
+# shell-style; '*' matches '/' too) that DISQUALIFY a carry: any file in
+# the ancestor→head delta matching an exclusion forces fresh evidence even
+# when the delta classifies entirely carry-safe. Built for policy-bearing
+# markdown the "docs" class would otherwise carry — AGENTS.md and other
+# agent/reviewer instruction files are docs by extension yet obeyed
+# mechanically, so a push editing them deserves a fresh review (e.g.
+# "*AGENTS.md;.github/*"). Surgical: non-matching deltas still carry;
+# identical trees (no delta) are unaffected; inert while
+# REVIEW_GATE_CARRY_FORWARD is empty.
+
 # SECOND OPINION
 
 SECOND_OPINION_TARGET = "codex"

@@ -86,6 +86,18 @@
 #                                             always require fresh evidence, and
 #                                             changes-requested / unresolved threads
 #                                             still fail closed.
+#   REVIEW_GATE_CARRY_FORWARD_EXCLUDE         path globs (';'-separated, shell-style;
+#                                             '*' matches '/' too — fnmatch without
+#                                             FNM_PATHNAME) that disqualify a carry:
+#                                             any file in the N→head delta matching an
+#                                             exclusion forces fresh evidence even when
+#                                             the delta classifies carry-safe. For
+#                                             policy-bearing files the classes would
+#                                             otherwise carry (AGENTS.md and other
+#                                             agent/reviewer instruction markdown —
+#                                             vstack#1115). Empty = no exclusions.
+#                                             Identical-tree carries are unaffected
+#                                             (no delta, nothing to exclude).
 #
 # Env (required): GH_TOKEN (or ambient gh auth), GH_REPO, PR_NUMBER, HEAD_SHA
 # Env (optional): PR_AUTHOR — resolved from the PR when empty.
@@ -150,6 +162,7 @@ THREADS_MODE="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
 API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 2
 API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 2
 CARRY_FORWARD="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 2
+CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 2
 
 # Configuration errors are exit 2 (no verdict), same contract as a failed
 # evidence read: a typo in trust config must never quietly widen or narrow
@@ -848,6 +861,43 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     if [ "$cmp_file_count" -ge 300 ]; then
       echo "::warning::compare $base...$HEAD_SHA returned $cmp_file_count files (the API caps the list at 300): the delta cannot be proven complete; refusing carry-forward" >&2
       break
+    fi
+    # Path exclusions (vstack#1115): a delta that classifies carry-safe can
+    # still change agent behavior — AGENTS.md and other instruction markdown
+    # are "docs" by extension yet are obeyed mechanically, so a push editing
+    # them deserves fresh review. Any changed file matching an exclusion glob
+    # refuses the whole carry. Matching is shell-style via `case` ('*'
+    # crosses '/', so '*AGENTS.md' covers the file at any depth); patterns
+    # never touch the filesystem. Older candidates' deltas are supersets, so
+    # stop walking — same shape as the 300-entry refusal above. A filename
+    # with embedded newlines would be matched line-by-line, which can only
+    # over-refuse, never under-refuse. Identical-tree carries never reach
+    # here (no delta, nothing to exclude).
+    if [ -n "$CARRY_EXCLUDE" ]; then
+      delta_files="$(jq -r '.files[] | .filename // ""' <<<"$cmp")" || {
+        echo "::error::could not list the $base...$HEAD_SHA delta files for exclusion matching" >&2
+        exit 2
+      }
+      excluded=""
+      while IFS= read -r fn; do
+        [ -z "$fn" ] && continue
+        while IFS= read -r pat; do
+          pat="$(printf '%s' "$pat" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          [ -z "$pat" ] && continue
+          case "$fn" in
+            $pat) excluded="$fn"; break ;;
+          esac
+        done <<EOF_EXCL_PATS
+$(printf '%s' "$CARRY_EXCLUDE" | tr ';' '\n')
+EOF_EXCL_PATS
+        [ -n "$excluded" ] && break
+      done <<EOF_EXCL_FILES
+$delta_files
+EOF_EXCL_FILES
+      if [ -n "$excluded" ]; then
+        echo "::warning::compare $base...$HEAD_SHA touches '$excluded', matched by REVIEW_GATE_CARRY_FORWARD_EXCLUDE; refusing carry-forward (fresh evidence required)" >&2
+        break
+      fi
     fi
     # Classify every changed file into an ENABLED class; anything else —
     # code lines, added/removed/renamed files under "comments", binary or
