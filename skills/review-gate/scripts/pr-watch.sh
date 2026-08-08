@@ -96,7 +96,9 @@ while [ $# -gt 0 ]; do
       case "$1" in
         ''|*[!0-9]*) echo "::error::pr-watch: PR arguments must be numbers (got '$1')" >&2; exit 2 ;;
       esac
-      PR_ARGS="$PR_ARGS $1"
+      # Base-10 normalization: a zero-padded "09" is not valid JSON for the
+      # --argjson binding check downstream.
+      PR_ARGS="$PR_ARGS $((10#$1))"
       ;;
   esac
   shift
@@ -451,8 +453,25 @@ for number in $pr_numbers; do
           emit "$number" "$head" error "silence clock is in the future by $(( -age ))s (author-controlled committer timestamp) — silence age unprovable"
           errored=1
         elif [ "$age" -gt "$AWAITING_AFTER" ]; then
-          emit "$number" "$head" awaiting-stale "no review evidence for ${age}s (quiet period ${AWAITING_AFTER}s) — trigger a re-review or apply the on-timeout policy$queued"
-          attention=1
+          # A draft marked ready keeps its old commit/creation timestamps,
+          # so the first post-readiness poll would read stale instantly.
+          # The readiness event is the true start of the review wait —
+          # consulted only when the cheap clock already says stale (one
+          # timeline read per would-be-stale PR, not per poll).
+          ready_at="$(gh api "repos/$GH_REPO/issues/$number/timeline?per_page=100" --paginate \
+              -H "Accept: application/vnd.github+json" 2>/dev/null \
+            | jq -rs '[.[] | if type == "array" then .[] else empty end | select(.event? == "ready_for_review") | .created_at] | sort | last // ""')" || ready_at=""
+          if [ -n "$ready_at" ] && [ "$ready_at" != "null" ]; then
+            ready_epoch="$(date -u -d "$ready_at" +%s 2>/dev/null \
+              || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ready_at" +%s 2>/dev/null)" || ready_epoch=""
+            if [ -n "$ready_epoch" ] && [ "$ready_epoch" -gt "$head_epoch" ]; then
+              age=$(( $(date +%s) - ready_epoch ))
+            fi
+          fi
+          if [ "$age" -gt "$AWAITING_AFTER" ]; then
+            emit "$number" "$head" awaiting-stale "no review evidence for ${age}s (quiet period ${AWAITING_AFTER}s) — trigger a re-review or apply the on-timeout policy$queued"
+            attention=1
+          fi
         fi
       else
         # Neither timestamp parsed: silence age is unprovable, and
@@ -473,7 +492,14 @@ for number in $pr_numbers; do
       errored=1
       continue
     }
-    if [ -n "$head_now" ] && [ "$head_now" != "$head" ]; then
+    case "$head_now" in
+      ''|null)
+        emit "$number" "$head" error "head recheck returned no usable sha (broken read)"
+        errored=1
+        continue
+        ;;
+    esac
+    if [ "$head_now" != "$head" ]; then
       emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$head_now")) — findings describe the old head; re-run"
       attention=1
     fi

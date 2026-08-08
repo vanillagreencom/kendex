@@ -174,6 +174,13 @@ case "$args" in
       printf '%s\n' "$pr_row_json"
     fi
     ;;
+  *"/timeline?per_page=100"*)
+    if [[ -n "${STUB_READY_AT:-}" ]]; then
+      jq -n --arg at "$STUB_READY_AT" '[{event:"ready_for_review", created_at:$at}]'
+    else
+      printf '[]\n'
+    fi
+    ;;
   *"/statuses?per_page=100"*)
     if [[ "${STUB_GATE_HISTORY:-[]}" == "emptybytes" ]]; then exit 0; fi
     printf '%s\n' "${STUB_GATE_HISTORY:-[]}"
@@ -711,6 +718,36 @@ rc=$?
 set -e
 assert_eq "$rc" "2" "pw49: mismatched PR number exits 2"
 assert_contains "$out" "not a well-formed PR object" "pw49: fails the binding check"
+
+# pw50: zero-padded explicit args normalize (09 -> 9).
+set +e
+out=$(run_watch STUB_PR_9="$(pr_row 9 closed)" STUB_VERDICT_LINE="unused" -- 09)
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw50: zero-padded arg fetches and reduces (closed = silent 0)"
+
+# pw51: a recheck returning no usable sha is a loud error.
+set +e
+out=$(run_watch STUB_HEAD_AFTER="null" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw51: null recheck sha exits 2"
+assert_contains "$out" "no usable sha" "pw51: named"
+
+# pw52: a fresh ready_for_review event restarts the quiet period for a
+# just-readied long-lived draft.
+set +e
+out=$(run_watch STUB_READY_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 3600)
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw52: fresh readiness restarts the quiet period"
+assert_not_contains "$out" "awaiting-stale" "pw52: no stale alert"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
