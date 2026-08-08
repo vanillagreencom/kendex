@@ -361,6 +361,24 @@ set -e
 assert_eq "$rc" "1" "pw10: stale awaiting head exits 1"
 assert_contains "$out" "awaiting-stale" "pw10: kind emitted"
 
+# pw10b/pw10c: the settings path resolves PR_REVIEW_WAIT_SECS — a valid
+# value drives the same quiet-period logic as --awaiting-after, and an
+# invalid one is a loud config error (exit 2), never a silent 900 fallback
+# that changes the review-silence policy behind the operator's back.
+set +e
+out=$(run_watch PR_REVIEW_WAIT_SECS=60 STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z")
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw10b: settings-path quiet period drives awaiting-stale"
+assert_contains "$out" "awaiting-stale" "pw10b: kind emitted"
+
+set +e
+out=$(run_watch PR_REVIEW_WAIT_SECS=90s STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z" 2>&1)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw10c: nonnumeric PR_REVIEW_WAIT_SECS is a loud config error"
+assert_contains "$out" "PR_REVIEW_WAIT_SECS" "pw10c: names the key"
+
 # pw11: predicate failure is a loud error, exit 2.
 set +e
 out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \

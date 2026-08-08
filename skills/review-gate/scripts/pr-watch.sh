@@ -128,7 +128,15 @@ case "$THREADS_TERM" in
 esac
 if [ -z "$AWAITING_AFTER" ]; then
   AWAITING_AFTER="$(rg_setting PR_REVIEW_WAIT_SECS "900")" || exit 2
-  case "$AWAITING_AFTER" in ''|*[!0-9]*) AWAITING_AFTER=900 ;; esac
+  # Fail-loud, same as --awaiting-after and every REVIEW_GATE config error:
+  # a typo ("90s") must never silently become the 900 default — a silent
+  # fallback CHANGES the review-silence policy the operator thinks they set.
+  case "$AWAITING_AFTER" in
+    ''|*[!0-9]*)
+      echo "::error::pr-watch: PR_REVIEW_WAIT_SECS must be a non-negative integer, got '$AWAITING_AFTER'" >&2
+      exit 2
+      ;;
+  esac
 fi
 WRITER_WORKFLOW="${PR_WATCH_WRITER_WORKFLOW:-Review gate writer}"
 
