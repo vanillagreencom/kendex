@@ -115,6 +115,7 @@ as satisfied. A reviewed PR would merge untested.
 | `SKILL.md` | The agent-facing contract: decision table, settings, operations. |
 | `scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. |
 | `scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
+| `scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" — unresolved threads (queued PRs annotated), standing objections, a gate the writer hasn't converged (`--heal` dispatches it once), a mergeable PR nothing will merge, reviewer silence past the quiet period. Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate. |
 | `scripts/review-predicate-selftest.sh` | Offline proof of the decision table; runs ungated in CI so a broken predicate reds its own job instead of approving everything. |
 | `templates/review-gate-writer.yml` | The one workflow to copy in. Repo-owned after copying. |
 | `tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |

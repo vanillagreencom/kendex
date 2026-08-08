@@ -125,6 +125,33 @@ its CI, and updates its own docs from the legacy override key to
 replaces four workflows and every coupling between review state and CI
 scheduling.
 
+## Watching PRs as an agent (pr-watch)
+
+The predicate and writer keep the GATE correct; `scripts/pr-watch.sh` is the
+agent-side third piece — a needs-attention reducer for sessions shepherding
+one or many PRs across hours. The failure mode it removes: an agent watching
+gate-state *transitions* sleeps forever through a PR sitting steadily at
+"pending because review threads are open" (no transition, no wake), which
+has stranded multi-PR sessions for hours in production.
+
+Wrap it in whatever wake-up mechanism the harness has — the loop body is
+always the same:
+
+```bash
+# cron / polling loop / harness monitor — silence means nothing needs you
+GH_REPO=<owner>/<repo> .agents/skills/review-gate/scripts/pr-watch.sh --heal \
+  || notify "$(GH_REPO=<owner>/<repo> .agents/skills/review-gate/scripts/pr-watch.sh --heal)"
+```
+
+Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to
+triage — queued PRs annotated with the dequeue-first warning — objections,
+a stale gate, a disarmed mergeable PR, reviewer silence past the quiet
+period); exit 2 = a PR could not be read (fail loud, never skipped).
+`--heal` bounds itself to one writer dispatch per invocation. The orch
+skill's waiters remain the single-PR *foreground* waits (nudge and
+on-timeout policy live there); pr-watch is the multi-PR *background*
+reducer they and harness monitors share.
+
 ## Verification
 
 - The offline selftest passes from the repo root (configured layer =
