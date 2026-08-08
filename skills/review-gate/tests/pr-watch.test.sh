@@ -439,6 +439,25 @@ assert_eq "$rc" "1" "pw26: objection over green gate exits 1"
 assert_contains "$out" "changes-requested" "pw26: objection emitted"
 assert_contains "$out" "gate-stale" "pw26: stale green emitted too"
 
+# pw27: a future-dated committer timestamp (author-controlled) is a loud
+# error, never indefinite healthy silence.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2030-01-01T00:00:00Z" -- --awaiting-after 60)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw27: future-dated head exits 2"
+assert_contains "$out" "unprovable" "pw27: named as unprovable silence age"
+
+# pw28: queued gate-stale lines carry the dequeue note.
+set +e
+out=$(run_watch STUB_QUEUED=yes STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=changes-requested detail=reviewer objects" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+set -e
+assert_eq "$(grep -c "QUEUED: dequeue" <<<"$out")" "2" "pw28: both lines carry the dequeue note"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

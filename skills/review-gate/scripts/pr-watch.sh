@@ -245,7 +245,7 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
     # A GREEN gate over open threads is the inverse writer miss — the
     # merge-enabling direction, so it heals, not just reports.
     if [ "$gate_state" = "success" ]; then
-      emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal"
+      emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
       heal "$number" "$head"
     fi
     continue
@@ -292,7 +292,7 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
       emit "$number" "$head" changes-requested "$detail$queued"
       attention=1
       if [ "$gate_state" = "success" ]; then
-        emit "$number" "$head" gate-stale "a standing objection but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal"
+        emit "$number" "$head" gate-stale "a standing objection but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
         heal "$number" "$head"
       fi
       continue
@@ -356,7 +356,16 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
       fi
       if [ -n "$head_epoch" ]; then
         age=$(( $(date +%s) - head_epoch ))
-        if [ "$age" -gt "$AWAITING_AFTER" ]; then
+        # The committer timestamp is AUTHOR-CONTROLLED: a future-dated head
+        # would keep age negative and read healthy forever — the exact
+        # stall this reducer exists to prevent. Beyond a small skew
+        # allowance it is a loud error, never silence. (created_at is
+        # server-stamped, so the floor above cannot be forged forward past
+        # real PR creation.)
+        if [ "$age" -lt -300 ]; then
+          emit "$number" "$head" error "silence clock is in the future by $(( -age ))s (author-controlled committer timestamp) — silence age unprovable"
+          errored=1
+        elif [ "$age" -gt "$AWAITING_AFTER" ]; then
           emit "$number" "$head" awaiting-stale "no review evidence for ${age}s (quiet period ${AWAITING_AFTER}s) — trigger a re-review or apply the on-timeout policy$queued"
           attention=1
         fi
