@@ -839,6 +839,14 @@ set -e
 assert_eq "$rc" "2" "pw59: future-dated timeline event exits 2"
 assert_contains "$out" "unprovable" "pw59: named"
 
+# pw60: a state outside the open|closed enum is malformed, never a skip.
+set +e
+out=$(run_watch STUB_PR_9="$(pr_row 9 bogus)" STUB_VERDICT_LINE="unused" -- 9)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw60: bogus state exits 2"
+assert_contains "$out" "outside the open|closed enum" "pw60: named"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

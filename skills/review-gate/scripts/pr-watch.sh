@@ -193,8 +193,18 @@ for number in $pr_numbers; do
   draft="$(jq -r '.draft // false | tostring' <<<"$row")"
   armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$row")"
   created_at="$(jq -r '.created_at // ""' <<<"$row")"
-  # Closed/merged PRs need nothing (reachable via explicit PR args).
-  [ "$state" = "open" ] || continue
+  # Closed/merged PRs need nothing (reachable via explicit PR args). The
+  # REST enum is open|closed — anything else is malformed data, and a
+  # malformed state must never read as "closed, skip silently".
+  case "$state" in
+    open) ;;
+    closed) continue ;;
+    *)
+      emit "$number" "$head" error "PR state '$state' is outside the open|closed enum (malformed response)"
+      errored=1
+      continue
+      ;;
+  esac
 
   # Queue membership: pushes to a queued PR's branch are rejected, so every
   # attention line on a queued PR carries the annotation. REQUIRED input —
