@@ -425,9 +425,21 @@ for number in $pr_numbers; do
     if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
         and (has("auto_merge"))
         and ((.auto_merge | type) == "null" or (.auto_merge | type) == "object")
+        and ((.state? // null) == "open" or (.state? // null) == "closed")
+        and ((.draft | type) == "boolean")
         and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))' >/dev/null 2>&1 <<<"$ownership_row"; then
       emit "$number" "$head" error "auto-merge recheck returned a malformed PR object (broken read)"
       errored=1
+      continue
+    fi
+    # A PR that closed or merged mid-reduction needs nothing — never a
+    # re-arm nudge for a completed PR; drafts likewise re-load (a PR
+    # converted to draft mid-reduction stopped being re-armable).
+    if [ "$(jq -r '.state' <<<"$ownership_row")" != "open" ]; then
+      continue
+    fi
+    draft="$(jq -r '.draft | tostring' <<<"$ownership_row")"
+    if [ "$draft" = "true" ]; then
       continue
     fi
     ownership_head="$(jq -r '.head.sha' <<<"$ownership_row")"

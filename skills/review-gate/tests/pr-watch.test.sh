@@ -177,7 +177,15 @@ case "$args" in
       # Row fetches: STUB_ARMED_AFTER flips auto_merge from the SECOND
       # fetch of a number (the just-in-time ownership recheck), via a
       # per-number counter.
-      if [[ -n "${STUB_ARMED_AFTER:-}" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
+      if [[ "${STUB_CLOSED_AFTER:-}" == "yes" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
+        cf="$STUB_PR_CALLS_DIR/$n"
+        if [[ -f "$cf" ]]; then
+          jq '.state = "closed"' <<<"$pr_row_json"
+        else
+          : > "$cf"
+          printf '%s\n' "$pr_row_json"
+        fi
+      elif [[ -n "${STUB_ARMED_AFTER:-}" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
         cf="$STUB_PR_CALLS_DIR/$n"
         if [[ -f "$cf" ]]; then
           if [[ "$STUB_ARMED_AFTER" == "false" ]]; then
@@ -903,6 +911,20 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "pw64: mid-reduction disarm exits 1"
 assert_contains "$out" "disarmed" "pw64: kind emitted"
+
+# pw65: a PR that closed mid-reduction gets no re-arm nudge — silence.
+# (Shim: STUB_ARMED_AFTER machinery reuses the per-number counter; here we
+# hand-serve a closed row on the second fetch via STUB_CLOSED_AFTER.)
+mkdir -p "$TMP_ROOT/prcalls"; rm -f "$TMP_ROOT/prcalls"/*
+set +e
+out=$(run_watch STUB_CLOSED_AFTER=yes STUB_PR_CALLS_DIR="$TMP_ROOT/prcalls" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw65: mid-reduction close exits 0"
+assert_not_contains "$out" "disarmed" "pw65: no re-arm nudge for a completed PR"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
