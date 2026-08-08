@@ -104,6 +104,7 @@ shift || true
 args="$*"
 if [[ "$cmd" == "workflow" ]]; then
   echo "dispatch:$args" >> "${STUB_DISPATCH_LOG:?}"
+  if [[ "${STUB_DISPATCH_FAIL:-}" == "yes" ]]; then exit 1; fi
   exit 0
 fi
 [[ "$cmd" == "api" ]] || { echo "unexpected gh command: $cmd $args" >&2; exit 1; }
@@ -482,6 +483,50 @@ assert_eq "$rc" "1" "pw30: threads still report under THREADS=off"
 assert_contains "$out" "threads-open" "pw30: threads-open emitted"
 assert_not_contains "$out" "gate-stale" "pw30: no false gate-stale"
 assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "0" "pw30: no writer dispatch"
+
+# pw31: an invalid REVIEW_GATE_THREADS value refuses to reduce (config
+# error, exit 2) instead of silently reading as enforced.
+set +e
+out=$(run_watch REVIEW_GATE_THREADS=of STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw31: invalid thread mode exits 2"
+assert_contains "$out" "invalid REVIEW_GATE_THREADS" "pw31: named as config error"
+
+# pw32: a FAILED dispatch still consumes the one heal attempt — no
+# per-stale-PR retry storm during an outage.
+: > "$TMP_ROOT/dispatch.log"
+set +e
+out=$(run_watch STUB_DISPATCH_FAIL=yes STUB_OPEN_PRS="$(jq -cn --argjson a "$(pr_row 7)" --argjson b "$(pr_row 8)" '[$a,$b]')" \
+  STUB_VERDICT_LINE="verdict=approved detail=unused" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"pending"}]' -- --heal)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw32: failed dispatch exits 2"
+assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw32: exactly one dispatch ATTEMPT"
+
+# pw33: under THREADS=off, open threads do not eat the disarmed finding —
+# one line per finding, both emit.
+set +e
+out=$(run_watch REVIEW_GATE_THREADS=off STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
+  STUB_UNRESOLVED=2 STUB_VERDICT_LINE="verdict=approved detail=unused" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw33: exits 1"
+assert_contains "$out" "threads-open" "pw33: threads reported"
+assert_contains "$out" "disarmed" "pw33: disarmed also reported"
+
+# pw34: drafts get no reviewer-silence alerts (mismatch checks still run).
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open armed true)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw34: old draft is not awaiting-stale"
+assert_eq "$out" "" "pw34: and silent"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

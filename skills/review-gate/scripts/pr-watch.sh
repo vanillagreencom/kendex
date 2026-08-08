@@ -104,6 +104,13 @@ done
 
 GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 2
 THREADS_TERM="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
+case "$THREADS_TERM" in
+  enforce|off) ;;
+  *)
+    echo "::error::pr-watch: invalid REVIEW_GATE_THREADS value '$THREADS_TERM' (enforce|off) — refusing to reduce against unknown enforcement semantics" >&2
+    exit 2
+    ;;
+esac
 if [ -z "$AWAITING_AFTER" ]; then
   AWAITING_AFTER="$(rg_setting PR_REVIEW_WAIT_SECS "900")" || exit 2
   case "$AWAITING_AFTER" in ''|*[!0-9]*) AWAITING_AFTER=900 ;; esac
@@ -118,12 +125,15 @@ emit() { # pr, head, kind, detail
   printf '%s\t%s\t%s\t%s\n' "$1" "$(printf %.8s "$2")" "$3" "$4"
 }
 
-heal() { # pr, head — one bounded writer dispatch per invocation
+heal() { # pr, head — one bounded writer dispatch ATTEMPT per invocation
   [ "$HEAL" = "1" ] || return 0
   [ "$healed" = "0" ] || return 0
+  # The attempt is recorded BEFORE the outcome: during an API/workflow
+  # outage a per-stale-PR retry storm would violate the once-per-invocation
+  # bound the docs promise.
+  healed=1
   if gh workflow run "$WRITER_WORKFLOW" --repo "$GH_REPO" >/dev/null 2>&1; then
     emit "$1" "$2" heal-dispatched "writer workflow '$WRITER_WORKFLOW' dispatched (once per invocation)"
-    healed=1
   else
     emit "$1" "$2" error "writer dispatch failed for '$WRITER_WORKFLOW'"
     errored=1
@@ -249,11 +259,18 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
     # gate over open threads is the DESIGNED state (thread hygiene is the
     # server-side ruleset), and flagging it would false-alert and dispatch
     # the writer on every poll for a status it would only re-affirm.
-    if [ "$gate_state" = "success" ] && [ "$THREADS_TERM" != "off" ]; then
-      emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
-      heal "$number" "$head"
+    if [ "$THREADS_TERM" != "off" ]; then
+      if [ "$gate_state" = "success" ]; then
+        emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
+        heal "$number" "$head"
+      fi
+      # Enforced threads make every other reduction moot for this head —
+      # the gate is (or will converge) closed on them.
+      continue
     fi
-    continue
+    # Under off the remaining reductions still matter (one line per
+    # finding): a green unarmed PR here still needs its disarmed re-arm
+    # nudge, so fall through instead of continuing.
   fi
 
   if [ "$EVALUATE" = "1" ]; then
@@ -333,6 +350,13 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
         emit "$number" "$head" gate-stale "predicate says awaiting but the newest '$GATE_CONTEXT' row is still success — withdrawn evidence left a merge-enabling gate$queued"
         attention=1
         heal "$number" "$head"
+      fi
+      # Drafts are not awaiting REVIEW — they are awaiting readiness: the
+      # silence clock skips them (the gate-mismatch check above still
+      # applies), or a long-lived draft pins the watcher at exit 1 asking
+      # for re-reviews nobody owes it.
+      if [ "$draft" = "true" ]; then
+        continue
       fi
       # Quiet-period clock: reviewer silence counts from when this head
       # BECAME the head. GitHub exposes no head-transition timestamp, so
