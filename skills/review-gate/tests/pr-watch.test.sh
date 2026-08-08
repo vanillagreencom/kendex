@@ -611,6 +611,17 @@ set -e
 assert_eq "$rc" "2" "pw31b: invalid gate mode exits 2"
 assert_contains "$out" "invalid REVIEW_GATE_MODE" "pw31b: named as config error"
 
+# pw10d: a digit-only value beyond Bash's integer range must be a loud
+# config error — unbounded, it would error inside the later [ -gt ]
+# comparisons, get swallowed by the if, and silently disable the
+# awaiting-stale alert (fail-open silence).
+set +e
+out=$(run_watch PR_REVIEW_WAIT_SECS=99999999999999999999 STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z" 2>&1)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw10d: out-of-range wait value exits 2"
+assert_contains "$out" "out of range" "pw10d: named as out of range"
+
 # pw31: an invalid REVIEW_GATE_THREADS value refuses to reduce (config
 # error, exit 2) instead of silently reading as enforced.
 set +e

@@ -148,12 +148,20 @@ if [ -z "$AWAITING_AFTER" ]; then
   # Fail-loud, same as --awaiting-after and every REVIEW_GATE config error:
   # a typo ("90s") must never silently become the 900 default — a silent
   # fallback CHANGES the review-silence policy the operator thinks they set.
+  # Digit-only AND bounded: a digit string beyond Bash's integer range
+  # (e.g. 20 digits) passes a pure [!0-9] check but then errors inside the
+  # later [ -gt ] comparisons — swallowed by the if, silently disabling the
+  # awaiting-stale alert. 9 digits (~31 years) is bound enough.
   case "$AWAITING_AFTER" in
     ''|*[!0-9]*)
       echo "::error::pr-watch: PR_REVIEW_WAIT_SECS must be a non-negative integer, got '$AWAITING_AFTER'" >&2
       exit 2
       ;;
   esac
+  if [ "${#AWAITING_AFTER}" -gt 9 ]; then
+    echo "::error::pr-watch: PR_REVIEW_WAIT_SECS is out of range (max 9 digits), got '$AWAITING_AFTER'" >&2
+    exit 2
+  fi
 fi
 WRITER_WORKFLOW="${PR_WATCH_WRITER_WORKFLOW:-Review gate writer}"
 
