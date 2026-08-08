@@ -180,6 +180,13 @@ else
 fi
 
 # --- per-PR reduction ---------------------------------------------------
+# Rows are projected BEFORE the loop: a jq failure inside process
+# substitution cannot fail the while loop (it would just read nothing and
+# exit 0 healthy), so the projection is validated here, loudly.
+pr_rows="$(jq -r '.[] | [.number, .head.sha, (.user.login // "-"), .state, (.draft // false | tostring), (if .auto_merge == null then "false" else "true" end), (.created_at // "-")] | @tsv' <<<"$prs" 2>/dev/null)" || {
+  echo "::error::pr-watch: open-PR rows failed projection (malformed listing element)" >&2
+  exit 2
+}
 while IFS=$'\t' read -r number head author state draft armed created_at; do
   [ -z "$number" ] && continue
   # "-" is the jq placeholder for absent values: bash collapses adjacent
@@ -240,12 +247,19 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
     errored=1
     continue
   }
-  unresolved="$(jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length' <<<"$threads_resp" 2>/dev/null)" || {
-    emit "$number" "$head" error "thread response unparsable"
+  # Predicate-parity validation: a node whose isResolved is not a boolean
+  # (or a non-boolean hasNextPage) is a malformed response — counting it as
+  # resolved would report health from untrustworthy data.
+  unresolved="$(jq -r 'if ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
+      then error("malformed thread node")
+      else [.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length end' <<<"$threads_resp" 2>/dev/null)" || {
+    emit "$number" "$head" error "thread response malformed (non-boolean isResolved) or unparsable"
     errored=1
     continue
   }
-  overflow="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$threads_resp" 2>/dev/null)" || overflow="true"
+  overflow="$(jq -r 'if (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean"
+      then error("malformed pageInfo")
+      else .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage end' <<<"$threads_resp" 2>/dev/null)" || overflow="true"
   if [ "$overflow" = "true" ] || [ "$unresolved" -gt 0 ]; then
     if [ "$overflow" = "true" ]; then
       emit "$number" "$head" threads-open "over 100 review threads (count overflow — fail closed)$queued"
@@ -423,7 +437,9 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
       fi
       ;;
   esac
-done < <(jq -r '.[] | [.number, .head.sha, (.user.login // "-"), .state, (.draft // false | tostring), (if .auto_merge == null then "false" else "true" end), (.created_at // "-")] | @tsv' <<<"$prs")
+done <<EOF_ROWS
+$pr_rows
+EOF_ROWS
 
 if [ "$errored" = "1" ]; then exit 2; fi
 if [ "$attention" = "1" ]; then exit 1; fi

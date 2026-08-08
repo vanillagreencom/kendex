@@ -126,6 +126,10 @@ case "$args" in
       echo "HTTP 500" >&2
       exit 1
     fi
+    if [[ -n "${STUB_THREADS_RAW:-}" ]]; then
+      printf '%s\n' "$STUB_THREADS_RAW"
+      exit 0
+    fi
     n="${STUB_UNRESOLVED:-0}"
     next="${STUB_THREADS_NEXTPAGE:-false}"
     jq -n --argjson n "$n" --argjson next "$next" \
@@ -556,6 +560,24 @@ set -e
 assert_eq "$rc" "1" "pw36: race-path threads exit 1"
 assert_contains "$out" "gate-stale" "pw36: stale green reported"
 assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw36: and heals"
+
+# pw37: a null isResolved node is malformed, never counted as resolved.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[{"isResolved":null}]}}}}}' \
+  STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw37: malformed thread node exits 2"
+assert_contains "$out" "malformed" "pw37: named as malformed"
+
+# pw38: a malformed listing element fails the row projection loudly.
+set +e
+out=$(run_watch STUB_OPEN_PRS='[42]' STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw38: malformed listing element exits 2"
+assert_contains "$out" "projection" "pw38: named as a projection failure"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
