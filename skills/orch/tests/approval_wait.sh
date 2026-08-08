@@ -1434,6 +1434,69 @@ assert_eq "$rc" "0" "transient4: approval-mode 503s then approval exits 0" "$std
 assert_eq "$(json_field "$output" '.status')" "approved" "transient4: status approved despite transient 503s" "$stderr"
 assert_eq "$(json_field "$output" '.transient_api_errors')" "2" "transient4: approval-mode pr view retries counted" "$stderr"
 
+echo "=== PR_REVIEW_WAIT_SECS (absent max_wait positional resolves via settings) ==="
+
+# No 3rd positional: the deadline comes from PR_REVIEW_WAIT_SECS through
+# orch-env (env > vstack.settings.toml > 900). These cases pin every layer
+# without ever waiting the 900s built-in default.
+run_wait_json_nomax() {
+  (cd "$TMP_ROOT/repo" \
+    && PATH="$TMP_ROOT/bin:$PATH" \
+       env "$@" .agents/skills/orch/scripts/approval-wait 1 1 --json)
+}
+
+# Env layer: a 1-second setting times the wait out promptly (a broken
+# resolution would idle toward the 900s default and hang the suite).
+stderr="$TMP_ROOT/waitsecs1.err"
+set +e
+output=$(run_wait_json_nomax STUB_APPROVAL_MODE=none PR_REVIEW_WAIT_SECS=1 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "waitsecs: env PR_REVIEW_WAIT_SECS drives the deadline" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "waitsecs: env-resolved deadline reports timeout" "$stderr"
+assert_eq "$(json_field "$output" '.elapsed_seconds | . < 5')" "true" "waitsecs: env deadline is the 1s setting, not the 900s default" "$stderr"
+
+# Settings layer: the same key from vstack.settings.toml [env] applies when
+# the process env is silent.
+cat > "$TMP_ROOT/repo/vstack.settings.toml" <<'EOF'
+[env]
+PR_REVIEW_WAIT_SECS = "1"
+EOF
+stderr="$TMP_ROOT/waitsecs2.err"
+set +e
+output=$(run_wait_json_nomax STUB_APPROVAL_MODE=none 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "waitsecs: settings-file PR_REVIEW_WAIT_SECS applies" "$stderr"
+assert_eq "$(json_field "$output" '.status')" "timeout" "waitsecs: settings-resolved deadline reports timeout" "$stderr"
+assert_eq "$(json_field "$output" '.elapsed_seconds | . < 5')" "true" "waitsecs: settings deadline is the 1s value, not the 900s default" "$stderr"
+
+# Process env beats the settings file (orch-env precedence): with the file
+# saying 1 and the env saying 3, the wait must run past 1s.
+stderr="$TMP_ROOT/waitsecs3.err"
+set +e
+output=$(run_wait_json_nomax STUB_APPROVAL_MODE=none PR_REVIEW_WAIT_SECS=3 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "waitsecs: env beats settings file (still times out)" "$stderr"
+assert_eq "$(json_field "$output" '.elapsed_seconds | . >= 2')" "true" "waitsecs: env 3s outlives the settings file's 1s" "$stderr"
+
+# An explicit positional max_wait always wins over the setting.
+stderr="$TMP_ROOT/waitsecs4.err"
+set +e
+output=$(run_wait_json_short STUB_APPROVAL_MODE=none PR_REVIEW_WAIT_SECS=600 2>"$stderr")
+rc=$?
+set -e
+assert_eq "$rc" "1" "waitsecs: explicit positional wins over the setting" "$stderr"
+assert_eq "$(json_field "$output" '.elapsed_seconds | . < 600')" "true" "waitsecs: positional 3s deadline, not the setting's 600" "$stderr"
+rm -f "$TMP_ROOT/repo/vstack.settings.toml"
+
+# Numeric-default guard (orch-env layer): a non-numeric setting value falls
+# back to the numeric default instead of poisoning the deadline arithmetic.
+guard_out="$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_WAIT_SECS=soon .agents/skills/orch/scripts/orch-env PR_REVIEW_WAIT_SECS 900) )"
+assert_eq "$guard_out" "900" "waitsecs: non-numeric value falls back to the numeric default"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

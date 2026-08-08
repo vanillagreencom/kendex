@@ -103,7 +103,7 @@ The three waiters share a bounded env-first GitHub auth ladder and exit `3` on h
 
 ### Review-gate modes
 
-`approval-wait --resolve-mode` prints the project's effective gate mode; workflows read the mode only through it. `PR_REVIEW_GATE` selects `approval` (GitHub-native approval verdict), `review` (non-author review of the current head + zero unresolved threads, for commenting-only review bots), or `off` (reviewer-less repo: wait skipped, gate recorded not-applicable). Default `approval`. Full setting semantics — the legacy `PR_APPROVAL_GATE` mapping, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_OUTAGE_CONTEXT` — and the waiters' JSON contracts: [references/gates.md](references/gates.md).
+`approval-wait --resolve-mode` prints the project's effective gate mode; workflows read the mode only through it. `PR_REVIEW_GATE` selects `approval` (GitHub-native approval verdict), `review` (non-author review of the current head + zero unresolved threads, for commenting-only review bots), or `off` (reviewer-less repo: wait skipped, gate recorded not-applicable). Default `approval`. Full setting semantics — the legacy `PR_APPROVAL_GATE` mapping, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS`, `PR_REVIEW_OUTAGE_CONTEXT` — and the waiters' JSON contracts: [references/gates.md](references/gates.md).
 
 ## Schemas
 
