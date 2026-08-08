@@ -313,6 +313,14 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 # identical trees (no delta) are unaffected; inert while
 # REVIEW_GATE_CARRY_FORWARD is empty.
 
+REVIEW_GATE_MODE = "enforce"
+# Used by: review-gate (`review-predicate.sh`) and orch (submit flow). The
+# one-switch per-repo gate disable: "enforce" (default) is the full gate;
+# "off" answers approved with an attestation detail before any evidence
+# read — the writer converges the required status to success and merging
+# gates on CI alone; orch skips its reviewer wait. Unknown values are a
+# loud config error: a typo cannot disable a merge gate.
+
 # SECOND OPINION
 
 SECOND_OPINION_TARGET = "codex"

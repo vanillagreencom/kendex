@@ -98,6 +98,16 @@
 #                                             vstack#1115). Empty = no exclusions.
 #                                             Identical-tree carries are unaffected
 #                                             (no delta, nothing to exclude).
+#   REVIEW_GATE_MODE                          "enforce" (default) or "off": "off" makes
+#                                             this predicate answer approved WITHOUT
+#                                             evaluating any evidence — the one-switch
+#                                             per-repo gate disable (owner decision
+#                                             2026-08-08). The verdict detail carries the
+#                                             attestation so every posted status says the
+#                                             gate is disabled, not that a review
+#                                             happened. Unknown values are a config
+#                                             error (exit 2) — a typo must never
+#                                             silently disable a merge gate.
 #
 # Env (required): GH_TOKEN (or ambient gh auth), GH_REPO, PR_NUMBER, HEAD_SHA
 # Env (optional): PR_AUTHOR — resolved from the PR when empty.
@@ -163,6 +173,7 @@ API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 2
 API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 2
 CARRY_FORWARD="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 2
 CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 2
+GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 2
 
 # Configuration errors are exit 2 (no verdict), same contract as a failed
 # evidence read: a typo in trust config must never quietly widen or narrow
@@ -177,6 +188,13 @@ if [ "$SHA_FLOOR" -lt 4 ] || [ "$SHA_FLOOR" -gt 40 ]; then
   echo "::error::review-predicate: REVIEW_GATE_SHA_PREFIX_FLOOR must be 4..40, got '$SHA_FLOOR'" >&2
   exit 2
 fi
+case "$GATE_MODE" in
+  enforce|off) ;;
+  *)
+    echo "::error::review-predicate: REVIEW_GATE_MODE must be 'enforce' or 'off', got '$GATE_MODE'" >&2
+    exit 2
+    ;;
+esac
 case "$MIN_STATE" in
   any|approved) ;;
   *)
@@ -276,6 +294,18 @@ for required in GH_REPO PR_NUMBER HEAD_SHA; do
     exit 2
   fi
 done
+
+# The one-switch gate disable (owner decision 2026-08-08): mode "off" answers
+# approved BEFORE any evidence read — no API calls, no evidence model, no
+# thread term. The detail line is an attestation, not a review claim: every
+# status the writer converges from this verdict says the gate is disabled.
+# Required env is still validated above (a caller that cannot even name the
+# PR is misconfigured regardless of mode), and an invalid mode value already
+# exited 2 — the switch can turn the gate off, a typo cannot.
+if [ "$GATE_MODE" = "off" ]; then
+  echo "verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)"
+  exit 0
+fi
 
 if [ -z "${PR_AUTHOR:-}" ]; then
   PR_AUTHOR="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq .user.login)" || {

@@ -142,6 +142,16 @@ REVIEW_GATE_CARRY_FORWARD = ""
 # are unaffected; inert while REVIEW_GATE_CARRY_FORWARD is empty.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 
+# The one-switch per-repo gate disable (owner decision 2026-08-08):
+# "enforce" (default) is the full gate; "off" makes the predicate answer
+# approved with an attestation detail ("review gate disabled by settings")
+# before ANY evidence read, so the writer converges the required status to
+# success and merges gate on CI alone. Statuses posted under "off" say the
+# gate is disabled — never that a review happened. Unknown values are a
+# loud config error: a typo cannot disable a merge gate. Orch's submit
+# flow reads the same key and skips its reviewer wait when "off".
+REVIEW_GATE_MODE = "enforce"
+
 # Review-wait quiet period in seconds — SHARED with the orch skill (orch's
 # approval-wait resolves its absent max_wait positional through it). Read
 # here by pr-watch.sh as the awaiting-stale threshold: an un-reviewed head
