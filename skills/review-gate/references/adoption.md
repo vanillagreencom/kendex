@@ -138,9 +138,14 @@ Wrap it in whatever wake-up mechanism the harness has — the loop body is
 always the same:
 
 ```bash
-# cron / polling loop / harness monitor — silence means nothing needs you
-GH_REPO=<owner>/<repo> .agents/skills/review-gate/scripts/pr-watch.sh --heal \
-  || notify "$(GH_REPO=<owner>/<repo> .agents/skills/review-gate/scripts/pr-watch.sh --heal)"
+# cron / polling loop / harness monitor — silence means nothing needs you.
+# ONE invocation, output captured to a file: re-running it to build the
+# notification would re-dispatch --heal's writer kick and could observe
+# different state. (Plain redirection, no inline substitution — the shape
+# stays harness-safe under restrictive shell classifiers.)
+export GH_REPO=<owner>/<repo>
+.agents/skills/review-gate/scripts/pr-watch.sh --heal > pr-watch.out 2>&1 \
+  || notify-from-file pr-watch.out
 ```
 
 Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to

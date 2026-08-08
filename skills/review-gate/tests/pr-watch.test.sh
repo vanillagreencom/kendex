@@ -22,6 +22,18 @@
 #                                                   no predicate consulted
 #   pw14. explicit PR arg, closed PR             -> skipped silently
 #   pw15. draft + approved + success + unarmed   -> no disarmed line
+#   pw16. approved verdict + open threads        -> threads-open anyway
+#         (the REVIEW_GATE_THREADS=off shape)       (direct read, both modes)
+#   pw17. over 100 threads                       -> fail-closed attention
+#   pw18. queue-membership read failure          -> error, exit 2 (never a
+#                                                   silent "not queued")
+#   pw19. cheap mode, unarmed success gate       -> disarmed still emitted
+#   pw20. zero-exit predicate, garbage output    -> error, exit 2
+#   pw21. old commit in a fresh PR               -> not stale (created_at
+#                                                   floors the silence clock)
+#   pw22. explicit PR arg answering junk         -> that PR's error line,
+#                                                   remaining args processed
+#   pw23. zero-byte gate-status read             -> error (broken read)
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -97,6 +109,10 @@ fi
 [[ "$cmd" == "api" ]] || { echo "unexpected gh command: $cmd $args" >&2; exit 1; }
 case "$args" in
   graphql*mergeQueueEntry*)
+    if [[ "${STUB_QUEUE_FAIL:-}" == "yes" ]]; then
+      echo "HTTP 500" >&2
+      exit 1
+    fi
     if [[ "${STUB_QUEUED:-}" == "yes" ]]; then
       echo '{"data":{"repository":{"pullRequest":{"mergeQueueEntry":{"position":1}}}}}' \
         | jq -r 'if .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end'
@@ -105,7 +121,14 @@ case "$args" in
     fi
     ;;
   graphql*reviewThreads*)
-    printf '%s\n' "${STUB_UNRESOLVED:-0}"
+    if [[ "${STUB_THREADS_FAIL:-}" == "yes" ]]; then
+      echo "HTTP 500" >&2
+      exit 1
+    fi
+    n="${STUB_UNRESOLVED:-0}"
+    next="${STUB_THREADS_NEXTPAGE:-false}"
+    jq -n --argjson n "$n" --argjson next "$next" \
+      '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:$next}, nodes:[range($n) | {isResolved:false}]}}}}}'
     ;;
   *"pulls?state=open"*)
     if [[ "${STUB_OPEN_PRS:-[]}" == "emptybytes" ]]; then exit 0; fi
@@ -118,6 +141,7 @@ case "$args" in
     printf '%s\n' "${!var}"
     ;;
   *"/statuses?per_page=100"*)
+    if [[ "${STUB_GATE_HISTORY:-[]}" == "emptybytes" ]]; then exit 0; fi
     printf '%s\n' "${STUB_GATE_HISTORY:-[]}"
     ;;
   *commits/*)
@@ -132,10 +156,11 @@ EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
 HEAD_A="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-pr_row() { # number, [state], [armed], [draft] -> one pulls-list row
+pr_row() { # number, [state], [armed], [draft], [created_at] -> one pulls-list row
   jq -n --argjson n "$1" --arg state "${2:-open}" --arg armed "${3:-armed}" --arg draft "${4:-false}" \
-    --arg head "$HEAD_A" \
+    --arg created "${5:-2026-01-01T00:00:00Z}" --arg head "$HEAD_A" \
     '{number:$n, state:$state, draft:($draft=="true"), head:{sha:$head}, user:{login:"author"},
+      created_at:$created,
       auto_merge: (if $armed=="armed" then {merge_method:"merge"} else null end)}'
 }
 
@@ -296,6 +321,87 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "pw15: draft exits 0"
 assert_not_contains "$out" "disarmed" "pw15: no disarmed line for drafts"
+
+# pw16: threads are read DIRECTLY even in evaluate mode — a
+# REVIEW_GATE_THREADS=off repo's predicate returns approved with threads
+# open, and the watcher must still see them.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_UNRESOLVED=2 \
+  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw16: threads-off repo shape still reports threads"
+assert_contains "$out" "threads-open" "pw16: kind emitted despite approved verdict"
+
+# pw17: over 100 threads fails CLOSED as attention.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_UNRESOLVED=100 STUB_THREADS_NEXTPAGE=true \
+  STUB_VERDICT_LINE="verdict=approved detail=unused")
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw17: thread overflow exits 1"
+assert_contains "$out" "overflow" "pw17: named as overflow (fail closed)"
+
+# pw18: a failed queue-membership read is a loud error, never "not queued".
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_QUEUE_FAIL=yes STUB_VERDICT_LINE="verdict=approved detail=unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw18: queue read failure exits 2"
+assert_contains "$out" "merge-queue membership read failed" "pw18: error line names the read"
+
+# pw19: cheap mode still emits disarmed (its documented second finding).
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
+  STUB_VERDICT_LINE="unused" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' -- --no-evaluate)
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw19: cheap mode reports disarmed"
+assert_contains "$out" "disarmed" "pw19: kind emitted"
+
+# pw20: a zero-exit predicate with unrecognizable output is an error, never
+# a healthy PR.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="garbage output with no verdict")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw20: malformed predicate output exits 2"
+assert_contains "$out" "no recognizable verdict" "pw20: named as broken output"
+
+# pw21: the awaiting clock floors at PR creation — a cherry-picked
+# days-old commit in a freshly opened PR is NOT instantly stale.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open armed false "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 3600)
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw21: fresh PR with an old commit is not stale (created_at floor)"
+
+# pw22: an explicitly named PR whose fetch returns junk is that PR's error
+# line — the remaining arguments still process.
+set +e
+out=$(run_watch STUB_PR_5="not json at all" STUB_PR_6="$(pr_row 6 closed)" STUB_VERDICT_LINE="unused" -- 5 6)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw22: junk PR response exits 2"
+assert_contains "$out" "not a PR object" "pw22: error names the broken read"
+
+# pw23: a zero-byte gate-status read is a broken read, never an empty set.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
+  STUB_GATE_HISTORY="emptybytes")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw23: zero-byte gate read exits 2"
+assert_contains "$out" "zero bytes" "pw23: named as a broken read"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

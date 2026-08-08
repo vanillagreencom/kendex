@@ -130,3 +130,11 @@ REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 # "comments" only on repos where that residual carry risk is acceptable;
 # "docs" has no such caveat.
 REVIEW_GATE_CARRY_FORWARD = ""
+
+# Review-wait quiet period in seconds — SHARED with the orch skill (orch's
+# approval-wait resolves its absent max_wait positional through it). Read
+# here by pr-watch.sh as the awaiting-stale threshold: an un-reviewed head
+# older than this warrants a manual re-review trigger or the caller's
+# on-timeout policy. One key on purpose, so the watcher and the waiter
+# agree on what "reviewer silence has gone on too long" means.
+PR_REVIEW_WAIT_SECS = "900"

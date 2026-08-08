@@ -11,10 +11,15 @@
 #
 # One invocation answers: does any open PR need attention RIGHT NOW?
 #
-#   threads-open       unresolved review threads (the detail carries the
-#                      predicate's count wording; QUEUED PRs are annotated —
-#                      a queued PR needs a DEQUEUE before any fix push,
-#                      GitHub rejects pushes to queued branches)
+#   threads-open       unresolved review threads — read DIRECTLY in both
+#                      modes (never only via the predicate: a repo running
+#                      REVIEW_GATE_THREADS=off gets approved verdicts with
+#                      threads open, and thread transitions have no webhook
+#                      anywhere — seeing them is this tool's reason to
+#                      exist). Over 100 threads fails CLOSED as attention.
+#                      QUEUED PRs are annotated — a queued PR needs a
+#                      DEQUEUE before any fix push, GitHub rejects pushes
+#                      to queued branches
 #   changes-requested  a standing objection blocks the gate
 #   gate-stale         the predicate says approved but the gate context's
 #                      newest row is not success — the writer has not
@@ -43,9 +48,11 @@
 #
 # Usage: pr-watch.sh [PR# ...] [--no-evaluate] [--heal] [--awaiting-after SECS]
 #   PR# ...            watch only these PRs (default: every open PR)
-#   --no-evaluate      cheap mode: skip the predicate; only thread counts
-#                      (direct GraphQL read) and the disarmed check run —
-#                      no gate-stale / changes-requested / awaiting-stale
+#   --no-evaluate      cheap mode: skips ONLY the predicate (the expensive
+#                      multi-read evaluation) — the thread, queue, and
+#                      gate-status reads still run, so threads-open and
+#                      disarmed both fire; gate-stale / changes-requested /
+#                      awaiting-stale need the predicate and do not
 #   --heal             on gate-stale, dispatch the writer workflow once per
 #                      invocation (name: PR_WATCH_WRITER_WORKFLOW, default
 #                      "Review gate writer")
@@ -122,6 +129,14 @@ if [ -n "$PR_ARGS" ]; then
       errored=1
       continue
     }
+    # Guarded append: an empty or non-JSON body from a nominally successful
+    # call must become this PR's error line, not a set -e death that
+    # abandons the remaining arguments.
+    if ! jq -e 'type == "object" and has("number")' >/dev/null 2>&1 <<<"$row"; then
+      emit "$n" "--------" error "PR #$n response is not a PR object (broken read)"
+      errored=1
+      continue
+    fi
     prs="$(jq -c --argjson r "$row" '. + [$r]' <<<"$prs")"
   done
 else
@@ -142,15 +157,51 @@ else
 fi
 
 # --- per-PR reduction ---------------------------------------------------
-while IFS=$'\t' read -r number head author state draft armed; do
+while IFS=$'\t' read -r number head author state draft armed created_at; do
   [ -z "$number" ] && continue
   # Closed/merged PRs need nothing (reachable only via explicit PR args).
   [ "$state" = "open" ] || continue
 
   # Queue membership: pushes to a queued PR's branch are rejected, so every
-  # attention line on a queued PR carries the annotation.
+  # attention line on a queued PR carries the annotation. REQUIRED input —
+  # a failed read silently treated as "not queued" would emit a false
+  # disarmed finding and drop the dequeue warning, so it fails loud like
+  # every other read here.
   queued="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){mergeQueueEntry{position}}}}" \
-      --jq 'if .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end' 2>/dev/null)" || queued=""
+      --jq 'if .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end' 2>/dev/null)" || {
+    emit "$number" "$head" error "merge-queue membership read failed"
+    errored=1
+    continue
+  }
+
+  # Threads are read DIRECTLY in BOTH modes, never only through the
+  # predicate: a repo running REVIEW_GATE_THREADS=off gets `approved` from
+  # the predicate with threads open (thread hygiene is server-side there),
+  # and the watcher's whole reason to exist is that thread transitions have
+  # no webhook — the reducer must see them regardless of the repo's
+  # enforcement point. Over 100 threads fails CLOSED as attention, the same
+  # posture as the predicate's own overflow.
+  threads_resp="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved}}}}}" 2>/dev/null)" || {
+    emit "$number" "$head" error "thread read failed"
+    errored=1
+    continue
+  }
+  unresolved="$(jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length' <<<"$threads_resp" 2>/dev/null)" || {
+    emit "$number" "$head" error "thread response unparsable"
+    errored=1
+    continue
+  }
+  overflow="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$threads_resp" 2>/dev/null)" || overflow="true"
+  if [ "$overflow" = "true" ]; then
+    emit "$number" "$head" threads-open "over 100 review threads (count overflow — fail closed)$queued"
+    attention=1
+    continue
+  fi
+  if [ "$unresolved" -gt 0 ]; then
+    emit "$number" "$head" threads-open "$unresolved unresolved review thread(s)$queued"
+    attention=1
+    continue
+  fi
 
   if [ "$EVALUATE" = "1" ]; then
     verdict_line="$(GH_REPO="$GH_REPO" PR_NUMBER="$number" HEAD_SHA="$head" PR_AUTHOR="$author" \
@@ -161,26 +212,30 @@ while IFS=$'\t' read -r number head author state draft armed; do
     }
     verdict="$(sed -n 's/^verdict=\([a-z-]*\) .*/\1/p' <<<"$verdict_line")"
     detail="$(sed -n 's/^verdict=[a-z-]* detail=//p' <<<"$verdict_line")"
+    # The writer validates this same interface; an unknown or empty verdict
+    # from a zero-exit predicate is a broken reducer, never a healthy PR.
+    case "$verdict" in
+      approved|awaiting|threads-open|changes-requested) ;;
+      *)
+        emit "$number" "$head" error "predicate produced no recognizable verdict (broken output)"
+        errored=1
+        continue
+        ;;
+    esac
   else
-    # Cheap mode: thread count only — the one term whose transition has no
-    # webhook anywhere and therefore the one agents most often sleep
-    # through.
-    unresolved="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}" \
-        --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length' 2>/dev/null)" || {
-      emit "$number" "$head" error "thread read failed"
-      errored=1
-      continue
-    }
-    if [ "$unresolved" -gt 0 ]; then
-      emit "$number" "$head" threads-open "$unresolved unresolved review thread(s)$queued"
-      attention=1
-    fi
+    # Cheap mode skips only the PREDICATE (the expensive multi-read
+    # evaluation): threads above and the gate-status/disarmed reduction
+    # below still run, so the two cheap-mode findings the header documents
+    # are both reachable. gate-stale / changes-requested / awaiting-stale
+    # need the predicate and are evaluate-mode only.
     verdict=""
     detail=""
   fi
 
   case "$verdict" in
     threads-open)
+      # Direct count was zero but the predicate saw threads (paging race /
+      # mid-read resolution) — the predicate fails closed, so surface it.
       emit "$number" "$head" threads-open "$detail$queued"
       attention=1
       continue
@@ -193,13 +248,41 @@ while IFS=$'\t' read -r number head author state draft armed; do
   esac
 
   # Gate context's NEWEST row (list endpoint, newest-first — the same
-  # projection the predicate documents for the status surface).
-  gate_state="$(gh api "repos/$GH_REPO/commits/$head/statuses?per_page=100" --paginate 2>/dev/null \
-      | jq -rs --arg ctx "$GATE_CONTEXT" 'add // [] | map(select(.context == $ctx)) | (.[0].state // "absent")')" || {
+  # projection the predicate documents for the status surface). Fetch and
+  # merge are SEPARATE steps with a zero-byte guard, the engine's required
+  # pattern: a pipe would replace gh's exit status with jq's, and a
+  # successful call producing zero bytes is a broken read, not an empty
+  # status set (that is the two-byte page []).
+  status_pages="$(gh api "repos/$GH_REPO/commits/$head/statuses?per_page=100" --paginate 2>/dev/null)" || {
     emit "$number" "$head" error "gate-status read failed"
     errored=1
     continue
   }
+  if [ -z "$status_pages" ]; then
+    emit "$number" "$head" error "gate-status read produced zero bytes (broken read)"
+    errored=1
+    continue
+  fi
+  gate_state="$(jq -rs --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
+      then (add | map(select(.context == $ctx)) | (.[0].state // "absent"))
+      else error("not a status page") end' <<<"$status_pages" 2>/dev/null)" || {
+    emit "$number" "$head" error "gate-status pages are malformed (broken read)"
+    errored=1
+    continue
+  }
+
+  # Disarmed reduction — BOTH modes (the cheap-mode contract includes it):
+  # a gate-open, un-queued, non-draft PR with auto-merge unarmed is
+  # mergeable, but nothing will merge it.
+  if [ "$gate_state" = "success" ] && [ "$armed" = "false" ] && [ -z "$queued" ] && [ "$draft" != "true" ]; then
+    # In evaluate mode only a confirmed approved verdict nominates the
+    # disarmed line (an approved gate over an awaiting predicate is the
+    # writer's problem, reported below as the state mismatch it is).
+    if [ "$EVALUATE" = "0" ] || [ "$verdict" = "approved" ]; then
+      emit "$number" "$head" disarmed "gate open but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)"
+      attention=1
+    fi
+  fi
 
   case "$verdict" in
     approved)
@@ -215,14 +298,18 @@ while IFS=$'\t' read -r number head author state draft armed; do
             errored=1
           fi
         fi
-      elif [ "$armed" = "false" ] && [ -z "$queued" ] && [ "$draft" != "true" ]; then
-        emit "$number" "$head" disarmed "gate open but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)"
-        attention=1
       fi
       ;;
     awaiting)
-      # Quiet-period check keys on the HEAD COMMIT's age: reviewer silence
-      # counts from the last push, matching the waiters' clock model.
+      # Quiet-period clock: reviewer silence counts from when this head
+      # BECAME the head. GitHub exposes no head-transition timestamp, so
+      # the approximation is max(head commit's committer date, PR
+      # created_at) — the PR floor covers a cherry-picked or long-prepared
+      # commit landing in a freshly opened PR (its commit date can be days
+      # old); a future-dated commit clamps to "not stale yet" rather than
+      # "stale forever" because the age simply goes negative. A push of an
+      # OLD commit onto an old PR still reads stale early — accepted:
+      # over-reporting silence errs toward a nudge, never toward a stall.
       head_at="$(gh api "repos/$GH_REPO/commits/$head" --jq '.commit.committer.date' 2>/dev/null)" || {
         emit "$number" "$head" error "head-commit read failed"
         errored=1
@@ -231,6 +318,14 @@ while IFS=$'\t' read -r number head author state draft armed; do
       # date -d is GNU; BSD/macOS uses -j -f. Try GNU first, fall back.
       head_epoch="$(date -d "$head_at" +%s 2>/dev/null \
         || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$head_at" +%s 2>/dev/null)" || head_epoch=""
+      created_epoch=""
+      if [ -n "$created_at" ] && [ "$created_at" != "null" ]; then
+        created_epoch="$(date -d "$created_at" +%s 2>/dev/null \
+          || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null)" || created_epoch=""
+      fi
+      if [ -n "$created_epoch" ] && { [ -z "$head_epoch" ] || [ "$created_epoch" -gt "$head_epoch" ]; }; then
+        head_epoch="$created_epoch"
+      fi
       if [ -n "$head_epoch" ]; then
         age=$(( $(date +%s) - head_epoch ))
         if [ "$age" -gt "$AWAITING_AFTER" ]; then
@@ -240,7 +335,7 @@ while IFS=$'\t' read -r number head author state draft armed; do
       fi
       ;;
   esac
-done < <(jq -r '.[] | [.number, .head.sha, (.user.login // ""), .state, (.draft // false | tostring), (if .auto_merge == null then "false" else "true" end)] | @tsv' <<<"$prs")
+done < <(jq -r '.[] | [.number, .head.sha, (.user.login // ""), .state, (.draft // false | tostring), (if .auto_merge == null then "false" else "true" end), (.created_at // "")] | @tsv' <<<"$prs")
 
 if [ "$errored" = "1" ]; then exit 2; fi
 if [ "$attention" = "1" ]; then exit 1; fi
