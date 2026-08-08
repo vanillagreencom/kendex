@@ -168,6 +168,7 @@ case "$args" in
     # "emptybytes": a SUCCESSFUL call producing zero bytes — the broken-read
     # shape the writer must fail loud on, distinct from the empty page `[]`.
     if [[ "${STUB_GATE_HISTORY:-[]}" == "emptybytes" ]]; then exit 0; fi
+    if [[ "${STUB_GATE_HISTORY:-[]}" == "whitespace" ]]; then printf '   \n'; exit 0; fi
     printf '%s\n' "${STUB_GATE_HISTORY:-[]}"
     if [[ -n "${STUB_GATE_HISTORY_PAGE2:-}" ]]; then printf '%s\n' "$STUB_GATE_HISTORY_PAGE2"; fi
     ;;
@@ -177,6 +178,7 @@ case "$args" in
       exit 1
     fi
     if [[ "${STUB_OPEN_PRS:-[]}" == "emptybytes" ]]; then exit 0; fi
+    if [[ "${STUB_OPEN_PRS:-[]}" == "whitespace" ]]; then printf '   \n'; exit 0; fi
     printf '%s\n' "${STUB_OPEN_PRS:-[]}"
     if [[ -n "${STUB_OPEN_PRS_PAGE2:-}" ]]; then printf '%s\n' "$STUB_OPEN_PRS_PAGE2"; fi
     ;;
@@ -434,6 +436,23 @@ rc=0; out=$(run_writer_all workflow_run STUB_VERDICT_LINE="$APPROVED" STUB_OPEN_
 assert_eq "$rc" "1" "w22c: zero-byte open-PR listing exits 1"
 assert_contains "$out" "zero bytes" "w22c: names the broken read"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22c: posts nothing on a broken listing"
+
+# The two adjacent shapes the -z guard cannot see: whitespace-only slurps to
+# [] and an error-object page to {} — both used to read as "zero open PRs"
+# and exit green.
+rc=0; out=$(run_writer_all workflow_run STUB_VERDICT_LINE="$APPROVED" STUB_OPEN_PRS=whitespace 2>&1) || rc=$?
+assert_eq "$rc" "1" "w22d: whitespace-only open-PR listing exits 1"
+assert_contains "$out" "not arrays" "w22d: names the shape violation"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22d: posts nothing"
+
+rc=0; out=$(run_writer_all workflow_run STUB_VERDICT_LINE="$APPROVED" STUB_OPEN_PRS='{"message":"Server Error"}' 2>&1) || rc=$?
+assert_eq "$rc" "1" "w22e: an error-object page exits 1"
+assert_contains "$out" "not arrays" "w22e: names the shape violation"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22e: posts nothing"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='{"message":"Server Error"}' 2>&1) || rc=$?
+assert_eq "$rc" "1" "w22f: an error-object status page exits 1"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22f: no post past a malformed status page"
 
 # A ghost-authored PR (user serialized null) enumerates with an empty
 # author; the predicate resolves the real author itself downstream.
