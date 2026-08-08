@@ -93,5 +93,9 @@ REVIEW_GATE_CARRY_FORWARD = "docs"
 # Policy-bearing markdown is "docs" by extension but is obeyed mechanically
 # by agents and reviewers — a push editing it changes behavior and gets a
 # fresh review instead of carrying ancestor evidence (vstack#1115 closes
-# the residual accepted when the docs class was enabled).
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md"
+# the residual accepted when the docs class was enabled). In THIS repo the
+# product itself is instruction markdown, so the whole agents/skills/
+# pi-extensions trees are excluded: carry-forward stays useful for genuine
+# prose (README, CHANGELOG, docs/) and nothing mechanically consumed ever
+# rides an ancestor's evidence.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;agents/*;skills/*;pi-extensions/*"
