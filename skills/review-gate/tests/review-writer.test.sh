@@ -314,6 +314,22 @@ assert_eq "$rc" "0" "w11: failed guard re-read defers with exit 0 (fail-safe sid
 assert_contains "$out" "deferring the success post" "w11: names the deferral"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w11: no post on an unreadable re-read"
 
+# A MALFORMED re-read must land on the same fail-safe side as a failed one:
+# a whitespace-only success slurps to [] and an error-object page collapses
+# through `add` — both would report newer=0 and permit exactly the stale
+# success the guard exists to block.
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING_OLD" \
+  STUB_GUARD_HISTORY=$' \n  \n') || rc=$?
+assert_eq "$rc" "0" "w11b: whitespace-only guard re-read defers with exit 0"
+assert_contains "$out" "deferring the success post" "w11b: names the deferral"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w11b: no post past a vacuous guard re-read"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING_OLD" \
+  STUB_GUARD_HISTORY='{"message":"Server Error"}') || rc=$?
+assert_eq "$rc" "0" "w11c: error-object guard re-read defers with exit 0"
+assert_contains "$out" "deferring the success post" "w11c: names the deferral"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w11c: no post past a malformed guard re-read"
+
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$CR" STUB_GATE_HISTORY="$PENDING_OLD" \
   STUB_GUARD_HISTORY='[{"context":"Review gate","state":"pending","description":"newer","created_at":"'"$FUTURE"'"}]') || rc=$?
 assert_contains "$(cat "$POST_LOG")" "state=failure" "w12: downward posts never consult the guard"
@@ -452,7 +468,13 @@ assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22e: posts nothing"
 
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY='{"message":"Server Error"}' 2>&1) || rc=$?
 assert_eq "$rc" "1" "w22f: an error-object status page exits 1"
+assert_contains "$out" "not arrays" "w22f: names the shape violation (a red for another reason is not this guard)"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22f: no post past a malformed status page"
+
+rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY=$' \n  \n' 2>&1) || rc=$?
+assert_eq "$rc" "1" "w22g: a whitespace-only status-history read exits 1 (slurps to [], not an empty status set)"
+assert_contains "$out" "not arrays" "w22g: names the shape violation"
+assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w22g: posts nothing"
 
 # A ghost-authored PR (user serialized null) enumerates with an empty
 # author; the predicate resolves the real author itself downstream.
@@ -557,10 +579,11 @@ else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: no actions:write — the writer never re-runs CI"
 fi
 # The || 'main' arm keeps an empty default_branch expression from letting
-# actions/checkout fall back to its own default ref — the merge-group job
-# would get the queue's synthetic ref, the write job's pull_request_target
-# leg the PR merge ref, both under a write-capable token. BOTH checkouts
-# are counted: a one-match pin would stay green if either job regressed to
+# actions/checkout fall back to the event's own default ref — the
+# merge-group job would get the queue's synthetic ref, the write job's
+# pull_request_target leg the PR's BASE branch (not necessarily the
+# default branch), both under a write-capable token. BOTH checkouts are
+# counted: a one-match pin would stay green if either job regressed to
 # the bare expression.
 fallback_ref_count="$(grep -cF -- "ref: \${{ github.event.repository.default_branch || 'main' }}" "$TEMPLATE" || true)"
 if [[ "$fallback_ref_count" == "2" ]]; then

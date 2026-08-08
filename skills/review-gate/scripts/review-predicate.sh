@@ -351,15 +351,16 @@ got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
 # to not-evidence — the same as absent, never a failure. A read FAILURE here
 # must fail LOUDLY: treating it as absent evidence could flip a healthy PR's
 # merge state on a transient API hiccup.
-# The combined-status endpoint paginates its statuses array (default 30
-# contexts per page), so fetch EVERY page (fail loud) and merge them into one
-# snapshot — each trusted context and the outage attestation below evaluate
-# against it. Fetch and merge are SEPARATE steps for the same reason as the
-# check-runs read: a pipe would replace gh's exit status with jq's and turn a
-# read failure into an empty-success (fail-open). A caller that already holds
-# the combined status (a converge-style sweep projecting required statuses
-# per head) hands it in via REVIEW_GATE_STATUS_SNAPSHOT_FILE instead, and
-# this read is skipped entirely.
+# The statuses LIST endpoint paginates (100 rows per page here), so fetch
+# EVERY page (fail loud) and merge them into one snapshot — each trusted
+# context and the outage attestation below evaluate against it. Fetch and
+# merge are SEPARATE steps for the same reason as the check-runs read: a
+# pipe would replace gh's exit status with jq's and turn a read failure
+# into an empty-success (fail-open). A caller that already holds the
+# LIST-endpoint rows (a converge-style sweep projecting required statuses
+# per head) hands them in via REVIEW_GATE_STATUS_SNAPSHOT_FILE instead
+# (wrapped {sha, statuses} per the header contract), and this read is
+# skipped entirely.
 if [ -n "${REVIEW_GATE_STATUS_SNAPSHOT_FILE:-}" ]; then
   # The snapshot substitutes for a READ, so it gets the read contract: not a
   # file, zero bytes, unparseable, missing the statuses array, or not bound

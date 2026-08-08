@@ -29,7 +29,7 @@ for v in $vars; do
   # Env-only per-invocation seams, not settings keys — they must not appear
   # as settings assignments (REVIEW_GATE_SETTINGS_FILE overrides the file
   # path in tests; REVIEW_GATE_STATUS_SNAPSHOT_FILE hands one head's
-  # combined-status snapshot in from a converge-style caller). The absence is the contract: an
+  # LIST-endpoint status snapshot in from a converge-style caller). The absence is the contract: an
   # assignment in either example would advertise a per-invocation seam as a
   # repo setting, so it must FAIL here.
   case "$v" in

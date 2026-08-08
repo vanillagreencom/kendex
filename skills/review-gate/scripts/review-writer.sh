@@ -249,9 +249,13 @@ fi
 # state. Fetch and filter are SEPARATE steps: a pipe would replace gh's exit
 # status with jq's, so a failed or truncated re-read could slurp to an empty
 # array and report newer=0 — the exact stale-success fail-open this guard
-# closes. A failed re-read defers too. And `>=`, not `>`: both timestamps
-# have one-second resolution, so a write landing later within the evaluation
-# second compares EQUAL — deferring on equality self-heals.
+# closes. A failed re-read defers too — and so does a MALFORMED one: the
+# same non-vacuous all-arrays validation as the projection read above,
+# because a whitespace-only success slurps to [] and a non-array page
+# collapses through `add`, both reporting newer=0 and permitting exactly
+# the stale success this guard exists to block. And `>=`, not `>`: both
+# timestamps have one-second resolution, so a write landing later within
+# the evaluation second compares EQUAL — deferring on equality self-heals.
 #
 # The re-read deliberately uses bare `gh api`, not a retry wrapper (the
 # predicate's gh_read is predicate-internal): every failure mode here lands
@@ -262,9 +266,11 @@ guard_newer=""
 if guard_pages="$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/statuses?per_page=100" --paginate)" \
    && [ -n "$guard_pages" ]; then
   guard_newer="$(jq -rs --arg ctx "$GATE_CONTEXT" --arg since "$evaluated_at" \
-      '[add // [] | .[] | select(.context == $ctx
-        and (($since | length) > 0) and ((.created_at // "") >= $since))] | length' \
-      <<<"$guard_pages")" || guard_newer=""
+      'if (length > 0) and all(type == "array")
+       then [add | .[] | select(.context == $ctx
+         and (($since | length) > 0) and ((.created_at // "") >= $since))] | length
+       else error("guard re-read pages are not arrays") end' \
+      <<<"$guard_pages" 2>/dev/null)" || guard_newer=""
 fi
 if [ "$guard_newer" != "0" ]; then
   echo "::warning::deferring the success post: $GATE_CONTEXT was re-written (or unreadable) after this run's evaluation at $evaluated_at — a newer writer run's verdict stands; the next pass converges"

@@ -973,18 +973,19 @@ export GH_SHIM_EMPTY=comments
 run "zero-byte comments producer is a failed read" "" 2
 unset GH_SHIM_EMPTY
 
-# Status-snapshot seam (VST-35): a caller that already holds the combined
-# status hands it in; the predicate must evaluate against it WITHOUT its own
-# combined-status read (proven by failing that endpoint), and an unreadable
-# or malformed snapshot gets the read contract: exit 2. The snapshot must be
-# BOUND to this head (top-level sha == HEAD_SHA, VST-71): a snapshot for
-# another head passing shape validation would evaluate stale evidence.
+# Status-snapshot seam (VST-35): a caller that already holds the head's
+# LIST-endpoint status rows hands them in (wrapped {sha, statuses}); the
+# predicate must evaluate against them WITHOUT its own statuses read
+# (proven by failing that endpoint), and an unreadable or malformed
+# snapshot gets the read contract: exit 2. The snapshot must be BOUND to
+# this head (top-level sha == HEAD_SHA, VST-71): a snapshot for another
+# head passing shape validation would evaluate stale evidence.
 reset
 CFG_CONTEXTS="mech-ctx"
 jq -n --arg sha "$HEAD" '{sha:$sha,statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}}]}' >"$fixtures/snapshot.json"
 CFG_SNAPSHOT="$fixtures/snapshot.json"
 export GH_SHIM_FAIL=statuses
-run "snapshot seam: caller-supplied combined status (sha-bound) is evaluated, duplicate read skipped" approved
+run "snapshot seam: caller-supplied list-endpoint snapshot (sha-bound) is evaluated, duplicate read skipped" approved
 unset GH_SHIM_FAIL
 
 reset
@@ -1229,12 +1230,18 @@ compare_fix ahead "[$DOCS_DELTA]"
 printf '[]\n' >"$fixtures/compare.page2.json"
 run "carry: a non-object later compare page is exit 2, never a partial classification" "" 2
 
+# Files ride page one ONLY (the real API shape — compare pagination
+# paginates commits, never files), so a files array on a later page is
+# deliberately ignored, not merged: this pins that a later-page "files"
+# entry cannot smuggle rows into the classification. The fixture plants a
+# CODE file there — if a regression ever merged later pages, the docs-only
+# carry below would flip to awaiting and this case would catch it.
 reset
 carry_candidate
 CFG_CARRY="docs"
 compare_fix ahead "[$DOCS_DELTA]"
-jq -n --argjson f "[$DOCS_DELTA]" '{status:"ahead",files:$f}' >"$fixtures/compare.page2.json"
-run "carry: a healthy later compare page merges into the classification" approved
+jq -n '{status:"ahead",files:[{filename:"src/smuggled.sh",status:"modified",patch:"@@ -1 +1 @@\n-a\n+b"}]}' >"$fixtures/compare.page2.json"
+run "carry: a later-page files array is ignored, never merged (files ride page one only)" approved
 
 reset
 carry_candidate

@@ -186,10 +186,11 @@ jobs:
         with:
           # `|| 'main'` fallback: if the default_branch expression ever
           # resolved empty on some event leg, actions/checkout would fall
-          # back to its own default ref — on this job's pull_request_target
-          # leg that is the PR MERGE ref, i.e. PR-controlled code under the
-          # writer's write-capable token. 'main' is this repo's default
-          # branch (repo-owned ADAPT).
+          # back to the EVENT's own default ref, which is not necessarily
+          # the default branch — e.g. the PR's BASE branch on the
+          # pull_request_target leg (a PR targeting a non-default branch
+          # would run THAT branch's engine under the writer's write-capable
+          # token). 'main' is this repo's default branch (repo-owned ADAPT).
           ref: ${{ github.event.repository.default_branch || 'main' }}
           persist-credentials: false
 
