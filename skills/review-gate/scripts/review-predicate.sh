@@ -488,6 +488,18 @@ while IFS= read -r ctx; do
   # the mechanical half of the settings doc's "only names produced by
   # trusted bots" precondition.
   #
+  # SUPERSESSION IS PER SURFACE, deliberately: the check-run and commit-
+  # status surfaces are independent evidence sources ("either counts" is the
+  # documented contract), so a newer run on one surface does not withdraw an
+  # older row on the OTHER. Cross-surface ordering has no sound key — run
+  # ids and status ids live in different id spaces, and timestamps carry the
+  # one-second-tie hazard both projections were built to avoid — and no
+  # known reviewer publishes both surfaces under one name on one head (the
+  # migration case lands as a name change or a repo settings change, both of
+  # which reset trust config). A repo listing a name its reviewer publishes
+  # on both surfaces accepts that either surface's newest clean row
+  # satisfies the term.
+  #
   # NEWEST RUN DECIDES, per name (vstack#1110) — the check-run mirror of the
   # status branch's newest-row projection below. Counting "any clean
   # success" would let a reviewer's older clean run outlive its own NEWER
