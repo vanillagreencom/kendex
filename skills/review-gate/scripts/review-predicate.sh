@@ -12,7 +12,10 @@
 #       on this head, whose title/summary/description carries no
 #       skip-pattern marker (a "pass" that says the analysis was rate
 #       limited, skipped or queued proves nothing ran — it is silence, not
-#       approval, and routes to NOT-EVIDENCE, never to failure);
+#       approval, and routes to NOT-EVIDENCE, never to failure). On BOTH
+#       surfaces the NEWEST row/run per name decides (statuses by list
+#       order, check-runs by run id — vstack#1110): an older clean success
+#       never outlives its reviewer's newer pending/failed round;
 #   (c) a trusted comment-form clean pass: an issue comment by a trusted bot
 #       login whose body binds the evidence to this head's sha;
 #   (d) the trusted reviewer-outage attestation status — substitutes for
@@ -484,14 +487,41 @@ while IFS= read -r ctx; do
   # therefore never clean-analysis evidence (VST-19); rejecting it here is
   # the mechanical half of the settings doc's "only names produced by
   # trusted bots" precondition.
+  #
+  # NEWEST RUN DECIDES, per name (vstack#1110) — the check-run mirror of the
+  # status branch's newest-row projection below. Counting "any clean
+  # success" would let a reviewer's older clean run outlive its own NEWER
+  # in-progress/failed round on the same head (a bot starting a fresh
+  # analysis creates a new run; the default filter=latest projects per
+  # check SUITE, and a fresh analysis is a fresh suite) and open the gate
+  # on stale evidence. Ordering keys on the run id — assigned monotonically
+  # at creation, present on every real API row, and immune to the
+  # one-second created_at ties the status branch documents; started_at is
+  # NOT used (null on queued runs, which would sort a queued fresh round
+  # oldest and revive the stale success). Mirroring the status branch's
+  # publisher handling: github-actions-published rows are dropped BEFORE
+  # the projection (the one identity PR content can wield — a minted newer
+  # row must not mask real rows, not even toward closed), while rows with
+  # NO app slug at all are KEPT in the sequence — an anomalous newest row
+  # reads as silence, and dropping it pre-projection would revive an older
+  # success from malformed current evidence. PR content cannot produce a
+  # slugless row (its runs carry the github-actions slug). The newest
+  # accepted row must then itself be a clean, non-skip-filtered success;
+  # anything else — in-progress (null conclusion), failure, a skip-marked
+  # "pass", or a slugless anomaly — is silence, never a gate failure.
   check_runs="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | [ .check_runs[]
-          | select(.name == $ctx and .conclusion == "success")
-          | select(((.app.slug // "") != "") and ((.app.slug // "") != "github-actions"))
-          | (((.output.title // "") + " " + (.output.summary // "")) | ascii_downcase) as $text
-          | select(([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
-        ] | length' <<<"$checkruns_resp")" || {
+          | select(.name == $ctx)
+          | select((.app.slug // "") != "github-actions")
+        ]
+      | sort_by(.id // 0) | last
+      | if . == null then 0
+        elif ((.app.slug // "") == "") then 0
+        elif (.conclusion == "success")
+             and ((((.output.title // "") + " " + (.output.summary // "")) | ascii_downcase) as $text
+                  | ([ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
+        then 1 else 0 end' <<<"$checkruns_resp")" || {
     echo "::error::could not evaluate '$ctx' check-runs" >&2
     exit 2
   }

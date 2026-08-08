@@ -478,6 +478,62 @@ CFG_CONTEXTS="mech-ctx"
 jq -n '{check_runs:[{name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.json"
 run "check-run with no app slug (unprovable provenance) is not evidence" awaiting
 
+# NEWEST RUN DECIDES per name (vstack#1110), ordered by run id — the
+# check-run mirror of the status surface's newest-row projection. A
+# reviewer starting a fresh analysis round must withdraw its own older
+# clean success on the same head; counting "any clean success" would open
+# the gate on stale evidence.
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}},
+  {id:2,name:"mech-ctx",conclusion:null,status:"in_progress",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:null}}
+]}' >"$fixtures/checkruns.json"
+run "newer in-progress run masks its older clean success (newest run decides)" awaiting
+
+# The skip marker comes from the ACTIVE pattern list, not a literal, so the
+# configured layer (which replaces the default patterns) still exercises it.
+reset
+CFG_CONTEXTS="mech-ctx"
+first_skip="$(list_items "$ACTIVE_SKIPS" | head -1)"
+jq -n --arg skip "Review $first_skip. 0 files reviewed." '{check_runs:[
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}},
+  {id:2,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:$skip}}
+]}' >"$fixtures/checkruns.json"
+run "newer skip-marked 'pass' masks its older clean success" awaiting
+
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {id:1,name:"mech-ctx",conclusion:"failure",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"findings posted"}},
+  {id:2,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
+]}' >"$fixtures/checkruns.json"
+run "newest clean success over an older failed run is evidence" approved
+
+# The minting lever stays closed under the projection: a github-actions-
+# published row is dropped BEFORE choosing the newest, so PR content cannot
+# post a newer run under the trusted name to mask the reviewer's real
+# success — closing the gate is not its call either (the status branch
+# documents the same rule for its reject list).
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}},
+  {id:2,name:"mech-ctx",conclusion:null,status:"queued",app:{slug:"github-actions"},output:{title:null,summary:null}}
+]}' >"$fixtures/checkruns.json"
+run "github-actions-published newer run cannot mask the reviewer's clean success" approved
+
+# Slugless ANOMALY rows are the opposite of the minting lever: kept in the
+# sequence, so an anomalous NEWEST row masks toward closed rather than
+# reviving an older success from malformed current evidence.
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}},
+  {id:2,name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}
+]}' >"$fixtures/checkruns.json"
+run "slugless anomaly as the newest run masks toward closed (never revives the older success)" awaiting
+
 # Legacy commit STATUSES carry no app slug, only a creator — and on repos
 # whose PR workflows hold statuses:write, PR content can mint one under any
 # context through github-actions[bot]. The OPT-IN publisher reject-list
