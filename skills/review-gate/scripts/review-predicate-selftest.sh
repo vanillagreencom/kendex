@@ -1188,12 +1188,22 @@ CFG_CARRY="docs"
 compare_fix ahead "[$(jq -n '{filename:"notes.md",previous_filename:"src/thing.sh",status:"renamed",patch:"@@ -1 +1 @@\n-do_the_thing\n+do_the_thing"}')]"
 run "carry: a code file RENAMED to a .md name refuses under 'docs'" awaiting
 
+# Real API shape (compare pagination paginates COMMITS): a later page is a
+# healthy OBJECT with no files array — files ride page one only. Carry must
+# still work across it, and a non-object later page must fail loud.
 reset
 carry_candidate
 CFG_CARRY="docs"
 compare_fix ahead "[$DOCS_DELTA]"
-printf '{}\n' >"$fixtures/compare.page2.json"
-run "carry: a malformed later compare page is exit 2, never a partial classification" "" 2
+printf '{"commits": []}\n' >"$fixtures/compare.page2.json"
+run "carry: a fileless later compare page (real pagination shape) still carries" approved
+
+reset
+carry_candidate
+CFG_CARRY="docs"
+compare_fix ahead "[$DOCS_DELTA]"
+printf '[]\n' >"$fixtures/compare.page2.json"
+run "carry: a non-object later compare page is exit 2, never a partial classification" "" 2
 
 reset
 carry_candidate
@@ -1382,6 +1392,7 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
   reset
   status_ctx "$ACTIVE_OUTAGE" success "internal review loop clean (attested by the operator)"
   cases=$((cases + 1))
+  detail_rc=0
   detail_line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
     REVIEW_GATE_SETTINGS_FILE=/dev/null \
     REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="$CFG_CONTEXTS" \
@@ -1392,14 +1403,21 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
     REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" REVIEW_GATE_THREADS="$CFG_THREADS" \
     REVIEW_GATE_CARRY_FORWARD="$CFG_CARRY" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
-    "$predicate" 2>/dev/null | head -n 1)"
+    "$predicate" 2>/dev/null)" || detail_rc=$?
+  detail_line="$(head -n 1 <<<"$detail_line")"
   case "$detail_line" in
     *"operator override"*"internal review loop clean"*)
-      echo "ok    configured: the override reason rides out in the verdict detail (approved)" ;;
+      if [ "${detail_rc:-0}" -ne 0 ]; then
+        echo "FAIL  configured: the override-detail case exited ${detail_rc} despite the expected line" >&2
+        failures=$((failures + 1))
+      else
+        echo "ok    configured: the override reason rides out in the verdict detail (approved)"
+      fi ;;
     *)
       echo "FAIL  configured: override reason missing from the detail: $detail_line" >&2
       failures=$((failures + 1)) ;;
   esac
+  detail_rc=0
 
   # The v2 key name is resolved by the PREDICATE (every live gate read
   # honors it), not only by the writer — an adopter setting just the v2 key
@@ -1408,6 +1426,7 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
   CFG_OUTAGE="legacy-name"
   status_ctx "v2-override-name" success "attested via the v2 key"
   cases=$((cases + 1))
+  alias_rc=0
   alias_line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
     REVIEW_GATE_SETTINGS_FILE=/dev/null \
     REVIEW_GATE_TRUSTED_STATUS_CONTEXTS="" REVIEW_GATE_COMMENT_REVIEWERS="" \
@@ -1416,12 +1435,20 @@ if [ -n "$ACTIVE_OUTAGE" ]; then
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="" REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" \
     REVIEW_GATE_THREADS="$CFG_THREADS" REVIEW_GATE_CARRY_FORWARD="" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
-    "$predicate" 2>/dev/null | head -n 1)"
+    "$predicate" 2>/dev/null)" || alias_rc=$?
+  alias_line="$(head -n 1 <<<"$alias_line")"
   case "$alias_line" in
-    verdict=approved*) echo "ok    configured: REVIEW_GATE_OVERRIDE_CONTEXT wins over the legacy key in the predicate itself (approved)" ;;
+    verdict=approved*)
+      if [ "${alias_rc:-0}" -ne 0 ]; then
+        echo "FAIL  configured: the override-alias case exited ${alias_rc} despite the expected line" >&2
+        failures=$((failures + 1))
+      else
+        echo "ok    configured: REVIEW_GATE_OVERRIDE_CONTEXT wins over the legacy key in the predicate itself (approved)"
+      fi ;;
     *) echo "FAIL  configured: the v2 override key was not honored by the predicate: $alias_line" >&2
        failures=$((failures + 1)) ;;
   esac
+  alias_rc=0
   CFG_OUTAGE="$ACTIVE_OUTAGE"
 
   if [ -n "$ACTIVE_PUBLISHER_REJECT" ]; then

@@ -137,8 +137,14 @@ if [ -z "${PR_NUMBER:-}" ]; then
     echo "::error::open-PR listing produced zero bytes (broken read); taking no action"
     exit 1
   fi
-  prs="$(jq -s '[add // [] | .[] | {number, headRefOid: .head.sha, author: {login: (.user.login // "")}}]' <<<"$raw_prs")" || {
-    echo "::error::could not parse the open-PR list"
+  # Page-shape validation, not just parse success: a whitespace-only body
+  # slurps to [] and an error-object page slurps to {} — both would read
+  # as "zero open PRs" and exit green with every gate silently stranded.
+  # A healthy page is an ARRAY (an empty repo is the two-byte page []).
+  prs="$(jq -s 'if (length > 0) and all(type == "array")
+                then [add | .[] | {number, headRefOid: .head.sha, author: {login: (.user.login // "")}}]
+                else error("not an array page") end' <<<"$raw_prs" 2>/dev/null)" || {
+    echo "::error::open-PR listing pages are not arrays (broken read); taking no action"
     exit 1
   }
   count="$(jq length <<<"$prs")"
@@ -199,8 +205,10 @@ if [ -z "$raw_statuses" ]; then
   echo "::error::commit-statuses read for $HEAD_SHA produced zero bytes (broken read); taking no action"
   exit 1
 fi
-gate_statuses="$(jq -s --arg ctx "$GATE_CONTEXT" '[add // [] | .[] | select(.context == $ctx)]' <<<"$raw_statuses")" || {
-  echo "::error::could not parse commit statuses for $HEAD_SHA; taking no action"
+gate_statuses="$(jq -s --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
+                  then [add | .[] | select(.context == $ctx)]
+                  else error("not an array page") end' <<<"$raw_statuses" 2>/dev/null)" || {
+  echo "::error::commit-status pages for $HEAD_SHA are not arrays (broken read); taking no action"
   exit 1
 }
 current_state="$(jq -r '.[0].state // "absent"' <<<"$gate_statuses")"

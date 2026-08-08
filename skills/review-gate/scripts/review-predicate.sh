@@ -697,17 +697,21 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
       echo "::error::comparison $base...$HEAD_SHA produced zero bytes (broken read)" >&2
       exit 2
     fi
-    # EVERY page of a healthy compare response carries a files array
-    # (possibly empty); any page without one is a malformed or truncated
-    # response, and defaulting it to [] would hide that page's files from
-    # classification — a carried approval from a broken read (vstack#1097
-    # closed the later-page half of this; page 1 was always checked). Same
-    # exit-2 contract as every other evidence read.
-    cmp="$(jq -s 'if (length > 0) and all(type == "object" and ((.files | type) == "array"))
-                  then {status: (.[0].status // ""), files: (map(.files) | add)}
+    # THE FILES LIST RIDES PAGE ONE ONLY: compare pagination paginates the
+    # COMMITS array — later pages are healthy objects that carry no files
+    # (demanding one there, as the first vstack#1097 fix did, made every
+    # multi-page compare exit 2 and hard-failed the predicate). So: page
+    # one must be an object WITH a files array (a page-one without it is a
+    # malformed or truncated response — defaulting to [] would carry an
+    # approval from a broken read), later pages need only be objects, and
+    # the classification reads files from page one alone. The 300-entry
+    # API cap still refuses carry below (completeness unprovable at the
+    # cap). Same exit-2 contract as every other evidence read.
+    cmp="$(jq -s 'if (length > 0) and all(type == "object") and ((.[0].files | type) == "array")
+                  then {status: (.[0].status // ""), files: .[0].files}
                   else error("malformed compare page") end' \
               <<<"$cmp_pages" 2>/dev/null)" || {
-      echo "::error::could not merge the comparison pages for $base...$HEAD_SHA (missing or malformed files array)" >&2
+      echo "::error::could not merge the comparison pages for $base...$HEAD_SHA (non-object page, or page one without a files array)" >&2
       exit 2
     }
     cmp_status="$(jq -r .status <<<"$cmp")"
