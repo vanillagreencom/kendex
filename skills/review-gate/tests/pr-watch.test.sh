@@ -114,6 +114,12 @@ case "$args" in
       echo "HTTP 500" >&2
       exit 1
     fi
+    if [[ "${STUB_QUEUE_ERRORS:-}" == "yes" ]]; then
+      # gh --jq applies to the full envelope: an errors array beside partial
+      # data must make the jq error() — emulate gh's behavior (nonzero, no
+      # stdout) the way it fails on error().
+      exit 1
+    fi
     if [[ "${STUB_QUEUE_NULL_ENVELOPE:-}" == "yes" ]]; then
       # gh --jq evaluates server-side of the stub: emulate by failing the
       # jq the way gh does on an error() — nonzero with no output.
@@ -150,12 +156,22 @@ case "$args" in
     n="${n%% *}"
     var="STUB_PR_${n}"
     if [[ -n "${!var:-}" ]]; then
-      printf '%s\n' "${!var}"
+      pr_row_json="${!var}"
     elif [[ -n "${STUB_OPEN_PRS:-}" && "${STUB_OPEN_PRS}" != "emptybytes" ]]; then
-      jq -e --argjson n "$n" '.[] | select((.number? // null) == $n)' <<<"$STUB_OPEN_PRS" || { echo "HTTP 404" >&2; exit 1; }
+      pr_row_json="$(jq -e --argjson n "$n" '.[] | select((.number? // null) == $n)' <<<"$STUB_OPEN_PRS")" || { echo "HTTP 404" >&2; exit 1; }
     else
       echo "HTTP 404" >&2
       exit 1
+    fi
+    if [[ "$args" == *"--jq .head.sha"* ]]; then
+      # The recheck read: STUB_HEAD_AFTER simulates a mid-reduction push.
+      if [[ -n "${STUB_HEAD_AFTER:-}" ]]; then
+        printf '%s\n' "$STUB_HEAD_AFTER"
+      else
+        jq -r '.head.sha' <<<"$pr_row_json"
+      fi
+    else
+      printf '%s\n' "$pr_row_json"
     fi
     ;;
   *"/statuses?per_page=100"*)
@@ -668,6 +684,33 @@ rc=$?
 set -e
 assert_eq "$rc" "2" "pw46: ghost author exits 2"
 assert_contains "$out" "deleted account" "pw46: cause named"
+
+# pw47: a head that moves during the reduction is attention, not silence.
+set +e
+out=$(run_watch STUB_HEAD_AFTER="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw47: moved head exits 1"
+assert_contains "$out" "head-moved" "pw47: kind emitted"
+
+# pw48: GraphQL errors beside partial queue data are a loud error.
+set +e
+out=$(run_watch STUB_QUEUE_ERRORS=yes STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw48: queue errors envelope exits 2"
+
+# pw49: a response describing a DIFFERENT PR fails the binding check.
+set +e
+out=$(run_watch STUB_PR_9="$(pr_row 7)" STUB_VERDICT_LINE="unused" -- 9)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw49: mismatched PR number exits 2"
+assert_contains "$out" "not a well-formed PR object" "pw49: fails the binding check"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

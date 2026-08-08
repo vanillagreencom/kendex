@@ -127,6 +127,7 @@ healed=0
 
 emit() { # pr, head, kind, detail
   printf '%s\t%s\t%s\t%s\n' "$1" "$(printf %.8s "$2")" "$3" "$4"
+  emitted_this_pr=1
 }
 
 heal() { # pr, head — one bounded writer dispatch ATTEMPT per invocation
@@ -173,12 +174,13 @@ fi
 
 # --- per-PR reduction ---------------------------------------------------
 for number in $pr_numbers; do
+  emitted_this_pr=0
   row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
     emit "$number" "--------" error "could not read PR #$number"
     errored=1
     continue
   }
-  if ! jq -e 'type == "object" and (.number | type) == "number" and ((.head.sha? // null) | type) == "string" and ((.state? // null) | type) == "string"' >/dev/null 2>&1 <<<"$row"; then
+  if ! jq -e --argjson n "$number" 'type == "object" and .number == $n and ((.head.sha? // null) | type) == "string" and ((.state? // null) | type) == "string"' >/dev/null 2>&1 <<<"$row"; then
     emit "$number" "--------" error "PR #$number response is not a well-formed PR object (broken read)"
     errored=1
     continue
@@ -198,7 +200,8 @@ for number in $pr_numbers; do
   # disarmed finding and drop the dequeue warning, so it fails loud like
   # every other read here.
   queued="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){mergeQueueEntry{position}}}}" \
-      --jq 'if (.data.repository.pullRequest | type) != "object"
+      --jq 'if ((.errors? // []) | length) > 0 then error("graphql errors present")
+            elif (.data.repository.pullRequest | type) != "object"
                or ((.data.repository.pullRequest.mergeQueueEntry | type) != "null" and (.data.repository.pullRequest.mergeQueueEntry | type) != "object")
             then error("malformed queue envelope")
             elif .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end' 2>/dev/null)" || {
@@ -255,7 +258,8 @@ for number in $pr_numbers; do
   # Predicate-parity validation: a node whose isResolved is not a boolean
   # (or a non-boolean hasNextPage) is a malformed response — counting it as
   # resolved would report health from untrustworthy data.
-  unresolved="$(jq -r 'if (.data.repository.pullRequest.reviewThreads | type) != "object"
+  unresolved="$(jq -r 'if ((.errors? // []) | length) > 0 then error("graphql errors present")
+      elif (.data.repository.pullRequest.reviewThreads | type) != "object"
          or (.data.repository.pullRequest.reviewThreads.nodes | type) != "array"
       then error("malformed thread container")
       elif ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
@@ -458,6 +462,22 @@ for number in $pr_numbers; do
       fi
       ;;
   esac
+
+  # Final head recheck — only when this PR would otherwise report healthy:
+  # a push DURING the reduction leaves every read above describing the old
+  # head, and silence would claim the new, unreviewed head needs nothing.
+  # A moved head is attention (re-run), never silence.
+  if [ "$emitted_this_pr" = "0" ]; then
+    head_now="$(gh api "repos/$GH_REPO/pulls/$number" --jq '.head.sha' 2>/dev/null)" || {
+      emit "$number" "$head" error "head recheck failed (broken read)"
+      errored=1
+      continue
+    }
+    if [ -n "$head_now" ] && [ "$head_now" != "$head" ]; then
+      emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$head_now")) — findings describe the old head; re-run"
+      attention=1
+    fi
+  fi
 done
 
 if [ "$errored" = "1" ]; then exit 2; fi
