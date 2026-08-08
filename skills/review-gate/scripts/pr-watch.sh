@@ -32,6 +32,8 @@
 #                      than the quiet period (PR_REVIEW_WAIT_SECS, default
 #                      900) — time for a manual re-review trigger or the
 #                      caller's on-timeout policy
+#   heal-dispatched    informational companion to a healed gate-stale: the
+#                      one bounded writer dispatch of this invocation fired
 #   head-moved         the head changed while this PR was being reduced —
 #                      the findings (or the silence) describe the OLD head;
 #                      re-run. Attention, not an error: the race is
@@ -656,23 +658,25 @@ for number in $pr_numbers; do
             # would make every timestamp above describe the OLD head while
             # the NEW head's quiet period just began. The recheck runs
             # here (the emission below would skip the end-of-loop one).
-            stale_head_now="$(gh api "repos/$GH_REPO/pulls/$number" --jq '.head.sha' 2>/dev/null)" || {
-              emit "$number" "$head" error "head recheck failed while confirming staleness (broken read)"
+            stale_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
+              emit "$number" "$head" error "reviewability recheck failed while confirming staleness (broken read)"
               errored=1
               continue
             }
-            case "$stale_head_now" in
-              ''|null|*[!0-9a-fA-F]*)
-                emit "$number" "$head" error "head recheck returned no usable sha while confirming staleness (broken read)"
-                errored=1
-                continue
-                ;;
-            esac
-            if [ "${#stale_head_now}" -ne 40 ]; then
-              emit "$number" "$head" error "head recheck returned a non-sha value while confirming staleness (broken read)"
+            if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
+                and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))
+                and ((.state? // null) == "open" or (.state? // null) == "closed")
+                and (has("draft") and (.draft | type) == "boolean")' >/dev/null 2>&1 <<<"$stale_row"; then
+              emit "$number" "$head" error "reviewability recheck returned a malformed PR object while confirming staleness (broken read)"
               errored=1
               continue
             fi
+            # Closed or drafted mid-reduction: no longer awaiting review —
+            # silence, per the same rules as the initial reduction.
+            if [ "$(jq -r '.state' <<<"$stale_row")" != "open" ] || [ "$(jq -r '.draft' <<<"$stale_row")" = "true" ]; then
+              continue
+            fi
+            stale_head_now="$(jq -r '.head.sha' <<<"$stale_row")"
             if [ "$stale_head_now" != "$head" ]; then
               emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$stale_head_now")) — findings describe the old head; re-run"
               attention=1
