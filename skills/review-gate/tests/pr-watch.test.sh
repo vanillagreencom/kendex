@@ -960,6 +960,17 @@ assert_eq "$rc" "1" "pw67: to-draft conversion still reduces the verdict"
 assert_contains "$out" "gate-stale" "pw67: stale green still reported"
 assert_not_contains "$out" "disarmed" "pw67: but no re-arm nudge"
 
+# pw68: an unparsable creation timestamp is a broken read, never a skipped
+# floor that false-alerts staleness.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open armed false garbage)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw68: unparsable created_at exits 2"
+assert_contains "$out" "creation timestamp unparsable" "pw68: named"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

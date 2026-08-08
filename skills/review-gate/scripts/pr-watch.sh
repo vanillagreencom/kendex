@@ -559,6 +559,11 @@ for number in $pr_numbers; do
       if [ -n "$created_at" ] && [ "$created_at" != "null" ]; then
         created_epoch="$(date -u -d "$created_at" +%s 2>/dev/null \
           || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null)" || created_epoch=""
+        if [ -z "$created_epoch" ]; then
+          emit "$number" "$head" error "PR creation timestamp unparsable (broken read) — the silence floor cannot be computed"
+          errored=1
+          continue
+        fi
       fi
       if [ -n "$created_epoch" ] && { [ -z "$head_epoch" ] || [ "$created_epoch" -gt "$head_epoch" ]; }; then
         head_epoch="$created_epoch"
