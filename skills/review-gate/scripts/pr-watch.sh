@@ -411,19 +411,32 @@ for number in $pr_numbers; do
   # a queue ejection mid-reduction must not read healthy, and a concurrent
   # arm must not false-alert).
   if [ "$gate_state" = "success" ] && [ "$draft" != "true" ]; then
-    armed_now="$(gh api "repos/$GH_REPO/pulls/$number" --jq 'if .auto_merge == null then "false" else "true" end' 2>/dev/null)" || {
+    ownership_row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
       emit "$number" "$head" error "auto-merge recheck failed (broken read)"
       errored=1
       continue
     }
-    case "$armed_now" in
-      true|false) armed="$armed_now" ;;
-      *)
-        emit "$number" "$head" error "auto-merge recheck returned no usable value (broken read)"
-        errored=1
-        continue
-        ;;
-    esac
+    # Same schema discipline as the initial fetch: auto_merge must be
+    # null|object (a missing field is null in jq and would silently coerce
+    # to unarmed — a false disarmed from a broken envelope), and the row
+    # must still describe THE SAME HEAD (a push mid-reduction cleared
+    # auto-merge on a NEW head; recommending re-arm against stale verdict
+    # and gate reads would arm an unreviewed head).
+    if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
+        and (has("auto_merge"))
+        and ((.auto_merge | type) == "null" or (.auto_merge | type) == "object")
+        and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))' >/dev/null 2>&1 <<<"$ownership_row"; then
+      emit "$number" "$head" error "auto-merge recheck returned a malformed PR object (broken read)"
+      errored=1
+      continue
+    fi
+    ownership_head="$(jq -r '.head.sha' <<<"$ownership_row")"
+    if [ "$ownership_head" != "$head" ]; then
+      emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$ownership_head")) — findings describe the old head; re-run"
+      attention=1
+      continue
+    fi
+    armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$ownership_row")"
     queued_now="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){isInMergeQueue mergeQueueEntry{position}}}}" \
       --jq 'if ((.errors? // []) | length) > 0 then error("graphql errors present")
             elif (.data.repository.pullRequest | type) != "object"
@@ -504,6 +517,11 @@ for number in $pr_numbers; do
       # silence clock shifts by the UTC offset in either direction).
       head_epoch="$(date -u -d "$head_at" +%s 2>/dev/null \
         || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$head_at" +%s 2>/dev/null)" || head_epoch=""
+      if [ -z "$head_epoch" ]; then
+        emit "$number" "$head" error "head committer date unparsable (broken read) — the silence clock never substitutes the creation time for broken head metadata"
+        errored=1
+        continue
+      fi
       created_epoch=""
       if [ -n "$created_at" ] && [ "$created_at" != "null" ]; then
         created_epoch="$(date -u -d "$created_at" +%s 2>/dev/null \

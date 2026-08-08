@@ -166,14 +166,7 @@ case "$args" in
       echo "HTTP 404" >&2
       exit 1
     fi
-    if [[ "$args" == *"--jq if .auto_merge"* ]]; then
-      # The just-in-time ownership recheck; STUB_ARMED_AFTER overrides.
-      if [[ -n "${STUB_ARMED_AFTER:-}" ]]; then
-        printf '%s\n' "$STUB_ARMED_AFTER"
-      else
-        jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$pr_row_json"
-      fi
-    elif [[ "$args" == *"--jq .head.sha"* ]]; then
+    if [[ "$args" == *"--jq .head.sha"* ]]; then
       # The recheck read: STUB_HEAD_AFTER simulates a mid-reduction push.
       if [[ -n "${STUB_HEAD_AFTER:-}" ]]; then
         printf '%s\n' "$STUB_HEAD_AFTER"
@@ -181,7 +174,24 @@ case "$args" in
         jq -r '.head.sha' <<<"$pr_row_json"
       fi
     else
-      printf '%s\n' "$pr_row_json"
+      # Row fetches: STUB_ARMED_AFTER flips auto_merge from the SECOND
+      # fetch of a number (the just-in-time ownership recheck), via a
+      # per-number counter.
+      if [[ -n "${STUB_ARMED_AFTER:-}" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
+        cf="$STUB_PR_CALLS_DIR/$n"
+        if [[ -f "$cf" ]]; then
+          if [[ "$STUB_ARMED_AFTER" == "false" ]]; then
+            jq '.auto_merge = null' <<<"$pr_row_json"
+          else
+            jq '.auto_merge = {merge_method:"merge"}' <<<"$pr_row_json"
+          fi
+        else
+          : > "$cf"
+          printf '%s\n' "$pr_row_json"
+        fi
+      else
+        printf '%s\n' "$pr_row_json"
+      fi
     fi
     ;;
   *"/timeline?per_page=100"*)
@@ -528,7 +538,7 @@ out=$(run_watch STUB_OPEN_PRS="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:
 rc=$?
 set -e
 assert_eq "$rc" "2" "pw29: unparsable timestamps exit 2"
-assert_contains "$out" "unprovable" "pw29: named as unprovable"
+assert_contains "$out" "unparsable" "pw29: named as unparsable (broken read)"
 
 # pw30: under REVIEW_GATE_THREADS=off, a green gate over open threads is
 # the DESIGNED state — threads still report (triage is the agent's job)
@@ -883,8 +893,9 @@ assert_contains "$out" "no usable committer date" "pw63: named"
 
 # pw64: a mid-reduction disarm (queue ejection shape) is caught by the
 # just-in-time ownership recheck — never a healthy exit 0.
+mkdir -p "$TMP_ROOT/prcalls"; rm -f "$TMP_ROOT/prcalls"/*
 set +e
-out=$(run_watch STUB_ARMED_AFTER=false \
+out=$(run_watch STUB_ARMED_AFTER=false STUB_PR_CALLS_DIR="$TMP_ROOT/prcalls" \
   STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
   STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
   STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
