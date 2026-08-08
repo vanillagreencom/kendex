@@ -182,7 +182,12 @@ for number in $pr_numbers; do
     errored=1
     continue
   }
-  if ! jq -e --argjson n "$number" 'type == "object" and .number == $n and ((.head.sha? // null) | type) == "string" and ((.state? // null) | type) == "string"' >/dev/null 2>&1 <<<"$row"; then
+  if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
+      and ((.head.sha? // null) | type) == "string"
+      and ((.state? // null) | type) == "string"
+      and ((.draft | type) == "boolean")
+      and ((.auto_merge | type) == "null" or (.auto_merge | type) == "object")
+      and ((.created_at? // null) | type) == "string"' >/dev/null 2>&1 <<<"$row"; then
     emit "$number" "--------" error "PR #$number response is not a well-formed PR object (broken read)"
     errored=1
     continue
@@ -190,9 +195,9 @@ for number in $pr_numbers; do
   head="$(jq -r '.head.sha' <<<"$row")"
   state="$(jq -r '.state' <<<"$row")"
   author="$(jq -r '.user.login // ""' <<<"$row")"
-  draft="$(jq -r '.draft // false | tostring' <<<"$row")"
+  draft="$(jq -r '.draft | tostring' <<<"$row")"
   armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$row")"
-  created_at="$(jq -r '.created_at // ""' <<<"$row")"
+  created_at="$(jq -r '.created_at' <<<"$row")"
   # Closed/merged PRs need nothing (reachable via explicit PR args). The
   # REST enum is open|closed — anything else is malformed data, and a
   # malformed state must never read as "closed, skip silently".

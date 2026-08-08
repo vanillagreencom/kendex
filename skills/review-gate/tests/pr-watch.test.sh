@@ -847,6 +847,15 @@ set -e
 assert_eq "$rc" "2" "pw60: bogus state exits 2"
 assert_contains "$out" "outside the open|closed enum" "pw60: named"
 
+# pw61: a PR response missing reducer-load-bearing fields (draft /
+# auto_merge / created_at) fails the well-formed check.
+set +e
+out=$(run_watch STUB_PR_9="$(jq -cn --arg head "$HEAD_A" '{number:9, state:"open", head:{sha:$head}, user:{login:"author"}}')" STUB_VERDICT_LINE="unused" -- 9)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw61: partial PR object exits 2"
+assert_contains "$out" "not a well-formed PR object" "pw61: named"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
