@@ -136,5 +136,8 @@ REVIEW_GATE_CARRY_FORWARD = ""
 # here by pr-watch.sh as the awaiting-stale threshold: an un-reviewed head
 # older than this warrants a manual re-review trigger or the caller's
 # on-timeout policy. One key on purpose, so the watcher and the waiter
-# agree on what "reviewer silence has gone on too long" means.
+# agree on what "reviewer silence has gone on too long" means. Set it HERE
+# (or export it), not in .env/.env.local: review-gate scripts resolve
+# env > this file > default, while orch additionally reads the .env files —
+# a .env-only value reaches the waiter but not the watcher.
 PR_REVIEW_WAIT_SECS = "900"
