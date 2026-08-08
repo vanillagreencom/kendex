@@ -406,7 +406,38 @@ for number in $pr_numbers; do
 
   # Disarmed reduction — BOTH modes (the cheap-mode contract includes it):
   # a gate-open, un-queued, non-draft PR with auto-merge unarmed is
-  # mergeable, but nothing will merge it.
+  # mergeable, but nothing will merge it. Ownership is re-read JUST-IN-TIME
+  # (auto-merge and queue membership both move while the predicate runs —
+  # a queue ejection mid-reduction must not read healthy, and a concurrent
+  # arm must not false-alert).
+  if [ "$gate_state" = "success" ] && [ "$draft" != "true" ]; then
+    armed_now="$(gh api "repos/$GH_REPO/pulls/$number" --jq 'if .auto_merge == null then "false" else "true" end' 2>/dev/null)" || {
+      emit "$number" "$head" error "auto-merge recheck failed (broken read)"
+      errored=1
+      continue
+    }
+    case "$armed_now" in
+      true|false) armed="$armed_now" ;;
+      *)
+        emit "$number" "$head" error "auto-merge recheck returned no usable value (broken read)"
+        errored=1
+        continue
+        ;;
+    esac
+    queued_now="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){isInMergeQueue mergeQueueEntry{position}}}}" \
+      --jq 'if ((.errors? // []) | length) > 0 then error("graphql errors present")
+            elif (.data.repository.pullRequest | type) != "object"
+               or ((.data.repository.pullRequest.isInMergeQueue | type) != "boolean")
+               or ((.data.repository.pullRequest.mergeQueueEntry | type) != "null" and (.data.repository.pullRequest.mergeQueueEntry | type) != "object")
+            then error("malformed queue envelope")
+            elif (.data.repository.pullRequest.isInMergeQueue or (.data.repository.pullRequest.mergeQueueEntry != null))
+            then " (QUEUED: dequeue before pushing)" else "" end' 2>/dev/null)" || {
+      emit "$number" "$head" error "merge-queue recheck failed or malformed"
+      errored=1
+      continue
+    }
+    queued="$queued_now"
+  fi
   if [ "$gate_state" = "success" ] && [ "$armed" = "false" ] && [ -z "$queued" ] && [ "$draft" != "true" ]; then
     # In evaluate mode only a confirmed approved verdict nominates the
     # disarmed line (an approved gate over an awaiting predicate is the
@@ -460,6 +491,13 @@ for number in $pr_numbers; do
         errored=1
         continue
       }
+      case "$head_at" in
+        ''|null)
+          emit "$number" "$head" error "head commit has no usable committer date (broken read)"
+          errored=1
+          continue
+          ;;
+      esac
       # date -d is GNU; BSD/macOS uses -u -j -f (the -u is load-bearing:
       # the trailing Z is a LITERAL in this format string, so without -u
       # BSD date reads the timestamp in the machine's local zone and the

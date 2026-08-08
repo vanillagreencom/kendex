@@ -166,7 +166,14 @@ case "$args" in
       echo "HTTP 404" >&2
       exit 1
     fi
-    if [[ "$args" == *"--jq .head.sha"* ]]; then
+    if [[ "$args" == *"--jq if .auto_merge"* ]]; then
+      # The just-in-time ownership recheck; STUB_ARMED_AFTER overrides.
+      if [[ -n "${STUB_ARMED_AFTER:-}" ]]; then
+        printf '%s\n' "$STUB_ARMED_AFTER"
+      else
+        jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$pr_row_json"
+      fi
+    elif [[ "$args" == *"--jq .head.sha"* ]]; then
       # The recheck read: STUB_HEAD_AFTER simulates a mid-reduction push.
       if [[ -n "${STUB_HEAD_AFTER:-}" ]]; then
         printf '%s\n' "$STUB_HEAD_AFTER"
@@ -863,6 +870,28 @@ rc=$?
 set -e
 assert_eq "$rc" "2" "pw62: non-sha initial head exits 2"
 assert_contains "$out" "not a well-formed PR object" "pw62: named"
+
+# pw63: a head commit without a committer date is a broken read.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="null" -- --awaiting-after 60)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw63: missing committer date exits 2"
+assert_contains "$out" "no usable committer date" "pw63: named"
+
+# pw64: a mid-reduction disarm (queue ejection shape) is caught by the
+# just-in-time ownership recheck — never a healthy exit 0.
+set +e
+out=$(run_watch STUB_ARMED_AFTER=false \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw64: mid-reduction disarm exits 1"
+assert_contains "$out" "disarmed" "pw64: kind emitted"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
