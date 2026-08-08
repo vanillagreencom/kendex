@@ -403,6 +403,42 @@ set -e
 assert_eq "$rc" "2" "pw23: zero-byte gate read exits 2"
 assert_contains "$out" "zero bytes" "pw23: named as a broken read"
 
+# pw24: the INVERSE mismatch — awaiting verdict over a still-green gate
+# (withdrawn evidence, merge-enabling) — is gate-stale and heals.
+: > "$TMP_ROOT/dispatch.log"
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' \
+  STUB_HEAD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -- --heal --awaiting-after 3600)
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw24: stale-green over awaiting exits 1"
+assert_contains "$out" "merge-enabling" "pw24: named as the dangerous direction"
+assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw24: and it heals"
+
+# pw25: ghost author (user: null) must not shift TSV columns — the PR still
+# processes and its findings still emit.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:"open", draft:false, head:{sha:$head}, user:null, created_at:"2026-01-01T00:00:00Z", auto_merge:{merge_method:"merge"}}]')" \
+  STUB_UNRESOLVED=1 STUB_VERDICT_LINE="verdict=approved detail=unused")
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw25: ghost-author PR still reduces"
+assert_contains "$out" "threads-open" "pw25: its findings still emit"
+
+# pw26: a green gate over a standing objection reports both the objection
+# and the stale gate.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=changes-requested detail=reviewer objects" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw26: objection over green gate exits 1"
+assert_contains "$out" "changes-requested" "pw26: objection emitted"
+assert_contains "$out" "gate-stale" "pw26: stale green emitted too"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

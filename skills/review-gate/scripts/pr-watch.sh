@@ -117,6 +117,18 @@ emit() { # pr, head, kind, detail
   printf '%s\t%s\t%s\t%s\n' "$1" "$(printf %.8s "$2")" "$3" "$4"
 }
 
+heal() { # pr, head — one bounded writer dispatch per invocation
+  [ "$HEAL" = "1" ] || return 0
+  [ "$healed" = "0" ] || return 0
+  if gh workflow run "$WRITER_WORKFLOW" --repo "$GH_REPO" >/dev/null 2>&1; then
+    emit "$1" "$2" heal-dispatched "writer workflow '$WRITER_WORKFLOW' dispatched (once per invocation)"
+    healed=1
+  else
+    emit "$1" "$2" error "writer dispatch failed for '$WRITER_WORKFLOW'"
+    errored=1
+  fi
+}
+
 # --- enumerate ----------------------------------------------------------
 # Same fail-loud page discipline as the writer: a zero-byte or non-array
 # page is a broken read, never an empty repo — silently watching zero PRs
@@ -159,6 +171,12 @@ fi
 # --- per-PR reduction ---------------------------------------------------
 while IFS=$'\t' read -r number head author state draft armed created_at; do
   [ -z "$number" ] && continue
+  # "-" is the jq placeholder for absent values: bash collapses adjacent
+  # tabs (tab is IFS whitespace), so a truly empty field would shift every
+  # later column and silently skip the PR — the ghost-author shape the
+  # writer's own tests pin. Decoded back to empty here.
+  [ "$author" = "-" ] && author=""
+  [ "$created_at" = "-" ] && created_at=""
   # Closed/merged PRs need nothing (reachable only via explicit PR args).
   [ "$state" = "open" ] || continue
 
@@ -170,6 +188,31 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
   queued="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){mergeQueueEntry{position}}}}" \
       --jq 'if .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end' 2>/dev/null)" || {
     emit "$number" "$head" error "merge-queue membership read failed"
+    errored=1
+    continue
+  }
+
+  # Gate context's NEWEST row (list endpoint, newest-first — the same
+  # projection the predicate documents for the status surface). Fetch and
+  # merge are SEPARATE steps with a zero-byte guard, the engine's required
+  # pattern: a pipe would replace gh's exit status with jq's, and a
+  # successful call producing zero bytes is a broken read, not an empty
+  # status set (that is the two-byte page []).
+  status_pages="$(gh api "repos/$GH_REPO/commits/$head/statuses?per_page=100" --paginate 2>/dev/null)" || {
+    emit "$number" "$head" error "gate-status read failed"
+    errored=1
+    continue
+  }
+
+  if [ -z "$status_pages" ]; then
+    emit "$number" "$head" error "gate-status read produced zero bytes (broken read)"
+    errored=1
+    continue
+  fi
+  gate_state="$(jq -rs --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
+      then (add | map(select(.context == $ctx)) | (.[0].state // "absent"))
+      else error("not a status page") end' <<<"$status_pages" 2>/dev/null)" || {
+    emit "$number" "$head" error "gate-status pages are malformed (broken read)"
     errored=1
     continue
   }
@@ -192,14 +235,19 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
     continue
   }
   overflow="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"$threads_resp" 2>/dev/null)" || overflow="true"
-  if [ "$overflow" = "true" ]; then
-    emit "$number" "$head" threads-open "over 100 review threads (count overflow — fail closed)$queued"
+  if [ "$overflow" = "true" ] || [ "$unresolved" -gt 0 ]; then
+    if [ "$overflow" = "true" ]; then
+      emit "$number" "$head" threads-open "over 100 review threads (count overflow — fail closed)$queued"
+    else
+      emit "$number" "$head" threads-open "$unresolved unresolved review thread(s)$queued"
+    fi
     attention=1
-    continue
-  fi
-  if [ "$unresolved" -gt 0 ]; then
-    emit "$number" "$head" threads-open "$unresolved unresolved review thread(s)$queued"
-    attention=1
+    # A GREEN gate over open threads is the inverse writer miss — the
+    # merge-enabling direction, so it heals, not just reports.
+    if [ "$gate_state" = "success" ]; then
+      emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal"
+      heal "$number" "$head"
+    fi
     continue
   fi
 
@@ -243,33 +291,14 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
     changes-requested)
       emit "$number" "$head" changes-requested "$detail$queued"
       attention=1
+      if [ "$gate_state" = "success" ]; then
+        emit "$number" "$head" gate-stale "a standing objection but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal"
+        heal "$number" "$head"
+      fi
       continue
       ;;
   esac
 
-  # Gate context's NEWEST row (list endpoint, newest-first — the same
-  # projection the predicate documents for the status surface). Fetch and
-  # merge are SEPARATE steps with a zero-byte guard, the engine's required
-  # pattern: a pipe would replace gh's exit status with jq's, and a
-  # successful call producing zero bytes is a broken read, not an empty
-  # status set (that is the two-byte page []).
-  status_pages="$(gh api "repos/$GH_REPO/commits/$head/statuses?per_page=100" --paginate 2>/dev/null)" || {
-    emit "$number" "$head" error "gate-status read failed"
-    errored=1
-    continue
-  }
-  if [ -z "$status_pages" ]; then
-    emit "$number" "$head" error "gate-status read produced zero bytes (broken read)"
-    errored=1
-    continue
-  fi
-  gate_state="$(jq -rs --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
-      then (add | map(select(.context == $ctx)) | (.[0].state // "absent"))
-      else error("not a status page") end' <<<"$status_pages" 2>/dev/null)" || {
-    emit "$number" "$head" error "gate-status pages are malformed (broken read)"
-    errored=1
-    continue
-  }
 
   # Disarmed reduction — BOTH modes (the cheap-mode contract includes it):
   # a gate-open, un-queued, non-draft PR with auto-merge unarmed is
@@ -289,18 +318,17 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
       if [ "$gate_state" != "success" ]; then
         emit "$number" "$head" gate-stale "predicate says approved but the newest '$GATE_CONTEXT' row is $gate_state — the writer has not converged$queued"
         attention=1
-        if [ "$HEAL" = "1" ] && [ "$healed" = "0" ]; then
-          if gh workflow run "$WRITER_WORKFLOW" --repo "$GH_REPO" >/dev/null 2>&1; then
-            emit "$number" "$head" heal-dispatched "writer workflow '$WRITER_WORKFLOW' dispatched (once per invocation)"
-            healed=1
-          else
-            emit "$number" "$head" error "writer dispatch failed for '$WRITER_WORKFLOW'"
-            errored=1
-          fi
-        fi
+        heal "$number" "$head"
       fi
       ;;
     awaiting)
+      # The INVERSE mismatch is the dangerous one: evidence withdrawn but
+      # the gate still green (merge-enabling). Stale success heals too.
+      if [ "$gate_state" = "success" ]; then
+        emit "$number" "$head" gate-stale "predicate says awaiting but the newest '$GATE_CONTEXT' row is still success — withdrawn evidence left a merge-enabling gate$queued"
+        attention=1
+        heal "$number" "$head"
+      fi
       # Quiet-period clock: reviewer silence counts from when this head
       # BECAME the head. GitHub exposes no head-transition timestamp, so
       # the approximation is max(head commit's committer date, PR
@@ -335,7 +363,7 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
       fi
       ;;
   esac
-done < <(jq -r '.[] | [.number, .head.sha, (.user.login // ""), .state, (.draft // false | tostring), (if .auto_merge == null then "false" else "true" end), (.created_at // "")] | @tsv' <<<"$prs")
+done < <(jq -r '.[] | [.number, .head.sha, (.user.login // "-"), .state, (.draft // false | tostring), (if .auto_merge == null then "false" else "true" end), (.created_at // "-")] | @tsv' <<<"$prs")
 
 if [ "$errored" = "1" ]; then exit 2; fi
 if [ "$attention" = "1" ]; then exit 1; fi

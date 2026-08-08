@@ -139,13 +139,13 @@ always the same:
 
 ```bash
 # cron / polling loop / harness monitor — silence means nothing needs you.
-# ONE invocation, output captured to a file: re-running it to build the
-# notification would re-dispatch --heal's writer kick and could observe
-# different state. (Plain redirection, no inline substitution — the shape
-# stays harness-safe under restrictive shell classifiers.)
-export GH_REPO=<owner>/<repo>
-.agents/skills/review-gate/scripts/pr-watch.sh --heal > pr-watch.out 2>&1 \
-  || notify-from-file pr-watch.out
+# Run it BARE, once: the wake-up mechanism owns output capture (cron mails
+# stdout; harness monitors surface stdout lines as events; a scheduler
+# stores the log) and the exit code is the predicate. Never invoke it a
+# second time to build a notification — that re-dispatches --heal's writer
+# kick and can observe different state. The bare single command is also
+# the one shape every restrictive harness classifier accepts.
+GH_REPO=<owner>/<repo> .agents/skills/review-gate/scripts/pr-watch.sh --heal
 ```
 
 Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to
