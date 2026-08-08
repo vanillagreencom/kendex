@@ -394,7 +394,10 @@ if [ -n "${REVIEW_GATE_STATUS_SNAPSHOT_FILE:-}" ]; then
                         | (type == "object") and ((.statuses | type) == "array")
                           and (.sha == $sha)
                           and (($rj | length) == 0
-                               or (.statuses | all((.creator.login // "") != ""))))
+                               or (.statuses | all(
+                                    ((.creator | type) == "object")
+                                    and ((.creator.login | type) == "string")
+                                    and ((.creator.login | length) > 0)))))
                      then {statuses: .[0].statuses}
                      else error("not a single list-endpoint status snapshot for this head") end' \
                     "$REVIEW_GATE_STATUS_SNAPSHOT_FILE" 2>/dev/null)" || {

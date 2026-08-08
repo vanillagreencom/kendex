@@ -557,9 +557,22 @@ else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: no actions:write — the writer never re-runs CI"
 fi
 # The || 'main' arm keeps an empty default_branch expression from letting
-# actions/checkout fall back to its own default ref — on pull_request_target
-# that is the PR merge ref under a write-capable token.
-pin "ref: \${{ github.event.repository.default_branch || 'main' }}" "tpl: engine runs from the default branch (empty-expression fallback pinned)"
+# actions/checkout fall back to its own default ref — the merge-group job
+# would get the queue's synthetic ref, the write job's pull_request_target
+# leg the PR merge ref, both under a write-capable token. BOTH checkouts
+# are counted: a one-match pin would stay green if either job regressed to
+# the bare expression.
+fallback_ref_count="$(grep -cF -- "ref: \${{ github.event.repository.default_branch || 'main' }}" "$TEMPLATE" || true)"
+if [[ "$fallback_ref_count" == "2" ]]; then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: BOTH checkouts pin the default branch with the empty-expression fallback"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected exactly 2 fallback refs, found %s\n' "tpl: BOTH checkouts pin the default branch with the empty-expression fallback" "$fallback_ref_count"
+fi
+if grep -qF -- 'ref: ${{ github.event.repository.default_branch }}' "$TEMPLATE"; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: a checkout regressed to the bare default_branch expression (empty resolution would reach actions/checkout's own fallback)"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: no checkout uses the bare default_branch expression"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

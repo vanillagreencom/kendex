@@ -1081,6 +1081,12 @@ run "snapshot seam: null-creator row with the reject list EMPTY still evaluates 
 unset GH_SHIM_FAIL
 
 reset
+CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+jq -n --arg sha "$HEAD" '{sha:$sha,statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",created_at:"2026-01-01T00:00:00Z",creator:{login:{}}}]}' >"$fixtures/objlogin-snapshot.json"
+CFG_SNAPSHOT="$fixtures/objlogin-snapshot.json"
+run "snapshot seam: NON-STRING creator login under a configured reject list is exit 2 (// \"\" would let an object through)" "" 2
+
+reset
 CFG_CONTEXTS="mech-ctx"
 status_ctx "mech-ctx" success "analysis complete"
 printf '{}\n' >"$fixtures/statuses.page2.json"
