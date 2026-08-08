@@ -1,8 +1,9 @@
 # shellcheck shell=bash
 # Settings resolution for the review-gate engine. Sourced (not executed) by
-# review-predicate.sh, review-writer.sh and the selftest.
+# review-predicate.sh, review-writer.sh, pr-watch.sh and the selftest.
 #
-# Resolution order for every REVIEW_GATE_* key:
+# Resolution order for every key read through rg_setting (the REVIEW_GATE_*
+# family, plus shared keys like PR_REVIEW_WAIT_SECS):
 #   1. explicit environment — a SET variable wins even when set to the empty
 #      string, so a caller (or the selftest) can force "explicitly empty";
 #   2. the repo's committed vstack.settings.toml (the file's sole uncommented

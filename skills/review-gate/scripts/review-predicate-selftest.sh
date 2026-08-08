@@ -169,8 +169,10 @@ checkrun() { # name, conclusion, summary, [app slug] -> checkruns.json
   # Real check runs always carry a publishing app; the default models a
   # trusted reviewer's own app. Pass "github-actions" for the near-miss:
   # a PR workflow can publish under ANY NAME through that shared app.
+  # Every real row also carries a run id — the predicate validates it, so
+  # the fixture models the real shape.
   jq -n --arg name "$1" --arg conclusion "$2" --arg summary "${3:-}" --arg app "${4:-trusted-reviewer-app}" \
-    '{check_runs:[{name:$name,conclusion:$conclusion,app:{slug:$app},output:{title:null,summary:$summary}}]}' \
+    '{check_runs:[{id:1,name:$name,conclusion:$conclusion,app:{slug:$app},output:{title:null,summary:$summary}}]}' \
     >"$fixtures/checkruns.json"
 }
 compare_fix() { # status, [files JSON array] -> compare.json (the N...head delta)
@@ -478,7 +480,7 @@ run "github-actions-published check-run under a trusted name is not evidence" aw
 # unprovable provenance and is not evidence either.
 reset
 CFG_CONTEXTS="mech-ctx"
-jq -n '{check_runs:[{name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.json"
+jq -n '{check_runs:[{id:1,name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.json"
 run "check-run with no app slug (unprovable provenance) is not evidence" awaiting
 
 # NEWEST RUN DECIDES per name (vstack#1110), ordered by run id — the
@@ -534,6 +536,34 @@ jq -n '{check_runs:[
   {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
 ]}' >"$fixtures/checkruns.json"
 run "github-actions-published newer run cannot mask the reviewer's clean success" approved
+
+# The ordering key is validated, never defaulted: a retained row without a
+# positive numeric id is a broken read (exit 2) — sorting it as 0 would let
+# a malformed NEWEST row revive the older success it should mask. Rows
+# dropped for the github-actions slug are excluded before validation.
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {name:"mech-ctx",conclusion:null,status:"in_progress",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:null}},
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
+]}' >"$fixtures/checkruns.json"
+run "a retained check-run row with NO id is exit 2, never sorted oldest" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {id:"2",name:"mech-ctx",conclusion:null,status:"in_progress",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:null}},
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
+]}' >"$fixtures/checkruns.json"
+run "a string-typed run id is exit 2 (validated, not coerced)" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+jq -n '{check_runs:[
+  {name:"mech-ctx",conclusion:null,status:"queued",app:{slug:"github-actions"},output:{title:null,summary:null}},
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
+]}' >"$fixtures/checkruns.json"
+run "an id-less github-actions row is dropped before validation (cannot fail the read)" approved
 
 # Slugless ANOMALY rows are the opposite of the minting lever: kept in the
 # sequence, so an anomalous NEWEST row masks toward closed rather than
@@ -752,7 +782,7 @@ run "trusted approval + untrusted changes-requested fails closed" changes-reques
 # and this case would stop exercising the skip-pattern text at all.
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_SKIPS="rate limited"
-printf '{"check_runs":[{"name":"mech-ctx","conclusion":"success","app":{"slug":"trusted-reviewer-app"},"output":{"title":"mech-ctx","summary":"Review rate limited. 0 files reviewed."}}]}\n' \
+printf '{"check_runs":[{"id":1,"name":"mech-ctx","conclusion":"success","app":{"slug":"trusted-reviewer-app"},"output":{"title":"mech-ctx","summary":"Review rate limited. 0 files reviewed."}}]}\n' \
   >"$fixtures/checkruns.json"
 run "rate-limited 'pass' check-run is NOT evidence (live fixture)" awaiting
 
@@ -1018,7 +1048,7 @@ run "pagination: trusted status on statuses page 2 counts" approved
 
 reset
 CFG_CONTEXTS="mech-ctx"
-jq -n '{check_runs:[{name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.page2.json"
+jq -n '{check_runs:[{id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}]}' >"$fixtures/checkruns.page2.json"
 run "pagination: trusted check-run on page 2 counts" approved
 
 # PR_AUTHOR resolution (VST-35): every other case passes PR_AUTHOR

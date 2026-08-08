@@ -536,14 +536,23 @@ while IFS= read -r ctx; do
   # slugless row (its runs carry the github-actions slug). The newest
   # accepted row must then itself be a clean, non-skip-filtered success;
   # anything else — in-progress (null conclusion), failure, a skip-marked
-  # "pass", or a slugless anomaly — is silence, never a gate failure.
+  # "pass", or a slugless anomaly — is silence, never a gate failure. The
+  # ordering key is VALIDATED, not defaulted: a retained row without a
+  # positive numeric id would sort as the OLDEST row, so a malformed newest
+  # round could revive the older success it should mask — every real API
+  # row carries the id, so its absence is a broken read (exit 2), the same
+  # posture as every page-shape guard. Rows dropped for the github-actions
+  # slug are excluded BEFORE validation: a minted row cannot fail the read.
   check_runs="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | [ .check_runs[]
           | select(.name == $ctx)
           | select((.app.slug // "") != "github-actions")
         ]
-      | sort_by(.id // 0) | last
+      | if any(.[]; ((.id // null) | type) != "number" or (.id < 1))
+        then error("check-run row without a positive run id (broken read)")
+        else . end
+      | sort_by(.id) | last
       | if . == null then 0
         elif ((.app.slug // "") == "") then 0
         elif (.conclusion == "success")
