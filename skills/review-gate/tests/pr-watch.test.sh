@@ -589,6 +589,28 @@ assert_contains "$out" "threads-open" "pw30: threads-open emitted"
 assert_not_contains "$out" "gate-stale" "pw30: no false gate-stale"
 assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "0" "pw30: no writer dispatch"
 
+# pw30b: under REVIEW_GATE_MODE=off the gate is green BY DESIGN — threads
+# still report (a server-side thread ruleset can still block the merge)
+# but a green gate over them is never gate-stale and never heals.
+: > "$TMP_ROOT/dispatch.log"
+set +e
+out=$(run_watch REVIEW_GATE_MODE=off STUB_QUEUED=no STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_UNRESOLVED=2 STUB_VERDICT_LINE="verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)"   STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' -- --heal)
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw30b: threads still report under MODE=off"
+assert_contains "$out" "threads-open" "pw30b: threads-open emitted"
+assert_not_contains "$out" "gate-stale" "pw30b: no false gate-stale on a disabled gate"
+assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "0" "pw30b: no writer dispatch"
+
+# pw31b: an invalid REVIEW_GATE_MODE refuses to reduce (config error,
+# exit 2) — parity with the predicate's own validation.
+set +e
+out=$(run_watch REVIEW_GATE_MODE=offf STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw31b: invalid gate mode exits 2"
+assert_contains "$out" "invalid REVIEW_GATE_MODE" "pw31b: named as config error"
+
 # pw31: an invalid REVIEW_GATE_THREADS value refuses to reduce (config
 # error, exit 2) instead of silently reading as enforced.
 set +e

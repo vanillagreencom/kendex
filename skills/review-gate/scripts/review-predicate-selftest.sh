@@ -62,7 +62,6 @@ ACTIVE_API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
 ACTIVE_API_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
 ACTIVE_CARRY="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 1
 ACTIVE_CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 1
-ACTIVE_GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 1
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -249,7 +248,12 @@ reset() {
   CFG_API_DELAY="$ACTIVE_API_DELAY"
   CFG_CARRY="$ACTIVE_CARRY"
   CFG_CARRY_EXCLUDE="$ACTIVE_CARRY_EXCLUDE"
-  CFG_GATE_MODE="$ACTIVE_GATE_MODE"
+  # PINNED to enforce, never the repo's ACTIVE value: mode "off" is a bypass
+  # switch, not a trust surface — under it every behavior case would answer
+  # approved and the suite would fail, turning a deliberately disabled gate
+  # into a red required CI job. The off/invalid arms are exercised by their
+  # own explicit cases below.
+  CFG_GATE_MODE="enforce"
   CFG_SNAPSHOT=""
   rm -f "$fixtures/compare.json"
   CFG_PR_AUTHOR="$AUTHOR"

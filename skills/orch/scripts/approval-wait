@@ -176,6 +176,18 @@ if $RESOLVE_MODE; then
   # shellcheck source=lib/vstack-env.sh
   source "$SCRIPT_DIR/lib/vstack-env.sh"
   vstack_load_project_env "$PROJECT_ROOT"
+  # The engine's one-switch gate disable wins over every reviewer-gate key:
+  # REVIEW_GATE_MODE=off means the repo's review gate is disabled by
+  # settings, so EVERY caller that resolves a mode here — submit-pr's § 4
+  # and nested flows like ci-fix alike — skips the reviewer wait. Resolved
+  # centrally so no workflow needs its own override. Only the exact value
+  # "off" narrows; any other value (including a typo) leaves the reviewer
+  # keys authoritative — the engine predicate is where a bad value fails
+  # loud, and a typo must never silently disable a wait.
+  if [[ "$("$SCRIPT_DIR/orch-env" REVIEW_GATE_MODE "enforce")" == "off" ]]; then
+    printf 'off\n'
+    exit 0
+  fi
   mode="${PR_REVIEW_GATE:-}"
   case "$mode" in
     approval|review|off) ;;
