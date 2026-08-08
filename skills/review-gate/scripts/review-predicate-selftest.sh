@@ -1018,10 +1018,15 @@ CFG_CONTEXTS="mech-ctx"
 printf '\n   \n' >"$fixtures/checkruns.json"
 run "whitespace-only check-runs response is exit 2, not silence" "" 2
 
+# OBJECT without check_runs, deliberately: an array fixture failed under
+# the OLD merger too (`.check_runs` on an array is a jq error), proving
+# nothing. `{}` collapsed through the old `map(.check_runs) | add // []`
+# to an EMPTY run set — silence built from a broken read; only the new
+# shape guard turns it into exit 2.
 reset
 CFG_CONTEXTS="mech-ctx"
-printf '[]\n' >"$fixtures/checkruns.json"
-run "check-runs page without a check_runs array is exit 2" "" 2
+printf '{}\n' >"$fixtures/checkruns.json"
+run "check-runs page without a check_runs array is exit 2 (the old merger read it as silence)" "" 2
 
 reset
 CFG_REVIEWERS="mech-bot[bot]:Reviewed commit:"
