@@ -3,7 +3,10 @@
 # reviewed?". Shipped by the vstack review-gate skill and vendored into
 # consumers at .agents/skills/review-gate/scripts/. Callers: review-writer.sh
 # (the single writer, which converges the merge-blocking commit status to
-# this verdict on every leg) and the repo's ungated selftest CI job.
+# this verdict on its evaluating legs — its merge_group leg posts success
+# without evaluation, post-approval by construction, and its fork
+# pull_request_review leg is a read-only no-op) and the repo's ungated
+# selftest CI job.
 #
 # Predicate: review evidence present for the CURRENT head — any of
 #   (a) a review OBJECT at the exact head from a non-author, non-dismissed,
