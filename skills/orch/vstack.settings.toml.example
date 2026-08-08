@@ -51,8 +51,12 @@ PR_REVIEW_ON_TIMEOUT = "block"
 # names a commit-status context, a review-mode proceed posts that context as `success` on
 # the proceeded head; the review-gate predicate accepts it as its override
 # evidence term, and the review-gate writer converges the gate status on
-# the event. Empty (default) = post nothing (orch-side-only opt-in — the
-# repo-side gate is untouched). SECURITY: this is a branch-protection
+# the event. PAIRING REQUIRED: the predicate reads its own
+# REVIEW_GATE_OVERRIDE_CONTEXT (legacy alias REVIEW_GATE_OUTAGE_CONTEXT) —
+# it never reads this key — so both settings must carry the SAME exact
+# context value or the posted marker is ignored and the gate stays
+# awaiting review. Empty (default) = post nothing (orch-side-only opt-in —
+# the repo-side gate is untouched). SECURITY: this is a branch-protection
 # relaxation — the status lets a merge proceed with no review. It is bounded by
 # the same genuine-silence predicate as the proceed and by bot-only status
 # trust, and matched by context, so name it ONLY where every status publisher

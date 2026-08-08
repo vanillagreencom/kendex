@@ -126,7 +126,11 @@ PR_REVIEW_OUTAGE_CONTEXT = ""
 # merges on review evidence. When this names a commit-status context, a
 # review-mode proceed posts that context as `success` on the proceeded head; the review-gate
 # predicate accepts it as its override evidence term and the review-gate
-# writer converges the gate status on the event. Empty (default) = orch-side-only (no marker; the repo-side
+# writer converges the gate status on the event. PAIRING REQUIRED: the
+# predicate reads its own REVIEW_GATE_OVERRIDE_CONTEXT (legacy alias
+# REVIEW_GATE_OUTAGE_CONTEXT), never this key — both settings must carry
+# the SAME exact context value or the posted marker is ignored and the
+# gate stays awaiting review. Empty (default) = orch-side-only (no marker; the repo-side
 # gate is untouched). SECURITY: a branch-protection relaxation — the status
 # lets a merge proceed with no review; bounded by the genuine-silence proceed
 # predicate + bot-only status trust, matched by context, so name it ONLY where
