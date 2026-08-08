@@ -452,8 +452,11 @@ for number in $pr_numbers; do
       continue
     fi
     # A to-draft conversion reloads draft (the disarmed condition below
-    # already excludes drafts) — the verdict-dependent reductions and the
-    # final recheck still run for it.
+    # already excludes drafts). The verdict-dependent reductions still run
+    # for it — with the awaiting arm's own draft skip applying as usual, so
+    # a drafted PR on the awaiting path exits its iteration there (before
+    # the final head recheck), by the same rule as a PR that was always a
+    # draft.
     draft="$(jq -r '.draft | tostring' <<<"$ownership_row")"
     ownership_head="$(jq -r '.head.sha' <<<"$ownership_row")"
     if [ "$ownership_head" != "$head" ]; then
