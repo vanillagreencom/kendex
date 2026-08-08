@@ -219,8 +219,8 @@ for number in $pr_numbers; do
   if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
       and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))
       and ((.state? // null) | type) == "string"
-      and ((.draft | type) == "boolean")
-      and ((.auto_merge | type) == "null" or (.auto_merge | type) == "object")
+      and (has("draft") and (.draft | type) == "boolean")
+      and (has("auto_merge") and ((.auto_merge | type) == "null" or (.auto_merge | type) == "object"))
       and ((.created_at? // null) | type) == "string"' >/dev/null 2>&1 <<<"$row"; then
     emit "$number" "--------" error "PR #$number response is not a well-formed PR object (broken read)"
     errored=1
@@ -652,6 +652,11 @@ for number in $pr_numbers; do
                 continue
                 ;;
             esac
+            if [ "${#stale_head_now}" -ne 40 ]; then
+              emit "$number" "$head" error "head recheck returned a non-sha value while confirming staleness (broken read)"
+              errored=1
+              continue
+            fi
             if [ "$stale_head_now" != "$head" ]; then
               emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$stale_head_now")) — findings describe the old head; re-run"
               attention=1
