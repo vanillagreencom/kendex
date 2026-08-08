@@ -256,7 +256,10 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
   # Predicate-parity validation: a node whose isResolved is not a boolean
   # (or a non-boolean hasNextPage) is a malformed response — counting it as
   # resolved would report health from untrustworthy data.
-  unresolved="$(jq -r 'if ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
+  unresolved="$(jq -r 'if (.data.repository.pullRequest.reviewThreads | type) != "object"
+         or (.data.repository.pullRequest.reviewThreads.nodes | type) != "array"
+      then error("malformed thread container")
+      elif ([.data.repository.pullRequest.reviewThreads.nodes[] | select((.isResolved | type) != "boolean")] | length) > 0
       then error("malformed thread node")
       else [.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length end' <<<"$threads_resp" 2>/dev/null)" || {
     emit "$number" "$head" error "thread response malformed (non-boolean isResolved) or unparsable"

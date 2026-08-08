@@ -612,6 +612,16 @@ set -e
 assert_eq "$rc" "2" "pw41: malformed queue envelope exits 2"
 assert_contains "$out" "merge-queue membership" "pw41: named"
 
+# pw42: a non-array nodes container is malformed, never zero threads.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":{"item":{"isResolved":true}}}}}}}' \
+  STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw42: non-array nodes container exits 2"
+assert_contains "$out" "malformed" "pw42: named as malformed"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
