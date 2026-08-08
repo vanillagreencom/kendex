@@ -5,7 +5,7 @@ import { Type, type Static } from "typebox";
 import { extractGitHubUrl } from "../extract/github.js";
 import { fetchHttpContent, isProbablyPdf } from "../extract/http.js";
 import { extractLocalVideo, isLocalVideoPath } from "../extract/video.js";
-import { extractYouTubeUrl, parseYouTubeUrl } from "../extract/youtube.js";
+import { extractYouTubeUrl, isTranscriptPrompt, parseYouTubeUrl } from "../extract/youtube.js";
 import { readFile as fsReadFile } from "node:fs/promises";
 import { fetchLocalPdfText, fetchPdfText, extractPdfTextBest } from "../extract/pdf.js";
 import { looksLikeScannedPdf, rasterizePdfPages, type PdfPageImage } from "../extract/pdf-pages.js";
@@ -22,7 +22,9 @@ export const webFetchSchema = Type.Object({
 	filePaths: Type.Optional(Type.Array(Type.String({ description: "Local file paths to extract. Currently supports PDFs." }))),
 	textMaxCharacters: Type.Optional(Type.Number({ description: "Preview character cap for direct/GitHub/PDF fetches and provider extraction cap for Exa fallback/override. Direct fetches still store the full extracted text in session storage before preview truncation. Multi-URL calls otherwise cap the aggregate `content[0].text` (16 KB for 2–5 URLs, 25 KB for 6+ URLs with a manifest); passing this flag opts back into larger per-URL previews." })),
 	provider: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("http"), Type.Literal("exa")])),
-	prompt: Type.Optional(Type.String({ description: "Optional prompt for video/YouTube understanding (passed to Gemini Web/API). Ignored for non-video URLs." })),
+	prompt: Type.Optional(Type.String({ description: "Optional prompt for video/YouTube extraction. Transcript requests use native YouTube captions; other video prompts use Gemini Web/API. Ignored for non-video URLs." })),
+	videoMode: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("transcript"), Type.Literal("understand")], { description: "YouTube handling mode. auto detects transcript requests from prompt; transcript fetches complete native captions; understand uses Gemini for audio/visual analysis." })),
+	transcriptLanguage: Type.Optional(Type.String({ description: "Preferred YouTube caption language (BCP 47 code, default en). Used only for native transcript extraction." })),
 });
 export type WebFetchInput = Static<typeof webFetchSchema>;
 
@@ -57,7 +59,14 @@ interface WebFetchPreviewDetails {
 export interface BuildWebFetchToolResultOptions {
 	maxCharacters?: number;
 	explicit?: boolean;
+	batchSize?: number;
 	pageImages?: Array<{ type: "image"; mimeType: string; data: string; pageNumber?: number }>;
+}
+
+export interface WebFetchDependencies {
+	extractYouTubeUrl?: typeof extractYouTubeUrl;
+	fetchHttpContent?: typeof fetchHttpContent;
+	createExaClient?: (apiKey: string | undefined) => ExaClient;
 }
 
 function fallbackTitle(url: string | undefined, fallback = "content"): string {
@@ -165,6 +174,48 @@ function manifestIdOnlyRow(item: StoredWebContent): string {
 	return `- ${item.id}`;
 }
 
+function failureMessage(error: unknown): string {
+	return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim();
+}
+
+function isAbortError(error: unknown, signal: AbortSignal | undefined): boolean {
+	return Boolean(signal?.aborted || (error && typeof error === "object" && "name" in error && (error as { name?: unknown }).name === "AbortError"));
+}
+
+function boundedText(text: string, maxCharacters: number | undefined, marker: string): string {
+	if (maxCharacters === undefined || text.length <= maxCharacters) return text;
+	return text.slice(0, Math.max(0, maxCharacters - marker.length)) + marker;
+}
+
+function aggregateFailureMessage(failures: Array<{ url: string; error: unknown; provider?: string }>, maxCharacters?: number): string {
+	const rows = failures.map((failure) => `- ${failure.url}${failure.provider ? ` [${failure.provider}]` : ""}: ${failureMessage(failure.error)}`);
+	const message = `Fetch failed for ${failures.length} URL(s):\n${rows.join("\n")}`;
+	return boundedText(message, maxCharacters, `\n[error details truncated to fit ${maxCharacters} character aggregate cap]`);
+}
+
+function addPartialFailures(result: ReturnType<typeof buildWebFetchToolResult>, failures: Array<{ url: string; error: unknown; provider?: string }>) {
+	const rows = failures.map((failure) => `- ${failure.url}${failure.provider ? ` [${failure.provider}]` : ""}: ${failureMessage(failure.error)}`);
+	const textItem = result.content.find((item) => item.type === "text");
+	if (textItem?.type === "text") {
+		const failureBlock = `\n\nFailed ${failures.length} URL(s):\n${rows.join("\n")}`;
+		const aggregateCap = result.details.preview.aggregateCap;
+		if (typeof aggregateCap === "number" && textItem.text.length + failureBlock.length > aggregateCap) {
+			const compact = `\n\n[partial result: ${failures.length} URL(s) failed; full failure details are available in tool metadata]`;
+			textItem.text = textItem.text.slice(0, Math.max(0, aggregateCap - compact.length)) + compact;
+		} else {
+			textItem.text += failureBlock;
+		}
+	}
+	return {
+		...result,
+		details: {
+			...result.details,
+			partial: true,
+			failures: failures.map((failure) => ({ url: failure.url, provider: failure.provider, error: failureMessage(failure.error) })),
+		},
+	};
+}
+
 function renderManifestHeader(count: number, totalFullChars: number): string {
 	return `Fetched ${count} URLs (${formatBytesApprox(totalFullChars)} total, stored as ${count} content ids):`;
 }
@@ -191,6 +242,33 @@ function aggregatePolicy(count: number, requested: number, explicit: boolean): A
 	};
 }
 
+function normalizedUrlKey(input: string | undefined): string {
+	if (!input) return "";
+	try {
+		const url = new URL(input);
+		url.hash = "";
+		return url.toString().replace(/\/$/, "");
+	} catch {
+		return input.replace(/\/$/, "");
+	}
+}
+
+function exaStatusFailure(raw: unknown, url: string): string | undefined {
+	const statuses = Array.isArray((raw as any)?.statuses) ? (raw as any).statuses : [];
+	const key = normalizedUrlKey(url);
+	const status = statuses.find((item: any) => normalizedUrlKey(item?.url) === key) ?? statuses.find((item: any) => typeof item?.id === "string" && item.id === url);
+	if (!status) return "Exa returned no content for this URL.";
+	const statusName = typeof status.status === "string" ? status.status.trim().toLowerCase() : "";
+	if (["success", "completed", "complete", "ok"].includes(statusName) && !status.error) return undefined;
+	for (const value of [status.error, status.message, status.status]) {
+		if (typeof value === "string" && value.trim()) return value.trim();
+		if (value && typeof value === "object") {
+			try { return JSON.stringify(value); } catch { /* use generic fallback */ }
+		}
+	}
+	return "Exa returned no content for this URL.";
+}
+
 function previewStats(content: string, maxCharacters: number): WebFetchPreviewItem {
 	const fullCharacters = content.length;
 	return {
@@ -214,7 +292,7 @@ export function buildWebFetchToolResult(
 	const explicit = options.explicit ?? false;
 	const pageImages = options.pageImages ?? legacyPageImages ?? [];
 
-	const policy = aggregatePolicy(stored.length, requestedMax, explicit);
+	const policy = aggregatePolicy(options.batchSize ?? stored.length, requestedMax, explicit);
 
 	const previewItems = stored.map((item) => {
 		const stats = previewStats(item.content, policy.perUrlMax);
@@ -301,7 +379,10 @@ export function buildWebFetchToolResult(
 	};
 }
 
-export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd?: string) => WebToolsSettings, name = "web_fetch") {
+export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd?: string) => WebToolsSettings, name = "web_fetch", dependencies: WebFetchDependencies = {}) {
+	const youtubeExtractor = dependencies.extractYouTubeUrl ?? extractYouTubeUrl;
+	const httpExtractor = dependencies.fetchHttpContent ?? fetchHttpContent;
+	const createExaClient = dependencies.createExaClient ?? ((apiKey: string | undefined) => new ExaClient({ apiKey }));
 	return {
 		renderShell: "self" as const,
 		name,
@@ -318,9 +399,10 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 			if (options?.isPartial) return emptyComponent();
 			if (context?.isError) return textComponent(errorSummary(theme, providerLabel(name === "web_fetch" ? "Web Fetch" : name, fetchProviderForLabel(context?.args?.provider)), firstText(result) || "failed"));
 			const stored = Array.isArray(result?.details?.stored) ? result.details.stored : [];
+			const failures = Array.isArray(result?.details?.failures) ? result.details.failures : [];
 			const provider = fetchProviderForLabel(context?.args?.provider, result?.details?.provider);
 			const preview = result?.details?.preview;
-			const meta = [`${stored.length} stored`, preview?.truncated ? `preview ${preview.shownCharacters}/${preview.fullCharacters} chars` : undefined].filter(Boolean).join(" · ");
+			const meta = [`${stored.length} stored`, failures.length ? `${failures.length} failed` : undefined, preview?.truncated ? `preview ${preview.shownCharacters}/${preview.fullCharacters} chars` : undefined].filter(Boolean).join(" · ");
 			const target = context?.args?.url || context?.args?.urls?.[0] || context?.args?.filePath || context?.args?.filePaths?.[0] || "content";
 			const lines = [successSummary(theme, providerLabel(name === "web_fetch" ? "Web Fetch" : name, provider), target, meta)];
 			for (let index = 0; index < stored.slice(0, 3).length; index++) {
@@ -342,21 +424,39 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 			const settings = getSettings(ctx.cwd);
 			const list = urls(params);
 			if (list.length === 0) throw new Error(`${name} requires url/urls or filePath/filePaths.`);
+			const requestedPreview = previewLimit(params);
+			const failureAggregateCap = aggregatePolicy(list.length, requestedPreview.maxCharacters, requestedPreview.explicit).aggregateCap;
+			const thrownErrorMessageCap = failureAggregateCap === undefined ? undefined : Math.max(0, failureAggregateCap - "Error: ".length);
+			const transcriptUrls = list.filter((url) => parseYouTubeUrl(url) && (params.videoMode === "transcript" || (params.videoMode !== "understand" && isTranscriptPrompt(params.prompt))));
+			if (transcriptUrls.length && params.provider === "exa") throw new Error("YouTube transcript extraction is incompatible with provider=exa. Use provider=auto or provider=http.");
+			if (transcriptUrls.length && !settings.video.enabled) throw new Error("YouTube transcript extraction is disabled by the video.enabled setting.");
 			if (params.provider === "exa" && list.some(isLocalFileInput)) throw new Error("provider=exa can only fetch remote URLs. Use provider=auto or provider=http for local PDF paths.");
 			async function fetchWithExa(failedUrls: string[]) {
-				const client = new ExaClient({ apiKey: settings.apiKeys.exa });
+				const client = createExaClient(settings.apiKeys.exa);
 				// vstack#185: Exa /contents stores excerpts (default 6k chars).
 				// Tag each stored item with the provider cap so `get_web_content`
 				// and operator-facing docs can distinguish Exa excerpts from
 				// direct/GitHub/PDF/HTTP full-text fetches.
 				const providerTextMaxCharacters = params.textMaxCharacters ?? 6000;
 				const response = await client.contents({ urls: failedUrls, textMaxCharacters: providerTextMaxCharacters }, signal);
-				return response.results.map((result) => storeWebContent(pi, { title: result.title?.trim() || fallbackTitle(result.url), url: result.url, content: result.text || result.summary || "", metadata: { provider: "exa", tool: name, contentKind: "excerpt", providerTextMaxCharacters } }));
+				const stored: StoredWebContent[] = [];
+				const successfulUrls = new Set<string>();
+				for (const result of response.results) {
+					const content = result.text || result.summary || "";
+					if (!result.url || !content) continue;
+					successfulUrls.add(normalizedUrlKey(result.url));
+					stored.push(storeWebContent(pi, { title: result.title?.trim() || fallbackTitle(result.url), url: result.url, content, metadata: { provider: "exa", tool: name, contentKind: "excerpt", providerTextMaxCharacters } }));
+				}
+				const failures = failedUrls
+					.filter((url) => !successfulUrls.has(normalizedUrlKey(url)))
+					.map((url) => ({ url, provider: "exa", error: exaStatusFailure(response.raw, url) }))
+					.filter((failure): failure is { url: string; provider: string; error: string } => failure.error !== undefined);
+				return { stored, failures };
 			}
 			if (params.provider !== "exa") {
 				const stored = [];
 				const pageImages: PdfPageImage[] = [];
-				const failed: Array<{ url: string; error: unknown }> = [];
+				const failed: Array<{ url: string; error: unknown; provider?: string; allowExaFallback: boolean }> = [];
 				async function handlePdfBuffer(buffer: Buffer | ArrayBuffer | Uint8Array, source: { provider: "http" | "local"; url: string; title: string; localPath?: string }) {
 					const bufferLike = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer));
 					let text = "";
@@ -383,6 +483,7 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 					stored.push(storeWebContent(pi, { title: source.title, url: source.url, content, metadata }));
 				}
 				for (const url of list) {
+					let youtubeExtractionAttempted = false;
 					try {
 						if (isLocalFileInput(url)) {
 							const localPath = resolveLocalFilePath(ctx.cwd, url);
@@ -401,8 +502,10 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 							stored.push(storeWebContent(pi, { title: github.title, url, content: github.content, metadata: github.metadata }));
 							continue;
 						}
-						if (settings.video.enabled && parseYouTubeUrl(url)) {
-							const yt = await extractYouTubeUrl(url, { prompt: params.prompt, geminiApiKey: settings.apiKeys.gemini, browserCookies: { preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile }, signal });
+						const youtube = settings.video.enabled ? parseYouTubeUrl(url) : undefined;
+						if (youtube) {
+							youtubeExtractionAttempted = true;
+							const yt = await youtubeExtractor(url, { prompt: params.prompt, mode: params.videoMode, transcriptLanguage: params.transcriptLanguage, geminiApiKey: settings.apiKeys.gemini, browserCookies: { preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile }, signal });
 							if (yt) {
 								stored.push(storeWebContent(pi, { title: yt.title, url: yt.url, content: yt.content, metadata: { tool: name, ...yt.metadata } }));
 								continue;
@@ -415,25 +518,44 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 							await handlePdfBuffer(buffer, { provider: "http", url, title: url.split("/").pop() || url });
 							continue;
 						}
-						const extracted = await fetchHttpContent(url, { signal, jinaFallback: settings.htmlExtraction.jinaFallback, jinaApiKey: settings.apiKeys.jina });
+						const extracted = await httpExtractor(url, { signal, jinaFallback: settings.htmlExtraction.jinaFallback, jinaApiKey: settings.apiKeys.jina });
 						stored.push(storeWebContent(pi, { title: extracted.title, url: extracted.url, content: extracted.content, metadata: { provider: "http", tool: name, ...extracted.metadata } }));
 					} catch (error) {
-						failed.push({ url, error });
+						if (isAbortError(error, signal)) throw error;
+						failed.push({ url, error, provider: youtubeExtractionAttempted ? "youtube" : "direct", allowExaFallback: !youtubeExtractionAttempted });
 					}
 				}
 				if (failed.length) {
-					const localFailure = failed.find((item) => isLocalFileInput(item.url));
-					if (localFailure) throw new Error(`Local file extraction failed for ${localFailure.url}: ${localFailure.error instanceof Error ? localFailure.error.message : String(localFailure.error)}`);
-					if (params.provider === "http" || !settings.apiKeys.exa) throw new Error(`Direct fetch failed for ${failed.map((item) => item.url).join(", ")}: ${failed[0]?.error instanceof Error ? failed[0].error.message : String(failed[0]?.error)}`);
-					stored.push(...await fetchWithExa(failed.map((item) => item.url)));
+					const terminalFailures = failed.filter((item) => isLocalFileInput(item.url) || !item.allowExaFallback || params.provider === "http" || !settings.apiKeys.exa);
+					const exaFallbackFailures = failed.filter((item) => !terminalFailures.includes(item));
+					if (exaFallbackFailures.length) {
+						try {
+							const exaResult = await fetchWithExa(exaFallbackFailures.map((item) => item.url));
+							stored.push(...exaResult.stored);
+							terminalFailures.push(...exaResult.failures.map((item) => ({ ...item, allowExaFallback: false })));
+						} catch (error) {
+							if (isAbortError(error, signal)) throw error;
+							terminalFailures.push(...exaFallbackFailures.map((item) => ({ ...item, provider: "exa", error })));
+						}
+					}
+					if (terminalFailures.length) {
+						if (stored.length === 0) {
+							throw new Error(aggregateFailureMessage(terminalFailures, thrownErrorMessageCap));
+						}
+						const actualProvider = storedProvider(stored);
+						const { maxCharacters, explicit } = previewLimit(params);
+						return addPartialFailures(buildWebFetchToolResult(stored, actualProvider, { maxCharacters, explicit, batchSize: list.length, pageImages }), terminalFailures);
+					}
 				}
 				const actualProvider = storedProvider(stored);
 				const { maxCharacters, explicit } = previewLimit(params);
-				return buildWebFetchToolResult(stored, params.provider === "http" ? "http" : actualProvider, { maxCharacters, explicit, pageImages });
+				return buildWebFetchToolResult(stored, actualProvider, { maxCharacters, explicit, batchSize: list.length, pageImages });
 			}
-			const stored = await fetchWithExa(list);
+			const exaResult = await fetchWithExa(list);
 			const { maxCharacters, explicit } = previewLimit(params);
-			return buildWebFetchToolResult(stored, "exa", { maxCharacters, explicit });
+			if (exaResult.stored.length === 0 && exaResult.failures.length) throw new Error(aggregateFailureMessage(exaResult.failures, thrownErrorMessageCap));
+			const result = buildWebFetchToolResult(exaResult.stored, "exa", { maxCharacters, explicit, batchSize: list.length });
+			return exaResult.failures.length ? addPartialFailures(result, exaResult.failures) : result;
 		},
 	};
 }

@@ -1,6 +1,7 @@
 import { GeminiApiClient } from "../providers/gemini-api.js";
 import { GeminiWebClient } from "../providers/gemini-web.js";
 import { readBrowserCookies, type ReadCookiesOptions } from "../utils/browser-cookies.js";
+import { fetchTranscript, type TranscriptConfig, type TranscriptResult, type TranscriptSegment } from "youtube-transcript-plus";
 
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "music.youtube.com"]);
 
@@ -33,33 +34,109 @@ export function parseYouTubeUrl(input: string): ParsedYouTubeUrl | undefined {
 
 export interface YouTubeExtractOptions {
 	prompt?: string;
+	mode?: "auto" | "transcript" | "understand";
+	transcriptLanguage?: string;
 	geminiApiKey?: string;
 	geminiModel?: string;
 	browserCookies?: ReadCookiesOptions;
 	preferGeminiWeb?: boolean;
+	transcriptFetcher?: YouTubeTranscriptFetcher;
 	signal?: AbortSignal;
 	timeoutMs?: number;
 	fetchImpl?: typeof fetch;
 }
+
+export type YouTubeTranscriptFetcher = (
+	videoId: string,
+	config: TranscriptConfig & { videoDetails: true },
+) => Promise<TranscriptResult>;
 
 export interface YouTubeExtractResult {
 	videoId: string;
 	url: string;
 	title: string;
 	content: string;
-	source: "gemini-web" | "gemini-api";
+	source: "youtube-captions" | "gemini-web" | "gemini-api";
 	metadata: Record<string, unknown>;
 }
 
 const DEFAULT_PROMPT = "Provide a structured summary of the video: title (if shown), key topics, important quotes, and any visual details. Include approximate timestamps for major sections.";
 
-const TRANSCRIPT_KEYWORDS = /\b(transcri[bp]|transcription|verbatim|subtitle|caption|lyrics?\b)/i;
+const TRANSCRIPT_KEYWORDS = /\b(transcript(?:ion|s|ed|ing)?|transcrib(?:e|ed|es|ing|er|ers)|verbatim|subtitles?|captions?|lyrics?)\b/i;
 const TIMESTAMP_DIRECTIVE = "\n\nFormat the output as a transcript with [HH:MM:SS] timestamps at every line break (every 10-15 seconds). Include spoken dialogue, lyrics, and notable visual cues. Do not omit timestamps.";
+
+export function isTranscriptPrompt(input: string | undefined): boolean {
+	return Boolean(input && TRANSCRIPT_KEYWORDS.test(input));
+}
 
 function enhancePrompt(input: string | undefined): string {
 	const base = input ?? DEFAULT_PROMPT;
-	if (input && TRANSCRIPT_KEYWORDS.test(input) && !/\[hh:mm/i.test(input)) return base + TIMESTAMP_DIRECTIVE;
+	if (isTranscriptPrompt(input) && !/\[hh:mm/i.test(input!)) return base + TIMESTAMP_DIRECTIVE;
 	return base;
+}
+
+function decodeHtmlEntities(text: string): string {
+	return text
+		.replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+		.replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;|&#39;/g, "'")
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&amp;/g, "&");
+}
+
+function transcriptTimestamp(offsetSeconds: number): string {
+	const whole = Math.max(0, Math.floor(offsetSeconds));
+	const hours = String(Math.floor(whole / 3600)).padStart(2, "0");
+	const minutes = String(Math.floor((whole % 3600) / 60)).padStart(2, "0");
+	const seconds = String(whole % 60).padStart(2, "0");
+	return `[${hours}:${minutes}:${seconds}]`;
+}
+
+export function formatYouTubeTranscript(segments: TranscriptSegment[]): string {
+	return segments
+		.map((segment) => {
+			const text = decodeHtmlEntities(segment.text).replace(/\s+/g, " ").trim();
+			return text ? `${transcriptTimestamp(segment.offset)} ${text}` : "";
+		})
+		.filter(Boolean)
+		.join("\n");
+}
+
+function isAbortError(error: unknown, signal: AbortSignal | undefined): boolean {
+	return Boolean(signal?.aborted || (error && typeof error === "object" && "name" in error && (error as { name?: unknown }).name === "AbortError"));
+}
+
+async function tryYouTubeCaptions(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult> {
+	const transcriptFetcher = options.transcriptFetcher ?? fetchTranscript;
+	const result = await transcriptFetcher(parsed.videoId, {
+		lang: options.transcriptLanguage ?? "en",
+		videoDetails: true,
+		retries: 2,
+		retryDelay: 500,
+		signal: options.signal,
+	});
+	const content = formatYouTubeTranscript(result.segments);
+	if (!content) throw new Error("YouTube returned no caption segments.");
+	return {
+		videoId: parsed.videoId,
+		url: parsed.canonicalUrl,
+		title: result.videoDetails.title || `YouTube ${parsed.kind} ${parsed.videoId}`,
+		content,
+		source: "youtube-captions",
+		metadata: {
+			provider: "youtube-captions",
+			contentKind: "full-transcript",
+			videoId: parsed.videoId,
+			kind: parsed.kind,
+			language: result.segments[0]?.lang ?? options.transcriptLanguage ?? "en",
+			captionSegments: result.segments.length,
+			durationSeconds: result.videoDetails.lengthSeconds,
+			author: result.videoDetails.author,
+			channelId: result.videoDetails.channelId,
+		},
+	};
 }
 
 async function tryGeminiWeb(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult | undefined> {
@@ -109,6 +186,8 @@ async function tryGeminiApi(parsed: ParsedYouTubeUrl, options: YouTubeExtractOpt
 export async function extractYouTubeUrl(input: string, options: YouTubeExtractOptions = {}): Promise<YouTubeExtractResult | undefined> {
 	const parsed = parseYouTubeUrl(input);
 	if (!parsed) return undefined;
+	const transcriptRequested = options.mode === "transcript" || (options.mode !== "understand" && isTranscriptPrompt(options.prompt));
+	if (transcriptRequested) return await tryYouTubeCaptions(parsed, options);
 	const order: Array<() => Promise<YouTubeExtractResult | undefined>> = options.preferGeminiWeb === false
 		? [() => tryGeminiApi(parsed, options), () => tryGeminiWeb(parsed, options)]
 		: [() => tryGeminiWeb(parsed, options), () => tryGeminiApi(parsed, options)];
@@ -118,6 +197,7 @@ export async function extractYouTubeUrl(input: string, options: YouTubeExtractOp
 			const result = await attempt();
 			if (result) return result;
 		} catch (error) {
+			if (isAbortError(error, options.signal)) throw error;
 			errors.push(error instanceof Error ? error.message : String(error));
 		}
 	}

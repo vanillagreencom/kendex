@@ -60,6 +60,19 @@ test("GeminiWebClient.query parses StreamGenerate envelope and surfaces text", a
 	assert.equal(appCall, 1);
 });
 
+test("GeminiWebClient.query uses latest non-empty streamed candidate", async () => {
+	const empty = JSON.stringify([null, null, null, null, [[null, [""]]]]);
+	const partial = JSON.stringify([null, null, null, null, [[null, ["partial"]]]]);
+	const complete = JSON.stringify([null, null, null, null, [[null, ["complete response"]]]]);
+	const envelope = `)]}'\n\n[${[empty, partial, complete].map((body) => JSON.stringify(["wrf", null, body])).join(",")}]`;
+	const fetchImpl = (async (url: any) => {
+		if (String(url).startsWith("https://gemini.google.com/app")) return new Response(`<html>"SNlM0e":"AT0KEN"</html>`, { status: 200 });
+		return new Response(envelope, { status: 200 });
+	}) as typeof fetch;
+	const client = new GeminiWebClient({ "__Secure-1PSID": "x", "__Secure-1PSIDTS": "y" }, fetchImpl);
+	assert.equal(await client.query("hi", { timeoutMs: 5000 }), "complete response");
+});
+
 test("GeminiWebClient.query throws when access token missing", async () => {
 	const fetchImpl = (async () => new Response("<html>no token</html>", { status: 200 })) as typeof fetch;
 	const client = new GeminiWebClient({ "__Secure-1PSID": "x", "__Secure-1PSIDTS": "y" }, fetchImpl);

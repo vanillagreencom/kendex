@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-web-tools",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "First-party Pi web tools: provider-toggled web search, Exa deep research, content retrieval, and OpenAI native web_search integration.",
   "type": "module",
   "keywords": [
@@ -181,7 +181,7 @@
         {
           "key": "video.enabled",
           "label": "Video extraction",
-          "description": "Enable YouTube and local video understanding via Gemini API/Web when available.",
+          "description": "Enable complete YouTube caption transcripts plus YouTube/local video understanding via Gemini API/Web.",
           "type": "boolean",
           "default": true,
           "category": "Content",
@@ -196,6 +196,9 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
+  },
+  "dependencies": {
+    "youtube-transcript-plus": "^2.0.1"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
@@ -217,6 +220,7 @@
     "src/",
     "tests/",
     "scripts/",
+    "CHANGELOG.md",
     "instructions.md",
     "README.md",
     "package.json",

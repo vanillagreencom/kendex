@@ -76,19 +76,33 @@ function parseStreamGenerate(rawText: string): { text: string; errorCode?: numbe
 	const root = JSON.parse(trimJsonEnvelope(rawText));
 	const errorCodeRaw = getNested(root, [0, 5, 2, 0, 1, 0]);
 	const errorCode = typeof errorCodeRaw === "number" && errorCodeRaw >= 0 ? errorCodeRaw : undefined;
-	let body: unknown = null;
+	let firstCandidate: unknown = undefined;
+	let latestNonEmptyText = "";
 	for (const part of Array.isArray(root) ? root : []) {
 		const partBody = getNested(part, [2]);
 		if (typeof partBody !== "string") continue;
 		try {
 			const parsed = JSON.parse(partBody);
-			if (Array.isArray(getNested(parsed, [4]))) { body = parsed; break; }
+			const candidates = getNested(parsed, [4]);
+			if (!Array.isArray(candidates) || candidates.length === 0) continue;
+			const candidate = candidates[0];
+			if (firstCandidate === undefined) firstCandidate = candidate;
+			const text = candidateText(candidate);
+			if (text) latestNonEmptyText = text;
 		} catch { /* skip */ }
 	}
-	const candidates = getNested(body, [4]);
-	const first = Array.isArray(candidates) ? candidates[0] : undefined;
-	const text = (getNested(first, [1, 0]) as string | undefined) ?? "";
+	const text = latestNonEmptyText || candidateText(firstCandidate);
 	return { text, errorCode };
+}
+
+function candidateText(candidate: unknown): string {
+	const raw = getNested(candidate, [1, 0]);
+	let text = typeof raw === "string" ? raw : "";
+	if (/^http:\/\/googleusercontent\.com\/card_content\/\d+/.test(text)) {
+		const alternate = getNested(candidate, [22, 0]);
+		if (typeof alternate === "string" && alternate) text = alternate;
+	}
+	return text;
 }
 
 function buildFReq(prompt: string): string {
