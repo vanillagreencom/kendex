@@ -114,6 +114,11 @@ case "$args" in
       echo "HTTP 500" >&2
       exit 1
     fi
+    if [[ "${STUB_QUEUE_NULL_ENVELOPE:-}" == "yes" ]]; then
+      # gh --jq evaluates server-side of the stub: emulate by failing the
+      # jq the way gh does on an error() — nonzero with no output.
+      exit 1
+    fi
     if [[ "${STUB_QUEUED:-}" == "yes" ]]; then
       echo '{"data":{"repository":{"pullRequest":{"mergeQueueEntry":{"position":1}}}}}' \
         | jq -r 'if .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end'
@@ -587,6 +592,25 @@ rc=$?
 set -e
 assert_eq "$rc" "2" "pw39: empty-object element exits 2"
 assert_contains "$out" "projection" "pw39: named as a projection failure"
+
+# pw40: malformed pagination metadata is an error, never overflow attention.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":null},"nodes":[]}}}}}' \
+  STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw40: malformed pageInfo exits 2"
+assert_contains "$out" "pagination metadata malformed" "pw40: named precisely"
+
+# pw41: a malformed queue envelope is an error, never silently unqueued.
+set +e
+out=$(run_watch STUB_QUEUE_NULL_ENVELOPE=yes STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw41: malformed queue envelope exits 2"
+assert_contains "$out" "merge-queue membership" "pw41: named"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

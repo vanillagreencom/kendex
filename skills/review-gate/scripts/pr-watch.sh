@@ -208,8 +208,10 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
   # disarmed finding and drop the dequeue warning, so it fails loud like
   # every other read here.
   queued="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){mergeQueueEntry{position}}}}" \
-      --jq 'if .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end' 2>/dev/null)" || {
-    emit "$number" "$head" error "merge-queue membership read failed"
+      --jq 'if (.data.repository.pullRequest | type) != "object"
+            then error("malformed queue envelope")
+            elif .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end' 2>/dev/null)" || {
+    emit "$number" "$head" error "merge-queue membership read failed or malformed"
     errored=1
     continue
   }
@@ -263,7 +265,11 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
   }
   overflow="$(jq -r 'if (.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage | type) != "boolean"
       then error("malformed pageInfo")
-      else .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage end' <<<"$threads_resp" 2>/dev/null)" || overflow="true"
+      else .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage end' <<<"$threads_resp" 2>/dev/null)" || {
+    emit "$number" "$head" error "thread pagination metadata malformed (non-boolean hasNextPage)"
+    errored=1
+    continue
+  }
   if [ "$overflow" = "true" ] || [ "$unresolved" -gt 0 ]; then
     if [ "$overflow" = "true" ]; then
       emit "$number" "$head" threads-open "over 100 review threads (count overflow — fail closed)$queued"
