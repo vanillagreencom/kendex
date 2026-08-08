@@ -43,7 +43,7 @@ decision lives. Raising them again is noise:
 - **Evidence carry-forward.** Docs-only deltas carry ancestor review
   evidence by owner decision (`REVIEW_GATE_CARRY_FORWARD = "docs"`).
   Policy-bearing markdown is excluded via
-  `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` (vstack#1115); the `comments` class
+  `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`; the `comments` class
   is deliberately off. The remaining residual is documented in
   `vstack.settings.toml` comments.
 - **TOCTOU on gate success posts.** The gate's verdict is recomputed by
