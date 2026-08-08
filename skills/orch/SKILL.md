@@ -105,7 +105,7 @@ The three waiters share a bounded env-first GitHub auth ladder and exit `3` on h
 
 ### Review-gate modes
 
-`approval-wait --resolve-mode` prints the project's effective gate mode; workflows read the mode only through it. `PR_REVIEW_GATE` selects `approval` (GitHub-native approval verdict), `review` (non-author review of the current head + zero unresolved threads, for commenting-only review bots), or `off` (reviewer-less repo: wait skipped, gate recorded not-applicable). Default `approval`. Full setting semantics — the legacy `PR_APPROVAL_GATE` mapping, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS`, `PR_REVIEW_OUTAGE_CONTEXT` — and the waiters' JSON contracts: [references/gates.md](references/gates.md).
+`approval-wait --resolve-mode` prints the project's effective gate mode; workflows read the mode only through it. `PR_REVIEW_GATE` selects `approval` (GitHub-native approval verdict), `review` (non-author review of the current head + zero unresolved threads, for commenting-only review bots), or `off` (reviewer-less repo: wait skipped, gate recorded not-applicable). Default `approval`. Full setting semantics — the legacy `PR_APPROVAL_GATE` mapping, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS` — and the waiters' JSON contracts: [references/gates.md](references/gates.md).
 
 ## Schemas
 
@@ -130,7 +130,7 @@ Put non-secret workflow settings in committed `vstack.settings.toml` under `[env
 | `PR_REVIEW_REFIX_MAX_LINES` | Changed-line ceiling a support-scope fix round may reach before `review-pr` re-reviews it anyway; a round that cleared blockers is re-reviewed regardless (read via `refix-route`) | `200` |
 | `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session (read via `orch-env REVIEWER_SLOT_BUDGET 0`; `0` = unlimited). On the Codex collaboration runtime, set it to the config-declared cap (`features.multi_agent_v2.max_concurrent_threads_per_session`) reported by `spawn-adapter slots` | `0` |
 | `ORCH_DECISION_MODE` | Workflow decision-point behavior (read via `orch-env ORCH_DECISION_MODE ask`). `ask` presents every decision to the user; `auto-recommended` executes the workflow's recommended option at the `review-pr` § 4/§ 7 and `dev-fix` § 1 ask-user steps and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. Decision-record revisits, scope expansion beyond the issue, benchmark-host protocol changes, and merge ALWAYS ask, in every mode | `ask` |
-| Review-gate settings | `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_OUTAGE_CONTEXT` — [references/gates.md](references/gates.md) | — |
+| Review-gate settings | `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*` — [references/gates.md](references/gates.md) | — |
 
 System dependencies: `jq`; `bash` 4+; `flock` (util-linux) for atomic state updates.
 

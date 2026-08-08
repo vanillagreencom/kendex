@@ -76,7 +76,7 @@
 # (approval mode) no active COMMENTED review either. A force-push that moved the
 # head mid-wait falls back to "timeout" (the caller re-waits on the now-stable
 # head), and the head is re-confirmed once more at the deadline itself — closing
-# the last-poll -> emit window — so neither the proceed nor its outage marker can
+# the last-poll -> emit window — so the proceed can never
 # land on a commit that was superseded after the final poll. Proceed thus never
 # bypasses a live gate and never attests a stale head — only routes around a
 # genuinely dead reviewer.
@@ -84,22 +84,6 @@
 # comment-hygiene gate still apply. The --on-timeout flag overrides the setting;
 # both read with orch-env precedence (process env > vstack.settings.toml >
 # default).
-#
-# Reviewer-outage attestation (PR_REVIEW_OUTAGE_CONTEXT, default empty; review
-# mode only): on a repo whose CI/branch-protection gate independently blocks
-# merges on review evidence, the orch-side "proceeded" alone does not unblock
-# the merge — that gate runs on events, not on orch's wait deadline. When this
-# names a commit-status context, a review-mode proceed posts that context as
-# `success` on the proceeded head, giving such a gate a signal to accept (the
-# review-gate predicate's override term) — the review-gate writer converges the
-# gate on the attestation's own status event.
-# Approval mode never posts it (its silence signal excludes reviewer checks,
-# and a status cannot satisfy native required-approvals).
-# It is a branch-protection relaxation bounded by the same genuine-silence
-# predicate as the proceed itself and by bot-only status trust; match-by-context,
-# so name it only where every status publisher is trusted. Empty = orch-side
-# only (no marker; the repo-side gate is untouched). See orch DEVELOPMENT.md
-# "Reviewer-outage recognition" for the repo-side gate/bridge pattern.
 #
 # Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review] [--on-timeout block|proceed]
 #        approval-wait --resolve-mode
@@ -142,12 +126,6 @@
 #                                   # "status" — the API surface that matched
 #     "transient_api_errors": <int>,  # only when > 0: transient GitHub API
 #                                   # failures absorbed by retrying (vstack#748)
-#     "outage_marker": <string>,    # review-mode proceed with
-#                                   # PR_REVIEW_OUTAGE_CONTEXT set: "posted" or
-#                                   # "failed" (the status POST was rejected —
-#                                   # the repo-side CI gate got no signal and
-#                                   # cannot recover; retry or stop, do not idle
-#                                   # ci-wait). Absent when not attempted.
 #     "error": <string>             # only when status == "error"
 #   }
 #
@@ -278,23 +256,6 @@ case "$ON_TIMEOUT" in
     ;;
 esac
 
-# Reviewer-outage attestation (PR_REVIEW_OUTAGE_CONTEXT, default empty; review
-# mode only — see post_outage_marker). When a proceed degrade fires (reviewer
-# genuinely down), a repo whose CI gate blocks merges on review evidence needs
-# a signal it can accept — CI runs on events,
-# not on a wait deadline, so it has no notion of "orch hit the deadline". If
-# this names a commit-status context, orch posts that context as `success` on
-# the proceeded head (below): the review-gate predicate accepts it as its
-# override evidence term, and the review-gate writer converges the required
-# gate status on the attestation's status event. SECURITY: this is a
-# branch-protection relaxation — the status lets a merge proceed with no review.
-# It is bounded by the same hardened predicate that gates the proceed itself
-# (genuine silence only) and by the bot-only trust of the status API, and it is
-# match-by-context, so name it only on repos where every status publisher is
-# trusted (the same trust model as PR_REVIEW_CHECK). Empty = post nothing (orch
-# proceeds but the repo-side CI gate is unaffected — orch-side-only opt-in).
-OUTAGE_CONTEXT="$("$SCRIPT_DIR/orch-env" PR_REVIEW_OUTAGE_CONTEXT "")"
-
 update_elapsed() {
   local now
   now="$(date +%s)"
@@ -319,11 +280,6 @@ last_review_evidence=""
 last_check_surface=""
 last_check_app=""
 last_check_creator=""
-# Outage-marker outcome, reported in the JSON so a caller can distinguish a
-# proceed whose marker landed (repo-side gate will re-fire green) from one whose
-# marker POST failed (gate stays red, cannot recover on its own). "" = not
-# attempted (no context / approval mode); "posted"; "failed".
-last_outage_marker=""
 
 # Transient-failure bookkeeping (vstack#748): every gh call in the poll loop
 # writes stderr to GH_ERR_FILE so a failure can be classified before it is
@@ -386,7 +342,6 @@ emit_result() {
       --argjson elapsed "$elapsed" \
       --argjson mode_fields "$mode_fields" \
       --argjson transient "$transient_api_errors" \
-      --arg marker "$last_outage_marker" \
       --arg error "$error_msg" \
       '{
         status: $s,
@@ -397,7 +352,6 @@ emit_result() {
         elapsed_seconds: $elapsed
       } + $mode_fields
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
-        + (if $marker == "" then {} else {outage_marker: $marker} end)
         + (if $error == "" then {} else {error: $error} end)'
     return 0
   fi
@@ -655,48 +609,10 @@ post_nudge() {
   fi
 }
 
-# Attest a reviewer-outage on the proceeded head (PR_REVIEW_OUTAGE_CONTEXT).
-# Called only from the proceed path, so it inherits that path's guarantee of
-# genuine reviewer silence. Posts the configured context as `success` on the
-# exact head so the review-gate writer can converge the required gate status
-# on the attestation's status event; head-pinned, so a later
-# force-push (a new head with no marker) never rides a stale attestation. A
-# failure warns but never blocks the proceed verdict — the orch-side degrade
-# stands regardless; the marker is best-effort plumbing for repo-side CI.
-#
-# REVIEW MODE ONLY: the genuine-silence bound requires "no engagement of any
-# kind", but only review mode queries PR_REVIEW_CHECK check-runs/statuses into
-# last_reviews_present — approval mode counts formal reviews alone, so a
-# queued/pending/failed reviewer check could be active there when the marker
-# posts, falsely attesting silence. Restricting to review mode is also the
-# right scope: the marker exists to unblock a repo-side CI gate that reads
-# review-evidence statuses (the review-gated-CI pattern), and a commit status
-# cannot satisfy approval mode's native required-approvals branch protection.
-post_outage_marker() {
-  [ "$MODE" = "review" ] || return 0
-  [ -n "$OUTAGE_CONTEXT" ] || return 0
-  [ -n "$last_head_sha" ] || return 0
-  if gh api -X POST "repos/$REPO/statuses/$last_head_sha" \
-      -f state=success \
-      -f context="$OUTAGE_CONTEXT" \
-      -f "description=orch reviewer-outage: proceeded after ${elapsed}s with no reviewer evidence" \
-      >/dev/null 2>&1; then
-    last_outage_marker="posted"
-  else
-    # The proceed verdict stands (the reviewer is genuinely down), but the
-    # signal the repo-side CI gate needs was not created — that gate cannot
-    # recover on its own. Surface it loudly AND in the JSON (outage_marker:
-    # "failed") so the caller can retry the marker or stop, rather than idling
-    # ci-wait against a gate that will never turn green.
-    last_outage_marker="failed"
-    echo "approval-wait: outage-marker status '$OUTAGE_CONTEXT' POST failed for PR #$PR_NUM in $REPO — the repo-side CI gate will NOT recover on its own (check statuses:write); JSON outage_marker=failed." >&2
-  fi
-}
-
 # Re-read the PR head and confirm it still equals the head the proceed decision
 # was made on. head_changed_during_wait only catches changes OBSERVED across
 # polls; a push in the final last-poll -> emit window would otherwise let a
-# proceed (and its outage marker) land on a now-superseded commit while the
+# proceed land on a now-superseded commit while the
 # current-head gate got nothing. On a mismatch — or a failed/empty re-read — the
 # caller must treat it as timeout and re-wait on the current head, preserving the
 # head-unchanged guarantee. Uses a `-q` head-only query, distinct from the poll
@@ -1002,15 +918,10 @@ done
 if [ "$ON_TIMEOUT" = "proceed" ] && [ "$last_unresolved" -eq 0 ] \
   && [ "$last_reviews_present" -eq 0 ] && [ "$head_changed_during_wait" = false ] \
   && confirm_head_unchanged; then
-  # The head is confirmed unchanged through to this decision. Attest the outage
-  # on it BEFORE emitting, so a repo-side CI gate that reads
-  # PR_REVIEW_OUTAGE_CONTEXT already has the signal by the time the caller moves
-  # on to verify CI. No-op when the context is unset (orch-side-only).
-  post_outage_marker
   emit_result "proceeded"
   exit 0
 fi
 # Either not a proceed, or the head moved in the final window (confirm failed):
-# report timeout so the caller re-waits on the current head. No marker is posted.
+# report timeout so the caller re-waits on the current head.
 emit_result "timeout"
 exit 1

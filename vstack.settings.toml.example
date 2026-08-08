@@ -128,23 +128,6 @@ PR_REVIEW_ON_TIMEOUT = "block"
 # real comment is never bypassed); CI and comment-hygiene gates still apply. On
 # multi-reviewer repos this only fires when EVERY reviewer is silent.
 
-PR_REVIEW_OUTAGE_CONTEXT = ""
-# Used by: orch (`approval-wait`, review mode). Makes PR_REVIEW_ON_TIMEOUT=proceed
-# end-to-end on repos whose CI/branch-protection gate independently blocks
-# merges on review evidence. When this names a commit-status context, a
-# review-mode proceed posts that context as `success` on the proceeded head; the review-gate
-# predicate accepts it as its override evidence term and the review-gate
-# writer converges the gate status on the event. PAIRING REQUIRED: the
-# predicate reads its own REVIEW_GATE_OVERRIDE_CONTEXT (legacy alias
-# REVIEW_GATE_OUTAGE_CONTEXT), never this key — both settings must carry
-# the SAME exact context value or the posted marker is ignored and the
-# gate stays awaiting review. Empty (default) = orch-side-only (no marker; the repo-side
-# gate is untouched). SECURITY: a branch-protection relaxation — the status
-# lets a merge proceed with no review; bounded by the genuine-silence proceed
-# predicate + bot-only status trust, matched by context, so name it ONLY where
-# every status publisher is trusted. See orch DEVELOPMENT.md "Reviewer-outage
-# recognition".
-
 # BOT / COMMIT IDENTITY
 
 BOT_NAME = "automation-bot"
@@ -238,8 +221,8 @@ REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 
 REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
 # Used by: review-gate (`review-predicate.sh`, so every live gate read
-# honors it) — and orch's PR_REVIEW_OUTAGE_CONTEXT is the writer side of the
-# same context. Operator override status (v2; the outage attestation generalized):
+# honors it). MANUAL operator override status — posted by a human operator,
+# never by automation:
 # substitutes for MISSING review evidence only, and the status description
 # must carry a reason — ENFORCED (an empty or whitespace-only description is
 # not evidence); the reason appears in the gate status detail. SECURITY:
