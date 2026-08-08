@@ -103,6 +103,7 @@ while [ $# -gt 0 ]; do
 done
 
 GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 2
+THREADS_TERM="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
 if [ -z "$AWAITING_AFTER" ]; then
   AWAITING_AFTER="$(rg_setting PR_REVIEW_WAIT_SECS "900")" || exit 2
   case "$AWAITING_AFTER" in ''|*[!0-9]*) AWAITING_AFTER=900 ;; esac
@@ -243,8 +244,12 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
     fi
     attention=1
     # A GREEN gate over open threads is the inverse writer miss — the
-    # merge-enabling direction, so it heals, not just reports.
-    if [ "$gate_state" = "success" ]; then
+    # merge-enabling direction, so it heals, not just reports. ONLY where
+    # the thread term is enforced: under REVIEW_GATE_THREADS=off a green
+    # gate over open threads is the DESIGNED state (thread hygiene is the
+    # server-side ruleset), and flagging it would false-alert and dispatch
+    # the writer on every poll for a status it would only re-affirm.
+    if [ "$gate_state" = "success" ] && [ "$THREADS_TERM" != "off" ]; then
       emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
       heal "$number" "$head"
     fi

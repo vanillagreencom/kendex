@@ -468,6 +468,21 @@ set -e
 assert_eq "$rc" "2" "pw29: unparsable timestamps exit 2"
 assert_contains "$out" "unprovable" "pw29: named as unprovable"
 
+# pw30: under REVIEW_GATE_THREADS=off, a green gate over open threads is
+# the DESIGNED state — threads still report (triage is the agent's job)
+# but no gate-stale, no heal dispatch.
+: > "$TMP_ROOT/dispatch.log"
+set +e
+out=$(run_watch REVIEW_GATE_THREADS=off STUB_QUEUED=no STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_UNRESOLVED=2 STUB_VERDICT_LINE="verdict=approved detail=unused" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' -- --heal)
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw30: threads still report under THREADS=off"
+assert_contains "$out" "threads-open" "pw30: threads-open emitted"
+assert_not_contains "$out" "gate-stale" "pw30: no false gate-stale"
+assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "0" "pw30: no writer dispatch"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
