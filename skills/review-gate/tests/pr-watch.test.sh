@@ -641,6 +641,16 @@ set -e
 assert_eq "$rc" "2" "pw44: empty gate context exits 2"
 assert_contains "$out" "REVIEW_GATE_CONTEXT is explicitly empty" "pw44: named as config error"
 
+# pw45: a matching gate row without a state is malformed, never absent.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=approved detail=unused" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":null}]')
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw45: null-state gate row exits 2"
+assert_contains "$out" "malformed" "pw45: named as malformed"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -239,9 +239,12 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
     continue
   fi
   gate_state="$(jq -rs --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
-      then (add | map(select(.context == $ctx)) | (.[0].state // "absent"))
+      then (add | map(select(.context == $ctx))
+            | if length == 0 then "absent"
+              elif (.[0].state | type) != "string" then error("row without a state")
+              else .[0].state end)
       else error("not a status page") end' <<<"$status_pages" 2>/dev/null)" || {
-    emit "$number" "$head" error "gate-status pages are malformed (broken read)"
+    emit "$number" "$head" error "gate-status pages are malformed (broken read or a matching row without a state)"
     errored=1
     continue
   }
