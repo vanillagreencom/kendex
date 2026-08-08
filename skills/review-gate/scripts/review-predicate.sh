@@ -506,10 +506,18 @@ while IFS= read -r ctx; do
   # choosing the newest — a rejected creator is "not evidence either way",
   # and letting a minted row mask real rows would hand PR content a
   # close-the-gate lever it should not have (only toward closed, but still
-  # not its call). The newest ACCEPTED row must then itself be a clean
-  # success: a newest row that is pending/failure, or a skip-filtered
-  # success ("rate limited"), is silence — exactly what the combined
-  # endpoint's projection used to yield.
+  # not its call). Login-less ANOMALY rows are the opposite: they are NOT
+  # dropped from the sequence — dropped-before-newest they would revive an
+  # OLDER success (stale approval from malformed current evidence); kept,
+  # an anomalous NEWEST row reads as silence. Safe against the minting
+  # lever because PR content cannot produce a login-less row (its statuses
+  # carry github-actions[bot], which is what the reject list names), and a
+  # GitHub-side anomaly (a ghost/deleted creator) masks toward CLOSED, and
+  # only until a real row supersedes it. The newest ACCEPTED row must then
+  # itself be a clean success: a newest row that is pending/failure, a
+  # skip-filtered success ("rate limited"), or — while the reject list is
+  # configured — a login-less anomaly, is silence — exactly what the
+  # combined endpoint's projection used to yield.
   check_status="$(jq --arg ctx "$ctx" --arg skips "$SKIP_PATTERNS" --arg reject "$PUBLISHER_REJECT" '
       ($skips | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $sk
       | ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
@@ -518,8 +526,10 @@ while IFS= read -r ctx; do
           # Bind the login BEFORE index(): inside index(...) the dot rebinds
           # to $rj, so `.creator` would index the reject ARRAY, not the
           # status. Same rebinding trap the comment-form matcher documents.
+          # Only LISTED creators are dropped; login-less rows stay in the
+          # sequence (see the anomaly rationale above).
           | (.creator.login // "") as $cl
-          | select(($rj | length) == 0 or ($cl != "" and ($rj | index($cl)) == null))
+          | select(($rj | length) == 0 or ($cl == "") or (($cl | type) != "string") or (($rj | index($cl)) == null))
         ]
       # FIRST accepted row, not sort_by(created_at)|last: the API lists
       # statuses newest-first (the writer and driver already rely on it),
@@ -528,6 +538,11 @@ while IFS= read -r ctx; do
       # reintroduce exactly the stale-evidence read this projection closes.
       | first
       | if . == null then 0
+        elif ($rj | length) > 0
+             and (((.creator | type) != "object")
+                  or ((.creator.login | type) != "string")
+                  or ((.creator.login | length) == 0))
+        then 0
         elif .state == "success"
              and ((((.description // "") | ascii_downcase) as $text
                    | [ $sk[] | . as $p | select($text | contains($p)) ] | length) == 0)
@@ -622,7 +637,10 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
   # read above: on the LIST endpoint every real publisher (Apps included)
   # carries a creator login, so while the reject list is configured a
   # status with NO login is an anomaly and is not evidence — trusting
-  # anomalies is the fail-open direction. List empty (the default) = filter
+  # anomalies is the fail-open direction. And same SEQUENCE semantics:
+  # anomaly rows stay in the newest-row selection (an anomalous newest row
+  # is silence, never a hole an older success shines through), only listed
+  # creators are dropped before it. List empty (the default) = filter
   # off = unchanged behavior.
   # The REASON is mandatory (plan Change 2, finding 9, carried from the
   # outage semantics): an override with an empty description is not an
@@ -640,12 +658,17 @@ if [ -n "$OUTAGE_CONTEXT" ]; then
     | [ .statuses[]
         | select(.context == $ctx)
         | (.creator.login // "") as $cl
-        | select(($rj | length) == 0 or ($cl != "" and ($rj | index($cl)) == null))
+        | select(($rj | length) == 0 or ($cl == "") or (($cl | type) != "string") or (($rj | index($cl)) == null))
       ]
     # FIRST accepted row — same newest-first API-order reliance and
     # second-precision tie rationale as the trusted-context read above.
     | first
     | if . == null then "0\t"
+      elif ($rj | length) > 0
+           and (((.creator | type) != "object")
+                or ((.creator.login | type) != "string")
+                or ((.creator.login | length) == 0))
+      then "0\t"
       elif .state == "success"
            and (((.description // "") | gsub("^\\s+|\\s+$"; "") | length) > 0)
       then "1\t\((.description // "") | gsub("[\n\r\t]"; " "))"

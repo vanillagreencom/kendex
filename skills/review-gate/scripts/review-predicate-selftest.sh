@@ -504,6 +504,33 @@ CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
 status_ctx "mech-ctx" success "analysis complete" ""
 run "publisher filter set: a status with NO creator login is not evidence" awaiting
 
+# Anomaly rows MASK, they never REVIVE: a login-less row is not-evidence,
+# but dropping it from the sequence before newest-row selection would let
+# an OLDER success on the same context decide — stale approval built from
+# malformed current evidence. The anomalous newest row must read as
+# SILENCE. (Rejected-creator rows keep the opposite, deliberate semantics:
+# they are dropped before selection so a minted row can never mask real
+# rows — PR content cannot produce a login-less row, so no such lever
+# exists here.)
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+jq -n '[{context:"mech-ctx",state:"success",description:"analysis complete",created_at:"2026-01-02T00:00:00Z",creator:null},
+        {context:"mech-ctx",state:"success",description:"analysis complete",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}}]' >"$fixtures/statuses.json"
+run "publisher filter set: a login-less NEWEST row is silence — the older success does not revive" awaiting
+
+reset
+CFG_CONTEXTS=""
+CFG_OUTAGE="mech-outage"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+jq -n '[{context:"mech-outage",state:"success",description:"reviewer down",created_at:"2026-01-02T00:00:00Z",creator:null},
+        {context:"mech-outage",state:"success",description:"reviewer down",created_at:"2026-01-01T00:00:00Z",creator:{login:"operator"}}]' >"$fixtures/statuses.json"
+run "publisher filter set: a login-less newest OVERRIDE row is silence — the older attestation does not revive" awaiting
+
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT=""
+jq -n '[{context:"mech-ctx",state:"success",description:"analysis complete",created_at:"2026-01-02T00:00:00Z",creator:null},
+        {context:"mech-ctx",state:"success",description:"analysis complete",created_at:"2026-01-01T00:00:00Z",creator:{login:"trusted-publisher"}}]' >"$fixtures/statuses.json"
+run "publisher filter unset: the login-less newest row itself counts (filter off, default unchanged)" approved
+
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT=""
 status_ctx "mech-ctx" success "analysis complete" "github-actions[bot]"
