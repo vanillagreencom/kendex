@@ -145,7 +145,7 @@ always the same:
 # second time to build a notification — that re-dispatches --heal's writer
 # kick and can observe different state. The bare single command is also
 # the one shape every restrictive harness classifier accepts.
-export GH_REPO=<owner>/<repo>
+export GH_REPO=your-org/your-repo
 .agents/skills/review-gate/scripts/pr-watch.sh --heal
 ```
 (The `export` is its own line, not a command prefix — inline
