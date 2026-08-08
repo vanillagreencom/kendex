@@ -1000,6 +1000,34 @@ export GH_SHIM_EMPTY=comments
 run "zero-byte comments producer is a failed read" "" 2
 unset GH_SHIM_EMPTY
 
+# Vacuous and non-array pages (the whitespace shape passes the zero-byte
+# guard yet slurps to nothing): the reviews case is the dangerous one — []
+# built from a broken read erases a standing CHANGES_REQUESTED while other
+# evidence satisfies the positive side. Check-run and comment pages get the
+# same contract; wrong-shaped pages are exit 2, never empty evidence.
+reset
+printf '\n   \n' >"$fixtures/reviews.json"
+run "whitespace-only reviews response is exit 2, not an empty review set" "" 2
+
+reset
+printf '{"message":"Server Error"}\n' >"$fixtures/reviews.json"
+run "error-object reviews page is exit 2, not an empty review set" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+printf '\n   \n' >"$fixtures/checkruns.json"
+run "whitespace-only check-runs response is exit 2, not silence" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"
+printf '[]\n' >"$fixtures/checkruns.json"
+run "check-runs page without a check_runs array is exit 2" "" 2
+
+reset
+CFG_REVIEWERS="mech-bot[bot]:Reviewed commit:"
+printf '\n   \n' >"$fixtures/comments.json"
+run "whitespace-only comments response is exit 2, not absent evidence" "" 2
+
 # Status-snapshot seam (VST-35): a caller that already holds the head's
 # LIST-endpoint status rows hands them in (wrapped {sha, statuses}); the
 # predicate must evaluate against them WITHOUT its own statuses read

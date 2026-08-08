@@ -278,7 +278,11 @@ fi
 # reviews read specifically an empty result can erase a standing
 # CHANGES_REQUESTED while other evidence still satisfies the positive side —
 # a false approved. An intentionally empty page set from a real API response
-# is a NON-EMPTY `[]` body, so only a bytes-empty producer is refused.
+# is a NON-EMPTY `[]` body, so only a bytes-empty producer is refused — and
+# the merge validates page SHAPE, not just parse success: a whitespace-only
+# body passes the zero-byte check yet slurps to [] (vacuously "no reviews"),
+# and an error-object page would collapse through `add` — both erase a
+# standing CHANGES_REQUESTED. A broken read is exit 2, never empty evidence.
 raw_reviews="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER/reviews?per_page=100" --paginate)" || {
   echo "::error::could not read reviews for PR #$PR_NUMBER" >&2
   exit 2
@@ -287,8 +291,10 @@ if [ -z "$raw_reviews" ]; then
   echo "::error::reviews read for PR #$PR_NUMBER produced zero bytes (broken read, not an empty page set)" >&2
   exit 2
 fi
-reviews="$(jq -s 'add // []' <<<"$raw_reviews")" || {
-  echo "::error::could not parse reviews for PR #$PR_NUMBER" >&2
+reviews="$(jq -s 'if (length > 0) and all(type == "array")
+                  then add
+                  else error("review pages are not arrays") end' <<<"$raw_reviews" 2>/dev/null)" || {
+  echo "::error::reviews read for PR #$PR_NUMBER returned non-array pages or a vacuous body (broken read)" >&2
   exit 2
 }
 # Changes-requested reduces each reviewer over their DECISIVE states only
@@ -456,8 +462,14 @@ while IFS= read -r ctx; do
     echo "::error::'$ctx' check-runs read produced zero bytes (broken read)" >&2
     exit 2
   fi
-  checkruns_resp="$(jq -s '{check_runs: (map(.check_runs) | add // [])}' <<<"$checkruns_pages")" || {
-    echo "::error::could not merge '$ctx' check-run pages" >&2
+  # Page-shape validation, same reasoning as the reviews read: a
+  # whitespace-only body slurps to [] and a non-object page (or one with no
+  # check_runs array) would collapse to an empty run set — silence built
+  # from a broken read. Exit 2 instead.
+  checkruns_resp="$(jq -s 'if (length > 0) and all((type == "object") and ((.check_runs | type) == "array"))
+                           then {check_runs: (map(.check_runs) | add)}
+                           else error("check-run pages are malformed") end' <<<"$checkruns_pages" 2>/dev/null)" || {
+    echo "::error::'$ctx' check-run pages are malformed or vacuous (broken read)" >&2
     exit 2
   }
   # Bind each skip pattern to a variable BEFORE testing containment: inside
@@ -580,8 +592,14 @@ if [ -n "$COMMENT_REVIEWERS" ]; then
     echo "::error::issue-comments read for PR #$PR_NUMBER produced zero bytes (broken read, not an empty page set)" >&2
     exit 2
   fi
-  comments="$(jq -s 'add // []' <<<"$raw_comments")" || {
-    echo "::error::could not parse issue comments for PR #$PR_NUMBER" >&2
+  # Same page-shape validation as the reviews read: whitespace slurps to
+  # [] and an error-object page collapses through `add` — either would
+  # vaporize comment-form evidence (wrong direction: strands at awaiting)
+  # on a broken read that should be exit 2.
+  comments="$(jq -s 'if (length > 0) and all(type == "array")
+                     then add
+                     else error("comment pages are not arrays") end' <<<"$raw_comments" 2>/dev/null)" || {
+    echo "::error::issue-comments read for PR #$PR_NUMBER returned non-array pages or a vacuous body (broken read)" >&2
     exit 2
   }
   while IFS= read -r pair; do
