@@ -102,7 +102,10 @@
 #
 # Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review] [--on-timeout block|proceed]
 #        approval-wait --resolve-mode
-#   poll_interval default 15s, max_wait default 900s (15 min).
+#   poll_interval default 15s. max_wait: when the positional arg is absent,
+#   PR_REVIEW_WAIT_SECS resolves it (env > vstack.settings.toml > 900) —
+#   the per-repo review quiet-period knob; an explicit positional arg
+#   always wins.
 #
 # --resolve-mode prints the project's effective reviewer-gate mode and exits:
 # PR_REVIEW_GATE (approval|review|off) when set; otherwise the legacy
@@ -225,7 +228,11 @@ esac
 
 PR_NUM="${POSITIONAL[0]:?Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json] [--mode approval|review]}"
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
-MAX_WAIT="${POSITIONAL[2]:-900}"
+# Absent positional resolves through the per-repo quiet-period setting:
+# env > vstack.settings.toml > 900. orch-env's numeric-default guard keeps
+# a non-numeric setting from breaking the deadline arithmetic. An explicit
+# positional arg always wins (callers that pass one keep exact behavior).
+MAX_WAIT="${POSITIONAL[2]:-$("$SCRIPT_DIR/orch-env" PR_REVIEW_WAIT_SECS 900)}"
 START_TIME="$(date +%s)"
 elapsed=0
 

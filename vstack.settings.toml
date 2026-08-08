@@ -69,10 +69,24 @@ REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
 REVIEW_GATE_COMMENT_REVIEWERS = "chatgpt-codex-connector[bot]:Reviewed commit:;bmethod:REVIEWED-CLEAN"
 REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 REVIEW_GATE_OVERRIDE_CONTEXT = "vstack-reviewer-outage"
-REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];bmethod"
+# chatgpt-codex-connector[bot] trusted per the owner decision 2026-08-08:
+# any trusted AI bot's review satisfies the evidence term once threads are
+# resolved. Codex reviews actively; leaving it untrusted made its reviews
+# invisible as evidence while still counting as "engagement" that held off
+# the proceed-on-timeout fallback — a deadlock, not a safeguard. Its
+# reaction-emoji verdicts stay unparsed by design; trusting the login makes
+# the emoji irrelevant.
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot];bmethod"
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 # PR-triggered workflows must not be able to mint trusted contexts or the
 # operator override: statuses created by github-actions[bot] are never
 # evidence. Safe here because the override is operator-PAT-posted under v2
 # (the old Actions-posted sweep attestation is gone).
 REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
+# Docs-only deltas carry ancestor evidence forward (owner decision
+# 2026-08-08, fleet-wide): a final docs-only push keeps its review evidence
+# instead of forcing one more re-review round. "comments" is deliberately
+# NOT enabled — its classifier is line-lexical and cannot see enclosing
+# heredocs/multiline strings (see the example's caveat); "docs" has no such
+# residual. Code changes always require fresh evidence.
+REVIEW_GATE_CARRY_FORWARD = "docs"

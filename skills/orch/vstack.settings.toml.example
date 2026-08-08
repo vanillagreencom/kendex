@@ -14,6 +14,11 @@
 # still honored when this key is unset.
 PR_REVIEW_GATE = "approval"
 
+# Used by: orch (`approval-wait`). Total review-wait budget in seconds — the
+# per-repo quiet period before the on-timeout policy applies — used when the
+# caller passes no max_wait positional arg (an explicit arg always wins).
+PR_REVIEW_WAIT_SECS = "900"
+
 # Used by: orch (`approval-wait`). Seconds without the gate's signal (for the
 # current head) before nudging the reviewer, once per head; a push resets the
 # clock. "0" disables nudging.
