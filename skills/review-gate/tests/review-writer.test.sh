@@ -324,9 +324,14 @@ assert_eq "$rc" "0" "w11b: whitespace-only guard re-read defers with exit 0"
 assert_contains "$out" "deferring the success post" "w11b: names the deferral"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w11b: no post past a vacuous guard re-read"
 
+# EMPTY object, deliberately: `{"message":...}` would have deferred under
+# the OLD filter too (`.[]` yields the string, `.context` on a string is a
+# jq error → guard_newer="" → defer), proving nothing. `{}` collapses
+# through the old `add // [] | .[]` to zero rows → newer=0 → stale success
+# POSTS under the old code; only the all-arrays validation defers it.
 rc=0; out=$(run_writer STUB_VERDICT_LINE="$APPROVED" STUB_GATE_HISTORY="$PENDING_OLD" \
-  STUB_GUARD_HISTORY='{"message":"Server Error"}') || rc=$?
-assert_eq "$rc" "0" "w11c: error-object guard re-read defers with exit 0"
+  STUB_GUARD_HISTORY='{}') || rc=$?
+assert_eq "$rc" "0" "w11c: empty-object guard re-read defers with exit 0 (the old filter posted through it)"
 assert_contains "$out" "deferring the success post" "w11c: names the deferral"
 assert_eq "$(( $(wc -l < "$POST_LOG") ))" "0" "w11c: no post past a malformed guard re-read"
 
