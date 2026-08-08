@@ -145,27 +145,15 @@ heal() { # pr, head — one bounded writer dispatch ATTEMPT per invocation
 }
 
 # --- enumerate ----------------------------------------------------------
-# Same fail-loud page discipline as the writer: a zero-byte or non-array
-# page is a broken read, never an empty repo — silently watching zero PRs
-# is exactly the blindness this tool exists to remove.
+# Enumeration yields PR NUMBERS ONLY; every PR object is fetched FRESH at
+# reduction time. A snapshot row would be a TOCTOU hazard: a push between
+# the listing and this PR's reduction would leave the loop evaluating an
+# old head (and old auto-merge state) while the queue/thread reads observe
+# the new one — an approved green OLD head reading as healthy right after
+# an unreviewed push. Same fail-loud page discipline as the writer: a
+# zero-byte or non-array page is a broken read, never an empty repo.
 if [ -n "$PR_ARGS" ]; then
-  prs="[]"
-  for n in $PR_ARGS; do
-    row="$(gh api "repos/$GH_REPO/pulls/$n" 2>/dev/null)" || {
-      emit "$n" "--------" error "could not read PR #$n"
-      errored=1
-      continue
-    }
-    # Guarded append: an empty or non-JSON body from a nominally successful
-    # call must become this PR's error line, not a set -e death that
-    # abandons the remaining arguments.
-    if ! jq -e 'type == "object" and has("number")' >/dev/null 2>&1 <<<"$row"; then
-      emit "$n" "--------" error "PR #$n response is not a PR object (broken read)"
-      errored=1
-      continue
-    fi
-    prs="$(jq -c --argjson r "$row" '. + [$r]' <<<"$prs")"
-  done
+  pr_numbers="$PR_ARGS"
 else
   raw_prs="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate)" || {
     echo "::error::pr-watch: could not list open PRs" >&2
@@ -175,35 +163,33 @@ else
     echo "::error::pr-watch: open-PR listing produced zero bytes (broken read)" >&2
     exit 2
   fi
-  prs="$(jq -cs 'if (length > 0) and all(type == "array")
-                 then add
-                 else error("not an array page") end' <<<"$raw_prs" 2>/dev/null)" || {
-    echo "::error::pr-watch: open-PR listing pages are not arrays (broken read)" >&2
+  pr_numbers="$(jq -rs 'if (length > 0) and all(type == "array")
+      then (add | map(if (.number | type) != "number" then error("row without a number") else .number end) | join(" "))
+      else error("not an array page") end' <<<"$raw_prs" 2>/dev/null)" || {
+    echo "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
     exit 2
   }
 fi
 
 # --- per-PR reduction ---------------------------------------------------
-# Rows are projected BEFORE the loop: a jq failure inside process
-# substitution cannot fail the while loop (it would just read nothing and
-# exit 0 healthy), so the projection is validated here, loudly.
-pr_rows="$(jq -r '.[]
-  | if (.number | type) != "number" or ((.head.sha? // null) | type) != "string" or ((.state? // null) | type) != "string"
-    then error("row missing required fields")
-    else [.number, .head.sha, (.user.login // "-"), .state, (.draft // false | tostring), (if .auto_merge == null then "false" else "true" end), (.created_at // "-")] | @tsv
-    end' <<<"$prs" 2>/dev/null)" || {
-  echo "::error::pr-watch: open-PR rows failed projection (malformed listing element)" >&2
-  exit 2
-}
-while IFS=$'\t' read -r number head author state draft armed created_at; do
-  [ -z "$number" ] && continue
-  # "-" is the jq placeholder for absent values: bash collapses adjacent
-  # tabs (tab is IFS whitespace), so a truly empty field would shift every
-  # later column and silently skip the PR — the ghost-author shape the
-  # writer's own tests pin. Decoded back to empty here.
-  [ "$author" = "-" ] && author=""
-  [ "$created_at" = "-" ] && created_at=""
-  # Closed/merged PRs need nothing (reachable only via explicit PR args).
+for number in $pr_numbers; do
+  row="$(gh api "repos/$GH_REPO/pulls/$number" 2>/dev/null)" || {
+    emit "$number" "--------" error "could not read PR #$number"
+    errored=1
+    continue
+  }
+  if ! jq -e 'type == "object" and (.number | type) == "number" and ((.head.sha? // null) | type) == "string" and ((.state? // null) | type) == "string"' >/dev/null 2>&1 <<<"$row"; then
+    emit "$number" "--------" error "PR #$number response is not a well-formed PR object (broken read)"
+    errored=1
+    continue
+  fi
+  head="$(jq -r '.head.sha' <<<"$row")"
+  state="$(jq -r '.state' <<<"$row")"
+  author="$(jq -r '.user.login // ""' <<<"$row")"
+  draft="$(jq -r '.draft // false | tostring' <<<"$row")"
+  armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$row")"
+  created_at="$(jq -r '.created_at // ""' <<<"$row")"
+  # Closed/merged PRs need nothing (reachable via explicit PR args).
   [ "$state" = "open" ] || continue
 
   # Queue membership: pushes to a queued PR's branch are rejected, so every
@@ -472,9 +458,7 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
       fi
       ;;
   esac
-done <<EOF_ROWS
-$pr_rows
-EOF_ROWS
+done
 
 if [ "$errored" = "1" ]; then exit 2; fi
 if [ "$attention" = "1" ]; then exit 1; fi

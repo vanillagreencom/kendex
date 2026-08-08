@@ -147,9 +147,16 @@ case "$args" in
     ;;
   *pulls/*)
     n="${args##*pulls/}"
-    var="STUB_PR_${n%% *}"
-    if [[ -z "${!var:-}" ]]; then echo "HTTP 404" >&2; exit 1; fi
-    printf '%s\n' "${!var}"
+    n="${n%% *}"
+    var="STUB_PR_${n}"
+    if [[ -n "${!var:-}" ]]; then
+      printf '%s\n' "${!var}"
+    elif [[ -n "${STUB_OPEN_PRS:-}" && "${STUB_OPEN_PRS}" != "emptybytes" ]]; then
+      jq -e --argjson n "$n" '.[] | select((.number? // null) == $n)' <<<"$STUB_OPEN_PRS" || { echo "HTTP 404" >&2; exit 1; }
+    else
+      echo "HTTP 404" >&2
+      exit 1
+    fi
     ;;
   *"/statuses?per_page=100"*)
     if [[ "${STUB_GATE_HISTORY:-[]}" == "emptybytes" ]]; then exit 0; fi
@@ -402,7 +409,7 @@ out=$(run_watch STUB_PR_5="not json at all" STUB_PR_6="$(pr_row 6 closed)" STUB_
 rc=$?
 set -e
 assert_eq "$rc" "2" "pw22: junk PR response exits 2"
-assert_contains "$out" "not a PR object" "pw22: error names the broken read"
+assert_contains "$out" "not a well-formed PR object" "pw22: error names the broken read"
 
 # pw23: a zero-byte gate-status read is a broken read, never an empty set.
 set +e
@@ -584,7 +591,7 @@ out=$(run_watch STUB_OPEN_PRS='[42]' STUB_VERDICT_LINE="unused")
 rc=$?
 set -e
 assert_eq "$rc" "2" "pw38: malformed listing element exits 2"
-assert_contains "$out" "projection" "pw38: named as a projection failure"
+assert_contains "$out" "malformed" "pw38: named as a malformed listing"
 
 # pw39: an object-shaped malformed element (missing required fields) fails
 # the projection deterministically instead of misparsing the TSV loop.
@@ -593,7 +600,7 @@ out=$(run_watch STUB_OPEN_PRS='[{}]' STUB_VERDICT_LINE="unused")
 rc=$?
 set -e
 assert_eq "$rc" "2" "pw39: empty-object element exits 2"
-assert_contains "$out" "projection" "pw39: named as a projection failure"
+assert_contains "$out" "malformed" "pw39: named as a malformed listing"
 
 # pw40: malformed pagination metadata is an error, never overflow attention.
 set +e
