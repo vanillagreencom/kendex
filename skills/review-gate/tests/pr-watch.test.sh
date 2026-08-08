@@ -458,6 +458,16 @@ out=$(run_watch STUB_QUEUED=yes STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)
 set -e
 assert_eq "$(grep -c "QUEUED: dequeue" <<<"$out")" "2" "pw28: both lines carry the dequeue note"
 
+# pw29: unparsable timestamps are a loud error, never silent health.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:"open", draft:false, head:{sha:$head}, user:{login:"author"}, created_at:"garbage", auto_merge:{merge_method:"merge"}}]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="also-garbage" -- --awaiting-after 60)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw29: unparsable timestamps exit 2"
+assert_contains "$out" "unprovable" "pw29: named as unprovable"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

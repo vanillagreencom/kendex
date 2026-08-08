@@ -369,6 +369,11 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
           emit "$number" "$head" awaiting-stale "no review evidence for ${age}s (quiet period ${AWAITING_AFTER}s) — trigger a re-review or apply the on-timeout policy$queued"
           attention=1
         fi
+      else
+        # Neither timestamp parsed: silence age is unprovable, and
+        # unprovable must never read as healthy (fail-loud contract).
+        emit "$number" "$head" error "silence clock has no parsable timestamp (head commit and created_at both unusable) — silence age unprovable"
+        errored=1
       fi
       ;;
   esac
