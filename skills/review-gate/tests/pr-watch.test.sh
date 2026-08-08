@@ -126,13 +126,13 @@ case "$args" in
       exit 1
     fi
     if [[ "${STUB_QUEUED:-}" == "yes" ]]; then
-      printf ' (QUEUED: dequeue before pushing)\n'
+      printf 'queued\n'
     elif [[ "${STUB_QUEUED_FLAG_ONLY:-}" == "yes" ]]; then
       # Transitional snapshot: isInMergeQueue true, entry null — must still
       # read as queued (the OR contract).
-      printf ' (QUEUED: dequeue before pushing)\n'
+      printf 'queued\n'
     else
-      printf '\n'
+      printf 'unqueued\n'
     fi
     ;;
   graphql*reviewThreads*)
@@ -177,7 +177,15 @@ case "$args" in
       # Row fetches: STUB_ARMED_AFTER flips auto_merge from the SECOND
       # fetch of a number (the just-in-time ownership recheck), via a
       # per-number counter.
-      if [[ "${STUB_CLOSED_AFTER:-}" == "yes" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
+      if [[ "${STUB_DRAFT_AFTER:-}" == "yes" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
+        cf="$STUB_PR_CALLS_DIR/$n"
+        if [[ -f "$cf" ]]; then
+          jq '.draft = true' <<<"$pr_row_json"
+        else
+          : > "$cf"
+          printf '%s\n' "$pr_row_json"
+        fi
+      elif [[ "${STUB_CLOSED_AFTER:-}" == "yes" && -n "${STUB_PR_CALLS_DIR:-}" ]]; then
         cf="$STUB_PR_CALLS_DIR/$n"
         if [[ -f "$cf" ]]; then
           jq '.state = "closed"' <<<"$pr_row_json"
@@ -925,6 +933,32 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "pw65: mid-reduction close exits 0"
 assert_not_contains "$out" "disarmed" "pw65: no re-arm nudge for a completed PR"
+
+# pw66: a bogus commit-status state is malformed, never absent or stale.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=approved detail=unused" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"bogus"}]')
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw66: bogus status state exits 2"
+assert_contains "$out" "valid error|failure|pending|success state" "pw66: named"
+
+# pw67: a to-draft conversion mid-reduction skips only the re-arm nudge —
+# verdict reductions still run (the stale-green mismatch still heals).
+mkdir -p "$TMP_ROOT/prcalls"; rm -f "$TMP_ROOT/prcalls"/*
+: > "$TMP_ROOT/dispatch.log"
+set +e
+out=$(run_watch STUB_DRAFT_AFTER=yes STUB_PR_CALLS_DIR="$TMP_ROOT/prcalls" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7 open unarmed)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' \
+  STUB_HEAD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" -- --heal --awaiting-after 3600)
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw67: to-draft conversion still reduces the verdict"
+assert_contains "$out" "gate-stale" "pw67: stale green still reported"
+assert_not_contains "$out" "disarmed" "pw67: but no re-arm nudge"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

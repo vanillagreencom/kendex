@@ -169,10 +169,12 @@ read_gate_state() { # pr, head — sets gate_state; returns 1 after emitting an 
   gate_state="$(jq -rs --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
       then (add | map(select(.context == $ctx))
             | if length == 0 then "absent"
-              elif (.[0].state | type) != "string" then error("row without a state")
+              elif ((.[0].state | type) != "string")
+                   or ((.[0].state | IN("error","failure","pending","success")) | not)
+              then error("row with an invalid state")
               else .[0].state end)
       else error("not a status page") end' <<<"$status_pages" 2>/dev/null)" || {
-    emit "$1" "$2" error "gate-status pages are malformed (broken read or a matching row without a state)"
+    emit "$1" "$2" error "gate-status pages are malformed (broken read, or a matching row without a valid error|failure|pending|success state)"
     errored=1
     return 1
   }
@@ -255,11 +257,22 @@ for number in $pr_numbers; do
                or ((.data.repository.pullRequest.mergeQueueEntry | type) != "null" and (.data.repository.pullRequest.mergeQueueEntry | type) != "object")
             then error("malformed queue envelope")
             elif (.data.repository.pullRequest.isInMergeQueue or (.data.repository.pullRequest.mergeQueueEntry != null))
-            then " (QUEUED: dequeue before pushing)" else "" end' 2>/dev/null)" || {
+            then "queued" else "unqueued" end' 2>/dev/null)" || {
     emit "$number" "$head" error "merge-queue membership read failed or malformed"
     errored=1
     continue
   }
+  # Explicit sentinels: an EMPTY successful projection is a broken read,
+  # never mistakable for the legitimate unqueued state.
+  case "$queued" in
+    queued) queued=" (QUEUED: dequeue before pushing)" ;;
+    unqueued) queued="" ;;
+    *)
+      emit "$number" "$head" error "merge-queue projection produced no usable sentinel (broken read)"
+      errored=1
+      continue
+      ;;
+  esac
 
 
   # Threads are read DIRECTLY in BOTH modes, never only through the
@@ -438,10 +451,10 @@ for number in $pr_numbers; do
     if [ "$(jq -r '.state' <<<"$ownership_row")" != "open" ]; then
       continue
     fi
+    # A to-draft conversion reloads draft (the disarmed condition below
+    # already excludes drafts) — the verdict-dependent reductions and the
+    # final recheck still run for it.
     draft="$(jq -r '.draft | tostring' <<<"$ownership_row")"
-    if [ "$draft" = "true" ]; then
-      continue
-    fi
     ownership_head="$(jq -r '.head.sha' <<<"$ownership_row")"
     if [ "$ownership_head" != "$head" ]; then
       emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$ownership_head")) — findings describe the old head; re-run"
@@ -456,12 +469,20 @@ for number in $pr_numbers; do
                or ((.data.repository.pullRequest.mergeQueueEntry | type) != "null" and (.data.repository.pullRequest.mergeQueueEntry | type) != "object")
             then error("malformed queue envelope")
             elif (.data.repository.pullRequest.isInMergeQueue or (.data.repository.pullRequest.mergeQueueEntry != null))
-            then " (QUEUED: dequeue before pushing)" else "" end' 2>/dev/null)" || {
+            then "queued" else "unqueued" end' 2>/dev/null)" || {
       emit "$number" "$head" error "merge-queue recheck failed or malformed"
       errored=1
       continue
     }
-    queued="$queued_now"
+    case "$queued_now" in
+      queued) queued=" (QUEUED: dequeue before pushing)" ;;
+      unqueued) queued="" ;;
+      *)
+        emit "$number" "$head" error "merge-queue recheck produced no usable sentinel (broken read)"
+        errored=1
+        continue
+        ;;
+    esac
   fi
   if [ "$gate_state" = "success" ] && [ "$armed" = "false" ] && [ -z "$queued" ] && [ "$draft" != "true" ]; then
     # In evaluate mode only a confirmed approved verdict nominates the
