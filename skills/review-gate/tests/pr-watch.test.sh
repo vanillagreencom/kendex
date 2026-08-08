@@ -856,6 +856,14 @@ set -e
 assert_eq "$rc" "2" "pw61: partial PR object exits 2"
 assert_contains "$out" "not a well-formed PR object" "pw61: named"
 
+# pw62: an initial head that is not a 40-hex sha fails the schema boundary.
+set +e
+out=$(run_watch STUB_PR_9="$(jq -cn '{number:9, state:"open", draft:false, head:{sha:"main"}, user:{login:"author"}, created_at:"2026-01-01T00:00:00Z", auto_merge:null}')" STUB_VERDICT_LINE="unused" -- 9)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw62: non-sha initial head exits 2"
+assert_contains "$out" "not a well-formed PR object" "pw62: named"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

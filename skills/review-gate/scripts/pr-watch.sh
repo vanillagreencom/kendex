@@ -147,6 +147,38 @@ heal() { # pr, head — one bounded writer dispatch ATTEMPT per invocation
   fi
 }
 
+
+read_gate_state() { # pr, head — sets gate_state; returns 1 after emitting an error
+  # Gate context's NEWEST row (list endpoint, newest-first — the same
+  # projection the predicate documents for the status surface), read
+  # JUST-IN-TIME at each consumer site: the writer can converge between an
+  # early snapshot and a status-dependent finding, and acting on a stale
+  # row would false-alert gate-stale (plus dispatch churn) or recommend
+  # re-arming from an obsolete success. Fetch and merge are SEPARATE steps
+  # with a zero-byte guard, the engine's required pattern.
+  status_pages="$(gh api "repos/$GH_REPO/commits/$2/statuses?per_page=100" --paginate 2>/dev/null)" || {
+    emit "$1" "$2" error "gate-status read failed"
+    errored=1
+    return 1
+  }
+  if [ -z "$status_pages" ]; then
+    emit "$1" "$2" error "gate-status read produced zero bytes (broken read)"
+    errored=1
+    return 1
+  fi
+  gate_state="$(jq -rs --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
+      then (add | map(select(.context == $ctx))
+            | if length == 0 then "absent"
+              elif (.[0].state | type) != "string" then error("row without a state")
+              else .[0].state end)
+      else error("not a status page") end' <<<"$status_pages" 2>/dev/null)" || {
+    emit "$1" "$2" error "gate-status pages are malformed (broken read or a matching row without a state)"
+    errored=1
+    return 1
+  }
+  return 0
+}
+
 # --- enumerate ----------------------------------------------------------
 # Enumeration yields PR NUMBERS ONLY; every PR object is fetched FRESH at
 # reduction time. A snapshot row would be a TOCTOU hazard: a push between
@@ -183,7 +215,7 @@ for number in $pr_numbers; do
     continue
   }
   if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
-      and ((.head.sha? // null) | type) == "string"
+      and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))
       and ((.state? // null) | type) == "string"
       and ((.draft | type) == "boolean")
       and ((.auto_merge | type) == "null" or (.auto_merge | type) == "object")
@@ -229,33 +261,6 @@ for number in $pr_numbers; do
     continue
   }
 
-  # Gate context's NEWEST row (list endpoint, newest-first — the same
-  # projection the predicate documents for the status surface). Fetch and
-  # merge are SEPARATE steps with a zero-byte guard, the engine's required
-  # pattern: a pipe would replace gh's exit status with jq's, and a
-  # successful call producing zero bytes is a broken read, not an empty
-  # status set (that is the two-byte page []).
-  status_pages="$(gh api "repos/$GH_REPO/commits/$head/statuses?per_page=100" --paginate 2>/dev/null)" || {
-    emit "$number" "$head" error "gate-status read failed"
-    errored=1
-    continue
-  }
-
-  if [ -z "$status_pages" ]; then
-    emit "$number" "$head" error "gate-status read produced zero bytes (broken read)"
-    errored=1
-    continue
-  fi
-  gate_state="$(jq -rs --arg ctx "$GATE_CONTEXT" 'if (length > 0) and all(type == "array")
-      then (add | map(select(.context == $ctx))
-            | if length == 0 then "absent"
-              elif (.[0].state | type) != "string" then error("row without a state")
-              else .[0].state end)
-      else error("not a status page") end' <<<"$status_pages" 2>/dev/null)" || {
-    emit "$number" "$head" error "gate-status pages are malformed (broken read or a matching row without a state)"
-    errored=1
-    continue
-  }
 
   # Threads are read DIRECTLY in BOTH modes, never only through the
   # predicate: a repo running REVIEW_GATE_THREADS=off gets `approved` from
@@ -309,6 +314,7 @@ for number in $pr_numbers; do
     # gate over open threads is the DESIGNED state (thread hygiene is the
     # server-side ruleset), and flagging it would false-alert and dispatch
     # the writer on every poll for a status it would only re-affirm.
+    read_gate_state "$number" "$head" || continue
     if [ "$THREADS_TERM" != "off" ] && [ "$gate_state" = "success" ]; then
       emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
       heal "$number" "$head"
@@ -357,6 +363,10 @@ for number in $pr_numbers; do
     verdict=""
     detail=""
   fi
+
+  # Status-dependent reductions below act on a JUST-READ row (see the
+  # helper's rationale) — cheap-mode reductions included.
+  read_gate_state "$number" "$head" || continue
 
   case "$verdict" in
     threads-open)
