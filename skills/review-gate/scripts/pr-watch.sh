@@ -328,15 +328,18 @@ for number in $pr_numbers; do
     # server-side ruleset), and flagging it would false-alert and dispatch
     # the writer on every poll for a status it would only re-affirm.
     read_gate_state "$number" "$head" || continue
+    stale_green_reported=0
     if [ "$THREADS_TERM" != "off" ] && [ "$gate_state" = "success" ]; then
       emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
       heal "$number" "$head"
+      stale_green_reported=1
     fi
     # One line PER FINDING: open threads must not suppress a standing
     # objection (or, under off, the disarmed nudge) — evaluation proceeds
     # and the predicate's duplicate threads-open verdict dedupes below.
   else
     threads_reported=0
+    stale_green_reported=0
   fi
 
   if [ "$EVALUATE" = "1" ]; then
@@ -384,9 +387,15 @@ for number in $pr_numbers; do
   case "$verdict" in
     threads-open)
       # Already reported from the direct read — dedupe the predicate's
-      # duplicate verdict and stop here (nothing below applies: the gate
-      # is, or will converge, closed on the threads).
+      # duplicate verdict. Before stopping, re-check the FRESH gate state:
+      # a writer that evaluated before the thread appeared can post success
+      # BETWEEN the two reads, and discarding that would leave a
+      # merge-enabling green gate unhealed until the cron floor.
       if [ "$threads_reported" = "1" ]; then
+        if [ "$stale_green_reported" = "0" ] && [ "$THREADS_TERM" != "off" ] && [ "$gate_state" = "success" ]; then
+          emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
+          heal "$number" "$head"
+        fi
         continue
       fi
       # Direct count was zero but the predicate saw threads (paging race /
