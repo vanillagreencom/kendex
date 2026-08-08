@@ -651,6 +651,16 @@ set -e
 assert_eq "$rc" "2" "pw45: null-state gate row exits 2"
 assert_contains "$out" "malformed" "pw45: named as malformed"
 
+# pw46: a ghost-author PR with nothing else to report names the cause
+# precisely (the predicate cannot evaluate it) instead of a generic error.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:"open", draft:false, head:{sha:$head}, user:null, created_at:"2026-01-01T00:00:00Z", auto_merge:{merge_method:"merge"}}]')" \
+  STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw46: ghost author exits 2"
+assert_contains "$out" "deleted account" "pw46: cause named"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

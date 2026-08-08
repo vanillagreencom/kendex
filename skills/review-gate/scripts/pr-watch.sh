@@ -312,6 +312,15 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
   fi
 
   if [ "$EVALUATE" = "1" ]; then
+    # Ghost authors (user: null — a deleted account) cannot be evaluated by
+    # the predicate: its author-exclusion terms need a real login and it
+    # exits 2 on an empty one. Name the cause instead of burning the call
+    # on a generic failure — the line is the actionable finding.
+    if [ -z "$author" ]; then
+      emit "$number" "$head" error "PR author is a deleted account (ghost) — the predicate cannot evaluate author-exclusion terms; review and merge this PR manually"
+      errored=1
+      continue
+    fi
     verdict_line="$(GH_REPO="$GH_REPO" PR_NUMBER="$number" HEAD_SHA="$head" PR_AUTHOR="$author" \
         "$script_dir/review-predicate.sh" 2>/dev/null)" || {
       emit "$number" "$head" error "predicate evaluation failed (exit 2 — read failure or invalid config)"
