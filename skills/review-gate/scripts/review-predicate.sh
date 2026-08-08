@@ -83,21 +83,28 @@
 #
 # Env (required): GH_TOKEN (or ambient gh auth), GH_REPO, PR_NUMBER, HEAD_SHA
 # Env (optional): PR_AUTHOR — resolved from the PR when empty.
-# Env (optional): REVIEW_GATE_STATUS_SNAPSHOT_FILE — path to a combined-status
-#   snapshot (JSON object with a `statuses` array and a top-level `sha` equal
-#   to HEAD_SHA) supplied by the CALLER; when set, the predicate evaluates
+# Env (optional): REVIEW_GATE_STATUS_SNAPSHOT_FILE — path to a status snapshot
+#   (JSON object with a `statuses` array and a top-level `sha` equal to
+#   HEAD_SHA) supplied by the CALLER; when set, the predicate evaluates
 #   trusted-context and outage evidence against it instead of fetching the
-#   combined status itself. A converge-style caller that already read the
-#   combined status for its own projection hands it in here and the duplicate
-#   per-head read disappears — the API response carries the head sha at top
-#   level, so a SINGLE-PAGE response satisfies the binding as-is. The
-#   snapshot must contain the COMPLETE status set for the head: a caller
-#   that paginated (heads with >100 statuses) merges every page's statuses
-#   into one array under one top-level sha before handing it in — a
-#   first-page-only snapshot would silently drop later-page evidence. Per-invocation env
-#   seam (like REVIEW_GATE_SETTINGS_FILE), never a settings key: the snapshot
-#   is bound to one head at one moment, and the `sha` requirement enforces
-#   that binding. An unreadable/malformed/wrong-head snapshot is exit 2.
+#   statuses itself. LIST-ENDPOINT ROWS ONLY: the rows must come from the
+#   per-commit statuses LIST endpoint (/commits/<sha>/statuses), the same
+#   endpoint the fetch path below uses — full per-context HISTORY, real
+#   `creator.login` on every row. The combined endpoint
+#   (/commits/<sha>/status) is NOT a valid source: it projects
+#   latest-per-context (masking newer-row supersession) and serializes
+#   `creator` as null for App-posted rows, which the
+#   REVIEW_GATE_STATUS_PUBLISHER_REJECT anomaly rule would then silently
+#   drop as not-evidence. While the reject list is configured, a row without
+#   a creator login is refused AT THE SEAM (exit 2) rather than silently
+#   erased downstream. The snapshot must contain the COMPLETE status set for
+#   the head: a caller that paginated (heads with >100 rows) merges every
+#   page's rows into one array under one top-level `sha` before handing it
+#   in — a first-page-only snapshot would silently drop later-page
+#   evidence. Per-invocation env seam (like REVIEW_GATE_SETTINGS_FILE),
+#   never a settings key: the snapshot is bound to one head at one moment,
+#   and the `sha` requirement enforces that binding. An
+#   unreadable/malformed/wrong-head snapshot is exit 2.
 #
 # Output: one machine-readable line on stdout:
 #   verdict=approved|awaiting|threads-open|changes-requested detail=<human text>
@@ -371,14 +378,27 @@ if [ -n "${REVIEW_GATE_STATUS_SNAPSHOT_FILE:-}" ]; then
   # with zero evidence (vstack#1086). Slurping also makes a zero-value
   # (empty or whitespace-only) file hit the error branch instead of jq's
   # silent empty-output success.
-  status_resp="$(jq -s --arg sha "$HEAD_SHA" '
-                     if (length == 1) and (.[0]
+  #
+  # LIST-endpoint rows only (see the env contract in the header): while the
+  # publisher reject list is configured, every row must carry a real
+  # creator login — on the LIST endpoint every real publisher has one, and
+  # the downstream anomaly rule drops login-less rows as not-evidence. A
+  # combined-endpoint snapshot (null creators on App rows) under a
+  # configured reject list would therefore silently erase real evidence;
+  # refusing it here turns that erasure into a loud contract error. With
+  # the reject list empty (the shipped default) the filter is off and no
+  # creator requirement applies.
+  status_resp="$(jq -s --arg sha "$HEAD_SHA" --arg reject "$PUBLISHER_REJECT" '
+                     ($reject | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $rj
+                     | if (length == 1) and (.[0]
                         | (type == "object") and ((.statuses | type) == "array")
-                          and (.sha == $sha))
+                          and (.sha == $sha)
+                          and (($rj | length) == 0
+                               or (.statuses | all((.creator.login // "") != ""))))
                      then {statuses: .[0].statuses}
-                     else error("not a single combined-status snapshot for this head") end' \
+                     else error("not a single list-endpoint status snapshot for this head") end' \
                     "$REVIEW_GATE_STATUS_SNAPSHOT_FILE" 2>/dev/null)" || {
-    echo "::error::REVIEW_GATE_STATUS_SNAPSHOT_FILE '$REVIEW_GATE_STATUS_SNAPSHOT_FILE' is not a readable combined-status snapshot bound to $HEAD_SHA (exactly one JSON object with a statuses array and top-level sha == HEAD_SHA)" >&2
+    echo "::error::REVIEW_GATE_STATUS_SNAPSHOT_FILE '$REVIEW_GATE_STATUS_SNAPSHOT_FILE' is not a readable list-endpoint status snapshot bound to $HEAD_SHA (exactly one JSON object with a statuses array and top-level sha == HEAD_SHA; with REVIEW_GATE_STATUS_PUBLISHER_REJECT configured every row must carry a creator login — combined-endpoint snapshots null App creators and are not a valid source)" >&2
     exit 2
   }
 else

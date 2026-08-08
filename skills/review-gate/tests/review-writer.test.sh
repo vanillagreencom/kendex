@@ -556,7 +556,10 @@ if grep -qF -- "actions: write" "$TEMPLATE"; then
 else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: no actions:write — the writer never re-runs CI"
 fi
-pin 'ref: ${{ github.event.repository.default_branch }}' "tpl: engine runs from the default branch"
+# The || 'main' arm keeps an empty default_branch expression from letting
+# actions/checkout fall back to its own default ref — on pull_request_target
+# that is the PR merge ref under a write-capable token.
+pin "ref: \${{ github.event.repository.default_branch || 'main' }}" "tpl: engine runs from the default branch (empty-expression fallback pinned)"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -1062,6 +1062,24 @@ jq -n --arg sha "$HEAD" '{sha:$sha,statuses:{}}' >"$fixtures/objstat-snapshot.js
 CFG_SNAPSHOT="$fixtures/objstat-snapshot.json"
 run "snapshot seam: snapshot with non-array statuses is exit 2" "" 2
 
+# LIST-shape at the seam: while the publisher reject list is configured, the
+# downstream anomaly rule drops login-less rows as not-evidence — so a
+# combined-endpoint snapshot (null creators on App rows) would silently
+# erase real evidence. The seam refuses it loudly instead. With the list
+# empty (shipped default) the filter is off and null creators still pass.
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT="github-actions[bot]"
+jq -n --arg sha "$HEAD" '{sha:$sha,statuses:[{context:"mech-ctx",state:"success",description:"analysis complete",created_at:"2026-01-01T00:00:00Z",creator:null}]}' >"$fixtures/nullcreator-snapshot.json"
+CFG_SNAPSHOT="$fixtures/nullcreator-snapshot.json"
+run "snapshot seam: null-creator row under a configured reject list is exit 2, not silent erasure" "" 2
+
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT=""
+CFG_SNAPSHOT="$fixtures/nullcreator-snapshot.json"
+export GH_SHIM_FAIL=statuses
+run "snapshot seam: null-creator row with the reject list EMPTY still evaluates (filter off)" approved
+unset GH_SHIM_FAIL
+
 reset
 CFG_CONTEXTS="mech-ctx"
 status_ctx "mech-ctx" success "analysis complete"

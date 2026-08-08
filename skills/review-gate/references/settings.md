@@ -38,20 +38,28 @@ Two env-only PER-INVOCATION seams are deliberately NOT settings keys:
   file to resolve from is a property of one invocation, never of the repo
   the file itself describes — a settings key naming its own settings file
   would be circular.
-- `REVIEW_GATE_STATUS_SNAPSHOT_FILE` — path to a combined-status snapshot
-  (JSON object with a `statuses` array and a top-level `sha` equal to the
-  invocation's `HEAD_SHA` — a single-page raw combined-status API response
-  carries both; a caller that paginated merges every page's statuses into
-  the one array first, since a first-page-only snapshot silently drops
-  later-page evidence) the CALLER already holds. When set, the predicate evaluates
-  trusted-context and outage evidence against it instead of fetching the
-  combined status itself — a converge-style sweep that reads the combined
-  status for its own required-status projection stops paying that read
-  twice per head. The snapshot is bound to one head at one moment, which is
-  why it can never be a repo setting — and the `sha` requirement enforces
-  that binding: a snapshot for another head is refused. An unreadable,
-  malformed, or wrong-head snapshot gets the read contract: exit 2, no
-  verdict.
+- `REVIEW_GATE_STATUS_SNAPSHOT_FILE` — path to a status snapshot (JSON
+  object with a `statuses` array and a top-level `sha` equal to the
+  invocation's `HEAD_SHA`) the CALLER already holds. The rows must come
+  from the per-commit statuses LIST endpoint (`/commits/<sha>/statuses`) —
+  the same endpoint the predicate's own fetch path uses: full per-context
+  history, real `creator.login` on every row. The combined endpoint
+  (`/commits/<sha>/status`) is NOT a valid source — it projects
+  latest-per-context and serializes `creator` as null for App-posted rows,
+  which `REVIEW_GATE_STATUS_PUBLISHER_REJECT`'s anomaly rule treats as
+  not-evidence; while that reject list is configured, the seam refuses a
+  snapshot containing login-less rows (exit 2) rather than silently
+  dropping real evidence. The caller wraps the rows itself: merge every
+  page's rows into one `statuses` array under a top-level `sha` (a
+  first-page-only snapshot silently drops later-page evidence). When set,
+  the predicate evaluates trusted-context and outage evidence against it
+  instead of fetching the statuses itself — a converge-style sweep that
+  reads the status list for its own required-status projection stops
+  paying that read twice per head. The snapshot is bound to one head at
+  one moment, which is why it can never be a repo setting — and the `sha`
+  requirement enforces that binding: a snapshot for another head is
+  refused. An unreadable, malformed, or wrong-head snapshot gets the read
+  contract: exit 2, no verdict.
 
 # Security posture
 
