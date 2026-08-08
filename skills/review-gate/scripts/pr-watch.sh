@@ -471,13 +471,16 @@ for number in $pr_numbers; do
             errored=1
             continue
           fi
-          # The reviewable period restarts at readiness AND at reopening —
-          # both mark "this PR became awaitable again" without a new head.
+          # The reviewable period restarts at readiness, at reopening, AND
+          # at a re-review request (the exact action the awaiting-stale
+          # line recommends — without this floor the next poll would nudge
+          # again immediately, forever) — each marks "the review wait
+          # started over" without a new head.
           # A matching event whose created_at is not a string is malformed
           # data, not an ignorable row (fail loud, never a stale alert
           # from untrustworthy input).
           ready_at="$(jq -rs 'if (length > 0) and all(type == "array")
-              then ([.[] | .[] | select((.event? == "ready_for_review") or (.event? == "reopened"))
+              then ([.[] | .[] | select((.event? == "ready_for_review") or (.event? == "reopened") or (.event? == "review_requested"))
                      | if (.created_at | type) != "string" then error("event without a timestamp") else .created_at end]
                     | sort | last // "")
               else error("not a timeline page") end' <<<"$timeline_pages" 2>/dev/null)" || {
@@ -495,6 +498,13 @@ for number in $pr_numbers; do
             fi
             if [ "$ready_epoch" -gt "$head_epoch" ]; then
               age=$(( $(date +%s) - ready_epoch ))
+              # Same skew rule as the head clock: a future-dated event must
+              # not buy silent health until wall-clock catches up.
+              if [ "$age" -lt -300 ]; then
+                emit "$number" "$head" error "silence clock is in the future by $(( -age ))s (timeline event timestamp) — silence age unprovable"
+                errored=1
+                continue
+              fi
             fi
           fi
           if [ "$age" -gt "$AWAITING_AFTER" ]; then

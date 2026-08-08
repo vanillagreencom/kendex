@@ -183,7 +183,9 @@ case "$args" in
       exit 1
     fi
     if [[ "${STUB_TIMELINE_EMPTYBYTES:-}" == "yes" ]]; then exit 0; fi
-    if [[ -n "${STUB_REOPENED_AT:-}" ]]; then
+    if [[ -n "${STUB_REREQUEST_AT:-}" ]]; then
+      jq -n --arg at "$STUB_REREQUEST_AT" '[{event:"review_requested", created_at:$at}]'
+    elif [[ -n "${STUB_REOPENED_AT:-}" ]]; then
       jq -n --arg at "$STUB_REOPENED_AT" '[{event:"reopened", created_at:$at}]'
     elif [[ -n "${STUB_READY_AT:-}" ]]; then
       jq -n --arg at "$STUB_READY_AT" '[{event:"ready_for_review", created_at:$at}]'
@@ -814,6 +816,27 @@ rc=$?
 set -e
 assert_eq "$rc" "2" "pw57: unparsable readiness timestamp exits 2"
 assert_not_contains "$out" "awaiting-stale" "pw57: no stale alert"
+
+# pw58: a fresh re-review request restarts the quiet period (no nudge loop).
+set +e
+out=$(run_watch STUB_REREQUEST_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 3600)
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw58: fresh re-review request restarts the quiet period"
+
+# pw59: a future-dated timeline event is unprovable, never silent health.
+set +e
+out=$(run_watch STUB_READY_AT="2030-01-01T00:00:00Z" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw59: future-dated timeline event exits 2"
+assert_contains "$out" "unprovable" "pw59: named"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
