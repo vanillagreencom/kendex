@@ -1450,6 +1450,25 @@ CFG_CARRY="comments"; CFG_CARRY_EXCLUDE="src/thing.sh"
 compare_fix ahead "[$COMMENT_DELTA]"
 run "carry-exclude: applies to the comments class too (literal path)" awaiting
 
+# A git filename may embed a newline; split across lines it could dodge a
+# compound glob (skills/*.md misses 'skills/foo\nbar.md' tested as two
+# records) while the intact name still classifies docs. Exclusion matching
+# demands provable record boundaries: control characters refuse the carry.
+NEWLINE_NAME_DELTA="$(delta_file "$(printf 'skills/foo\nbar.md')" modified '@@ -1 +1 @@
+-a
++b')"
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE="skills/*.md"
+compare_fix ahead "[$NEWLINE_NAME_DELTA]"
+run "carry-exclude: a newline-embedding filename refuses (record boundaries unprovable)" awaiting
+
+reset
+carry_candidate
+CFG_CARRY="docs"; CFG_CARRY_EXCLUDE=""
+compare_fix ahead "[$NEWLINE_NAME_DELTA]"
+run "carry-exclude: the control-character refusal is scoped to configured exclusions" approved
+
 reset
 carry_candidate
 CFG_CARRY="docs"

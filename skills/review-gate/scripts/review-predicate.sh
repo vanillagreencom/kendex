@@ -869,11 +869,30 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
     # refuses the whole carry. Matching is shell-style via `case` ('*'
     # crosses '/', so '*AGENTS.md' covers the file at any depth); patterns
     # never touch the filesystem. Older candidates' deltas are supersets, so
-    # stop walking — same shape as the 300-entry refusal above. A filename
-    # with embedded newlines would be matched line-by-line, which can only
-    # over-refuse, never under-refuse. Identical-tree carries never reach
-    # here (no delta, nothing to exclude).
+    # stop walking — same shape as the 300-entry refusal above.
+    # Identical-tree carries never reach here (no delta, nothing to
+    # exclude). The matching loop below is line-based, and a git filename
+    # MAY legally embed a newline — split across lines, such a name could
+    # dodge a compound glob (`skills/*.md` misses `skills/foo\nbar.md`
+    # tested as two records) while the classifier still carries the intact
+    # name. So exclusion matching first demands provable record boundaries:
+    # any control character in any filename refuses the carry (fresh review
+    # required), the same completeness posture as the 300-entry cap.
     if [ -n "$CARRY_EXCLUDE" ]; then
+      # \p{Cc} (the Unicode control category), NOT a class range written
+      # with \uNNNN escapes: jq's Oniguruma mis-handles those inside [...]
+      # (observed on jq 1.8.2: such a class matches plain ASCII names), and
+      # a scan that matches everything would silently disable carry-forward
+      # wherever exclusions are configured. The selftest's surgical
+      # non-match case pins the false-positive direction.
+      ctrl_hit="$(jq '[.files[] | (.filename // "") | test("\\p{Cc}")] | any' <<<"$cmp")" || {
+        echo "::error::could not scan the $base...$HEAD_SHA delta filenames for control characters" >&2
+        exit 2
+      }
+      if [ "$ctrl_hit" = "true" ]; then
+        echo "::warning::compare $base...$HEAD_SHA contains a filename with control characters: exclusion matching cannot be proven; refusing carry-forward" >&2
+        break
+      fi
       delta_files="$(jq -r '.files[] | .filename // ""' <<<"$cmp")" || {
         echo "::error::could not list the $base...$HEAD_SHA delta files for exclusion matching" >&2
         exit 2
