@@ -466,8 +466,20 @@ for number in $pr_numbers; do
             errored=1
             continue
           }
+          if [ -z "$timeline_pages" ]; then
+            emit "$number" "$head" error "timeline read produced zero bytes while confirming staleness (broken read)"
+            errored=1
+            continue
+          fi
+          # The reviewable period restarts at readiness AND at reopening —
+          # both mark "this PR became awaitable again" without a new head.
+          # A matching event whose created_at is not a string is malformed
+          # data, not an ignorable row (fail loud, never a stale alert
+          # from untrustworthy input).
           ready_at="$(jq -rs 'if (length > 0) and all(type == "array")
-              then ([.[] | .[] | select(.event? == "ready_for_review") | .created_at] | sort | last // "")
+              then ([.[] | .[] | select((.event? == "ready_for_review") or (.event? == "reopened"))
+                     | if (.created_at | type) != "string" then error("event without a timestamp") else .created_at end]
+                    | sort | last // "")
               else error("not a timeline page") end' <<<"$timeline_pages" 2>/dev/null)" || {
             emit "$number" "$head" error "timeline pages malformed while confirming staleness (fail loud, not a stale alert)"
             errored=1
@@ -476,7 +488,12 @@ for number in $pr_numbers; do
           if [ -n "$ready_at" ] && [ "$ready_at" != "null" ]; then
             ready_epoch="$(date -u -d "$ready_at" +%s 2>/dev/null \
               || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ready_at" +%s 2>/dev/null)" || ready_epoch=""
-            if [ -n "$ready_epoch" ] && [ "$ready_epoch" -gt "$head_epoch" ]; then
+            if [ -z "$ready_epoch" ]; then
+              emit "$number" "$head" error "readiness/reopen timestamp unparsable while confirming staleness (fail loud, not a stale alert)"
+              errored=1
+              continue
+            fi
+            if [ "$ready_epoch" -gt "$head_epoch" ]; then
               age=$(( $(date +%s) - ready_epoch ))
             fi
           fi

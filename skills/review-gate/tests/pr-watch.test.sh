@@ -182,7 +182,10 @@ case "$args" in
       echo "HTTP 500" >&2
       exit 1
     fi
-    if [[ -n "${STUB_READY_AT:-}" ]]; then
+    if [[ "${STUB_TIMELINE_EMPTYBYTES:-}" == "yes" ]]; then exit 0; fi
+    if [[ -n "${STUB_REOPENED_AT:-}" ]]; then
+      jq -n --arg at "$STUB_REOPENED_AT" '[{event:"reopened", created_at:$at}]'
+    elif [[ -n "${STUB_READY_AT:-}" ]]; then
       jq -n --arg at "$STUB_READY_AT" '[{event:"ready_for_review", created_at:$at}]'
     else
       printf '[]\n'
@@ -779,6 +782,38 @@ set -e
 assert_eq "$rc" "2" "pw54: non-sha recheck exits 2"
 assert_contains "$out" "non-sha value" "pw54: named"
 assert_not_contains "$out" "head-moved" "pw54: never head-moved"
+
+# pw55: a zero-byte timeline response is a broken read.
+set +e
+out=$(run_watch STUB_TIMELINE_EMPTYBYTES=yes \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw55: zero-byte timeline exits 2"
+assert_contains "$out" "zero bytes" "pw55: named"
+
+# pw56: a fresh reopen restarts the quiet period like readiness does.
+set +e
+out=$(run_watch STUB_REOPENED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 3600)
+rc=$?
+set -e
+assert_eq "$rc" "0" "pw56: fresh reopen restarts the quiet period"
+
+# pw57: an unparsable readiness timestamp fails loud, never a stale alert.
+set +e
+out=$(run_watch STUB_READY_AT="garbage-timestamp" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw57: unparsable readiness timestamp exits 2"
+assert_not_contains "$out" "awaiting-stale" "pw57: no stale alert"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
