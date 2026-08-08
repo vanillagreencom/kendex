@@ -201,12 +201,14 @@ for number in $pr_numbers; do
   # a failed read silently treated as "not queued" would emit a false
   # disarmed finding and drop the dequeue warning, so it fails loud like
   # every other read here.
-  queued="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){mergeQueueEntry{position}}}}" \
+  queued="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){isInMergeQueue mergeQueueEntry{position}}}}" \
       --jq 'if ((.errors? // []) | length) > 0 then error("graphql errors present")
             elif (.data.repository.pullRequest | type) != "object"
+               or ((.data.repository.pullRequest.isInMergeQueue | type) != "boolean")
                or ((.data.repository.pullRequest.mergeQueueEntry | type) != "null" and (.data.repository.pullRequest.mergeQueueEntry | type) != "object")
             then error("malformed queue envelope")
-            elif .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end' 2>/dev/null)" || {
+            elif (.data.repository.pullRequest.isInMergeQueue or (.data.repository.pullRequest.mergeQueueEntry != null))
+            then " (QUEUED: dequeue before pushing)" else "" end' 2>/dev/null)" || {
     emit "$number" "$head" error "merge-queue membership read failed or malformed"
     errored=1
     continue
@@ -503,12 +505,17 @@ for number in $pr_numbers; do
       continue
     }
     case "$head_now" in
-      ''|null)
+      ''|null|*[!0-9a-fA-F]*)
         emit "$number" "$head" error "head recheck returned no usable sha (broken read)"
         errored=1
         continue
         ;;
     esac
+    if [ "${#head_now}" -ne 40 ]; then
+      emit "$number" "$head" error "head recheck returned a non-sha value (broken read)"
+      errored=1
+      continue
+    fi
     if [ "$head_now" != "$head" ]; then
       emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$head_now")) — findings describe the old head; re-run"
       attention=1

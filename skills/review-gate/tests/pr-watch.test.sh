@@ -126,8 +126,11 @@ case "$args" in
       exit 1
     fi
     if [[ "${STUB_QUEUED:-}" == "yes" ]]; then
-      echo '{"data":{"repository":{"pullRequest":{"mergeQueueEntry":{"position":1}}}}}' \
-        | jq -r 'if .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end'
+      printf ' (QUEUED: dequeue before pushing)\n'
+    elif [[ "${STUB_QUEUED_FLAG_ONLY:-}" == "yes" ]]; then
+      # Transitional snapshot: isInMergeQueue true, entry null — must still
+      # read as queued (the OR contract).
+      printf ' (QUEUED: dequeue before pushing)\n'
     else
       printf '\n'
     fi
@@ -764,6 +767,18 @@ rc=$?
 set -e
 assert_eq "$rc" "2" "pw53: timeline failure exits 2"
 assert_not_contains "$out" "awaiting-stale" "pw53: no stale alert on unconfirmed data"
+
+# pw54: a non-sha recheck value is a broken read, never head-moved.
+set +e
+out=$(run_watch STUB_HEAD_AFTER="42" \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=approved detail=review evidence at head" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]')
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw54: non-sha recheck exits 2"
+assert_contains "$out" "non-sha value" "pw54: named"
+assert_not_contains "$out" "head-moved" "pw54: never head-moved"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
