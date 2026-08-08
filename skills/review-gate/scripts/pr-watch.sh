@@ -220,7 +220,7 @@ for number in $pr_numbers; do
       and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))
       and ((.state? // null) | type) == "string"
       and (has("draft") and (.draft | type) == "boolean")
-      and (has("auto_merge") and ((.auto_merge | type) == "null" or (.auto_merge | type) == "object"))
+      and (has("auto_merge") and ((.auto_merge | type) == "null" or ((.auto_merge | type) == "object" and ((.auto_merge.merge_method? // null) | type) == "string")))
       and ((.created_at? // null) | type) == "string"' >/dev/null 2>&1 <<<"$row"; then
     emit "$number" "--------" error "PR #$number response is not a well-formed PR object (broken read)"
     errored=1
@@ -437,7 +437,7 @@ for number in $pr_numbers; do
     # and gate reads would arm an unreviewed head).
     if ! jq -e --argjson n "$number" 'type == "object" and .number == $n
         and (has("auto_merge"))
-        and ((.auto_merge | type) == "null" or (.auto_merge | type) == "object")
+        and ((.auto_merge | type) == "null" or ((.auto_merge | type) == "object" and ((.auto_merge.merge_method? // null) | type) == "string"))
         and ((.state? // null) == "open" or (.state? // null) == "closed")
         and ((.draft | type) == "boolean")
         and (((.head.sha? // null) | type) == "string" and (.head.sha | test("^[0-9a-fA-F]{40}$")))' >/dev/null 2>&1 <<<"$ownership_row"; then

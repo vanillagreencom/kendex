@@ -971,6 +971,14 @@ set -e
 assert_eq "$rc" "2" "pw68: unparsable created_at exits 2"
 assert_contains "$out" "creation timestamp unparsable" "pw68: named"
 
+# pw69: an empty auto_merge object is malformed, never silently armed.
+set +e
+out=$(run_watch STUB_PR_9="$(jq -cn --arg head "$HEAD_A" '{number:9, state:"open", draft:false, head:{sha:$head}, user:{login:"author"}, created_at:"2026-01-01T00:00:00Z", auto_merge:{}}')" STUB_VERDICT_LINE="unused" -- 9)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw69: empty auto_merge object exits 2"
+assert_contains "$out" "not a well-formed PR object" "pw69: named"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
