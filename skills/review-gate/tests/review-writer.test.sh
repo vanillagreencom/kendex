@@ -537,8 +537,8 @@ assert_contains "$(cat "$ENV_LOG")" "OUTAGE=<unset>" "w30b: absent key leaves th
 
 echo "=== workflow template pins (review-gate-writer.yml) ==="
 
-# Grep-pins on the shipped template (precedent: workflow-eviction-routing
-# pins approval-rerun.yml). Runtime behavior of workflow-level expressions
+# Grep-pins on the shipped template (precedent: the retired
+# workflow-eviction-routing suite pinned approval-rerun.yml the same way). Runtime behavior of workflow-level expressions
 # is offline-untestable — the job-level if: evaluates on GitHub — so F4's
 # billing behavior is asserted in Layer 2 (the sandbox observes push/
 # merge-group completions as SKIPPED writer runs); these pins keep the

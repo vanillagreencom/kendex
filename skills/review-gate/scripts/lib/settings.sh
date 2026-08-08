@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Settings resolution for the review-gate engine. Sourced (not executed) by
-# review-predicate.sh, approval-refire.sh and the selftest.
+# review-predicate.sh, review-writer.sh and the selftest.
 #
 # Resolution order for every REVIEW_GATE_* key:
 #   1. explicit environment — a SET variable wins even when set to the empty

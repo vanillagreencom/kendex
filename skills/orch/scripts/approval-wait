@@ -90,9 +90,10 @@
 # merges on review evidence, the orch-side "proceeded" alone does not unblock
 # the merge — that gate runs on events, not on orch's wait deadline. When this
 # names a commit-status context, a review-mode proceed posts that context as
-# `success` on the proceeded head, giving such a gate a signal to accept (as an
-# extra review-evidence surface) and its status re-fire bridge an event to re-run
-# on. Approval mode never posts it (its silence signal excludes reviewer checks,
+# `success` on the proceeded head, giving such a gate a signal to accept (the
+# review-gate predicate's override term) — the review-gate writer converges the
+# gate on the attestation's own status event.
+# Approval mode never posts it (its silence signal excludes reviewer checks,
 # and a status cannot satisfy native required-approvals).
 # It is a branch-protection relaxation bounded by the same genuine-silence
 # predicate as the proceed itself and by bot-only status trust; match-by-context,
@@ -276,9 +277,9 @@ esac
 # a signal it can accept — CI runs on events,
 # not on a wait deadline, so it has no notion of "orch hit the deadline". If
 # this names a commit-status context, orch posts that context as `success` on
-# the proceeded head (below): the repo's CI gate can add it as an accepted
-# review-evidence surface, and its status re-fire bridge re-runs the gate on the
-# status event, turning the required check green. SECURITY: this is a
+# the proceeded head (below): the review-gate predicate accepts it as its
+# override evidence term, and the review-gate writer converges the required
+# gate status on the attestation's status event. SECURITY: this is a
 # branch-protection relaxation — the status lets a merge proceed with no review.
 # It is bounded by the same hardened predicate that gates the proceed itself
 # (genuine silence only) and by the bot-only trust of the status API, and it is
@@ -650,8 +651,8 @@ post_nudge() {
 # Attest a reviewer-outage on the proceeded head (PR_REVIEW_OUTAGE_CONTEXT).
 # Called only from the proceed path, so it inherits that path's guarantee of
 # genuine reviewer silence. Posts the configured context as `success` on the
-# exact head so a repo whose CI gate reads it can turn its required check green
-# and its status re-fire bridge can re-run the gate; head-pinned, so a later
+# exact head so the review-gate writer can converge the required gate status
+# on the attestation's status event; head-pinned, so a later
 # force-push (a new head with no marker) never rides a stale attestation. A
 # failure warns but never blocks the proceed verdict — the orch-side degrade
 # stands regardless; the marker is best-effort plumbing for repo-side CI.

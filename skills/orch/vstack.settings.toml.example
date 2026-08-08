@@ -49,8 +49,8 @@ PR_REVIEW_ON_TIMEOUT = "block"
 # merges on review evidence (that gate runs on events, not on orch's wait
 # deadline, so the orch-side "proceeded" alone cannot unblock it). When this
 # names a commit-status context, a review-mode proceed posts that context as `success` on
-# the proceeded head; the repo's CI gate can accept it as an extra
-# review-evidence surface, and its status re-fire bridge re-runs the gate on
+# the proceeded head; the review-gate predicate accepts it as its override
+# evidence term, and the review-gate writer converges the gate status on
 # the event. Empty (default) = post nothing (orch-side-only opt-in — the
 # repo-side gate is untouched). SECURITY: this is a branch-protection
 # relaxation — the status lets a merge proceed with no review. It is bounded by
