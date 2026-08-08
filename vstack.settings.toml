@@ -98,4 +98,4 @@ REVIEW_GATE_CARRY_FORWARD = "docs"
 # pi-extensions trees are excluded: carry-forward stays useful for genuine
 # prose (README, CHANGELOG, docs/) and nothing mechanically consumed ever
 # rides an ancestor's evidence.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;agents/*;skills/*;pi-extensions/*"
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;agents/*;skills/*;pi-extensions/*;.pi/*;skill-templates/*"
