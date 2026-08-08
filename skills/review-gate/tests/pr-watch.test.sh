@@ -579,6 +579,15 @@ set -e
 assert_eq "$rc" "2" "pw38: malformed listing element exits 2"
 assert_contains "$out" "projection" "pw38: named as a projection failure"
 
+# pw39: an object-shaped malformed element (missing required fields) fails
+# the projection deterministically instead of misparsing the TSV loop.
+set +e
+out=$(run_watch STUB_OPEN_PRS='[{}]' STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw39: empty-object element exits 2"
+assert_contains "$out" "projection" "pw39: named as a projection failure"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

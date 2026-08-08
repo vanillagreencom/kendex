@@ -183,7 +183,11 @@ fi
 # Rows are projected BEFORE the loop: a jq failure inside process
 # substitution cannot fail the while loop (it would just read nothing and
 # exit 0 healthy), so the projection is validated here, loudly.
-pr_rows="$(jq -r '.[] | [.number, .head.sha, (.user.login // "-"), .state, (.draft // false | tostring), (if .auto_merge == null then "false" else "true" end), (.created_at // "-")] | @tsv' <<<"$prs" 2>/dev/null)" || {
+pr_rows="$(jq -r '.[]
+  | if (.number | type) != "number" or ((.head.sha? // null) | type) != "string" or ((.state? // null) | type) != "string"
+    then error("row missing required fields")
+    else [.number, .head.sha, (.user.login // "-"), .state, (.draft // false | tostring), (if .auto_merge == null then "false" else "true" end), (.created_at // "-")] | @tsv
+    end' <<<"$prs" 2>/dev/null)" || {
   echo "::error::pr-watch: open-PR rows failed projection (malformed listing element)" >&2
   exit 2
 }
