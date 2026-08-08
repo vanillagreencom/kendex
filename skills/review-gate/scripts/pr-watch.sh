@@ -32,6 +32,10 @@
 #                      than the quiet period (PR_REVIEW_WAIT_SECS, default
 #                      900) — time for a manual re-review trigger or the
 #                      caller's on-timeout policy
+#   head-moved         the head changed while this PR was being reduced —
+#                      the findings (or the silence) describe the OLD head;
+#                      re-run. Attention, not an error: the race is
+#                      ordinary, the response is one more poll
 #   error              this PR could not be evaluated (predicate exit 2 /
 #                      read failure) — fail LOUD per engine ethos, never
 #                      silently skipped

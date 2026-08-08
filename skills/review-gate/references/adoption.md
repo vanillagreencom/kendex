@@ -155,7 +155,9 @@ approval classifiers.)
 Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to
 triage — queued PRs annotated with the dequeue-first warning — objections,
 a stale gate, a disarmed mergeable PR, reviewer silence past the quiet
-period); exit 2 = a PR could not be read (fail loud, never skipped).
+period, or `head-moved` when a push landed mid-reduction — the findings
+describe the old head, so re-run); exit 2 = a PR could not be read (fail
+loud, never skipped).
 `--heal` bounds itself to one writer dispatch per invocation. The orch
 skill's waiters remain the single-PR *foreground* waits (nudge and
 on-timeout policy live there); pr-watch is the multi-PR *background*
