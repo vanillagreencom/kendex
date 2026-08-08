@@ -145,8 +145,12 @@ always the same:
 # second time to build a notification — that re-dispatches --heal's writer
 # kick and can observe different state. The bare single command is also
 # the one shape every restrictive harness classifier accepts.
-GH_REPO=<owner>/<repo> .agents/skills/review-gate/scripts/pr-watch.sh --heal
+export GH_REPO=<owner>/<repo>
+.agents/skills/review-gate/scripts/pr-watch.sh --heal
 ```
+(The `export` is its own line, not a command prefix — inline
+env-assignment prefixes are a rejected shape under restrictive Codex
+approval classifiers.)
 
 Exit 0 = silence (healthy); exit 1 = attention lines on stdout (threads to
 triage — queued PRs annotated with the dequeue-first warning — objections,

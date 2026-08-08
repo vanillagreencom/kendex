@@ -253,6 +253,11 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
     errored=1
     continue
   }
+  if [ -z "$threads_resp" ]; then
+    emit "$number" "$head" error "thread read produced zero bytes (broken read)"
+    errored=1
+    continue
+  fi
   # Predicate-parity validation: a node whose isResolved is not a boolean
   # (or a non-boolean hasNextPage) is a malformed response — counting it as
   # resolved would report health from untrustworthy data.

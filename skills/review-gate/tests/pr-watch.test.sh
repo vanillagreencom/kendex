@@ -131,6 +131,7 @@ case "$args" in
       echo "HTTP 500" >&2
       exit 1
     fi
+    if [[ "${STUB_THREADS_RAW:-}" == "emptybytes" ]]; then exit 0; fi
     if [[ -n "${STUB_THREADS_RAW:-}" ]]; then
       printf '%s\n' "$STUB_THREADS_RAW"
       exit 0
@@ -621,6 +622,15 @@ rc=$?
 set -e
 assert_eq "$rc" "2" "pw42: non-array nodes container exits 2"
 assert_contains "$out" "malformed" "pw42: named as malformed"
+
+# pw43: a zero-byte thread response is a broken read, never zero threads.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_RAW="emptybytes" STUB_VERDICT_LINE="unused")
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw43: zero-byte thread read exits 2"
+assert_contains "$out" "zero bytes" "pw43: named as a broken read"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
