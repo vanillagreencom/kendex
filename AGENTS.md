@@ -2,6 +2,8 @@
 
 Cross-harness distribution system for AI coding skills, agents, hooks, and Pi extensions. Installs into Claude Code, Cursor, OpenCode, Codex, and Pi via a Rust CLI.
 
+Reviewing a PR as a review bot? Follow `review-bots.md` (repo root) — reviewer context stays there, not here.
+
 ## Session handoffs
 
 Session handoff files live ONLY in `docs/handoff/` (git-ignored) — exactly one file, pruned each update to the minimum context a fresh session needs (no history/prose). Read it only when the user asks or starts a session from a handoff.

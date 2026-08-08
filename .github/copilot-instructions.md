@@ -16,3 +16,6 @@ into consuming repositories. Working conventions live in the root `AGENTS.md`.
   deliberate batches. Cross-repo consumer-sync impacts are coordination
   notes, not merge blockers; each extension's `CHANGELOG.md` is the
   consumer-facing delta contract.
+- Fleet reviewer guidance — review economics, accepted residual classes,
+  do-not-re-raise rules — lives in the root `review-bots.md`. Read it
+  before reviewing and follow it.
