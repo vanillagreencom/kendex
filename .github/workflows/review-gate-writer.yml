@@ -64,14 +64,19 @@ name: Review gate writer
   workflow_dispatch: {}
   # NO check_run trigger here, deliberately — per-repo OPT-IN only (plan
   # round-2 finding R3): every ordinary CI job completion fires
-  # check_run.completed, and an early-exit that needs the settings file
+  # check_run events, and an early-exit that needs the settings file
   # needs a checkout, which bills the 1-minute minimum per run on private
   # repos. A repo whose reviewer publishes check-runs AND NOTHING ELSE adds:
   #   check_run:
-  #     types: [completed]
+  #     types: [created, completed]
   # plus a job-level guard on the write job's if: matching the reviewer's
   # check name literally (the file is repo-owned after copy, so the
-  # hardcoded name is config); a job-level skip bills nothing.
+  # hardcoded name is config); a job-level skip bills nothing. `created`
+  # matters under newest-run semantics: a reviewer STARTING a fresh round
+  # withdraws its own older clean success, and without the created leg that
+  # downward transition waits for the run's completion or the cron floor.
+  # Repos without the opt-in converge withdrawals on the cron floor — the
+  # same accepted class as thread resolution.
 
 permissions:
   contents: read
