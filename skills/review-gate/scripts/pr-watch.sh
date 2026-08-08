@@ -386,8 +386,14 @@ for number in $pr_numbers; do
     # In evaluate mode only a confirmed approved verdict nominates the
     # disarmed line (an approved gate over an awaiting predicate is the
     # writer's problem, reported below as the state mismatch it is).
-    if [ "$EVALUATE" = "0" ] || [ "$verdict" = "approved" ]; then
+    if [ "$verdict" = "approved" ]; then
       emit "$number" "$head" disarmed "gate open but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)"
+      attention=1
+    elif [ "$EVALUATE" = "0" ]; then
+      # Cheap mode saw only the STATUS — which could itself be the stale
+      # green evaluate mode would classify as gate-stale. Surface the state
+      # but never recommend arming on unconfirmed evidence.
+      emit "$number" "$head" disarmed "gate status reads success but auto-merge is not armed and the PR is not queued — UNCONFIRMED in cheap mode: run evaluate mode (or the predicate) before re-arming"
       attention=1
     fi
   fi

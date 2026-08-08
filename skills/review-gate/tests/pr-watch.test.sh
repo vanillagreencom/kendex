@@ -416,6 +416,7 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "pw19: cheap mode reports disarmed"
 assert_contains "$out" "disarmed" "pw19: kind emitted"
+assert_contains "$out" "UNCONFIRMED in cheap mode" "pw19: and never recommends arming unconfirmed"
 
 # pw20: a zero-exit predicate with unrecognizable output is an error, never
 # a healthy PR.
