@@ -458,9 +458,19 @@ for number in $pr_numbers; do
           # The readiness event is the true start of the review wait —
           # consulted only when the cheap clock already says stale (one
           # timeline read per would-be-stale PR, not per poll).
-          ready_at="$(gh api "repos/$GH_REPO/issues/$number/timeline?per_page=100" --paginate \
-              -H "Accept: application/vnd.github+json" 2>/dev/null \
-            | jq -rs '[.[] | if type == "array" then .[] else empty end | select(.event? == "ready_for_review") | .created_at] | sort | last // ""')" || ready_at=""
+          timeline_pages="$(gh api "repos/$GH_REPO/issues/$number/timeline?per_page=100" --paginate \
+              -H "Accept: application/vnd.github+json" 2>/dev/null)" || {
+            emit "$number" "$head" error "timeline read failed while confirming staleness (fail loud, not a stale alert)"
+            errored=1
+            continue
+          }
+          ready_at="$(jq -rs 'if (length > 0) and all(type == "array")
+              then ([.[] | .[] | select(.event? == "ready_for_review") | .created_at] | sort | last // "")
+              else error("not a timeline page") end' <<<"$timeline_pages" 2>/dev/null)" || {
+            emit "$number" "$head" error "timeline pages malformed while confirming staleness (fail loud, not a stale alert)"
+            errored=1
+            continue
+          }
           if [ -n "$ready_at" ] && [ "$ready_at" != "null" ]; then
             ready_epoch="$(date -u -d "$ready_at" +%s 2>/dev/null \
               || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$ready_at" +%s 2>/dev/null)" || ready_epoch=""

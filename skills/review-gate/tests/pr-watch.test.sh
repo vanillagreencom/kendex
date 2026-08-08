@@ -175,6 +175,10 @@ case "$args" in
     fi
     ;;
   *"/timeline?per_page=100"*)
+    if [[ "${STUB_TIMELINE_FAIL:-}" == "yes" ]]; then
+      echo "HTTP 500" >&2
+      exit 1
+    fi
     if [[ -n "${STUB_READY_AT:-}" ]]; then
       jq -n --arg at "$STUB_READY_AT" '[{event:"ready_for_review", created_at:$at}]'
     else
@@ -748,6 +752,18 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "pw52: fresh readiness restarts the quiet period"
 assert_not_contains "$out" "awaiting-stale" "pw52: no stale alert"
+
+# pw53: a timeline failure while confirming staleness fails loud, never a
+# stale alert on unconfirmed data.
+set +e
+out=$(run_watch STUB_TIMELINE_FAIL=yes \
+  STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="verdict=awaiting detail=no evidence" \
+  STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 60)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw53: timeline failure exits 2"
+assert_not_contains "$out" "awaiting-stale" "pw53: no stale alert on unconfirmed data"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
