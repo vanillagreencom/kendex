@@ -632,6 +632,15 @@ set -e
 assert_eq "$rc" "2" "pw43: zero-byte thread read exits 2"
 assert_contains "$out" "zero bytes" "pw43: named as a broken read"
 
+# pw44: an explicitly empty gate context is a config error in every mode.
+set +e
+out=$(run_watch REVIEW_GATE_CONTEXT= STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_VERDICT_LINE="unused" -- --no-evaluate)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw44: empty gate context exits 2"
+assert_contains "$out" "REVIEW_GATE_CONTEXT is explicitly empty" "pw44: named as config error"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

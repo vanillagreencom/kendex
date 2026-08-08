@@ -103,6 +103,10 @@ while [ $# -gt 0 ]; do
 done
 
 GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 2
+if [ -z "$GATE_CONTEXT" ]; then
+  echo "::error::pr-watch: REVIEW_GATE_CONTEXT is explicitly empty — the predicate rejects this configuration and so does the watcher (cheap mode would otherwise search for an empty context)" >&2
+  exit 2
+fi
 THREADS_TERM="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
 case "$THREADS_TERM" in
   enforce|off) ;;
@@ -209,6 +213,7 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
   # every other read here.
   queued="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){mergeQueueEntry{position}}}}" \
       --jq 'if (.data.repository.pullRequest | type) != "object"
+               or ((.data.repository.pullRequest.mergeQueueEntry | type) != "null" and (.data.repository.pullRequest.mergeQueueEntry | type) != "object")
             then error("malformed queue envelope")
             elif .data.repository.pullRequest.mergeQueueEntry == null then "" else " (QUEUED: dequeue before pushing)" end' 2>/dev/null)" || {
     emit "$number" "$head" error "merge-queue membership read failed or malformed"

@@ -33,10 +33,11 @@ Invoke via your AI coding harness (e.g., `/orch <command>` or `/skill:orch <comm
 | `worktree` | Git worktree management |
 | `project-management` | TPM audit/cycle/roadmap workflows |
 | `decider` | Architectural decision documents |
+| `review-gate` (optional) | Multi-PR needs-attention watching via its `pr-watch.sh` — orch consumes it when installed (existence check) and falls back to per-PR waiter polling without it |
 
 ## Setup
 
-1. Install dependency skills: `github`, `worktree`, `decider`, `project-management`; add `linear` for Linear workflows.
+1. Install dependency skills: `github`, `worktree`, `decider`, `project-management`; add `linear` for Linear workflows and `review-gate` for the multi-PR watcher integration (optional — orch falls back to its own waiters without it).
 2. Set non-sensitive runtime defaults in `vstack.settings.toml`; keep secrets in `.env.local`.
 3. Verify each skill works from the project root before invoking a workflow.
 
