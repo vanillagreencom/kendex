@@ -60,6 +60,9 @@ Evidence for the CURRENT head is any of:
    pass must prove analysis RAN: a success matching
    `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` (e.g. "rate limited") is
    NOT-EVIDENCE, never a failure. It is silence, which `awaiting` handles.
+   On BOTH surfaces the NEWEST row/run per name decides (statuses by list
+   order, check-runs by run id — vstack#1110): an older clean success never
+   outlives its reviewer's newer pending/failed/skip-marked round.
 3. **Comment-form clean pass** (`REVIEW_GATE_COMMENT_REVIEWERS`): an issue
    comment by a trusted bot login — never the PR author, even if configured —
    binding the evidence to this head's sha (floor

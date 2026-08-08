@@ -482,31 +482,40 @@ run "check-run with no app slug (unprovable provenance) is not evidence" awaitin
 # check-run mirror of the status surface's newest-row projection. A
 # reviewer starting a fresh analysis round must withdraw its own older
 # clean success on the same head; counting "any clean success" would open
-# the gate on stale evidence.
+# the gate on stale evidence. Every multi-row fixture lists the NEWER run
+# (higher id) FIRST — the API's usual newest-first shape — so an
+# implementation that skipped the id sort and took the last array row
+# would fail these cases instead of passing by row order.
 reset
 CFG_CONTEXTS="mech-ctx"
 jq -n '{check_runs:[
-  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}},
-  {id:2,name:"mech-ctx",conclusion:null,status:"in_progress",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:null}}
+  {id:2,name:"mech-ctx",conclusion:null,status:"in_progress",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:null}},
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
 ]}' >"$fixtures/checkruns.json"
 run "newer in-progress run masks its older clean success (newest run decides)" awaiting
 
 # The skip marker comes from the ACTIVE pattern list, not a literal, so the
 # configured layer (which replaces the default patterns) still exercises it.
-reset
-CFG_CONTEXTS="mech-ctx"
+# Guarded on a non-empty list: empty REVIEW_GATE_CHECKRUN_SKIP_PATTERNS
+# legitimately disables the filter, and this case would then assert the
+# wrong verdict — the masking property it proves is already covered for
+# that shape by the in-progress case above.
 first_skip="$(list_items "$ACTIVE_SKIPS" | head -1)"
-jq -n --arg skip "Review $first_skip. 0 files reviewed." '{check_runs:[
-  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}},
-  {id:2,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:$skip}}
-]}' >"$fixtures/checkruns.json"
-run "newer skip-marked 'pass' masks its older clean success" awaiting
+if [ -n "$first_skip" ]; then
+  reset
+  CFG_CONTEXTS="mech-ctx"
+  jq -n --arg skip "Review $first_skip. 0 files reviewed." '{check_runs:[
+    {id:2,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:$skip}},
+    {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
+  ]}' >"$fixtures/checkruns.json"
+  run "newer skip-marked 'pass' masks its older clean success" awaiting
+fi
 
 reset
 CFG_CONTEXTS="mech-ctx"
 jq -n '{check_runs:[
-  {id:1,name:"mech-ctx",conclusion:"failure",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"findings posted"}},
-  {id:2,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
+  {id:2,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}},
+  {id:1,name:"mech-ctx",conclusion:"failure",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"findings posted"}}
 ]}' >"$fixtures/checkruns.json"
 run "newest clean success over an older failed run is evidence" approved
 
@@ -518,8 +527,8 @@ run "newest clean success over an older failed run is evidence" approved
 reset
 CFG_CONTEXTS="mech-ctx"
 jq -n '{check_runs:[
-  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}},
-  {id:2,name:"mech-ctx",conclusion:null,status:"queued",app:{slug:"github-actions"},output:{title:null,summary:null}}
+  {id:2,name:"mech-ctx",conclusion:null,status:"queued",app:{slug:"github-actions"},output:{title:null,summary:null}},
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
 ]}' >"$fixtures/checkruns.json"
 run "github-actions-published newer run cannot mask the reviewer's clean success" approved
 
@@ -529,8 +538,8 @@ run "github-actions-published newer run cannot mask the reviewer's clean success
 reset
 CFG_CONTEXTS="mech-ctx"
 jq -n '{check_runs:[
-  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}},
-  {id:2,name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}}
+  {id:2,name:"mech-ctx",conclusion:"success",output:{title:null,summary:"analysis complete"}},
+  {id:1,name:"mech-ctx",conclusion:"success",app:{slug:"trusted-reviewer-app"},output:{title:null,summary:"analysis complete"}}
 ]}' >"$fixtures/checkruns.json"
 run "slugless anomaly as the newest run masks toward closed (never revives the older success)" awaiting
 

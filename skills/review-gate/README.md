@@ -74,7 +74,11 @@ Different reviewers signal differently, so the predicate accepts any of:
 - a **review approval** at the exact head from a trusted login;
 - a **clean-analysis check or status** succeeding on that head — for bots that
   only file a review when they have complaints (a "pass" that says *rate
-  limited* or *skipped* is treated as silence, not approval);
+  limited* or *skipped* is treated as silence, not approval). On both
+  surfaces only the NEWEST row/run per name is considered: a reviewer
+  starting a fresh round withdraws its own older clean success, so a newer
+  pending, failed, or skip-marked run reads as silence, never as the old
+  approval;
 - a **comment-form pass** binding a trusted bot's comment to that head's sha;
 - an **operator override** status carrying a written reason — the escape
   hatch for when every reviewer is down. It substitutes for *missing*

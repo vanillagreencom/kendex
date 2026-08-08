@@ -15,7 +15,9 @@ REVIEW_GATE_CONTEXT = "Review gate"
 # Clean-analysis evidence: exact names of the trusted reviewer's check-run
 # and/or legacy commit status; a success for a listed name on the current
 # head counts as review evidence (for bots that submit a review object only
-# when they have findings). Both APIs are queried; either counts. SECURITY:
+# when they have findings). Both APIs are queried; either counts, and on
+# both the NEWEST row/run per name decides (a newer pending/failed/
+# skip-marked round withdraws the reviewer's own older success). SECURITY:
 # check-runs and statuses are matched by NAME, and any GitHub App or Actions
 # workflow can publish under any name — list only names produced by trusted
 # bots, on repos where every publisher is trusted.
