@@ -435,8 +435,9 @@ out=$(run_watch STUB_OPEN_PRS="$(jq -cn --arg head "$HEAD_A" '[{number:7, state:
   STUB_UNRESOLVED=1 STUB_VERDICT_LINE="verdict=approved detail=unused")
 rc=$?
 set -e
-assert_eq "$rc" "1" "pw25: ghost-author PR still reduces"
+assert_eq "$rc" "2" "pw25: ghost-author PR reduces threads AND names the ghost (exit 2)"
 assert_contains "$out" "threads-open" "pw25: its findings still emit"
+assert_contains "$out" "deleted account" "pw25: alongside the named ghost error"
 
 # pw26: a green gate over a standing objection reports both the objection
 # and the stale gate.
