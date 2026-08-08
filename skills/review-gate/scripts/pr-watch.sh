@@ -636,6 +636,27 @@ for number in $pr_numbers; do
             fi
           fi
           if [ "$age" -gt "$AWAITING_AFTER" ]; then
+            # Head-bind the stale claim: a push after the initial fetch
+            # would make every timestamp above describe the OLD head while
+            # the NEW head's quiet period just began. The recheck runs
+            # here (the emission below would skip the end-of-loop one).
+            stale_head_now="$(gh api "repos/$GH_REPO/pulls/$number" --jq '.head.sha' 2>/dev/null)" || {
+              emit "$number" "$head" error "head recheck failed while confirming staleness (broken read)"
+              errored=1
+              continue
+            }
+            case "$stale_head_now" in
+              ''|null|*[!0-9a-fA-F]*)
+                emit "$number" "$head" error "head recheck returned no usable sha while confirming staleness (broken read)"
+                errored=1
+                continue
+                ;;
+            esac
+            if [ "$stale_head_now" != "$head" ]; then
+              emit "$number" "$head" head-moved "the head changed during this reduction (now $(printf %.8s "$stale_head_now")) — findings describe the old head; re-run"
+              attention=1
+              continue
+            fi
             emit "$number" "$head" awaiting-stale "no review evidence for ${age}s (quiet period ${AWAITING_AFTER}s) — trigger a re-review or apply the on-timeout policy$queued"
             attention=1
           fi
