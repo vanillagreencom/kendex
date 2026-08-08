@@ -528,6 +528,35 @@ set -e
 assert_eq "$rc" "0" "pw34: old draft is not awaiting-stale"
 assert_eq "$out" "" "pw34: and silent"
 
+# pw35: open threads do not suppress a standing objection — both lines.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_UNRESOLVED=1 STUB_VERDICT_LINE="verdict=changes-requested detail=reviewer objects")
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw35: exits 1"
+assert_contains "$out" "threads-open" "pw35: threads reported"
+assert_contains "$out" "changes-requested" "pw35: objection reported too"
+
+# pw35b: the predicate's duplicate threads-open verdict dedupes.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_UNRESOLVED=1 STUB_VERDICT_LINE="verdict=threads-open detail=1 unresolved review threads")
+set -e
+assert_eq "$(grep -c "threads-open" <<<"$out")" "1" "pw35b: one threads-open line, not two"
+
+# pw36: the predicate paging-race threads path heals a green gate too.
+: > "$TMP_ROOT/dispatch.log"
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_UNRESOLVED=0 STUB_VERDICT_LINE="verdict=threads-open detail=1 unresolved review threads" \
+  STUB_GATE_HISTORY='[{"context":"Review gate","state":"success"}]' -- --heal)
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw36: race-path threads exit 1"
+assert_contains "$out" "gate-stale" "pw36: stale green reported"
+assert_eq "$(wc -l < "$TMP_ROOT/dispatch.log" | tr -d ' ')" "1" "pw36: and heals"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -253,24 +253,22 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
       emit "$number" "$head" threads-open "$unresolved unresolved review thread(s)$queued"
     fi
     attention=1
+    threads_reported=1
     # A GREEN gate over open threads is the inverse writer miss — the
     # merge-enabling direction, so it heals, not just reports. ONLY where
     # the thread term is enforced: under REVIEW_GATE_THREADS=off a green
     # gate over open threads is the DESIGNED state (thread hygiene is the
     # server-side ruleset), and flagging it would false-alert and dispatch
     # the writer on every poll for a status it would only re-affirm.
-    if [ "$THREADS_TERM" != "off" ]; then
-      if [ "$gate_state" = "success" ]; then
-        emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
-        heal "$number" "$head"
-      fi
-      # Enforced threads make every other reduction moot for this head —
-      # the gate is (or will converge) closed on them.
-      continue
+    if [ "$THREADS_TERM" != "off" ] && [ "$gate_state" = "success" ]; then
+      emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
+      heal "$number" "$head"
     fi
-    # Under off the remaining reductions still matter (one line per
-    # finding): a green unarmed PR here still needs its disarmed re-arm
-    # nudge, so fall through instead of continuing.
+    # One line PER FINDING: open threads must not suppress a standing
+    # objection (or, under off, the disarmed nudge) — evaluation proceeds
+    # and the predicate's duplicate threads-open verdict dedupes below.
+  else
+    threads_reported=0
   fi
 
   if [ "$EVALUATE" = "1" ]; then
@@ -304,10 +302,23 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
 
   case "$verdict" in
     threads-open)
+      # Already reported from the direct read — dedupe the predicate's
+      # duplicate verdict and stop here (nothing below applies: the gate
+      # is, or will converge, closed on the threads).
+      if [ "$threads_reported" = "1" ]; then
+        continue
+      fi
       # Direct count was zero but the predicate saw threads (paging race /
-      # mid-read resolution) — the predicate fails closed, so surface it.
+      # mid-read resolution) — the predicate fails closed, so surface it,
+      # WITH the same stale-green companion as the direct path (this arm
+      # only exists under enforced threads): a merge-enabling green gate
+      # over the raced-in thread must heal, not wait for the cron floor.
       emit "$number" "$head" threads-open "$detail$queued"
       attention=1
+      if [ "$gate_state" = "success" ]; then
+        emit "$number" "$head" gate-stale "threads are open but the newest '$GATE_CONTEXT' row is success — the writer has not converged the withdrawal$queued"
+        heal "$number" "$head"
+      fi
       continue
       ;;
     changes-requested)
@@ -372,13 +383,16 @@ while IFS=$'\t' read -r number head author state draft armed created_at; do
         errored=1
         continue
       }
-      # date -d is GNU; BSD/macOS uses -j -f. Try GNU first, fall back.
-      head_epoch="$(date -d "$head_at" +%s 2>/dev/null \
-        || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$head_at" +%s 2>/dev/null)" || head_epoch=""
+      # date -d is GNU; BSD/macOS uses -u -j -f (the -u is load-bearing:
+      # the trailing Z is a LITERAL in this format string, so without -u
+      # BSD date reads the timestamp in the machine's local zone and the
+      # silence clock shifts by the UTC offset in either direction).
+      head_epoch="$(date -u -d "$head_at" +%s 2>/dev/null \
+        || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$head_at" +%s 2>/dev/null)" || head_epoch=""
       created_epoch=""
       if [ -n "$created_at" ] && [ "$created_at" != "null" ]; then
-        created_epoch="$(date -d "$created_at" +%s 2>/dev/null \
-          || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null)" || created_epoch=""
+        created_epoch="$(date -u -d "$created_at" +%s 2>/dev/null \
+          || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null)" || created_epoch=""
       fi
       if [ -n "$created_epoch" ] && { [ -z "$head_epoch" ] || [ "$created_epoch" -gt "$head_epoch" ]; }; then
         head_epoch="$created_epoch"
