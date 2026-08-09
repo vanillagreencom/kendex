@@ -126,7 +126,7 @@ jobs:
           node-version: 22.19.0
 
       - name: workflow pins Node before Node suites
-        run: node --test --test-name-pattern='skill suites pin Node before the first Node command' pi-extensions/package-policy.test.mjs
+        run: node --test --test-name-pattern='skill suites Node policy' pi-extensions/package-policy.test.mjs
 
       - name: deep-research node suite
         run: node --test skills/deep-research/tests/deep-research.test.mjs
