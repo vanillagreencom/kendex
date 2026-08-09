@@ -447,7 +447,11 @@ derive_review_scope() {
   local git_err diff_files
   git_err=$(mktemp)
   # shellcheck disable=SC2086
-  if ! diff_files=$(git -C "$cwd" diff --name-only $range 2>"$git_err"); then
+  # core.quotePath=false keeps non-ASCII path bytes literal — the default
+  # C-quoting ("services/\303\251/…") would break the nested-AGENTS ancestor
+  # walk and misname files in the prompt's changed-file list.
+  # shellcheck disable=SC2086
+  if ! diff_files=$(git -C "$cwd" -c core.quotePath=false diff --name-only $range 2>"$git_err"); then
     jq -n --arg range "$range" --arg cwd "$cwd" --arg detail "$(head -5 "$git_err")" \
       '{error: "Cannot derive review scope: git diff failed for range \($range)", cwd: $cwd, detail: $detail}' >&2
     rm -f "$git_err"
@@ -485,6 +489,12 @@ REVIEW_INSTRUCTIONS_FILE_CAP=65536
 emit_instruction_file() {
   local f="$1" phys_dir size
   [[ -n "$f" && -f "$CWD/$f" ]] || return 0
+  if [[ ! -r "$CWD/$f" ]]; then
+    # Skip loudly, never abort: under set -e an unguarded read failure here
+    # (permissions, TOCTOU disappearance) would kill the whole review.
+    echo "→ skipping unreadable instruction file: $f" >&2
+    return 0
+  fi
   if [[ -L "$CWD/$f" ]]; then
     echo "→ skipping symlinked instruction file (must be a regular file inside the repo): $f" >&2
     return 0
@@ -497,8 +507,9 @@ emit_instruction_file() {
   case "$matched" in *$'\n'"$f"$'\n'*) return 0 ;; esac
   matched="${matched}${f}"$'\n'
   printf -- '--- %s ---\n' "$f"
-  head -c "$REVIEW_INSTRUCTIONS_FILE_CAP" "$CWD/$f"
-  size=$(wc -c < "$CWD/$f")
+  head -c "$REVIEW_INSTRUCTIONS_FILE_CAP" "$CWD/$f" 2>/dev/null || true
+  # Size from metadata (GNU/BSD stat), no second read of the bytes.
+  size=$(stat -c%s "$CWD/$f" 2>/dev/null || stat -f%z "$CWD/$f" 2>/dev/null || echo 0)
   if [[ "$size" -gt "$REVIEW_INSTRUCTIONS_FILE_CAP" ]]; then
     printf '\n[truncated at %s bytes]\n' "$REVIEW_INSTRUCTIONS_FILE_CAP"
   else
