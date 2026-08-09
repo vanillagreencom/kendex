@@ -14,9 +14,10 @@ working document; this template only changes when the loop design changes.
 Scope boundary: Loops handle cheap per-issue hygiene only (labels, team
 routing, duplicate flagging, actionability nudges). Batch work — bundling,
 consolidation, cancellation, obsolete detection with code verification — stays
-with the tpm audit workflow (`skills/project-management/workflows/tpm-audit.md`),
-which has repo access and returns recommendations only; a reviewing caller
-applies them. Loops must never cancel, merge, or consolidate issues.
+with the audit workflow (`skills/project-management/workflows/audit-issues.md`
+— the user-facing wrapper that owns the approval gate and the mutations, with
+the repo-access analysis in `workflows/tpm-audit.md` underneath). Loops must
+never cancel, merge, or consolidate issues.
 
 ---
 
