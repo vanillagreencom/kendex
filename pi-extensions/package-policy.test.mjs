@@ -25,6 +25,26 @@ function tsFiles(dir) {
 	return out;
 }
 
+test("skill suites pin Node before the first Node command", () => {
+	const workflow = readFileSync(join(root, "..", ".github", "workflows", "skill-tests.yml"), "utf8").split("\n");
+	const setupNode = workflow.findIndex((line) => line.includes("uses: actions/setup-node@v4"));
+	const deepResearch = workflow.findIndex((line) => line.includes("name: deep-research node suite"));
+	const firstNodeCommand = workflow.findIndex((line) => /^\s*run:\s*node(?:\s|$)/.test(line));
+	const setupBun = workflow.findIndex((line) => line.includes("uses: oven-sh/setup-bun@v2"));
+	const piQol = workflow.findIndex((line) => line.includes("name: pi-qol regression suite"));
+	const piClaudeBridge = workflow.findIndex((line) => line.includes("name: pi-claude-bridge unit suite"));
+	assert.notEqual(setupNode, -1, "skill suites configure Node");
+	assert.notEqual(firstNodeCommand, -1, "skill suites contain a Node command");
+	assert.ok(setupNode < firstNodeCommand, "actions/setup-node must run before the first Node command");
+	assert.ok(setupNode < deepResearch && deepResearch < setupBun, "deep-research stays between Node and Bun setup");
+	assert.ok(setupBun < piQol && piQol < piClaudeBridge, "Pi package suite order stays unchanged");
+	const nextStep = workflow.findIndex((line, index) => index > setupNode && /^\s{6}- (?:name|uses):/.test(line));
+	assert.notEqual(nextStep, -1, "Node setup is followed by another workflow step");
+	const setupBlock = workflow.slice(setupNode, nextStep);
+	assert.ok(setupBlock.some((line) => line.trim() === "node-version: 22.19.0"), "skill suites pin exact Node 22.19.0");
+	assert.ok(!setupBlock.some((line) => /^\s*cache:/.test(line)), "Node setup does not add caching");
+});
+
 test("Pi package manifests follow the Pi 0.75 package policy", () => {
 	for (const { dir, packagePath, pkg } of packages()) {
 		assert.equal(pkg.engines?.node, ">=22.19.0", `${dir}: declare Pi 0.75 Node baseline`);
