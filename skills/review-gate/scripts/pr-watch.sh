@@ -99,6 +99,12 @@ while [ $# -gt 0 ]; do
       case "$AWAITING_AFTER" in
         ''|*[!0-9]*) echo "::error::pr-watch: --awaiting-after needs a positive integer" >&2; exit 2 ;;
       esac
+      # Same bound as the settings path: past Bash's integer range the later
+      # [ -gt ] comparisons fail silently inside their ifs.
+      if [ "${#AWAITING_AFTER}" -gt 9 ]; then
+        echo "::error::pr-watch: --awaiting-after is out of range (max 9 digits)" >&2
+        exit 2
+      fi
       ;;
     -*) echo "::error::pr-watch: unknown flag $1" >&2; exit 2 ;;
     *)
