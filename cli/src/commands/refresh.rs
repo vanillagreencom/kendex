@@ -982,6 +982,7 @@ pub fn prune_hook_harnesses(
             continue;
         };
         let mut new_harnesses = Vec::new();
+        let mut uninstalled_known = false;
         for harness_id in &entry.harnesses {
             if hook.applies_to(harness_id) {
                 new_harnesses.push(harness_id.clone());
@@ -989,11 +990,19 @@ pub fn prune_hook_harnesses(
             }
 
             let Some(harness) = Harness::from_id(harness_id) else {
+                eprintln!(
+                    "Warning: hook {} records unrecognized harness id {harness_id}; \
+                     dropping it from the lock (nothing this binary can uninstall)",
+                    entry.name
+                );
                 pruned_any = true;
                 continue;
             };
             match installer::remove_hook_install(&entry.name, harness, global) {
-                Ok(_) => pruned_any = true,
+                Ok(_) => {
+                    pruned_any = true;
+                    uninstalled_known = true;
+                }
                 Err(err) => {
                     eprintln!(
                         "Warning: failed to remove hook {} from {} during refresh: {err}",
@@ -1004,18 +1013,19 @@ pub fn prune_hook_harnesses(
                 }
             }
         }
-        // Only an entry emptied by THIS run's allowlist pruning is a completed
-        // self-heal, safe to drop. An entry that arrived already empty was
-        // never emptied by an allowlist change — it is the VST-134 bug shape —
-        // and silently unmanaging it here would mask the stale install exactly
-        // like the summary bug did. Leave it in the lock so the refresh pass
-        // fails it loudly (`fail_no_installable_harness`).
+        // Only an entry emptied by a COMPLETED self-heal — this run's allowlist
+        // pruning actually uninstalled a recognized harness — is safe to drop.
+        // An entry that arrived already empty (the VST-134 bug shape), or that
+        // emptied solely by shedding unrecognized ids no uninstall ever ran
+        // for, stays in the lock so the refresh pass fails it loudly
+        // (`fail_no_installable_harness`) instead of silently unmanaging a
+        // possibly-stale install.
         let arrived_empty = entry.harnesses.is_empty();
         if new_harnesses != entry.harnesses {
             entry.harnesses = new_harnesses;
             pruned_any = true;
         }
-        if entry.harnesses.is_empty() && !arrived_empty {
+        if entry.harnesses.is_empty() && !arrived_empty && uninstalled_known {
             remove_hook_entries.push(entry.name.clone());
         }
     }

@@ -1095,6 +1095,29 @@ fn prune_preserves_arrived_empty_hook_entry_for_loud_refresh_failure() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// An entry emptied SOLELY by shedding unrecognized harness ids had no
+/// uninstall run for it — deleting it from the lock would silently unmanage a
+/// possibly-stale install with no cleanup ever attempted. It must survive
+/// pruning (with an empty list) so the refresh pass fails it loudly; only a
+/// completed self-heal (a recognized harness actually uninstalled) may drop
+/// the entry.
+#[test]
+fn prune_keeps_hook_entry_emptied_only_by_unrecognized_ids() {
+    let mut lock = LockFile::default();
+    lock.add(lock_hook("guard", vec!["not-a-harness"]));
+    let hooks = vec![source_hook("guard", Some(vec!["codex"]))];
+
+    assert!(prune_hook_harnesses(false, &mut lock, &hooks, None));
+    let entry = lock
+        .entries
+        .get("guard")
+        .expect("entry emptied without any uninstall must stay in the lock");
+    assert!(
+        entry.harnesses.is_empty(),
+        "the unrecognized id itself is still shed from the list"
+    );
+}
+
 /// The single-source fallback must not silently reinstall an entry from a
 /// source it was never installed from — it reports missing instead.
 #[test]
