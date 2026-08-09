@@ -63,7 +63,7 @@ Thumbs.db
 # (docs/cross-repo.md, the curated contract, IS tracked on purpose)
 docs/cross-repo-notes.md
 
-# Workspace-specific Linear Loop config — never committed (vstack is portable);
-# backed up as a secret gist, see the file's own header. The portable template
-# (docs/linear-loops.md) IS tracked on purpose.
-docs/linear-loops-local.md
+# Filled workspace copies of portable doc templates — never committed (vstack
+# is portable/public). Pattern: tracked template docs/<name>.md, untracked
+# filled copy docs/<name>-local.md, gist-backed per the file's own header.
+docs/*-local.md

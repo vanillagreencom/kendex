@@ -1,17 +1,15 @@
-# Linear Loops — Triage Janitor (portable template)
+# Linear Loops — Triage Janitor (template)
 
-Source-of-truth template for Linear Loop definitions. Loops have no public
-GraphQL API (verified 2026-08-08 by schema introspection: no
-`loop*`/`agentAutomation*` CRUD; only leaked enums
+Loops have no public GraphQL API (verified 2026-08-08 by schema
+introspection: no `loop*`/`agentAutomation*` CRUD; only leaked enums
 `AgentAutomationUsageLimitScope`, `WorkflowTrigger`, `WorkflowTriggerType`),
 so they are configured manually in the Linear UI at **Loops → New loop**.
-When this file changes, re-paste the affected sections into the UI.
 
-This file is portable — it contains no workspace-specific team names,
-products, or integration details. Workspace specifics (team list, ownership
-map, sync direction notes) live in `docs/linear-loops-local.md`, which is
-untracked (see `.gitignore`). Fill the `[BRACKETED]` placeholders from that
-local file when pasting into Linear.
+**How to use this template:** copy this file to `docs/linear-loops-local.md`
+(the `docs/*-local.md` gitignore rule keeps it out of version control), fill
+in every `[BRACKETED]` placeholder — each one says what to put there — and
+paste the finished sections into the Linear UI. Your filled copy is the
+working document; this template only changes when the loop design changes.
 
 Scope boundary: Loops handle cheap per-issue hygiene only (labels, team
 routing, duplicate flagging, actionability nudges). Batch work — bundling,
@@ -31,7 +29,7 @@ Runs once per newly created issue.
 | Setting | Value |
 |---------|-------|
 | Event | An issue is **created** (NOT "created or updated") |
-| Teams | [ALL WORKSPACE TEAMS] |
+| Teams | [Every team the janitor should cover — usually all public teams] |
 | Filter: Status | Triage, Backlog, Todo |
 
 No Agent Session filter: its options (Active/Error/Dismissed/Merged) only
@@ -80,9 +78,12 @@ making a change, and never take destructive action.
 
 Use this map for routing decisions. It overrides guesses from team names.
 
-[PASTE WORKSPACE OWNERSHIP MAP FROM docs/linear-loops-local.md — one bullet
-per team: team name (KEY): what it owns, plus any NOT-this disambiguations
-and cross-cutting routing rules.]
+[One bullet per team, format: "- <team name> (<KEY>): <what it owns —
+repos, components, work types>". Where two teams sound alike or share a
+product name, add an explicit "NOT ..." disambiguation. Close with any
+cross-cutting rules, for example: "An issue about agent workflows, CI
+harness behavior, or shared tooling belongs on the infrastructure team even
+if filed on a product team, and vice versa."]
 
 ## Task 1 — Labels
 
@@ -125,14 +126,14 @@ Comments are short, factual, and neutral. No greetings, no sign-offs.
 ## Loop 2 — Re-triage on demand
 
 Manual re-run handle: apply the `re-triage` label to any issue to get one
-janitor pass. Requires the workspace label `re-triage` to exist.
+janitor pass. Create the workspace label `re-triage` first.
 
 ### Trigger
 
 | Setting | Value |
 |---------|-------|
 | Event | An issue is **updated** |
-| Teams | [ALL WORKSPACE TEAMS] |
+| Teams | [Same teams as Loop 1] |
 | Filter: Labels | contains `re-triage` |
 | Filter: Status | Triage, Backlog, Todo |
 | Filter: Agent Session | "is not Active" if the filter supports negation — avoids re-triaging an issue an agent is mid-flight on; omit if only inclusion is supported |
@@ -146,7 +147,8 @@ Identical to Loop 1.
 
 ### Instructions
 
-The full Loop 1 instructions text, with this section appended at the end:
+The full Loop 1 instructions text (with your ownership map filled in), plus
+this section appended at the end:
 
 ```text
 ## Completion
