@@ -1,7 +1,15 @@
 {
-  "lastVersion": "0.83.0",
-  "lastDate": "2026-07-29",
-  "lastRun": "2026-07-30T22:13:55Z",
-  "lastRunHead": "6d125be09bdec3fb09bcccfad0a23547dff50c47",
-  "sourcesCovered": ["agent", "ai", "coding-agent", "server", "storage", "tui", "releases"]
+  "lastVersion": "0.84.1",
+  "lastDate": "2026-08-07",
+  "lastRun": "2026-08-09T22:20:58Z",
+  "lastRunHead": "1d5d41087091a101e7556e39a57eeaf33ffee0b6",
+  "sourcesCovered": [
+    "agent",
+    "ai",
+    "coding-agent",
+    "server",
+    "storage",
+    "tui",
+    "releases"
+  ]
 }
