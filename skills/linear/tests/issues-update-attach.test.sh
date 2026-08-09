@@ -66,7 +66,12 @@ case "$query" in
   fi
   ;;
 *"issueUpdate("*)
-  printf '%s' "{\"data\":{\"issueUpdate\":{\"success\":true,\"issue\":$ISSUE_JSON}}}___HTTP_CODE___200"
+  title_in="$(jq -r '.variables.input.title // empty' <<<"$payload")"
+  if [ "$title_in" = "REJECT-UPDATE" ]; then
+    printf '%s' '{"data":{"issueUpdate":{"success":false,"issue":null}}}___HTTP_CODE___200'
+  else
+    printf '%s' "{\"data\":{\"issueUpdate\":{\"success\":true,\"issue\":$ISSUE_JSON}}}___HTTP_CODE___200"
+  fi
   ;;
 *"issue(id:"*)
   printf '%s' "{\"data\":{\"issue\":$ISSUE_JSON}}___HTTP_CODE___200"
@@ -162,5 +167,21 @@ run_linear issues update TEAM-9 --attach "$TMP_ROOT/nope.png"
 [[ "$RC" -ne 0 ]] || fail "missing --attach path exited 0: $OUT"
 grep -q "not readable" <<<"$ERR" || fail "missing-path refusal lacks 'not readable': $ERR"
 [[ "$(api_calls)" == "0" ]] || fail "missing --attach path attempted $(api_calls) API call(s)"
+
+echo "=== issueUpdate payload rejection: nothing attached, non-zero ==="
+
+run_linear issues update TEAM-9 --title "REJECT-UPDATE" --attach "$TMP_ROOT/notes.pdf"
+[[ "$RC" -ne 0 ]] || fail "rejected issueUpdate exited 0: $OUT"
+grep -q "rejected" <<<"$ERR" || fail "rejection error missing: $ERR"
+if jq -s -e 'any(.[]; .query? // "" | contains("attachmentCreate"))' "$CURL_LOG" >/dev/null; then
+  fail "attachmentCreate was reached after a rejected update"
+fi
+
+echo "=== bulk-update forwards --attach to each issue ==="
+
+run_linear issues bulk-update TEAM-9 --attach "$TMP_ROOT/shot.png"
+[[ "$RC" -eq 0 ]] || fail "bulk-update --attach failed: $ERR"
+jq -s -e 'any(.[]; .query? // "" | contains("fileUpload"))' "$CURL_LOG" >/dev/null ||
+  fail "bulk-update --attach never uploaded: $(cat "$CURL_LOG")"
 
 echo "all pass"

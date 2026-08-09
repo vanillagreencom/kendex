@@ -151,4 +151,12 @@ run_linear comments create TEAM-1
 [[ "$RC" -ne 0 ]] || fail "body-less, attach-less comment exited 0: $OUT"
 grep -q -- "--attach" <<<"$ERR" || fail "refusal does not mention --attach as an option: $ERR"
 
+echo "=== markdown label escaping in comment embeds ==="
+
+printf 'PNG' >"$TMP_ROOT/re]port.png"
+run_linear comments create TEAM-1 --body "See:" --attach "$TMP_ROOT/re]port.png"
+[[ "$RC" -eq 0 ]] || fail "bracket-name comment attach failed: $ERR"
+jq -s -e 'any(.[]; (.query? // "" | contains("commentCreate")) and (.variables.input.body | contains("![re\\]port.png](")))' "$CURL_LOG" >/dev/null ||
+  fail "comment body does not escape the bracket filename: $(cat "$CURL_LOG")"
+
 echo "all pass"

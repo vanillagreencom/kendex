@@ -355,6 +355,14 @@ attach_download_from_text() {
 #   3. Reference assetUrl from markdown, or attach it via attachmentCreate.
 # These functions need common.sh (graphql_query, curl_config_quote) loaded.
 
+# Escape a filename for use inside a markdown image/link LABEL: backslashes
+# and square brackets escape, newlines collapse to spaces — a name like
+# "report].png" must not terminate the label early and mis-reference the
+# uploaded asset. Only the label needs this; URLs come from Linear.
+attach_markdown_label() {
+    printf '%s' "$1" | tr '\n' ' ' | sed -e 's/\\/\\\\/g' -e 's/\[/\\[/g' -e 's/\]/\\]/g'
+}
+
 # Content type from the file extension: the type must be declared at
 # fileUpload time, before any bytes exist server-side to sniff.
 attach_upload_content_type() {
@@ -438,11 +446,15 @@ attach_upload_file() {
     # PUT the bytes with EXACTLY the returned headers (plus Content-Type),
     # over the same curl-config-on-stdin transport graphql_query uses so
     # header values never touch process argv.
+    # Content-Type and Cache-Control mirror Linear's documented upload
+    # example (linear.app/developers/how-to-upload-a-file-to-linear); the
+    # response headers below are copied verbatim on top.
     local put_config_lines=(
         "url = $(curl_config_quote "$upload_url")"
         'request = "PUT"'
         "upload-file = $(curl_config_quote "$file_path")"
         "header = $(curl_config_quote "Content-Type: $content_type")"
+        "header = $(curl_config_quote "Cache-Control: public, max-age=31536000")"
     )
     local header_line
     while IFS= read -r header_line; do

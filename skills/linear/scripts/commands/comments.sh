@@ -128,7 +128,14 @@ create_comment() {
             --body) body="$2"; shift 2 ;;
             --body-file) body_file="$2"; shift 2 ;;
             --parent) parent_id="$2"; shift 2 ;;
-            --attach) attach_paths+=("$2"); shift 2 ;;
+            --attach)
+                if [ -z "${2-}" ]; then
+                    echo '{"error": "--attach requires a path argument"}' >&2
+                    return 1
+                fi
+                attach_paths+=("$2")
+                shift 2
+                ;;
             --attach=*) attach_paths+=("${1#*=}"); shift ;;
             --) shift; break ;;
             -*) echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2; return 1 ;;
@@ -165,10 +172,12 @@ create_comment() {
         attach_url=$(echo "$attach_info" | jq -r '.assetUrl')
         attach_name=$(echo "$attach_info" | jq -r '.filename')
         attach_type=$(echo "$attach_info" | jq -r '.contentType')
+        local attach_label
+        attach_label="$(attach_markdown_label "$attach_name")"
         if [[ "$attach_type" == image/* ]]; then
-            body="${body:+${body}${attach_sep}}![${attach_name}](${attach_url})"
+            body="${body:+${body}${attach_sep}}![${attach_label}](${attach_url})"
         else
-            body="${body:+${body}${attach_sep}}[${attach_name}](${attach_url})"
+            body="${body:+${body}${attach_sep}}[${attach_label}](${attach_url})"
         fi
     done
 

@@ -582,12 +582,14 @@ bulk_update_issues() {
             from_stdin="true"
             shift
             ;;
-        --state | --status | --labels | --label | --title | --description | --project | --parent | --milestone | --priority | --estimate | --assignee | --cycle | --sort-order)
+        --state | --status | --labels | --label | --title | --description | --project | --parent | --milestone | --priority | --estimate | --assignee | --cycle | --sort-order | --attach)
             # These are update options - collect with their values
+            # (--attach re-uploads per issue: Linear assets are issue-agnostic
+            # but each issue gets its own embed/attachment)
             update_args+=("$1" "$2")
             shift 2
             ;;
-        --state=* | --status=* | --labels=* | --label=* | --title=* | --description=* | --project=* | --parent=* | --milestone=* | --priority=* | --estimate=* | --assignee=* | --cycle=* | --sort-order=*)
+        --state=* | --status=* | --labels=* | --label=* | --title=* | --description=* | --project=* | --parent=* | --milestone=* | --priority=* | --estimate=* | --assignee=* | --cycle=* | --sort-order=* | --attach=*)
             # Support --key=value syntax (AI agents often use this)
             local _key="${1%%=*}" _val="${1#*=}"
             update_args+=("$_key" "$_val")
@@ -935,7 +937,9 @@ upload_attach_paths() {
         attach_name=$(echo "$attach_info" | jq -r '.filename')
         attach_type=$(echo "$attach_info" | jq -r '.contentType')
         if [[ "$attach_type" == image/* ]]; then
-            description="${description:+${description}${attach_sep}}![${attach_name}](${attach_url})"
+            local attach_label
+            attach_label="$(attach_markdown_label "$attach_name")"
+            description="${description:+${description}${attach_sep}}![${attach_label}](${attach_url})"
         else
             attach_pending+=("${attach_url}"$'\t'"${attach_name}")
         fi
@@ -973,6 +977,10 @@ create_issue() {
             shift 2
             ;;
         --attach)
+            if [ -z "${2-}" ]; then
+                echo '{"error": "--attach requires a path argument"}' >&2
+                return 1
+            fi
             attach_paths+=("$2")
             shift 2
             ;;
@@ -1101,6 +1109,25 @@ create_issue() {
     # the created issue after the create (attachmentCreate needs its id).
     if [ ${#attach_paths[@]} -gt 0 ]; then
         attach_preflight_files "${attach_paths[@]}" || return 1
+        # Resolve declared agent labels BEFORE uploading: under a declared
+        # taxonomy an unresolvable agent label refuses the create later
+        # (routed-or-refused), and uploads done first would strand orphaned
+        # assets in Linear storage.
+        if [ -n "$labels" ] && [ -n "${LINEAR_AGENT_LABELS:-}" ]; then
+            local pre_label_names=() pre_label_name
+            IFS=',' read -ra pre_label_names <<<"$labels"
+            for pre_label_name in "${pre_label_names[@]}"; do
+                case "$pre_label_name" in
+                agent:*)
+                    if ! resolve_label_id "$pre_label_name" >/dev/null; then
+                        jq -cn --arg label "$pre_label_name" \
+                            '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing before uploading attachments (the create would be refused as unrouted). Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
+                        return 1
+                    fi
+                    ;;
+                esac
+            done
+        fi
         upload_attach_paths "${attach_paths[@]}" || return 1
     fi
 
@@ -1242,6 +1269,14 @@ create_issue() {
 
     local result
     result=$(graphql_query "$mutation" "{\"input\": $input_json}")
+    # graphql_query treats any HTTP-200 payload as a completed request — a
+    # payload-level rejection (issueCreate.success == false) must fail HERE,
+    # before anything downstream claims a created issue or attaches uploads
+    # to whatever object a failed payload happened to include.
+    if [ "$(echo "$result" | jq -r '.issueCreate.success // false')" != "true" ]; then
+        echo "$result" | jq -c '{error: "issueCreate was rejected (success != true) - no issue was created; uploaded files (if any) were not attached", data: (.issueCreate // {})}' >&2
+        return 1
+    fi
     # Write-through: upsert new issue into cache
     local created_issue
     created_issue=$(echo "$result" | jq '.issueCreate.issue // empty')
@@ -1368,6 +1403,10 @@ update_issue() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --attach)
+            if [ -z "${2-}" ]; then
+                echo '{"error": "--attach requires a path argument"}' >&2
+                return 1
+            fi
             attach_paths+=("$2")
             shift 2
             ;;
@@ -1726,6 +1765,13 @@ update_issue() {
 
     local result
     result=$(graphql_query "$mutation" "{\"id\": \"$issue_id\", \"input\": $input_json}")
+    # Payload-level rejection (issueUpdate.success == false) must fail HERE —
+    # falling through would report the pre-update issue and still attach
+    # queued uploads to an issue the rejected update never touched.
+    if [ "$(echo "$result" | jq -r '.issueUpdate.success // false')" != "true" ]; then
+        echo "$result" | jq -c --arg id "$issue_id" '{error: ("issueUpdate was rejected (success != true) for " + $id + " - nothing was updated; uploaded files (if any) were not attached"), data: (.issueUpdate // {})}' >&2
+        return 1
+    fi
     # Write-through: upsert updated issue into cache
     local updated_issue
     updated_issue=$(echo "$result" | jq '.issueUpdate.issue // empty')

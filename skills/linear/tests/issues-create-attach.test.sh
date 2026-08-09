@@ -75,9 +75,19 @@ case "$query" in
   printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
-  printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
+  name="$(jq -r '.variables.name // empty' <<<"$payload")"
+  if [ "$name" = "agent:ghost" ]; then
+    printf '%s' '{"data":{"issueLabels":{"nodes":[]}}}___HTTP_CODE___200'
+  else
+    printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
+  fi
   ;;
 *"issueCreate(input:"*)
+  title_in="$(jq -r '.variables.input.title // empty' <<<"$payload")"
+  if [ "$title_in" = "REJECT-CREATE" ]; then
+    printf '%s' '{"data":{"issueCreate":{"success":false,"issue":null}}}___HTTP_CODE___200'
+    exit 0
+  fi
   printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"issue-uuid","identifier":"TEAM-1","title":"t","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Configured"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/x/issue/TEAM-1","createdAt":"2026-08-08T00:00:00Z","updatedAt":"2026-08-08T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
   ;;
 *)
@@ -216,5 +226,40 @@ run_linear issues create --title "Guarded" --attach "$TMP_ROOT/shot.png"
 [[ "$RC" -ne 0 ]] || fail "bare create with --attach passed the routing guard: $OUT"
 grep -q "LINEAR_AGENT_LABELS" <<<"$ERR" || fail "guard refusal missing: $ERR"
 [[ "$(api_calls)" == "0" ]] || fail "guarded create attempted $(api_calls) API call(s)"
+
+echo "=== markdown label escaping: bracket filename cannot break the embed ==="
+
+printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/vstack.settings.toml"
+printf 'PNG' >"$TMP_ROOT/re]port.png"
+run_linear issues create --title "Escaped" --attach "$TMP_ROOT/re]port.png"
+[[ "$RC" -eq 0 ]] || fail "bracket-name attach failed: $ERR"
+jq -s -e 'any(.[]; (.query? // "" | contains("issueCreate")) and (.variables.input.description | contains("![re\\]port.png](")))' "$CURL_LOG" >/dev/null ||
+  fail "description embed does not escape the bracket filename: $(cat "$CURL_LOG")"
+
+echo "=== issueCreate payload rejection: no attach, non-zero, no created claim ==="
+
+run_linear issues create --title "REJECT-CREATE" --attach "$TMP_ROOT/notes.pdf"
+[[ "$RC" -ne 0 ]] || fail "rejected issueCreate exited 0: $OUT"
+grep -q "rejected" <<<"$ERR" || fail "rejection error missing: $ERR"
+if jq -s -e 'any(.[]; .query? // "" | contains("attachmentCreate"))' "$CURL_LOG" >/dev/null; then
+  fail "attachmentCreate was reached after a rejected create"
+fi
+
+echo "=== declared taxonomy: unresolvable agent label refuses BEFORE uploads ==="
+
+printf '[env]\nLINEAR_TEAM = "Configured"\nLINEAR_AGENT_LABELS = "agent:generalist, agent:ghost"\n' \
+  >"$PROJECT/vstack.settings.toml"
+run_linear issues create --title "Orphan guard" --labels "agent:ghost" --attach "$TMP_ROOT/shot.png"
+[[ "$RC" -ne 0 ]] || fail "unresolvable agent label with --attach exited 0: $OUT"
+if jq -s -e 'any(.[]; .query? // "" | contains("fileUpload"))' "$CURL_LOG" >/dev/null; then
+  fail "fileUpload ran before the routed-or-refused check — orphaned upload"
+fi
+
+echo "=== bare --attach is a structured usage error, not a set -u abort ==="
+
+printf '[env]\nLINEAR_TEAM = "Configured"\n' >"$PROJECT/vstack.settings.toml"
+run_linear issues create --title "Bare" --attach
+[[ "$RC" -ne 0 ]] || fail "bare --attach exited 0: $OUT"
+grep -q "requires a path" <<<"$ERR" || fail "bare --attach lacks the structured error: $ERR"
 
 echo "all pass"
