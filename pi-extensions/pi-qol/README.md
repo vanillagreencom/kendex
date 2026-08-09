@@ -26,7 +26,7 @@ Quality-of-life extension for Pi: compact statusline, multiline input, session n
 
 ## Install
 
-Requires Pi 0.80.4 or newer. The long-session budget guard depends on the `agent_settled` extension lifecycle event added in that release.
+Requires Pi 0.80.4 or newer for long-session budget guard support.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-qol):
 
@@ -185,20 +185,20 @@ Idle thresholds (token threshold, idle delay, fixed token limit, percent limit) 
 
 ### Long-session budget guard
 
-For long autonomous runs the agent may not go idle, so idle compaction may never fire and the transcript can grow until provider/buffer limits hit. The budget guard evaluates context usage on `agent_end` (not idle), then waits for `agent_settled` before dispatching so Pi's built-in post-agent auto-compaction gets first refusal. When QOL dispatches, its settled handler remains pending until `ctx.compact()` reports completion or failure, so terminal settlement and one-shot shutdown cannot overtake compaction. If Pi compacts first, its `session_compact` event satisfies the staged budget trigger and QOL skips the duplicate request. Guard state belongs to the active session generation; delayed callbacks or `session_compact` events from a replaced session are ignored. Repeated `agent_end` events in the same trigger bucket stay suppressed after compaction; suppression clears only when usage drops below the configured thresholds or usage advances to a genuinely new trigger key. Transient QOL compaction failures still clear the key so the next cycle can retry.
+For long autonomous runs the agent may not go idle, so the transcript can grow until provider or buffer limits hit. The budget guard starts bounded compaction when context usage crosses a configured threshold, while giving Pi's built-in compaction priority and avoiding duplicate attempts. QOL waits for an active guard compaction to finish before a one-shot pane exits. After success, it suppresses repeat work at the same threshold until usage drops or advances; transient failures retry on a later cycle.
 
 | Setting | What it does | Default |
 | --- | --- | --- |
-| Long-session budget guard | Master toggle for the agent_end budget guard. | on |
+| Long-session budget guard | Master toggle for threshold-triggered bounded compaction. | on |
 | Budget guard percent | Context-window percentage that fires the guard. `-1` disables percent-based firing. | `85` |
 | Budget guard token limit | Absolute tokens that fire the guard. `-1` uses percent only. | `-1` |
 | Chunked compaction input cap | Max serialized characters per summarization request. Long transcripts are chunked, summarized chunk-by-chunk, then tree-reduced — every model/remote request (chunk + every reduce pass) is bounded so the compaction call itself cannot exceed provider buffer limits. `0` disables chunking. | `240000` |
 | Write pre-compaction handoff artifact | Before compaction, write `~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/<timestamp>.json` plus a `latest.json` pointer containing previous summary, last task state, and referenced files/artifacts. Write failures surface as a QOL warning notification and a `handoffArtifactError` field in the compaction details. | on |
 | Transcript-risk warn budget (chars) | `/context` shows a warning when the serialized payload of messages-to-send exceeds this many characters, even if tokens are still below the context window. `0` disables. | `600000` |
 
-When the budget guard fires it injects a sentinel into the compaction request so the QOL bounded handler always runs — chunked summarizer + handoff artifact — even if **Custom compaction summaries** is off. Manual compactions (`/tree`, idle compaction, user-triggered) still only use the QOL handler when **Custom compaction summaries** is on; otherwise they fall through to Pi's default compaction with no handoff artifact and no chunking. If you want every compaction to use the QOL bounded path, turn **Custom compaction summaries** on.
+Budget-guard compaction always uses QOL's bounded path — chunked summarizer plus handoff artifact — even if **Custom compaction summaries** is off. Manual compactions (`/tree`, idle compaction, user-triggered) use the QOL path only when **Custom compaction summaries** is on; otherwise they use Pi's default compaction with no handoff artifact or chunking. Turn **Custom compaction summaries** on when every compaction should use the bounded path.
 
-While budget-guard compaction is running, QOL keeps a persistent status line above the prompt (and in the normal status footer when the compact statusline is disabled). After Pi prints the compacted-summary block, the line changes to `QOL budget guard finalizing compaction…` until `ctx.compact()` reports completion, so long reload/finalization gaps do not look frozen.
+While budget-guard compaction is running, QOL keeps a persistent status line above the prompt (and in the normal status footer when the compact statusline is disabled). After Pi prints the compacted-summary block, the line changes to `QOL budget guard finalizing compaction…` until finalization completes, so long reload gaps do not look frozen.
 
 Recommended values for long autonomous runs:
 

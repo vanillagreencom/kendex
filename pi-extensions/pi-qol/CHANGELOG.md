@@ -4,10 +4,10 @@
 
 ### 1.7.5
 
-- Long-session budget guard now stages threshold crossings at `agent_end` and dispatches only after `agent_settled`, allowing Pi's built-in post-agent auto-compaction to complete first without a duplicate `Already compacted` failure.
-- Successful `session_compact` events now satisfy the current trigger key. The same threshold bucket stays suppressed until usage falls below the guard or advances to a new trigger key; unrelated failures still surface and retry normally.
-- Minimum supported Pi host is now 0.80.4 because the budget guard requires the `agent_settled` extension event introduced in that release.
-- Budget-guard `agent_settled` handling now remains pending through the callback-based compaction lifecycle, preventing terminal settlement or one-shot pane shutdown from overtaking an active QOL compaction. Guard state is session-generation-owned, so reset invalidates both delayed callbacks and delayed `session_compact` events from prior sessions before they can mutate a newer trigger or dispatch.
+- Long-session budget guard now gives Pi's built-in post-response compaction first chance, avoiding duplicate `Already compacted` failures.
+- Successful compaction suppresses repeat attempts at the same threshold until usage falls below the guard or advances to a new threshold; unrelated failures still surface and retry normally.
+- Minimum supported Pi version is now 0.80.4 for long-session budget guard support.
+- Active budget-guard compaction now finishes before terminal settlement or one-shot pane shutdown can overtake it. Delayed activity from a replaced session is ignored instead of changing the current session's guard state.
 
 ### 1.7.4
 
