@@ -157,7 +157,9 @@ neither a parent nor sub-issues — otherwise skip this task entirely (an
 In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
-agent:* label. If the triggering issue plus one to
+agent:* label. Exclude any issue (including the trigger) that blocks or is
+blocked by an issue OUTSIDE the selected bundle — cross-boundary sequencing
+must stay where it is visible, so such issues are left unbundled. If the triggering issue plus one to
 four of them would plausibly ship as a single pull request — same component
 or surface, complementary small changes, no conflicting approaches — create
 ONE new parent issue IN THAT SAME TEAM AND PROJECT from the template below and set each child's parent to
@@ -165,6 +167,14 @@ it. Skip entirely when in doubt; never re-parent an issue that already has
 a parent; never bundle across teams or projects. Issues that have sub-issues
 (coordination parents — including ones this loop created, which will
 themselves trigger a janitor run) are never bundle candidates.
+
+Duplicate-bundle guard (concurrent runs have no lock): the OLDEST issue of
+the would-be bundle leads — if any selected companion was created before
+the triggering issue, skip this task entirely; the janitor run for that
+oldest member (or a re-triage of it) owns the bundle. Immediately before
+creating the parent, re-check that every selected child still has no
+parent; if any acquired one since the search, abandon the bundle without
+creating anything.
 
 Parent issue format (from the project-management skill's
 parent-issue-template — keep this embedded copy faithful to it; omit any
@@ -312,7 +322,8 @@ has labels contradicted by its content, or clearly belongs to another team,
 add the "re-triage" label. Also apply "re-triage" when an unstarted issue
 has an obvious same-team, same-project companion that would ship in the
 same pull request — even if its own metadata is complete — so the janitor's
-bundling task can create the parent. The re-triage pass performs the actual cleanup
+bundling task can create the parent; apply it to the OLDEST member of the
+companion group only (that issue leads the bundle). The re-triage pass performs the actual cleanup
 (including project/agent assignment and Task 6 bundling). Do not fix the
 metadata inline.
 
