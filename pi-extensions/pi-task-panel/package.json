@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-task-panel",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Persistent Claude-style tasks panel for Pi with slash commands and a structured tasks_write tool.",
   "license": "MIT",
   "keywords": [
@@ -80,6 +80,19 @@
           "category": "Keyboard",
           "apply": "reload",
           "requiresReload": true
+        },
+        {
+          "key": "toggleBehavior",
+          "label": "Toggle behavior",
+          "description": "What the panel shortcut and /tasks toggle do. toggle hides the panel and restores the last visible mode when toggling back in; cycle steps hidden → compact → expanded → hidden.",
+          "type": "enum",
+          "enumValues": [
+            "toggle",
+            "cycle"
+          ],
+          "default": "toggle",
+          "category": "Keyboard",
+          "apply": "live"
         },
         {
           "key": "managerShortcut",

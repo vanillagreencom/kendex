@@ -1,5 +1,6 @@
 export type PanelState = "hidden" | "compact" | "expanded";
 export type VisiblePanelState = Exclude<PanelState, "hidden">;
+export type PanelToggleBehavior = "toggle" | "cycle";
 
 export interface TaskPanelVisibilityState {
 	panel: PanelState;
@@ -96,9 +97,18 @@ export function applyTaskPanelContentVisibility(
 	if (options.remainingTasks > 0) autoShowTaskPanelOnce(state, options);
 }
 
-export function cycleTaskPanelVisibility(state: TaskPanelVisibilityState): void {
+export function normalizePanelToggleBehavior(value: unknown, fallback: PanelToggleBehavior = "toggle"): PanelToggleBehavior {
+	return value === "toggle" || value === "cycle" ? value : fallback;
+}
+
+export function toggleTaskPanelVisibility(state: TaskPanelVisibilityState, behavior: PanelToggleBehavior = "toggle"): void {
 	ensureTaskPanelVisibility(state);
+	if (behavior === "cycle") {
+		if (state.panel === "hidden") userShowTaskPanel(state, "compact");
+		else if (state.panel === "compact") userShowTaskPanel(state, "expanded");
+		else userHideTaskPanel(state);
+		return;
+	}
 	if (state.panel === "hidden") userShowTaskPanel(state);
-	else if (state.panel === "compact") userShowTaskPanel(state, "expanded");
 	else userHideTaskPanel(state);
 }

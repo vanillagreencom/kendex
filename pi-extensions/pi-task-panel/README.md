@@ -48,6 +48,7 @@ Restart Pi after installation.
 | `/tasks hide` | Hide the panel. |
 | `/tasks show` | Show the compact panel. |
 | `/tasks show-all` | Show the expanded panel. |
+| `/tasks:toggle` | Hide/restore the panel, or cycle all states with `toggleBehavior=cycle`. |
 | `/tasks:clear-completed` | Remove completed tasks. |
 | `/tasks:export <path>` | Write tasks to a markdown file. |
 | `/tasks:import <path>` | Load tasks from a markdown file. |
@@ -68,9 +69,9 @@ Bulk edit format:
 
 Status suffixes: `(active)`, `(done)`, `(dropped)`.
 
-## Visibility cycle
+## Visibility toggle
 
-The panel toggle cycles visible modes and hides the panel; toggling back in restores the last visible mode. After `/tasks hide` or a hide shortcut, task mutations stay hidden until `/tasks show`, `/tasks show-all`, or an explicit toggle-in. The manager popup opens with its own shortcut and documents its keys in the footer. All bindings are configurable via `/extensions:settings`; Pi's thinking-visibility binding is preserved unless you opt in to taking it over.
+The panel toggle (`alt+t` by default, `/tasks:toggle`) hides the panel and restores the last visible mode when toggling back in — a compact panel reopens compact, an expanded panel reopens expanded. Set `toggleBehavior` to `cycle` to step through hidden → compact → expanded → hidden instead. After `/tasks hide` or a hide shortcut, task mutations stay hidden until `/tasks show`, `/tasks show-all`, or an explicit toggle-in. The manager popup opens with its own shortcut and documents its keys in the footer. All bindings are configurable via `/extensions:settings`; Pi's thinking-visibility binding is preserved unless you opt in to taking it over.
 
 ## Settings
 
@@ -96,6 +97,7 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 | --- | --- |
 | Take over thinking-visibility binding | Repurpose Pi's thinking-visibility binding for the task-panel toggle. |
 | Alternate shortcut | Always-available toggle. Configurable. |
+| Toggle behavior | `toggle` (default) hides/restores the last visible mode; `cycle` steps hidden → compact → expanded → hidden. |
 | Manager popup shortcut | Configurable. |
 
 ### Tool output

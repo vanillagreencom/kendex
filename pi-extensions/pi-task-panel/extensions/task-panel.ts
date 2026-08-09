@@ -11,15 +11,17 @@ import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js
 import {
 	applyTaskPanelContentVisibility,
 	createTaskPanelVisibility,
-	cycleTaskPanelVisibility,
 	ensureTaskPanelVisibility,
 	normalizePanelState,
+	normalizePanelToggleBehavior,
 	rememberTaskPanelVisibility,
 	restoreTaskPanelVisibility,
+	toggleTaskPanelVisibility,
 	userHideTaskPanel,
 	userShowTaskPanel,
 	visiblePanelFor,
 	type PanelState,
+	type PanelToggleBehavior,
 	type VisiblePanelState,
 } from "./visibility.js";
 import { reportTaskPanelPersistenceFailure } from "./diagnostics.js";
@@ -316,6 +318,10 @@ function defaultPanelState(cwd?: string): PanelState {
 	return normalizePanelState(settingString("panelDefaultState", "compact", cwd), "compact");
 }
 
+function panelToggleBehavior(cwd?: string): PanelToggleBehavior {
+	return normalizePanelToggleBehavior(settingString("toggleBehavior", "toggle", cwd));
+}
+
 function emptyState(cwd?: string): TaskPanelState {
 	const visibility = createTaskPanelVisibility(defaultPanelState(cwd));
 	return { ...visibility, phases: [], tasks: [], updatedAt: new Date().toISOString(), version: 1 };
@@ -424,7 +430,7 @@ function panelToggleHint(cwd: string): string {
 	const toggle = settingString("alternateShortcut", "alt+t", cwd);
 	const manager = settingString("managerShortcut", "alt+shift+t", cwd);
 	const parts: string[] = [];
-	if (toggle !== "none") parts.push(`${formatShortcutHint(toggle)} toggle`);
+	if (toggle !== "none") parts.push(`${formatShortcutHint(toggle)} ${panelToggleBehavior(cwd)}`);
 	if (manager !== "none") parts.push(`${formatShortcutHint(manager)} manage`);
 	return parts.join(glyphs(cwd).dot);
 }
@@ -1120,7 +1126,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			case "show": message = mutate(ctx, () => { userShowTaskPanel(state, "compact"); return `Task panel showing ${Math.max(1, Math.floor(settingNumber("maxCompactTasks", 4, ctx.cwd)))} task(s)`; }); break;
 			case "show-all": message = mutate(ctx, () => { userShowTaskPanel(state, "expanded"); return "Task panel showing all tasks"; }); break;
 			case "toggle": message = mutate(ctx, () => {
-				cycleTaskPanelVisibility(state);
+				toggleTaskPanelVisibility(state, panelToggleBehavior(ctx.cwd));
 				if (state.panel === "hidden") return "Task panel hidden";
 				return state.panel === "expanded" ? "Task panel showing all tasks" : `Task panel showing ${Math.max(1, Math.floor(settingNumber("maxCompactTasks", 4, ctx.cwd)))} task(s)`;
 			}); break;
@@ -1151,7 +1157,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		{ sub: "edit", description: "Bulk edit tasks as plain text" },
 		{ sub: "manage", description: "Open the interactive task manager" },
 		{ sub: "clear-completed", description: "Remove completed tasks" },
-		{ sub: "toggle", description: "Show or hide the mini task panel" },
+		{ sub: "toggle", description: "Show or hide the mini task panel (cycles all states with toggleBehavior=cycle)" },
 	] as const;
 	for (const { sub, description } of noArgSubs) {
 		pi.registerCommand(`tasks:${sub}`, {
@@ -1288,7 +1294,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", (_event, ctx) => setMiniDashboardWidget(ctx, WIDGET_KEY, MINI_DASHBOARD_RANK.TASKS, undefined));
 
 	const toggle = async (ctx: ExtensionContext) => {
-		cycleTaskPanelVisibility(state);
+		toggleTaskPanelVisibility(state, panelToggleBehavior(ctx.cwd));
 		persist();
 		syncWidget(ctx);
 	};
