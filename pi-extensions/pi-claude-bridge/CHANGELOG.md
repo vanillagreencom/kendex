@@ -4,6 +4,8 @@
 
 ### 3.1.6
 
+- **Pi 0.84.0 parity: `AGENTS.override.md` is now honored when forwarding context to Claude Code.** Pi added per-directory `AGENTS.override.md` files that replace `AGENTS.md` in the same directory; the bridge mirrors that discovery and previously forwarded the superseded `AGENTS.md`. Per directory the bridge now prefers `AGENTS.override.md`, then `AGENTS.md`, and only accepts regular files. Pi's candidate list continues with `CLAUDE.md`, which the bridge deliberately omits — the Claude Code subprocess loads `CLAUDE.md` natively, so forwarding it would apply the same context twice.
+
 Found while reviewing drovr's 3.1.4 re-vendor (VST-53), same shape in the 3.1.5 source.
 
 - **A failed account rotation now surfaces an error event instead of ending the turn silently.** The account-retry continuation drained the rotated attempt inside a `try`/`finally { stream.end() }`, so when the drain threw the stream ended FIRST and the pipeline's `.catch` then pushed its error event into an already-ended stream — a silent drop (`EventStream.push` is a no-op after end). The consumer read a failed rotation as a normal completion. The stream now ends exactly once per outcome: after a successful drain on the success path, and in the `.catch` AFTER the error event is pushed on every throw path. Only reachable with an account router published under `Symbol.for("vstack.pi.claude-account-router.v1")`; consumers without one never enter this branch.

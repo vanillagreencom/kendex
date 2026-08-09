@@ -43837,7 +43837,7 @@ function spawnClaudeCodeWithDiagnostics(options) {
   };
 }
 
-// node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
+// node_modules/cc-session-io/dist/chunk-D6EZBJOC.js
 import { randomUUID } from "crypto";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync4, rmSync as rmSync2 } from "fs";
 import { dirname as dirname4 } from "path";
@@ -44095,16 +44095,13 @@ var Session = class {
     this._lastUuid = uuid3;
     return record2;
   }
-  /** Add a user message, as plain text or content blocks. Returns its uuid. */
-  addUserMessage(content) {
-    if (Array.isArray(content) && content.length === 0) {
-      throw new Error("addUserMessage: content array is empty; Anthropic rejects empty message content");
-    }
+  /** Add a user text message. Returns its uuid. */
+  addUserMessage(text) {
     const base = this.baseFields();
     const record2 = {
       type: "user",
       ...base,
-      message: { role: "user", content }
+      message: { role: "user", content: text }
     };
     this._pendingRecords.push(record2);
     return base.uuid;
@@ -44192,17 +44189,16 @@ var Session = class {
           const toolResults = msg.content.filter(
             (b) => b.type === "tool_result"
           );
-          const rest = msg.content.filter(
-            (b) => b.type !== "tool_result"
-          );
           if (toolResults.length > 0) {
             this.addToolResults(toolResults.map((r) => ({
               toolUseId: r.tool_use_id,
               content: r.content,
               isError: r.is_error
             })));
+          } else {
+            const text = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+            this.addUserMessage(text || JSON.stringify(msg.content));
           }
-          if (rest.length > 0) this.addUserMessage(rest);
         }
       }
     }
@@ -45771,24 +45767,30 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
 }
 
 // src/agents-md.ts
-import { existsSync as existsSync5, readFileSync as readFileSync7 } from "fs";
+import { readFileSync as readFileSync7, statSync as statSync5 } from "fs";
 import { dirname as dirname5, join as join9, resolve as resolve3 } from "path";
-function globalAgentsPath() {
-  return join9(piUserDir(), "AGENTS.md");
+var CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md"];
+function contextFileInDir(dir) {
+  for (const filename of CONTEXT_FILE_CANDIDATES) {
+    const candidate = join9(dir, filename);
+    try {
+      if (statSync5(candidate).isFile()) return candidate;
+    } catch {
+    }
+  }
+  return void 0;
 }
 function resolveAgentsMdPath() {
   if (isolatedFromEnv()) return void 0;
   const fromCwd = findAgentsMdInParents(process.cwd());
   if (fromCwd) return fromCwd;
-  const globalPath = globalAgentsPath();
-  if (existsSync5(globalPath)) return globalPath;
-  return void 0;
+  return contextFileInDir(piUserDir());
 }
 function findAgentsMdInParents(startDir) {
   let current = resolve3(startDir);
   while (true) {
-    const candidate = join9(current, "AGENTS.md");
-    if (existsSync5(candidate)) return candidate;
+    const candidate = contextFileInDir(current);
+    if (candidate) return candidate;
     const parent = dirname5(current);
     if (parent === current) break;
     current = parent;
@@ -45820,11 +45822,11 @@ function sanitizeAgentsContent(content) {
 }
 
 // src/prompt-context.ts
-import { existsSync as existsSync6, readFileSync as readFileSync8 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync8 } from "fs";
 import { dirname as dirname6, join as join10, resolve as resolve4 } from "path";
 function readTrimmed(path) {
   try {
-    if (!existsSync6(path)) return void 0;
+    if (!existsSync5(path)) return void 0;
     const content = readFileSync8(path, "utf8").trim();
     return content.length > 0 ? content : void 0;
   } catch (error51) {
@@ -45836,7 +45838,7 @@ function findProjectAppendSystem(startDir) {
   let current = resolve4(startDir);
   while (true) {
     const candidate = join10(current, ".pi", "APPEND_SYSTEM.md");
-    if (existsSync6(candidate)) return candidate;
+    if (existsSync5(candidate)) return candidate;
     const parent = dirname6(current);
     if (parent === current) break;
     current = parent;

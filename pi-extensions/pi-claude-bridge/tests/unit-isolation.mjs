@@ -93,6 +93,53 @@ describe("resolveAgentsMdPath isolation", () => {
 		}
 	}));
 
+	it("AGENTS.override.md replaces AGENTS.md in the same directory", () => withTempDir((dir) => {
+		const cwdDir = join(dir, "cwd");
+		mkdirSync(cwdDir, { recursive: true });
+		writeFileSync(join(cwdDir, "AGENTS.md"), "# base instructions\n");
+		writeFileSync(join(cwdDir, "AGENTS.override.md"), "# override instructions\n");
+		const oldCwd = process.cwd();
+		try {
+			process.chdir(cwdDir);
+			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined }, () => {
+				assert.equal(resolveAgentsMdPath(), join(process.cwd(), "AGENTS.override.md"));
+				assert.match(extractAgentsAppend() ?? "", /override instructions/);
+			});
+		} finally {
+			process.chdir(oldCwd);
+		}
+	}));
+
+	it("a nearer AGENTS.md still wins over an ancestor AGENTS.override.md", () => withTempDir((dir) => {
+		const cwdDir = join(dir, "parent", "child");
+		mkdirSync(cwdDir, { recursive: true });
+		writeFileSync(join(dir, "parent", "AGENTS.override.md"), "# ancestor override\n");
+		writeFileSync(join(cwdDir, "AGENTS.md"), "# nearest instructions\n");
+		const oldCwd = process.cwd();
+		try {
+			process.chdir(cwdDir);
+			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined }, () => {
+				assert.equal(resolveAgentsMdPath(), join(process.cwd(), "AGENTS.md"));
+			});
+		} finally {
+			process.chdir(oldCwd);
+		}
+	}));
+
+	it("a directory named AGENTS.md is not treated as a context file", () => withTempDir((dir) => {
+		const cwdDir = join(dir, "cwd");
+		mkdirSync(join(cwdDir, "AGENTS.md"), { recursive: true });
+		const oldCwd = process.cwd();
+		try {
+			process.chdir(cwdDir);
+			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined, PI_CODING_AGENT_DIR: join(dir, "empty-agent") }, () => {
+				assert.notEqual(resolveAgentsMdPath(), join(process.cwd(), "AGENTS.md"));
+			});
+		} finally {
+			process.chdir(oldCwd);
+		}
+	}));
+
 	it("default mode falls back to the piUserDir AGENTS.md", () => withTempDir((dir) => {
 		const cwdDir = join(dir, "cwd");
 		const agentDir = join(dir, "agent");

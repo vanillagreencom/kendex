@@ -1,38 +1,52 @@
 // AGENTS.md discovery and sanitization for forwarding to Claude Code.
 //
 // Pi uses AGENTS.md for long-lived instructions; Claude Code reads the same
-// content under "# CLAUDE.md". We walk up from cwd looking for AGENTS.md,
+// content under "# CLAUDE.md". We walk up from cwd looking for a context file,
 // fall back to <piUserDir>/AGENTS.md (~/.pi/agent/AGENTS.md unless
 // PI_CODING_AGENT_DIR points elsewhere), and rewrite pi-specific references
 // (~/.pi, .pi/, .pi, pi) to their Claude Code equivalents so any paths or
 // references in the file still resolve inside the CC subprocess.
 //
+// Per directory we mirror the leading entries of Pi's own candidate order
+// (resource-loader.ts): AGENTS.override.md replaces AGENTS.md in the same
+// directory. Pi's list continues with CLAUDE.md, which we deliberately omit --
+// the Claude Code subprocess already loads CLAUDE.md natively, so forwarding it
+// would apply the same context twice.
+//
 // In isolated mode (CLAUDE_BRIDGE_ISOLATED=1), all AGENTS.md discovery is
 // disabled. Embedding hosts provide their instruction surface explicitly.
 
-import { existsSync, readFileSync } from "fs";
+import { readFileSync, statSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { isolatedFromEnv, piUserDir } from "./config.js";
 import { debug } from "./debug.js";
 
-function globalAgentsPath(): string {
-	return join(piUserDir(), "AGENTS.md");
+const CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md"];
+
+function contextFileInDir(dir: string): string | undefined {
+	for (const filename of CONTEXT_FILE_CANDIDATES) {
+		const candidate = join(dir, filename);
+		try {
+			if (statSync(candidate).isFile()) return candidate;
+		} catch {
+			// Missing or unreadable candidate; try the next filename.
+		}
+	}
+	return undefined;
 }
 
 export function resolveAgentsMdPath(): string | undefined {
 	if (isolatedFromEnv()) return undefined;
 	const fromCwd = findAgentsMdInParents(process.cwd());
 	if (fromCwd) return fromCwd;
-	const globalPath = globalAgentsPath();
-	if (existsSync(globalPath)) return globalPath;
-	return undefined;
+	return contextFileInDir(piUserDir());
 }
 
 export function findAgentsMdInParents(startDir: string): string | undefined {
 	let current = resolve(startDir);
 	while (true) {
-		const candidate = join(current, "AGENTS.md");
-		if (existsSync(candidate)) return candidate;
+		const candidate = contextFileInDir(current);
+		if (candidate) return candidate;
 		const parent = dirname(current);
 		if (parent === current) break;
 		current = parent;
