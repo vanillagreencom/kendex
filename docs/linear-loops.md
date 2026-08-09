@@ -50,7 +50,7 @@ integration creator, and those are exactly the ones needing triage.
 | Team access | All public teams | Duplicate check needs cross-team view |
 | Allow changes outside triggering issue | ON | Needed only for `related` relations and duplicate comments; instructions hard-limit everything else |
 | Web search | OFF | Not needed |
-| Externally synced issues and comments | ON | Instructions forbid title/description edits on synced issues; verify your sync direction before enabling — with a one-way external→Linear sync, Linear-side comments do not propagate back |
+| Externally synced issues and comments | ON | Updates to synced issues always sync both ways (Linear's creation-direction setting only affects creation), so janitor comments and edits WILL appear on the external tracker — acceptable for short factual triage comments |
 | Coding sessions | OFF | Loops get no repo access; code-verified work belongs to tpm audit |
 
 ### Instructions
@@ -65,10 +65,8 @@ making a change, and never take destructive action.
 - Never cancel, close, archive, merge, or delete any issue.
 - Never create new issues.
 - Never edit the title or description of any issue other than the triggering
-  issue. Never edit the title or description of the triggering issue if it is
-  synced from an external tracker (has an external link/attachment) — for
-  synced issues, restrict yourself to labels, team, priority, relations, and
-  comments.
+  issue. Remember that edits and comments on issues synced from an external
+  tracker propagate to that tracker.
 - Never change assignees, cycles, or projects.
 - On issues other than the triggering issue, you may only add "related"
   relations and comments — no field edits of any kind.
