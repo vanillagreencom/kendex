@@ -62,7 +62,7 @@ export interface YouTubeExtractResult {
 
 const DEFAULT_PROMPT = "Provide a structured summary of the video: title (if shown), key topics, important quotes, and any visual details. Include approximate timestamps for major sections.";
 
-const TRANSCRIPT_KEYWORDS = /\b(transcript(?:ion|s|ed|ing)?|transcrib(?:e|ed|es|ing|er|ers)|verbatim|subtitles?|captions?|lyrics?)\b/i;
+const TRANSCRIPT_KEYWORDS = /\b(transcript(?:ions?|s|ed|ing)?|transcrib(?:e|ed|es|ing|er|ers)|verbatim|subtitl(?:es?|ed|ing)|caption(?:s|ed|ing)?|lyrics?)\b/i;
 const TIMESTAMP_DIRECTIVE = "\n\nFormat the output as a transcript with [HH:MM:SS] timestamps at every line break (every 10-15 seconds). Include spoken dialogue, lyrics, and notable visual cues. Do not omit timestamps.";
 
 export function isTranscriptPrompt(input: string | undefined): boolean {

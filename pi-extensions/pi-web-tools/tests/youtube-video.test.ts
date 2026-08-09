@@ -25,6 +25,10 @@ test("parseYouTubeUrl returns undefined for unrelated hosts", () => {
 test("isTranscriptPrompt recognizes transcript requests", () => {
 	assert.equal(isTranscriptPrompt("Produce a complete transcript with timestamps"), true);
 	assert.equal(isTranscriptPrompt("Transcribe this video verbatim"), true);
+	assert.equal(isTranscriptPrompt("Return transcriptions for these talks"), true);
+	assert.equal(isTranscriptPrompt("Get the closed captioning"), true);
+	assert.equal(isTranscriptPrompt("Extract subtitles while subtitling the clip"), true);
+	assert.equal(isTranscriptPrompt("Analyze the transcriptome"), false);
 	assert.equal(isTranscriptPrompt("Summarize the visual design"), false);
 });
 
@@ -357,6 +361,10 @@ test("web_fetch keeps partial failure text inside the multi-URL aggregate cap", 
 	assert.ok((result as any).content[0].text.length <= 25 * 1024);
 	assert.equal((result as any).details.stored.length, 1);
 	assert.equal((result as any).details.failures.length, 6);
+	assert.equal((result as any).details.preview.manifest, false);
+	assert.equal((result as any).details.preview.perUrlMaxCharacters, 4000);
+	assert.equal((result as any).details.preview.shownCharacters, 4000);
+	assert.equal((result as any).details.preview.aggregateCap, 25 * 1024);
 });
 
 test("web_fetch bounds explicit-cap failure rows and blocks", async () => {
@@ -474,9 +482,7 @@ test("web_fetch reconciles Exa HTTP-200 per-URL failures", async () => {
 		provider: "exa",
 	}, undefined, undefined, { cwd: process.cwd() } as any);
 	assert.equal((deduped as any).details.stored.length, 1);
-	assert.equal((deduped as any).details.failures.length, 1);
-	assert.equal((deduped as any).details.failures[0].url, "http://example.com");
-	assert.match((deduped as any).details.failures[0].error, /success.*without text or summary/i);
+	assert.equal((deduped as any).details.failures, undefined);
 });
 
 test("web_fetch reports Exa success statuses with empty content", async () => {
@@ -517,6 +523,46 @@ test("web_fetch normalizes Exa status ids before matching", async () => {
 		url: "https://example.com/status-detail",
 		provider: "exa",
 	}, undefined, undefined, { cwd: process.cwd() } as any), /permission denied/);
+});
+
+test("web_fetch reconciles Exa canonical, id, and missing-URL results safely", async () => {
+	const responses = [
+		{ results: [{ url: "https://example.com/article", title: "Canonical", text: "canonical content" }], raw: {} },
+		{ results: [{ id: "https://www.example.com/id-match/", url: "https://redirected.example/final", title: "Redirected", text: "redirect content" }], raw: {} },
+		{ results: [{ title: "Missing URL", text: "positional content" }], raw: {} },
+	];
+	let responseIndex = 0;
+	const tool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{ createExaClient: () => ({ contents: async () => responses[responseIndex++] }) as any },
+	);
+	const canonicalRequest = "http://www.example.com/article/";
+	const canonical = await tool.execute("test", { url: canonicalRequest, provider: "exa" }, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.equal((canonical as any).details.stored[0].url, canonicalRequest);
+	assert.equal((canonical as any).details.failures, undefined);
+
+	const idRequest = "http://example.com/id-match";
+	const idMatched = await tool.execute("test", { url: idRequest, provider: "exa" }, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.equal((idMatched as any).details.stored[0].url, idRequest);
+	assert.equal((idMatched as any).details.failures, undefined);
+
+	const missingUrlRequest = "https://example.com/missing-url";
+	const missingUrl = await tool.execute("test", { url: missingUrlRequest, provider: "exa" }, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.equal((missingUrl as any).details.stored[0].url, missingUrlRequest);
+	assert.equal((missingUrl as any).details.failures, undefined);
+
+	const unrelatedTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{ createExaClient: () => ({ contents: async () => ({ results: [{ url: "https://unrelated.example/one", text: "unrelated one" }, { url: "https://unrelated.example/two", text: "unrelated two" }], raw: {} }) }) as any },
+	);
+	await assert.rejects(() => unrelatedTool.execute("test", {
+		urls: ["https://example.com/one", "https://example.com/two"],
+		provider: "exa",
+	}, undefined, undefined, { cwd: process.cwd() } as any), /Fetch failed for 2 URL/);
 });
 
 test("web_fetch preserves AbortError identity and aggregates all-failed batches", async () => {
@@ -598,6 +644,7 @@ test("web_fetch forwards auto transcript prompt, language, and signal", async ()
 				assert.equal(options?.prompt, "Produce complete transcript");
 				assert.equal(options?.transcriptLanguage, "de");
 				assert.equal(options?.signal, controller.signal);
+				assert.equal(options?.timeoutMs, 120000);
 				observed = true;
 				return { videoId: "abc123XYZ_-", url, title: "Transcript", content: "[00:00:00] Hallo", source: "youtube-captions", metadata: { provider: "youtube-captions" } };
 			},

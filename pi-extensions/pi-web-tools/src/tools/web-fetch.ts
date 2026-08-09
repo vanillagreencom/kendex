@@ -39,6 +39,7 @@ export const MULTI_URL_LARGE_BATCH_PER_URL_HEAD = 512;
 export const WEB_FETCH_FAILURE_MESSAGE_MAX_CHARACTERS = 1024;
 export const WEB_FETCH_FAILURE_ROW_MAX_CHARACTERS = 1536;
 export const WEB_FETCH_FAILURE_BLOCK_MAX_CHARACTERS = 8 * 1024;
+export const DEFAULT_YOUTUBE_EXTRACTION_TIMEOUT_MS = 120_000;
 
 interface WebFetchPreviewItem {
 	id: string;
@@ -62,6 +63,7 @@ interface WebFetchPreviewDetails {
 export interface BuildWebFetchToolResultOptions {
 	maxCharacters?: number;
 	explicit?: boolean;
+	/** Original requested item count; used only to retain a stable aggregate output cap after partial failures. */
 	batchSize?: number;
 	pageImages?: Array<{ type: "image"; mimeType: string; data: string; pageNumber?: number }>;
 }
@@ -257,8 +259,9 @@ function normalizedUrlKey(input: string | undefined): string {
 	if (!input) return "";
 	try {
 		const url = new URL(input);
-		url.hash = "";
-		return url.toString().replace(/\/$/, "");
+		const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+		const pathname = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
+		return `${hostname}${url.port ? `:${url.port}` : ""}${pathname}${url.search}`;
 	} catch {
 		return input.replace(/\/$/, "");
 	}
@@ -303,7 +306,9 @@ export function buildWebFetchToolResult(
 	const explicit = options.explicit ?? false;
 	const pageImages = options.pageImages ?? legacyPageImages ?? [];
 
-	const policy = aggregatePolicy(options.batchSize ?? stored.length, requestedMax, explicit);
+	const presentationPolicy = aggregatePolicy(stored.length, requestedMax, explicit);
+	const aggregateCap = aggregatePolicy(options.batchSize ?? stored.length, requestedMax, explicit).aggregateCap;
+	const policy = { ...presentationPolicy, aggregateCap };
 
 	const previewItems = stored.map((item) => {
 		const stats = previewStats(item.content, policy.perUrlMax);
@@ -460,16 +465,55 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 				const providerTextMaxCharacters = params.textMaxCharacters ?? 6000;
 				const response = await client.contents({ urls: failedUrls, textMaxCharacters: providerTextMaxCharacters }, signal);
 				const stored: StoredWebContent[] = [];
-				const successfulUrls = new Set<string>();
-				for (const result of response.results) {
+				const requested = failedUrls.map((url, index) => ({ url, index, key: normalizedUrlKey(url) }));
+				const satisfiedRequestIndices = new Set<number>();
+				const assignments = new Map<number, number>();
+				const contentResults: Array<{ index: number; result: (typeof response.results)[number]; content: string; keys: string[] }> = [];
+				for (let index = 0; index < response.results.length; index++) {
+					const result = response.results[index]!;
 					const content = result.text?.trim() ? result.text : result.summary?.trim() ? result.summary : "";
-					if (!result.url || !content) continue;
-					successfulUrls.add(normalizedUrlKey(result.url));
-					stored.push(storeWebContent(pi, { title: result.title?.trim() || fallbackTitle(result.url), url: result.url, content, metadata: { provider: "exa", tool: name, contentKind: "excerpt", providerTextMaxCharacters } }));
+					if (!content) continue;
+					const keys = Array.from(new Set([normalizedUrlKey(result.url), normalizedUrlKey(result.id)].filter(Boolean)));
+					contentResults.push({ index, result, content, keys });
 				}
-				const failures = failedUrls
-					.filter((url) => !successfulUrls.has(normalizedUrlKey(url)))
-					.map((url) => ({ url, provider: "exa", error: exaStatusFailure(response.raw, url) }));
+				for (const entry of contentResults) {
+					const matches = requested.filter((item) => !satisfiedRequestIndices.has(item.index) && entry.keys.includes(item.key));
+					if (!matches.length) continue;
+					assignments.set(entry.index, matches[0]!.index);
+					for (const match of matches) satisfiedRequestIndices.add(match.index);
+				}
+				for (const entry of contentResults) {
+					if (assignments.has(entry.index)) continue;
+					const singleResultFallback = failedUrls.length === 1 && response.results.length === 1 && !satisfiedRequestIndices.has(0);
+					const missingIdentityFallback = entry.keys.length === 0 && response.results.length === failedUrls.length && entry.index < failedUrls.length && !satisfiedRequestIndices.has(entry.index);
+					if (!singleResultFallback && !missingIdentityFallback) continue;
+					const requestIndex = singleResultFallback ? 0 : entry.index;
+					assignments.set(entry.index, requestIndex);
+					satisfiedRequestIndices.add(requestIndex);
+				}
+				for (const entry of contentResults) {
+					const requestIndex = assignments.get(entry.index);
+					if (requestIndex === undefined) continue;
+					const requestedUrl = failedUrls[requestIndex]!;
+					const returnedUrl = entry.result.url?.trim();
+					const returnedId = entry.result.id?.trim();
+					stored.push(storeWebContent(pi, {
+						title: entry.result.title?.trim() || fallbackTitle(requestedUrl),
+						url: requestedUrl,
+						content: entry.content,
+						metadata: {
+							provider: "exa",
+							tool: name,
+							contentKind: "excerpt",
+							providerTextMaxCharacters,
+							...(returnedUrl && returnedUrl !== requestedUrl ? { exaResultUrl: returnedUrl } : {}),
+							...(returnedId ? { exaResultId: returnedId } : {}),
+						},
+					}));
+				}
+				const failures = requested
+					.filter((item) => !satisfiedRequestIndices.has(item.index))
+					.map((item) => ({ url: item.url, provider: "exa", error: exaStatusFailure(response.raw, item.url) }));
 				return { stored, failures };
 			}
 			if (params.provider !== "exa") {
@@ -525,7 +569,7 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 						const youtube = settings.video.enabled ? parseYouTubeUrl(url) : undefined;
 						if (youtube) {
 							youtubeExtractionAttempted = true;
-							const yt = await youtubeExtractor(url, { prompt: params.prompt, mode: params.videoMode, transcriptLanguage: params.transcriptLanguage, geminiApiKey: settings.apiKeys.gemini, browserCookies: { preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile }, signal });
+							const yt = await youtubeExtractor(url, { prompt: params.prompt, mode: params.videoMode, transcriptLanguage: params.transcriptLanguage, geminiApiKey: settings.apiKeys.gemini, browserCookies: { preferredBrowser: settings.browserCookies.preferredBrowser, profile: settings.browserCookies.profile }, signal, timeoutMs: DEFAULT_YOUTUBE_EXTRACTION_TIMEOUT_MS });
 							if (yt) {
 								stored.push(storeWebContent(pi, { title: yt.title, url: yt.url, content: yt.content, metadata: { tool: name, ...yt.metadata } }));
 								continue;

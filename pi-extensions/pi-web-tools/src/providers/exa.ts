@@ -34,6 +34,7 @@ export interface ExaClientOptions {
 }
 
 export interface NormalizedExaResult {
+	id?: string;
 	title?: string;
 	url?: string;
 	text?: string;
@@ -52,6 +53,7 @@ export interface NormalizedExaResponse {
 function normalizeResults(raw: any): NormalizedExaResult[] {
 	const results = Array.isArray(raw?.results) ? raw.results : Array.isArray(raw?.sources) ? raw.sources : [];
 	return results.map((result: any) => ({
+		...(typeof result.id === "string" ? { id: result.id } : {}),
 		title: typeof result.title === "string" ? result.title : undefined,
 		url: typeof result.url === "string" ? result.url : undefined,
 		text: typeof result.text === "string" ? result.text : typeof result.contents === "string" ? result.contents : undefined,

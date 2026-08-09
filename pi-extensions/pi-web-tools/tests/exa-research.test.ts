@@ -111,6 +111,16 @@ test("Exa answer normalizes sources as results", async () => {
 	assert.deepEqual(response.results, [{ title: "S", url: "https://example.com/s", text: "Source text", summary: undefined, highlights: undefined, publishedDate: undefined }]);
 });
 
+test("Exa contents preserves result ids for request reconciliation", async () => {
+	const client = new ExaClient({
+		apiKey: "key",
+		baseUrl: "https://exa.test",
+		fetchImpl: (async () => new Response(JSON.stringify({ results: [{ id: "https://example.com/requested", url: "https://redirected.example/final", text: "Content" }] }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch,
+	});
+	const response = await client.contents({ urls: ["https://example.com/requested"] });
+	assert.equal(response.results[0]?.id, "https://example.com/requested");
+});
+
 test("findings report includes required sections and citations", () => {
 	const report = renderFindingsReport({ query: "Question?" }, { answer: "Answer", results: [{ title: "T", url: "https://example.com" }], raw: { ok: true }, metadata: { researchMode: "standard", queryCount: 1, uniqueSourceCount: 1 } }, { rawOutputPath: "findings.raw.json" });
 	for (const section of ["Executive Summary", "Key Findings", "Evidence and Sources", "Tradeoffs / Alternatives", "Recommendation / Decision Criteria", "Risks / Unknowns", "Revisit Conditions", "Research Metadata"]) assert.match(report, new RegExp(section.replace("/", "\\/")));
