@@ -25,9 +25,14 @@ List:
   comments.sh list <issue-id>
 
 Create Options:
-  --body <text>         Comment body (required unless --body-file is set)
+  --body <text>         Comment body (required unless --body-file or --attach is set)
   --body-file <path>    Read comment body from file (preferred for markdown)
   --parent <id>         Parent comment ID for replies
+  --attach <path>       Upload a file to Linear and reference it in the body
+                        (repeatable). Images embed as ![name](assetUrl); other
+                        files append a [name](assetUrl) markdown link. Composes
+                        with --body/--body-file; missing/unreadable paths
+                        refuse before any API call.
 
 Update Options:
   --body <text>         New comment body (required unless --body-file is set)
@@ -37,6 +42,7 @@ Examples:
   comments.sh list PROJ-42
   comments.sh create PROJ-42 --body "Starting work on this task"
   comments.sh create PROJ-42 --body-file tmp/comment.md
+  comments.sh create PROJ-42 --body "See capture" --attach tmp/screenshot.png
   comments.sh update <comment-id> --body "Updated comment text"
   comments.sh delete <comment-id>
 EOF
@@ -115,12 +121,15 @@ create_comment() {
     local body=""
     local body_file=""
     local parent_id=""
+    local attach_paths=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --body) body="$2"; shift 2 ;;
             --body-file) body_file="$2"; shift 2 ;;
             --parent) parent_id="$2"; shift 2 ;;
+            --attach) attach_paths+=("$2"); shift 2 ;;
+            --attach=*) attach_paths+=("${1#*=}"); shift ;;
             --) shift; break ;;
             -*) echo "{\"error\": \"Unknown option: $1. Run --help for valid options.\"}" >&2; return 1 ;;
             *) break ;;
@@ -135,10 +144,33 @@ create_comment() {
         read_body_file "$body_file"
     fi
 
-    if [ -z "$body" ]; then
-        echo '{"error": "Required: --body or --body-file"}' >&2
+    # --attach: refuse unreadable paths before any API call.
+    if [ ${#attach_paths[@]} -gt 0 ]; then
+        attach_preflight_files "${attach_paths[@]}" || return 1
+    fi
+
+    if [ -z "$body" ] && [ ${#attach_paths[@]} -eq 0 ]; then
+        echo '{"error": "Required: --body, --body-file, or --attach"}' >&2
         return 1
     fi
+
+    # Upload --attach files and reference them from the comment body: images
+    # embed as markdown, other files get a markdown link (comments have no
+    # attachmentCreate surface, so the link IS the attachment). An upload
+    # failure refuses here, before the comment exists — nothing partial.
+    local attach_path attach_info attach_sep=$'\n\n'
+    for attach_path in ${attach_paths[@]+"${attach_paths[@]}"}; do
+        attach_info=$(attach_upload_file "$attach_path") || return 1
+        local attach_url attach_name attach_type
+        attach_url=$(echo "$attach_info" | jq -r '.assetUrl')
+        attach_name=$(echo "$attach_info" | jq -r '.filename')
+        attach_type=$(echo "$attach_info" | jq -r '.contentType')
+        if [[ "$attach_type" == image/* ]]; then
+            body="${body:+${body}${attach_sep}}![${attach_name}](${attach_url})"
+        else
+            body="${body:+${body}${attach_sep}}[${attach_name}](${attach_url})"
+        fi
+    done
 
     # Escape body for JSON (handle newlines and quotes)
     local escaped_body

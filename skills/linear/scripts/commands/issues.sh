@@ -147,6 +147,14 @@ Create Options:
   --parent <id>         Parent issue ID (creates sub-issue)
   --milestone <name|uuid> Project milestone (name or UUID)
   --cycle <id>          Cycle (sprint) ID
+  --attach <path>       Upload a file to Linear and attach it (repeatable).
+                        Images (png/jpg/jpeg/gif/webp/svg) embed into the
+                        description as ![name](assetUrl); other files become
+                        Linear attachments (attachmentCreate) on the created
+                        issue. Composes with --description/--description-file.
+                        Missing/unreadable paths refuse before any API call;
+                        an attachment failure after the create reports the
+                        created identifier and exits non-zero.
   --format=ids          Print ONLY the created issue identifier (for capture;
                         default output is the full JSON create response)
   --no-agent-label      Permit a deliberate bare create (e.g. intake
@@ -175,6 +183,13 @@ Update Options:
   --milestone <name|uuid> Set project milestone (name or UUID)
   --cycle <id>          Set cycle (sprint) ID
   --clear-cycle         Remove cycle assignment
+  --attach <path>       Upload a file to Linear and attach it (repeatable).
+                        Images embed as ![name](assetUrl) appended to the
+                        description being written (with no --description on
+                        this update, appended to the existing description);
+                        other files become Linear attachments. --attach alone
+                        is a valid update. Partial failures after the update
+                        report the identifier and exit non-zero.
   --sort-order <float>  Manual sort position (lower = higher; parent/standalone only)
   --format <fmt>        Output format for the updated issue: safe | compact | ids |
                         raw. When omitted, emits the mutation summary
@@ -881,6 +896,52 @@ require_agent_routing_label() {
     return 0
 }
 
+# Create pending non-image attachments on an issue that already exists.
+# Entries are "assetUrl<TAB>title" strings from the upload loop. A failure
+# here is a partial write: the issue mutation succeeded but an attachment is
+# missing, so each failure emits a JSON error naming the issue with
+# partial: true (same posture as bulk-update), and the caller must exit
+# non-zero. Usage: apply_pending_attachments <uuid> <identifier> <entry>...
+apply_pending_attachments() {
+    local issue_uuid="$1" issue_identifier="$2"
+    shift 2
+    local failed=0 entry
+    for entry in "$@"; do
+        local pending_url="${entry%%$'\t'*}"
+        local pending_name="${entry#*$'\t'}"
+        if [[ -z "$issue_uuid" ]] ||
+            ! attach_create_issue_attachment "$issue_uuid" "$pending_url" "$pending_name"; then
+            jq -cn --arg id "${issue_identifier:-$issue_uuid}" --arg name "$pending_name" --arg url "$pending_url" \
+                '{error: ("attachmentCreate failed for " + $name + " on issue " + $id + " - the issue write succeeded but this attachment is missing (uploaded asset: " + $url + ")"), identifier: $id, partial: true}' >&2
+            failed=1
+        fi
+    done
+    return "$failed"
+}
+
+# Upload every --attach path, embedding images into the description variable
+# of the caller and queueing non-images for apply_pending_attachments.
+# Usage: upload_attach_paths <path>...
+# Caller contract: `description` and `attach_pending` are the CALLER's
+# variables (description grows ![name](assetUrl) embeds; attach_pending grows
+# "assetUrl<TAB>filename" entries). Returns 1 on any upload failure.
+upload_attach_paths() {
+    local attach_path attach_info
+    local attach_sep=$'\n\n'
+    for attach_path in "$@"; do
+        attach_info=$(attach_upload_file "$attach_path") || return 1
+        local attach_url attach_name attach_type
+        attach_url=$(echo "$attach_info" | jq -r '.assetUrl')
+        attach_name=$(echo "$attach_info" | jq -r '.filename')
+        attach_type=$(echo "$attach_info" | jq -r '.contentType')
+        if [[ "$attach_type" == image/* ]]; then
+            description="${description:+${description}${attach_sep}}![${attach_name}](${attach_url})"
+        else
+            attach_pending+=("${attach_url}"$'\t'"${attach_name}")
+        fi
+    done
+}
+
 create_issue() {
     if cache_test_isolation_violation; then
         cache_test_isolation_refusal
@@ -902,12 +963,22 @@ create_issue() {
     local requested_parent_id=""
     local output_format=""
     local no_agent_label=0
+    local attach_paths=()
+    local attach_pending=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --title)
             title="$2"
             shift 2
+            ;;
+        --attach)
+            attach_paths+=("$2")
+            shift 2
+            ;;
+        --attach=*)
+            attach_paths+=("${1#*=}")
+            shift
             ;;
         --format)
             output_format="$2"
@@ -1023,6 +1094,15 @@ create_issue() {
     fi
 
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
+
+    # --attach: refuse unreadable paths before any API call, then upload
+    # (uploads run only after the routing guard above has passed). Images
+    # embed into the description; other files become Linear attachments on
+    # the created issue after the create (attachmentCreate needs its id).
+    if [ ${#attach_paths[@]} -gt 0 ]; then
+        attach_preflight_files "${attach_paths[@]}" || return 1
+        upload_attach_paths "${attach_paths[@]}" || return 1
+    fi
 
     # Build input object - use jq for proper JSON escaping
     local escaped_title
@@ -1225,6 +1305,22 @@ create_issue() {
         _desc=$(echo "$created_issue" | jq -r '.description // empty')
         attach_download_from_text "$_desc" "$_id" "description" &
     fi
+    # Non-image --attach files: attachmentCreate against the created issue.
+    # The issue already exists here, so a failure must surface the created
+    # identifier AND exit non-zero — never a zero exit with a silent gap.
+    local attach_failed=0
+    if [ ${#attach_pending[@]} -gt 0 ]; then
+        if [[ -n "$created_issue" && "$created_issue" != "null" ]]; then
+            local created_uuid created_identifier
+            created_uuid=$(echo "$created_issue" | jq -r '.id // empty')
+            created_identifier=$(echo "$created_issue" | jq -r '.identifier // empty')
+            apply_pending_attachments "$created_uuid" "$created_identifier" \
+                "${attach_pending[@]}" || attach_failed=1
+        else
+            echo '{"error": "Issue was created but the response omitted the issue object; uploaded files could not be attached", "partial": true}' >&2
+            attach_failed=1
+        fi
+    fi
     local normalized
     normalized=$(normalize_mutation_response "$result" "issueCreate" "issue")
     emit_linear_issue_activity "linear.issue_created" "info" "$normalized"
@@ -1235,6 +1331,9 @@ create_issue() {
         echo "$normalized" | jq -r '.identifier // empty'
     else
         echo "$normalized"
+    fi
+    if [ "$attach_failed" = "1" ]; then
+        return 1
     fi
 }
 
@@ -1263,9 +1362,19 @@ update_issue() {
     local clear_estimate="false"
     local sort_order=""
     local output_format=""
+    local attach_paths=()
+    local attach_pending=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+        --attach)
+            attach_paths+=("$2")
+            shift 2
+            ;;
+        --attach=*)
+            attach_paths+=("${1#*=}")
+            shift
+            ;;
         --format)
             output_format="$2"
             shift 2
@@ -1410,6 +1519,11 @@ update_issue() {
         read_description_file "$description_file"
     fi
 
+    # --attach: refuse unreadable paths before any API call.
+    if [ ${#attach_paths[@]} -gt 0 ]; then
+        attach_preflight_files "${attach_paths[@]}" || return 1
+    fi
+
     local input_parts=()
 
     # Get issue to find team ID (needed for state lookup) - use raw format
@@ -1417,6 +1531,25 @@ update_issue() {
     issue_result=$(get_issue "$issue_id" --format=raw)
     local team_name
     team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
+
+    # Upload --attach files. Image embeds append to the description being
+    # written; when this update does not itself rewrite the description,
+    # seed it from the issue's current one so the embed is an append, not a
+    # wipe. Non-images queue for attachmentCreate after the update.
+    if [ ${#attach_paths[@]} -gt 0 ]; then
+        if [[ -z "$description" && -z "$description_file" ]]; then
+            local has_image_attach=0 attach_probe
+            for attach_probe in "${attach_paths[@]}"; do
+                case "$(attach_upload_content_type "$attach_probe")" in
+                image/*) has_image_attach=1 ;;
+                esac
+            done
+            if [ "$has_image_attach" = "1" ]; then
+                description=$(echo "$issue_result" | jq -r '.issue.description // empty')
+            fi
+        fi
+        upload_attach_paths "${attach_paths[@]}" || return 1
+    fi
 
     if [ -n "$title" ]; then
         local escaped_title
@@ -1545,9 +1678,34 @@ update_issue() {
         input_parts+=("\"cycleId\": \"$cycle\"")
     fi
 
-    if [ ${#input_parts[@]} -eq 0 ]; then
+    if [ ${#input_parts[@]} -eq 0 ] && [ ${#attach_pending[@]} -eq 0 ]; then
         echo '{"error": "No update options provided"}' >&2
         return 1
+    fi
+
+    # Attach-only update (non-image --attach, no field changes): there is
+    # nothing to send through issueUpdate, so skip the mutation and only
+    # create the attachments against the resolved issue.
+    if [ ${#input_parts[@]} -eq 0 ]; then
+        local attach_only_uuid attach_only_identifier attach_only_url
+        attach_only_uuid=$(echo "$issue_result" | jq -r '.issue.id // empty')
+        attach_only_identifier=$(echo "$issue_result" | jq -r '.issue.identifier // empty')
+        attach_only_url=$(echo "$issue_result" | jq -r '.issue.url // empty')
+        if [[ -z "$attach_only_uuid" ]]; then
+            jq -cn --arg id "$issue_id" '{error: ("Issue not found: " + $id)}' >&2
+            return 1
+        fi
+        local attach_only_failed=0
+        apply_pending_attachments "$attach_only_uuid" "$attach_only_identifier" \
+            "${attach_pending[@]}" || attach_only_failed=1
+        jq -cn --arg identifier "$attach_only_identifier" --arg url "$attach_only_url" \
+            --argjson ok "$([ "$attach_only_failed" = "0" ] && echo true || echo false)" \
+            --argjson count "${#attach_pending[@]}" \
+            '{success: $ok, identifier: $identifier, url: (if $url == "" then null else $url end), attachments_requested: $count}'
+        if [ "$attach_only_failed" = "1" ]; then
+            return 1
+        fi
+        return 0
     fi
 
     local input_json
@@ -1624,6 +1782,22 @@ update_issue() {
         echo "$normalized"
         ;;
     esac
+
+    # Non-image --attach files: attachmentCreate after the update. The update
+    # itself succeeded (and was reported above), so a failure here must name
+    # the issue and exit non-zero — never a zero exit with a silent gap.
+    if [ ${#attach_pending[@]} -gt 0 ]; then
+        local attach_target_uuid attach_target_identifier
+        if [[ -n "$updated_issue" && "$updated_issue" != "null" ]]; then
+            attach_target_uuid=$(echo "$updated_issue" | jq -r '.id // empty')
+            attach_target_identifier=$(echo "$updated_issue" | jq -r '.identifier // empty')
+        else
+            attach_target_uuid=$(echo "$issue_result" | jq -r '.issue.id // empty')
+            attach_target_identifier=$(echo "$issue_result" | jq -r '.issue.identifier // empty')
+        fi
+        apply_pending_attachments "$attach_target_uuid" "$attach_target_identifier" \
+            "${attach_pending[@]}" || return 1
+    fi
 }
 
 # IssueArchivePayload.success reports the request was processed, not that the

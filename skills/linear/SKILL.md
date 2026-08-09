@@ -41,8 +41,8 @@ CLI wrapper for Linear's GraphQL API with local cache, bulk operations, and stru
 
 | Resource | Actions |
 |----------|---------|
-| `issues` | list, get, create, update, children, list-relations, add-relation, remove-relation, bulk-get, bulk-update, activate (`--agent <name>` applies the exclusive `agent:<name>` label), block, unblock, complete (`--summary <text>` / `--summary-file <path>` post the completion comment before the Done transition), validate-completion |
-| `comments` | list, create (`--body` or `--body-file`) |
+| `issues` | list, get, create, update (create and update take a repeatable `--attach <path>` file upload — see [Attachment Uploads](#attachment-uploads)), children, list-relations, add-relation, remove-relation, bulk-get, bulk-update, activate (`--agent <name>` applies the exclusive `agent:<name>` label), block, unblock, complete (`--summary <text>` / `--summary-file <path>` post the completion comment before the Done transition), validate-completion |
+| `comments` | list, create (`--body`, `--body-file`, repeatable `--attach <path>`) |
 | `projects` | list, get, create, update, list-dependencies, add-dependency, remove-dependency, post-update, list-updates |
 | `initiatives` | list, get, create, add-project |
 | `milestones` | list, get, create |
@@ -97,6 +97,15 @@ linear.sh sync --full           # Full re-sync
 Cache and attachment files live under `.cache/linear` in the physical git worktree root reported by `git rev-parse --show-toplevel`, not under the path used to reach the skill script. This keeps `sync`, `cache`, and attachment reads consistent across symlinked checkout spellings, worktrees, and canonical source-path invocation. A missing-cache error includes the checked `cache_dir` and `meta_path`; inspect those fields before assuming a sync wrote somewhere else.
 
 In a linked git worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed symlink into the main checkout but is a real directory (a git operation re-materialized it), any full or reconciling `sync` refuses before touching the API — a full re-sync into a worktree-local dir would silently re-pull the entire history and burn the shared API budget. The refusal names the worktree, the expected symlink, and the repair: run `worktree fix-links <PATH>` from the main checkout, then re-run `sync`. Repos whose configured `WORKTREE_SYMLINKS` deliberately excludes `.cache` are exempt.
+
+## Attachment Uploads
+
+`issues create`, `issues update`, and `comments create` take a repeatable `--attach <path>`. Each file is uploaded through Linear's `fileUpload` flow: the mutation returns `uploadUrl`, `assetUrl`, and the exact headers the storage PUT must carry — the CLI PUTs the bytes with those headers verbatim (plus Content-Type from the file extension; unknown extensions upload as `application/octet-stream`).
+
+- Images (`image/*`) embed into the description/body being written as `![<filename>](<assetUrl>)`. On `issues update` without `--description`/`--description-file`, the embed appends to the issue's existing description.
+- Non-image files on issues become real Linear attachments (`attachmentCreate`) after the issue write; `issues update --attach` alone (no other fields) is valid and skips the `issueUpdate` mutation. On comments they append a `[<filename>](<assetUrl>)` markdown link instead — comments have no attachment surface.
+- `--attach` composes with `--description-file`/`--body-file`. A missing or unreadable path refuses before any API call. If the issue write succeeded but an attachment step failed, the command reports the issue identifier with `partial: true` on stderr and exits non-zero — never a zero exit with a silent gap.
+- Embedded assetUrls point at `uploads.linear.app`, so the attachment cache downloads them on write-through and picks them up on sync like any other attachment.
 
 ## Issue Creation Routing
 

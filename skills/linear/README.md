@@ -32,6 +32,8 @@ Read-only cache queries (`./scripts/linear.sh cache ...` except `cache attachmen
 
 Use `comments create ISSUE --body-file tmp/comment.md` for Markdown or multi-line comments. Inline `--body` is intended for short plain strings.
 
+Use `--attach <path>` (repeatable) on `issues create`, `issues update`, and `comments create` to upload local files via Linear's `fileUpload` flow. Images embed as `![name](assetUrl)` markdown in the description/body; other files become Linear attachments on issues (`attachmentCreate`) or `[name](assetUrl)` links on comments. A missing/unreadable path refuses before any API call; a failed attachment after a successful issue write reports the identifier with `partial: true` on stderr and exits nonzero.
+
 Use `issues activate ISSUE --agent NAME` to claim an issue: it sets "In Progress" and applies the exclusive `agent:NAME` label in a single update (replacing any existing `agent:*` label), and fails without changing state when the label does not exist.
 
 Use `issues complete ISSUE --summary-file tmp/summary.md` (or `--summary "text"`) to post the completion summary comment and then transition to "Done". The comment is posted first, so a failed post leaves the issue state unchanged; unknown or trailing arguments are rejected before any mutation.
