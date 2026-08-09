@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-task-panel",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "description": "Persistent Claude-style tasks panel for Pi with slash commands and a structured tasks_write tool.",
   "license": "MIT",
   "keywords": [
