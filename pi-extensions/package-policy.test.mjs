@@ -30,7 +30,8 @@ function yamlScalar(value) {
 	if (trimmed.length >= 2 && ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'")))) {
 		return trimmed.slice(1, -1);
 	}
-	return trimmed;
+	const comment = trimmed.search(/\s+#/);
+	return comment === -1 ? trimmed : trimmed.slice(0, comment).trimEnd();
 }
 
 function stepField(lines, key) {
@@ -42,13 +43,30 @@ function stepField(lines, key) {
 	return undefined;
 }
 
+function stepMapping(lines, key) {
+	const pattern = new RegExp(`^(?: {6}-\\s+| {8})${key}:\\s*(?:#.*)?$`);
+	const index = lines.findIndex((line) => pattern.test(line));
+	if (index === -1) return undefined;
+	const parentIndent = lines[index].match(/^\s*/)?.[0].length ?? 0;
+	const childPattern = new RegExp(`^ {${parentIndent + 2}}([A-Za-z0-9_-]+):\\s*(.*)$`);
+	const mapping = {};
+	for (const line of lines.slice(index + 1)) {
+		if (!line.trim() || line.trimStart().startsWith("#")) continue;
+		const indent = line.match(/^\s*/)?.[0].length ?? 0;
+		if (indent <= parentIndent) break;
+		const child = line.match(childPattern);
+		if (child) mapping[child[1]] = yamlScalar(child[2]);
+	}
+	return mapping;
+}
+
 function stepRun(lines) {
 	const pattern = /^(?: {6}-\s+| {8})run:\s*(.*)$/;
 	const index = lines.findIndex((line) => pattern.test(line));
 	if (index === -1) return undefined;
 	const match = lines[index].match(pattern);
 	const value = match?.[1]?.trim() ?? "";
-	if (!/^[>|][+-]?$/.test(value)) return yamlScalar(value);
+	if (!/^[>|][+-]?(?:\s+#.*)?$/.test(value)) return yamlScalar(value);
 	const runIndent = lines[index].match(/^\s*/)?.[0].length ?? 0;
 	const body = [];
 	for (const line of lines.slice(index + 1)) {
@@ -85,6 +103,7 @@ function workflowJobSteps(source, jobName) {
 		raw: stepLines.join("\n").trimEnd(),
 		run: stepRun(stepLines),
 		uses: stepField(stepLines, "uses"),
+		with: stepMapping(stepLines, "with"),
 	}));
 }
 
@@ -113,8 +132,8 @@ function assertSkillSuitesNodePolicy(source) {
 	assert.ok(setupNode < firstNodeCommand, "jobs.skill-suites setup-node must run before its first Node/npm/npx command");
 	assert.ok(setupNode < deepResearch && deepResearch < setupBun, "deep-research stays between Node and Bun setup");
 	assert.ok(setupBun < piQol && piQol < piClaudeBridge, "Pi package suite order stays unchanged");
-	assert.match(steps[setupNode].raw, /^\s*node-version:\s*22\.19\.0\s*$/m, "skill suites pin exact Node 22.19.0");
-	assert.doesNotMatch(steps[setupNode].raw, /^\s*cache:/m, "Node setup does not add caching");
+	assert.equal(steps[setupNode].with?.["node-version"], "22.19.0", "skill suites pin exact Node 22.19.0");
+	assert.equal(steps[setupNode].with?.cache, undefined, "Node setup does not add caching");
 }
 
 function replaceOnce(source, before, after) {
@@ -130,7 +149,7 @@ test("skill suites Node policy accepts the pinned workflow", () => {
 	assertSkillSuitesNodePolicy(skillTestsWorkflow());
 });
 
-test("skill suites Node policy rejects wrong-job setup and hidden block commands", () => {
+test("skill suites Node policy rejects wrong-job setup and decoy pins", () => {
 	const workflow = skillTestsWorkflow();
 	const setupStep = workflowJobSteps(workflow, "skill-suites").find((step) => step.uses === "actions/setup-node@v4");
 	assert.ok(setupStep, "skill suites setup-node step exists for mutations");
@@ -142,7 +161,19 @@ test("skill suites Node policy rejects wrong-job setup and hidden block commands
 	);
 	assert.throws(() => assertSkillSuitesNodePolicy(wrongJobSetup), /jobs\.skill-suites configures Node/);
 
-	const hiddenCommand = `      - name: hidden pre-setup block command\n        run: |\n          echo preparing\n          npx --version\n\n${setupStep.raw}`;
+	const wrongPinWithDecoy = replaceOnce(
+		workflow,
+		"          node-version: 22.19.0",
+		"          node-version: 20.0.0\n        env:\n          DECOY: |\n            node-version: 22.19.0",
+	);
+	assert.throws(() => assertSkillSuitesNodePolicy(wrongPinWithDecoy), /pin exact Node 22\.19\.0/);
+});
+
+test("skill suites Node policy rejects hidden commented block commands", () => {
+	const workflow = skillTestsWorkflow();
+	const setupStep = workflowJobSteps(workflow, "skill-suites").find((step) => step.uses === "actions/setup-node@v4");
+	assert.ok(setupStep, "skill suites setup-node step exists for mutation");
+	const hiddenCommand = `      - name: hidden pre-setup block command\n        run: | # valid YAML comment\n          echo preparing\n          npx --version\n\n${setupStep.raw}`;
 	const blockCommandBeforeSetup = replaceOnce(workflow, setupStep.raw, hiddenCommand);
 	assert.throws(() => assertSkillSuitesNodePolicy(blockCommandBeforeSetup), /before its first Node\/npm\/npx command/);
 });
