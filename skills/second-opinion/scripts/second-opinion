@@ -560,13 +560,21 @@ collect_review_instructions() {
     # same documented posture as newline-in-name on the glob side. Not worth
     # a -z/NUL rebuild of the scope pipeline for hostile filenames in a repo
     # the reviewer chose to review.
-    local changed_file dir
+    local changed_file dir chain_i
     while IFS= read -r changed_file; do
       [[ -n "$changed_file" ]] || continue
+      # Emit parents BEFORE children (root → leaf): agent-file convention is
+      # that deeper files override shallower ones, and prompt recency weights
+      # later content — so the more-specific file must appear last. Collect
+      # the ancestor chain walking up, then emit it in reverse.
+      local -a agents_chain=()
       dir="$(dirname "$changed_file")"
       while [[ "$dir" != "." && "$dir" != "/" ]]; do
-        emit_instruction_file "$dir/AGENTS.md"
+        agents_chain+=("$dir/AGENTS.md")
         dir="$(dirname "$dir")"
+      done
+      for ((chain_i = ${#agents_chain[@]} - 1; chain_i >= 0; chain_i--)); do
+        emit_instruction_file "${agents_chain[$chain_i]}"
       done
     done <<< "$REVIEW_CHANGED_FILES"
   fi

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **second-opinion: `AGENTS.md` joined the default review-instruction globs**,
+  and nested `AGENTS.md` files governing the changed paths are collected too
+  (parents before children). **Migration note for existing installs**: skill
+  seeding never overwrites an existing `SECOND_OPINION_REVIEW_INSTRUCTIONS`
+  key, so a `vstack.settings.toml` that carries the previous default keeps the
+  old list — update the pinned value to
+  `"AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"`
+  (or delete the key to track the default) to pick up AGENTS.md coverage.
+
 - **orch: local pre-PR review passes are budgeted per pushed head, not per
   submission** (VST-153, follow-up to the vstack#1141 `reviewed_head` artifact
   stamp). `submit-pr` § 1.2 checks the budget through the new
