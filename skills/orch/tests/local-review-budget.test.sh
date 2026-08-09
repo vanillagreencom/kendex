@@ -142,15 +142,43 @@ assert_field "$OUT" head "$HEAD_C" "…reporting the normalized head"
 echo "=== transient bookkeeping never leaks into state ==="
 
 prior="$("$WS" --state-dir "$SD" get "$ISSUE" '.pr_local_review | has("prior_head")')"
-assert_status "$([[ "$prior" == "false" ]]; echo $?)" 0 "prior_head transient is stripped after the check"
+assert_status "$([[ "$prior" == "false" ]]; echo $?)" 0 "no transient keys land in state"
 
 echo "=== bare flags stay on the documented exit-2 usage path ==="
 
-for flag in --state-dir --worktree --head; do
+for flag in --state-dir --worktree --head --count; do
   rc=0
   "$BUDGET" "$ISSUE" "$flag" >/dev/null 2>&1 || rc=$?
   assert_status "$rc" 2 "bare $flag exits 2, not a bash expansion abort"
 done
+
+rc=0
+"$BUDGET" --state-dir= "$ISSUE" --head "$HEAD_C" >/dev/null 2>&1 || rc=$?
+assert_status "$rc" 2 "empty equals-form --state-dir= exits 2 instead of silently dropping the override"
+
+echo "=== --count attributes a completed pass atomically ==="
+
+HEAD_D="dddddddddddddddddddddddddddddddddddddddd"
+HEAD_E="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+"$BUDGET" --state-dir "$SD" "$ISSUE" --head "$HEAD_D" >/dev/null
+"$WS" --state-dir "$SD" set "$ISSUE" pr_local_review.extra keepme2 >/dev/null
+OUT="$("$BUDGET" --state-dir "$SD" "$ISSUE" --count "$HEAD_D")"
+assert_field "$OUT" passes "1" "matching head increments to one pass"
+assert_field "$OUT" reviewed_head "$HEAD_D" "…attributed to the counted head"
+OUT="$("$BUDGET" --state-dir "$SD" "$ISSUE" --count "$HEAD_D")"
+assert_field "$OUT" passes "2" "second count on the same head increments"
+OUT="$("$BUDGET" --state-dir "$SD" "$ISSUE" --count "$HEAD_E")"
+assert_field "$OUT" passes "1" "a different artifact head initializes at one pass, never inheriting"
+assert_field "$OUT" reviewed_head "$HEAD_E" "…and re-attributes to the new head"
+extra="$("$WS" --state-dir "$SD" get "$ISSUE" '.pr_local_review.extra')"
+assert_status "$([[ "$extra" == "keepme2" ]]; echo $?)" 0 "count-mode re-attribution preserves sibling keys"
+
+rc=0
+"$BUDGET" --state-dir "$SD" "$ISSUE" --count 'bad"; .x = 1; "' >/dev/null 2>&1 || rc=$?
+assert_status "$rc" 2 "malformed artifact head is refused before any state write"
+rc=0
+"$BUDGET" --state-dir "$SD" "$ISSUE" --count "$HEAD_D" --head "$HEAD_E" >/dev/null 2>&1 || rc=$?
+assert_status "$rc" 2 "--count combined with --head is a usage error"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

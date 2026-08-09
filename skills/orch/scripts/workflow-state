@@ -167,6 +167,44 @@ cmd_update() {
     atomic_update "$state_file" "$jq_expr"
 }
 
+# Atomic read-modify-write-report: the expression must evaluate to
+# {state: <new full state>, report: <any>}. The write of .state and the
+# capture of .report happen under the same lock, so the printed report is
+# the evidence of exactly the transition this call performed — a follow-up
+# `get` could instead observe another writer's interleaved change.
+cmd_update_report() {
+    local issue_id="$1"
+    local jq_expr="$2"
+
+    local state_file
+    state_file=$(resolve_state_file "$issue_id")
+    ensure_state_exists "$state_file"
+
+    local lock_file="${state_file}.lock"
+    local tmp_file="${state_file}.tmp"
+    local report_file="${state_file}.report"
+
+    (
+        flock -w 10 200 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
+
+        local combined
+        if ! combined=$(jq -c "$jq_expr" "$state_file" 2>&1); then
+            echo "Error: jq expression failed: $jq_expr" >&2
+            exit 1
+        fi
+        if ! jq -e '(.state | type == "object") and has("report")' >/dev/null 2>&1 <<<"$combined"; then
+            echo "Error: update-report expression must produce {state: <object>, report: <any>}" >&2
+            exit 1
+        fi
+        jq -c '.state' <<<"$combined" > "$tmp_file"
+        jq -c '.report' <<<"$combined" > "$report_file"
+        mv "$tmp_file" "$state_file"
+    ) 200>"$lock_file" || return 1
+
+    cat "$report_file"
+    rm -f "$report_file"
+}
+
 cmd_append() {
     local issue_id="$1"
     local field="$2"
@@ -328,6 +366,16 @@ Commands:
 
   get <issue_id> [jq_path]      Read value (default: entire state)
   update <issue_id> <jq_expr>   Run arbitrary jq expression
+  update-report <issue_id> <jq_expr>
+                                Atomic read-modify-write-report: the jq expr
+                                runs against the current state under the same
+                                lock as update and must produce
+                                {state: <new full state>, report: <any>} —
+                                .state is written back, .report printed
+                                compactly. Use when a caller needs a decision
+                                and its evidence from the SAME locked step
+                                (a separate get after update can interleave
+                                with another writer)
   append <issue_id> <field> <value>   Append to array field
   increment <issue_id> <field>  Increment numeric field
   set <issue_id> <field> <value>  Set field value ({/[ prefix, null/true/false,
@@ -407,6 +455,7 @@ case "${1:-help}" in
     init)      shift; cmd_init "$@" ;;
     get)       shift; cmd_get "$@" ;;
     update)    shift; cmd_update "$@" ;;
+    update-report) shift; cmd_update_report "$@" ;;
     append)    shift; cmd_append "$@" ;;
     increment) shift; cmd_increment "$@" ;;
     set)       shift; cmd_set "$@" ;;

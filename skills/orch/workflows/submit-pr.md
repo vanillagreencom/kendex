@@ -94,9 +94,9 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    ```bash
    jq -r '.qa_metadata.reviewed_head // empty' "$LOCAL_OUTPUT"
    ```
-   If the output is non-empty, use it as `[ARTIFACT_HEAD]`; if empty (an older artifact without the stamp), use the `head` value the step 1 check printed. Then count and attribute in ONE update — increment only when the recorded head already matches; a mismatch (HEAD moved between step 1 and the review) initializes the artifact's head at one pass instead of letting a new head inherit the old head's count:
+   If the output is non-empty, use it as `[ARTIFACT_HEAD]`; if empty (an older artifact without the stamp), use the `head` value the step 1 check printed. Then count the pass — the helper validates the SHA (a malformed artifact value is refused, never embedded in a state expression) and attributes atomically: increment when the recorded head matches, else the new head initializes at one pass rather than inheriting the old head's count:
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_local_review = (if (.pr_local_review.reviewed_head // "") == "[ARTIFACT_HEAD]" then (.pr_local_review + {passes: ((.pr_local_review.passes // 0) + 1)}) else ((.pr_local_review // {}) + {passes: 1, reviewed_head: "[ARTIFACT_HEAD]"}) end)'
+   .agents/skills/orch/scripts/local-review-budget [ISSUE_ID] --count "[ARTIFACT_HEAD]"
    ```
 
    If `ok == false`, report the `reason` and continue to § 2 — local review is advisory, never a submission blocker. This includes reason `no_review` (the artifact self-reports no review happened), reason `incomplete` (the artifact declares `qa_metadata` but its findings are unusable — arrays lost, or a present `blockers[]`/`suggestions[]` item omits a required `review-finding` field such as `category`; a `detail` field pinpoints it), and script exits 3 (no diff scope) / 4 (model reported no review, or the response stayed schema-incomplete after the one-shot retry) / 5 (the external CLI never produced a review — non-zero exit, timeout, or empty response — partial output preserved as `<output>.failed.json`): none of these is a pass.
