@@ -100,7 +100,11 @@ while [ $# -gt 0 ]; do
         ''|*[!0-9]*) echo "::error::pr-watch: --awaiting-after needs a positive integer" >&2; exit 2 ;;
       esac
       # Same bound as the settings path: past Bash's integer range the later
-      # [ -gt ] comparisons fail silently inside their ifs.
+      # [ -gt ] comparisons fail silently inside their ifs. Leading zeros
+      # are stripped first so a zero-padded fixed-width value is judged by
+      # its numeric magnitude, not its character count.
+      AWAITING_AFTER="$(printf '%s' "$AWAITING_AFTER" | sed 's/^0*//')"
+      [ -z "$AWAITING_AFTER" ] && AWAITING_AFTER=0
       if [ "${#AWAITING_AFTER}" -gt 9 ]; then
         echo "::error::pr-watch: --awaiting-after is out of range (max 9 digits)" >&2
         exit 2
@@ -164,6 +168,8 @@ if [ -z "$AWAITING_AFTER" ]; then
       exit 2
       ;;
   esac
+  AWAITING_AFTER="$(printf '%s' "$AWAITING_AFTER" | sed 's/^0*//')"
+  [ -z "$AWAITING_AFTER" ] && AWAITING_AFTER=0
   if [ "${#AWAITING_AFTER}" -gt 9 ]; then
     echo "::error::pr-watch: PR_REVIEW_WAIT_SECS is out of range (max 9 digits), got '$AWAITING_AFTER'" >&2
     exit 2
