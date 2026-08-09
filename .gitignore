@@ -62,3 +62,8 @@ Thumbs.db
 # Cross-repo mailbox log — machine-local session coordination, never committed
 # (docs/cross-repo.md, the curated contract, IS tracked on purpose)
 docs/cross-repo-notes.md
+
+# Workspace-specific Linear Loop config — never committed (vstack is portable);
+# backed up as a secret gist, see the file's own header. The portable template
+# (docs/linear-loops.md) IS tracked on purpose.
+docs/linear-loops-local.md

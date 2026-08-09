@@ -1,11 +1,17 @@
-# Linear Loops — Triage Janitor
+# Linear Loops — Triage Janitor (portable template)
 
-Source of truth for our Linear Loop definitions. Loops have no public GraphQL
-API (verified 2026-08-08 by schema introspection: no `loop*`/`agentAutomation*`
-CRUD; only leaked enums `AgentAutomationUsageLimitScope`, `WorkflowTrigger`,
-`WorkflowTriggerType`), so they are configured manually in the Linear UI at
-**Loops → New loop**. When this file changes, re-paste the affected sections
-into the UI.
+Source-of-truth template for Linear Loop definitions. Loops have no public
+GraphQL API (verified 2026-08-08 by schema introspection: no
+`loop*`/`agentAutomation*` CRUD; only leaked enums
+`AgentAutomationUsageLimitScope`, `WorkflowTrigger`, `WorkflowTriggerType`),
+so they are configured manually in the Linear UI at **Loops → New loop**.
+When this file changes, re-paste the affected sections into the UI.
+
+This file is portable — it contains no workspace-specific team names,
+products, or integration details. Workspace specifics (team list, ownership
+map, sync direction notes) live in `docs/linear-loops-local.md`, which is
+untracked (see `.gitignore`). Fill the `[BRACKETED]` placeholders from that
+local file when pasting into Linear.
 
 Scope boundary: Loops handle cheap per-issue hygiene only (labels, team
 routing, duplicate flagging, actionability nudges). Batch work — bundling,
@@ -25,16 +31,19 @@ Runs once per newly created issue.
 | Setting | Value |
 |---------|-------|
 | Event | An issue is **created** (NOT "created or updated") |
-| Teams | drovr, hyprtrade, memsira, vg-shell, vstack |
+| Teams | [ALL WORKSPACE TEAMS] |
 | Filter: Status | Triage, Backlog, Todo |
-| Filter: Agent Session (if available) | none — skip issues an agent is actively working |
 
-Created-only is deliberate: an "updated" trigger fires on every GitHub-sync
-refresh, every `linear.sh` mutation from orch/tpm, and the loop's own edits.
-Re-triage is handled by Loop 2.
+No Agent Session filter: its options (Active/Error/Dismissed/Merged) only
+match issues that HAVE a session, and a just-created issue almost never does —
+the filter would exclude nearly everything or nothing useful.
 
-Do not add a Creator filter — GitHub-synced issues have an integration
-creator, and those are exactly the ones needing triage.
+Created-only is deliberate: an "updated" trigger fires on every issue-tracker
+sync refresh, every CLI mutation from orchestration agents, and the loop's own
+edits. Re-triage is handled by Loop 2.
+
+Do not add a Creator filter — issues synced from an external tracker have an
+integration creator, and those are exactly the ones needing triage.
 
 ### Permissions
 
@@ -43,7 +52,7 @@ creator, and those are exactly the ones needing triage.
 | Team access | All public teams | Duplicate check needs cross-team view |
 | Allow changes outside triggering issue | ON | Needed only for `related` relations and duplicate comments; instructions hard-limit everything else |
 | Web search | OFF | Not needed |
-| Externally synced issues and comments | ON | Instructions forbid title/description edits on synced issues; sync is one-way GitHub→Linear so Linear-side comments don't propagate back |
+| Externally synced issues and comments | ON | Instructions forbid title/description edits on synced issues; verify your sync direction before enabling — with a one-way external→Linear sync, Linear-side comments do not propagate back |
 | Coding sessions | OFF | Loops get no repo access; code-verified work belongs to tpm audit |
 
 ### Instructions
@@ -59,8 +68,9 @@ making a change, and never take destructive action.
 - Never create new issues.
 - Never edit the title or description of any issue other than the triggering
   issue. Never edit the title or description of the triggering issue if it is
-  synced from GitHub (has a GitHub link/attachment) — for synced issues,
-  restrict yourself to labels, team, priority, relations, and comments.
+  synced from an external tracker (has an external link/attachment) — for
+  synced issues, restrict yourself to labels, team, priority, relations, and
+  comments.
 - Never change assignees, cycles, or projects.
 - On issues other than the triggering issue, you may only add "related"
   relations and comments — no field edits of any kind.
@@ -70,19 +80,9 @@ making a change, and never take destructive action.
 
 Use this map for routing decisions. It overrides guesses from team names.
 
-- vstack (VST): the agent-stack infrastructure repo — skills/, agents/,
-  hooks/, pi-extensions, the Rust vstack CLI (add/refresh/report,
-  vstack.toml), and propagation into consuming repos.
-- hyprtrade (HT): the hyprtrade trading application itself. NOT the
-  hyprtrade.io marketing website — website work belongs to vg-shell.
-- vg-shell (VGS): the shell/capture pipeline repo and the hyprtrade.io
-  website.
-- drovr (DRO): the drovr product.
-- memsira (MEM): the memsira product.
-
-An issue about agent workflows, skills, hooks, CI harness behavior, or the
-vstack CLI belongs in vstack even if it was filed on a product team, and vice
-versa: product bugs filed on vstack belong on the product team.
+[PASTE WORKSPACE OWNERSHIP MAP FROM docs/linear-loops-local.md — one bullet
+per team: team name (KEY): what it owns, plus any NOT-this disambiguations
+and cross-cutting routing rules.]
 
 ## Task 1 — Labels
 
@@ -132,9 +132,10 @@ janitor pass. Requires the workspace label `re-triage` to exist.
 | Setting | Value |
 |---------|-------|
 | Event | An issue is **updated** |
-| Teams | drovr, hyprtrade, memsira, vg-shell, vstack |
+| Teams | [ALL WORKSPACE TEAMS] |
 | Filter: Labels | contains `re-triage` |
 | Filter: Status | Triage, Backlog, Todo |
+| Filter: Agent Session | "is not Active" if the filter supports negation — avoids re-triaging an issue an agent is mid-flight on; omit if only inclusion is supported |
 
 Self-disarming: the loop removes the label when done; label absent means the
 filter fails, so its own final update does not re-fire it.
@@ -159,9 +160,9 @@ is mandatory — the label is the trigger, and removing it prevents re-runs.
 ## Deliberate non-loops
 
 - **No per-team loop copies** — the ownership map inside one instructions
-  text covers team differences; five copies drift.
-- **No "updated" catch-all loop** — sync and orchestration churn would fire
-  it constantly.
+  text covers team differences; copies drift.
+- **No "updated" catch-all loop** — tracker sync and orchestration churn
+  would fire it constantly.
 - **No consolidation/cancel/bundle loop** — stays with tpm audit (repo
   verification, batch view, review gate).
-- **No priority/estimate loop** — orch and cycle planning own those.
+- **No priority/estimate loop** — orchestration and cycle planning own those.
