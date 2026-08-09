@@ -106,13 +106,18 @@ impl RefreshStats {
     /// success, no failure, and no missing state, and the summary echoed the
     /// recorded source hash as both old and new — "(unchanged)" for an entry
     /// that was never re-copied from its source (VST-134).
-    fn fail_no_installable_harness(&mut self, item: &str, harnesses: &[String]) {
+    fn fail_no_installable_harness(&mut self, item: &str, harnesses: &[String], global: bool) {
+        let remove_cmd = if global {
+            format!("vstack remove {item} --global")
+        } else {
+            format!("vstack remove {item}")
+        };
         self.fail(
             item,
             None,
             format!(
                 "no installable harness (recorded harnesses: [{}]); \
-                 re-add the item or run `vstack remove` to drop the stale entry",
+                 re-add the item or run `{remove_cmd}` to drop the stale entry",
                 harnesses.join(", ")
             ),
         );
@@ -367,7 +372,7 @@ pub fn refresh_items_in_scope(
                 stats.mark_content_changed(name);
             }
         } else if succeeded == 0 && !failed {
-            stats.fail_no_installable_harness(name, &entry.harnesses);
+            stats.fail_no_installable_harness(name, &entry.harnesses, global);
         }
     }
 
@@ -442,7 +447,7 @@ pub fn refresh_items_in_scope(
                 stats.mark_content_changed(name);
             }
         } else if succeeded == 0 && !failed {
-            stats.fail_no_installable_harness(name, &entry.harnesses);
+            stats.fail_no_installable_harness(name, &entry.harnesses, global);
         }
     }
 
@@ -496,7 +501,7 @@ pub fn refresh_items_in_scope(
             stats.hooks_refreshed += 1;
             stats.mark_success(name);
         } else if succeeded == 0 && !failed {
-            stats.fail_no_installable_harness(name, &entry.harnesses);
+            stats.fail_no_installable_harness(name, &entry.harnesses, global);
         }
     }
 
@@ -999,11 +1004,18 @@ pub fn prune_hook_harnesses(
                 }
             }
         }
+        // Only an entry emptied by THIS run's allowlist pruning is a completed
+        // self-heal, safe to drop. An entry that arrived already empty was
+        // never emptied by an allowlist change — it is the VST-134 bug shape —
+        // and silently unmanaging it here would mask the stale install exactly
+        // like the summary bug did. Leave it in the lock so the refresh pass
+        // fails it loudly (`fail_no_installable_harness`).
+        let arrived_empty = entry.harnesses.is_empty();
         if new_harnesses != entry.harnesses {
             entry.harnesses = new_harnesses;
             pruned_any = true;
         }
-        if entry.harnesses.is_empty() {
+        if entry.harnesses.is_empty() && !arrived_empty {
             remove_hook_entries.push(entry.name.clone());
         }
     }

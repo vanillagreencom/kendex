@@ -1051,6 +1051,50 @@ fn refresh_fails_loud_when_a_lock_entry_yields_no_harness_install() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// Caller-level companion to the test above for the hook shape: production
+/// callers (`run_one`, the TUI) run [`prune_hook_harnesses`] before the
+/// refresh passes, and pruning used to DELETE a hook entry whose harness list
+/// was already empty on arrival — silently unmanaging the bug-shaped entry
+/// (VST-134) before the loud-failure guard could ever see it. Pruning must
+/// only drop an entry it emptied itself (a completed allowlist self-heal);
+/// an arrived-empty entry stays in the lock and fails the refresh pass.
+#[test]
+fn prune_preserves_arrived_empty_hook_entry_for_loud_refresh_failure() {
+    let root = tmpdir("arrived-empty-hook");
+    let project = root.join("project");
+    let source = make_source(&root, "source");
+    std::fs::create_dir_all(&project).unwrap();
+    write_colliding_source(&source, "2", "PreToolUse", "source-model");
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry("guard", ItemKind::Hook, &source, vec![]));
+    let sources = vec![RefreshSource::from_root(&source)];
+    let source_hooks = all_source_hooks(&sources);
+
+    // run_one ordering: prune first, then the refresh passes.
+    assert!(
+        !prune_hook_harnesses(false, &mut lock, &source_hooks, None),
+        "an arrived-empty entry was not pruned by this run and must not count as pruned"
+    );
+    assert!(
+        lock.entries.contains_key("guard"),
+        "pruning must not silently unmanage an arrived-empty hook entry"
+    );
+
+    let stats = crate::test_util::with_project_root(&project, || {
+        let mut project_config = ProjectConfig::default();
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+    });
+    assert!(
+        stats.failures.iter().any(|failure| failure.item == "guard"),
+        "the surviving entry must fail the refresh pass loudly: {:?}",
+        stats.failures
+    );
+    assert_eq!(stats.hooks_refreshed, 0);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// The single-source fallback must not silently reinstall an entry from a
 /// source it was never installed from — it reports missing instead.
 #[test]
