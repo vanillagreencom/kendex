@@ -82,8 +82,9 @@ making a change, and never take destructive action.
 - Routing labels are add-only: never change or remove an existing `agent:*`
   label (activation re-checks routing and owns corrections).
 - On issues other than the triggering issue, you may only add "related"
-  relations, comments, and — for Task 6 bundle children only — set their
-  parent to the bundle parent you just created. No other field edits.
+  relations, comments, apply the "re-triage" label to a Task 6 bundle
+  leader, and — for Task 6 bundle children only — set their parent to the
+  bundle parent you just created. No other field edits.
 - If nothing needs changing, do nothing at all. Do not post repeat comments.
 
 ## Team ownership map
@@ -112,9 +113,9 @@ If ownership is ambiguous, comment and ask. Humans move issues; you flag.
 Apply missing labels from the existing label set of the issue's CURRENT
 team (Task 1 never moves issues). Never invent labels; if no
 existing label fits, skip. Read each label's description to decide fit
-against the issue's title and description. Remove a
-label only when it is plainly contradicted by the issue content or invalid
-for the destination team; otherwise leave existing labels alone.
+against the issue's title and description. Remove a label only when it is plainly contradicted by the issue content or
+invalid for the issue's CURRENT team (Task 1 never moves issues); otherwise
+leave existing labels alone.
 
 Agent routing label: if the issue carries no `agent:*` label, assign exactly
 ONE from the team's declared set below, chosen by which definition best fits
@@ -160,9 +161,12 @@ neither a parent nor sub-issues — otherwise skip this task entirely (an
 In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
-agent:* label. Exclude any issue (including the trigger) that blocks or is
-blocked by an issue OUTSIDE the selected bundle — cross-boundary sequencing
-must stay where it is visible, so such issues are left unbundled. If the triggering issue plus one to
+agent:* label. Evaluation order for the boundary rule: select precondition-passing
+candidates first, then drop any member (including the trigger) that blocks
+or is blocked by an issue outside the tentative bundle, and re-evaluate
+once after the drops; if the trigger itself is dropped, skip this task —
+cross-boundary sequencing must stay where it is visible, so such issues
+are left unbundled. If the triggering issue plus one to
 four of them would plausibly ship as a single pull request — same component
 or surface, complementary small changes, no conflicting approaches — create
 ONE new parent issue IN THAT SAME TEAM AND PROJECT from the template below and set each child's parent to
@@ -171,13 +175,21 @@ a parent; never bundle across teams or projects. Issues that have sub-issues
 (coordination parents — including ones this loop created, which will
 themselves trigger a janitor run) are never bundle candidates.
 
-Duplicate-bundle guard (concurrent runs have no lock): the OLDEST issue of
-the would-be bundle leads — if any selected companion was created before
-the triggering issue, skip this task entirely; the janitor run for that
-oldest member (or a re-triage of it) owns the bundle. Immediately before
-creating the parent, re-check that every selected child still has no
-parent; if any acquired one since the search, abandon the bundle without
-creating anything.
+Duplicate-bundle guard (concurrent runs have no lock): the bundle's LEADER
+is its oldest member that itself passes every precondition above (leaf,
+projected, agent-labeled, unstarted, no cross-boundary blocking relations)
+— ineligible members can be bundled but never lead. If the triggering
+issue is NOT the leader, do not create anything: apply the "re-triage"
+label to the leader and stop this task — the leader's re-triage pass owns
+the bundle (its own creation-time pass ran before the younger companions
+existed, so this re-trigger is what makes bundling actually happen).
+If the triggering issue IS the leader: immediately before creating the
+parent, (a) re-check that every selected child still has no parent, and
+(b) search for an existing coordination parent already covering any of
+them — if either check hits, abandon the bundle without creating anything.
+Perfect mutual exclusion is impossible without locks; these rechecks bound
+the window, and an accidental duplicate parent is flagged by the next
+sweep rather than compounded.
 
 Parent issue format (from the project-management skill's
 parent-issue-template — keep this embedded copy faithful to it; omit any
@@ -301,7 +313,8 @@ working.
 - Never edit any issue's title, description, assignees, cycles, projects,
   priority, or estimate.
 - Allowed mutations: comments, "related" relations, and adding the
-  "re-triage" label. Nothing else.
+  "re-triage" label (on audited issues, or on a companion-group leader per
+  Check 2 even when it sits outside the audited set). Nothing else.
 - At most one comment per issue per run — when several checks match the
   same issue, combine them into that single comment (Check 1's obsolete
   finding first, then Check 3's duplicate note as a second line). If you
@@ -325,8 +338,11 @@ has labels contradicted by its content, or clearly belongs to another team,
 add the "re-triage" label. Also apply "re-triage" when an unstarted issue
 has an obvious same-team, same-project companion that would ship in the
 same pull request — even if its own metadata is complete — so the janitor's
-bundling task can create the parent; apply it to the OLDEST member of the
-companion group only (that issue leads the bundle). The re-triage pass performs the actual cleanup
+bundling task can create the parent. Apply it to the group's LEADER only:
+its oldest member that is itself open, unstarted, and free of blocking
+relations outside the group. The leader may sit outside this run's audited
+ten — that one label application is explicitly permitted — but if the true
+leader is started or otherwise ineligible, skip the group entirely. The re-triage pass performs the actual cleanup
 (including project/agent assignment and Task 6 bundling). Do not fix the
 metadata inline.
 
