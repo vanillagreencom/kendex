@@ -193,17 +193,17 @@ For long autonomous runs the agent may not go idle, so the transcript can grow u
 | Budget guard percent | Context-window percentage that fires the guard. `-1` disables percent-based firing. | `85` |
 | Budget guard token limit | Absolute tokens that fire the guard. `-1` uses percent only. | `-1` |
 | Chunked compaction input cap | Max serialized characters per summarization request. Long transcripts are chunked, summarized chunk-by-chunk, then tree-reduced — every model/remote request (chunk + every reduce pass) is bounded so the compaction call itself cannot exceed provider buffer limits. `0` disables chunking. | `240000` |
-| Write pre-compaction handoff artifact | For budget-guard compaction and enabled custom session compactions, write `~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/<timestamp>.json` plus a `latest.json` pointer containing previous summary, last task state, and referenced files/artifacts. Branch summaries do not write these artifacts. Write failures surface as a QOL warning notification and a `handoffArtifactError` field in the compaction details. | on |
+| Write pre-compaction handoff artifact | When enabled, budget-guard compaction and enabled custom session compactions write `~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/<timestamp>.json` plus a `latest.json` pointer containing previous summary, last task state, and referenced files/artifacts. Branch summaries do not write these artifacts. Write failures surface as a QOL warning notification and a `handoffArtifactError` field in the compaction details. | on |
 | Transcript-risk warn budget (chars) | `/context` shows a warning when the serialized payload of messages-to-send exceeds this many characters, even if tokens are still below the context window. `0` disables. | `600000` |
 
-Budget-guard compaction always uses QOL's chunked summarizer plus handoff artifact, even if **Custom compaction summaries** is off. Manual/user-triggered and idle compactions use that same path only when **Custom compaction summaries** is on. `/tree` branch summaries separately use QOL's chunked summarizer when **Custom branch summaries** is on, but do not write handoff artifacts. When the relevant setting is off, Pi uses its default behavior for that compaction type.
+Budget-guard compaction always uses QOL's chunked summarizer, even if **Custom compaction summaries** is off. It writes a pre-compaction handoff artifact only when **Write pre-compaction handoff artifact** is enabled. Manual/user-triggered and idle compactions use the QOL chunked path only when **Custom compaction summaries** is on, and follow the same handoff-artifact toggle. `/tree` branch summaries separately use QOL's chunked summarizer when **Custom branch summaries** is on, but do not write handoff artifacts. When the relevant summarization setting is off, Pi uses its default behavior for that compaction type.
 
 While budget-guard compaction is running, QOL keeps a persistent status line above the prompt (and in the normal status footer when the compact statusline is disabled). After Pi prints the compacted-summary block, the line changes to `QOL budget guard finalizing compaction…` until finalization completes, so long reload gaps do not look frozen.
 
 Recommended values for long autonomous runs:
 
 - Keep **Long-session budget guard** on. Lower **Budget guard percent** to `75` if your provider buffers are tight.
-- Optionally turn **Custom compaction summaries** on so user-initiated and idle compactions also use the QOL chunked summarizer + handoff artifact. (Budget-guard-triggered compactions always use them regardless of this setting.)
+- Optionally turn **Custom compaction summaries** on so user-initiated and idle compactions also use the QOL chunked summarizer. With **Write pre-compaction handoff artifact** enabled, those compactions also write handoff artifacts. Budget-guard compaction always uses the QOL chunked summarizer and follows the handoff-artifact toggle.
 - Lower **Chunked compaction input cap** to ~`120000` when the summarizer model has a small context window.
 
 ### Thinking

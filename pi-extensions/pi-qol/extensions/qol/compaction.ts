@@ -256,9 +256,9 @@ export function writeBudgetHandoffArtifact(ctx: ExtensionContext, handoff: QolBu
 
 export async function handleQolCompaction(event: any, ctx: ExtensionContext): Promise<any> {
 	const isBudgetGuard = isBudgetGuardCompaction(event?.customInstructions);
-	// Budget-guard-triggered compactions force the QOL bounded path so the
-	// chunked summarizer + handoff artifact always run, even when the user
-	// has not flipped compaction.customEnabled on.
+	// Budget-guard-triggered compactions force the QOL bounded summarizer even
+	// when compaction.customEnabled is off. The handoff writer still honors its
+	// independent compaction.handoffArtifactEnabled toggle.
 	if (!isBudgetGuard && !settingBoolean("compaction.customEnabled", false, ctx.cwd)) return undefined;
 	const preparation = event.preparation ?? {};
 	const messages = [...(preparation.messagesToSummarize ?? []), ...(preparation.turnPrefixMessages ?? [])];
