@@ -151,16 +151,28 @@ no project clearly fits — name the gap in your Task 4 comment instead.
 
 ## Task 6 — Same-PR bundling
 
+Bundle only when the triggering issue, after Tasks 1-5, is itself unstarted
+(Triage, Backlog, Todo), HAS a project, carries an agent:* label, and has
+neither a parent nor sub-issues — otherwise skip this task entirely (an
+In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
-SAME project as the triggering issue. If the triggering issue plus one to
+SAME project that likewise have no parent, no sub-issues, and carry an
+agent:* label. If the triggering issue plus one to
 four of them would plausibly ship as a single pull request — same component
 or surface, complementary small changes, no conflicting approaches — create
-ONE new parent issue from the template below and set each child's parent to
+ONE new parent issue IN THAT SAME TEAM AND PROJECT from the template below and set each child's parent to
 it. Skip entirely when in doubt; never re-parent an issue that already has
-a parent; never bundle across teams or projects.
+a parent; never bundle across teams or projects. Issues that have sub-issues
+(coordination parents — including ones this loop created, which will
+themselves trigger a janitor run) are never bundle candidates.
 
 Parent issue format (from the project-management skill's
-parent-issue-template — keep this embedded copy faithful to it):
+parent-issue-template — keep this embedded copy faithful to it; omit any
+header line with no value):
+
+  **Research**: [RESEARCH_REF — only when a child carries one]
+  **Decision [DXXX]**: [DECISION_PATH — only when a child carries one]
+  **Source**: [ORIGIN_CONTEXT — only when a child carries one]
 
   [SUMMARY — 1-2 sentences describing the bundle's overall goal,
   synthesized from the children, not copied from one of them]
@@ -297,7 +309,10 @@ audit confirmation; not closing." Do not cancel the issue yourself.
 
 If the issue lacks a type label, a project, or an `agent:*` routing label,
 has labels contradicted by its content, or clearly belongs to another team,
-add the "re-triage" label — the re-triage pass performs the actual cleanup
+add the "re-triage" label. Also apply "re-triage" when an unstarted issue
+has an obvious same-team, same-project companion that would ship in the
+same pull request — even if its own metadata is complete — so the janitor's
+bundling task can create the parent. The re-triage pass performs the actual cleanup
 (including project/agent assignment and Task 6 bundling). Do not fix the
 metadata inline.
 
