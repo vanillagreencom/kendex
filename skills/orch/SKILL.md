@@ -272,6 +272,8 @@ Never edit or write code unless the user explicitly asks. Delegate to the domain
 
 **Parallel work safety.** Before running issues in parallel, verify all five dimensions — dependency resolution, agent overlap, code scope, build config (manifest changes are hard separations), and active work (worktrees, open PRs) — and apply the grouping constraints. Mechanics: `workflows/parallel-check.md`.
 
+**Tracked issue creation.** Never create a tracked issue directly (`linear.sh issues create` / `gh issue create`) from an orchestration session — route it through TPM (project-management), which owns labels, project, priority, estimate, and relations. A direct create prints a URL and looks like success while the issue lands with none of those; without an `agent:*` label it is invisible to agent routing. The only direct creates are the ones a workflow step explicitly specifies with its label set (`plan-issues`, `start-new`, the `merge-pr` rebundle).
+
 ---
 
 ### Review Pipeline
@@ -280,4 +282,4 @@ Never edit or write code unless the user explicitly asks. Delegate to the domain
 
 **Recommendation categorization.** Evaluate each suggestion in order: actionable (vague → omit) → related (doc updates for changed code are always `fix`; unrelated → `issue`) → size (small → `fix`; needs tracking or delegation → `issue`). Security vulnerabilities: `fix` if quick, else `issue` — never skip. Filing bar: file an `issue` only for out-of-scope behavioral defects, est≥2 refactors, decision revisits, or evidenced anomalies; P4 polish is absorbed in-PR when est-1 and related, else dropped with a one-line note. Residue attaches to an existing same-surface bundle by default. Full decision flow and signal table: `workflows/recommendation-bias.md`.
 
-**Issue audit pipeline.** Collect review JSON → transform `category=issue` suggestions into audit input (schema in `project-management/schemas/`) → delegate to TPM for tracked issue creation. Sources: suggestions, escalated blockers, dev-skipped items, planned items, discovered work; populate dependency fields when order is known.
+**Issue audit pipeline.** Every follow-up that needs a tracked issue goes through this pipeline, however it was discovered — not only review JSON. In scope: `category=issue` suggestions, escalated blockers, dev-agent "deliberately left out"/skipped lists, planned items, and gaps noticed while reading reports, return messages, or code. Collect them → transform into audit input (schema in `project-management/schemas/`) → delegate to TPM for tracked issue creation; populate dependency fields when order is known. Never file these directly with `issues create` (see [Coordination](#coordination) — tracked issue creation).

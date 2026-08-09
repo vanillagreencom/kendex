@@ -161,6 +161,15 @@ LINEAR_FORMAT = "safe"
 LINEAR_TEAM_PREFIX = "PROJ"
 # Used by: linear.
 
+LINEAR_AGENT_LABELS = ""
+# Used by: linear (`issues create`). The project's declared agent-routing
+# label set, comma- or space-separated (e.g. "agent:generalist, agent:rust").
+# When non-empty, `issues create` refuses a create that carries no agent
+# label from this set - an issue without one is invisible to agent routing,
+# while the create prints a URL that looks like success. `--no-agent-label`
+# permits a deliberate bare create (e.g. intake mirroring). Leave empty in
+# projects with no agent-label taxonomy; the guard then stays off.
+
 # GITHUB
 
 GH_BOT_USERNAME = "automation[bot]"

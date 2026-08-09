@@ -97,6 +97,12 @@ Cache and attachment files live under `.cache/linear` in the physical git worktr
 
 In a linked git worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed symlink into the main checkout but is a real directory (a git operation re-materialized it), any full or reconciling `sync` refuses before touching the API — a full re-sync into a worktree-local dir would silently re-pull the entire history and burn the shared API budget. The refusal names the worktree, the expected symlink, and the repair: run `worktree fix-links <PATH>` from the main checkout, then re-run `sync`. Repos whose configured `WORKTREE_SYMLINKS` deliberately excludes `.cache` are exempt.
 
+## Issue Creation Routing
+
+Never create a tracked issue directly from an orchestration or review session — route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations. A direct `issues create` prints a URL and looks like success even when the issue landed with none of those, invisible to agent routing.
+
+When the project declares its agent-label taxonomy (`LINEAR_AGENT_LABELS` in `vstack.settings.toml` `[env]`, comma- or space-separated `agent:*` names), `issues create` enforces this: it refuses — before any API call — a create that carries no agent label from the declared set, including an unknown/typoed `agent:*` name that label resolution would otherwise silently skip. `--no-agent-label` permits a deliberate bare create (e.g. mirroring intake from another tracker). Projects with no declaration are unaffected.
+
 ## Output Formats
 
 | Format | Description |
@@ -117,6 +123,7 @@ In a linked git worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed 
 | `LINEAR_TEAM` | Team every write targets | — (unset refuses writes) |
 | `LINEAR_FORMAT` | Default output format | `safe` |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `PROJ` |
+| `LINEAR_AGENT_LABELS` | Declared agent-routing label set; non-empty makes `issues create` refuse creates with no agent label from the set (see [Issue Creation Routing](#issue-creation-routing)) | — (unset = guard off) |
 
 Put `LINEAR_API_KEY` in `.env.local`. Put non-secret defaults in committed `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides. For the API key specifically, a key set by project files (`.env` → settings `[env]` → `.env.local`) wins over a plain `LINEAR_API_KEY` inherited from the environment — per-repo workspaces make a box-global export wrong for every other repo, and `auth-check` warns (key fingerprints only) when a differing inherited key is being shadowed. `LINEAR_API_KEY_OVERRIDE` always wins; use it for one-off/inline keys and tests.
 

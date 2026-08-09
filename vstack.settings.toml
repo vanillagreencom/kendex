@@ -13,6 +13,11 @@ GH_VERIFY_CMD = ""
 LINEAR_FORMAT = "safe"
 LINEAR_TEAM = "vstack"
 LINEAR_TEAM_PREFIX = "VST"
+# Agent-routing set from docs/issue-label-taxonomy.md § Agent labels — keep the
+# two in sync. `issues create` refuses a create carrying none of these
+# (VST-147); `agent:iced` exists in the workspace but has no vstack surface,
+# so it is deliberately not declared here.
+LINEAR_AGENT_LABELS = "agent:generalist, agent:rust, agent:researcher, agent:multi, agent:human"
 ORCH_STATE_DIR = "tmp"
 # Reviewer gate: Copilot (copilot-pull-request-reviewer) auto-reviews every PR
 # here but never APPROVES — it only COMMENTS — so the gate runs in "review"

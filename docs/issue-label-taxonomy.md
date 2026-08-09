@@ -138,6 +138,12 @@ per issue, naming which agent role owns it.
 
 (`agent:iced` completes the group but has no vstack surface — see below.)
 
+This set is also declared machine-readably as `LINEAR_AGENT_LABELS` in
+`vstack.settings.toml` `[env]` — the linear skill's `issues create` refuses a create
+carrying none of the declared labels, so an issue filed outside the TPM pipeline can
+no longer land silently unrouted (VST-147; `--no-agent-label` opts a deliberate bare
+create out). Keep the declaration and this table in sync.
+
 ## Never-use for this repo
 
 These workspace labels exist for other projects' surfaces and structurally cannot
