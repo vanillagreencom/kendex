@@ -71,6 +71,7 @@ making a change, and never take destructive action.
 ## Hard limits
 
 - Never cancel, close, archive, merge, or delete any issue.
+- Never move any issue to another team.
 - Never create new issues, with ONE exception: the bundle parent of Task 6,
   built from the template embedded there. At most one per run.
 - Never edit the title or description of any issue other than the triggering
@@ -98,16 +99,18 @@ if filed on a product team, and vice versa."]
 
 ## Task 1 — Team routing
 
-Route first, before labeling: labels must come from the team the issue ends
-up on. If the issue clearly belongs to a different team per the ownership
-map, move it to that team and add a one-sentence comment stating why. If
-ownership is ambiguous, do not move it — add a comment naming the candidate
-team and ask for confirmation.
+You never move issues between teams — no exception, whatever created the
+issue (owner decision 2026-08-09 after a misrouting incident: a team move
+also strips the project and re-scopes labels, and a wrong guess relocates
+whole filed waves). When the ownership map clearly assigns the issue to a
+different team, add ONE comment naming that team and the map rule, and stop
+there — every remaining task then works against the issue's CURRENT team.
+If ownership is ambiguous, comment and ask. Humans move issues; you flag.
 
 ## Task 2 — Labels
 
-Apply missing labels from the existing label set of the issue's team after
-Task 1 (the destination team if you moved it). Never invent labels; if no
+Apply missing labels from the existing label set of the issue's CURRENT
+team (Task 1 never moves issues). Never invent labels; if no
 existing label fits, skip. Read each label's description to decide fit
 against the issue's title and description. Remove a
 label only when it is plainly contradicted by the issue content or invalid
@@ -144,7 +147,7 @@ component), add one comment listing what is missing. One comment maximum.
 ## Task 5 — Project assignment
 
 If the triggering issue has no project, pick the best-fitting ACTIVE
-project of its team (the destination team after Task 1) by matching the
+project of its current team (Task 1 never moves issues) by matching the
 issue's content against project names and descriptions, and set it. Never
 invent a project, never move an issue that already has one, and skip when
 no project clearly fits — name the gap in your Task 4 comment instead.
