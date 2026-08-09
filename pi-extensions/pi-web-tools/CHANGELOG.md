@@ -12,7 +12,8 @@
 - Unspecified transcript language now preserves YouTube's first-track fallback; explicit language requests recover case-insensitive regional matches, transcript metadata records the selected track, and caption fetches honor caller timeouts. HTML entities decode in one pass, with invalid numeric scalars retained literally.
 - Exa empty-success documents and missing requested URLs now surface as failures, status matching normalizes both URL and id fields, mixed transcript conflicts no longer abort unrelated URLs, and unresolved Gemini card placeholders no longer replace a genuine streamed answer.
 - Native caption extraction invoked through `web_fetch` now has a 120-second default timeout, and auto transcript detection recognizes common forms such as transcriptions, captioning, and subtitling.
-- Mostly-failed batches size successful previews from the content actually stored while retaining the original request-size aggregate cap. Exa content reconciliation accepts safe scheme/`www` canonicalization, result ids, and missing-URL positional responses without merging unrelated results.
+- Mostly-failed batches size successful previews from the content actually stored while retaining the original request-size aggregate cap. Exa content reconciliation accepts safe scheme/`www` canonicalization, result ids, and missing-identity positional responses; identified mismatches, including lone results, remain failures.
+- Explicit YouTube `understand` mode now preserves the caller's prompt unchanged for both Gemini Web and API paths instead of appending transcript-format instructions.
 
 ### 1.3.1
 

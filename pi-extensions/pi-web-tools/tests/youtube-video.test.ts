@@ -160,15 +160,21 @@ test("extractYouTubeUrl preserves caption fallback and recovers language variant
 
 test("videoMode=understand overrides transcript prompt detection", async () => {
 	let transcriptCalls = 0;
+	let sentPrompt: string | undefined;
 	const result = await extractYouTubeUrl("https://youtu.be/abc123XYZ_-", {
 		mode: "understand",
 		prompt: "Summarize this transcript",
 		preferGeminiWeb: false,
 		geminiApiKey: "key",
 		transcriptFetcher: async () => { transcriptCalls++; throw new Error("unexpected transcript call"); },
-		fetchImpl: (async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Visual summary" }] } }] }), { status: 200 })) as typeof fetch,
+		fetchImpl: (async (_url, init) => {
+			const body = JSON.parse(String(init?.body));
+			sentPrompt = body.contents[0].parts[1].text;
+			return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Visual summary" }] } }] }), { status: 200 });
+		}) as typeof fetch,
 	});
 	assert.equal(transcriptCalls, 0);
+	assert.equal(sentPrompt, "Summarize this transcript");
 	assert.equal(result?.source, "gemini-api");
 	assert.equal(result?.content, "Visual summary");
 });
@@ -207,6 +213,39 @@ test("native caption timeout cancellation reaches the transcript fetcher", async
 		},
 	}), (error) => error instanceof DOMException && error.name === "TimeoutError");
 	assert.equal(observedSignal?.aborted, true);
+});
+
+test("successful caption extraction removes parent timeout listener", async () => {
+	const controller = new AbortController();
+	const signal = controller.signal;
+	const originalAdd = signal.addEventListener.bind(signal);
+	const originalRemove = signal.removeEventListener.bind(signal);
+	let added = 0;
+	let removed = 0;
+	Object.defineProperty(signal, "addEventListener", { value: (...args: Parameters<AbortSignal["addEventListener"]>) => { added++; return originalAdd(...args); } });
+	Object.defineProperty(signal, "removeEventListener", { value: (...args: Parameters<AbortSignal["removeEventListener"]>) => { removed++; return originalRemove(...args); } });
+	await extractYouTubeUrl("https://youtu.be/abc123XYZ_-", {
+		mode: "transcript",
+		timeoutMs: 60000,
+		signal,
+		transcriptFetcher: async (videoId) => ({
+			videoDetails: {
+				videoId,
+				title: "Cleanup",
+				author: "Channel",
+				channelId: "channel-1",
+				lengthSeconds: 1,
+				viewCount: 1,
+				description: "",
+				keywords: [],
+				thumbnails: [],
+				isLiveContent: false,
+			},
+			segments: [{ offset: 0, duration: 1, text: "Done", lang: "en" }],
+		}),
+	});
+	assert.equal(added, 1);
+	assert.equal(removed, 1);
 });
 
 function webFetchSettings(videoEnabled = true): any {
@@ -563,6 +602,17 @@ test("web_fetch reconciles Exa canonical, id, and missing-URL results safely", a
 		urls: ["https://example.com/one", "https://example.com/two"],
 		provider: "exa",
 	}, undefined, undefined, { cwd: process.cwd() } as any), /Fetch failed for 2 URL/);
+
+	const loneUnrelatedTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{ createExaClient: () => ({ contents: async () => ({ results: [{ url: "https://unrelated.example/page", text: "unrelated" }], raw: {} }) }) as any },
+	);
+	await assert.rejects(() => loneUnrelatedTool.execute("test", {
+		url: "https://example.com/requested",
+		provider: "exa",
+	}, undefined, undefined, { cwd: process.cwd() } as any), /Fetch failed for 1 URL/);
 });
 
 test("web_fetch preserves AbortError identity and aggregates all-failed batches", async () => {

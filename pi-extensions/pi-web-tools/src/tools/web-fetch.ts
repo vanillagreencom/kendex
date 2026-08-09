@@ -484,12 +484,10 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 				}
 				for (const entry of contentResults) {
 					if (assignments.has(entry.index)) continue;
-					const singleResultFallback = failedUrls.length === 1 && response.results.length === 1 && !satisfiedRequestIndices.has(0);
 					const missingIdentityFallback = entry.keys.length === 0 && response.results.length === failedUrls.length && entry.index < failedUrls.length && !satisfiedRequestIndices.has(entry.index);
-					if (!singleResultFallback && !missingIdentityFallback) continue;
-					const requestIndex = singleResultFallback ? 0 : entry.index;
-					assignments.set(entry.index, requestIndex);
-					satisfiedRequestIndices.add(requestIndex);
+					if (!missingIdentityFallback) continue;
+					assignments.set(entry.index, entry.index);
+					satisfiedRequestIndices.add(entry.index);
 				}
 				for (const entry of contentResults) {
 					const requestIndex = assignments.get(entry.index);

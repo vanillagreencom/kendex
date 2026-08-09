@@ -69,8 +69,9 @@ export function isTranscriptPrompt(input: string | undefined): boolean {
 	return Boolean(input && TRANSCRIPT_KEYWORDS.test(input));
 }
 
-function enhancePrompt(input: string | undefined): string {
+function enhancePrompt(input: string | undefined, mode: YouTubeExtractOptions["mode"]): string {
 	const base = input ?? DEFAULT_PROMPT;
+	if (mode === "understand") return base;
 	if (isTranscriptPrompt(input) && !/\[hh:mm/i.test(input!)) return base + TIMESTAMP_DIRECTIVE;
 	return base;
 }
@@ -123,64 +124,85 @@ function availableTranscriptLanguages(error: unknown): string[] | undefined {
 	return Array.isArray(available) && available.every((lang) => typeof lang === "string") ? available : undefined;
 }
 
-async function tryYouTubeCaptions(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult> {
-	const transcriptFetcher = options.transcriptFetcher ?? fetchTranscript;
-	const signal = options.timeoutMs === undefined
-		? options.signal
-		: options.signal
-			? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)])
-			: AbortSignal.timeout(options.timeoutMs);
-	const fetchCaptions = (lang: string | undefined) => transcriptFetcher(parsed.videoId, {
-		...(lang !== undefined ? { lang } : {}),
-		videoDetails: true,
-		retries: 2,
-		retryDelay: 500,
-		signal,
-	});
-	let selectedLanguage = options.transcriptLanguage;
-	let result: TranscriptResult;
-	try {
-		result = await fetchCaptions(selectedLanguage);
-	} catch (error) {
-		const available = availableTranscriptLanguages(error);
-		if (!available || selectedLanguage === undefined) throw error;
-		const requested = selectedLanguage.toLowerCase();
-		const recovered = available.find((lang) => lang.toLowerCase() === requested)
-			?? available.find((lang) => {
-				const candidate = lang.toLowerCase();
-				return candidate.startsWith(`${requested}-`) || requested.startsWith(`${candidate}-`);
-			});
-		if (!recovered) throw error;
-		selectedLanguage = recovered;
-		result = await fetchCaptions(recovered);
+function createCaptionCancellation(parent: AbortSignal | undefined, timeoutMs: number | undefined): { signal: AbortSignal | undefined; dispose: () => void } {
+	if (timeoutMs === undefined) return { signal: parent, dispose: () => {} };
+	const controller = new AbortController();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const onParentAbort = () => controller.abort(parent?.reason);
+	if (parent?.aborted) {
+		controller.abort(parent.reason);
+	} else {
+		parent?.addEventListener("abort", onParentAbort, { once: true });
+		timer = setTimeout(() => controller.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError")), timeoutMs);
+		timer.unref?.();
 	}
-	const content = formatYouTubeTranscript(result.segments);
-	if (!content) throw new Error("YouTube returned no caption segments.");
 	return {
-		videoId: parsed.videoId,
-		url: parsed.canonicalUrl,
-		title: result.videoDetails.title || `YouTube ${parsed.kind} ${parsed.videoId}`,
-		content,
-		source: "youtube-captions",
-		metadata: {
-			provider: "youtube-captions",
-			contentKind: "full-transcript",
-			videoId: parsed.videoId,
-			kind: parsed.kind,
-			language: result.segments[0]?.lang ?? selectedLanguage,
-			captionSegments: result.segments.length,
-			durationSeconds: result.videoDetails.lengthSeconds,
-			author: result.videoDetails.author,
-			channelId: result.videoDetails.channelId,
+		signal: controller.signal,
+		dispose: () => {
+			if (timer !== undefined) clearTimeout(timer);
+			parent?.removeEventListener("abort", onParentAbort);
 		},
 	};
+}
+
+async function tryYouTubeCaptions(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult> {
+	const transcriptFetcher = options.transcriptFetcher ?? fetchTranscript;
+	const cancellation = createCaptionCancellation(options.signal, options.timeoutMs);
+	try {
+		const fetchCaptions = (lang: string | undefined) => transcriptFetcher(parsed.videoId, {
+			...(lang !== undefined ? { lang } : {}),
+			videoDetails: true,
+			retries: 2,
+			retryDelay: 500,
+			signal: cancellation.signal,
+		});
+		let selectedLanguage = options.transcriptLanguage;
+		let result: TranscriptResult;
+		try {
+			result = await fetchCaptions(selectedLanguage);
+		} catch (error) {
+			const available = availableTranscriptLanguages(error);
+			if (!available || selectedLanguage === undefined) throw error;
+			const requested = selectedLanguage.toLowerCase();
+			const recovered = available.find((lang) => lang.toLowerCase() === requested)
+				?? available.find((lang) => {
+					const candidate = lang.toLowerCase();
+					return candidate.startsWith(`${requested}-`) || requested.startsWith(`${candidate}-`);
+				});
+			if (!recovered) throw error;
+			selectedLanguage = recovered;
+			result = await fetchCaptions(recovered);
+		}
+		const content = formatYouTubeTranscript(result.segments);
+		if (!content) throw new Error("YouTube returned no caption segments.");
+		return {
+			videoId: parsed.videoId,
+			url: parsed.canonicalUrl,
+			title: result.videoDetails.title || `YouTube ${parsed.kind} ${parsed.videoId}`,
+			content,
+			source: "youtube-captions",
+			metadata: {
+				provider: "youtube-captions",
+				contentKind: "full-transcript",
+				videoId: parsed.videoId,
+				kind: parsed.kind,
+				language: result.segments[0]?.lang ?? selectedLanguage,
+				captionSegments: result.segments.length,
+				durationSeconds: result.videoDetails.lengthSeconds,
+				author: result.videoDetails.author,
+				channelId: result.videoDetails.channelId,
+			},
+		};
+	} finally {
+		cancellation.dispose();
+	}
 }
 
 async function tryGeminiWeb(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult | undefined> {
 	const cookies = await readBrowserCookies({ ...(options.browserCookies ?? {}), requiredCookies: ["__Secure-1PSID", "__Secure-1PSIDTS"] });
 	if (!cookies) return undefined;
 	const client = new GeminiWebClient(cookies.cookies, options.fetchImpl ?? fetch);
-	const prompt = `${enhancePrompt(options.prompt)}\n\nYouTube video: ${parsed.canonicalUrl}`;
+	const prompt = `${enhancePrompt(options.prompt, options.mode)}\n\nYouTube video: ${parsed.canonicalUrl}`;
 	const text = await client.query(prompt, { model: options.geminiModel, signal: options.signal, timeoutMs: options.timeoutMs });
 	return {
 		videoId: parsed.videoId,
@@ -198,7 +220,7 @@ async function tryGeminiApi(parsed: ParsedYouTubeUrl, options: YouTubeExtractOpt
 	const model = options.geminiModel ?? "gemini-2.5-flash";
 	const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(options.geminiApiKey)}`;
 	const body = {
-		contents: [{ role: "user", parts: [{ fileData: { fileUri: parsed.canonicalUrl, mimeType: "video/mp4" } }, { text: enhancePrompt(options.prompt) }] }],
+		contents: [{ role: "user", parts: [{ fileData: { fileUri: parsed.canonicalUrl, mimeType: "video/mp4" } }, { text: enhancePrompt(options.prompt, options.mode) }] }],
 	};
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const response = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: options.signal });
