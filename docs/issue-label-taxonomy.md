@@ -108,6 +108,7 @@ Classify what the work *is*; pair one with the routing label.
 | `needs-review` | Explicit review gate required before execution, merge, or close |
 | `critical-path` | Blocks or enables major project progress; align priority |
 | `owner-gated` | Needs an owner decision or owner-only action to proceed |
+| `re-triage` | Trigger handle for the Linear Loop triage janitor (`docs/linear-loops.md`): apply to any issue to request one triage pass; the loop removes it as its first action |
 
 ### Steward labels (team VST)
 

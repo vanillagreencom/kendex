@@ -15,8 +15,8 @@ Scope boundary: Loops handle cheap per-issue hygiene only (labels, team
 routing, duplicate flagging, actionability nudges). Batch work — bundling,
 consolidation, cancellation, obsolete detection with code verification — stays
 with the tpm audit workflow (`skills/project-management/workflows/tpm-audit.md`),
-which has repo access and a review gate. Loops must never cancel, merge, or
-consolidate issues.
+which has repo access and returns recommendations only; a reviewing caller
+applies them. Loops must never cancel, merge, or consolidate issues.
 
 ---
 
@@ -83,20 +83,22 @@ cross-cutting rules, for example: "An issue about agent workflows, CI
 harness behavior, or shared tooling belongs on the infrastructure team even
 if filed on a product team, and vice versa."]
 
-## Task 1 — Labels
+## Task 1 — Team routing
 
-Apply missing labels from the issue's team's existing label set only. Never
-invent labels; if no existing label fits, skip. Read each label's description
-to decide fit against the issue's title and description. Remove a label only
-when it is plainly contradicted by the issue content; otherwise leave
-existing labels alone.
+Route first, before labeling: labels must come from the team the issue ends
+up on. If the issue clearly belongs to a different team per the ownership
+map, move it to that team and add a one-sentence comment stating why. If
+ownership is ambiguous, do not move it — add a comment naming the candidate
+team and ask for confirmation.
 
-## Task 2 — Team routing
+## Task 2 — Labels
 
-If the issue clearly belongs to a different team per the ownership map, move
-it to that team and add a one-sentence comment stating why. If ownership is
-ambiguous, do not move it — add a comment naming the candidate team and ask
-for confirmation.
+Apply missing labels from the existing label set of the issue's team after
+Task 1 (the destination team if you moved it). Never invent labels; if no
+existing label fits, skip. Read each label's description to decide fit
+against the issue's title and description. Remove a label only when it is
+plainly contradicted by the issue content or invalid for the destination
+team; otherwise leave existing labels alone.
 
 ## Task 3 — Duplicate flagging
 
@@ -133,11 +135,14 @@ janitor pass. Create the workspace label `re-triage` first.
 | Event | An issue is **updated** |
 | Teams | [Same teams as Loop 1] |
 | Filter: Labels | contains `re-triage` |
-| Filter: Status | Triage, Backlog, Todo |
 | Filter: Agent Session | "is not Active" if the filter supports negation — avoids re-triaging an issue an agent is mid-flight on; omit if only inclusion is supported |
 
-Self-disarming: the loop removes the label when done; label absent means the
-filter fails, so its own final update does not re-fire it.
+No Status filter: the label is an explicit operator request, valid on active
+issues (In Progress, In Review) too.
+
+Self-disarming: the loop removes the label FIRST, before any other mutation —
+label absent means the filter fails, so neither its intermediate edits nor
+its final update can schedule another run.
 
 ### Permissions
 
@@ -149,10 +154,14 @@ The full Loop 1 instructions text (with your ownership map filled in), plus
 this section appended at the end:
 
 ```text
-## Completion
+## First action — disarm the trigger
 
-When finished, remove the "re-triage" label from the triggering issue. This
-is mandatory — the label is the trigger, and removing it prevents re-runs.
+Before anything else, remove the "re-triage" label from the triggering
+issue. This is mandatory and unconditional: the label is this loop's
+trigger, and removing it before any other change prevents your own edits
+from scheduling another run. The "do nothing if nothing needs changing"
+rule applies to the janitor tasks, not to this removal — the removal always
+happens.
 ```
 
 ---
