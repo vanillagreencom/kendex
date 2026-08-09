@@ -128,6 +128,30 @@ OUT="$("$BUDGET" --state-dir "$SD" "$ISSUE" --worktree "$REPO")"
 assert_field "$OUT" passes "0" "a new commit in the worktree restarts the counter"
 assert_field "$OUT" reviewed_head "$head1" "…reporting the superseded head"
 
+echo "=== uppercase SHAs normalize instead of resetting the round ==="
+
+HEAD_C="cccccccccccccccccccccccccccccccccccccccc"
+HEAD_C_UPPER="CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+"$BUDGET" --state-dir "$SD" "$ISSUE" --head "$HEAD_C" >/dev/null
+"$WS" --state-dir "$SD" increment "$ISSUE" pr_local_review.passes >/dev/null
+OUT="$("$BUDGET" --state-dir "$SD" "$ISSUE" --head "$HEAD_C_UPPER")"
+assert_field "$OUT" reset "false" "an uppercase spelling of the same head is not a new round"
+assert_field "$OUT" passes "1" "…and keeps the counted pass"
+assert_field "$OUT" head "$HEAD_C" "…reporting the normalized head"
+
+echo "=== transient bookkeeping never leaks into state ==="
+
+prior="$("$WS" --state-dir "$SD" get "$ISSUE" '.pr_local_review | has("prior_head")')"
+assert_status "$([[ "$prior" == "false" ]]; echo $?)" 0 "prior_head transient is stripped after the check"
+
+echo "=== bare flags stay on the documented exit-2 usage path ==="
+
+for flag in --state-dir --worktree --head; do
+  rc=0
+  "$BUDGET" "$ISSUE" "$flag" >/dev/null 2>&1 || rc=$?
+  assert_status "$rc" 2 "bare $flag exits 2, not a bash expansion abort"
+done
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

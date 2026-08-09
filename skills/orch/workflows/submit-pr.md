@@ -68,7 +68,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
 - A PR number argument was provided — the PR already exists; arrived comments are triaged in § 3.
 - `.agents/skills/second-opinion/scripts/second-opinion` does not exist (skill not installed).
 
-1. **Check pass budget** (max 2 local review passes per pushed head — GitHub bots re-review every push, so a new head is a new round, not a spend against a per-submission cap; VST-153):
+1. **Check pass budget** (max 2 local review passes per pushed head — GitHub bots re-review every push, so a new head is a new round, not a spend against a per-submission cap):
    ```bash
    .agents/skills/orch/scripts/local-review-budget [ISSUE_ID] --worktree "[WORKTREE_PATH]"
    ```
@@ -90,16 +90,14 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    ```bash
    .agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]
    ```
-   If `ok == true`, count the pass and record the head the artifact actually reviewed (`qa_metadata.reviewed_head`, pinned at scope derivation — vstack#1141):
+   If `ok == true`, count the pass against the head the artifact actually reviewed (`qa_metadata.reviewed_head`, pinned at scope derivation). Read the artifact head first:
    ```bash
-   .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_local_review.passes
    jq -r '.qa_metadata.reviewed_head // empty' "$LOCAL_OUTPUT"
    ```
-   If the jq output is non-empty, record it — the artifact's pin wins over the step 1 stamp:
+   If the output is non-empty, use it as `[ARTIFACT_HEAD]`; if empty (an older artifact without the stamp), use the `head` value the step 1 check printed. Then count and attribute in ONE update — increment only when the recorded head already matches; a mismatch (HEAD moved between step 1 and the review) initializes the artifact's head at one pass instead of letting a new head inherit the old head's count:
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_local_review.reviewed_head = "[REVIEWED_HEAD_FROM_PREVIOUS_COMMAND]"'
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_local_review = (if (.pr_local_review.reviewed_head // "") == "[ARTIFACT_HEAD]" then (.pr_local_review + {passes: ((.pr_local_review.passes // 0) + 1)}) else ((.pr_local_review // {}) + {passes: 1, reviewed_head: "[ARTIFACT_HEAD]"}) end)'
    ```
-   If it is empty (an older artifact without the stamp), skip the record — the step 1 budget check already stamped the worktree HEAD, and the counted pass stays attributed to it.
 
    If `ok == false`, report the `reason` and continue to § 2 — local review is advisory, never a submission blocker. This includes reason `no_review` (the artifact self-reports no review happened), reason `incomplete` (the artifact declares `qa_metadata` but its findings are unusable — arrays lost, or a present `blockers[]`/`suggestions[]` item omits a required `review-finding` field such as `category`; a `detail` field pinpoints it), and script exits 3 (no diff scope) / 4 (model reported no review, or the response stayed schema-incomplete after the one-shot retry) / 5 (the external CLI never produced a review — non-zero exit, timeout, or empty response — partial output preserved as `<output>.failed.json`): none of these is a pass.
 
@@ -115,7 +113,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
      - `source`: `local-review`
    - `suggestions[]` with `category: "issue"` → build the audit-input file and invoke `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 1.2 step 5` (same path as `review-pr-comments.md` § 6.2). Include created issue IDs in the PR body (§ 2 step 3).
 
-5. **Re-verify after fixes**: if dev-fix applied commits, return to step 1 for one confirming pass over the updated diff — the fix commits moved HEAD, so the step 1 check starts a fresh round for the new head. If nothing was applied, → § 2.
+5. **Re-verify after fixes**: if dev-fix applied commits, return to step 1 for **one** confirming pass over the updated diff — the fix commits moved HEAD, so the step 1 check starts a fresh round for the new head. The loop bound is this step's one-confirming-pass rule, not the per-head budget (which by design refills on every new head, exactly as GitHub bots re-review every push): after the confirming pass, → § 2 regardless of findings routed. If nothing was applied, → § 2.
 
 ---
 

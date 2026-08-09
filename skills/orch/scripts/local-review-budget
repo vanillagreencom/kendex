@@ -43,12 +43,22 @@ ISSUE_ID=""
 WORKTREE=""
 HEAD_ARG=""
 
+# Explicit value checks (not ${2:?}) keep every malformed invocation on the
+# documented exit-2 usage path — a bare flag must not abort with bash's own
+# exit 1.
+require_value() {
+  if [[ $# -lt 2 || -z "$2" ]]; then
+    echo "local-review-budget: $1 requires a value" >&2
+    exit 2
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --state-dir) STATE_DIR="${2:?--state-dir requires a path}"; shift 2 ;;
+    --state-dir) require_value "$1" "${2-}"; STATE_DIR="$2"; shift 2 ;;
     --state-dir=*) STATE_DIR="${1#--state-dir=}"; shift ;;
-    --worktree) WORKTREE="${2:?--worktree requires a path}"; shift 2 ;;
-    --head) HEAD_ARG="${2:?--head requires a commit SHA}"; shift 2 ;;
+    --worktree) require_value "$1" "${2-}"; WORKTREE="$2"; shift 2 ;;
+    --head) require_value "$1" "${2-}"; HEAD_ARG="$2"; shift 2 ;;
     -h|--help) sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "local-review-budget: unknown argument: $1" >&2; exit 2 ;;
     *)
@@ -75,6 +85,11 @@ else
   HEAD_SHA="$HEAD_ARG"
 fi
 
+# Normalize case before validating: git accepts uppercase SHAs, and an
+# unnormalized compare would treat AAAA… and aaaa… as different heads,
+# resetting the round on every check.
+HEAD_SHA="$(printf '%s' "$HEAD_SHA" | tr '[:upper:]' '[:lower:]')"
+
 # The SHA is embedded in a jq program below — accept only a full hex SHA so
 # the embedding cannot break out of the string literal.
 if ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -84,21 +99,28 @@ fi
 WS=("$SCRIPT_DIR/workflow-state")
 [[ -n "$STATE_DIR" ]] && WS+=(--state-dir "$STATE_DIR")
 
-# ensure_state_exists inside workflow-state errors (exit 1) when no state file
-# exists for the key — this check never creates state, init owns that.
-RECORDED_HEAD="$("${WS[@]}" get "$ISSUE_ID" '.pr_local_review.reviewed_head // ""')"
-
-RESET=false
-if [[ "$RECORDED_HEAD" != "$HEAD_SHA" ]]; then
-  # New head (or nothing recorded): the round budget restarts. Stamp the
-  # current head so the passes counted from here on are attributed to it;
-  # the post-pass record overwrites with the artifact's reviewed_head.
-  "${WS[@]}" update "$ISSUE_ID" \
-    ".pr_local_review = (.pr_local_review // {}) + {passes: 0, reviewed_head: \"$HEAD_SHA\"}"
-  RESET=true
-fi
+# Compare-and-reset in ONE workflow-state update, so the decision and the
+# write happen under the same state lock: a separate read-then-write could
+# interleave with another caller's counted pass and zero it. The update
+# returns the post-decision object; `reset`/`reviewed_head` are derived from
+# the prior head it embeds. ensure_state_exists inside workflow-state errors
+# (exit 1) when no state file exists — this check never creates state, init
+# owns that.
+"${WS[@]}" update "$ISSUE_ID" \
+  ".pr_local_review = (
+     (.pr_local_review // {}) as \$prev
+     | if (\$prev.reviewed_head // \"\") == \"$HEAD_SHA\"
+       then \$prev + {prior_head: (\$prev.reviewed_head // \"\")}
+       else \$prev + {passes: 0, reviewed_head: \"$HEAD_SHA\", prior_head: (\$prev.reviewed_head // \"\")}
+       end)"
 
 PASSES="$("${WS[@]}" get "$ISSUE_ID" '.pr_local_review.passes // 0')"
+RECORDED_HEAD="$("${WS[@]}" get "$ISSUE_ID" '.pr_local_review.prior_head // ""')"
+RESET=false
+[[ "$RECORDED_HEAD" != "$HEAD_SHA" ]] && RESET=true
+
+# prior_head is a transient of this check, not part of the schema — strip it.
+"${WS[@]}" update "$ISSUE_ID" '.pr_local_review |= del(.prior_head)'
 
 jq -n -c \
   --argjson passes "$PASSES" \
