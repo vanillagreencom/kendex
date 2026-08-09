@@ -43,7 +43,13 @@ import {
 	type BgSessionSelection,
 } from "./sessions.js";
 import { createTaskId, emitSubagentEvent, tryEmitSubagentEvent } from "./tasks.js";
-import { normalizePiStreamEvent } from "./transcripts.js";
+import {
+	applyPartialAssistantMessage,
+	createPartialAssistantMessageState,
+	normalizePiStreamEvent,
+	partialAssistantMessage,
+	resetPartialAssistantMessage,
+} from "./transcripts.js";
 import {
 	DETAIL_STRING_MAX_CHARS,
 	type CwdSnapshot,
@@ -699,6 +705,7 @@ async function runSingleAgentAttempt(
 			let settledShutdownOwnsLifecycle = false;
 			const deliveredSettledSignals = new Set<NodeJS.Signals>();
 			let latestFilteredMessageUpdate: any;
+			const partialMessageState = createPartialAssistantMessageState();
 			const timeoutMs = bgTaskTimeoutMs(cwd ?? defaultCwd);
 			const timeoutDeadline = timeoutMs > 0 ? Date.now() + timeoutMs : undefined;
 			let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
@@ -882,14 +889,19 @@ async function runSingleAgentAttempt(
 
 			const flushFilteredMessageUpdate = (reason: "nonzero_exit" | "process_error" | "timeout") => {
 				if (keepFullTranscript || !latestFilteredMessageUpdate) return;
+				// Pi's delta-only wire event leaves the newest update holding one token, so carry the
+				// message rebuilt from this message's deltas alongside it.
+				const partialMessage = partialAssistantMessage(partialMessageState);
 				appendTranscript({
 					stream: "stdout",
 					raw: JSON.stringify(latestFilteredMessageUpdate),
 					event: latestFilteredMessageUpdate,
 					buffered: true,
 					reason,
+					...(partialMessage ? { partialMessage } : {}),
 				});
 				latestFilteredMessageUpdate = undefined;
+				resetPartialAssistantMessage(partialMessageState);
 			};
 
 			const appendTimeoutDiagnostic = (diagnostics: string[], diagnostic: string) => {
@@ -985,7 +997,11 @@ async function runSingleAgentAttempt(
 				}
 				const normalized = normalizePiStreamEvent(event);
 				const eventName = normalized.name;
-				if (eventName === "message_update" && !keepFullTranscript) latestFilteredMessageUpdate = normalized.event;
+				if (eventName === "message_start") resetPartialAssistantMessage(partialMessageState);
+				if (eventName === "message_update" && !keepFullTranscript) {
+					latestFilteredMessageUpdate = normalized.event;
+					applyPartialAssistantMessage(partialMessageState, normalized.payload);
+				}
 				if (shouldAppendTranscriptEvent(eventName, keepFullTranscript)) {
 					const transcriptEvent = eventName === "agent_start"
 						? withAgentStartTranscriptMetadata(normalized.event, { agent: agent.name, model: selectedModel, args })
@@ -1019,7 +1035,10 @@ async function runSingleAgentAttempt(
 					compactThenEmptyAgentEnd = sawSessionCompact && !postCompactAssistantHasText && agentEndHasTextlessContent(payload);
 				}
 
-				if (eventName === "message_end") latestFilteredMessageUpdate = undefined;
+				if (eventName === "message_end") {
+					latestFilteredMessageUpdate = undefined;
+					resetPartialAssistantMessage(partialMessageState);
+				}
 				if (eventName === "message_end" && payload.message) {
 					const msg = payload.message as Message;
 					currentResult.messages.push(msg);

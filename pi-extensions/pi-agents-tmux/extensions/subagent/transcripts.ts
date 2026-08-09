@@ -20,6 +20,71 @@ export function normalizePiStreamEvent(event: any): NormalizedTranscriptEvent {
 	return { event, name, payload: event };
 }
 
+// Pi 0.84.0 made the JSON/RPC `message_update` wire event delta-only: `toJsonEvent()`
+// drops the cumulative top-level `message` and `assistantMessageEvent.partial` snapshots
+// that used to carry the whole message-so-far. Keeping only the newest event therefore
+// preserves a single token, so the failure-path transcript flush has to rebuild the
+// partial assistant message from the deltas it saw since the last message boundary.
+//
+// Tool calls are deliberately not reconstructed here: their lifecycle is already recorded
+// through the separate tool_execution_* transcript events.
+export interface PartialAssistantMessageState {
+	/** contentIndex -> block, so out-of-order or interleaved indices still land correctly. */
+	blocks: Map<number, { kind: "text" | "thinking"; text: string }>;
+	/** A snapshot-bearing event (older Pi, or a shape that kept `partial`) supersedes deltas. */
+	hasSnapshot: boolean;
+}
+
+export function createPartialAssistantMessageState(): PartialAssistantMessageState {
+	return { blocks: new Map(), hasSnapshot: false };
+}
+
+export function resetPartialAssistantMessage(state: PartialAssistantMessageState): void {
+	state.blocks.clear();
+	state.hasSnapshot = false;
+}
+
+/** Fold one `message_update` payload into the reconstructed partial assistant message. */
+export function applyPartialAssistantMessage(state: PartialAssistantMessageState, payload: any): void {
+	if (!payload || typeof payload !== "object") return;
+	const streamEvent = payload.assistantMessageEvent;
+	if (payload.message || (streamEvent && typeof streamEvent === "object" && streamEvent.partial)) {
+		state.hasSnapshot = true;
+		return;
+	}
+	if (!streamEvent || typeof streamEvent !== "object") return;
+	const type = typeof streamEvent.type === "string" ? streamEvent.type : undefined;
+	if (!type) return;
+	const contentIndex = typeof streamEvent.contentIndex === "number" ? streamEvent.contentIndex : 0;
+	const kind = type.startsWith("thinking") ? "thinking" : type.startsWith("text") ? "text" : undefined;
+	if (!kind) return;
+
+	if (type.endsWith("_end")) {
+		// `*_end` carries the authoritative full block content; prefer it over accumulated deltas.
+		if (typeof streamEvent.content === "string") state.blocks.set(contentIndex, { kind, text: streamEvent.content });
+		return;
+	}
+	if (type.endsWith("_delta")) {
+		if (typeof streamEvent.delta !== "string" || streamEvent.delta.length === 0) return;
+		const existing = state.blocks.get(contentIndex);
+		if (existing && existing.kind === kind) existing.text += streamEvent.delta;
+		else state.blocks.set(contentIndex, { kind, text: streamEvent.delta });
+	}
+}
+
+/**
+ * The reconstructed assistant message, or undefined when nothing was accumulated or the
+ * flushed event already carries its own cumulative snapshot.
+ */
+export function partialAssistantMessage(state: PartialAssistantMessageState): { role: "assistant"; content: Array<{ type: "text" | "thinking"; text: string }> } | undefined {
+	if (state.hasSnapshot || state.blocks.size === 0) return undefined;
+	const content = [...state.blocks.entries()]
+		.sort(([a], [b]) => a - b)
+		.filter(([, block]) => block.text.length > 0)
+		.map(([, block]) => ({ type: block.kind, text: block.text }));
+	return content.length > 0 ? { role: "assistant", content } : undefined;
+}
+
 export function normalizeTranscriptRecordEvent(record: any): NormalizedTranscriptEvent {
 	if (!record || typeof record !== "object") return { event: record, payload: record };
 	if (record.event && typeof record.event === "object") return normalizePiStreamEvent(record.event);
