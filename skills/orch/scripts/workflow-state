@@ -182,8 +182,10 @@ cmd_update_report() {
 
     local lock_file="${state_file}.lock"
     local tmp_file="${state_file}.tmp"
-    local report_file="${state_file}.report"
 
+    # The report prints from INSIDE the locked section — no shared report
+    # file exists to race on, so concurrent calls for the same issue each
+    # return exactly their own transition's evidence.
     (
         flock -w 10 200 || { echo "Error: could not acquire lock on $lock_file" >&2; exit 1; }
 
@@ -192,17 +194,16 @@ cmd_update_report() {
             echo "Error: jq expression failed: $jq_expr" >&2
             exit 1
         fi
-        if ! jq -e '(.state | type == "object") and has("report")' >/dev/null 2>&1 <<<"$combined"; then
-            echo "Error: update-report expression must produce {state: <object>, report: <any>}" >&2
+        # Exactly ONE {state, report} object: a stream of several would write
+        # multiple top-level documents into the state file.
+        if ! jq -e -s 'length == 1 and (.[0].state | type == "object") and (.[0] | has("report"))' >/dev/null 2>&1 <<<"$combined"; then
+            echo "Error: update-report expression must produce exactly one {state: <object>, report: <any>}" >&2
             exit 1
         fi
         jq -c '.state' <<<"$combined" > "$tmp_file"
-        jq -c '.report' <<<"$combined" > "$report_file"
         mv "$tmp_file" "$state_file"
-    ) 200>"$lock_file" || return 1
-
-    cat "$report_file"
-    rm -f "$report_file"
+        jq -c '.report' <<<"$combined"
+    ) 200>"$lock_file"
 }
 
 cmd_append() {

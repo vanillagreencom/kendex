@@ -180,6 +180,29 @@ rc=0
 "$BUDGET" --state-dir "$SD" "$ISSUE" --count "$HEAD_D" --head "$HEAD_E" >/dev/null 2>&1 || rc=$?
 assert_status "$rc" 2 "--count combined with --head is a usage error"
 
+echo "=== update-report: concurrent calls each get exactly their own evidence ==="
+
+# Ten overlapping update-report calls increment one counter; the lock must
+# serialize them so the state lands at 10 and the ten printed reports are a
+# permutation of 1..10 — no lost update, no cross-read report.
+"$WS" --state-dir "$SD" set "$ISSUE" race_counter 0 >/dev/null
+RACE_OUT="$TMP_ROOT/race-reports"
+: >"$RACE_OUT"
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  "$WS" --state-dir "$SD" update-report "$ISSUE" \
+    '((.race_counter // 0) + 1) as $n | {state: (.race_counter = $n), report: {n: $n}}' \
+    >>"$RACE_OUT" &
+done
+wait
+final="$("$WS" --state-dir "$SD" get "$ISSUE" '.race_counter')"
+assert_status "$([[ "$final" == "10" ]]; echo $?)" 0 "ten concurrent update-reports serialize to a final count of 10"
+distinct="$(jq -r '.n' "$RACE_OUT" | sort -n | uniq | wc -l | tr -d ' ')"
+assert_status "$([[ "$distinct" == "10" ]]; echo $?)" 0 "each call reported a distinct transition (no report cross-read)"
+
+rc=0
+"$WS" --state-dir "$SD" update-report "$ISSUE" '{state: ., report: 1}, {state: ., report: 2}' >/dev/null 2>&1 || rc=$?
+assert_status "$rc" 1 "a multi-object update-report stream is rejected, not written"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
