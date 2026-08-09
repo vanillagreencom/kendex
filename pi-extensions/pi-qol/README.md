@@ -26,7 +26,7 @@ Quality-of-life extension for Pi: compact statusline, multiline input, session n
 
 ## Install
 
-Requires Pi 0.80.4 or newer for long-session budget guard support.
+Requires Pi 0.80.4 or newer.
 
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-qol):
 
@@ -196,7 +196,7 @@ For long autonomous runs the agent may not go idle, so the transcript can grow u
 | Write pre-compaction handoff artifact | Before compaction, write `~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/<timestamp>.json` plus a `latest.json` pointer containing previous summary, last task state, and referenced files/artifacts. Write failures surface as a QOL warning notification and a `handoffArtifactError` field in the compaction details. | on |
 | Transcript-risk warn budget (chars) | `/context` shows a warning when the serialized payload of messages-to-send exceeds this many characters, even if tokens are still below the context window. `0` disables. | `600000` |
 
-Budget-guard compaction always uses QOL's bounded path — chunked summarizer plus handoff artifact — even if **Custom compaction summaries** is off. Manual compactions (`/tree`, idle compaction, user-triggered) use the QOL path only when **Custom compaction summaries** is on; otherwise they use Pi's default compaction with no handoff artifact or chunking. Turn **Custom compaction summaries** on when every compaction should use the bounded path.
+Budget-guard compaction always uses QOL's bounded path — chunked summarizer plus handoff artifact — even if **Custom compaction summaries** is off. Manual/user-triggered and idle compactions use the QOL path only when **Custom compaction summaries** is on. `/tree` branch summaries use it only when **Custom branch summaries** is on. Otherwise those compactions use Pi's default behavior with no QOL handoff artifact or chunking.
 
 While budget-guard compaction is running, QOL keeps a persistent status line above the prompt (and in the normal status footer when the compact statusline is disabled). After Pi prints the compacted-summary block, the line changes to `QOL budget guard finalizing compaction…` until finalization completes, so long reload gaps do not look frozen.
 
