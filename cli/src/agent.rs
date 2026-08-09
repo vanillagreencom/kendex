@@ -490,6 +490,34 @@ pub fn custom_hooks_section(hooks: &[CustomHookEntry]) -> String {
     section
 }
 
+/// Canonical skill-failure routing rules referenced by the short reporting
+/// directive in every agent body. One copy per install scope replaces the
+/// former ~300-word blockquote repeated in every generated agent file.
+pub const FAILURE_REPORTING_DOC: &str = include_str!("../../docs/skill-failure-reporting.md");
+
+/// Where the failure-reporting reference lives for a scope: next to the
+/// skills install root (`.agents/` for projects, `~/.config/vstack/` global).
+pub fn failure_reporting_reference_path(global: bool) -> std::path::PathBuf {
+    if global {
+        crate::config::global_state_dir().join("skill-failure-reporting.md")
+    } else {
+        crate::config::project_root()
+            .join(".agents")
+            .join("skill-failure-reporting.md")
+    }
+}
+
+/// Install or refresh the canonical failure-reporting reference for a scope.
+/// Idempotent: only writes when the on-disk copy is missing or stale.
+pub fn install_failure_reporting_reference(global: bool) -> Result<()> {
+    let path = failure_reporting_reference_path(global);
+    if std::fs::read_to_string(&path).is_ok_and(|existing| existing == FAILURE_REPORTING_DOC) {
+        return Ok(());
+    }
+    crate::path_safety::write_file_no_follow(&path, FAILURE_REPORTING_DOC)
+        .with_context(|| format!("installing {}", path.display()))
+}
+
 /// Emit the load-skills preamble injected into every generated agent body.
 /// Each harness (pi, codex, opencode, claude) already auto-exposes skill
 /// name+description through its native discovery surface (`<available_skills>`

@@ -426,7 +426,13 @@ pub fn refresh_items_in_scope(
                     .ok()
                     .map(|dest| hash_installed_skill_dir(&dest))
                     .unwrap_or(0);
-                match installer::install_skill(skill, harness, global, entry.method, skill_instr) {
+                match installer::install_skill(
+                    skill,
+                    harness,
+                    global,
+                    entry.method,
+                    skill_instr.as_deref(),
+                ) {
                     Ok(result) => {
                         succeeded += 1;
                         if hash_installed_skill_dir(&result.path) != before {
@@ -944,7 +950,7 @@ fn refresh_project_owned_skill_instructions(
 
         match crate::skill::sync_project_owned_skill_instructions(
             &skill_md,
-            project_config.skill_instructions_for(name),
+            project_config.skill_instructions_for(name).as_deref(),
         ) {
             Ok(None) => {}
             Ok(Some(changed)) => {

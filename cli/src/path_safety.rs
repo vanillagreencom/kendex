@@ -17,6 +17,13 @@ pub(crate) fn validate_item_name(name: &str) -> Result<()> {
     if !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')) {
         bail!("item name {name:?} must contain only ASCII letters, digits, '.', '_', or '-'");
     }
+    if name.eq_ignore_ascii_case(crate::project_config::SHARED_INSTRUCTIONS_KEY) {
+        bail!(
+            "item name {name:?} is reserved: `all` is the shared key in \
+             [agent-launch-instructions], [agent-additional-instructions], and \
+             [skill-instructions] that applies to every agent/skill"
+        );
+    }
     Ok(())
 }
 
@@ -99,6 +106,20 @@ mod tests {
         }
         assert!(validate_item_name("guard-hook").is_ok());
         assert!(validate_item_name("guard.hook_1").is_ok());
+    }
+
+    #[test]
+    fn validate_item_name_rejects_reserved_shared_instruction_key() {
+        for name in ["all", "All", "ALL"] {
+            let err = validate_item_name(name).unwrap_err();
+            assert!(
+                err.to_string().contains("reserved"),
+                "expected reserved-name error for {name:?}, got: {err}"
+            );
+        }
+        // Names merely containing "all" stay valid.
+        assert!(validate_item_name("allow").is_ok());
+        assert!(validate_item_name("all-agents").is_ok());
     }
 
     #[cfg(unix)]

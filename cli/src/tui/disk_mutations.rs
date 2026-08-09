@@ -264,7 +264,7 @@ pub(super) fn perform_move_plans(
                         *harness,
                         to_global,
                         entry.method,
-                        instr,
+                        instr.as_deref(),
                     ) {
                         Ok(_) => succeeded.push(*harness),
                         Err(err) => install_failures.push(format!("{}: {err:#}", harness.name())),

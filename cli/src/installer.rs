@@ -517,6 +517,64 @@ mod tests {
     }
 
     #[test]
+    fn install_skill_applies_shared_skill_instructions_to_every_skill() {
+        let root = std::env::temp_dir().join(format!(
+            "vstack_shared_skill_instr_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let project = root.join("project");
+        let source = root.join("source").join("github");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: github\ndescription: GitHub ops\n---\n\n# GitHub\n\nBody.\n",
+        )
+        .unwrap();
+
+        // The skill has NO entry of its own — only the shared key applies.
+        let config: crate::project_config::ProjectConfig =
+            toml::from_str("[skill-instructions]\nall = \"Shared skill rule.\"\n").unwrap();
+        let instructions = config.skill_instructions_for("github");
+        assert_eq!(instructions.as_deref(), Some("Shared skill rule."));
+
+        let skill = Skill {
+            name: "github".into(),
+            description: "GitHub ops".into(),
+            license: None,
+            user_invocable: None,
+            dependencies: None,
+            body: String::new(),
+            source_dir: source.clone(),
+            resolved_deps: Vec::new(),
+        };
+
+        let result = crate::test_util::with_project_root(&project, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Copy,
+                instructions.as_deref(),
+            )
+            .unwrap()
+        });
+
+        let installed = std::fs::read_to_string(result.path.join("SKILL.md")).unwrap();
+        assert!(
+            installed.contains("## Project Instructions"),
+            "installed SKILL.md: {installed}"
+        );
+        assert!(
+            installed.contains("Shared skill rule."),
+            "installed SKILL.md: {installed}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn remove_item_reports_agent_delete_failure() {
         let root = std::env::temp_dir().join(format!(
             "vstack_remove_agent_failure_{}_{}",

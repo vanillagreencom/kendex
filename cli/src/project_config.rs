@@ -105,6 +105,20 @@ fn default_hook_agents() -> CustomHookTarget {
     CustomHookTarget::All("all".into())
 }
 
+/// Key in `[agent-launch-instructions]`, `[agent-additional-instructions]`,
+/// and `[skill-instructions]` whose value applies to every agent/skill.
+/// `"*"` is accepted as an alias. The name is reserved: no installable item
+/// may be called `all` (enforced in `path_safety::validate_item_name`).
+pub const SHARED_INSTRUCTIONS_KEY: &str = "all";
+const SHARED_INSTRUCTIONS_KEY_ALIAS: &str = "*";
+
+fn shared_instruction_entry(map: &HashMap<String, String>) -> Option<&str> {
+    map.get(SHARED_INSTRUCTIONS_KEY)
+        .or_else(|| map.get(SHARED_INSTRUCTIONS_KEY_ALIAS))
+        .map(|s| s.as_str())
+        .filter(|s| !s.is_empty())
+}
+
 fn is_agent_frontmatter_override(value: &toml::Value) -> bool {
     let Some(table) = value.as_table() else {
         return false;
@@ -293,22 +307,72 @@ impl ProjectConfig {
             .unwrap_or_default()
     }
 
-    /// Get guidance text for an agent
+    /// Get guidance text for an agent (per-agent entry only; the shared
+    /// `all` entry is merged in by [`Self::merge_shared_and_specific`]).
     pub fn guidance_for(&self, agent_name: &str) -> Option<&str> {
         self.agent_guidance.get(agent_name).map(|s| s.as_str())
     }
 
-    /// Get additional instructions for an agent
+    /// Get additional instructions for an agent (per-agent entry only).
     pub fn instructions_for(&self, agent_name: &str) -> Option<&str> {
         self.agent_instructions.get(agent_name).map(|s| s.as_str())
     }
 
-    /// Get project-specific instructions for a skill
-    pub fn skill_instructions_for(&self, skill_name: &str) -> Option<&str> {
-        self.skill_instructions
+    /// Shared `[agent-launch-instructions]` value applied to every agent.
+    pub fn shared_guidance(&self) -> Option<&str> {
+        shared_instruction_entry(&self.agent_guidance)
+    }
+
+    /// Shared `[agent-additional-instructions]` value applied to every agent.
+    pub fn shared_instructions(&self) -> Option<&str> {
+        shared_instruction_entry(&self.agent_instructions)
+    }
+
+    /// Get project-specific instructions for a skill: the shared `all` entry
+    /// (if any) followed by the skill's own entry, blank-line separated.
+    pub fn skill_instructions_for(&self, skill_name: &str) -> Option<String> {
+        let specific = self
+            .skill_instructions
             .get(skill_name)
             .map(|s| s.as_str())
-            .filter(|s| !s.is_empty())
+            .filter(|s| !s.is_empty());
+        Self::merge_shared_and_specific(
+            shared_instruction_entry(&self.skill_instructions),
+            specific,
+        )
+    }
+
+    /// Merge a shared (`all`) instruction value with an item-specific one:
+    /// both render, shared first, separated by a blank line.
+    pub fn merge_shared_and_specific(
+        shared: Option<&str>,
+        specific: Option<&str>,
+    ) -> Option<String> {
+        match (shared, specific) {
+            (Some(shared), Some(specific)) => {
+                Some(format!("{}\n\n{}", shared.trim(), specific.trim()))
+            }
+            (Some(text), None) | (None, Some(text)) => Some(text.trim().to_string()),
+            (None, None) => None,
+        }
+    }
+
+    /// Remove the shared (`all`) portion from text extracted out of a
+    /// generated agent file. Generated files render the merged value, so
+    /// re-extraction must not persist or re-merge the shared part as an
+    /// item-specific entry — that would paste the fleet-wide text into every
+    /// per-agent key on the next refresh.
+    pub fn strip_shared_prefix<'a>(shared: Option<&str>, extracted: &'a str) -> Option<&'a str> {
+        let Some(shared) = shared.map(str::trim).filter(|s| !s.is_empty()) else {
+            return Some(extracted);
+        };
+        match extracted.trim().strip_prefix(shared) {
+            Some(rest) => {
+                let rest = rest.trim();
+                (!rest.is_empty()).then_some(rest)
+            }
+            None => Some(extracted),
+        }
     }
 
     /// Get custom hooks that apply to a specific agent, as CustomHookEntry for agent frontmatter
@@ -343,21 +407,34 @@ impl ProjectConfig {
         agent_name: &str,
         extracted: &crate::agent::AgentExtras,
     ) {
+        // A generated file renders the merged shared+specific value; only the
+        // specific remainder may be persisted as this agent's own entry.
+        let extracted_guidance = extracted
+            .guidance
+            .as_deref()
+            .and_then(|text| Self::strip_shared_prefix(self.shared_guidance(), text))
+            .map(String::from);
+        let extracted_instructions = extracted
+            .instructions
+            .as_deref()
+            .and_then(|text| Self::strip_shared_prefix(self.shared_instructions(), text))
+            .map(String::from);
+
         let needs_guidance =
-            extracted.guidance.is_some() && self.guidance_for(agent_name).is_none();
+            extracted_guidance.is_some() && self.guidance_for(agent_name).is_none();
         let needs_instructions =
-            extracted.instructions.is_some() && self.instructions_for(agent_name).is_none();
+            extracted_instructions.is_some() && self.instructions_for(agent_name).is_none();
         if !needs_guidance && !needs_instructions {
             return;
         }
 
-        if let Some(ref text) = extracted.guidance
+        if let Some(ref text) = extracted_guidance
             && needs_guidance
         {
             self.agent_guidance
                 .insert(agent_name.to_string(), text.clone());
         }
-        if let Some(ref text) = extracted.instructions
+        if let Some(ref text) = extracted_instructions
             && needs_instructions
         {
             self.agent_instructions
@@ -369,7 +446,7 @@ impl ProjectConfig {
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
         let mut out = existing.clone();
 
-        if needs_guidance && let Some(ref text) = extracted.guidance {
+        if needs_guidance && let Some(ref text) = extracted_guidance {
             out = upsert_agent_value_in_section(
                 &out,
                 "[agent-launch-instructions]",
@@ -378,7 +455,7 @@ impl ProjectConfig {
             );
         }
 
-        if needs_instructions && let Some(ref text) = extracted.instructions {
+        if needs_instructions && let Some(ref text) = extracted_instructions {
             out = upsert_agent_value_in_section(
                 &out,
                 "[agent-additional-instructions]",
@@ -1800,7 +1877,10 @@ fn launch_instructions_heading() -> String {
     out.push_str("# Adds a \"## Launch Instructions\" section near the top\n");
     out.push_str("# of each agent file. Use this for startup tasks, required\n");
     out.push_str("# reading, or project-specific operating notes.\n");
+    out.push_str("# The reserved key `all` applies to every agent, rendered\n");
+    out.push_str("# before that agent's own entry.\n");
     out.push_str("# Examples:\n");
+    out.push_str("# all = \"Run `just setup` before anything else.\"\n");
     out.push_str("# rust = \"Read docs/architecture.md before coding.\"\n");
     out.push_str("# iced = \"\"\"\n");
     out.push_str("# Read docs/ui.md.\n");
@@ -2492,7 +2572,9 @@ fn create_project_config(path: &Path, agents: &[String], skills: &[String]) {
     out.push_str("\n\n# ── Additional Instructions ──────────────────────────\n");
     out.push_str("# Adds a \"## Additional Instructions\" section at the\n");
     out.push_str("# bottom of each agent file. Project-specific rules,\n");
-    out.push_str("# conventions, or reminders for this agent.\n");
+    out.push_str("# conventions, or reminders for this agent. The reserved\n");
+    out.push_str("# key `all` applies to every agent, rendered before that\n");
+    out.push_str("# agent's own entry.\n");
     out.push_str("#\n");
     out.push_str("[agent-additional-instructions]\n\n");
     for (i, name) in agents.iter().enumerate() {
@@ -2508,6 +2590,8 @@ fn create_project_config(path: &Path, agents: &[String], skills: &[String]) {
     out.push_str("# top of each skill's SKILL.md. Project-specific\n");
     out.push_str("# context for how this skill applies to your codebase.\n");
     out.push_str("# Won't overwrite the skill author's own instructions.\n");
+    out.push_str("# The reserved key `all` applies to every skill,\n");
+    out.push_str("# rendered before that skill's own entry.\n");
     out.push_str("#\n");
     out.push_str("[skill-instructions]\n\n");
     for (i, name) in skills.iter().enumerate() {
@@ -2956,6 +3040,132 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn shared_instruction_key_parses_in_all_three_tables() {
+        let toml = r#"
+[agent-launch-instructions]
+all = "Run just setup first."
+rust = "Read docs/architecture.md."
+
+[agent-additional-instructions]
+all = "Fleet-wide rule."
+
+[skill-instructions]
+all = "Shared skill rule."
+trading-design = "Dark theme."
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.shared_guidance(), Some("Run just setup first."));
+        assert_eq!(config.shared_instructions(), Some("Fleet-wide rule."));
+        // Per-agent accessors stay item-specific.
+        assert_eq!(
+            config.guidance_for("rust"),
+            Some("Read docs/architecture.md.")
+        );
+        assert_eq!(config.guidance_for("iced"), None);
+        // Skill lookup merges shared-first with the skill's own entry.
+        assert_eq!(
+            config.skill_instructions_for("trading-design").as_deref(),
+            Some("Shared skill rule.\n\nDark theme.")
+        );
+        // Skills without their own entry still get the shared value.
+        assert_eq!(
+            config.skill_instructions_for("github").as_deref(),
+            Some("Shared skill rule.")
+        );
+    }
+
+    #[test]
+    fn shared_instruction_key_accepts_star_alias() {
+        let toml = "[agent-launch-instructions]\n\"*\" = \"Star rule.\"\n";
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.shared_guidance(), Some("Star rule."));
+        // `all` wins over the alias when both are present.
+        let toml = "[agent-launch-instructions]\nall = \"All rule.\"\n\"*\" = \"Star rule.\"\n";
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.shared_guidance(), Some("All rule."));
+    }
+
+    #[test]
+    fn merge_shared_and_specific_orders_shared_first() {
+        assert_eq!(
+            ProjectConfig::merge_shared_and_specific(Some("shared"), Some("specific")).as_deref(),
+            Some("shared\n\nspecific")
+        );
+        assert_eq!(
+            ProjectConfig::merge_shared_and_specific(Some("shared"), None).as_deref(),
+            Some("shared")
+        );
+        assert_eq!(
+            ProjectConfig::merge_shared_and_specific(None, Some("specific")).as_deref(),
+            Some("specific")
+        );
+        assert_eq!(ProjectConfig::merge_shared_and_specific(None, None), None);
+    }
+
+    #[test]
+    fn strip_shared_prefix_removes_merged_render_remainder() {
+        // Extracted text that IS the shared value: nothing agent-specific.
+        assert_eq!(
+            ProjectConfig::strip_shared_prefix(Some("shared"), "shared"),
+            None
+        );
+        // Merged render round-trips back to the specific remainder.
+        assert_eq!(
+            ProjectConfig::strip_shared_prefix(Some("shared"), "shared\n\nmine"),
+            Some("mine")
+        );
+        // Unrelated text passes through untouched.
+        assert_eq!(
+            ProjectConfig::strip_shared_prefix(Some("shared"), "custom"),
+            Some("custom")
+        );
+        // No shared value configured: extraction is untouched.
+        assert_eq!(
+            ProjectConfig::strip_shared_prefix(None, "anything"),
+            Some("anything")
+        );
+    }
+
+    #[test]
+    fn save_extracted_never_persists_shared_text_as_per_agent_entry() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_shared_save_extracted_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("vstack.toml"),
+            "[agent-launch-instructions]\nall = \"shared\"\n",
+        )
+        .unwrap();
+        let mut config = ProjectConfig::load(&dir);
+
+        // Re-extraction of a shared-only render must not create a per-agent key.
+        let extracted = crate::agent::AgentExtras {
+            guidance: Some("shared".into()),
+            ..Default::default()
+        };
+        config.save_extracted(&dir, "rust", &extracted);
+        assert_eq!(config.guidance_for("rust"), None);
+
+        // Re-extraction of a merged render persists only the specific remainder.
+        let extracted = crate::agent::AgentExtras {
+            guidance: Some("shared\n\nmine".into()),
+            ..Default::default()
+        };
+        config.save_extracted(&dir, "rust", &extracted);
+        assert_eq!(config.guidance_for("rust"), Some("mine"));
+        let on_disk = std::fs::read_to_string(dir.join("vstack.toml")).unwrap();
+        assert!(on_disk.contains("rust = \"mine\""), "on disk: {on_disk}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // vstack: regression. `normalize_attached_section_headers` used to
     // split any line containing a known section header substring, including

@@ -162,10 +162,13 @@ Per-agent customization survives `vstack add` — re-applied on every install/re
 rust = ["github", "worktree"]
 
 # Launch instructions added near the top of generated agent files.
+# The reserved key `all` (alias `"*"`) applies to every agent; shared text
+# renders first, then the agent's own entry, blank-line separated.
 [agent-launch-instructions]
+all = "Run `just setup` before anything else."
 rust = "Read docs/architecture.md before coding."
 
-# Project guidance appended to generated agent files.
+# Project guidance appended to generated agent files. `all` works here too.
 [agent-additional-instructions]
 rust = "Always run clippy before committing."
 
@@ -184,6 +187,7 @@ rust = { nickname-candidates = ["Rust-Atlas", "Rust-Delta"], model = "gpt-5.6-so
 rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
 
 # Project instructions prepended to a skill's SKILL.md.
+# `all` applies to every installed and project-owned skill.
 [skill-instructions]
 trading-design = "Dark theme, green/red accents."
 ```

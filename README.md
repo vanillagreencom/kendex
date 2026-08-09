@@ -97,14 +97,20 @@ project-skills-dir = "project-skills"
 rust = ["github", "worktree"]
 
 # Instructions added near the top of the generated agent file.
+# The reserved key `all` applies to every agent; when an agent also has its
+# own entry, both render — shared first, then the agent's own, separated by
+# a blank line. (`"*"` is accepted as an alias for `all`.)
 [agent-launch-instructions]
+all = "Run `just setup` before anything else."
 rust = "Read docs/architecture.md before coding."
 
 # Extra instructions appended to the generated agent file.
+# `all` works here the same way.
 [agent-additional-instructions]
 rust = "Always run clippy before committing."
 
 # Project instructions prepended to a skill's SKILL.md.
+# `all` applies to every installed and project-owned skill.
 [skill-instructions]
 trading-design = "Dark theme, green/red accents."
 

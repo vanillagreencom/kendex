@@ -2374,7 +2374,13 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 .get(&s.name)
                 .copied()
                 .unwrap_or(method);
-            let result = installer::install_skill(s, *harness, global, skill_method, skill_instr)?;
+            let result = installer::install_skill(
+                s,
+                *harness,
+                global,
+                skill_method,
+                skill_instr.as_deref(),
+            )?;
             log_lines.push(result.detail.clone());
             results.push(result);
         }

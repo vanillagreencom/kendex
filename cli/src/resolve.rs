@@ -162,22 +162,34 @@ pub fn build_agent_extras(
     agent_role: &AgentRole,
     file_extras: Option<&AgentExtras>,
 ) -> AgentExtras {
-    let file_guidance = file_extras.and_then(|e| e.guidance.as_deref());
-    let file_instructions = file_extras.and_then(|e| e.instructions.as_deref());
+    // File-extracted sections come from a previously generated (merged)
+    // render; strip the shared portion so it is never merged in twice.
+    let file_guidance = file_extras
+        .and_then(|e| e.guidance.as_deref())
+        .and_then(|text| {
+            ProjectConfig::strip_shared_prefix(project_config.shared_guidance(), text)
+        });
+    let file_instructions = file_extras
+        .and_then(|e| e.instructions.as_deref())
+        .and_then(|text| {
+            ProjectConfig::strip_shared_prefix(project_config.shared_instructions(), text)
+        });
     let file_color = file_extras.and_then(|e| e.color.as_deref());
     AgentExtras {
         color: project_config
             .color_for(agent_name)
             .or(file_color)
             .map(String::from),
-        guidance: project_config
-            .guidance_for(agent_name)
-            .or(file_guidance)
-            .map(String::from),
-        instructions: project_config
-            .instructions_for(agent_name)
-            .or(file_instructions)
-            .map(String::from),
+        guidance: ProjectConfig::merge_shared_and_specific(
+            project_config.shared_guidance(),
+            project_config.guidance_for(agent_name).or(file_guidance),
+        ),
+        instructions: ProjectConfig::merge_shared_and_specific(
+            project_config.shared_instructions(),
+            project_config
+                .instructions_for(agent_name)
+                .or(file_instructions),
+        ),
         frontmatter: Default::default(),
         frontmatter_by_harness: project_config
             .agent_frontmatter_by_harness
@@ -324,6 +336,61 @@ mod tests {
             .hook_events
             .insert("PreToolUse:Bash".into(), HookTarget::All("all".into()));
         mapping
+    }
+
+    #[test]
+    fn build_agent_extras_merges_shared_instruction_key() {
+        let toml = r#"
+[agent-launch-instructions]
+all = "Shared launch."
+rust = "Rust launch."
+
+[agent-additional-instructions]
+all = "Shared extra."
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        let role = AgentRole::Engineer;
+
+        // Both present: shared renders first, blank-line separated.
+        let extras = build_agent_extras(&config, "rust", &role, None);
+        assert_eq!(
+            extras.guidance.as_deref(),
+            Some("Shared launch.\n\nRust launch.")
+        );
+        assert_eq!(extras.instructions.as_deref(), Some("Shared extra."));
+
+        // Shared-only agent still gets the shared value.
+        let extras = build_agent_extras(&config, "iced", &role, None);
+        assert_eq!(extras.guidance.as_deref(), Some("Shared launch."));
+
+        // Per-agent-only config renders unchanged.
+        let config: ProjectConfig =
+            toml::from_str("[agent-launch-instructions]\nrust = \"Rust launch.\"\n").unwrap();
+        let extras = build_agent_extras(&config, "rust", &role, None);
+        assert_eq!(extras.guidance.as_deref(), Some("Rust launch."));
+    }
+
+    #[test]
+    fn build_agent_extras_strips_shared_text_from_file_extras() {
+        let config: ProjectConfig =
+            toml::from_str("[agent-launch-instructions]\nall = \"Shared launch.\"\n").unwrap();
+        let role = AgentRole::Engineer;
+
+        // File extras extracted from a previously generated (merged) render
+        // must not double the shared value.
+        let file_extras = AgentExtras {
+            guidance: Some("Shared launch.\n\nMine.".into()),
+            ..Default::default()
+        };
+        let extras = build_agent_extras(&config, "rust", &role, Some(&file_extras));
+        assert_eq!(extras.guidance.as_deref(), Some("Shared launch.\n\nMine."));
+
+        let file_extras = AgentExtras {
+            guidance: Some("Shared launch.".into()),
+            ..Default::default()
+        };
+        let extras = build_agent_extras(&config, "rust", &role, Some(&file_extras));
+        assert_eq!(extras.guidance.as_deref(), Some("Shared launch."));
     }
 
     #[test]
