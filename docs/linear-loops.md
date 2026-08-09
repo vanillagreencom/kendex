@@ -13,13 +13,16 @@ inside the instructions text are runtime values the loop substitutes per
 issue — leave those untouched. Your filled copy is the working document;
 this template only changes when the loop design changes.
 
-Scope boundary: Loops handle cheap per-issue hygiene only (labels, team
-routing, duplicate flagging, actionability nudges). Batch work — bundling,
-consolidation, cancellation, obsolete detection with code verification — stays
+Scope boundary: Loops handle cheap per-issue hygiene (labels, team
+routing, duplicate flagging, actionability nudges) plus — in the scheduled
+Loop 3 sweep only — comment-only FLAGGING of likely-obsolete issues via Code
+Intelligence. The line is flags versus decisions: every batch mutation —
+bundling, consolidation, cancellation, acting on an obsolete flag — stays
 with the audit workflow (`skills/project-management/workflows/audit-issues.md`
 — the user-facing wrapper that owns the approval gate and the mutations, with
 the repo-access analysis in `workflows/tpm-audit.md` underneath). Loops must
-never cancel, merge, or consolidate issues.
+never cancel, merge, or consolidate issues; Loop 3's obsolete check feeds
+that workflow, it never decides for it.
 
 ---
 
@@ -100,7 +103,9 @@ Apply missing labels from the existing label set of the issue's team after
 Task 1 (the destination team if you moved it). Never invent labels; if no
 existing label fits, skip. Read each label's description to decide fit
 against the issue's title and description. Never apply `agent:*` labels —
-that category is assigned when work is claimed, not at triage. Remove a
+that category is owned by the TPM pipeline (roadmap planning and issue
+audit derive and assign it; activation applies it when work is claimed) and
+is never a triage-time guess. Remove a
 label only when it is plainly contradicted by the issue content or invalid
 for the destination team; otherwise leave existing labels alone.
 
@@ -183,6 +188,7 @@ Requires workspace Code Intelligence enabled with Loops access.
 |---------|-------|
 | Event | On a **schedule** — [pick a weekly slot, e.g. Monday 09:00 workspace time] |
 | Teams | [Same teams as Loop 1] |
+| Eligibility | No UI filter exists for scheduled loops — the instructions text below enforces it: Backlog/Todo state, not updated in 60 days, oldest first, at most 10 issues per run, skip issues an agent session is actively working |
 
 ### Permissions
 
@@ -211,8 +217,11 @@ working.
   priority, or estimate.
 - Allowed mutations: comments, "related" relations, and adding the
   "re-triage" label. Nothing else.
-- At most one comment per issue per run; if you commented on an issue in a
-  previous run and nothing changed, skip it entirely.
+- At most one comment per issue per run — when several checks match the
+  same issue, combine them into that single comment (Check 1's obsolete
+  finding first, then Check 3's duplicate note as a second line). If you
+  commented on an issue in a previous run and nothing changed, skip it
+  entirely.
 - Edits and comments on issues synced from an external tracker propagate to
   that tracker.
 
