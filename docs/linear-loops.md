@@ -13,14 +13,16 @@ inside the instructions text are runtime values the loop substitutes per
 issue — leave those untouched. Your filled copy is the working document;
 this template only changes when the loop design changes.
 
-Scope boundary: Loops handle cheap per-issue hygiene (labels, team
-routing, duplicate flagging, actionability nudges) plus — in the scheduled
-Loop 3 sweep only — comment-only FLAGGING of likely-obsolete issues via Code
-Intelligence. The line is flags versus decisions: every batch mutation —
-bundling, consolidation, cancellation, acting on an obsolete flag — stays
-with the audit workflow (`skills/project-management/workflows/audit-issues.md`
-— the user-facing wrapper that owns the approval gate and the mutations, with
-the repo-access analysis in `workflows/tpm-audit.md` underneath). Loops must
+Scope boundary: Loops own per-issue hygiene AND routing — labels, team
+routing, project assignment, `agent:*` routing labels, duplicate flagging,
+actionability nudges, and same-PR bundling under a new template parent
+(janitor Task 6) — plus, in the scheduled Loop 3 sweep only, comment-only
+FLAGGING of likely-obsolete issues via Code Intelligence. The line is
+constructive versus destructive: cancellation, merging issues away, and
+acting on an obsolete flag stay with the audit workflow
+(`skills/project-management/workflows/audit-issues.md` — the user-facing
+wrapper that owns the approval gate and those mutations, with the
+repo-access analysis in `workflows/tpm-audit.md` underneath). Loops must
 never cancel, merge, or consolidate issues; Loop 3's obsolete check feeds
 that workflow, it never decides for it.
 
@@ -54,7 +56,7 @@ integration creator, and those are exactly the ones needing triage.
 | Setting | Value | Why |
 |---------|-------|-----|
 | Team access | All public teams | Duplicate check needs cross-team view |
-| Allow changes outside triggering issue | ON | Needed only for `related` relations and duplicate comments; instructions hard-limit everything else |
+| Allow changes outside triggering issue | ON | Needed for `related` relations, duplicate comments, and setting the parent on Task 6 bundle children; instructions hard-limit everything else |
 | Web search | OFF | Not needed |
 | Externally synced issues and comments | ON | Updates to synced issues always sync both ways (Linear's creation-direction setting only affects creation), so janitor comments and edits WILL appear on the external tracker — acceptable for short factual triage comments |
 | Coding sessions | OFF | Loops get no repo access; code-verified work belongs to tpm audit |
@@ -69,13 +71,18 @@ making a change, and never take destructive action.
 ## Hard limits
 
 - Never cancel, close, archive, merge, or delete any issue.
-- Never create new issues.
+- Never create new issues, with ONE exception: the bundle parent of Task 6,
+  built from the template embedded there. At most one per run.
 - Never edit the title or description of any issue other than the triggering
   issue. Remember that edits and comments on issues synced from an external
   tracker propagate to that tracker.
-- Never change assignees, cycles, or projects.
+- Never change assignees or cycles. Project may be SET where it is empty
+  (Task 5) — never changed or cleared once set.
+- Routing labels are add-only: never change or remove an existing `agent:*`
+  label (activation re-checks routing and owns corrections).
 - On issues other than the triggering issue, you may only add "related"
-  relations and comments — no field edits of any kind.
+  relations, comments, and — for Task 6 bundle children only — set their
+  parent to the bundle parent you just created. No other field edits.
 - If nothing needs changing, do nothing at all. Do not post repeat comments.
 
 ## Team ownership map
@@ -102,12 +109,21 @@ team and ask for confirmation.
 Apply missing labels from the existing label set of the issue's team after
 Task 1 (the destination team if you moved it). Never invent labels; if no
 existing label fits, skip. Read each label's description to decide fit
-against the issue's title and description. Never apply `agent:*` labels —
-that category is owned by the TPM pipeline (roadmap planning and issue
-audit derive and assign it; activation applies it when work is claimed) and
-is never a triage-time guess. Remove a
+against the issue's title and description. Remove a
 label only when it is plainly contradicted by the issue content or invalid
 for the destination team; otherwise leave existing labels alone.
+
+Agent routing label: if the issue carries no `agent:*` label, assign exactly
+ONE from the team's declared set below, chosen by which definition best fits
+the issue's scope. Add-only — never change or remove an existing `agent:*`
+label; the TPM pipeline and activation own corrections. If no definition
+clearly fits, assign nothing and name the gap in your Task 4 comment
+instead.
+
+[AGENT LABEL DEFINITIONS — one bullet per label the team declares, format:
+"- agent:NAME: what scope it owns — components, file types, work kinds".
+Copy these from the team's label descriptions / taxonomy doc and keep them
+in sync.]
 
 ## Task 3 — Duplicate flagging
 
@@ -124,6 +140,50 @@ Do not close, merge, or mark either issue as a duplicate yourself. Flag only.
 If the issue lacks clear scope, acceptance criteria, or a concrete
 deliverable (for example a vague one-line description with no target
 component), add one comment listing what is missing. One comment maximum.
+
+## Task 5 — Project assignment
+
+If the triggering issue has no project, pick the best-fitting ACTIVE
+project of its team (the destination team after Task 1) by matching the
+issue's content against project names and descriptions, and set it. Never
+invent a project, never move an issue that already has one, and skip when
+no project clearly fits — name the gap in your Task 4 comment instead.
+
+## Task 6 — Same-PR bundling
+
+Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
+SAME project as the triggering issue. If the triggering issue plus one to
+four of them would plausibly ship as a single pull request — same component
+or surface, complementary small changes, no conflicting approaches — create
+ONE new parent issue from the template below and set each child's parent to
+it. Skip entirely when in doubt; never re-parent an issue that already has
+a parent; never bundle across teams or projects.
+
+Parent issue format (from the project-management skill's
+parent-issue-template — keep this embedded copy faithful to it):
+
+  [SUMMARY — 1-2 sentences describing the bundle's overall goal,
+  synthesized from the children, not copied from one of them]
+
+  ## Sub-Issues
+
+  - [ISSUE_ID]: [title] (agent:X)
+  - [ISSUE_ID]: [title] (agent:Y)
+
+  ## Acceptance Criteria
+
+  - [ ] [Criterion from child [ISSUE_ID]]
+
+  ## Context
+
+  - [Key constraints shared by the children, 1-3 bullets]
+
+Parent rules: title names the bundle's goal, not a child's; label the
+parent `agent:multi` when children span two or more `agent:*` domains,
+otherwise give it the children's shared agent label; the parent carries NO
+estimate; omit the Acceptance Criteria section when children have none; no
+implementation detail — requirements live in the children; add no blocking
+relations unless a child's own text states one.
 
 ## Tone
 
@@ -235,9 +295,11 @@ audit confirmation; not closing." Do not cancel the issue yourself.
 
 ## Check 2 — Stale or incomplete metadata
 
-If the issue lacks a type label, has labels contradicted by its content, or
-clearly belongs to another team, add the "re-triage" label — the re-triage
-loop performs the actual cleanup. Do not fix the metadata inline.
+If the issue lacks a type label, a project, or an `agent:*` routing label,
+has labels contradicted by its content, or clearly belongs to another team,
+add the "re-triage" label — the re-triage pass performs the actual cleanup
+(including project/agent assignment and Task 6 bundling). Do not fix the
+metadata inline.
 
 ## Check 3 — Duplicates
 
@@ -258,7 +320,9 @@ Comments are short, factual, and neutral. No greetings, no sign-offs.
   text covers team differences; copies drift.
 - **No "updated" catch-all loop** — tracker sync and orchestration churn
   would fire it constantly.
-- **No consolidation/cancel/bundle loop** — the scheduled sweep FLAGS
-  obsolete candidates, but cancellation stays with the gated audit workflow
-  (batch view, approval, deterministic repo verification).
+- **No cancel/consolidation loop** — the scheduled sweep FLAGS obsolete
+  candidates, but cancellation and merging issues away stay with the gated
+  audit workflow (batch view, approval, deterministic repo verification).
+  Same-PR bundling is NOT this: it lives in janitor Task 6, creates only a
+  template parent, and destroys nothing.
 - **No priority/estimate loop** — orchestration and cycle planning own those.
