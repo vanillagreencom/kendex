@@ -98,9 +98,10 @@ function parseStreamGenerate(rawText: string): { text: string; errorCode?: numbe
 function candidateText(candidate: unknown): string {
 	const raw = getNested(candidate, [1, 0]);
 	let text = typeof raw === "string" ? raw : "";
-	if (/^http:\/\/googleusercontent\.com\/card_content\/\d+/.test(text)) {
+	const isCardPlaceholder = (value: string) => /^https?:\/\/(?:www\.)?googleusercontent\.com\/card_content\/\d+(?:[/?#].*)?$/i.test(value.trim());
+	if (isCardPlaceholder(text)) {
 		const alternate = getNested(candidate, [22, 0]);
-		if (typeof alternate === "string" && alternate) text = alternate;
+		text = typeof alternate === "string" && alternate && !isCardPlaceholder(alternate) ? alternate : "";
 	}
 	return text;
 }

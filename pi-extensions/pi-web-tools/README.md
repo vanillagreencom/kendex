@@ -87,9 +87,9 @@ web_fetch({
 
 - `videoMode: "auto"` is the default. Prompts containing transcript, transcribe, verbatim, subtitle, caption, or lyrics terms use native YouTube captions; other prompts use Gemini.
 - Native transcripts include every caption segment as `[HH:MM:SS] text`, decode caption HTML entities, and store the complete result under the content id.
-- `transcriptLanguage` accepts a BCP 47 language code and defaults to `en`.
+- `transcriptLanguage` accepts a BCP 47 language code. When omitted, native extraction uses YouTube's first available caption track. Explicit base-language requests can recover matching regional tracks such as `en-US`; stored metadata records the selected track language.
 - Caption-unavailable errors surface directly. The tool does not substitute an Exa page excerpt or label a generated summary as a complete transcript.
-- `provider: "exa"` is rejected with transcript mode; use `auto` or `http`. Mixed batches return successful content ids plus explicit failed-URL details.
+- `provider: "exa"` is rejected for transcript-only batches; use `auto` or `http`. Mixed batches keep transcript conflicts as explicit per-URL failures and continue unrelated URLs. Disabled video extraction follows the same mixed-batch behavior.
 - Gemini Web/API remains the path for visual details, questions about frames, and videos without a transcript request.
 
 ## API keys

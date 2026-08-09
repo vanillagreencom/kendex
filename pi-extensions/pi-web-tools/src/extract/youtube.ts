@@ -76,9 +76,14 @@ function enhancePrompt(input: string | undefined): string {
 }
 
 function decodeHtmlEntities(text: string): string {
+	const decodeNumericEntity = (match: string, digits: string, radix: number): string => {
+		const codePoint = Number.parseInt(digits, radix);
+		if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return match;
+		return String.fromCodePoint(codePoint);
+	};
 	return text
-		.replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
-		.replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
+		.replace(/&#x([0-9a-f]+);/gi, (match, hex: string) => decodeNumericEntity(match, hex, 16))
+		.replace(/&#(\d+);/g, (match, code: string) => decodeNumericEntity(match, code, 10))
 		.replace(/&quot;/g, '"')
 		.replace(/&apos;|&#39;/g, "'")
 		.replace(/&lt;/g, "<")
@@ -108,15 +113,38 @@ function isAbortError(error: unknown, signal: AbortSignal | undefined): boolean 
 	return Boolean(signal?.aborted || (error && typeof error === "object" && "name" in error && (error as { name?: unknown }).name === "AbortError"));
 }
 
+function availableTranscriptLanguages(error: unknown): string[] | undefined {
+	if (!error || typeof error !== "object" || !("name" in error) || (error as { name?: unknown }).name !== "YoutubeTranscriptNotAvailableLanguageError" || !("availableLangs" in error)) return undefined;
+	const available = (error as { availableLangs?: unknown }).availableLangs;
+	return Array.isArray(available) && available.every((lang) => typeof lang === "string") ? available : undefined;
+}
+
 async function tryYouTubeCaptions(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult> {
 	const transcriptFetcher = options.transcriptFetcher ?? fetchTranscript;
-	const result = await transcriptFetcher(parsed.videoId, {
-		lang: options.transcriptLanguage ?? "en",
+	const fetchCaptions = (lang: string | undefined) => transcriptFetcher(parsed.videoId, {
+		...(lang !== undefined ? { lang } : {}),
 		videoDetails: true,
 		retries: 2,
 		retryDelay: 500,
 		signal: options.signal,
 	});
+	let selectedLanguage = options.transcriptLanguage;
+	let result: TranscriptResult;
+	try {
+		result = await fetchCaptions(selectedLanguage);
+	} catch (error) {
+		const available = availableTranscriptLanguages(error);
+		if (!available || selectedLanguage === undefined) throw error;
+		const requested = selectedLanguage.toLowerCase();
+		const recovered = available.find((lang) => lang.toLowerCase() === requested)
+			?? available.find((lang) => {
+				const candidate = lang.toLowerCase();
+				return candidate.startsWith(`${requested}-`) || requested.startsWith(`${candidate}-`);
+			});
+		if (!recovered) throw error;
+		selectedLanguage = recovered;
+		result = await fetchCaptions(recovered);
+	}
 	const content = formatYouTubeTranscript(result.segments);
 	if (!content) throw new Error("YouTube returned no caption segments.");
 	return {
@@ -130,7 +158,7 @@ async function tryYouTubeCaptions(parsed: ParsedYouTubeUrl, options: YouTubeExtr
 			contentKind: "full-transcript",
 			videoId: parsed.videoId,
 			kind: parsed.kind,
-			language: result.segments[0]?.lang ?? options.transcriptLanguage ?? "en",
+			language: result.segments[0]?.lang ?? selectedLanguage,
 			captionSegments: result.segments.length,
 			durationSeconds: result.videoDetails.lengthSeconds,
 			author: result.videoDetails.author,

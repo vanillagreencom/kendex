@@ -9,6 +9,8 @@
 - Failed YouTube extraction no longer silently falls through to Exa `/contents`, which ignored the video prompt and returned a provider-capped 6,000-character page excerpt.
 - Mixed URL batches now return stored successes plus provider-attributed per-URL failures instead of throwing after hiding already-stored content ids. Failure output obeys the same aggregate caps as previews, Exa HTTP-200 per-URL statuses are reconciled, and cancellation preserves `AbortError` identity.
 - Gemini Web stream parsing now selects the latest non-empty streamed candidate instead of stopping at the first candidate container, fixing empty-response failures against current response envelopes.
+- Unspecified transcript language now preserves YouTube's first-track fallback; explicit language requests recover case-insensitive regional matches, and transcript metadata records the selected track. Invalid numeric HTML entities remain literal instead of aborting transcript formatting.
+- Exa empty-success documents and missing requested URLs now surface as failures, status matching normalizes both URL and id fields, mixed transcript conflicts no longer abort unrelated URLs, and unresolved Gemini card placeholders no longer replace a genuine streamed answer.
 
 ### 1.3.1
 

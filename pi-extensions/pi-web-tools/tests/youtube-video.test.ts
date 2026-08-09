@@ -35,6 +35,12 @@ test("formatYouTubeTranscript emits complete timestamped caption lines", () => {
 	]), "[00:00:00] Hello & welcome\n[01:01:01] Don't truncate this");
 });
 
+test("formatYouTubeTranscript preserves invalid numeric HTML entities", () => {
+	assert.equal(formatYouTubeTranscript([
+		{ offset: 0, duration: 1, text: "invalid &#x110000; &#55296; &#xDFFF; valid &#x1F600;", lang: "en" },
+	]), "[00:00:00] invalid &#x110000; &#55296; &#xDFFF; valid 😀");
+});
+
 test("extractYouTubeUrl uses native captions for transcript prompts", async () => {
 	const controller = new AbortController();
 	const result = await extractYouTubeUrl("https://www.youtube.com/watch?v=abc123XYZ_-&t=42s", {
@@ -67,6 +73,79 @@ test("extractYouTubeUrl uses native captions for transcript prompts", async () =
 	assert.equal(result?.title, "Test Video");
 	assert.equal(result?.content, "[00:00:01] Complete caption");
 	assert.equal(result?.metadata.contentKind, "full-transcript");
+});
+
+test("extractYouTubeUrl preserves caption fallback and recovers language variants", async () => {
+	const fallback = await extractYouTubeUrl("https://youtu.be/abc123XYZ_-", {
+		mode: "transcript",
+		transcriptFetcher: async (videoId, config) => {
+			assert.equal(Object.hasOwn(config, "lang"), false);
+			return {
+				videoDetails: {
+					videoId,
+					title: "Fallback Track",
+					author: "Channel",
+					channelId: "channel-1",
+					lengthSeconds: 1,
+					viewCount: 1,
+					description: "",
+					keywords: [],
+					thumbnails: [],
+					isLiveContent: false,
+				},
+				segments: [{ offset: 0, duration: 1, text: "Hola", lang: "es" }],
+			};
+		},
+	});
+	assert.equal(fallback?.metadata.language, "es");
+
+	const requestedLanguages: Array<string | undefined> = [];
+	const recovered = await extractYouTubeUrl("https://youtu.be/abc123XYZ_-", {
+		mode: "transcript",
+		transcriptLanguage: "EN",
+		transcriptFetcher: async (videoId, config) => {
+			requestedLanguages.push(config.lang);
+			if (config.lang === "EN") {
+				throw Object.assign(new Error("requested language unavailable"), {
+					name: "YoutubeTranscriptNotAvailableLanguageError",
+					availableLangs: ["fr", "en-US"],
+				});
+			}
+			assert.equal(config.lang, "en-US");
+			return {
+				videoDetails: {
+					videoId,
+					title: "English Track",
+					author: "Channel",
+					channelId: "channel-1",
+					lengthSeconds: 1,
+					viewCount: 1,
+					description: "",
+					keywords: [],
+					thumbnails: [],
+					isLiveContent: false,
+				},
+				segments: [{ offset: 0, duration: 1, text: "Hello", lang: "en-US" }],
+			};
+		},
+	});
+	assert.deepEqual(requestedLanguages, ["EN", "en-US"]);
+	assert.equal(recovered?.metadata.language, "en-US");
+
+	const unavailable = Object.assign(new Error("requested language unavailable"), {
+		name: "YoutubeTranscriptNotAvailableLanguageError",
+		availableLangs: ["fr", "en-US"],
+	});
+	let unavailableCalls = 0;
+	await assert.rejects(() => extractYouTubeUrl("https://youtu.be/abc123XYZ_-", {
+		mode: "transcript",
+		transcriptLanguage: "de",
+		transcriptFetcher: async () => {
+			unavailableCalls++;
+			throw unavailable;
+		},
+	}), (error) => error === unavailable);
+	assert.equal(unavailableCalls, 1);
 });
 
 test("videoMode=understand overrides transcript prompt detection", async () => {
@@ -304,7 +383,49 @@ test("web_fetch reconciles Exa HTTP-200 per-URL failures", async () => {
 		provider: "exa",
 	}, undefined, undefined, { cwd: process.cwd() } as any);
 	assert.equal((deduped as any).details.stored.length, 1);
-	assert.equal((deduped as any).details.failures, undefined);
+	assert.equal((deduped as any).details.failures.length, 1);
+	assert.equal((deduped as any).details.failures[0].url, "http://example.com");
+	assert.match((deduped as any).details.failures[0].error, /success.*without text or summary/i);
+});
+
+test("web_fetch reports Exa success statuses with empty content", async () => {
+	const tool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{
+			createExaClient: () => ({
+				contents: async () => ({
+					results: [{ url: "https://example.com/empty", title: "Empty", text: "", summary: "" }],
+					raw: { statuses: [{ url: "https://example.com/empty", status: "success" }] },
+				}),
+			}) as any,
+		},
+	);
+	await assert.rejects(() => tool.execute("test", {
+		url: "https://example.com/empty",
+		provider: "exa",
+	}, undefined, undefined, { cwd: process.cwd() } as any), /success.*without text or summary/i);
+});
+
+test("web_fetch normalizes Exa status ids before matching", async () => {
+	const tool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{
+			createExaClient: () => ({
+				contents: async () => ({
+					results: [],
+					raw: { statuses: [{ id: "https://example.com/status-detail/", status: "permission denied" }] },
+				}),
+			}) as any,
+		},
+	);
+	await assert.rejects(() => tool.execute("test", {
+		url: "https://example.com/status-detail",
+		provider: "exa",
+	}, undefined, undefined, { cwd: process.cwd() } as any), /permission denied/);
 });
 
 test("web_fetch preserves AbortError identity and aggregates all-failed batches", async () => {
@@ -421,6 +542,45 @@ test("web_fetch rejects transcript requests that force Exa or disable video extr
 		url: "https://youtu.be/abc123XYZ_-",
 		prompt: "Produce complete transcript",
 	}, undefined, undefined, { cwd: process.cwd() } as any), /disabled by the video.enabled setting/);
+});
+
+test("web_fetch keeps transcript conflicts per-URL in mixed batches", async () => {
+	const exaTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{
+			createExaClient: () => ({
+				contents: async ({ urls }: { urls: string[] }) => {
+					assert.deepEqual(urls, ["https://example.com/good"]);
+					return { results: [{ url: urls[0], title: "Good", text: "content" }], raw: {} };
+				},
+			}) as any,
+		},
+	);
+	const exaResult = await exaTool.execute("test", {
+		urls: ["https://youtu.be/abc123XYZ_-", "https://example.com/good"],
+		provider: "exa",
+		videoMode: "transcript",
+	}, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.equal((exaResult as any).details.stored.length, 1);
+	assert.equal((exaResult as any).details.failures[0].url, "https://youtu.be/abc123XYZ_-");
+	assert.match((exaResult as any).details.failures[0].error, /incompatible with provider=exa/);
+
+	const disabledTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(false),
+		"web_fetch",
+		{ fetchHttpContent: async (url) => ({ url, title: "Good", content: "content", metadata: {} }) },
+	);
+	const disabledResult = await disabledTool.execute("test", {
+		urls: ["https://youtu.be/abc123XYZ_-", "https://example.com/good"],
+		provider: "http",
+		videoMode: "transcript",
+	}, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.equal((disabledResult as any).details.stored.length, 1);
+	assert.equal((disabledResult as any).details.failures[0].url, "https://youtu.be/abc123XYZ_-");
+	assert.match((disabledResult as any).details.failures[0].error, /disabled by the video.enabled setting/);
 });
 
 test("isLocalVideoPath detects common video extensions", () => {
