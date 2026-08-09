@@ -295,9 +295,15 @@ function extractAccountId(token: string): string {
 	}
 }
 
-function buildHeaders(model: Model<Api>, apiKey: string, extraHeaders?: Record<string, string>): Headers {
+// Pi resolves provider headers as `ProviderHeaders` (`Record<string, string | null>`),
+// where a `null` value is a deletion marker rather than a value to send. Headers.set()
+// would stringify it and transmit the literal "null", so delete instead.
+export function buildHeaders(model: Model<Api>, apiKey: string, extraHeaders?: Record<string, string | null>): Headers {
 	const headers = new Headers(model.headers);
-	for (const [key, value] of Object.entries(extraHeaders ?? {})) headers.set(key, value);
+	for (const [key, value] of Object.entries(extraHeaders ?? {})) {
+		if (value === null) headers.delete(key);
+		else headers.set(key, value);
+	}
 	headers.set("Authorization", `Bearer ${apiKey}`);
 	headers.set("chatgpt-account-id", extractAccountId(apiKey));
 	headers.set("originator", "pi");

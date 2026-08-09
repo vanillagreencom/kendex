@@ -22,7 +22,7 @@ type AutoRenameFallbackMode = "none" | "truncate" | "words";
 interface AutoRenameAuth {
 	apiKey?: string;
 	env?: Record<string, string>;
-	headers?: Record<string, string>;
+	headers?: Record<string, string | null>;
 	label: string;
 	model: any;
 	source: string;
@@ -237,10 +237,13 @@ function autoRenameModelSettings(cwd?: string): string[] {
 		.filter((value, index, all) => all.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase()) === index);
 }
 
-function headerRecord(headers: unknown): Record<string, string> | undefined {
+// Pi resolves provider headers as `ProviderHeaders` (`Record<string, string | null>`).
+// A `null` value is a header-deletion marker that pi-ai acts on, so it must survive to
+// the stream unchanged — dropping it silently re-sends the header we were told to remove.
+export function headerRecord(headers: unknown): Record<string, string | null> | undefined {
 	if (!headers || typeof headers !== "object" || Array.isArray(headers)) return undefined;
 	const entries = Object.entries(headers as Record<string, unknown>)
-		.filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0);
+		.filter((entry): entry is [string, string | null] => entry[1] === null || (typeof entry[1] === "string" && entry[1].length > 0));
 	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 

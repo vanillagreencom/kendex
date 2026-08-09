@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBackgroundImageRequest, parseImageGenCommandArgs, selectCodexImageModel, summarizeNonImageResponse } from "../src/background-image-generation.js";
+import { buildBackgroundImageRequest, buildHeaders, parseImageGenCommandArgs, selectCodexImageModel, summarizeNonImageResponse } from "../src/background-image-generation.js";
+
+function codexToken(accountId: string): string {
+	const payload = Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } })).toString("base64");
+	return `header.${payload}.signature`;
+}
 
 test("parseImageGenCommandArgs separates @reference images from prompt", () => {
 	assert.deepEqual(parseImageGenCommandArgs("make it green @icon.png 'with soft shadows' @refs/logo.webp"), {
@@ -49,6 +54,14 @@ test("selectCodexImageModel prefers current image-capable Codex model and regist
 	assert.equal(selectCodexImageModel({ provider: "anthropic", id: "claude", input: ["text", "image"] }, { getAvailable: () => [fallback] }), fallback);
 	assert.equal(selectCodexImageModel({ provider: "openai-codex", id: "text-only", input: ["text"] }, { find: (_provider, _id) => fallback }), fallback);
 	assert.equal(selectCodexImageModel({ provider: "openai-codex", id: "text-only", input: ["text"] }, { getAll: () => [{ provider: "openai-codex", id: "also-text-only", input: ["text"] }] }), undefined);
+});
+
+test("buildHeaders treats null provider headers as deletions, not the string \"null\"", () => {
+	const model = { headers: { "x-inherited": "keep", "x-dropped": "stale" } } as never;
+	const headers = buildHeaders(model, codexToken("acct-1"), { "x-dropped": null, "x-added": "value" });
+	assert.equal(headers.get("x-dropped"), null);
+	assert.equal(headers.get("x-inherited"), "keep");
+	assert.equal(headers.get("x-added"), "value");
 });
 
 test("summarizeNonImageResponse includes status, error, and text output", () => {
