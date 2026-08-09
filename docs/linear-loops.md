@@ -99,9 +99,10 @@ team and ask for confirmation.
 Apply missing labels from the existing label set of the issue's team after
 Task 1 (the destination team if you moved it). Never invent labels; if no
 existing label fits, skip. Read each label's description to decide fit
-against the issue's title and description. Remove a label only when it is
-plainly contradicted by the issue content or invalid for the destination
-team; otherwise leave existing labels alone.
+against the issue's title and description. Never apply `agent:*` labels —
+that category is assigned when work is claimed, not at triage. Remove a
+label only when it is plainly contradicted by the issue content or invalid
+for the destination team; otherwise leave existing labels alone.
 
 ## Task 3 — Duplicate flagging
 
@@ -128,8 +129,9 @@ Comments are short, factual, and neutral. No greetings, no sign-offs.
 
 ## Loop 2 — Re-triage on demand
 
-Manual re-run handle: apply the `re-triage` label to any issue to get one
-janitor pass. Create the workspace label `re-triage` first.
+Re-run handle: apply the `re-triage` label to any issue to get one janitor
+pass. Sources of the label: manual (an operator or a local agent) and
+Loop 3's weekly sweep. Create the workspace label `re-triage` first.
 
 ### Trigger
 
@@ -169,12 +171,85 @@ happens.
 
 ---
 
+## Loop 3 — Backlog sweep (scheduled, flag-only)
+
+Weekly repo-grounded staleness sweep. Flags; never fixes or cancels. Chains
+Loop 2 by applying `re-triage` instead of duplicating the janitor logic.
+Requires workspace Code Intelligence enabled with Loops access.
+
+### Trigger
+
+| Setting | Value |
+|---------|-------|
+| Event | On a **schedule** — [pick a weekly slot, e.g. Monday 09:00 workspace time] |
+| Teams | [Same teams as Loop 1] |
+
+### Permissions
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| Team access | All public teams | Duplicate check needs cross-team view |
+| Allow changes outside triggering issue | ON | Scheduled loop touches multiple issues |
+| Web search | OFF | Not needed |
+| Externally synced issues and comments | ON | Same trade-off as Loop 1 |
+| Code Intelligence | ON | The obsolete check reads workspace-connected repos |
+| Coding sessions | OFF | Flag-only; no code changes |
+
+### Instructions
+
+```text
+You are a weekly backlog auditor. You flag; you never fix, cancel, or close.
+Work through at most 10 issues per run: Backlog or Todo state, not updated
+in the last 60 days, oldest first. Skip issues an agent session is actively
+working.
+
+## Hard limits
+
+- Never cancel, close, archive, merge, or delete any issue.
+- Never create new issues.
+- Never edit any issue's title, description, assignees, cycles, projects,
+  priority, or estimate.
+- Allowed mutations: comments, "related" relations, and adding the
+  "re-triage" label. Nothing else.
+- At most one comment per issue per run; if you commented on an issue in a
+  previous run and nothing changed, skip it entirely.
+- Edits and comments on issues synced from an external tracker propagate to
+  that tracker.
+
+## Check 1 — Likely obsolete
+
+Using code intelligence on the workspace-connected repositories, check
+whether the issue's described deliverable already exists in the owning
+repo (named function, component, config, or behavior). If it clearly does,
+comment: "Likely obsolete — <file or symbol you found>. Flagged for local
+audit confirmation; not closing." Do not cancel the issue yourself.
+
+## Check 2 — Stale or incomplete metadata
+
+If the issue lacks a type label, has labels contradicted by its content, or
+clearly belongs to another team, add the "re-triage" label — the re-triage
+loop performs the actual cleanup. Do not fix the metadata inline.
+
+## Check 3 — Duplicates
+
+If another issue (any state, any accessible team) describes the same
+problem, add a "related" relation and comment: "Possible duplicate of
+<ID> — <one-line reason>", substituting the issue you found and why.
+
+## Tone
+
+Comments are short, factual, and neutral. No greetings, no sign-offs.
+```
+
+---
+
 ## Deliberate non-loops
 
 - **No per-team loop copies** — the ownership map inside one instructions
   text covers team differences; copies drift.
 - **No "updated" catch-all loop** — tracker sync and orchestration churn
   would fire it constantly.
-- **No consolidation/cancel/bundle loop** — stays with tpm audit (repo
-  verification, batch view, review gate).
+- **No consolidation/cancel/bundle loop** — the scheduled sweep FLAGS
+  obsolete candidates, but cancellation stays with the gated audit workflow
+  (batch view, approval, deterministic repo verification).
 - **No priority/estimate loop** — orchestration and cycle planning own those.
