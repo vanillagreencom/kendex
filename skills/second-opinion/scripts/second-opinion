@@ -553,6 +553,13 @@ collect_review_instructions() {
     [[ "$p" == "AGENTS.md" ]] && want_agents=1
   done
   if [[ -n "$want_agents" && -n "${REVIEW_CHANGED_FILES:-}" ]]; then
+    # Path-byte fidelity: the walk consumes the newline-separated changed-file
+    # list (core.quotePath=false keeps non-ASCII literal). Control characters
+    # in a pathname stay C-quoted regardless of that setting, so such a path
+    # fails the -f check downstream and its AGENTS.md is OMITTED — fail-closed,
+    # same documented posture as newline-in-name on the glob side. Not worth
+    # a -z/NUL rebuild of the scope pipeline for hostile filenames in a repo
+    # the reviewer chose to review.
     local changed_file dir
     while IFS= read -r changed_file; do
       [[ -n "$changed_file" ]] || continue
