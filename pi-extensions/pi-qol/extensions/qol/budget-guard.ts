@@ -106,9 +106,10 @@ export function evaluateTranscriptRisk(input: TranscriptRiskInput): TranscriptRi
 
 /**
  * Sentinel marker injected into customInstructions when budget guard triggers
- * a compaction. Detected by handleQolCompaction to force the bounded QOL path
- * + handoff artifact write regardless of the global compaction.customEnabled
- * setting.
+ * a compaction. Detected by handleQolCompaction to force bounded QOL
+ * summarization regardless of compaction.customEnabled. The same path invokes
+ * the handoff writer, whose artifact creation obeys the independent
+ * compaction.handoffArtifactEnabled toggle.
  */
 export const QOL_BUDGET_GUARD_SENTINEL = "[QOL_BUDGET_GUARD]";
 
