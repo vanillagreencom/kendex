@@ -152,8 +152,10 @@ assert_contains "$PROMPT_CAPTURE" "RULE-AGENTS" "AGENTS.md content appended (def
 assert_contains "$PROMPT_CAPTURE" "RULE-NESTED" "nested AGENTS.md governing a changed path appended"
 # Parent-before-child order: the more-specific file must appear LAST (deeper
 # agent files override shallower ones; prompt recency weights later content).
-root_pos="$(grep -n "RULE-AGENTS" "$PROMPT_CAPTURE" | head -1 | cut -d: -f1)"
-nested_pos="$(grep -n "RULE-NESTED" "$PROMPT_CAPTURE" | head -1 | cut -d: -f1)"
+# Guarded against errexit: a missing match must record a FAIL below, not
+# abort the script before the summary prints.
+root_pos="$(grep -n "RULE-AGENTS" "$PROMPT_CAPTURE" | head -1 | cut -d: -f1 || true)"
+nested_pos="$(grep -n "RULE-NESTED" "$PROMPT_CAPTURE" | head -1 | cut -d: -f1 || true)"
 if [[ -n "$root_pos" && -n "$nested_pos" && "$root_pos" -lt "$nested_pos" ]]; then
   pass "root AGENTS.md emitted before the nested one (parents first)"
 else
