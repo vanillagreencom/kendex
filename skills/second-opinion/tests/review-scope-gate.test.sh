@@ -160,9 +160,12 @@ run_review "$DIRTY" "$REVIEWED_RESP" "$s2_out" "$s2_err" || rc2=$?
 assert_eq "$rc2" "0" "scoped review exits 0"
 assert_file_exists "$s2_out" "scoped review writes the --output artifact"
 assert_file_contains "$PROMPT_CAPTURE" "Branch: scope-branch" "prompt carries the derived branch"
-assert_file_contains "$PROMPT_CAPTURE" "Diff range: HEAD" "prompt carries the diff range"
+# The range is pinned to the concrete head commit at scope derivation (a
+# symbolic HEAD would re-resolve if a commit landed mid-review).
+dirty_head="$(git -C "$DIRTY" rev-parse HEAD)"
+assert_file_contains "$PROMPT_CAPTURE" "Diff range: $dirty_head" "prompt carries the pinned diff range"
 assert_file_contains "$PROMPT_CAPTURE" "file.txt" "prompt carries the changed-file list"
-assert_file_contains "$PROMPT_CAPTURE" "git diff HEAD" "prompt still gives the diff command to run"
+assert_file_contains "$PROMPT_CAPTURE" "git diff $dirty_head" "prompt still gives the diff command to run"
 
 # --- Scenario 3: self-reported no-review is never written as the artifact -----
 echo "=== scenario 3: qa_metadata.review_performed=false exits 4, no artifact ==="

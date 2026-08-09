@@ -234,6 +234,64 @@ assert_eq "$(count lane-codex)" "0" "lanes outside SECOND_OPINION_REVIEW_TARGETS
 assert_jq "$out5" '.agent' "external-union(claude+my-model)" "union agent includes the custom lane"
 assert_file_exists "$out5.my-model.json" "custom lane artifact kept beside the union"
 
+echo "=== scenario 6: distinct same-location findings from one lane both survive ==="
+# Location alone is not finding identity: one lane reporting two independent
+# bugs in the same function must keep both (occurrence-indexed keys), while
+# the other lane's single finding there still merges with the first.
+reset_counts
+cat > "$TMP_ROOT/resp-lane-claude.json" <<'JSON'
+{"agent":"external-claude","timestamp":"2026-01-01T00:00:00Z","verdict":"action_required",
+ "summary":"one bug in parse",
+ "blockers":[{"id":1,"title":"Off-by-one in parse","location":"src/app.rs (`parse`)","description":"claude desc","recommendation":"fix","priority":2,"estimate":1}],
+ "suggestions":[],"questions":[],"qa_metadata":{}}
+JSON
+cat > "$TMP_ROOT/resp-lane-codex.json" <<'JSON'
+{"agent":"external-codex","timestamp":"2026-01-01T00:00:00Z","verdict":"action_required",
+ "summary":"two distinct bugs in parse",
+ "blockers":[{"id":1,"title":"Boundary error in parse","location":"src/app.rs (`parse`)","description":"first distinct bug","recommendation":"fix","priority":1,"estimate":1},
+             {"id":2,"title":"Integer overflow in parse","location":"src/app.rs (`parse`)","description":"second distinct bug","recommendation":"fix","priority":2,"estimate":1}],
+ "suggestions":[],"questions":[],"qa_metadata":{}}
+JSON
+out6="$TMP_ROOT/out6.json"
+rc6=0
+run_multi "$out6" || rc6=$?
+assert_eq "$rc6" "0" "distinct-findings review exits 0"
+assert_jq "$out6" '[.blockers[] | select(.location == "src/app.rs (`parse`)")] | length' "2" "both same-location blockers survive the union"
+assert_jq "$out6" '[.blockers[] | select(.location == "src/app.rs (`parse`)") | .sources] | map(length) | sort | join(",")' "1,2" "first slot merges across lanes; second stays single-lane"
+
+echo "=== scenario 7: duplicate lane names run once ==="
+reset_counts
+out7="$TMP_ROOT/out7.json"
+rc7=0
+run_multi "$out7" SECOND_OPINION_REVIEW_TARGETS="codex, codex claude" || rc7=$?
+assert_eq "$rc7" "0" "duplicate-lane review exits 0"
+assert_eq "$(count lane-codex)" "1" "duplicated lane invoked exactly once"
+assert_jq "$out7" '.qa_metadata.lanes | length' "2" "lane provenance lists each lane once"
+grep -q "duplicate review target" "$TMP_ROOT/last.stderr" || fail "duplicate skip is not loud"
+
+echo "=== scenario 8: all-lanes failure removes a stale union artifact ==="
+reset_counts
+out8="$TMP_ROOT/out8.json"
+printf '{"verdict":"pass","summary":"STALE ARTIFACT FROM A PREVIOUS RUN"}\n' > "$out8"
+rm -f "$TMP_ROOT/resp-lane-claude.json" "$TMP_ROOT/resp-lane-codex.json"
+rc8=0
+run_multi "$out8" || rc8=$?
+[[ "$rc8" -ne 0 ]] && pass "all-lanes failure exits non-zero" || fail "all-lanes failure exited 0"
+assert_file_absent "$out8" "stale union artifact is cleared, not left as a fake pass"
+
+echo "=== scenario 9: lanes that ANSWER unusably classify as exit 4, not 5 ==="
+# A lane whose model returns non-JSON even after the retry exits 1 — a
+# response-level defect, not a provider outage. All lanes failing that way
+# must exit 4 per the documented contract.
+reset_counts
+printf 'this is not json at all\n' > "$TMP_ROOT/resp-lane-claude.json"
+printf 'still not json\n' > "$TMP_ROOT/resp-lane-codex.json"
+out9="$TMP_ROOT/out9.json"
+rc9=0
+run_multi "$out9" || rc9=$?
+assert_eq "$rc9" "4" "all lanes answering unusably exits 4"
+assert_file_absent "$out9" "no artifact when every lane answered unusably"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

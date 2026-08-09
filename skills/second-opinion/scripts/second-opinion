@@ -29,8 +29,14 @@ _CALLER_TARGET="${SECOND_OPINION_TARGET:-}"
 _CALLER_TIMEOUT="${SECOND_OPINION_TIMEOUT:-}"
 _CALLER_CLAUDE_CMD="${SECOND_OPINION_CLAUDE_CMD:-}"
 _CALLER_CODEX_CMD="${SECOND_OPINION_CODEX_CMD:-}"
-_CALLER_REVIEW_TARGETS="${SECOND_OPINION_REVIEW_TARGETS:-}"
-_CALLER_REVIEW_INSTRUCTIONS="${SECOND_OPINION_REVIEW_INSTRUCTIONS:-}"
+# Set-ness (not emptiness) is preserved for the review vars: an explicitly
+# EMPTY caller value is meaningful ("" disables the instruction block / lane
+# list) and must survive the .env reload rather than fall back to project
+# config.
+_CALLER_REVIEW_TARGETS="${SECOND_OPINION_REVIEW_TARGETS-}"
+_CALLER_REVIEW_TARGETS_SET="${SECOND_OPINION_REVIEW_TARGETS+x}"
+_CALLER_REVIEW_INSTRUCTIONS="${SECOND_OPINION_REVIEW_INSTRUCTIONS-}"
+_CALLER_REVIEW_INSTRUCTIONS_SET="${SECOND_OPINION_REVIEW_INSTRUCTIONS+x}"
 
 # Source project config/secrets. .env.local overrides public settings.
 # shellcheck source=lib/vstack-env.sh
@@ -42,8 +48,8 @@ vstack_load_project_env "$PROJECT_ROOT"
 [[ -n "$_CALLER_TIMEOUT" ]] && SECOND_OPINION_TIMEOUT="$_CALLER_TIMEOUT"
 [[ -n "$_CALLER_CLAUDE_CMD" ]] && SECOND_OPINION_CLAUDE_CMD="$_CALLER_CLAUDE_CMD"
 [[ -n "$_CALLER_CODEX_CMD" ]] && SECOND_OPINION_CODEX_CMD="$_CALLER_CODEX_CMD"
-[[ -n "$_CALLER_REVIEW_TARGETS" ]] && SECOND_OPINION_REVIEW_TARGETS="$_CALLER_REVIEW_TARGETS"
-[[ -n "$_CALLER_REVIEW_INSTRUCTIONS" ]] && SECOND_OPINION_REVIEW_INSTRUCTIONS="$_CALLER_REVIEW_INSTRUCTIONS"
+[[ -n "$_CALLER_REVIEW_TARGETS_SET" ]] && SECOND_OPINION_REVIEW_TARGETS="$_CALLER_REVIEW_TARGETS"
+[[ -n "$_CALLER_REVIEW_INSTRUCTIONS_SET" ]] && SECOND_OPINION_REVIEW_INSTRUCTIONS="$_CALLER_REVIEW_INSTRUCTIONS"
 
 # Dependency check
 command -v jq >/dev/null 2>&1 || { echo "Error: jq is required but not found" >&2; exit 1; }
@@ -314,10 +320,30 @@ REVIEW_LANES=()
 resolve_review_lanes() {
   local raw="${SECOND_OPINION_REVIEW_TARGETS-codex claude}"
   raw="${raw//,/ }"
-  local t
+  local t seen existing
+  # Same name shape the single-lane path enforces — an arbitrary token would
+  # otherwise reach indirect variable expansion and per-lane file paths. A
+  # duplicate name would launch concurrent children racing on the same lane
+  # artifact/stderr paths and duplicate the lane's provenance, so each
+  # available target joins at most once. Skips are loud.
+  set -f
   for t in $raw; do
+    set +f
+    if [[ ! "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
+      echo "→ skipping invalid review target name: $t" >&2
+      continue
+    fi
+    seen=""
+    for existing in ${REVIEW_LANES[@]+"${REVIEW_LANES[@]}"}; do
+      [[ "$existing" == "$t" ]] && seen=1 && break
+    done
+    if [[ -n "$seen" ]]; then
+      echo "→ skipping duplicate review target: $t" >&2
+      continue
+    fi
     target_available "$t" && REVIEW_LANES+=("$t")
   done
+  set +f
   return 0
 }
 
@@ -386,6 +412,7 @@ REVIEW_BRANCH=""
 REVIEW_RANGE=""
 REVIEW_CHANGED_FILES=""
 REVIEW_DIFFSTAT=""
+REVIEW_HEAD_SHA=""
 
 derive_review_scope() {
   local cwd="$1"
@@ -397,6 +424,21 @@ derive_review_scope() {
     [[ -n "$base_branch" ]] || base_branch=main
     range="origin/${base_branch}...HEAD"
   fi
+
+  # Pin the scope to an immutable commit at derivation time: a symbolic HEAD
+  # endpoint re-resolves per invocation, so a commit landing mid-review would
+  # let lanes inspect different diffs and the artifact claim a head the model
+  # never reviewed. reviewed_head is stamped from the RANGE'S endpoint (the
+  # commit actually reviewed) — never from a post-review rev-parse, and never
+  # from worktree HEAD when an explicit historical range was requested.
+  local head_now
+  head_now=$(git -C "$cwd" rev-parse HEAD 2>/dev/null || echo "")
+  if [[ -n "$head_now" && "$range" == *HEAD* ]]; then
+    range="${range//HEAD/$head_now}"
+  fi
+  local endpoint="${range##*..}"
+  [[ -n "$endpoint" ]] || endpoint="$head_now"
+  REVIEW_HEAD_SHA=$(git -C "$cwd" rev-parse "$endpoint" 2>/dev/null || echo "")
   REVIEW_RANGE="$range"
 
   REVIEW_BRANCH=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
@@ -447,12 +489,29 @@ collect_review_instructions() {
   # shellcheck disable=SC2206
   local -a pattern_list=($patterns)
   set +f
+  # Containment root: the reviewed repo's PHYSICAL path. Instruction files
+  # come from an untrusted checkout — a committed symlink (the file itself or
+  # a parent directory) pointing outside the repo would otherwise be followed
+  # by head/wc and leak an arbitrary host-readable file into the prompt sent
+  # to the external model. Symlinked instruction files are rejected outright;
+  # each match's parent directory must physically resolve inside the root.
+  local phys_root phys_dir
+  phys_root="$(cd "$CWD" && pwd -P)" || return 0
   for pattern in ${pattern_list[@]+"${pattern_list[@]}"}; do
     # compgen -G expands the glob without leaking non-matches (a bare unmatched
     # pattern would otherwise pass through as a literal word). One path per
     # line, so spaces in names survive; newline-in-name is not supported.
     while IFS= read -r f; do
       [[ -n "$f" && -f "$CWD/$f" ]] || continue
+      if [[ -L "$CWD/$f" ]]; then
+        echo "→ skipping symlinked instruction file (must be a regular file inside the repo): $f" >&2
+        continue
+      fi
+      phys_dir="$(cd "$CWD/$(dirname "$f")" 2>/dev/null && pwd -P)" || continue
+      if [[ "$phys_dir" != "$phys_root" && "$phys_dir" != "$phys_root"/* ]]; then
+        echo "→ skipping instruction file outside the reviewed repo: $f -> $phys_dir" >&2
+        continue
+      fi
       case "$matched" in *$'\n'"$f"$'\n'*) continue ;; esac
       matched="${matched}${f}"$'\n'
       printf -- '--- %s ---\n' "$f"
@@ -562,15 +621,38 @@ if $MULTI_LANE; then
   derive_review_scope "$CWD" "$RANGE"
 
   LANE_TMP_DIR=$(mktemp -d)
-  trap 'rm -rf "$LANE_TMP_DIR"' EXIT
+  LANE_PIDS=()
+  # On any exit — including INT/TERM — kill still-running lane children before
+  # cleanup: an interrupted parent must not leave external model CLIs running
+  # (and billing) in the background, writing orphaned sidecars.
+  cleanup_lanes() {
+    local pid
+    for pid in ${LANE_PIDS[@]+"${LANE_PIDS[@]}"}; do
+      kill "$pid" 2>/dev/null || true
+    done
+    if [[ ${#LANE_PIDS[@]} -gt 0 ]]; then
+      wait ${LANE_PIDS[@]+"${LANE_PIDS[@]}"} 2>/dev/null || true
+    fi
+    rm -rf "$LANE_TMP_DIR"
+  }
+  trap 'cleanup_lanes' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  # This run promises "no artifact when every lane fails" — a union artifact
+  # left by a PREVIOUS run at the same path would read as a fresh pass to a
+  # caller that continues past the advisory failure. Clear it before lanes
+  # spawn.
+  if [[ -n "$OUTPUT_PATH" ]]; then
+    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    rm -f "$OUTPUT_PATH"
+  fi
 
   SELF="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
-  LANE_PIDS=()
   LANE_OUTS=()
   LANE_ERRS=()
   for lane in "${REVIEW_LANES[@]}"; do
     if [[ -n "$OUTPUT_PATH" ]]; then
-      mkdir -p "$(dirname "$OUTPUT_PATH")"
       lane_out="${OUTPUT_PATH}.${lane}.json"
     else
       lane_out="$LANE_TMP_DIR/lane-${lane}.json"
@@ -593,12 +675,25 @@ if $MULTI_LANE; then
     # Replay the lane's stderr with a lane prefix so parallel logs stay
     # attributable in sequential order.
     sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" >&2 || true
+    lane_ok=false
     if [[ $lane_rc -eq 0 && -s "${LANE_OUTS[$i]}" ]]; then
       wrap="$LANE_TMP_DIR/wrap-${lane}.json"
-      jq --arg target "$lane" '{target: $target, review: .}' "${LANE_OUTS[$i]}" > "$wrap"
-      OK_WRAP_FILES+=("$wrap")
-    else
-      [[ $lane_rc -eq "$EXIT_NO_REVIEW" ]] && ANY_LANE_EXIT4=true
+      # A zero exit with a non-empty file is not proof of a valid artifact —
+      # jq must parse it, or the merge would abort on one corrupt lane.
+      if jq --arg target "$lane" '{target: $target, review: .}' "${LANE_OUTS[$i]}" > "$wrap" 2>/dev/null; then
+        OK_WRAP_FILES+=("$wrap")
+        lane_ok=true
+      else
+        echo "→ lane produced an unparseable artifact: $lane" >&2
+        lane_rc="$EXIT_NO_REVIEW"
+      fi
+    fi
+    if ! $lane_ok; then
+      # Exit-code contract: 4 = the lane ANSWERED but unusably. A lane's own
+      # exit 1 after the availability check is a response-level defect too
+      # (invalid JSON even after the retry exits 1) — only never-answered
+      # classes (5, 124) leave ANY_LANE_EXIT4 unset.
+      [[ $lane_rc -eq "$EXIT_NO_REVIEW" || $lane_rc -eq 1 ]] && ANY_LANE_EXIT4=true
       echo "→ lane failed: $lane (exit $lane_rc)" >&2
       LANES_FAILED_JSON=$(jq -n --argjson prev "$LANES_FAILED_JSON" \
         --arg target "$lane" --argjson code "$lane_rc" \
@@ -613,27 +708,37 @@ if $MULTI_LANE; then
   fi
 
   # Union merge. Dedupe key: normalized location (lowercased, backticks and
-  # whitespace runs collapsed); a finding with an empty location never
-  # deduplicates (its key is made unique by input position). Duplicate
-  # blockers/suggestions collapse to the first of each group with all
-  # contributing lanes listed in `sources`; a suggestion whose location a
-  # blocker already covers is dropped (the stricter class wins). reviewed_head
-  # is stamped for per-push budget accounting, mirroring the single-lane path.
+  # whitespace runs collapsed) PLUS the finding's occurrence index among
+  # same-location findings within its own lane — so one lane reporting two
+  # distinct bugs at a location keeps both (they get #0/#1), while the same
+  # bug reported by two lanes (each lane's #0) still merges. A finding with an
+  # empty location never deduplicates (its key is made unique by input
+  # position). Duplicates collapse to the first of each group with all
+  # contributing lanes listed in `sources`; a suggestion is dropped only when
+  # a blocker holds its exact key (the stricter class wins for the same slot).
+  # reviewed_head is the scope-derivation pin, for per-push budget accounting.
   STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  REVIEWED_HEAD=$(git -C "$CWD" rev-parse HEAD 2>/dev/null || echo "")
+  REVIEWED_HEAD="$REVIEW_HEAD_SHA"
   MERGED=$(jq -s --argjson failed "$LANES_FAILED_JSON" --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" '
     def norm: ((.location // "") | ascii_downcase | gsub("`"; "") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" "));
-    def keyed: to_entries | map(.value + {_k: ((.value | norm) as $l | if $l == "" then "__nokey_" + (.key | tostring) else $l end)});
+    def with_occ: reduce .[] as $f ({seen: {}, out: []};
+      ($f | norm) as $n
+      | (.seen[$n] // 0) as $c
+      | {seen: (.seen + {($n): ($c + 1)}), out: (.out + [$f + {_occ: $c}])})
+      | .out;
+    def keyed: to_entries | map(.value + {_k: ((.value | norm) as $l
+      | if $l == "" then "__nokey_" + (.key | tostring)
+        else $l + "#" + ((.value._occ // 0) | tostring) end)});
     def collapse: group_by(._k) | map(.[0] + {sources: (map(.source) | unique)});
     . as $lanes
     | ($lanes | map(.target)) as $targets
-    | ([ $lanes[] | .target as $t | .review.blockers[]    | . + {source: $t} ] | keyed) as $abk
-    | ([ $lanes[] | .target as $t | .review.suggestions[] | . + {source: $t} ] | keyed) as $ask
+    | ([ $lanes[] | .target as $t | (.review.blockers    | map(. + {source: $t}) | with_occ)[] ] | keyed) as $abk
+    | ([ $lanes[] | .target as $t | (.review.suggestions | map(. + {source: $t}) | with_occ)[] ] | keyed) as $ask
     | ($abk | collapse) as $bk
     | ($bk | map(._k)) as $bkeys
     | ($ask | map(select(._k as $k | ($bkeys | index($k)) == null)) | collapse) as $sk
-    | ($bk | map(del(._k, .source)) | to_entries | map(.value + {id: (.key + 1)})) as $blockers
-    | ($sk | map(del(._k, .source)) | to_entries | map(.value + {id: (.key + 1)})) as $suggestions
+    | ($bk | map(del(._k, ._occ, .source)) | to_entries | map(.value + {id: (.key + 1)})) as $blockers
+    | ($sk | map(del(._k, ._occ, .source)) | to_entries | map(.value + {id: (.key + 1)})) as $suggestions
     | {
         agent: ("external-union(" + ($targets | join("+")) + ")"),
         timestamp: $ts,
@@ -1132,7 +1237,9 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   REVIEWED_HEAD=""
   if [[ "$MODE" == "review" ]]; then
-    REVIEWED_HEAD=$(git -C "$CWD" rev-parse HEAD 2>/dev/null || echo "")
+    # Pinned at scope derivation, before the CLI ran — never re-sampled from a
+    # mutable HEAD after the review finished.
+    REVIEWED_HEAD="$REVIEW_HEAD_SHA"
   fi
   if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
       --argjson raw_bytes "$RAW_RESPONSE_BYTES" \

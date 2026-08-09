@@ -135,7 +135,7 @@ assert_contains "$PROMPT_CAPTURE" "Docs-vs-code drift:" "docs-drift lens present
 assert_contains "$PROMPT_CAPTURE" "Test adequacy:" "test-adequacy lens present"
 assert_not_contains "$PROMPT_CAPTURE" "Documentation gaps" "old documentation carve-out removed"
 assert_not_contains "$PROMPT_CAPTURE" "Test coverage suggestions" "old test-coverage carve-out removed"
-assert_contains "$PROMPT_CAPTURE" "git diff HEAD" "diff command still present"
+assert_contains "$PROMPT_CAPTURE" "git diff $(git -C "$WITH" rev-parse HEAD)" "diff command (pinned range) still present"
 
 # --- Scenario 2: default instruction globs are appended when present ----------
 echo "=== scenario 2: instruction files appended under default globs ==="
@@ -172,6 +172,34 @@ echo "=== scenario 6: artifact records the reviewed head commit ==="
 head_sha="$(git -C "$WITH" rev-parse HEAD)"
 got_head="$(jq -r '.qa_metadata.reviewed_head // "missing"' "$out1")"
 assert_eq "$got_head" "$head_sha" "qa_metadata.reviewed_head matches git HEAD of --cwd"
+
+# --- Scenario 7: symlinked instruction files are never followed ---------------
+# The reviewed checkout is untrusted: a committed symlink at an instruction
+# path (review-bots.md -> ~/.secrets) would otherwise leak an arbitrary
+# host-readable file into the prompt sent to the external model.
+echo "=== scenario 7: symlinked instruction file is rejected (containment) ==="
+SECRET="$TMP_ROOT/outside-secret.txt"
+printf 'SECRET-HOST-DATA: not for the prompt\n' > "$SECRET"
+EVIL="$TMP_ROOT/evil"
+make_repo "$EVIL"
+ln -s "$SECRET" "$EVIL/review-bots.md"
+mkdir -p "$EVIL/.github"
+ln -s "$TMP_ROOT" "$EVIL/.github/instructions"
+printf 'RULE-ECHO: a legitimate rule\n' > "$EVIL/.github/copilot-instructions.md"
+out7="$TMP_ROOT/out7.json"
+run_review "$EVIL" "$out7"
+assert_not_contains "$PROMPT_CAPTURE" "SECRET-HOST-DATA" "symlinked file content never reaches the prompt"
+assert_contains "$PROMPT_CAPTURE" "RULE-ECHO" "legitimate sibling instruction file still appended"
+
+# --- Scenario 8: explicitly EMPTY caller env survives project settings --------
+# SECOND_OPINION_REVIEW_INSTRUCTIONS="" is meaningful (disables the block);
+# the .env reload must restore caller SET-ness, not just non-empty values.
+echo "=== scenario 8: empty caller override beats project settings ==="
+printf '[env]\nSECOND_OPINION_REVIEW_INSTRUCTIONS = "review-bots.md"\n' > "$TMP_ROOT/proj/vstack.settings.toml"
+out8="$TMP_ROOT/out8.json"
+run_review "$WITH" "$out8" SECOND_OPINION_REVIEW_INSTRUCTIONS=
+assert_not_contains "$PROMPT_CAPTURE" "Repository review instructions" "caller-empty disables despite project settings"
+rm -f "$TMP_ROOT/proj/vstack.settings.toml"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

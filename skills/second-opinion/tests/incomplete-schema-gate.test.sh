@@ -163,7 +163,7 @@ assert_eq "$(cat "$COUNTER")" "2" "scenario 1 invoked the CLI twice (retry ran)"
 s1_retry_prompt="$PROMPT_DIR/prompt-2.txt"
 assert_file_contains "$s1_retry_prompt" "missing required schema fields" "retry prompt names the incomplete-schema defect"
 assert_file_contains "$s1_retry_prompt" "Branch: scope-branch" "retry prompt carries the derived branch (full original context)"
-assert_file_contains "$s1_retry_prompt" "git diff HEAD" "retry prompt still gives the diff command to run"
+assert_file_contains "$s1_retry_prompt" "git diff $(git -C "$WORK" rev-parse HEAD)" "retry prompt still gives the diff command to run"
 assert_file_contains "$s1_retry_prompt" '"verdict":"pass","summary":"Reviewed the diff, one issue noted"' "retry prompt embeds the captured truncated response"
 
 # --- Scenario 2: still-truncated retry is rejected, not written ---------------

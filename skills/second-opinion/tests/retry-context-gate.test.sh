@@ -174,9 +174,10 @@ assert_file_contains "$s2_out" "Null deref in parser" "artifact contains the ret
 assert_eq "$(cat "$COUNTER")" "2" "scenario 2 invoked the CLI twice (retry ran)"
 s2_retry_prompt="$PROMPT_DIR/prompt-2.txt"
 assert_file_contains "$s2_retry_prompt" "Branch: scope-branch" "retry prompt carries the derived branch"
-assert_file_contains "$s2_retry_prompt" "Diff range: HEAD" "retry prompt carries the diff range"
+work_head="$(git -C "$WORK" rev-parse HEAD)"
+assert_file_contains "$s2_retry_prompt" "Diff range: $work_head" "retry prompt carries the pinned diff range"
 assert_file_contains "$s2_retry_prompt" "file.txt" "retry prompt carries the changed-file list"
-assert_file_contains "$s2_retry_prompt" "git diff HEAD" "retry prompt still gives the diff command to run"
+assert_file_contains "$s2_retry_prompt" "git diff $work_head" "retry prompt still gives the diff command to run"
 assert_file_contains "$s2_retry_prompt" "already delivered above" "retry prompt embeds the captured first response"
 
 # --- Scenario 3: first response missing qa_metadata is non-conforming ---------
