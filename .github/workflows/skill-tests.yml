@@ -140,6 +140,21 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.80.5 @earendil-works/pi-ai@0.80.5 @earendil-works/pi-coding-agent@0.80.5 @earendil-works/pi-tui@0.80.5
           bun test ./tests
 
+      # Pi 0.84.x is the release the extensions are audited against, so the
+      # suites that assert 0.84 wire-format parity install that line rather
+      # than the 0.80.5 floor above.
+      - name: pi-agents-tmux suite
+        working-directory: pi-extensions/pi-agents-tmux
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox
+          bun test ./tests ./extensions/subagent/__tests__
+
+      - name: pi-codex-minimal-tools suite
+        working-directory: pi-extensions/pi-codex-minimal-tools
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox undici
+          npm test
+
       # The bridge ships ~256 unit tests that nothing in CI ran until now, so
       # "tests pass" on a bridge PR meant "passed on the author's machine".
       # Build first: one suite loads bundle/connector-inventory.js rather than
@@ -150,6 +165,14 @@ jobs:
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           npm run build
           npm run test:unit
+
+      # bundle/index.js is the artifact Pi loads and npm publishes. Building it
+      # from stale or out-of-range node_modules has silently shipped a vendored
+      # dependency downgrade before, as an invisible generated-file hunk. A clean
+      # lockfile build must reproduce the committed bytes exactly.
+      - name: pi-claude-bridge bundle matches a clean lockfile build
+        working-directory: pi-extensions/pi-claude-bridge
+        run: git diff --exit-code -- bundle/
 
   gate-selftest:
     # DELIBERATELY UNGATED: no `needs`, no approval condition, no path

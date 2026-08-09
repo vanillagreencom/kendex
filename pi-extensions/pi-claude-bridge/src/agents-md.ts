@@ -7,29 +7,38 @@
 // (~/.pi, .pi/, .pi, pi) to their Claude Code equivalents so any paths or
 // references in the file still resolve inside the CC subprocess.
 //
-// Per directory we mirror the leading entries of Pi's own candidate order
-// (resource-loader.ts): AGENTS.override.md replaces AGENTS.md in the same
-// directory. Pi's list continues with CLAUDE.md, which we deliberately omit --
-// the Claude Code subprocess already loads CLAUDE.md natively, so forwarding it
-// would apply the same context twice.
+// Per directory we mirror the AGENTS.* entries of Pi's own candidate order
+// (resource-loader.ts): AGENTS.override.md, AGENTS.md, AGENTS.MD -- the override
+// replaces AGENTS.md in the same directory. Pi's list continues with CLAUDE.md and
+// CLAUDE.MD, which we deliberately omit: the Claude Code subprocess already loads
+// CLAUDE.md natively, so forwarding it would apply the same context twice.
 //
 // In isolated mode (CLAUDE_BRIDGE_ISOLATED=1), all AGENTS.md discovery is
 // disabled. Embedding hosts provide their instruction surface explicitly.
 
-import { readFileSync, statSync } from "fs";
+import { lstatSync, readFileSync, statSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { isolatedFromEnv, piUserDir } from "./config.js";
 import { debug } from "./debug.js";
 
-const CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md"];
+const CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD"];
 
 function contextFileInDir(dir: string): string | undefined {
 	for (const filename of CONTEXT_FILE_CANDIDATES) {
 		const candidate = join(dir, filename);
 		try {
 			if (statSync(candidate).isFile()) return candidate;
-		} catch {
-			// Missing or unreadable candidate; try the next filename.
+		} catch (error) {
+			// A genuinely absent candidate is the normal case and stays silent. Anything else --
+			// a dangling symlink (which reports ENOENT through stat), a permissions error, an I/O
+			// fault -- means a context file the user intended is being skipped, and skipping an
+			// override silently forwards the AGENTS.md it was meant to supersede.
+			try {
+				lstatSync(candidate);
+				debug(`agents-md: skipping unusable ${candidate}: ${(error as NodeJS.ErrnoException).code ?? String(error)}`);
+			} catch {
+				// Not present at all; try the next filename.
+			}
 		}
 	}
 	return undefined;

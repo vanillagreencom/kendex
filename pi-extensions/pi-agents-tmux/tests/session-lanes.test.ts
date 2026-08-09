@@ -20,6 +20,7 @@ import {
 	resolveBgSession,
 	setSessionCompactorForTests,
 } from "../extensions/subagent/sessions.js";
+import { extractLastAssistantTextFromTranscriptContent } from "../extensions/subagent/format.js";
 import { recordProjectTrust } from "../extensions/subagent/settings.js";
 import {
 	runSingleAgent,
@@ -372,6 +373,46 @@ test("failed oneshot transcript flushes latest filtered message_update after the
 	else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
 });
 
+test("failed oneshot transcript keeps only the newest message's deltas across a message boundary", async () => {
+	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	// message_start must reset BOTH the accumulator and the pending event, or the flush pairs a
+	// stale event with a fresh reconstruction.
+	installMockSpawn([{ code: 1, stdout: bridgeStdout([
+		shapedStreamEvent("top-level", "message_start"),
+		shapedStreamEvent("top-level", "message_update", { assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "first message" } }),
+		shapedStreamEvent("top-level", "message_end", { message: { role: "assistant", content: [{ type: "text", text: "first message" }], usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2 } } }),
+		shapedStreamEvent("top-level", "message_start"),
+		shapedStreamEvent("top-level", "message_update", { assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "second message" } }),
+	]) }]);
+	try {
+		const result = await runSingleAgent(
+			tempRuntime(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review task message boundary",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents([]),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		const content = readTranscript(result);
+		const flushed = content.trim().split(/\r?\n/).map((line) => JSON.parse(line)).filter((record) => record.buffered);
+		assert.equal(flushed.length, 1);
+		assert.deepEqual(flushed[0].partialMessage, { role: "assistant", content: [{ type: "text", text: "second message" }] });
+		assert.equal(extractLastAssistantTextFromTranscriptContent(content), "second message");
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+	if (previousFull === undefined) delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
+});
+
 test("failed oneshot transcript rebuilds the partial message from Pi 0.84 delta-only message_update events", async () => {
 	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
 	const shapes: StreamShape[] = ["nested-event", "bridge-event", "top-level"];
@@ -404,6 +445,10 @@ test("failed oneshot transcript rebuilds the partial message from Pi 0.84 delta-
 			const flushed = content.trim().split(/\r?\n/).map((line) => JSON.parse(line)).filter((record) => record.buffered);
 			assert.equal(flushed.length, 1, shape);
 			assert.deepEqual(flushed[0].partialMessage, { role: "assistant", content: [{ type: "text", text: `rebuilt ${shape} partial answer` }] }, shape);
+			// The observable that matters: the readers which back the task summary and the dashboard
+			// must recover the rebuilt text. Asserting only the record field passed while the
+			// summary path still returned nothing.
+			assert.equal(extractLastAssistantTextFromTranscriptContent(content), `rebuilt ${shape} partial answer`, shape);
 		} finally {
 			setSingleAgentSpawnForTests();
 		}

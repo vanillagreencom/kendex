@@ -28,61 +28,102 @@ export function normalizePiStreamEvent(event: any): NormalizedTranscriptEvent {
 //
 // Tool calls are deliberately not reconstructed here: their lifecycle is already recorded
 // through the separate tool_execution_* transcript events.
+/** Stream event types that legitimately contribute no reconstructable content. */
+const PARTIAL_MESSAGE_IGNORED_TYPES = new Set(["start", "text_start", "thinking_start", "toolcall_start", "toolcall_delta", "toolcall_end", "done", "error"]);
+
+export type PartialAssistantContentBlock =
+	| { type: "text"; text: string }
+	| { type: "thinking"; thinking: string };
+
 export interface PartialAssistantMessageState {
 	/** contentIndex -> block, so out-of-order or interleaved indices still land correctly. */
 	blocks: Map<number, { kind: "text" | "thinking"; text: string }>;
-	/** A snapshot-bearing event (older Pi, or a shape that kept `partial`) supersedes deltas. */
+	/**
+	 * Whether the LAST applied event carried its own cumulative snapshot (older Pi, or a shape
+	 * that kept `partial`). Tracked per event, not sticky: the flush only cares whether the one
+	 * event it is writing already carries the message, so a later delta-only event clears it.
+	 */
 	hasSnapshot: boolean;
+	/** Applied `message_update` payloads since the last reset — the denominator for a silent-drop check. */
+	updatesSeen: number;
+	/** Unrecognized `assistantMessageEvent.type` values dropped since the last reset. */
+	unrecognizedTypes: Set<string>;
 }
 
 export function createPartialAssistantMessageState(): PartialAssistantMessageState {
-	return { blocks: new Map(), hasSnapshot: false };
+	return { blocks: new Map(), hasSnapshot: false, updatesSeen: 0, unrecognizedTypes: new Set() };
 }
 
 export function resetPartialAssistantMessage(state: PartialAssistantMessageState): void {
 	state.blocks.clear();
 	state.hasSnapshot = false;
+	state.updatesSeen = 0;
+	state.unrecognizedTypes.clear();
 }
 
 /** Fold one `message_update` payload into the reconstructed partial assistant message. */
 export function applyPartialAssistantMessage(state: PartialAssistantMessageState, payload: any): void {
 	if (!payload || typeof payload !== "object") return;
+	state.updatesSeen += 1;
 	const streamEvent = payload.assistantMessageEvent;
-	if (payload.message || (streamEvent && typeof streamEvent === "object" && streamEvent.partial)) {
-		state.hasSnapshot = true;
+	const nestedEvent = streamEvent && typeof streamEvent === "object" ? streamEvent : undefined;
+	state.hasSnapshot = Boolean(payload.message || nestedEvent?.partial);
+	if (state.hasSnapshot) return;
+	if (!nestedEvent) {
+		state.unrecognizedTypes.add("<no assistantMessageEvent>");
 		return;
 	}
-	if (!streamEvent || typeof streamEvent !== "object") return;
-	const type = typeof streamEvent.type === "string" ? streamEvent.type : undefined;
-	if (!type) return;
-	const contentIndex = typeof streamEvent.contentIndex === "number" ? streamEvent.contentIndex : 0;
+	const type = typeof nestedEvent.type === "string" ? nestedEvent.type : undefined;
+	if (!type) {
+		state.unrecognizedTypes.add("<no type>");
+		return;
+	}
+	const contentIndex = typeof nestedEvent.contentIndex === "number" ? nestedEvent.contentIndex : 0;
 	const kind = type.startsWith("thinking") ? "thinking" : type.startsWith("text") ? "text" : undefined;
-	if (!kind) return;
 
-	if (type.endsWith("_end")) {
+	if (kind && type.endsWith("_end")) {
 		// `*_end` carries the authoritative full block content; prefer it over accumulated deltas.
-		if (typeof streamEvent.content === "string") state.blocks.set(contentIndex, { kind, text: streamEvent.content });
+		if (typeof nestedEvent.content === "string") state.blocks.set(contentIndex, { kind, text: nestedEvent.content });
 		return;
 	}
-	if (type.endsWith("_delta")) {
-		if (typeof streamEvent.delta !== "string" || streamEvent.delta.length === 0) return;
+	if (kind && type.endsWith("_delta")) {
+		if (typeof nestedEvent.delta !== "string" || nestedEvent.delta.length === 0) return;
 		const existing = state.blocks.get(contentIndex);
-		if (existing && existing.kind === kind) existing.text += streamEvent.delta;
-		else state.blocks.set(contentIndex, { kind, text: streamEvent.delta });
+		if (existing && existing.kind === kind) existing.text += nestedEvent.delta;
+		else state.blocks.set(contentIndex, { kind, text: nestedEvent.delta });
+		return;
 	}
+	// A shape we do not know how to fold in. Recording it is what turns a future wire-format
+	// change into a reported diagnostic instead of a silently empty forensic record.
+	if (!PARTIAL_MESSAGE_IGNORED_TYPES.has(type)) state.unrecognizedTypes.add(type);
 }
 
 /**
  * The reconstructed assistant message, or undefined when nothing was accumulated or the
- * flushed event already carries its own cumulative snapshot.
+ * event being flushed already carries its own cumulative snapshot. Content blocks use Pi's
+ * own shapes (`{ type: "text", text }` / `{ type: "thinking", thinking }`) so the record is
+ * readable by the same helpers that read a real assistant message.
  */
-export function partialAssistantMessage(state: PartialAssistantMessageState): { role: "assistant"; content: Array<{ type: "text" | "thinking"; text: string }> } | undefined {
+export function partialAssistantMessage(state: PartialAssistantMessageState): { role: "assistant"; content: PartialAssistantContentBlock[] } | undefined {
 	if (state.hasSnapshot || state.blocks.size === 0) return undefined;
 	const content = [...state.blocks.entries()]
 		.sort(([a], [b]) => a - b)
 		.filter(([, block]) => block.text.length > 0)
-		.map(([, block]) => ({ type: block.kind, text: block.text }));
+		.map(([, block]): PartialAssistantContentBlock => (block.kind === "thinking"
+			? { type: "thinking", thinking: block.text }
+			: { type: "text", text: block.text }));
 	return content.length > 0 ? { role: "assistant", content } : undefined;
+}
+
+/**
+ * A diagnostic when reconstruction produced nothing despite events having been applied —
+ * the signal that Pi's wire format moved again and this shim went stale.
+ */
+export function partialAssistantMessageDiagnostic(state: PartialAssistantMessageState): string | undefined {
+	if (state.hasSnapshot || state.updatesSeen === 0 || state.blocks.size > 0) return undefined;
+	if (state.unrecognizedTypes.size === 0) return undefined;
+	const types = [...state.unrecognizedTypes].sort().join(", ");
+	return `partial assistant message could not be rebuilt from ${state.updatesSeen} message_update event(s); unrecognized assistantMessageEvent type(s): ${types}`;
 }
 
 export function normalizeTranscriptRecordEvent(record: any): NormalizedTranscriptEvent {

@@ -64,6 +64,20 @@ test("buildHeaders treats null provider headers as deletions, not the string \"n
 	assert.equal(headers.get("x-added"), "value");
 });
 
+test("buildHeaders keeps the request's own pinned headers even when nulled by the provider", () => {
+	const model = { headers: {} } as never;
+	const headers = buildHeaders(model, codexToken("acct-2"), {
+		Authorization: null,
+		"chatgpt-account-id": null,
+		originator: null,
+		"content-type": null,
+	});
+	assert.equal(headers.get("authorization"), `Bearer ${codexToken("acct-2")}`);
+	assert.equal(headers.get("chatgpt-account-id"), "acct-2");
+	assert.equal(headers.get("originator"), "pi");
+	assert.equal(headers.get("content-type"), "application/json");
+});
+
 test("summarizeNonImageResponse includes status, error, and text output", () => {
 	const summary = summarizeNonImageResponse({
 		status: "failed",

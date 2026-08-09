@@ -8,7 +8,7 @@
  * real home directory. Default (unset) behavior must be byte-identical to the
  * pre-isolation bridge.
  */
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
@@ -127,13 +127,66 @@ describe("resolveAgentsMdPath isolation", () => {
 	}));
 
 	it("a directory named AGENTS.md is not treated as a context file", () => withTempDir((dir) => {
-		const cwdDir = join(dir, "cwd");
+		// The walk-up must step over the directory and find the real file one level up.
+		const cwdDir = join(dir, "parent", "child");
 		mkdirSync(join(cwdDir, "AGENTS.md"), { recursive: true });
+		writeFileSync(join(dir, "parent", "AGENTS.md"), "# ancestor instructions\n");
 		const oldCwd = process.cwd();
 		try {
 			process.chdir(cwdDir);
 			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined, PI_CODING_AGENT_DIR: join(dir, "empty-agent") }, () => {
-				assert.notEqual(resolveAgentsMdPath(), join(process.cwd(), "AGENTS.md"));
+				assert.equal(resolveAgentsMdPath(), join(dir, "parent", "AGENTS.md"));
+			});
+		} finally {
+			process.chdir(oldCwd);
+		}
+	}));
+
+	it("AGENTS.MD is accepted, matching Pi's candidate order", () => withTempDir((dir) => {
+		const cwdDir = join(dir, "cwd");
+		mkdirSync(cwdDir, { recursive: true });
+		writeFileSync(join(cwdDir, "AGENTS.MD"), "# uppercase instructions\n");
+		const oldCwd = process.cwd();
+		try {
+			process.chdir(cwdDir);
+			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined }, () => {
+				assert.equal(resolveAgentsMdPath(), join(process.cwd(), "AGENTS.MD"));
+			});
+		} finally {
+			process.chdir(oldCwd);
+		}
+	}));
+
+	it("a dangling AGENTS.override.md symlink falls through to AGENTS.md", () => withTempDir((dir) => {
+		const cwdDir = join(dir, "cwd");
+		mkdirSync(cwdDir, { recursive: true });
+		writeFileSync(join(cwdDir, "AGENTS.md"), "# base instructions\n");
+		symlinkSync(join(cwdDir, "does-not-exist.md"), join(cwdDir, "AGENTS.override.md"));
+		const oldCwd = process.cwd();
+		try {
+			process.chdir(cwdDir);
+			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined }, () => {
+				assert.equal(resolveAgentsMdPath(), join(process.cwd(), "AGENTS.md"));
+				assert.match(extractAgentsAppend() ?? "", /base instructions/);
+			});
+		} finally {
+			process.chdir(oldCwd);
+		}
+	}));
+
+	it("the piUserDir fallback honors AGENTS.override.md too", () => withTempDir((dir) => {
+		const cwdDir = join(dir, "cwd");
+		const agentDir = join(dir, "agent");
+		mkdirSync(cwdDir, { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		writeFileSync(join(agentDir, "AGENTS.md"), "# global base\n");
+		writeFileSync(join(agentDir, "AGENTS.override.md"), "# global override\n");
+		const oldCwd = process.cwd();
+		try {
+			process.chdir(cwdDir);
+			withEnv({ CLAUDE_BRIDGE_ISOLATED: undefined, PI_CODING_AGENT_DIR: agentDir }, () => {
+				assert.equal(resolveAgentsMdPath(), resolve(join(agentDir, "AGENTS.override.md")));
+				assert.match(extractAgentsAppend() ?? "", /global override/);
 			});
 		} finally {
 			process.chdir(oldCwd);

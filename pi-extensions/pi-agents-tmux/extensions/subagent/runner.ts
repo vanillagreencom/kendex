@@ -48,6 +48,7 @@ import {
 	createPartialAssistantMessageState,
 	normalizePiStreamEvent,
 	partialAssistantMessage,
+	partialAssistantMessageDiagnostic,
 	resetPartialAssistantMessage,
 } from "./transcripts.js";
 import {
@@ -889,17 +890,29 @@ async function runSingleAgentAttempt(
 
 			const flushFilteredMessageUpdate = (reason: "nonzero_exit" | "process_error" | "timeout") => {
 				if (keepFullTranscript || !latestFilteredMessageUpdate) return;
-				// Pi's delta-only wire event leaves the newest update holding one token, so carry the
-				// message rebuilt from this message's deltas alongside it.
+				// Pi's delta-only wire event leaves the newest update holding one delta, so restore the
+				// cumulative `message` Pi used to send. Every transcript reader (summary backfill,
+				// dashboard activity, transcript display) already looks there, so putting the
+				// reconstruction anywhere else leaves the record unreadable.
 				const partialMessage = partialAssistantMessage(partialMessageState);
+				const flushedEvent = partialMessage
+					? { ...latestFilteredMessageUpdate, message: partialMessage }
+					: latestFilteredMessageUpdate;
+				const diagnostic = partialAssistantMessageDiagnostic(partialMessageState);
 				appendTranscript({
 					stream: "stdout",
-					raw: JSON.stringify(latestFilteredMessageUpdate),
-					event: latestFilteredMessageUpdate,
+					raw: JSON.stringify(flushedEvent),
+					event: flushedEvent,
 					buffered: true,
 					reason,
 					...(partialMessage ? { partialMessage } : {}),
 				});
+				// Route through result diagnostics, not the transcript alone: appendTranscript drops
+				// write failures, so a transcript-only signal has no second chance to surface.
+				if (diagnostic) {
+					appendResultDiagnostic(currentResult, diagnostic);
+					appendTranscript({ type: "diagnostic", diagnostic, attempt });
+				}
 				latestFilteredMessageUpdate = undefined;
 				resetPartialAssistantMessage(partialMessageState);
 			};
@@ -997,7 +1010,12 @@ async function runSingleAgentAttempt(
 				}
 				const normalized = normalizePiStreamEvent(event);
 				const eventName = normalized.name;
-				if (eventName === "message_start") resetPartialAssistantMessage(partialMessageState);
+				if (eventName === "message_start") {
+					// Both halves of "pending unflushed partial output" reset together; clearing only the
+					// accumulator would pair a stale event with a fresh reconstruction.
+					latestFilteredMessageUpdate = undefined;
+					resetPartialAssistantMessage(partialMessageState);
+				}
 				if (eventName === "message_update" && !keepFullTranscript) {
 					latestFilteredMessageUpdate = normalized.event;
 					applyPartialAssistantMessage(partialMessageState, normalized.payload);

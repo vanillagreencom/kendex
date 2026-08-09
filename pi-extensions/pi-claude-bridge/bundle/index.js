@@ -43837,7 +43837,7 @@ function spawnClaudeCodeWithDiagnostics(options) {
   };
 }
 
-// node_modules/cc-session-io/dist/chunk-D6EZBJOC.js
+// node_modules/cc-session-io/dist/chunk-7RWUSC7F.js
 import { randomUUID } from "crypto";
 import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync2, appendFileSync as appendFileSync3, existsSync as existsSync4, rmSync as rmSync2 } from "fs";
 import { dirname as dirname4 } from "path";
@@ -44095,13 +44095,16 @@ var Session = class {
     this._lastUuid = uuid3;
     return record2;
   }
-  /** Add a user text message. Returns its uuid. */
-  addUserMessage(text) {
+  /** Add a user message, as plain text or content blocks. Returns its uuid. */
+  addUserMessage(content) {
+    if (Array.isArray(content) && content.length === 0) {
+      throw new Error("addUserMessage: content array is empty; Anthropic rejects empty message content");
+    }
     const base = this.baseFields();
     const record2 = {
       type: "user",
       ...base,
-      message: { role: "user", content: text }
+      message: { role: "user", content }
     };
     this._pendingRecords.push(record2);
     return base.uuid;
@@ -44189,16 +44192,17 @@ var Session = class {
           const toolResults = msg.content.filter(
             (b) => b.type === "tool_result"
           );
+          const rest = msg.content.filter(
+            (b) => b.type !== "tool_result"
+          );
           if (toolResults.length > 0) {
             this.addToolResults(toolResults.map((r) => ({
               toolUseId: r.tool_use_id,
               content: r.content,
               isError: r.is_error
             })));
-          } else {
-            const text = msg.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
-            this.addUserMessage(text || JSON.stringify(msg.content));
           }
+          if (rest.length > 0) this.addUserMessage(rest);
         }
       }
     }
@@ -45767,15 +45771,20 @@ async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridg
 }
 
 // src/agents-md.ts
-import { readFileSync as readFileSync7, statSync as statSync5 } from "fs";
+import { lstatSync as lstatSync2, readFileSync as readFileSync7, statSync as statSync5 } from "fs";
 import { dirname as dirname5, join as join9, resolve as resolve3 } from "path";
-var CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md"];
+var CONTEXT_FILE_CANDIDATES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD"];
 function contextFileInDir(dir) {
   for (const filename of CONTEXT_FILE_CANDIDATES) {
     const candidate = join9(dir, filename);
     try {
       if (statSync5(candidate).isFile()) return candidate;
-    } catch {
+    } catch (error51) {
+      try {
+        lstatSync2(candidate);
+        debug(`agents-md: skipping unusable ${candidate}: ${error51.code ?? String(error51)}`);
+      } catch {
+      }
     }
   }
   return void 0;
