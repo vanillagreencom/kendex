@@ -12,14 +12,6 @@ export interface GuardCompactOptions {
 	onError?: (error: Error) => void;
 }
 
-export interface GuardDispatchInput {
-	trigger: BudgetTrigger | undefined;
-	compact: ((options: GuardCompactOptions) => void) | undefined;
-	notify: (message: string, level: GuardLevel) => void;
-	onStatus?: (message: string | undefined) => void;
-	staleCtx?: () => boolean;
-}
-
 export interface GuardPendingDispatchInput {
 	compact: ((options: GuardCompactOptions) => void) | undefined;
 	notify: (message: string, level: GuardLevel) => void;
@@ -171,15 +163,4 @@ export class BudgetGuardDriver {
 		}
 	}
 
-	/** Immediate convenience path retained for focused driver tests and callers. */
-	dispatch(input: GuardDispatchInput): DispatchOutcome {
-		const staged = this.stage(input.trigger, input.staleCtx);
-		if (staged.kind !== "staged" && !(staged.kind === "dedup" && this.pendingTrigger)) return staged;
-		return this.dispatchPending({
-			compact: input.compact,
-			notify: input.notify,
-			onStatus: input.onStatus,
-			staleCtx: input.staleCtx,
-		});
-	}
 }

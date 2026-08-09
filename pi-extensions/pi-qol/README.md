@@ -26,6 +26,8 @@ Quality-of-life extension for Pi: compact statusline, multiline input, session n
 
 ## Install
 
+Requires Pi 0.80.4 or newer. The long-session budget guard depends on the `agent_settled` extension lifecycle event added in that release.
+
 Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-qol):
 
 ```bash

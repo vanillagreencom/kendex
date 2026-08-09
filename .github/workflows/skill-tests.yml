@@ -124,6 +124,22 @@ jobs:
       - name: deep-research node suite
         run: node --test skills/deep-research/tests/deep-research.test.mjs
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # Pi 0.80.4 introduced agent_settled but was not published to npm;
+      # 0.80.5 is the earliest installable compatible dependency set.
+      - name: pi-qol regression suite
+        working-directory: pi-extensions/pi-qol
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.80.5 @earendil-works/pi-ai@0.80.5 @earendil-works/pi-coding-agent@0.80.5 @earendil-works/pi-tui@0.80.5
+          bun test ./tests
+
       # The bridge ships ~256 unit tests that nothing in CI ran until now, so
       # "tests pass" on a bridge PR meant "passed on the author's machine".
       # Build first: one suite loads bundle/connector-inventory.js rather than
