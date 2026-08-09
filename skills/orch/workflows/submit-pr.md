@@ -68,11 +68,11 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
 - A PR number argument was provided — the PR already exists; arrived comments are triaged in § 3.
 - `.agents/skills/second-opinion/scripts/second-opinion` does not exist (skill not installed).
 
-1. **Check pass budget** (max 2 local review passes per submission):
+1. **Check pass budget** (max 2 local review passes per pushed head — GitHub bots re-review every push, so a new head is a new round, not a spend against a per-submission cap; VST-153):
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_local_review.passes // 0'
+   .agents/skills/orch/scripts/local-review-budget [ISSUE_ID] --worktree "[WORKTREE_PATH]"
    ```
-   Use the output as `LOCAL_PASSES`. If `LOCAL_PASSES >= 2` → § 2.
+   The output is a JSON object: `{passes, max_passes, exhausted, head, reviewed_head, reset}` — the effective pass count for the worktree's **current** HEAD. When the recorded `pr_local_review.reviewed_head` differs from that HEAD (or nothing is recorded yet), the check atomically resets the counter to 0 and stamps the new head before printing (`reset: true`), so the cap applies within a single head. If `exhausted == true` → § 2.
 
 2. **Run the local review** (advisory — on script failure, report and continue to § 2). Capture an epoch freshness boundary *before* the review writes the artifact so step 3 can reject a stale or misdated file the way glob mode does:
    ```bash
@@ -90,10 +90,17 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    ```bash
    .agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]
    ```
-   Count the pass:
+   If `ok == true`, count the pass and record the head the artifact actually reviewed (`qa_metadata.reviewed_head`, pinned at scope derivation — vstack#1141):
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_local_review.passes
+   jq -r '.qa_metadata.reviewed_head // empty' "$LOCAL_OUTPUT"
    ```
+   If the jq output is non-empty, record it — the artifact's pin wins over the step 1 stamp:
+   ```bash
+   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_local_review.reviewed_head = "[REVIEWED_HEAD_FROM_PREVIOUS_COMMAND]"'
+   ```
+   If it is empty (an older artifact without the stamp), skip the record — the step 1 budget check already stamped the worktree HEAD, and the counted pass stays attributed to it.
+
    If `ok == false`, report the `reason` and continue to § 2 — local review is advisory, never a submission blocker. This includes reason `no_review` (the artifact self-reports no review happened), reason `incomplete` (the artifact declares `qa_metadata` but its findings are unusable — arrays lost, or a present `blockers[]`/`suggestions[]` item omits a required `review-finding` field such as `category`; a `detail` field pinpoints it), and script exits 3 (no diff scope) / 4 (model reported no review, or the response stayed schema-incomplete after the one-shot retry) / 5 (the external CLI never produced a review — non-zero exit, timeout, or empty response — partial output preserved as `<output>.failed.json`): none of these is a pass.
 
 4. **Route findings** from the JSON (`../../reviewer/schemas/review-finding.md` schema):
@@ -108,7 +115,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
      - `source`: `local-review`
    - `suggestions[]` with `category: "issue"` → build the audit-input file and invoke `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 1.2 step 5` (same path as `review-pr-comments.md` § 6.2). Include created issue IDs in the PR body (§ 2 step 3).
 
-5. **Re-verify after fixes**: if dev-fix applied commits, return to step 1 for one confirming pass over the updated diff. If nothing was applied, → § 2.
+5. **Re-verify after fixes**: if dev-fix applied commits, return to step 1 for one confirming pass over the updated diff — the fix commits moved HEAD, so the step 1 check starts a fresh round for the new head. If nothing was applied, → § 2.
 
 ---
 

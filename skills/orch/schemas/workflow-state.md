@@ -76,7 +76,8 @@ Persistent state file for orch workflows. Survives context compaction.
     "replied": []
   },
   "pr_local_review": {
-    "passes": 0
+    "passes": 0,
+    "reviewed_head": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
   },
   "pr_approval": {
     "forced": false,
@@ -120,7 +121,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `rebase_map` | object | Old→new commit SHA map accumulated from `worktree push` auto-rebase output (`rebase-map:` lines — vstack#728). Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. SHAs stored elsewhere in state are rewritten at push time (`submit-pr.md` § 2 step 1); the map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches, since a later rebase maps new → newer |
 | `pr_review_baseline` | object | Baseline for PR comment loop detection |
 | `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered) |
-| `pr_local_review` | object | Local pre-PR review tracking: `passes` (max 2 per submission) |
+| `pr_local_review` | object | Local pre-PR review tracking, budgeted per pushed head (VST-153): `passes` (local review passes counted against `reviewed_head`; max 2 per head) and `reviewed_head` (the head commit those passes reviewed — stamped by `local-review-budget` when the worktree head moves, then overwritten with the artifact's `qa_metadata.reviewed_head` after each counted pass). GitHub bots re-review every push, so a new head is a new round: `local-review-budget` resets `passes` to 0 when the worktree HEAD no longer matches `reviewed_head`; the cap binds only within a single head (`submit-pr.md` § 1.2) |
 | `pr_approval` | object | Approval merge-gate tracking: `forced` (user explicitly chose Force merge past a missing gate verdict), `reviewer_down` (the `PR_REVIEW_ON_TIMEOUT=proceed` degrade auto-proceeded past the deadline because every reviewer was silent — zero reviewer evidence and zero unresolved threads; kept distinct from `forced` so an automated reviewer-down proceed is never confused with a deliberate user override), `gate` (legacy field, still recorded: "off" when the reviewer gate is disabled for a reviewer-less repo) |
 | `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode` from `PR_REVIEW_GATE`, or derived from legacy `PR_APPROVAL_GATE`) |
 

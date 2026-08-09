@@ -93,6 +93,7 @@ Reference workflows (no command): `workflows/agent-sequencing.md` — cross-doma
 | `queue-wait` | Block until a PR's merge-queue / auto-merge outcome is decided — the merge-pr § 3.2 queue watch. Contract: [references/gates.md](references/gates.md) |
 | `orch-env` | Effective value of a vstack `[env]` setting (process env > `vstack.settings.toml` > supplied default) |
 | `refix-route` | Decide whether a fix round needs re-review; prints `{decision, class, reason, …}`. Route on `class`, never on `scope` alone (`review-pr` § 4 / § 7 / § 10) |
+| `local-review-budget` | Effective local pre-PR review pass count for the worktree's current head; prints `{passes, max_passes, exhausted, head, reviewed_head, reset}` and atomically restarts the counter when the head moved — the budget is per pushed head, never per submission (`submit-pr` § 1.2). Contract: `--help` |
 | `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) — see the Codex runtime notes above |
 | `open-terminal` | Launch-only terminal handoff for Linear/GitHub worktrees; `--lane auto[:<harness>]` picks the account with the most headroom via `lanes` and resolves the lane before any worktree is created. Flags: `--help` |

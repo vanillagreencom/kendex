@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **orch: local pre-PR review passes are budgeted per pushed head, not per
+  submission** (VST-153, follow-up to the vstack#1141 `reviewed_head` artifact
+  stamp). `submit-pr` § 1.2 checks the budget through the new
+  `local-review-budget` helper: `pr_local_review.passes` now counts against
+  `pr_local_review.reviewed_head` (recorded from the review artifact's
+  `qa_metadata.reviewed_head` after each counted pass), and a head change
+  resets the round — GitHub bots re-review every push, so a new head is a new
+  round; the 2-pass cap binds only within a single head.
+
 - **orch (breaking, removal): the legacy consumer script pair is gone.**
   `skills/orch/scripts/ci/{review-predicate.sh,approval-refire.sh}` and
   their tests existed only for pre-v2 hyprtrade, which completed its v2
