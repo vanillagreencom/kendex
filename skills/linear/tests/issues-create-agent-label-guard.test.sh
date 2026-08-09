@@ -36,7 +36,15 @@ case "$query" in
   printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
-  printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
+  # agent:ghost simulates a label declared in LINEAR_AGENT_LABELS but since
+  # deleted in Linear; any name that is not byte-exact (e.g. " agent:rust"
+  # with a leading space) also misses, mirroring the API's eq filter.
+  name="$(jq -r '.variables.name // empty' <<<"$payload")"
+  if [ "$name" = "agent:ghost" ] || [ "$name" != "$(printf '%s' "$name" | sed 's/^ *//;s/ *$//')" ]; then
+    printf '%s' '{"data":{"issueLabels":{"nodes":[]}}}___HTTP_CODE___200'
+  else
+    printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-uuid"}]}}}___HTTP_CODE___200'
+  fi
   ;;
 *"issueCreate(input:"*)
   printf '%s' '{"data":{"issueCreate":{"success":true,"issue":{"id":"issue-uuid","identifier":"TEAM-1","title":"t","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Configured"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/x/issue/TEAM-1","createdAt":"2026-08-08T00:00:00Z","updatedAt":"2026-08-08T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
@@ -152,6 +160,36 @@ assert_created "bare create with no LINEAR_AGENT_LABELS key"
 set_settings ""
 run_linear issues create --title "Empty declaration create"
 assert_created "bare create with empty LINEAR_AGENT_LABELS"
+
+echo "=== declared taxonomy: comma-space labels normalize for guard AND resolver ==="
+
+# Natural input "bug, agent:rust": the guard must accept it AND the resolver
+# must receive the TRIMMED names — an untrimmed " agent:rust" misses Linear's
+# eq filter and is silently skipped, recreating the unrouted-but-looks-routed
+# create the guard exists to prevent.
+set_settings "agent:generalist, agent:rust"
+run_linear issues create --title "Natural input" --labels "bug, agent:rust"
+assert_created "create with comma-space labels"
+jq -s -e 'any(.[]; .variables.name == "agent:rust")' "$CURL_LOG" >/dev/null ||
+  fail "resolver did not receive the trimmed agent label: $(cat "$CURL_LOG")"
+if jq -s -e 'any(.[]; .variables.name == " agent:rust")' "$CURL_LOG" >/dev/null; then
+  fail "resolver received an untrimmed label name: $(cat "$CURL_LOG")"
+fi
+jq -s -e 'any(.[]; (.query | contains("issueCreate")) and (.variables.input.labelIds | length == 2))' "$CURL_LOG" >/dev/null ||
+  fail "both normalized labels must resolve onto the create: $(cat "$CURL_LOG")"
+
+echo "=== declared taxonomy: a declared label missing in Linear hard-fails the create ==="
+
+# The guard's promise is routed-or-refused: a label that passes the declared
+# set but fails to resolve (declared in settings, deleted in Linear) must fail
+# the create, never warn-and-skip into an unrouted issue.
+set_settings "agent:generalist, agent:rust, agent:ghost"
+run_linear issues create --title "Stale declared label" --labels "agent:ghost"
+[[ "$RC" -ne 0 ]] || fail "unresolvable agent label exited 0: $OUT"
+grep -q "agent:ghost" <<<"$ERR" || fail "hard-fail does not name the unresolvable label: $ERR"
+if jq -s -e 'any(.[]; .query | contains("issueCreate"))' "$CURL_LOG" >/dev/null; then
+  fail "issueCreate was reached despite an unresolvable agent label"
+fi
 
 echo "=== help never trips the guard ==="
 

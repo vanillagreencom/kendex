@@ -83,7 +83,8 @@ linear.sh cache issues list --all-projects --state "Backlog,Todo" --max --format
 linear.sh cache issues get ABC-100 --with-bundle
 
 # WRITES → live (hit API, auto-update cache)
-linear.sh issues create --title "New task" --project "Phase 2"
+# (agent:* label required when LINEAR_AGENT_LABELS declares a taxonomy — see Issue Creation Routing)
+linear.sh issues create --title "New task" --project "Phase 2" --labels "agent:generalist"
 linear.sh issues update ABC-100 --state "Done"
 
 # SYNC → refresh cache

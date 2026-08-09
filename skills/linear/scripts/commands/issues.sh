@@ -1004,6 +1004,24 @@ create_issue() {
         return 1
     fi
 
+    # Normalize the label list ONCE, before the guard: split on commas, trim
+    # each name, drop empties, rejoin. The guard and the resolver below must
+    # see identical tokens — the guard trimming a copy while the resolver got
+    # the raw " agent:rust" made the natural "bug, agent:rust" input pass the
+    # guard and then be warn-skipped by resolution: an unrouted create that
+    # looked routed.
+    if [ -n "$labels" ]; then
+        local normalized_labels="" raw_label_name
+        local raw_label_names=()
+        IFS=',' read -ra raw_label_names <<<"$labels"
+        for raw_label_name in "${raw_label_names[@]}"; do
+            raw_label_name="$(vstack_trim "$raw_label_name")"
+            [ -n "$raw_label_name" ] || continue
+            normalized_labels="${normalized_labels:+$normalized_labels,}$raw_label_name"
+        done
+        labels="$normalized_labels"
+    fi
+
     require_agent_routing_label "$labels" "$no_agent_label" || return 1
 
     # Build input object - use jq for proper JSON escaping
@@ -1031,13 +1049,23 @@ create_issue() {
     [ -n "$priority" ] && input_parts+=("\"priority\": $priority")
     [ -n "$estimate" ] && input_parts+=("\"estimate\": $estimate")
 
-    # Handle labels (warn + skip on miss per label)
+    # Handle labels (warn + skip on miss per label — EXCEPT agent:* labels:
+    # the routing guard's promise is routed-or-refused, so an agent label
+    # that fails to resolve, e.g. one declared in LINEAR_AGENT_LABELS but
+    # since deleted in Linear, must fail the create rather than silently
+    # produce an unrouted issue that already passed the guard)
     if [ -n "$labels" ]; then
         IFS=',' read -ra label_names <<<"$labels"
         local label_ids=()
         for label_name in "${label_names[@]}"; do
             local label_id
-            label_id=$(resolve_label_id "$label_name") && label_ids+=("\"$label_id\"")
+            if label_id=$(resolve_label_id "$label_name"); then
+                label_ids+=("\"$label_id\"")
+            elif [[ "$label_name" == agent:* ]]; then
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing to create an issue that would look routed but is not. Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
+                return 1
+            fi
         done
         if [ ${#label_ids[@]} -gt 0 ]; then
             local label_json

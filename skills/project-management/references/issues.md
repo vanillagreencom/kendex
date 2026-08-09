@@ -77,7 +77,9 @@ Use `--parent [ISSUE_ID]` when:
 - Incorrect: All backend issues grouped (layer grouping)
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues create --title "Parse input data" --parent [ISSUE_ID]
+# Sub-issues carry the same agent:* label as their parent (repos declaring
+# LINEAR_AGENT_LABELS refuse an unlabeled create).
+.agents/skills/linear/scripts/linear.sh issues create --title "Parse input data" --parent [ISSUE_ID] --labels "[PARENT_AGENT_LABEL]"
 .agents/skills/linear/scripts/linear.sh cache issues children [ISSUE_ID]              # Direct children only
 .agents/skills/linear/scripts/linear.sh cache issues children [ISSUE_ID] --recursive  # All descendants (3 levels, includes blocks/blocked_by)
 ```

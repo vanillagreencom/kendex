@@ -231,7 +231,7 @@ GitHub/ad-hoc: skip.
 
 Implement per your agent's domain expertise. Run quality gates before completion.
 
-**Scope growing?** Linear: create sub-issues with `linear.sh issues create --parent [PARENT_ID]`. GitHub/ad-hoc: report discovered scope in § 9; do not create issues without orchestrator approval.
+**Scope growing?** Linear: create sub-issues with `linear.sh issues create --parent [PARENT_ID] --labels "agent:[AGENT_TYPE]"` — carry your own `agent:*` label so the sub-issue stays routed (repos declaring `LINEAR_AGENT_LABELS` refuse an unlabeled create). GitHub/ad-hoc: report discovered scope in § 9; do not create issues without orchestrator approval.
 
 **Found work outside scope?** Note in completion summary under "Discovered Work".
 

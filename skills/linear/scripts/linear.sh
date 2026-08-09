@@ -36,7 +36,7 @@ Resources:
 Examples:
   # Issues with parent/sub-issues and relations
   ./linear.sh issues list --label "backend" --state "Todo,In Progress"
-  ./linear.sh issues create --title "Task" --parent PROJ-42
+  ./linear.sh issues create --title "Task" --parent PROJ-42 --labels "agent:rust"
   ./linear.sh issues list-relations PROJ-42
   ./linear.sh issues add-relation PROJ-42 --blocks PROJ-43
   ./linear.sh issues children PROJ-42              # Direct children

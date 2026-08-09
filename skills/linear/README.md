@@ -50,8 +50,11 @@ Use explicit list actions for dependency reads: `issues list-relations ISSUE` an
 | `LINEAR_TEAM` | Team every write targets | — (unset refuses writes) |
 | `LINEAR_FORMAT` | Default output format | `safe` |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix | `PROJ` |
+| `LINEAR_AGENT_LABELS` | Declared agent-routing label set (comma- or space-separated `agent:*` names). When non-empty, `issues create` refuses a create carrying none of them — an unlabeled issue is invisible to agent routing while the CLI prints a URL that looks like success. `--no-agent-label` permits a deliberate bare create. | — (empty: guard off) |
 
 Keep `LINEAR_API_KEY` in `.env.local`. Shared non-secret defaults can live in `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides.
+
+Route normal tracked-issue creation through the TPM pipeline (`project-management` skill), which owns labels, project, priority, and relations — the guard exists to catch creates that bypass it.
 
 ## Dependencies
 
