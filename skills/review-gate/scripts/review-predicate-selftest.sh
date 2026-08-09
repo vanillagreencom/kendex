@@ -62,6 +62,19 @@ ACTIVE_API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
 ACTIVE_API_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
 ACTIVE_CARRY="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 1
 ACTIVE_CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 1
+# The repo's ACTIVE mode is validated here but NEVER copied into behavior
+# cases (reset() pins enforce — under a committed "off" every awaiting/
+# objection case would answer approved and red the required selftest job).
+# This standalone check is what catches a committed typo pre-merge: the
+# predicate would exit 2 on every live evaluation, but only at runtime.
+ACTIVE_GATE_MODE_CHECK="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 1
+case "$ACTIVE_GATE_MODE_CHECK" in
+  enforce|off) ;;
+  *)
+    echo "review-predicate selftest: FAIL — committed REVIEW_GATE_MODE is '$ACTIVE_GATE_MODE_CHECK' (must be 'enforce' or 'off'); the live predicate will exit 2 on every evaluation" >&2
+    exit 1
+    ;;
+esac
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
