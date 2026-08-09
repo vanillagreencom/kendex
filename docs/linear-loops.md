@@ -162,11 +162,12 @@ In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
 agent:* label. Evaluation order for the boundary rule: select precondition-passing
-candidates first, then drop any member (including the trigger) that blocks
-or is blocked by an issue outside the tentative bundle, and re-evaluate
-once after the drops; if the trigger itself is dropped, skip this task —
-cross-boundary sequencing must stay where it is visible, so such issues
-are left unbundled. If the triggering issue plus one to
+candidates first, then repeatedly drop any member (including the trigger)
+that blocks or is blocked by an issue outside the current tentative bundle,
+until a pass drops nobody (each drop can expose new cross-boundary
+relations, so one pass is not enough); if the trigger itself drops, skip
+this task — cross-boundary sequencing must stay where it is visible, so
+such issues are left unbundled. If the triggering issue plus one to
 four of them would plausibly ship as a single pull request — same component
 or surface, complementary small changes, no conflicting approaches — create
 ONE new parent issue IN THAT SAME TEAM AND PROJECT from the template below and set each child's parent to
@@ -175,10 +176,9 @@ a parent; never bundle across teams or projects. Issues that have sub-issues
 (coordination parents — including ones this loop created, which will
 themselves trigger a janitor run) are never bundle candidates.
 
-Duplicate-bundle guard (concurrent runs have no lock): the bundle's LEADER
-is its oldest member that itself passes every precondition above (leaf,
-projected, agent-labeled, unstarted, no cross-boundary blocking relations)
-— ineligible members can be bundled but never lead. If the triggering
+Duplicate-bundle guard (concurrent runs have no lock): every member of the
+final bundle already passes the preconditions above, and the LEADER is
+simply its oldest member. If the triggering
 issue is NOT the leader, do not create anything: apply the "re-triage"
 label to the leader and stop this task — the leader's re-triage pass owns
 the bundle (its own creation-time pass ran before the younger companions
@@ -339,8 +339,9 @@ add the "re-triage" label. Also apply "re-triage" when an unstarted issue
 has an obvious same-team, same-project companion that would ship in the
 same pull request — even if its own metadata is complete — so the janitor's
 bundling task can create the parent. Apply it to the group's LEADER only:
-its oldest member that is itself open, unstarted, and free of blocking
-relations outside the group. The leader may sit outside this run's audited
+the oldest member that would survive the janitor's Task 6 preconditions and
+boundary pruning (leaf, projected, agent-labeled, unstarted, no blocking
+relations outside the group) — the same definition Task 6 uses. The leader may sit outside this run's audited
 ten — that one label application is explicitly permitted — but if the true
 leader is started or otherwise ineligible, skip the group entirely. The re-triage pass performs the actual cleanup
 (including project/agent assignment and Task 6 bundling). Do not fix the
