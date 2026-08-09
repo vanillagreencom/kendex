@@ -222,6 +222,20 @@ Resolution rules:
   `UNSTABLE`, `HAS_HOOKS`) → resolved.
 - `mergeable` alone is never used for termination.
 
+### Watching many PRs (optional review-gate reference)
+
+`await-mergeable` is a single-PR foreground wait. For watching MANY PRs
+across a long horizon — open threads, standing objections, gate staleness,
+disarmed auto-merge, silent reviewers — do not hand-roll a poll loop keyed
+on state transitions (steady states transition nothing and the watcher
+sleeps through them). When the review-gate skill is installed (existence
+check on `.agents/skills/review-gate/scripts/pr-watch.sh`), run it as the
+needs-attention reducer: exit 0 = nothing needs you, exit 1 with
+tab-separated `<pr> <head8> <kind> <detail>` lines = act on those, exit 2 =
+a read failed (surface stderr, take no action). `--heal` adds one bounded
+writer dispatch for gate-stale findings. Without the skill installed, fall
+back to per-PR `await-mergeable` polling.
+
 ## Output Formats
 
 `--format` is command-specific, not a global flag. Only the commands listed
