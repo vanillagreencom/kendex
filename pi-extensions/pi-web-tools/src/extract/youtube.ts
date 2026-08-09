@@ -81,14 +81,18 @@ function decodeHtmlEntities(text: string): string {
 		if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return match;
 		return String.fromCodePoint(codePoint);
 	};
-	return text
-		.replace(/&#x([0-9a-f]+);/gi, (match, hex: string) => decodeNumericEntity(match, hex, 16))
-		.replace(/&#(\d+);/g, (match, code: string) => decodeNumericEntity(match, code, 10))
-		.replace(/&quot;/g, '"')
-		.replace(/&apos;|&#39;/g, "'")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&amp;/g, "&");
+	return text.replace(/&(?:#x([0-9a-f]+)|#(\d+)|(quot|apos|lt|gt|amp));/gi, (match, hex: string | undefined, decimal: string | undefined, named: string | undefined) => {
+		if (hex !== undefined) return decodeNumericEntity(match, hex, 16);
+		if (decimal !== undefined) return decodeNumericEntity(match, decimal, 10);
+		switch (named?.toLowerCase()) {
+			case "quot": return '"';
+			case "apos": return "'";
+			case "lt": return "<";
+			case "gt": return ">";
+			case "amp": return "&";
+			default: return match;
+		}
+	});
 }
 
 function transcriptTimestamp(offsetSeconds: number): string {
@@ -121,12 +125,17 @@ function availableTranscriptLanguages(error: unknown): string[] | undefined {
 
 async function tryYouTubeCaptions(parsed: ParsedYouTubeUrl, options: YouTubeExtractOptions): Promise<YouTubeExtractResult> {
 	const transcriptFetcher = options.transcriptFetcher ?? fetchTranscript;
+	const signal = options.timeoutMs === undefined
+		? options.signal
+		: options.signal
+			? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)])
+			: AbortSignal.timeout(options.timeoutMs);
 	const fetchCaptions = (lang: string | undefined) => transcriptFetcher(parsed.videoId, {
 		...(lang !== undefined ? { lang } : {}),
 		videoDetails: true,
 		retries: 2,
 		retryDelay: 500,
-		signal: options.signal,
+		signal,
 	});
 	let selectedLanguage = options.transcriptLanguage;
 	let result: TranscriptResult;

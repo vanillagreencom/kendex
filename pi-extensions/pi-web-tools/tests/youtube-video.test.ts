@@ -41,6 +41,12 @@ test("formatYouTubeTranscript preserves invalid numeric HTML entities", () => {
 	]), "[00:00:00] invalid &#x110000; &#55296; &#xDFFF; valid 😀");
 });
 
+test("formatYouTubeTranscript decodes HTML entities in one pass", () => {
+	assert.equal(formatYouTubeTranscript([
+		{ offset: 0, duration: 1, text: "&#38;lt; &#x26;amp; &amp;lt; &lt;", lang: "en" },
+	]), "[00:00:00] &lt; &amp; &lt; <");
+});
+
 test("extractYouTubeUrl uses native captions for transcript prompts", async () => {
 	const controller = new AbortController();
 	const result = await extractYouTubeUrl("https://www.youtube.com/watch?v=abc123XYZ_-&t=42s", {
@@ -183,6 +189,22 @@ test("transcript failures surface directly instead of falling through to generic
 	}), /captions disabled/);
 });
 
+test("native caption timeout cancellation reaches the transcript fetcher", async () => {
+	let observedSignal: AbortSignal | undefined;
+	await assert.rejects(() => extractYouTubeUrl("https://youtu.be/abc123XYZ_-", {
+		mode: "transcript",
+		timeoutMs: 5,
+		transcriptFetcher: async (_videoId, config) => {
+			observedSignal = config.signal;
+			if (!config.signal) throw new Error("missing timeout signal");
+			if (config.signal.aborted) throw config.signal.reason;
+			await new Promise<never>((_resolve, reject) => config.signal!.addEventListener("abort", () => reject(config.signal!.reason), { once: true }));
+			throw new Error("unreachable");
+		},
+	}), (error) => error instanceof DOMException && error.name === "TimeoutError");
+	assert.equal(observedSignal?.aborted, true);
+});
+
 function webFetchSettings(videoEnabled = true): any {
 	return {
 		apiKeys: { exa: "exa-key", gemini: undefined, jina: undefined },
@@ -241,6 +263,39 @@ test("web_fetch never uses Exa after a YouTube extractor failure", async () => {
 		videoMode: "transcript",
 	}, undefined, undefined, { cwd: process.cwd() } as any), /captions disabled/);
 	assert.equal(exaCalls, 0);
+});
+
+test("web_fetch retains Exa fallback for non-transcript YouTube failures", async () => {
+	let exaCalls = 0;
+	const attemptedModes: Array<string | undefined> = [];
+	const tool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{
+			extractYouTubeUrl: async (_url, options) => {
+				attemptedModes.push(options?.mode);
+				throw new Error("no Gemini provider available");
+			},
+			createExaClient: () => ({
+				contents: async ({ urls }: { urls: string[] }) => {
+					exaCalls++;
+					return { results: [{ url: urls[0], title: "YouTube", text: "page excerpt" }], raw: {} };
+				},
+			}) as any,
+		},
+	);
+	const plain = await tool.execute("test", {
+		url: "https://youtu.be/plainVideo1",
+	}, undefined, undefined, { cwd: process.cwd() } as any);
+	const understand = await tool.execute("test", {
+		url: "https://youtu.be/understand1",
+		videoMode: "understand",
+	}, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.equal((plain as any).details.provider, "exa");
+	assert.equal((understand as any).details.provider, "exa");
+	assert.deepEqual(attemptedModes, [undefined, "understand"]);
+	assert.equal(exaCalls, 2);
 });
 
 test("web_fetch returns successful batch items alongside YouTube failures", async () => {
@@ -302,6 +357,42 @@ test("web_fetch keeps partial failure text inside the multi-URL aggregate cap", 
 	assert.ok((result as any).content[0].text.length <= 25 * 1024);
 	assert.equal((result as any).details.stored.length, 1);
 	assert.equal((result as any).details.failures.length, 6);
+});
+
+test("web_fetch bounds explicit-cap failure rows and blocks", async () => {
+	const hugeFailure = "failure detail ".repeat(20000);
+	const partialTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{
+			fetchHttpContent: async (url) => {
+				if (url.endsWith("good")) return { url, title: "Good", content: "content", metadata: {} };
+				throw new Error(hugeFailure);
+			},
+		},
+	);
+	const partial = await partialTool.execute("test", {
+		urls: ["https://example.com/good", "https://example.com/fail-1", "https://example.com/fail-2"],
+		provider: "http",
+		textMaxCharacters: 100000,
+	}, undefined, undefined, { cwd: process.cwd() } as any);
+	const partialText = (partial as any).content[0].text as string;
+	const failureBlock = partialText.slice(partialText.indexOf("\n\nFailed"));
+	assert.ok(failureBlock.length <= 8 * 1024);
+	assert.ok((partial as any).details.failures.every((failure: any) => failure.error.length <= 1024));
+
+	const failedTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{ fetchHttpContent: async () => { throw new Error(hugeFailure); } },
+	);
+	await assert.rejects(() => failedTool.execute("test", {
+		urls: ["https://example.com/fail-1", "https://example.com/fail-2"],
+		provider: "http",
+		textMaxCharacters: 100000,
+	}, undefined, undefined, { cwd: process.cwd() } as any), (error) => error instanceof Error && error.message.length <= 8 * 1024);
 });
 
 test("web_fetch returns successes when Exa fallback also fails", async () => {

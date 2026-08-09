@@ -36,6 +36,9 @@ export const MULTI_URL_AGGREGATE_CAP_SMALL_BATCH = 16 * 1024;
 export const MULTI_URL_AGGREGATE_CAP_LARGE_BATCH = 25 * 1024;
 export const MULTI_URL_LARGE_BATCH_THRESHOLD = 6;
 export const MULTI_URL_LARGE_BATCH_PER_URL_HEAD = 512;
+export const WEB_FETCH_FAILURE_MESSAGE_MAX_CHARACTERS = 1024;
+export const WEB_FETCH_FAILURE_ROW_MAX_CHARACTERS = 1536;
+export const WEB_FETCH_FAILURE_BLOCK_MAX_CHARACTERS = 8 * 1024;
 
 interface WebFetchPreviewItem {
 	id: string;
@@ -175,7 +178,8 @@ function manifestIdOnlyRow(item: StoredWebContent): string {
 }
 
 function failureMessage(error: unknown): string {
-	return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim();
+	const message = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim();
+	return boundedText(message, WEB_FETCH_FAILURE_MESSAGE_MAX_CHARACTERS, "… [failure truncated]");
 }
 
 function isAbortError(error: unknown, signal: AbortSignal | undefined): boolean {
@@ -184,20 +188,27 @@ function isAbortError(error: unknown, signal: AbortSignal | undefined): boolean 
 
 function boundedText(text: string, maxCharacters: number | undefined, marker: string): string {
 	if (maxCharacters === undefined || text.length <= maxCharacters) return text;
+	if (maxCharacters <= marker.length) return marker.slice(0, Math.max(0, maxCharacters));
 	return text.slice(0, Math.max(0, maxCharacters - marker.length)) + marker;
 }
 
+function failureRow(failure: { url: string; error: unknown; provider?: string }): string {
+	const row = `- ${failure.url}${failure.provider ? ` [${failure.provider}]` : ""}: ${failureMessage(failure.error)}`;
+	return boundedText(row, WEB_FETCH_FAILURE_ROW_MAX_CHARACTERS, "… [row truncated]");
+}
+
 function aggregateFailureMessage(failures: Array<{ url: string; error: unknown; provider?: string }>, maxCharacters?: number): string {
-	const rows = failures.map((failure) => `- ${failure.url}${failure.provider ? ` [${failure.provider}]` : ""}: ${failureMessage(failure.error)}`);
+	const rows = failures.map(failureRow);
 	const message = `Fetch failed for ${failures.length} URL(s):\n${rows.join("\n")}`;
-	return boundedText(message, maxCharacters, `\n[error details truncated to fit ${maxCharacters} character aggregate cap]`);
+	const cap = Math.min(maxCharacters ?? WEB_FETCH_FAILURE_BLOCK_MAX_CHARACTERS, WEB_FETCH_FAILURE_BLOCK_MAX_CHARACTERS);
+	return boundedText(message, cap, "\n[error details truncated]");
 }
 
 function addPartialFailures(result: ReturnType<typeof buildWebFetchToolResult>, failures: Array<{ url: string; error: unknown; provider?: string }>) {
-	const rows = failures.map((failure) => `- ${failure.url}${failure.provider ? ` [${failure.provider}]` : ""}: ${failureMessage(failure.error)}`);
+	const rows = failures.map(failureRow);
 	const textItem = result.content.find((item) => item.type === "text");
 	if (textItem?.type === "text") {
-		const failureBlock = `\n\nFailed ${failures.length} URL(s):\n${rows.join("\n")}`;
+		const failureBlock = boundedText(`\n\nFailed ${failures.length} URL(s):\n${rows.join("\n")}`, WEB_FETCH_FAILURE_BLOCK_MAX_CHARACTERS, "\n\n[failure details truncated]");
 		const aggregateCap = result.details.preview.aggregateCap;
 		if (typeof aggregateCap === "number" && textItem.text.length + failureBlock.length > aggregateCap) {
 			const compact = `\n\n[partial result: ${failures.length} URL(s) failed; full failure details are available in tool metadata]`;
@@ -428,6 +439,7 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 			const failureAggregateCap = aggregatePolicy(list.length, requestedPreview.maxCharacters, requestedPreview.explicit).aggregateCap;
 			const thrownErrorMessageCap = failureAggregateCap === undefined ? undefined : Math.max(0, failureAggregateCap - "Error: ".length);
 			const transcriptUrls = list.filter((url) => parseYouTubeUrl(url) && (params.videoMode === "transcript" || (params.videoMode !== "understand" && isTranscriptPrompt(params.prompt))));
+			const transcriptUrlSet = new Set(transcriptUrls);
 			const transcriptConflict = transcriptUrls.length && params.provider === "exa"
 				? "YouTube transcript extraction is incompatible with provider=exa. Use provider=auto or provider=http."
 				: transcriptUrls.length && !settings.video.enabled
@@ -530,7 +542,7 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 						stored.push(storeWebContent(pi, { title: extracted.title, url: extracted.url, content: extracted.content, metadata: { provider: "http", tool: name, ...extracted.metadata } }));
 					} catch (error) {
 						if (isAbortError(error, signal)) throw error;
-						failed.push({ url, error, provider: youtubeExtractionAttempted ? "youtube" : "direct", allowExaFallback: !youtubeExtractionAttempted });
+						failed.push({ url, error, provider: youtubeExtractionAttempted ? "youtube" : "direct", allowExaFallback: !transcriptUrlSet.has(url) });
 					}
 				}
 				if (failed.length) {
