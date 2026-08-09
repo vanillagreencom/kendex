@@ -144,7 +144,8 @@ Environment (set in vstack.settings.toml [env] or .env.local):
   SECOND_OPINION_REVIEW_INSTRUCTIONS
                              Repo instruction-file globs appended to the review
                              prompt, resolved inside --cwd (default:
-                             "review-bots.md .github/instructions/*.instructions.md
+                             "AGENTS.md review-bots.md
+                             .github/instructions/*.instructions.md
                              .github/copilot-instructions.md"; set empty to disable)
 
 Default commands:
@@ -474,7 +475,7 @@ derive_review_scope() {
 # uses the defaults. Each file is capped so one oversized instruction file
 # cannot drown the diff in the prompt.
 
-REVIEW_INSTRUCTIONS_DEFAULT="review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+REVIEW_INSTRUCTIONS_DEFAULT="AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 REVIEW_INSTRUCTIONS_FILE_CAP=65536
 
 collect_review_instructions() {

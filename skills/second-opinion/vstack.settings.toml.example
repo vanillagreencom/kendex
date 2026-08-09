@@ -20,7 +20,7 @@ SECOND_OPINION_REVIEW_TARGETS = "codex claude"
 # Used by: second-opinion (review mode). Glob list of repo instruction files
 # appended to the review prompt (repo-rule adherence lens). Globs resolve
 # inside the reviewed repo (--cwd). Set empty to disable.
-SECOND_OPINION_REVIEW_INSTRUCTIONS = "review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 
 # Uncomment only when this project must force one target instead of auto-detecting
 # (this also disables multi-lane review).
