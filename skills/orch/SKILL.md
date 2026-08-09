@@ -4,8 +4,8 @@ description: "PRIMARY AGENT ONLY — single work-item orchestration for Linear o
 license: MIT
 user-invocable: true
 dependencies:
-  required: [github, worktree, dev, project-management, decider]
-  optional: [linear, review-gate]
+  required: [github, worktree, dev, project-management, decider, reviewer]
+  optional: [linear, review-gate, second-opinion]
 metadata:
   author: vanillagreen
   source: vstack
@@ -21,6 +21,8 @@ metadata:
 ## STOP — Required Setup
 
 Load IN ORDER before anything else; do not proceed if any fails: 1. `github`. 2. `worktree`. 3. Tracker — Linear issue → load `linear`; GitHub issue → use `github` only.
+
+orch is both the coordinator and the shared runtime library: the dev and reviewer skills require orch's scripts (`dev-return-write`, `resolve-base-branch`) and do not run standalone.
 
 > **MODE SWITCH**: Loading this skill puts you in **orchestrator mode**. Do not write code yourself. Delegate all implementation, review, and QA work to specialist sub-agents using the workflows in this skill.
 

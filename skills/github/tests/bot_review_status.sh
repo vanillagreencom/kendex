@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Unit tests for bot_review_status_compute (the multi-bot review-signal
-# abstraction) and the multi-reviewer verdict aggregation built on it (used
-# by pr-review-status consumers).
+# abstraction) and the multi-reviewer verdict aggregation built on it.
 #
 # All tests are fixture-driven — they call bot_review_status_compute with
 # preloaded JSON inputs and assert on the returned status/signals. No `gh`
@@ -13,7 +12,6 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIXTURES="$TEST_DIR/fixtures"
 LIB="$TEST_DIR/../scripts/lib/github-api.sh"
-PR_REVIEW_STATUS="$TEST_DIR/../scripts/commands/pr-review-status.sh"
 SCRIPTS_DIR="$TEST_DIR/../scripts"
 
 # get_repo_info / project root helpers in github-api.sh shell out to gh + git.
@@ -45,13 +43,6 @@ assert_contains() {
         FAIL=$((FAIL + 1))
         printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
     fi
-}
-
-assert_file_eq() {
-    local got_file="$1" want="$2" name="$3"
-    local got
-    got="$(cat "$got_file")"
-    assert_eq "$got" "$want" "$name"
 }
 
 fx() { cat "$FIXTURES/$1"; }
@@ -265,34 +256,6 @@ assert_eq "$(compute_sticky_verdict_from_body "Verdict: approval withheld")" "ch
 assert_eq "$(compute_sticky_verdict_from_body "Verdict: rejected")" "changes" "rejected verdict = changes"
 assert_eq "$(compute_sticky_verdict_from_body "Verdict: denied")" "changes" "denied verdict = changes"
 assert_eq "$(compute_sticky_verdict_from_body "Recommendation: no approval")" "changes" "no approval text = changes"
-
-# --- pr-review-status production command ---
-echo
-echo "=== pr-review-status reviewer selection ==="
-PR_STATUS_ROOT="$(mktemp -d)"
-trap 'rm -rf "$PR_STATUS_ROOT"' EXIT
-mkdir -p "$PR_STATUS_ROOT/commands" "$PR_STATUS_ROOT/lib"
-cp "$PR_REVIEW_STATUS" "$PR_STATUS_ROOT/commands/pr-review-status.sh"
-cp "$FIXTURES/pr-review-status/github-api.sh" "$PR_STATUS_ROOT/lib/github-api.sh"
-cp "$FIXTURES/pr-review-status/sticky-comment.sh" "$PR_STATUS_ROOT/commands/sticky-comment.sh"
-cp "$FIXTURES/pr-review-status/pr-threads.sh" "$PR_STATUS_ROOT/commands/pr-threads.sh"
-chmod +x "$PR_STATUS_ROOT/commands/pr-review-status.sh"
-chmod +x "$PR_STATUS_ROOT/commands/sticky-comment.sh"
-chmod +x "$PR_STATUS_ROOT/commands/pr-threads.sh"
-REVIEW_CALL_LOG="$PR_STATUS_ROOT/reviewer-calls"
-
-status_out=$(BOT_REVIEWERS=' pending-bot , pending-bot-extra , approved-live , unknown-bot , approved-bot ' \
-    BOT_SKIPPED_REVIEWERS=' pending-bot , approved-bot ' \
-    BOT_REVIEW_STATUS_CALL_LOG="$REVIEW_CALL_LOG" \
-    "$PR_STATUS_ROOT/commands/pr-review-status.sh" 42)
-assert_eq "$(echo "$status_out" | jq -c '.pending_bot_reviewers')" \
-    '["pending-bot-extra","unknown-bot"]' \
-    "exact skipped-reviewer matching preserves pending reviewer order"
-assert_eq "$(echo "$status_out" | jq -r '.reason')" \
-    "pending_bot_reviewer" \
-    "remaining pending reviewers keep the pending-bot decision"
-assert_file_eq "$REVIEW_CALL_LOG" $'pending-bot-extra\napproved-live\nunknown-bot' \
-    "skipped reviewers are not queried and similar reviewer names do not collide"
 
 # Guard every shipped GitHub script, including commands that fixture-driven
 # unit tests do not otherwise execute, against Bash 4-only syntax.

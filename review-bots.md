@@ -27,32 +27,23 @@ tokens. Calibrate accordingly:
 
 ## Accepted residual classes (decided — do not re-raise)
 
-These are known, deliberate trade-offs with rationale recorded where the
-decision lives. Raising them again is noise:
+These are known, deliberate trade-offs. Raising them again is noise:
 
-- **Per-surface supersession.** Evidence surfaces (review objects, check
-  runs, commit statuses, trusted comments) each resolve
-  newest-decides *within* the surface; there is no cross-surface
-  supersession ordering. Documented in the predicate header.
-- **Single-poll races.** The writer converges on its next pass (cron
-  floor ≤15 min); a state change landing between two reads is healed by
-  convergence, not by adding locks. Transient windows that self-heal via
-  converge-all are accepted (includes the writer ordering-guard
-  clock-skew window: runner clocks are NTP-synced and the guard defers on
-  same-second equality).
-- **Evidence carry-forward.** Docs-only deltas carry ancestor review
-  evidence by owner decision (`REVIEW_GATE_CARRY_FORWARD = "docs"`).
-  Policy-bearing markdown is excluded via
-  `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`; the `comments` class
-  is deliberately off. The remaining residual is documented in
-  `vstack.settings.toml` comments.
-- **TOCTOU on gate success posts.** The gate's verdict is recomputed by
-  the single writer on every trigger; a success posted just before a new
-  push is superseded by the next convergence, and the merge queue
-  re-checks at admission. Not a fail-open.
-- **Post-enqueue threads.** A review round arriving after merge-queue
-  admission can land threads on a queued PR; the documented dequeue →
-  fix → re-arm procedure covers it. Not a gate defect.
+- **No cross-surface evidence ordering.** All four evidence surfaces —
+  review objects, check runs, commit statuses, and SHA-bound trusted
+  comments — resolve newest-decides *within* the surface; nothing orders
+  evidence *across* surfaces. A finding that assumes one surface should
+  supersede another asks for a design that does not exist.
+- **Transient windows heal by convergence.** A state change landing
+  between two reads is corrected on the next convergence pass, at most
+  15 minutes later. Do not propose locks for these windows.
+- **A final docs-only push may keep earlier review evidence.** This is
+  deliberate; policy and instruction files are excluded and always get a
+  fresh review. Do not flag it as a gate hole.
+- **A gate success just before a push is not a fail-open.** The next
+  convergence supersedes it, and the merge queue re-checks at admission.
+- **Threads arriving after merge-queue admission are procedural, not a
+  gate defect.** The handling is dequeue → fix → re-arm.
 
 ## Trust model (context, not a finding surface)
 

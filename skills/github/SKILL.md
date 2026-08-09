@@ -29,7 +29,6 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 | `pr-data <N> [--actionable]` | Get PR with threads, comments, files. `--actionable`: unresolved non-outdated only. |
 | `pr-view [N] [--json FIELDS]` | View PR details (wraps gh pr view with bounded auth/no-PR errors) |
 | `pr-threads <N> [--unresolved]` | Get the complete paginated thread list/count, outdated included; fails rather than returning a partial list. See *PR blocked with no visible conversations*. |
-| `pr-review-status <N> [--baseline-ts TS --baseline-threads N]` | Check review state, determine if action needed |
 | `pr-list-ready [--all] [--format=safe\|table]` | List PRs ready for merge |
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
 | `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed. Prefer `--body-file` for Markdown with backticks/code fences; `--body` is safe only for plain strings. `--force` skips checks. |

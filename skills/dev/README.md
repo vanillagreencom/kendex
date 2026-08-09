@@ -27,6 +27,8 @@ find skills/dev/tests -type f -name '*.test.sh' -exec bash {} \;
 | Decider skill | Decision search, templates, and creation workflow |
 | Benchmarking skill | Baseline capture (optional) |
 
+The benchmarking skill is an interface by convention; consumers implement it. The QA-review workflow (`skills/reviewer/workflows/qa-review.md` § 2.4–2.5) scripts around three things: a regression check invocable as a documented standalone command whose exit code is the signal — 1 when regressions are detected, 0 clean — and direct runner/recorder commands usable without shell pipelines, redirection, or env-prefix plumbing (manual entry, where supported, passes the component name and JSON data only via a documented direct argument or body-file option). The recorder must produce a verifiable artifact: a run that records zero results, or a recorder that fails closed on all-zero counters, is reported as a benchmark tooling failure with `benchmark_commit: "none"` — never counted as coverage.
+
 ## License
 
 MIT

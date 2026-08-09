@@ -3,6 +3,9 @@ name: reviewer
 description: "Strict review and QA workflows: shared reviewer ethos, scope boundaries, code-review classification, finding JSON schema, and QA-label review lifecycle. Load this skill when reviewing a diff, classifying findings, returning a verdict, or handling a QA-label-triggered review."
 license: MIT
 user-invocable: true
+dependencies:
+  required: [orch, github, decider]
+  optional: [linear]
 metadata:
   author: vanillagreen
   source: vstack
@@ -21,6 +24,8 @@ Code-review, whole-codebase review, and QA-review workflows plus the structured-
 - You are doing a whole-codebase review where there is no PR, issue, or diff.
 - You are handling a QA-label-triggered review and need the QA review lifecycle.
 - You are emitting or consuming a review-finding JSON payload and need the canonical schema.
+
+orch is both the coordinator and the shared runtime library: this skill's workflows execute orch scripts (`workflows/review.md` runs orch's `resolve-base-branch`, and orch's `review-artifact-check` validates every artifact), so reviewer does not run standalone without orch — the same relationship the dev skill has.
 
 ## Workflows
 

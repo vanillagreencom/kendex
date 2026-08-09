@@ -6,8 +6,8 @@
 #
 # Review-completion evidence surfaces:
 #   - Formal PR review (review_status + request_changes_workflow below): the
-#     surface our merge tooling consumes — skills/github pr-review-status and
-#     pr-merge read login-attributed formal reviews and review threads.
+#     surface our merge tooling consumes — skills/github pr-merge reads
+#     login-attributed formal reviews and review threads.
 #   - Commit status named "CodeRabbit" (commit_status below): consumed only
 #     name-agnostically via `gh pr checks` in pr-merge, where a pending review
 #     blocks merge like any other pending context.

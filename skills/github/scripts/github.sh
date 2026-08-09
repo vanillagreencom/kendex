@@ -68,7 +68,6 @@ Commands:
   pr-data            Get PR with threads, comments, and files
   pr-view            View PR details (current branch or by number)
   pr-threads         Get PR review threads (optionally filtered)
-  pr-review-status   Check review state, determine if action needed
   pr-list-ready      List PRs ready for merge
   pr-list-failing    List PRs with CI failures
   pr-create          Create PR as bot account
@@ -129,7 +128,7 @@ command="${1:-help}"
 shift || true
 
 case "$command" in
-    pr-data|pr-view|pr-threads|pr-review-status|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|pr-cross-check|pr-issue|label-add|label-remove|await-mergeable|ci-logs|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
+    pr-data|pr-view|pr-threads|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|pr-cross-check|pr-issue|label-add|label-remove|await-mergeable|ci-logs|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
         script="$SCRIPT_DIR/commands/${command}.sh"
         if [ -f "$script" ]; then
             if [ -n "$WORK_DIR" ]; then
