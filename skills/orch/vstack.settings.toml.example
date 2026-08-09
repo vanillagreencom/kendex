@@ -14,6 +14,16 @@
 # still honored when this key is unset.
 PR_REVIEW_GATE = "approval"
 
+# The review-gate ENGINE's one-switch per-repo gate disable — resolved by
+# approval-wait --resolve-mode ahead of every reviewer-gate key: "off"
+# prints mode off (the wait loop is skipped; the engine keeps the required
+# gate status green with a disabled-by-settings attestation). Only the
+# exact value "off" narrows; anything else leaves PR_REVIEW_GATE
+# authoritative (the engine predicate fails loud on bad values). Listed
+# here because orch consumes it even where the review-gate skill is not
+# installed.
+REVIEW_GATE_MODE = "enforce"
+
 # Used by: orch (`approval-wait`). Total review-wait budget in seconds — the
 # per-repo quiet period before the on-timeout policy applies — used when the
 # caller passes no max_wait positional arg (an explicit arg always wins).

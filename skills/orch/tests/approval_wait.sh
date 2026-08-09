@@ -1216,6 +1216,21 @@ assert_eq "$(run_resolve_mode)" "review" "resolve: settings-file PR_REVIEW_GATE 
 assert_eq "$(run_resolve_mode PR_REVIEW_GATE=approval)" "approval" "resolve: process env beats settings file"
 rm -f "$TMP_ROOT/repo/vstack.settings.toml"
 
+# The engine's one-switch gate disable wins over every reviewer-gate key —
+# env and settings-file sources both; enforce (and any non-"off" value)
+# leaves the reviewer keys authoritative.
+assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off PR_REVIEW_GATE=approval)" "off" "resolve: REVIEW_GATE_MODE=off overrides approval"
+assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=off PR_REVIEW_GATE=review)" "off" "resolve: REVIEW_GATE_MODE=off overrides review"
+assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=enforce PR_REVIEW_GATE=review)" "review" "resolve: enforce preserves the reviewer keys"
+assert_eq "$(run_resolve_mode REVIEW_GATE_MODE=bogus PR_REVIEW_GATE=review)" "review" "resolve: a non-off value never narrows (engine fails loud, not here)"
+cat > "$TMP_ROOT/repo/vstack.settings.toml" <<'EOF'
+[env]
+REVIEW_GATE_MODE = "off"
+PR_REVIEW_GATE = "review"
+EOF
+assert_eq "$(run_resolve_mode)" "off" "resolve: settings-file REVIEW_GATE_MODE=off applies"
+rm -f "$TMP_ROOT/repo/vstack.settings.toml"
+
 echo "=== approval-wait nudge behavior ==="
 
 nudge_log_lines() {

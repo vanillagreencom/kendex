@@ -1281,6 +1281,20 @@ fi
 reset
 CFG_GATE_MODE="off"
 run "mode off: approved without evaluating anything" approved
+# The detail is the attestation CONTRACT, not decoration: statuses converged
+# from this verdict must say the gate is disabled, never imply a review
+# happened — pin the exact line.
+off_line="$(PATH="$shim:$PATH" GH_SHIM_FIXTURES="$fixtures" \
+  REVIEW_GATE_SETTINGS_FILE=/dev/null REVIEW_GATE_MODE=off \
+  GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$AUTHOR" \
+  "$predicate" 2>/dev/null)"
+cases=$((cases + 1))
+if [ "$off_line" = "verdict=approved detail=review gate disabled by settings (REVIEW_GATE_MODE=off)" ]; then
+  echo "ok    mode off: the attestation detail is exact (statuses never imply a review)"
+else
+  echo "FAIL  mode off attestation detail drifted: '$off_line'" >&2
+  failures=$((failures + 1))
+fi
 if [ -f "$fixtures/.urls.log" ] && [ -s "$fixtures/.urls.log" ]; then
   echo "FAIL  mode off must make ZERO API reads (urls.log: $(tr '\n' ' ' <"$fixtures/.urls.log"))" >&2
   failures=$((failures + 1))
