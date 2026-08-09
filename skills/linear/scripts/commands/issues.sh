@@ -1061,7 +1061,9 @@ create_issue() {
             local label_id
             if label_id=$(resolve_label_id "$label_name"); then
                 label_ids+=("\"$label_id\"")
-            elif [[ "$label_name" == agent:* ]]; then
+            elif [[ "$label_name" == agent:* ]] && [ -n "${LINEAR_AGENT_LABELS:-}" ]; then
+                # Hard-fail only under a declared taxonomy — undeclared repos
+                # keep the historical warn-and-skip for every label.
                 jq -cn --arg label "$label_name" \
                     '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing to create an issue that would look routed but is not. Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
                 return 1

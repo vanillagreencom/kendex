@@ -157,6 +157,12 @@ set_settings_no_taxonomy_key
 run_linear issues create --title "Bare repo create"
 assert_created "bare create with no LINEAR_AGENT_LABELS key"
 
+# Undeclared repos also keep the historical warn-and-skip for EVERY label,
+# including an unresolvable agent:* one — the hard-fail applies only under a
+# declared taxonomy.
+run_linear issues create --title "Undeclared skip" --labels "agent:ghost"
+assert_created "unresolvable agent label warn-skips when no taxonomy is declared"
+
 set_settings ""
 run_linear issues create --title "Empty declaration create"
 assert_created "bare create with empty LINEAR_AGENT_LABELS"
