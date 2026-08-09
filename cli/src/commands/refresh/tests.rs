@@ -988,6 +988,69 @@ fn refresh_reports_items_missing_from_their_source_instead_of_skipping() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// VST-134: an entry whose harness list yields no installable harness (empty,
+/// or ids this binary does not recognize) used to fall through its refresh pass
+/// silently — no success, no failure, no missing. `run_one` then echoed the
+/// recorded source hash as both old and new and printed "(unchanged)" while the
+/// installed bytes stayed stale after the source advanced. Field signature:
+/// `review-gate c9df07f6 → c9df07f6 (unchanged)` in a fresh consumer worktree
+/// whose copied lock carried such an entry, with the cache already fast-forwarded.
+/// "Unchanged" must mean bytes-identical to the resolved source; an entry that
+/// cannot be re-copied must fail loudly instead.
+#[test]
+fn refresh_fails_loud_when_a_lock_entry_yields_no_harness_install() {
+    let root = tmpdir("no-installable-harness");
+    let project = root.join("project");
+    let source = make_source(&root, "source");
+    std::fs::create_dir_all(&project).unwrap();
+    write_colliding_source(&source, "2", "PreToolUse", "source-model");
+
+    let mut lock = LockFile::default();
+    // The repro shape: empty harness list on a skill (seen in the wild from the
+    // pre-#1047 apply lock bug, carried into a fresh worktree by the lock copy).
+    lock.add(lock_entry("shared", ItemKind::Skill, &source, vec![]));
+    // Unrecognized harness ids are the same silent no-op for agents and hooks.
+    lock.add(lock_entry(
+        "rust",
+        ItemKind::Agent,
+        &source,
+        vec!["not-a-harness"],
+    ));
+    lock.add(lock_entry(
+        "guard",
+        ItemKind::Hook,
+        &source,
+        vec!["not-a-harness"],
+    ));
+    let sources = vec![RefreshSource::from_root(&source)];
+
+    let stats = crate::test_util::with_project_root(&project, || {
+        let mut project_config = ProjectConfig::default();
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+    });
+
+    assert!(
+        stats.has_failures(),
+        "zero-install entries must fail loudly, not disappear from the report"
+    );
+    for name in ["shared", "rust", "guard"] {
+        assert!(
+            stats.failures.iter().any(|failure| failure.item == name),
+            "{name} must be reported as a failure: {:?}",
+            stats.failures
+        );
+        assert!(
+            !stats.successful_items.contains(name),
+            "{name} must not count as refreshed"
+        );
+    }
+    assert_eq!(stats.skills_refreshed, 0);
+    assert_eq!(stats.agents_refreshed, 0);
+    assert_eq!(stats.hooks_refreshed, 0);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// The single-source fallback must not silently reinstall an entry from a
 /// source it was never installed from — it reports missing instead.
 #[test]
