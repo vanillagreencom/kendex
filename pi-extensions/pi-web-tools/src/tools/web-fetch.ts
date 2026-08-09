@@ -469,12 +469,12 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 				const satisfiedRequestIndices = new Set<number>();
 				const assignments = new Map<number, number>();
 				const contentResults: Array<{ index: number; result: (typeof response.results)[number]; content: string; keys: string[] }> = [];
+				const resultKeys = (result: (typeof response.results)[number]) => Array.from(new Set([normalizedUrlKey(result.url), normalizedUrlKey(result.id)].filter(Boolean)));
 				for (let index = 0; index < response.results.length; index++) {
 					const result = response.results[index]!;
 					const content = result.text?.trim() ? result.text : result.summary?.trim() ? result.summary : "";
 					if (!content) continue;
-					const keys = Array.from(new Set([normalizedUrlKey(result.url), normalizedUrlKey(result.id)].filter(Boolean)));
-					contentResults.push({ index, result, content, keys });
+					contentResults.push({ index, result, content, keys: resultKeys(result) });
 				}
 				for (const entry of contentResults) {
 					const matches = requested.filter((item) => !satisfiedRequestIndices.has(item.index) && entry.keys.includes(item.key));
@@ -482,12 +482,22 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 					assignments.set(entry.index, matches[0]!.index);
 					for (const match of matches) satisfiedRequestIndices.add(match.index);
 				}
-				for (const entry of contentResults) {
-					if (assignments.has(entry.index)) continue;
-					const missingIdentityFallback = entry.keys.length === 0 && response.results.length === failedUrls.length && entry.index < failedUrls.length && !satisfiedRequestIndices.has(entry.index);
-					if (!missingIdentityFallback) continue;
-					assignments.set(entry.index, entry.index);
-					satisfiedRequestIndices.add(entry.index);
+				const identityPositionsPreserved = response.results.every((result, index) => {
+					const keys = resultKeys(result);
+					return keys.length === 0 || (index < requested.length && keys.includes(requested[index]!.key));
+				});
+				if (response.results.length === failedUrls.length && identityPositionsPreserved) {
+					for (const entry of contentResults) {
+						if (assignments.has(entry.index) || entry.keys.length !== 0 || satisfiedRequestIndices.has(entry.index)) continue;
+						assignments.set(entry.index, entry.index);
+						satisfiedRequestIndices.add(entry.index);
+					}
+				}
+				const remainingAnonymous = contentResults.filter((entry) => entry.keys.length === 0 && !assignments.has(entry.index));
+				const remainingRequests = requested.filter((item) => !satisfiedRequestIndices.has(item.index));
+				if (remainingAnonymous.length === 1 && remainingRequests.length === 1) {
+					assignments.set(remainingAnonymous[0]!.index, remainingRequests[0]!.index);
+					satisfiedRequestIndices.add(remainingRequests[0]!.index);
 				}
 				for (const entry of contentResults) {
 					const requestIndex = assignments.get(entry.index);

@@ -615,6 +615,66 @@ test("web_fetch reconciles Exa canonical, id, and missing-URL results safely", a
 	}, undefined, undefined, { cwd: process.cwd() } as any), /Fetch failed for 1 URL/);
 });
 
+test("web_fetch assigns mixed anonymous Exa results only when unambiguous", async () => {
+	const requests = ["https://example.com/a", "https://example.com/b", "https://example.com/c"];
+	const allAnonymousTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{ createExaClient: () => ({ contents: async () => ({ results: [
+			{ text: "anonymous a" },
+			{ text: "anonymous b" },
+			{ text: "anonymous c" },
+		], raw: {} }) }) as any },
+	);
+	const allAnonymous = await allAnonymousTool.execute("test", { urls: requests, provider: "exa" }, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.deepEqual((allAnonymous as any).details.stored.map((item: any) => item.url), requests);
+	assert.equal((allAnonymous as any).details.failures, undefined);
+
+	const positionPreservingTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{ createExaClient: () => ({ contents: async () => ({ results: [
+			{ id: requests[0], text: "identified a" },
+			{ text: "anonymous b" },
+			{ id: requests[2], text: "identified c" },
+		], raw: {} }) }) as any },
+	);
+	const positionPreserving = await positionPreservingTool.execute("test", { urls: requests, provider: "exa" }, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.deepEqual((positionPreserving as any).details.stored.map((item: any) => item.url), requests);
+	assert.equal((positionPreserving as any).details.failures, undefined);
+
+	const singletonRemainderTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{ createExaClient: () => ({ contents: async () => ({ results: [
+			{ id: requests[2], text: "identified c" },
+			{ id: requests[0], text: "identified a" },
+			{ text: "anonymous b" },
+		], raw: {} }) }) as any },
+	);
+	const singletonRemainder = await singletonRemainderTool.execute("test", { urls: requests, provider: "exa" }, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.deepEqual((singletonRemainder as any).details.stored.map((item: any) => item.url).sort(), [...requests].sort());
+	assert.equal((singletonRemainder as any).details.failures, undefined);
+
+	const ambiguousTool = createWebFetchToolDefinition(
+		{ appendEntry() {} } as any,
+		() => webFetchSettings(),
+		"web_fetch",
+		{ createExaClient: () => ({ contents: async () => ({ results: [
+			{ id: requests[2], text: "identified c" },
+			{ text: "ambiguous anonymous one" },
+			{ text: "ambiguous anonymous two" },
+		], raw: {} }) }) as any },
+	);
+	const ambiguous = await ambiguousTool.execute("test", { urls: requests, provider: "exa" }, undefined, undefined, { cwd: process.cwd() } as any);
+	assert.deepEqual((ambiguous as any).details.stored.map((item: any) => item.url), [requests[2]]);
+	assert.deepEqual((ambiguous as any).details.stored.map((item: any) => item.content), ["identified c"]);
+	assert.deepEqual((ambiguous as any).details.failures.map((item: any) => item.url), requests.slice(0, 2));
+});
+
 test("web_fetch preserves AbortError identity and aggregates all-failed batches", async () => {
 	const abort = new DOMException("cancelled", "AbortError");
 	const abortingTool = createWebFetchToolDefinition(
