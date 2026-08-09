@@ -1118,6 +1118,27 @@ fn prune_keeps_hook_entry_emptied_only_by_unrecognized_ids() {
     );
 }
 
+/// A MIXED list — a recognized harness that uninstalls fine plus an
+/// unrecognized id — must also survive entry removal: the successful pi
+/// uninstall says nothing about the unknown harness's install, which no
+/// cleanup ever ran for. Deleting the entry would silently unmanage it.
+#[test]
+fn prune_keeps_hook_entry_when_any_shed_id_was_unrecognized() {
+    let mut lock = LockFile::default();
+    lock.add(lock_hook("guard", vec!["pi", "not-a-harness"]));
+    let hooks = vec![source_hook("guard", Some(vec!["codex"]))];
+
+    assert!(prune_hook_harnesses(false, &mut lock, &hooks, None));
+    let entry = lock
+        .entries
+        .get("guard")
+        .expect("mixed-list entry must stay in the lock after shedding an unknown id");
+    assert!(
+        entry.harnesses.is_empty(),
+        "both ids are shed from the list; the entry itself survives for the loud failure"
+    );
+}
+
 /// The single-source fallback must not silently reinstall an entry from a
 /// source it was never installed from — it reports missing instead.
 #[test]

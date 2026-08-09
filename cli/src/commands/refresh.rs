@@ -983,6 +983,7 @@ pub fn prune_hook_harnesses(
         };
         let mut new_harnesses = Vec::new();
         let mut uninstalled_known = false;
+        let mut shed_unknown = false;
         for harness_id in &entry.harnesses {
             if hook.applies_to(harness_id) {
                 new_harnesses.push(harness_id.clone());
@@ -990,11 +991,14 @@ pub fn prune_hook_harnesses(
             }
 
             let Some(harness) = Harness::from_id(harness_id) else {
+                // Debug-format the id: it comes from the lock file (untrusted
+                // input) and must not inject control characters into logs.
                 eprintln!(
-                    "Warning: hook {} records unrecognized harness id {harness_id}; \
+                    "Warning: hook {} records unrecognized harness id {harness_id:?}; \
                      dropping it from the lock (nothing this binary can uninstall)",
                     entry.name
                 );
+                shed_unknown = true;
                 pruned_any = true;
                 continue;
             };
@@ -1013,11 +1017,12 @@ pub fn prune_hook_harnesses(
                 }
             }
         }
-        // Only an entry emptied by a COMPLETED self-heal — this run's allowlist
-        // pruning actually uninstalled a recognized harness — is safe to drop.
-        // An entry that arrived already empty (the VST-134 bug shape), or that
-        // emptied solely by shedding unrecognized ids no uninstall ever ran
-        // for, stays in the lock so the refresh pass fails it loudly
+        // Only an entry emptied by a COMPLETED self-heal — every dropped id
+        // was a recognized harness that actually uninstalled this run — is
+        // safe to drop. An entry that arrived already empty (the VST-134 bug
+        // shape), or that shed ANY unrecognized id no uninstall ever ran for
+        // (even alongside successful recognized uninstalls), stays in the
+        // lock so the refresh pass fails it loudly
         // (`fail_no_installable_harness`) instead of silently unmanaging a
         // possibly-stale install.
         let arrived_empty = entry.harnesses.is_empty();
@@ -1025,7 +1030,7 @@ pub fn prune_hook_harnesses(
             entry.harnesses = new_harnesses;
             pruned_any = true;
         }
-        if entry.harnesses.is_empty() && !arrived_empty && uninstalled_known {
+        if entry.harnesses.is_empty() && !arrived_empty && uninstalled_known && !shed_unknown {
             remove_hook_entries.push(entry.name.clone());
         }
     }
