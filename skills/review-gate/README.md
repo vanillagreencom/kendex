@@ -1,6 +1,8 @@
 # review-gate
 
-Blocks a merge until the PR head has actually been **reviewed** — by a bot, a
+Blocks a merge until the PR head has actually been **reviewed** (unless the
+repo disables the gate with `REVIEW_GATE_MODE = "off"` — then the status is
+green without evidence and its description says so) — by a bot, a
 human, or whatever mix a repo uses. It answers one question and posts the
 answer as a commit status your branch rules require.
 

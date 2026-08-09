@@ -5,7 +5,9 @@ selftest, rulesets, per-repo settings, and what an adoption PR deletes.
 
 ## The precondition — check before anything else
 
-The gate answers "is this head reviewed?" and never polices CI. A repo must
+The gate answers "is this head reviewed?" (or, under
+`REVIEW_GATE_MODE = "off"`, attests that the repo disabled the question) and
+never polices CI. A repo must
 therefore satisfy ONE of these, or untested code can merge and this engine
 will not stop it:
 

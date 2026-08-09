@@ -93,8 +93,8 @@ PR_REVIEW_WAIT_SECS = "900"
 # review-wait budget in seconds — the per-repo quiet period before the
 # on-timeout policy applies — used when the caller passes no max_wait
 # positional arg (an explicit arg always wins). Must be a non-negative
-# integer: pr-watch.sh fails loud (exit 2) on any other value rather than
-# silently falling back to 900.
+# integer of at most 9 digits after leading zeros: pr-watch.sh fails loud
+# (exit 2) on any other value rather than silently falling back to 900.
 
 PR_REVIEW_NUDGE_SECS = "600"
 # Used by: orch (`approval-wait`). Seconds of reviewer silence for the current

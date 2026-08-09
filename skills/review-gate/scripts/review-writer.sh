@@ -9,6 +9,8 @@
 # someone the repo trusts, with no standing objection and no unresolved
 # threads? It evaluates review-predicate.sh and converges the gate commit
 # status (context: REVIEW_GATE_CONTEXT) to that answer. Nothing else.
+# (REVIEW_GATE_MODE=off changes the predicate's answer, not this writer:
+# the converged status is green with a disabled-by-settings attestation.)
 #
 # IT DELIBERATELY DOES NOT POLICE CI. Whether untested code can reach the
 # default branch is branch protection's job. A gate that tries to prove "the

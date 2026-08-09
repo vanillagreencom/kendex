@@ -622,6 +622,23 @@ set -e
 assert_eq "$rc" "2" "pw10d: out-of-range wait value exits 2"
 assert_contains "$out" "out of range" "pw10d: named as out of range"
 
+# pw10e/pw10f: the --awaiting-after CLI arm carries the same magnitude
+# bound and zero-padding normalization as the settings path — each parsing
+# path gets its own red-first control.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 99999999999999999999 2>&1)
+rc=$?
+set -e
+assert_eq "$rc" "2" "pw10e: oversized --awaiting-after exits 2"
+assert_contains "$out" "out of range" "pw10e: named as out of range"
+
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')"   STUB_VERDICT_LINE="verdict=awaiting detail=no evidence"   STUB_HEAD_DATE="2026-01-01T00:00:00Z" -- --awaiting-after 0000000000060)
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw10f: long zero-padded --awaiting-after is judged by magnitude (60s quiet period drives awaiting-stale)"
+assert_contains "$out" "awaiting-stale" "pw10f: kind emitted"
+
 # pw31: an invalid REVIEW_GATE_THREADS value refuses to reduce (config
 # error, exit 2) instead of silently reading as enforced.
 set +e

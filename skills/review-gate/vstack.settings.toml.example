@@ -161,6 +161,7 @@ REVIEW_GATE_MODE = "enforce"
 # (or export it), not in .env/.env.local: review-gate scripts resolve
 # env > this file > default, while orch additionally reads the .env files —
 # a .env-only value reaches the waiter but not the watcher. Must be a
-# non-negative integer: pr-watch.sh fails loud (exit 2) on any other value
-# rather than silently falling back to 900.
+# non-negative integer of at most 9 digits after leading zeros: pr-watch.sh
+# fails loud (exit 2) on any other value rather than silently falling back
+# to 900.
 PR_REVIEW_WAIT_SECS = "900"
