@@ -43,7 +43,9 @@ The exact `Already compacted` error is benign only when the current generation o
 
 ### Bounded-handler routing
 
-Budget-guard dispatch adds `QOL_BUDGET_GUARD_SENTINEL` to its custom instructions. `session_before_compact` detects that sentinel and routes the request through QOL's bounded summarizer and handoff-artifact path even when the general custom-compaction setting is off. Manual, idle, and tree compactions use that path only when their corresponding custom settings are enabled.
+Budget-guard dispatch adds `QOL_BUDGET_GUARD_SENTINEL` to its custom instructions. `session_before_compact` detects that sentinel and routes the request through QOL's bounded summarizer and handoff-artifact path even when the general custom-compaction setting is off. Non-budget session compactions, including manual/user-triggered and idle compaction, use the same path only when `compaction.customEnabled` is on.
+
+`session_before_tree` is a separate path. When `compaction.branchSummaryEnabled` is on, `handleQolBranchSummary()` uses `generateQolSummary()` and therefore the same bounded chunk/reduce summarization machinery, but it does not call `buildBudgetHandoff()` or `writeBudgetHandoffArtifact()`. Branch summaries never create pre-compaction handoff artifacts.
 
 ### Regression coverage
 

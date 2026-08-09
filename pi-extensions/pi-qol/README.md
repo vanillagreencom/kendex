@@ -177,7 +177,7 @@ Off by default. When enabled, non-interactive matches are blocked.
 | Include previous summary | Pass the previous summary for iterative continuity. |
 | Fallback to Pi default compaction | Run Pi's default compaction if QOL's fails. |
 | Show compaction notifications | Notify on compaction start/fail/complete. |
-| Custom branch summaries | Use the QOL summarizer for `/tree` branch summaries. |
+| Custom branch summaries | Use QOL's chunked summarizer for `/tree` branch summaries; branch summaries do not write handoff artifacts. |
 | Remote compaction endpoint | Call a remote HTTP summarizer instead of a model. |
 | Idle compaction trigger | Auto-compact after the session sits idle above a token threshold. |
 
@@ -193,10 +193,10 @@ For long autonomous runs the agent may not go idle, so the transcript can grow u
 | Budget guard percent | Context-window percentage that fires the guard. `-1` disables percent-based firing. | `85` |
 | Budget guard token limit | Absolute tokens that fire the guard. `-1` uses percent only. | `-1` |
 | Chunked compaction input cap | Max serialized characters per summarization request. Long transcripts are chunked, summarized chunk-by-chunk, then tree-reduced — every model/remote request (chunk + every reduce pass) is bounded so the compaction call itself cannot exceed provider buffer limits. `0` disables chunking. | `240000` |
-| Write pre-compaction handoff artifact | Before compaction, write `~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/<timestamp>.json` plus a `latest.json` pointer containing previous summary, last task state, and referenced files/artifacts. Write failures surface as a QOL warning notification and a `handoffArtifactError` field in the compaction details. | on |
+| Write pre-compaction handoff artifact | For budget-guard compaction and enabled custom session compactions, write `~/.pi/agent/vstack/sessions/<session>/pi-qol/handoff/<timestamp>.json` plus a `latest.json` pointer containing previous summary, last task state, and referenced files/artifacts. Branch summaries do not write these artifacts. Write failures surface as a QOL warning notification and a `handoffArtifactError` field in the compaction details. | on |
 | Transcript-risk warn budget (chars) | `/context` shows a warning when the serialized payload of messages-to-send exceeds this many characters, even if tokens are still below the context window. `0` disables. | `600000` |
 
-Budget-guard compaction always uses QOL's bounded path — chunked summarizer plus handoff artifact — even if **Custom compaction summaries** is off. Manual/user-triggered and idle compactions use the QOL path only when **Custom compaction summaries** is on. `/tree` branch summaries use it only when **Custom branch summaries** is on. Otherwise those compactions use Pi's default behavior with no QOL handoff artifact or chunking.
+Budget-guard compaction always uses QOL's chunked summarizer plus handoff artifact, even if **Custom compaction summaries** is off. Manual/user-triggered and idle compactions use that same path only when **Custom compaction summaries** is on. `/tree` branch summaries separately use QOL's chunked summarizer when **Custom branch summaries** is on, but do not write handoff artifacts. When the relevant setting is off, Pi uses its default behavior for that compaction type.
 
 While budget-guard compaction is running, QOL keeps a persistent status line above the prompt (and in the normal status footer when the compact statusline is disabled). After Pi prints the compacted-summary block, the line changes to `QOL budget guard finalizing compaction…` until finalization completes, so long reload gaps do not look frozen.
 
