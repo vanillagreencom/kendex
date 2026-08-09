@@ -52,17 +52,74 @@ test("dispatch deduplicates a repeated trigger after completion within the same 
 	expect(compactCalls.length).toBe(1);
 });
 
-test("dispatch fires again after session_compact resets the key", async () => {
+test("session_compact satisfies the current crossing key", async () => {
 	const driver = new BudgetGuardDriver();
 	const { compactCalls, makeCompact, notify } = recorder();
 	const t = trigger("percent:85:1", "reason");
 	driver.dispatch({ compact: makeCompact("success"), notify, trigger: t });
 	await new Promise((resolve) => setTimeout(resolve, 5));
 	driver.noteSessionCompacted();
-	expect(driver.currentKey).toBeUndefined();
+	expect(driver.currentKey).toBe(t.key);
 	const next = driver.dispatch({ compact: makeCompact("success"), notify, trigger: t });
-	expect(next.kind).toBe("dispatched");
+	expect(next.kind).toBe("dedup");
+	expect(compactCalls.length).toBe(1);
+});
+
+test("session_compact clears suppression after usage falls below the trigger", async () => {
+	const driver = new BudgetGuardDriver();
+	const { compactCalls, makeCompact, notify } = recorder();
+	const t = trigger("percent:85:1", "reason");
+	driver.dispatch({ compact: makeCompact("success"), notify, trigger: t });
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	driver.noteSessionCompacted();
+	expect(driver.dispatch({ compact: makeCompact("success"), notify, trigger: undefined }).kind).toBe("no-trigger");
+	expect(driver.dispatch({ compact: makeCompact("success"), notify, trigger: t }).kind).toBe("dispatched");
 	expect(compactCalls.length).toBe(2);
+});
+
+test("session_compact allows a genuinely new trigger key", async () => {
+	const driver = new BudgetGuardDriver();
+	const { compactCalls, makeCompact, notify } = recorder();
+	const first = trigger("percent:85:1", "first bucket");
+	const second = trigger("percent:85:2", "second bucket");
+	driver.dispatch({ compact: makeCompact("success"), notify, trigger: first });
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	driver.noteSessionCompacted();
+	expect(driver.dispatch({ compact: makeCompact("success"), notify, trigger: second }).kind).toBe("dispatched");
+	expect(compactCalls.length).toBe(2);
+});
+
+test("Already compacted is benign only after a later session_compact", async () => {
+	const driver = new BudgetGuardDriver();
+	const { compactCalls, notify, notifyCalls, onStatus, statusCalls } = recorder();
+	const t = trigger("percent:85:1", "reason");
+	driver.dispatch({
+		compact: (options) => compactCalls.push(options),
+		notify,
+		onStatus,
+		trigger: t,
+	});
+	driver.noteSessionCompacted();
+	compactCalls[0]?.onError?.(new Error("Already compacted"));
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	expect(driver.currentKey).toBe(t.key);
+	expect(driver.canFire).toBe(true);
+	expect(statusCalls.at(-1)).toBeUndefined();
+	expect(notifyCalls.some((call) => call.level === "error")).toBe(false);
+	expect(driver.dispatch({ compact: () => {}, notify, trigger: t }).kind).toBe("dedup");
+});
+
+test("Already compacted remains an error without a later session_compact", async () => {
+	const driver = new BudgetGuardDriver();
+	const { notify, notifyCalls } = recorder();
+	driver.dispatch({
+		compact: (options) => setTimeout(() => options.onError?.(new Error("Already compacted")), 0),
+		notify,
+		trigger: trigger("percent:85:1", "reason"),
+	});
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	expect(driver.currentKey).toBeUndefined();
+	expect(notifyCalls.some((call) => call.level === "error" && call.message.includes("Already compacted"))).toBe(true);
 });
 
 test("dispatch fires for a new bucket key after the first crossing", () => {

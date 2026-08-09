@@ -278,7 +278,7 @@ export default function qol(pi: ExtensionAPI): void {
 		budgetGuardStatus = undefined;
 	};
 
-	const maybeFireBudgetGuard = (ctx: ExtensionContext) => {
+	const stageBudgetGuard = (ctx: ExtensionContext) => {
 		let trigger;
 		try {
 			trigger = budgetGuardTrigger(ctx);
@@ -286,6 +286,10 @@ export default function qol(pi: ExtensionAPI): void {
 			if (isStaleCtxError(error)) return;
 			throw error;
 		}
+		budgetGuardDriver.stage(trigger);
+	};
+
+	const fireStagedBudgetGuard = (ctx: ExtensionContext) => {
 		const notifySafely = (message: string, level: "info" | "warning" | "error") => {
 			try {
 				if (ctx.hasUI && settingBoolean("compaction.notify", true, ctx.cwd)) ctx.ui.notify(message, level);
@@ -294,11 +298,10 @@ export default function qol(pi: ExtensionAPI): void {
 				throw error;
 			}
 		};
-		budgetGuardDriver.dispatch({
+		budgetGuardDriver.dispatchPending({
 			compact: typeof ctx.compact === "function" ? ctx.compact.bind(ctx) : undefined,
 			notify: notifySafely,
 			onStatus: (message) => setBudgetGuardStatus(ctx, message),
-			trigger,
 		});
 	};
 
@@ -720,7 +723,7 @@ export default function qol(pi: ExtensionAPI): void {
 			requestRender();
 		}
 		rateLimitAutoResumeController.noteAgentEnd(event, ctx);
-		maybeFireBudgetGuard(ctx);
+		stageBudgetGuard(ctx);
 		scheduleIdleCompaction(ctx);
 		void attemptAutoRename(ctx);
 		const text = lastAssistantTextFromAgentEnd(event, ctx);
@@ -743,10 +746,13 @@ export default function qol(pi: ExtensionAPI): void {
 		}
 		sendQolNotification(ctx, "ready", settingString("notification.readyMessage", "Ready for input", ctx.cwd), "info", "ready");
 	});
+	pi.on("agent_settled", (_event, ctx) => {
+		fireStagedBudgetGuard(ctx);
+	});
 	pi.on("session_compact", (_event, ctx) => {
 		if (budgetGuardStatus) setBudgetGuardStatus(ctx, "QOL budget guard finalizing compaction…");
-		// After a successful compaction usage drops below the budget, so reset the
-		// crossing key so the next threshold crossing re-fires the guard.
+		// Pi core can compact after agent_end but before agent_settled. Mark the
+		// staged or in-flight trigger satisfied so the same crossing cannot refire.
 		budgetGuardDriver.noteSessionCompacted();
 		if (!ctx.hasUI) return;
 		void refreshStatusline(ctx);

@@ -39,9 +39,10 @@ export const DEFAULT_IDLE_COMPACTION_THRESHOLD_TOKENS = 200000;
 export const DEFAULT_IDLE_COMPACTION_SECONDS = 300;
 
 // Budget guard: catches long autonomous sessions before they hit provider/buffer
-// limits. Fires on agent_end (no idle wait) when usage crosses a percent or
-// absolute token threshold. One notification + one compaction trigger per
-// threshold crossing so it does not loop.
+// limits. Evaluates on agent_end (no idle wait) when usage crosses a percent
+// or absolute token threshold, then dispatches after Pi settles. One
+// notification + one compaction trigger per threshold crossing so it does not
+// race Pi's built-in post-agent compaction or loop.
 export const DEFAULT_BUDGET_GUARD_PERCENT = 85;
 export const DEFAULT_BUDGET_GUARD_TOKENS = -1;
 

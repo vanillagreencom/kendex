@@ -372,10 +372,10 @@ export type BudgetGuardTrigger = BudgetTrigger;
 export type TranscriptRiskState = TranscriptRiskResult;
 
 /**
- * Budget guard fires on agent_end (no idle wait) when context usage crosses a
- * percent of the model window or an absolute token limit. Returns a stable key
- * per crossing so the caller can suppress repeated triggers while usage stays
- * above the threshold.
+ * Budget guard evaluates on agent_end (no idle wait) when context usage crosses
+ * a percent of the model window or an absolute token limit. Returns a stable
+ * key per crossing so the caller can stage settled-time dispatch and suppress
+ * repeated triggers while usage stays above the threshold.
  */
 export function budgetGuardTrigger(ctx: ExtensionContext): BudgetGuardTrigger | undefined {
 	if (!settingBoolean("compaction.budgetGuardEnabled", true, ctx.cwd)) return undefined;

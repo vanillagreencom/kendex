@@ -183,7 +183,7 @@ Idle thresholds (token threshold, idle delay, fixed token limit, percent limit) 
 
 ### Long-session budget guard
 
-For long autonomous runs the agent may not go idle, so idle compaction may never fire and the transcript can grow until provider/buffer limits hit. The budget guard runs on `agent_end` (not idle) and starts a compaction immediately when context usage crosses a percent of the model window or an absolute token limit. It fires once per threshold crossing — repeated `agent_end` events above the same threshold do not retrigger it, and the crossing key resets on a successful compaction or on a transient compaction failure (so the next `agent_end` retries).
+For long autonomous runs the agent may not go idle, so idle compaction may never fire and the transcript can grow until provider/buffer limits hit. The budget guard evaluates context usage on `agent_end` (not idle), then waits for `agent_settled` before dispatching so Pi's built-in post-agent auto-compaction gets first refusal. If Pi compacts first, its `session_compact` event satisfies the staged budget trigger and QOL skips the duplicate request. Repeated `agent_end` events in the same trigger bucket stay suppressed after compaction; suppression clears only when usage drops below the configured thresholds or usage advances to a genuinely new trigger key. Transient QOL compaction failures still clear the key so the next cycle can retry.
 
 | Setting | What it does | Default |
 | --- | --- | --- |
