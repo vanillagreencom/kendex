@@ -29,11 +29,13 @@ tokens. Calibrate accordingly:
 
 These are known, deliberate trade-offs. Raising them again is noise:
 
-- **No cross-surface evidence ordering.** All four evidence surfaces —
-  review objects, check runs, commit statuses, and SHA-bound trusted
-  comments — resolve newest-decides *within* the surface; nothing orders
-  evidence *across* surfaces. A finding that assumes one surface should
-  supersede another asks for a design that does not exist.
+- **No cross-surface evidence ordering.** Review objects, check runs, and
+  commit statuses resolve newest-decides *within* their own surface;
+  trusted comments bind to an exact head SHA and are counted
+  existentially (a comment about an old head can never vouch for a new
+  one, so there is nothing to supersede). Nothing orders evidence
+  *across* surfaces — a finding that assumes one surface should supersede
+  another asks for a design that does not exist.
 - **Transient windows heal by convergence.** A state change landing
   between two reads is corrected on the next convergence pass, at most
   15 minutes later. Do not propose locks for these windows.

@@ -48,6 +48,18 @@ grep -q "publisher filter set: an outage attestation with NO creator login is no
 grep -q "publisher filter unset: github-actions-minted outage attestation counts" "$work/defaults.out" \
   || note "outage default-unchanged case missing (outage read is a separate jq implementation)"
 
+# --- layer 1b: the committed-mode-typo guard must itself be falsifiable -----
+# The selftest validates the repo's ACTIVE REVIEW_GATE_MODE standalone (a
+# committed typo fails the suite pre-merge). Prove the guard fires: a
+# planted invalid mode must fail the suite naming the key — otherwise
+# deleting the guard would leave everything green.
+mkdir -p "$work/modetypo"
+if (cd "$work/modetypo" && REVIEW_GATE_MODE=offf "$SELFTEST") >"$work/modetypo.out" 2>&1; then
+  note "selftest passed with a planted invalid REVIEW_GATE_MODE — the committed-typo guard no longer fires"
+else
+  grep -q "REVIEW_GATE_MODE" "$work/modetypo.out"     || note "the planted-invalid-mode failure does not name REVIEW_GATE_MODE"
+fi
+
 # --- layer 2: the selftest must exercise CONFIGURED values ------------------
 mkdir -p "$work/configured"
 cat >"$work/configured/vstack.settings.toml" <<'EOF'
