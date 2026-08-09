@@ -17,8 +17,6 @@ metadata:
 
 The gate answers ONE question: **has this exact PR head been reviewed?** It
 posts that answer as a commit status the repo's branch rules require.
-(`REVIEW_GATE_MODE = "off"` disables the question per repo: the status goes
-green without evidence and its description says the gate is disabled.)
 
 It does not check CI, re-run anything, or reason about jobs. Whether untested
 code can reach the default branch is branch protection's job — see the
@@ -28,7 +26,7 @@ adoption precondition below.
 
 | Verdict | Status | Meaning |
 |---|---|---|
-| `approved` | `success` | Evidence exists for this head; no standing objection; no unresolved threads. (Under `REVIEW_GATE_MODE = "off"`: green without evidence, attestation in the description.) |
+| `approved` | `success` | Evidence exists for this head; no standing objection; no unresolved threads. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates NO term — success there means only "gate disabled", stated in the status description. |
 | `awaiting` | `pending` | No review evidence for this head yet. |
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection — never a build failure. |
