@@ -29,13 +29,14 @@ tokens. Calibrate accordingly:
 
 These are known, deliberate trade-offs. Raising them again is noise:
 
-- **No cross-surface evidence ordering.** Review objects, check runs, and
-  commit statuses resolve newest-decides *within* their own surface;
-  trusted comments bind to an exact head SHA and are counted
-  existentially (a comment about an old head can never vouch for a new
-  one, so there is nothing to supersede). Nothing orders evidence
-  *across* surfaces — a finding that assumes one surface should supersede
-  another asks for a design that does not exist.
+- **No cross-surface evidence ordering.** Nothing orders evidence *across*
+  the four surfaces (review objects, check runs, commit statuses, trusted
+  comments) — a finding that assumes one surface supersedes another asks
+  for a design that does not exist. Each surface's own resolution
+  semantics are specified in the predicate header
+  (`skills/review-gate/scripts/review-predicate.sh`) — check there before
+  asserting supersession behavior within a surface.
+
 - **Transient windows heal by convergence.** A state change landing
   between two reads is corrected on the next convergence pass, at most
   15 minutes later. Do not propose locks for these windows.
