@@ -14,6 +14,7 @@ export interface GuardCompactOptions {
 
 export interface GuardPendingDispatchInput {
 	compact: ((options: GuardCompactOptions) => void) | undefined;
+	generation?: number;
 	notify: (message: string, level: GuardLevel) => void;
 	onStatus?: (message: string | undefined) => void;
 	staleCtx?: () => boolean;
@@ -35,23 +36,37 @@ export interface GuardDispatchResult {
 }
 
 interface InFlightDispatch {
+	generation: number;
 	key: string;
 	sessionCompactVersion: number;
 	resolveCompletion: () => void;
 }
 
+interface OwnedTrigger {
+	generation: number;
+	trigger: BudgetTrigger;
+}
+
+interface SatisfiedTrigger {
+	generation: number;
+	key: string;
+}
+
 export class BudgetGuardDriver {
-	private satisfiedKey: string | undefined;
-	private pendingTrigger: BudgetTrigger | undefined;
+	private generation = 0;
+	private satisfiedTrigger: SatisfiedTrigger | undefined;
+	private pendingTrigger: OwnedTrigger | undefined;
 	private inFlight: InFlightDispatch | undefined;
 	private sessionCompactVersion = 0;
 
-	reset(): void {
+	reset(): number {
 		this.inFlight?.resolveCompletion();
-		this.satisfiedKey = undefined;
+		this.generation += 1;
+		this.satisfiedTrigger = undefined;
 		this.pendingTrigger = undefined;
 		this.inFlight = undefined;
 		this.sessionCompactVersion = 0;
+		return this.generation;
 	}
 
 	/** Returns true when no compaction call is currently active. Visible for tests. */
@@ -60,7 +75,7 @@ export class BudgetGuardDriver {
 	}
 
 	get currentKey(): string | undefined {
-		return this.inFlight?.key ?? this.pendingTrigger?.key ?? this.satisfiedKey;
+		return this.inFlight?.key ?? this.pendingTrigger?.trigger.key ?? this.satisfiedTrigger?.key;
 	}
 
 	/**
@@ -68,18 +83,22 @@ export class BudgetGuardDriver {
 	 * its built-in post-agent compaction check before agent_settled, so staging
 	 * here prevents two compaction attempts from racing each other.
 	 */
-	stage(trigger: BudgetTrigger | undefined, staleCtx?: () => boolean): DispatchOutcome {
+	stage(trigger: BudgetTrigger | undefined, staleCtx?: () => boolean, generation = this.generation): DispatchOutcome {
+		if (generation !== this.generation) return { kind: "ignored" };
 		if (staleCtx?.()) return { kind: "ignored" };
 		if (this.inFlight) return { kind: "in-flight" };
 		if (!trigger) {
 			this.pendingTrigger = undefined;
-			this.satisfiedKey = undefined;
+			this.satisfiedTrigger = undefined;
 			return { kind: "no-trigger" };
 		}
-		if (trigger.key === this.satisfiedKey || trigger.key === this.pendingTrigger?.key) {
+		if (
+			(this.satisfiedTrigger?.generation === generation && trigger.key === this.satisfiedTrigger.key) ||
+			(this.pendingTrigger?.generation === generation && trigger.key === this.pendingTrigger.trigger.key)
+		) {
 			return { kind: "dedup" };
 		}
-		this.pendingTrigger = trigger;
+		this.pendingTrigger = { generation, trigger };
 		return { kind: "staged", reason: trigger.reason };
 	}
 
@@ -88,21 +107,26 @@ export class BudgetGuardDriver {
 	 * in flight. Keep that key suppressed until usage produces no trigger or a
 	 * genuinely different trigger key.
 	 */
-	noteSessionCompacted(): void {
+	noteSessionCompacted(generation = this.generation): boolean {
+		if (generation !== this.generation) return false;
 		this.sessionCompactVersion += 1;
-		const currentKey = this.inFlight?.key ?? this.pendingTrigger?.key;
-		if (currentKey) this.satisfiedKey = currentKey;
+		const currentKey = this.inFlight?.key ?? this.pendingTrigger?.trigger.key;
+		if (currentKey) this.satisfiedTrigger = { generation, key: currentKey };
 		this.pendingTrigger = undefined;
+		return true;
 	}
 
 	/** Dispatch a trigger previously staged by agent_end. */
 	dispatchPending(input: GuardPendingDispatchInput): GuardDispatchResult {
 		const completed = (outcome: DispatchOutcome): GuardDispatchResult => ({ completion: Promise.resolve(), outcome });
+		const generation = input.generation ?? this.generation;
+		if (generation !== this.generation) return completed({ kind: "ignored" });
 		if (input.staleCtx?.()) return completed({ kind: "ignored" });
 		if (this.inFlight) return completed({ kind: "in-flight" });
-		const trigger = this.pendingTrigger;
-		if (!trigger) return completed({ kind: "no-trigger" });
-		if (trigger.key === this.satisfiedKey) {
+		const pending = this.pendingTrigger;
+		if (!pending || pending.generation !== generation) return completed({ kind: "no-trigger" });
+		const trigger = pending.trigger;
+		if (this.satisfiedTrigger?.generation === generation && trigger.key === this.satisfiedTrigger.key) {
 			this.pendingTrigger = undefined;
 			return completed({ kind: "dedup" });
 		}
@@ -118,23 +142,24 @@ export class BudgetGuardDriver {
 			resolveCompletion = resolve;
 		});
 		const dispatch: InFlightDispatch = {
+			generation,
 			key: trigger.key,
 			resolveCompletion,
 			sessionCompactVersion: this.sessionCompactVersion,
 		};
 		this.pendingTrigger = undefined;
 		this.inFlight = dispatch;
-		this.satisfiedKey = trigger.key;
+		this.satisfiedTrigger = { generation, key: trigger.key };
 		const instructions = `${QOL_BUDGET_GUARD_SENTINEL} QOL budget guard triggered at agent_end because ${trigger.reason}. Bound the summary input, preserve current task state, decisions, files, blockers, and next steps.`;
 
 		try {
 			input.compact({
 				customInstructions: instructions,
 				onComplete: () => {
-					if (this.inFlight !== dispatch) return;
+					if (this.generation !== dispatch.generation || this.inFlight !== dispatch) return;
 					try {
 						this.inFlight = undefined;
-						this.satisfiedKey = dispatch.key;
+						this.satisfiedTrigger = { generation: dispatch.generation, key: dispatch.key };
 						input.onStatus?.(undefined);
 						input.notify("QOL budget guard compaction completed.", "info");
 					} finally {
@@ -142,14 +167,14 @@ export class BudgetGuardDriver {
 					}
 				},
 				onError: (error: Error) => {
-					if (this.inFlight !== dispatch) return;
+					if (this.generation !== dispatch.generation || this.inFlight !== dispatch) return;
 					const duplicateCompletedAfterDispatch =
 						error.message === "Already compacted" &&
 						this.sessionCompactVersion > dispatch.sessionCompactVersion;
 					if (duplicateCompletedAfterDispatch) {
 						try {
 							this.inFlight = undefined;
-							this.satisfiedKey = dispatch.key;
+							this.satisfiedTrigger = { generation: dispatch.generation, key: dispatch.key };
 							input.onStatus?.(undefined);
 						} finally {
 							dispatch.resolveCompletion();
@@ -162,7 +187,7 @@ export class BudgetGuardDriver {
 						// A later session_compact already satisfied this key even when
 						// this callback reports a different, visible error.
 						if (this.sessionCompactVersion === dispatch.sessionCompactVersion) {
-							this.satisfiedKey = undefined;
+							this.satisfiedTrigger = undefined;
 						}
 						input.onStatus?.(undefined);
 						input.notify(`QOL budget guard compaction failed: ${error.message}`, "error");
@@ -173,10 +198,10 @@ export class BudgetGuardDriver {
 			});
 			return { completion, outcome: { kind: "dispatched", reason: trigger.reason } };
 		} catch (error) {
-			if (this.inFlight === dispatch) {
+			if (this.generation === dispatch.generation && this.inFlight === dispatch) {
 				try {
 					this.inFlight = undefined;
-					this.satisfiedKey = undefined;
+					this.satisfiedTrigger = undefined;
 					input.onStatus?.(undefined);
 					const message = error instanceof Error ? error.message : String(error);
 					input.notify(`QOL budget guard compaction failed to start: ${message}`, "error");

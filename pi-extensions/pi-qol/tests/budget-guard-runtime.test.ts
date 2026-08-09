@@ -261,6 +261,26 @@ test("reset clears in-flight and key state", () => {
 	expect(driver.currentKey).toBeUndefined();
 });
 
+test("session_compact from an old reset generation cannot satisfy the current trigger", async () => {
+	const driver = new BudgetGuardDriver();
+	const generationA = driver.reset();
+	driver.stage(trigger("percent:85:a", "session A"), undefined, generationA);
+	const generationB = driver.reset();
+	const current = trigger("percent:85:b", "session B");
+	driver.stage(current, undefined, generationB);
+	expect(driver.noteSessionCompacted(generationA)).toBe(false);
+	const compactCalls: GuardCompactOptions[] = [];
+	const lifecycle = driver.dispatchPending({
+		compact: (options) => compactCalls.push(options),
+		generation: generationB,
+		notify: () => {},
+	});
+	expect(lifecycle.outcome.kind).toBe("dispatched");
+	expect(driver.currentKey).toBe(current.key);
+	compactCalls[0]?.onComplete?.();
+	await lifecycle.completion;
+});
+
 test("reset invalidates delayed callbacks without mutating the next dispatch", async () => {
 	const driver = new BudgetGuardDriver();
 	const compactCalls: GuardCompactOptions[] = [];
