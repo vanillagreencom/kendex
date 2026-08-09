@@ -233,7 +233,7 @@ check on `.agents/skills/review-gate/scripts/pr-watch.sh`), run it as the
 needs-attention reducer:
 
 ```bash
-GH_REPO=<owner>/<repo> .agents/skills/review-gate/scripts/pr-watch.sh [PR#...]
+GH_REPO=OWNER/REPO .agents/skills/review-gate/scripts/pr-watch.sh [PR_NUMBER...]
 ```
 
 (`GH_REPO` is required — the watcher exits 2 immediately without it.)
