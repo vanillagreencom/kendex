@@ -29,10 +29,15 @@ export type DispatchOutcome =
 	| { kind: "dispatched"; reason: string }
 	| { kind: "dispatch-threw"; reason: string; error: string };
 
+export interface GuardDispatchResult {
+	outcome: DispatchOutcome;
+	completion: Promise<void>;
+}
+
 interface InFlightDispatch {
-	id: number;
 	key: string;
 	sessionCompactVersion: number;
+	resolveCompletion: () => void;
 }
 
 export class BudgetGuardDriver {
@@ -40,14 +45,13 @@ export class BudgetGuardDriver {
 	private pendingTrigger: BudgetTrigger | undefined;
 	private inFlight: InFlightDispatch | undefined;
 	private sessionCompactVersion = 0;
-	private nextDispatchId = 1;
 
 	reset(): void {
+		this.inFlight?.resolveCompletion();
 		this.satisfiedKey = undefined;
 		this.pendingTrigger = undefined;
 		this.inFlight = undefined;
 		this.sessionCompactVersion = 0;
-		this.nextDispatchId = 1;
 	}
 
 	/** Returns true when no compaction call is currently active. Visible for tests. */
@@ -89,32 +93,35 @@ export class BudgetGuardDriver {
 		const currentKey = this.inFlight?.key ?? this.pendingTrigger?.key;
 		if (currentKey) this.satisfiedKey = currentKey;
 		this.pendingTrigger = undefined;
-		this.inFlight = undefined;
 	}
 
 	/** Dispatch a trigger previously staged by agent_end. */
-	dispatchPending(input: GuardPendingDispatchInput): DispatchOutcome {
-		if (input.staleCtx?.()) return { kind: "ignored" };
-		if (this.inFlight) return { kind: "in-flight" };
+	dispatchPending(input: GuardPendingDispatchInput): GuardDispatchResult {
+		const completed = (outcome: DispatchOutcome): GuardDispatchResult => ({ completion: Promise.resolve(), outcome });
+		if (input.staleCtx?.()) return completed({ kind: "ignored" });
+		if (this.inFlight) return completed({ kind: "in-flight" });
 		const trigger = this.pendingTrigger;
-		if (!trigger) return { kind: "no-trigger" };
+		if (!trigger) return completed({ kind: "no-trigger" });
 		if (trigger.key === this.satisfiedKey) {
 			this.pendingTrigger = undefined;
-			return { kind: "dedup" };
+			return completed({ kind: "dedup" });
 		}
 		if (typeof input.compact !== "function") {
 			input.notify(`QOL budget guard cannot fire: ctx.compact is unavailable (${trigger.reason}).`, "warning");
-			return { kind: "no-compact-fn" };
+			return completed({ kind: "no-compact-fn" });
 		}
 
 		input.notify(`QOL budget guard starting compaction: ${trigger.reason}`, "info");
 		input.onStatus?.(`QOL budget guard compacting session: ${trigger.reason}`);
+		let resolveCompletion = () => {};
+		const completion = new Promise<void>((resolve) => {
+			resolveCompletion = resolve;
+		});
 		const dispatch: InFlightDispatch = {
-			id: this.nextDispatchId,
 			key: trigger.key,
+			resolveCompletion,
 			sessionCompactVersion: this.sessionCompactVersion,
 		};
-		this.nextDispatchId += 1;
 		this.pendingTrigger = undefined;
 		this.inFlight = dispatch;
 		this.satisfiedKey = trigger.key;
@@ -124,42 +131,63 @@ export class BudgetGuardDriver {
 			input.compact({
 				customInstructions: instructions,
 				onComplete: () => {
-					if (this.inFlight?.id === dispatch.id) this.inFlight = undefined;
-					this.satisfiedKey = dispatch.key;
-					input.onStatus?.(undefined);
-					input.notify("QOL budget guard compaction completed.", "info");
+					if (this.inFlight !== dispatch) return;
+					try {
+						this.inFlight = undefined;
+						this.satisfiedKey = dispatch.key;
+						input.onStatus?.(undefined);
+						input.notify("QOL budget guard compaction completed.", "info");
+					} finally {
+						dispatch.resolveCompletion();
+					}
 				},
 				onError: (error: Error) => {
+					if (this.inFlight !== dispatch) return;
 					const duplicateCompletedAfterDispatch =
 						error.message === "Already compacted" &&
 						this.sessionCompactVersion > dispatch.sessionCompactVersion;
 					if (duplicateCompletedAfterDispatch) {
-						if (this.inFlight?.id === dispatch.id) this.inFlight = undefined;
-						this.satisfiedKey = dispatch.key;
-						input.onStatus?.(undefined);
+						try {
+							this.inFlight = undefined;
+							this.satisfiedKey = dispatch.key;
+							input.onStatus?.(undefined);
+						} finally {
+							dispatch.resolveCompletion();
+						}
 						return;
 					}
 
-					if (this.inFlight?.id === dispatch.id) {
+					try {
 						this.inFlight = undefined;
 						// A later session_compact already satisfied this key even when
 						// this callback reports a different, visible error.
 						if (this.sessionCompactVersion === dispatch.sessionCompactVersion) {
 							this.satisfiedKey = undefined;
 						}
+						input.onStatus?.(undefined);
+						input.notify(`QOL budget guard compaction failed: ${error.message}`, "error");
+					} finally {
+						dispatch.resolveCompletion();
 					}
-					input.onStatus?.(undefined);
-					input.notify(`QOL budget guard compaction failed: ${error.message}`, "error");
 				},
 			});
-			return { kind: "dispatched", reason: trigger.reason };
+			return { completion, outcome: { kind: "dispatched", reason: trigger.reason } };
 		} catch (error) {
-			if (this.inFlight?.id === dispatch.id) this.inFlight = undefined;
-			this.satisfiedKey = undefined;
-			input.onStatus?.(undefined);
+			if (this.inFlight === dispatch) {
+				try {
+					this.inFlight = undefined;
+					this.satisfiedKey = undefined;
+					input.onStatus?.(undefined);
+					const message = error instanceof Error ? error.message : String(error);
+					input.notify(`QOL budget guard compaction failed to start: ${message}`, "error");
+					return { completion, outcome: { kind: "dispatch-threw", error: message, reason: trigger.reason } };
+				} finally {
+					dispatch.resolveCompletion();
+				}
+			}
+			dispatch.resolveCompletion();
 			const message = error instanceof Error ? error.message : String(error);
-			input.notify(`QOL budget guard compaction failed to start: ${message}`, "error");
-			return { kind: "dispatch-threw", error: message, reason: trigger.reason };
+			return { completion, outcome: { kind: "dispatch-threw", error: message, reason: trigger.reason } };
 		}
 	}
 

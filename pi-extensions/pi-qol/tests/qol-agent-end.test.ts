@@ -114,7 +114,7 @@ test("qol(pi) registers an agent_end handler", () => {
 	expect(typeof fake.handlers.agent_settled).toBe("function");
 });
 
-test("agent_end stages and agent_settled fires the budget guard with the QOL sentinel", () => {
+test("agent_settled waits for staged compaction completion", async () => {
 	const fake = makeFakeApi();
 	qolDefault(fake.api);
 	const agentEndHandler = fake.handlers.agent_end;
@@ -124,13 +124,36 @@ test("agent_end stages and agent_settled fires the budget guard with the QOL sen
 	const ctx = makeCtx();
 	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
 	expect(ctx.compact.mock.calls.length).toBe(0);
-	agentSettledHandler!({ type: "agent_settled" }, ctx);
+	const settlement = agentSettledHandler!({ type: "agent_settled" }, ctx) as Promise<void>;
 	expect(ctx.compact.mock.calls.length).toBe(1);
 	const arg = ctx.compact.mock.calls[0]?.[0] as CompactCall;
 	expect(arg.customInstructions ?? "").toContain(QOL_BUDGET_GUARD_SENTINEL);
+	let settled = false;
+	void settlement.then(() => { settled = true; });
+	await Promise.resolve();
+	expect(settled).toBe(false);
+	arg.onComplete?.();
+	await settlement;
+	expect(settled).toBe(true);
 });
 
-test("agent_end does not fire the budget guard when usage is below threshold", () => {
+test("agent_settled waits for staged compaction error", async () => {
+	const fake = makeFakeApi();
+	qolDefault(fake.api);
+	const ctx = makeCtx();
+	fake.handlers.agent_end!({ messages: [], type: "agent_end" }, ctx);
+	const settlement = fake.handlers.agent_settled!({ type: "agent_settled" }, ctx) as Promise<void>;
+	let settled = false;
+	void settlement.then(() => { settled = true; });
+	await Promise.resolve();
+	expect(settled).toBe(false);
+	const arg = ctx.compact.mock.calls[0]?.[0] as CompactCall;
+	arg.onError?.(new Error("model down"));
+	await settlement;
+	expect(settled).toBe(true);
+});
+
+test("agent_end does not fire the budget guard when usage is below threshold", async () => {
 	const fake = makeFakeApi();
 	qolDefault(fake.api);
 	const handler = fake.handlers.agent_end;
@@ -138,10 +161,11 @@ test("agent_end does not fire the budget guard when usage is below threshold", (
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 30, tokens: 60_000 }),
 	});
 	handler!({ messages: [], type: "agent_end" }, ctx);
+	await fake.handlers.agent_settled!({ type: "agent_settled" }, ctx);
 	expect(ctx.compact.mock.calls.length).toBe(0);
 });
 
-test("agent_end deduplicates while compaction is pending or in flight", () => {
+test("agent_end deduplicates while compaction is pending or in flight", async () => {
 	const fake = makeFakeApi();
 	qolDefault(fake.api);
 	const agentEndHandler = fake.handlers.agent_end;
@@ -150,12 +174,15 @@ test("agent_end deduplicates while compaction is pending or in flight", () => {
 	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
 	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
 	expect(ctx.compact.mock.calls.length).toBe(0);
-	agentSettledHandler!({ type: "agent_settled" }, ctx);
-	agentSettledHandler!({ type: "agent_settled" }, ctx);
+	const settlement = agentSettledHandler!({ type: "agent_settled" }, ctx) as Promise<void>;
+	await agentSettledHandler!({ type: "agent_settled" }, ctx);
 	expect(ctx.compact.mock.calls.length).toBe(1);
+	const arg = ctx.compact.mock.calls[0]?.[0] as CompactCall;
+	arg.onComplete?.();
+	await settlement;
 });
 
-test("agent_end does not re-fire the same trigger after session_compact", () => {
+test("agent_end does not re-fire the same trigger after session_compact", async () => {
 	const fake = makeFakeApi();
 	qolDefault(fake.api);
 	const agentEndHandler = fake.handlers.agent_end;
@@ -164,16 +191,19 @@ test("agent_end does not re-fire the same trigger after session_compact", () => 
 	expect(sessionCompactHandler).toBeDefined();
 	const ctx = makeCtx();
 	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	agentSettledHandler!({ type: "agent_settled" }, ctx);
+	const settlement = agentSettledHandler!({ type: "agent_settled" }, ctx) as Promise<void>;
 	expect(ctx.compact.mock.calls.length).toBe(1);
 	// Simulate Pi notifying us that compaction finished.
 	sessionCompactHandler!({ compactionEntry: {}, fromExtension: true, type: "session_compact" }, ctx);
+	const arg = ctx.compact.mock.calls[0]?.[0] as CompactCall;
+	arg.onComplete?.();
+	await settlement;
 	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	agentSettledHandler!({ type: "agent_settled" }, ctx);
+	await agentSettledHandler!({ type: "agent_settled" }, ctx);
 	expect(ctx.compact.mock.calls.length).toBe(1);
 });
 
-test("Pi auto-compaction between agent_end and agent_settled satisfies the staged trigger", () => {
+test("Pi auto-compaction between agent_end and agent_settled resolves without dispatch", async () => {
 	const fake = makeFakeApi();
 	qolDefault(fake.api);
 	const agentEndHandler = fake.handlers.agent_end;
@@ -186,29 +216,32 @@ test("Pi auto-compaction between agent_end and agent_settled satisfies the stage
 	// after that emits agent_settled.
 	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
 	sessionCompactHandler!({ compactionEntry: {}, fromExtension: false, reason: "threshold", type: "session_compact" }, ctx);
-	agentSettledHandler!({ type: "agent_settled" }, ctx);
+	await agentSettledHandler!({ type: "agent_settled" }, ctx);
 
 	expect(ctx.compact.mock.calls.length).toBe(0);
 	// Fake usage remains in the same trigger bucket. A later agent cycle stays
 	// suppressed until usage drops below threshold or advances to a new key.
 	agentEndHandler!({ messages: [], type: "agent_end" }, ctx);
-	agentSettledHandler!({ type: "agent_settled" }, ctx);
+	await agentSettledHandler!({ type: "agent_settled" }, ctx);
 	expect(ctx.compact.mock.calls.length).toBe(0);
 });
 
-test("agent_end notifies when ctx.compact is unavailable rather than poisoning future retries", () => {
+test("agent_end notifies when ctx.compact is unavailable rather than poisoning future retries", async () => {
 	const fake = makeFakeApi();
 	qolDefault(fake.api);
 	const handler = fake.handlers.agent_end;
 	const ctx = makeCtx({ compact: undefined });
 	// First settled cycle: no ctx.compact, should not throw or poison the key.
 	handler!({ messages: [], type: "agent_end" }, ctx);
-	fake.handlers.agent_settled!({ type: "agent_settled" }, ctx);
+	await fake.handlers.agent_settled!({ type: "agent_settled" }, ctx);
 	// Now provide ctx.compact and fire again - guard should still attempt
 	// because the previous attempt didn't poison the crossing key.
 	const compact = mock(() => {});
 	const ctxWithCompact = makeCtx({ compact });
 	handler!({ messages: [], type: "agent_end" }, ctxWithCompact);
-	fake.handlers.agent_settled!({ type: "agent_settled" }, ctxWithCompact);
+	const settlement = fake.handlers.agent_settled!({ type: "agent_settled" }, ctxWithCompact) as Promise<void>;
 	expect(compact.mock.calls.length).toBe(1);
+	const arg = compact.mock.calls[0]?.[0] as CompactCall;
+	arg.onComplete?.();
+	await settlement;
 });

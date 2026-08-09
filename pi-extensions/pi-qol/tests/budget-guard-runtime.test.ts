@@ -4,6 +4,7 @@ import {
 	BudgetGuardDriver,
 	type DispatchOutcome,
 	type GuardCompactOptions,
+	type GuardDispatchResult,
 	type GuardLevel,
 	type GuardPendingDispatchInput,
 } from "../extensions/qol/budget-guard-runtime.ts";
@@ -18,15 +19,19 @@ interface TestDispatchInput extends GuardPendingDispatchInput {
 	trigger: BudgetTrigger | undefined;
 }
 
-function dispatch(driver: BudgetGuardDriver, input: TestDispatchInput): DispatchOutcome {
+function dispatchLifecycle(driver: BudgetGuardDriver, input: TestDispatchInput): GuardDispatchResult {
 	const staged = driver.stage(input.trigger, input.staleCtx);
-	if (staged.kind !== "staged") return staged;
+	if (staged.kind !== "staged") return { completion: Promise.resolve(), outcome: staged };
 	return driver.dispatchPending({
 		compact: input.compact,
 		notify: input.notify,
 		onStatus: input.onStatus,
 		staleCtx: input.staleCtx,
 	});
+}
+
+function dispatch(driver: BudgetGuardDriver, input: TestDispatchInput): DispatchOutcome {
+	return dispatchLifecycle(driver, input).outcome;
 }
 
 function recorder() {
@@ -169,11 +174,12 @@ test("dispatch fires for a new bucket key after the first crossing", () => {
 	expect(second.kind).toBe("in-flight");
 });
 
-test("dispatch with no trigger clears the crossing key", () => {
+test("dispatch with no trigger clears the crossing key", async () => {
 	const driver = new BudgetGuardDriver();
 	const { makeCompact, notify } = recorder();
-	dispatch(driver, { compact: makeCompact("success"), notify, trigger: trigger("percent:85:1", "x") });
+	const lifecycle = dispatchLifecycle(driver, { compact: makeCompact("success"), notify, trigger: trigger("percent:85:1", "x") });
 	driver.noteSessionCompacted();
+	await lifecycle.completion;
 	dispatch(driver, { compact: makeCompact("success"), notify, trigger: undefined });
 	expect(driver.currentKey).toBeUndefined();
 });
@@ -253,4 +259,51 @@ test("reset clears in-flight and key state", () => {
 	driver.reset();
 	expect(driver.canFire).toBe(true);
 	expect(driver.currentKey).toBeUndefined();
+});
+
+test("reset invalidates delayed callbacks without mutating the next dispatch", async () => {
+	const driver = new BudgetGuardDriver();
+	const compactCalls: GuardCompactOptions[] = [];
+	const notifyCalls: NotifyCall[] = [];
+	const statusCalls: Array<string | undefined> = [];
+	const notify = (message: string, level: GuardLevel) => notifyCalls.push({ level, message });
+	const onStatus = (message: string | undefined) => statusCalls.push(message);
+	const first = trigger("percent:85:1", "first dispatch");
+	const second = trigger("percent:85:2", "second dispatch");
+	const firstLifecycle = dispatchLifecycle(driver, {
+		compact: (options) => compactCalls.push(options),
+		notify,
+		onStatus,
+		trigger: first,
+	});
+	driver.reset();
+	await firstLifecycle.completion;
+	const secondLifecycle = dispatchLifecycle(driver, {
+		compact: (options) => compactCalls.push(options),
+		notify,
+		onStatus,
+		trigger: second,
+	});
+	let secondCompleted = false;
+	void secondLifecycle.completion.then(() => { secondCompleted = true; });
+	await Promise.resolve();
+	expect(secondCompleted).toBe(false);
+	expect(driver.currentKey).toBe(second.key);
+	expect(driver.canFire).toBe(false);
+	expect(statusCalls.at(-1)).toContain("second dispatch");
+
+	compactCalls[0]?.onComplete?.();
+	compactCalls[0]?.onError?.(new Error("late first error"));
+	await Promise.resolve();
+
+	expect(secondCompleted).toBe(false);
+	expect(driver.currentKey).toBe(second.key);
+	expect(driver.canFire).toBe(false);
+	expect(statusCalls.at(-1)).toContain("second dispatch");
+	expect(notifyCalls.some((call) => call.message.includes("completed") || call.message.includes("late first error"))).toBe(false);
+
+	compactCalls[1]?.onComplete?.();
+	await secondLifecycle.completion;
+	expect(driver.canFire).toBe(true);
+	expect(driver.currentKey).toBe(second.key);
 });

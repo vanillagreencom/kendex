@@ -289,7 +289,7 @@ export default function qol(pi: ExtensionAPI): void {
 		budgetGuardDriver.stage(trigger);
 	};
 
-	const fireStagedBudgetGuard = (ctx: ExtensionContext) => {
+	const fireStagedBudgetGuard = async (ctx: ExtensionContext) => {
 		const notifySafely = (message: string, level: "info" | "warning" | "error") => {
 			try {
 				if (ctx.hasUI && settingBoolean("compaction.notify", true, ctx.cwd)) ctx.ui.notify(message, level);
@@ -298,11 +298,14 @@ export default function qol(pi: ExtensionAPI): void {
 				throw error;
 			}
 		};
-		budgetGuardDriver.dispatchPending({
+		const dispatch = budgetGuardDriver.dispatchPending({
 			compact: typeof ctx.compact === "function" ? ctx.compact.bind(ctx) : undefined,
 			notify: notifySafely,
 			onStatus: (message) => setBudgetGuardStatus(ctx, message),
 		});
+		// Supported Pi hosts always route ctx.compact terminal success/failure to
+		// one callback. Await it so Pi cannot emit terminal settlement first.
+		await dispatch.completion;
 	};
 
 	const scheduleIdleCompaction = (ctx: ExtensionContext) => {
@@ -746,8 +749,8 @@ export default function qol(pi: ExtensionAPI): void {
 		}
 		sendQolNotification(ctx, "ready", settingString("notification.readyMessage", "Ready for input", ctx.cwd), "info", "ready");
 	});
-	pi.on("agent_settled", (_event, ctx) => {
-		fireStagedBudgetGuard(ctx);
+	pi.on("agent_settled", async (_event, ctx) => {
+		await fireStagedBudgetGuard(ctx);
 	});
 	pi.on("session_compact", (_event, ctx) => {
 		if (budgetGuardStatus) setBudgetGuardStatus(ctx, "QOL budget guard finalizing compaction…");
