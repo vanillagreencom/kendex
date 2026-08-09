@@ -79,9 +79,9 @@ making a change, and never take destructive action.
 
 Use this map for routing decisions. It overrides guesses from team names.
 
-[One bullet per team, format: "- <team name> (<KEY>): <what it owns —
-repos, components, work types>". Where two teams sound alike or share a
-product name, add an explicit "NOT ..." disambiguation. Close with any
+[One bullet per team, format: "- TEAM_NAME (KEY): WHAT_IT_OWNS — repos,
+components, work types". Where two teams sound alike or share a product
+name, add an explicit "NOT ..." disambiguation. Close with any
 cross-cutting rules, for example: "An issue about agent workflows, CI
 harness behavior, or shared tooling belongs on the infrastructure team even
 if filed on a product team, and vice versa."]
