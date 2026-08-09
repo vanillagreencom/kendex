@@ -11,5 +11,17 @@ SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --e
 # Used by: second-opinion.
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
-# Uncomment only when this project must force one target instead of auto-detecting.
+# Used by: second-opinion (review mode). Space- or comma-separated review lanes;
+# every AVAILABLE lane runs on the same diff and findings are unioned, deduped
+# by location. Adding a third local model CLI is one entry here plus its
+# SECOND_OPINION_<NAME>_CMD (name uppercased, hyphens as underscores).
+SECOND_OPINION_REVIEW_TARGETS = "codex claude"
+
+# Used by: second-opinion (review mode). Glob list of repo instruction files
+# appended to the review prompt (repo-rule adherence lens). Globs resolve
+# inside the reviewed repo (--cwd). Set empty to disable.
+SECOND_OPINION_REVIEW_INSTRUCTIONS = "review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+
+# Uncomment only when this project must force one target instead of auto-detecting
+# (this also disables multi-lane review).
 # SECOND_OPINION_TARGET = "claude"
