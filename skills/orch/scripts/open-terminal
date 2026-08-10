@@ -96,7 +96,12 @@ done
 # error and oversized values are clamped to a bound that still fails fast.
 # Validated after argument parsing so --help never dies on project settings,
 # and ONLY for tmux launches — GUI/custom-command lanes never read it, and a
-# broken tmux-only setting must not abort unrelated launches.
+# broken tmux-only setting must not abort unrelated launches. The implicit
+# mode (no flag, $TMUX set → tmux) resolves HERE, before this gate, so an
+# implicit tmux launch validates instead of silently taking the default.
+if [[ -z "$TERMINAL_MODE" ]]; then
+  if [[ -n "${TMUX:-}" ]]; then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"; fi
+fi
 if [[ "$TERMINAL_MODE" != "tmux" ]]; then
   TMUX_VERIFY_SECS=15
 elif [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ ]]; then
@@ -183,9 +188,7 @@ if [[ -n "$LANE" ]]; then
   echo "Lane: $LANE_ENV"
 fi
 
-if [[ -z "$TERMINAL_MODE" ]]; then
-  if [[ -n "${TMUX:-}" ]]; then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"; fi
-fi
+
 
 resolve_repo() {
   if [[ -n "$REPO" ]]; then printf '%s\n' "$REPO"; return; fi
