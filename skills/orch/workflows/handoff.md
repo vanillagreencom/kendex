@@ -19,6 +19,14 @@ Launch one or more independent work item sessions. This is launch-only.
 
 ## 1. Confirm Launch
 
+**Container preflight** — before any worktree is created: for each Linear
+item, check the title FIRST — a `(one PR)` marker always makes it
+launchable, even with `agent:multi`. Otherwise, an item with the
+`agent:multi` label, or with children, is a CONTAINER: drop it from the
+launch list and surface its unblocked children as the launchable items
+instead (containers are never orchestrated and never own a worktree —
+open-terminal would create one before the launched session could refuse).
+
 Present:
 
 <output_format>
