@@ -97,6 +97,25 @@ fn git_common_dir(dir: &Path) -> Option<PathBuf> {
     absolute.canonicalize().ok()
 }
 
+/// `git rev-parse --show-toplevel` for `dir`, canonicalized: the root of the
+/// working tree that physically contains `dir`. `None` when `dir` is not
+/// inside a working tree, when git is unavailable, or when the answer cannot
+/// be resolved — callers must fail closed.
+pub(crate) fn git_worktree_root(dir: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args(["-C", dir.to_str()?, "rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    Path::new(&raw).canonicalize().ok()
+}
+
 /// Positive proof that `target` lives in a working tree of the SAME repository
 /// as `project_root` — both resolve to one `--git-common-dir`.
 ///

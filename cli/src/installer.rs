@@ -58,9 +58,10 @@ pub fn install_agent(
 
 /// Install a skill directory to a specific harness.
 ///
-/// Symlink mode: copy to a canonical dir (`.agents/skills/<name>/`) within the
-/// project, then symlink from each harness-specific dir to the canonical copy.
-/// All paths stay within the project root — no external symlinks.
+/// Symlink mode: copy to a canonical dir (`.agents/skills/<name>/`) in the
+/// checkout where the harness link physically lands — the project root, or
+/// the same-repository checkout a worktree setup shares its harness dirs
+/// with — then symlink from each harness-specific dir to the canonical copy.
 ///
 /// Copy mode: copy directly to each harness dir.
 pub fn install_skill(
@@ -73,24 +74,42 @@ pub fn install_skill(
     validate_new_item_name(&skill.name)?;
     let dest = harness.install_skill(skill, global)?;
 
-    // Canonical location: .agents/skills/<name>/ (universal, like Vercel npx skills)
-    let canonical = if global && matches!(harness, Harness::Codex) {
-        crate::config::codex_home_dir()
-            .join("skills")
-            .join(&skill.name)
-    } else if global {
-        crate::config::global_state_dir()
-            .join("skills")
-            .join(&skill.name)
-    } else {
-        crate::config::project_root()
-            .join(".agents")
-            .join("skills")
-            .join(&skill.name)
-    };
-
     let detail = match method {
         InstallMethod::Symlink => {
+            // Where the link physically lands. Worktree setups symlink
+            // harness dirs into the main checkout (vstack#886), so this can
+            // be a different checkout of the same repository than the
+            // project root the command ran from.
+            let link_home = if global {
+                None
+            } else {
+                dest.parent().and_then(same_repo_link_home)
+            };
+
+            // Canonical location: .agents/skills/<name>/ (universal, like
+            // Vercel npx skills). For project scope the copy must live in
+            // the checkout where the link physically lands: the link's
+            // relative spelling resolves from there, and a copy left in the
+            // worktree would leave the main checkout's link pointing at
+            // state that dies with the worktree (VST-195).
+            let canonical = if global && matches!(harness, Harness::Codex) {
+                crate::config::codex_home_dir()
+                    .join("skills")
+                    .join(&skill.name)
+            } else if global {
+                crate::config::global_state_dir()
+                    .join("skills")
+                    .join(&skill.name)
+            } else {
+                link_home
+                    .as_ref()
+                    .map(|home| home.checkout_root.clone())
+                    .unwrap_or_else(crate::config::project_root)
+                    .join(".agents")
+                    .join("skills")
+                    .join(&skill.name)
+            };
+
             // Step 1: Copy to canonical location (refresh from source).
             // Use a marker file to avoid re-copying if another harness
             // already refreshed the canonical in this process.
@@ -113,8 +132,15 @@ pub fn install_skill(
                 let _ = std::fs::write(&marker, std::process::id().to_string());
             }
 
-            // Step 2: If this harness IS the canonical path, we're done
-            if dest == canonical {
+            // Step 2: If this harness IS the canonical path — by spelling,
+            // or physically because a shared `.agents` already places dest
+            // at the canonical copy — we're done. Linking a physically
+            // canonical dest would replace the copy with a self-referential
+            // symlink.
+            let physically_canonical = link_home
+                .as_ref()
+                .is_some_and(|home| home.physical_parent.join(&skill.name) == canonical);
+            if dest == canonical || physically_canonical {
                 format!(
                     "{} → {} (canonical, {})",
                     skill.name,
@@ -128,12 +154,36 @@ pub fn install_skill(
                 }
                 remove_existing(&dest)?;
 
-                let repo_anchor = (!global).then(crate::config::project_root);
-                let rel = relative_path(dest.parent().unwrap(), &canonical, repo_anchor.as_deref())?;
                 #[cfg(unix)]
-                std::os::unix::fs::symlink(&rel, &dest).with_context(|| {
-                    format!("symlinking {} → {}", dest.display(), rel.display())
-                })?;
+                {
+                    let rel = match &link_home {
+                        // The repo layout is identical in every checkout, so
+                        // the relative spelling computed at the link's
+                        // physical home resolves there — worktree-independent.
+                        Some(home) => {
+                            let rel = lexical_relative(&home.physical_parent, &canonical);
+                            if home.physical_parent.join(&rel).is_dir() {
+                                rel
+                            } else {
+                                // Never emit a relative spelling whose target
+                                // does not exist from the link's physical
+                                // landing point.
+                                let abs = std::fs::canonicalize(&canonical)
+                                    .unwrap_or_else(|_| canonical.clone());
+                                eprintln!(
+                                    "  Warning: skill link {} cannot anchor inside its own checkout (VST-195); using absolute target {}",
+                                    dest.display(),
+                                    abs.display()
+                                );
+                                abs
+                            }
+                        }
+                        None => relative_path(dest.parent().unwrap(), &canonical)?,
+                    };
+                    std::os::unix::fs::symlink(&rel, &dest).with_context(|| {
+                        format!("symlinking {} → {}", dest.display(), rel.display())
+                    })?;
+                }
 
                 #[cfg(not(unix))]
                 copy_dir(&canonical, &dest)?;
@@ -383,47 +433,57 @@ fn normalize_absolute_path(path: &Path) -> PathBuf {
     normalized
 }
 
-/// Symlink target spelling for a link created in `from` pointing at `to`.
-///
-/// `repo_anchor` is the root whose repository the link must stay inside —
-/// the project root for project-scope installs, `None` for global scope.
-/// Worktree setups symlink shared harness dirs into the main checkout
-/// (vstack#886), so `from` may physically live in a different checkout than
-/// its apparent path. The repo layout is identical in every worktree, so as
-/// long as an endpoint's physical home is a worktree of the anchor's own
-/// repository, the lexical relative spelling resolves correctly from
-/// whichever checkout the link physically lands in. A canonicalized target
-/// here would anchor shared main-checkout state to the worktree that ran the
-/// refresh and dangle when that worktree is removed (VST-195).
-///
-/// An endpoint that escapes to an unrelated tree (for example a `.claude`
-/// dir symlinked into a dotfiles checkout) keeps the previous behavior: an
-/// absolute physical target rather than a relative path computed across
-/// unrelated roots.
-fn relative_path(from: &Path, to: &Path, repo_anchor: Option<&Path>) -> Result<PathBuf> {
+/// The physical home of a project-scope harness link whose parent directory
+/// is symlinked into another checkout of the same repository.
+struct LinkHome {
+    /// Canonical directory the link is physically created in.
+    physical_parent: PathBuf,
+    /// Root of the same-repository checkout containing `physical_parent`.
+    checkout_root: PathBuf,
+}
+
+/// Detect worktree indirection under `dest_parent`. Worktree setups symlink
+/// shared harness dirs into the main checkout (vstack#886), so a link created
+/// at an apparent worktree path may physically land in another checkout of
+/// the project's repository. Returns `None` for the ordinary case (no symlink
+/// indirection) and for indirection into unrelated trees (for example a
+/// `.claude` dir symlinked into a dotfiles checkout), both of which keep
+/// `relative_path`'s behavior.
+fn same_repo_link_home(dest_parent: &Path) -> Option<LinkHome> {
+    let lexical = normalize_absolute_path(dest_parent);
+    let physical = std::fs::canonicalize(dest_parent).ok()?;
+    if physical == lexical {
+        return None;
+    }
+    let project_root = crate::config::project_root();
+    if !crate::path_safety::is_same_repository_worktree(&project_root, &physical) {
+        return None;
+    }
+    let checkout_root = crate::path_safety::git_worktree_root(&physical)?;
+    Some(LinkHome {
+        physical_parent: physical,
+        checkout_root,
+    })
+}
+
+#[cfg(unix)]
+fn relative_path(from: &Path, to: &Path) -> Result<PathBuf> {
     let from_lexical = normalize_absolute_path(from);
     let from_canonical = std::fs::canonicalize(from).unwrap_or_else(|_| from_lexical.clone());
-    let to_lexical = normalize_absolute_path(to);
-    let to_canonical = std::fs::canonicalize(to).unwrap_or_else(|_| to_lexical.clone());
+    let to = std::fs::canonicalize(to).unwrap_or_else(|_| normalize_absolute_path(to));
 
-    let stays_in_repo = |lexical: &Path, canonical: &Path| {
-        lexical == canonical
-            || repo_anchor.is_some_and(|anchor| {
-                crate::path_safety::is_same_repository_worktree(anchor, canonical)
-            })
-    };
-
-    if !stays_in_repo(&from_lexical, &from_canonical) {
-        return Ok(to_canonical);
+    // If the apparent parent path differs from the real containing directory
+    // (for example because an ancestor is a symlink), prefer an absolute
+    // target over a confusing relative path that is computed from the real
+    // path. Same-repository worktree indirection never reaches this branch:
+    // install_skill resolves those links against their physical home first.
+    if from_canonical != from_lexical {
+        return Ok(to);
     }
-    let to = if stays_in_repo(&to_lexical, &to_canonical) {
-        to_lexical
-    } else {
-        to_canonical
-    };
     Ok(lexical_relative(&from_lexical, &to))
 }
 
+#[cfg(unix)]
 fn lexical_relative(from: &Path, to: &Path) -> PathBuf {
     let from_parts: Vec<_> = from.components().collect();
     let to_parts: Vec<_> = to.components().collect();
@@ -697,6 +757,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[cfg(unix)]
     #[test]
     fn relative_path_uses_relative_target_for_normal_directories() {
         let root = std::env::temp_dir().join(format!(
@@ -709,7 +770,7 @@ mod tests {
         std::fs::create_dir_all(&from).unwrap();
         std::fs::create_dir_all(&to).unwrap();
 
-        let rel = relative_path(&from, &to, None).unwrap();
+        let rel = relative_path(&from, &to).unwrap();
         assert_eq!(rel, PathBuf::from("../../config/skills/rust-runtime"));
 
         let _ = std::fs::remove_dir_all(&root);
@@ -734,7 +795,7 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         symlink(&real_parent, &apparent_parent).unwrap();
 
-        let rel = relative_path(&apparent_parent, &target, None).unwrap();
+        let rel = relative_path(&apparent_parent, &target).unwrap();
         assert!(
             rel.is_absolute(),
             "expected absolute symlink target, got {rel:?}"
@@ -787,17 +848,16 @@ mod tests {
         }
     }
 
-    /// A parent symlinked into another worktree of the anchor's repository
-    /// must keep the lexical relative spelling instead of bailing to an
-    /// absolute target — the repo-relative layout is identical in every
-    /// checkout, so the relative link resolves wherever it physically lands.
+    /// A harness dir symlinked into the main checkout must be detected as
+    /// same-repo indirection, resolving to main's physical dir and checkout
+    /// root; a real (non-symlinked) dir has no separate physical home.
     #[cfg(unix)]
     #[test]
-    fn relative_path_stays_lexical_when_parent_symlinks_into_same_repo_worktree() {
+    fn same_repo_link_home_resolves_worktree_parent_to_main_checkout() {
         use std::os::unix::fs::symlink;
 
         let root = std::env::temp_dir().join(format!(
-            "vstack_relative_path_worktree_{}_{}",
+            "vstack_link_home_worktree_{}_{}",
             std::process::id(),
             crate::config::now_iso().replace([':', '-'], "")
         ));
@@ -814,20 +874,72 @@ mod tests {
         std::fs::create_dir_all(&main_skills).unwrap();
         std::fs::create_dir_all(wt.join(".claude")).unwrap();
         symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
-        let target = wt.join(".agents").join("skills").join("github");
-        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(wt.join(".agents").join("skills")).unwrap();
 
-        let rel = relative_path(&wt.join(".claude").join("skills"), &target, Some(&wt)).unwrap();
-        assert_eq!(rel, PathBuf::from("../../.agents/skills/github"));
+        let shared = crate::test_util::with_project_root(&wt, || {
+            same_repo_link_home(&wt.join(".claude").join("skills"))
+        })
+        .expect("shared harness dir must resolve to a same-repo link home");
+        assert_eq!(shared.physical_parent, main_skills.canonicalize().unwrap());
+        assert_eq!(shared.checkout_root, main.canonicalize().unwrap());
+
+        let local = crate::test_util::with_project_root(&wt, || {
+            same_repo_link_home(&wt.join(".agents").join("skills"))
+        });
+        assert!(local.is_none(), "real dir must not get a link home");
 
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// VST-195: a refresh run from a git worktree whose `.claude/skills` is
-    /// symlinked into the main checkout must not anchor the main checkout's
-    /// skill links in the worktree — those links dangle the moment the
-    /// worktree is removed. The link physically lands in main, so its target
-    /// must be the repo-relative spelling that resolves inside main.
+    /// Fully shared `.agents`: for Codex/Pi the harness dest IS the canonical
+    /// copy, just spelled through the worktree's `.agents` symlink. Install
+    /// must recognize the physical identity and keep the real directory — a
+    /// naive dest != canonical comparison would replace the copy with a
+    /// self-referential symlink.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_does_not_self_link_a_physically_canonical_dest() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_self_link_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        std::fs::create_dir_all(main.join(".agents").join("skills")).unwrap();
+        symlink(main.join(".agents"), wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(&skill, Harness::Codex, false, InstallMethod::Symlink, None).unwrap()
+        });
+
+        let canonical = main.join(".agents").join("skills").join("github");
+        let meta = std::fs::symlink_metadata(&canonical).unwrap();
+        assert!(
+            meta.file_type().is_dir(),
+            "canonical copy must stay a real directory, not a symlink"
+        );
+        assert!(canonical.join("SKILL.md").is_file());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// VST-195, split layout (worktree config.md "Symlink entries that shadow
+    /// tracked content"): `.agents` holds tracked content, so it stays a REAL
+    /// directory in the worktree while `.claude/skills` is shared into the
+    /// main checkout. The harness link physically lands in main, so both the
+    /// link spelling and the canonical copy backing it must anchor in main —
+    /// a copy left in the worktree dies with the worktree.
     #[cfg(unix)]
     #[test]
     fn install_skill_from_worktree_keeps_main_checkout_links_repo_local() {
@@ -847,9 +959,6 @@ mod tests {
         }
         assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
 
-        // Provision the worktree the way the `worktree` skill does: the
-        // harness skills dir is shared into the main checkout. `.agents`
-        // stays a real directory here — the failure mode observed downstream.
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
         std::fs::create_dir_all(wt.join(".claude")).unwrap();
@@ -879,6 +988,22 @@ mod tests {
             target,
             PathBuf::from("../../.agents/skills/github"),
             "main-checkout link must use the repo-relative spelling"
+        );
+        assert!(
+            main.join(".agents/skills/github/SKILL.md").is_file(),
+            "canonical copy must land in the checkout where the link landed"
+        );
+        let resolved = link.canonicalize().unwrap();
+        assert!(
+            resolved.starts_with(main.canonicalize().unwrap()),
+            "link must resolve inside the main checkout, got {resolved:?}"
+        );
+
+        // Everything must keep resolving after the worktree is gone.
+        std::fs::remove_dir_all(&wt).unwrap();
+        assert!(
+            link.canonicalize().unwrap().join("SKILL.md").is_file(),
+            "main-checkout link must survive worktree removal"
         );
 
         let _ = std::fs::remove_dir_all(&root);
