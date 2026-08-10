@@ -65,7 +65,8 @@ artifacts — with no production caller; the orch workflows always use round mod
 There is one identity model (round id); the mtime freshness gate and the old
 legacy positional mode are gone (vstack#776).
 
---expect-items (fix rounds): the delegated review-item numbers. items[] must cover
+--expect-items (fix rounds): the delegated review-item NUMBERS as a comma-
+separated set (e.g. 1,2,3,4,5,6) — never a count. items[] must cover
 EXACTLY that set — each expected n present once, no unknown/duplicate n, every
 decision ∈ {Applied,Skipped,Blocked}, every reasoning non-empty. Without it, a
 fix/bundled artifact only needs a non-empty, well-formed items[].
@@ -272,6 +273,14 @@ validate_artifact() {
   fi
   if [[ -n "$expect_items" ]]; then
     if ! items_exact_ok "$file" "$expect_items"; then
+      # Count-vs-set misuse reads as "the dev agent skipped items" and points
+      # at the wrong party: a bare integer N alongside an N-item artifact is
+      # almost certainly a count where the flag wants the delegated item
+      # NUMBERS. Name the real problem in the emitted warning.
+      if [[ "$expect_items" =~ ^[0-9]+$ ]]         && jq -e --argjson n "$expect_items"           '((.items? | type) == "array") and ((.items | length) == $n)'           "$file" >/dev/null 2>&1; then
+        emit false "$file" "incomplete"           "--expect-items takes the delegated item NUMBERS (a set, e.g. 1,2,3), not a count: the artifact carries exactly $expect_items item(s), whose numbers do not equal {$expect_items}"
+        return 1
+      fi
       emit false "$file" "incomplete"
       return 1
     fi
