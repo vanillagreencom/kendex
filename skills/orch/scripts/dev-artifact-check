@@ -284,7 +284,13 @@ validate_artifact() {
       # commit_unreachable|null contract.
       if [[ "$expect_items" =~ ^[0-9]+$ ]] && [ "$expect_items" -gt 1 ] \
         && jq -e --argjson n "$expect_items" \
-          '((.items? | type) == "array") and (([ .items[].n ] | sort) == [range(1; $n + 1)])' \
+          '((.items? | type) == "array")
+             and (all(.items[];
+                   (type == "object")
+                   and ((.n | type) == "number")
+                   and ((.decision as $d | ["Applied","Skipped","Blocked"] | index($d)) != null)
+                   and ((.reasoning | type) == "string") and (.reasoning != "")))
+             and (([ .items[].n ] | sort) == [range(1; $n + 1)])' \
           "$file" >/dev/null 2>&1; then
         emit false "$file" "incomplete" "" \
           "if this delegation covered $expect_items items, then '$expect_items' was a COUNT — --expect-items takes the delegated item NUMBERS (e.g. 1,2,...,$expect_items); if it genuinely delegated only item #$expect_items, the artifact carries extra items 1..$expect_items"
