@@ -94,39 +94,43 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 
 `list-review-agents` scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agents` for `reviewer-*` files, dedupes, and exits non-zero if none found. Output: one agent name per line.
 
-**Risk-sized panel (opt-in, VST-200)** — a repo may declare a risk
-classifier that sizes this fan-out from the change set instead of always
-running the full fleet:
+**Risk-sized panel (opt-in)** — a repo may declare a risk classifier that
+sizes this fan-out from the change set instead of always running the full
+fleet. One checked helper invocation (simple executable + argument, safe
+under restrictive harness approval policies — a subshell/`&&` shape could be
+rejected and silently force the fallback):
 
 ```bash
-.agents/skills/orch/scripts/orch-env REVIEW_RISK_COMMAND ""
+.agents/skills/orch/scripts/review-risk [WORKTREE_PATH]
 ```
 
-If empty: skip this block — full `[AGENTS]` (today's behavior). If set, run
-it from the worktree root against the current change set:
+Outcomes:
+- **exit 0** — stdout is the validated level (`high`/`medium`/`low`). Record
+  it before sizing (the PR body publishes this line tool-emitted, never
+  hand-written):
+  ```bash
+  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_risk '{"level": "[LEVEL]", "command": "REVIEW_RISK_COMMAND"}'
+  ```
+- **exit 3** — `REVIEW_RISK_COMMAND` is unset: full `[AGENTS]` (today's
+  behavior).
+- **any other exit** — classifier failure or contract violation (detail on
+  stderr): note it in the review summary and run the full fleet. The key
+  fails open to DEPTH, never to shallowness.
+
+On every non-zero exit, ALSO clear any stale recorded risk so the PR body
+cannot claim a sizing this run did not perform:
 
 ```bash
-(cd [WORKTREE_PATH] && [REVIEW_RISK_COMMAND])
-```
-
-Contract: prints exactly `high`, `medium`, or `low` on stdout, exit 0. ANY
-other outcome — non-zero exit, empty or unrecognized output, command not
-found — is a note in the review summary and the full fleet runs: the key
-fails open to DEPTH, never to shallowness. On a valid answer, record it
-before sizing (the PR body publishes this line tool-emitted, never
-hand-written):
-
-```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_risk '{"level": "[LEVEL]", "command": "[REVIEW_RISK_COMMAND]"}'
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_risk null
 ```
 
 Then size `[AGENTS]`:
 
 | Level | Panel | Round expectation |
 |-------|-------|-------------------|
-| `high` | Full `[AGENTS]`, plus the adversarial-test expectation: reviewers are told a red-first test per finding is expected, not optional | Default cycle budget |
+| `high` | Full `[AGENTS]`; § 2.2 appends the high-risk line to every reviewer delegation prompt (the expectation must reach reviewers, not just this table) | Default cycle budget |
 | `medium` | Full `[AGENTS]` (default — identical to unset) | Default cycle budget |
-| `low` | `reviewer-correctness` + `reviewer-doc` + ONE domain reviewer chosen from the diff's domains (`.agents/skills/github/scripts/git-diff-summary [BASE_BRANCH]` — pick the reviewer matching the dominant domain; none matching → just the two) | Accept convergence after the first clean round — do not run extra rounds hunting on a low-risk diff |
+| `low` | `reviewer-correctness` + `reviewer-doc` + ONE domain reviewer chosen from the diff's domains (`.agents/skills/github/scripts/git-diff-summary -C [WORKTREE_PATH] [BASE_BRANCH]` — pick the reviewer matching the dominant domain; none matching → just the two) | Accept convergence after the first clean round — do not run extra rounds hunting on a low-risk diff |
 
 A `low` sizing never overrides explicit caller `agents` context, and the
 slot-budget/wave machinery below applies to the sized panel unchanged. The
@@ -252,6 +256,9 @@ Re-review cycle [N]. Already resolved — do NOT re-report:
 </if>
 <if re-review cycle and this reviewer session was recreated fresh (wave mode or respawn)>
 Fresh session — you have no memory of earlier cycles. Read your prior report [PRIOR_REPORT_PATH] and re-read the current diff before reviewing.
+</if>
+<if workflow state review_risk.level is "high">
+Declared change risk: HIGH. A red-first regression test per finding is expected, not optional — flag any finding you cannot pair with one.
 </if>
 </delegation_format>
 

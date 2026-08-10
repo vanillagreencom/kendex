@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# review-risk — run the repo's opt-in REVIEW_RISK_COMMAND classifier as ONE
+# checked helper invocation (executable + explicit argument), so restrictive
+# harness approval policies never see a subshell/&&/expansion command shape
+# and silently push every classification onto the full-fleet fallback.
+#
+# Usage: review-risk WORKTREE_PATH
+#
+# stdout + exit codes:
+#   high|medium|low, exit 0 — the classifier's validated answer
+#   exit 3                  — REVIEW_RISK_COMMAND is unset (opt-in not taken)
+#   exit 1                  — classifier failed, or printed anything else;
+#                             detail on stderr. Callers fail OPEN to depth:
+#                             any nonzero means "run the full fleet" (and
+#                             clear stale review_risk state).
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKTREE="${1:?usage: review-risk WORKTREE_PATH}"
+
+[ -d "$WORKTREE" ] || {
+  echo "Error: review-risk: worktree path is not a directory: $WORKTREE" >&2
+  exit 1
+}
+
+cmd="$("$SCRIPT_DIR/orch-env" REVIEW_RISK_COMMAND "")"
+if [ -z "$cmd" ]; then
+  exit 3
+fi
+
+if ! out="$(cd "$WORKTREE" && bash -c "$cmd" 2>&1)"; then
+  echo "Error: review-risk: REVIEW_RISK_COMMAND ('$cmd') failed: $out" >&2
+  exit 1
+fi
+level="$(printf '%s' "$out" | tr -d '[:space:]')"
+case "$level" in
+high | medium | low)
+  printf '%s\n' "$level"
+  ;;
+*)
+  echo "Error: review-risk: REVIEW_RISK_COMMAND ('$cmd') printed '$out' — contract is exactly high|medium|low on stdout, exit 0" >&2
+  exit 1
+  ;;
+esac
