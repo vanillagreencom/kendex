@@ -1700,14 +1700,18 @@ glob_matches() { # path, glob — the predicate's exact `case` matcher
 # repository, not merely the string the probe itself manufactured from that
 # same glob (a typo'd `skils/*` matches `skils/probe.md` forever). Empty in
 # hermetic harnesses — the manufactured fallback keeps those deterministic.
-EXCLUDE_TRACKED="$(
-  _selftest_repo_root="$(git -C "$(cd "$(dirname "$0")" && pwd)" rev-parse --show-toplevel 2>/dev/null)" &&
-    git -C "$_selftest_repo_root" ls-files 2>/dev/null || true
-)"
+# Resolved from the INVOKING directory's repository — the settings under
+# test belong to that repo, so its tracked tree is the evidence base. Empty
+# when the selftest runs outside a repository (hermetic harnesses): only
+# there do manufactured probe paths apply.
+EXCLUDE_TRACKED="$(git ls-files --full-name 2>/dev/null || true)"
 exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
-  # Real tracked matches first (non-circular evidence the glob is alive in
-  # this repository); manufactured '*'-filler paths only as fallback, and
-  # the concrete path is always re-proven against its source glob.
+  # Tracked mode (a real repository): ONLY real tracked matches count — a
+  # synthetic filler manufactured from the glob under test would let a
+  # typo'd `skils/*` verify itself against its own fabrication. No tracked
+  # match returns 2 so the caller can say so out loud. Hermetic mode (no
+  # repository): the '*'-filler fallback keeps harness runs deterministic,
+  # and the concrete path is still re-proven against its source glob.
   local pat="$1" ext candidate
   shift
   if [ -n "$EXCLUDE_TRACKED" ]; then
@@ -1723,6 +1727,7 @@ exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
     done <<EOF_TRACKED_PROBE
 $EXCLUDE_TRACKED
 EOF_TRACKED_PROBE
+    return 2
   fi
   case "$pat" in *'?'*|*'['*|*'\'*) return 1 ;; esac
   for ext in "$@"; do
@@ -1738,10 +1743,32 @@ EOF_TRACKED_PROBE
   return 1
 }
 exclude_free_path() { # ext... -> a path NO committed glob matches
-  # Every carry-class extension gets candidates: an exclude list covering
-  # all .md probe paths while .markdown stays carry-eligible must still
-  # prove the positive (non-matching deltas carry).
+  # Tracked mode: a REAL tracked carry-class file outside every glob is the
+  # positive proof (a committed `carry-probe*` exclusion must not read as
+  # "nothing can carry" while README.md still carries). Hermetic mode:
+  # synthetic candidates per extension.
   local ext candidate pat hit
+  if [ -n "$EXCLUDE_TRACKED" ]; then
+    while IFS= read -r candidate; do
+      [ -z "$candidate" ] && continue
+      hit=""
+      for ext in "$@"; do
+        case "$candidate" in *"$ext") hit=ext-ok ;; esac
+      done
+      [ "$hit" = "ext-ok" ] || continue
+      hit=""
+      while IFS= read -r pat; do
+        [ -z "$pat" ] && continue
+        if glob_matches "$candidate" "$pat"; then hit=1; break; fi
+      done <<EOF_FREE_TRACKED
+$(list_items "$ACTIVE_CARRY_EXCLUDE")
+EOF_FREE_TRACKED
+      if [ -z "$hit" ]; then printf '%s\n' "$candidate"; return 0; fi
+    done <<EOF_TRACKED_FREE
+$EXCLUDE_TRACKED
+EOF_TRACKED_FREE
+    return 1
+  fi
   for ext in "$@"; do
     for candidate in "carry-probe/unrelated$ext" "carry-probe-unrelated$ext"; do
       hit=""
@@ -1780,19 +1807,27 @@ if [ -n "$ACTIVE_CARRY" ]; then
   # every committed glob must still carry (the exclusion neither dead nor
   # over-broad).
   if [ -n "$ACTIVE_CARRY_EXCLUDE" ]; then
-    if carry_class_has docs; then
-      # Both docs-class extensions: a `*.markdown`-targeted glob must not
-      # ride green on an `.md`-only probe (and vice versa).
-      probe_exts=".md .markdown"
-      probe_patch='@@ -1 +1 @@
--old prose
-+new prose'
-    else
-      probe_exts=".sh"
-      probe_patch='@@ -1 +1 @@
+    # Probe extensions span EVERY enabled class — docs alone must not leave
+    # a comments-class exclusion (`src/*.sh`) untested, and an exclusion set
+    # covering all Markdown is not "carry disabled" while comment-only
+    # changes still carry.
+    probe_exts=""
+    carry_class_has docs && probe_exts=".md .markdown"
+    carry_class_has comments && probe_exts="${probe_exts:+$probe_exts }.sh"
+    [ -n "$probe_exts" ] || probe_exts=".md .markdown"
+    # Per-extension patches: a docs probe changes prose, a comments probe
+    # changes a comment line, so the delta classifies into its class and the
+    # refusal below is attributable to the exclusion alone.
+    probe_patch_for() {
+      case "$1" in
+      *.sh) printf '%s' '@@ -1 +1 @@
 -# old comment
-+# new comment'
-    fi
++# new comment' ;;
+      *) printf '%s' '@@ -1 +1 @@
+-old prose
++new prose' ;;
+      esac
+    }
     # shellcheck disable=SC2086 # probe_exts is a controlled word list
     probe_free="$(exclude_free_path $probe_exts)" || probe_free=""
 
@@ -1812,13 +1847,16 @@ if [ -n "$ACTIVE_CARRY" ]; then
         ;;
       esac
       # shellcheck disable=SC2086 # probe_exts is a controlled word list
-      probe_match="$(exclude_glob_probe "$probe_pat" $probe_exts)" || probe_match=""
-      if [ -n "$probe_match" ]; then
+      probe_match="$(exclude_glob_probe "$probe_pat" $probe_exts)"
+      probe_rc=$?
+      if [ "$probe_rc" -eq 0 ] && [ -n "$probe_match" ]; then
         reset
         CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
         reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
-        compare_fix ahead "[$(delta_file "$probe_match" modified "$probe_patch")]"
+        compare_fix ahead "[$(delta_file "$probe_match" modified "$(probe_patch_for "$probe_match")")]"
         run "configured: carry-exclude — '$probe_pat' matches '$probe_match', refusing the carry" awaiting
+      elif [ "$probe_rc" -eq 2 ]; then
+        echo "note  configured: carry-exclude — '$probe_pat' matches NO tracked carry-class ($probe_exts) path in this repository: prophylactic, or a typo/wrong anchor — verify the spelling; not exercised here"
       else
         echo "note  configured: carry-exclude — '$probe_pat' derives no carry-class ($probe_exts) probe: it guards paths the enabled carry class never carries, or uses ?/[/\\ metacharacters; not exercised here"
       fi
@@ -1830,15 +1868,17 @@ EOF_EXCLUDE_BATTERY
       reset
       CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
       reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
-      compare_fix ahead "[$(delta_file "$probe_free" modified "$probe_patch")]"
+      compare_fix ahead "[$(delta_file "$probe_free" modified "$(probe_patch_for "$probe_free")")]"
       run "configured: carry-exclude — '$probe_free' is outside every committed glob and still carries" approved
     else
-      # Exclusions swallowing EVERY carry-class candidate mean no docs/
-      # comments delta can ever carry — the enabled class is dead config,
-      # exactly the over-broadness this battery exists to catch. FAIL, not
-      # a note: a repo intending that posture should disable the class.
+      # No carry-class path escapes the exclusions — tracked mode proved it
+      # against the repository's real tree (a committed `carry-probe*` glob
+      # cannot trip this while README.md still carries), hermetic mode
+      # against every synthetic candidate. Either way the enabled classes
+      # are dead config: FAIL, not a note — a repo intending that posture
+      # should disable the class.
       cases=$((cases + 1))
-      echo "FAIL  configured: carry-exclude — the committed exclusions match every carry-class probe path ($probe_exts); the enabled carry class can never apply (over-broad exclusion set, or disable REVIEW_GATE_CARRY_FORWARD instead)" >&2
+      echo "FAIL  configured: carry-exclude — the committed exclusions match every carry-class ($probe_exts) path; the enabled carry class can never apply (over-broad exclusion set, or disable REVIEW_GATE_CARRY_FORWARD instead)" >&2
       failures=$((failures + 1))
     fi
   fi

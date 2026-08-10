@@ -120,8 +120,12 @@ grep -q "carry off (default): the same docs delta does NOT carry" "$work/default
 # never match a repository-relative compare filename) must FAIL the suite,
 # not skip silently.
 mkdir -p "$work/excludes"
-sed 's/^REVIEW_GATE_CARRY_FORWARD = .*/REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;guides\/*"/' \
-  "$work/configured/vstack.settings.toml" >"$work/excludes/vstack.settings.toml"
+# BSD/macOS sed has no \n replacement extension — build fixtures with
+# grep -v + printf instead.
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/excludes/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;guides/*"\n' \
+  >>"$work/excludes/vstack.settings.toml"
 if ! (cd "$work/excludes" && "$SELFTEST") >"$work/excludes.out" 2>&1; then
   cat "$work/excludes.out"
   note "selftest failed under a committed carry-exclude list"
@@ -137,8 +141,10 @@ grep -q "outside every committed glob and still carries" "$work/excludes.out" \
 # enabled class can never apply — that over-broadness must FAIL the suite,
 # not print a note.
 mkdir -p "$work/overbroad"
-sed 's/^REVIEW_GATE_CARRY_FORWARD = .*/REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"/' \
-  "$work/configured/vstack.settings.toml" >"$work/overbroad/vstack.settings.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/overbroad/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"\n' \
+  >>"$work/overbroad/vstack.settings.toml"
 if (cd "$work/overbroad" && "$SELFTEST") >"$work/overbroad.out" 2>&1; then
   note "selftest passed with a '*' carry-exclude — the over-broad-exclusion guard no longer fires"
 else
@@ -147,8 +153,10 @@ else
 fi
 
 mkdir -p "$work/deadglob"
-sed 's/^REVIEW_GATE_CARRY_FORWARD = .*/REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "\/docs\/*"/' \
-  "$work/configured/vstack.settings.toml" >"$work/deadglob/vstack.settings.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/deadglob/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "/docs/*"\n' \
+  >>"$work/deadglob/vstack.settings.toml"
 if (cd "$work/deadglob" && "$SELFTEST") >"$work/deadglob.out" 2>&1; then
   note "selftest passed with a leading-'/' carry-exclude glob — the dead-anchoring guard no longer fires"
 else
