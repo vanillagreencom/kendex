@@ -338,11 +338,18 @@ list_issues() {
 
     # A given-but-empty pattern must refuse, not degrade to an unfiltered
     # list: the dedupe preflight reads "rows came back" as "search ran".
-    # Whitespace counts as empty — "a | b" searches trimmed terms, and
-    # " | " has none, so it fails closed rather than matching broadly.
-    if [ "$search_given" = "true" ] && [ -z "$(printf '%s' "$search_pattern" | tr -d '|[:space:]')" ]; then
-        echo '{"error": "--search requires a non-empty value"}' >&2
-        return 1
+    # Emptiness is judged by the SAME jq normalization that builds the
+    # filter below — tr sees bytes, so a multibyte Unicode space (U+00A0)
+    # would pass a tr check and then normalize into an empty or-clause.
+    if [ "$search_given" = "true" ]; then
+        term_count=$(jq -rn --arg pattern "$search_pattern" '
+            $pattern | split("|")
+                | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
+                | map(select(length > 0)) | length')
+        if [ "$term_count" = "0" ]; then
+            echo '{"error": "--search requires a non-empty value"}' >&2
+            return 1
+        fi
     fi
 
     parse_filter ${args[@]+"${args[@]}"}
