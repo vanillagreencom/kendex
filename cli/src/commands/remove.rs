@@ -64,6 +64,7 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
             // Pi packages live in a separate location; route to the dedicated
             // helper. Also catches stale/manual installs missing from the lock.
             let mut removed = Vec::new();
+            let mut anchored_left_notices: Vec<std::path::PathBuf> = Vec::new();
             let remove_as_pi_extension = matches!(
                 lock_entry.as_ref().map(|e| e.kind),
                 Some(crate::config::ItemKind::PiExtension)
@@ -73,12 +74,9 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
                 crate::pi_extension::remove_pi_extension(name, global)
             } else {
                 installer::remove_item(name, kind, &harnesses, global).map(|outcome| {
-                    for anchored in &outcome.anchored_left {
-                        eprintln!(
-                            "  Anchored canonical left in place (another checkout's): {}",
-                            anchored.display()
-                        );
-                    }
+                    // Deferred below the scope header — printing here would
+                    // land indented notices before any scope context.
+                    anchored_left_notices.extend(outcome.anchored_left);
                     outcome.removed
                 })
             };
@@ -100,6 +98,12 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
                     if !printed_scope_header {
                         eprintln!("\n{scope_label}:");
                         printed_scope_header = true;
+                    }
+                    for anchored in anchored_left_notices.drain(..) {
+                        eprintln!(
+                            "  Anchored canonical left in place (another checkout's): {}",
+                            anchored.display()
+                        );
                     }
                     eprintln!("  removed stale lock entry for {name}");
                     lock.remove(name);
@@ -123,6 +127,12 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
                 if !printed_scope_header {
                     eprintln!("\n{scope_label}:");
                     printed_scope_header = true;
+                }
+                for anchored in anchored_left_notices.drain(..) {
+                    eprintln!(
+                        "  Anchored canonical left in place (another checkout's): {}",
+                        anchored.display()
+                    );
                 }
                 let pi_settings_path = config::pi_settings_path(global);
                 for path in &removed {

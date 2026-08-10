@@ -1231,7 +1231,15 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
                                 (Some(resolved), Some(local)) if resolved == *local => {
                                     resolving.push(harness.id().to_string());
                                 }
-                                (Some(_), _) if meta.file_type().is_symlink() => {
+                                // A symlink resolving elsewhere OR a real
+                                // copy-mode directory at a different
+                                // physical place — both are independent
+                                // installs the recovered entry must not
+                                // claim.
+                                (Some(_), _)
+                                    if meta.file_type().is_symlink()
+                                        || meta.file_type().is_dir() =>
+                                {
                                     foreign_resolving = true;
                                 }
                                 _ => {}
