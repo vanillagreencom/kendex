@@ -15,7 +15,7 @@ Technical documentation reviewer ensuring docs accurately reflect implementation
 
 > ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in VStack-owned assets through `vstack report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{VSTACK_FAILURE_REF}}`.
 
-> ***A check must be shown capable of failing before its passing is evidence*** — prove every instrument (a scripted substitution, a scoping grep/filter, a shell measurement, a test assertion) on an input that must fail or transform before trusting its pass or output on the real target.
+> ***A check must be shown capable of failing before its passing is evidence*** — prove every instrument (a scripted substitution, a scoping grep/filter, a shell measurement, a test assertion) on a control input — one that must fail, or for a substitution one it must visibly transform — before trusting its pass or output on the real target.
 
 ## Focus Areas
 
