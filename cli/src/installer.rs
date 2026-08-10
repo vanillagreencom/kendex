@@ -376,6 +376,21 @@ pub fn remove_item(
         // own remove collects it.
         for anchored in &anchored_canonicals {
             if anchored.exists() {
+                // Clear the managed marker so the owning checkout's
+                // reconciliation does not adopt (resurrect) a copy that may
+                // have existed solely for this worktree's install. A
+                // checkout that still references the skill re-marks it on
+                // its next refresh; its lock entries survive regardless,
+                // since the stale gate checks existence, not the marker.
+                let marker = anchored.join(".vstack-refreshed");
+                if let Err(err) = std::fs::remove_file(&marker)
+                    && err.kind() != std::io::ErrorKind::NotFound
+                {
+                    eprintln!(
+                        "  Warning: could not clear managed marker {}: {err}",
+                        marker.display()
+                    );
+                }
                 eprintln!(
                     "  Note: leaving canonical copy {} in place — it may back that checkout's own installs; remove it from that checkout to delete it (VST-195)",
                     anchored.display()
@@ -504,25 +519,84 @@ pub(crate) fn anchored_canonical_skill_roots(
     harnesses: &[Harness],
 ) -> Vec<(PathBuf, Vec<Harness>)> {
     let mut anchored: Vec<(PathBuf, Vec<Harness>)> = Vec::new();
-    let mut probed: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+    let mut probed: Vec<(PathBuf, Vec<PathBuf>)> = Vec::new();
     for harness in harnesses {
         let dir = harness.skills_dir(false);
-        let root = match probed.iter().find(|(probed_dir, _)| *probed_dir == dir) {
+        let roots = match probed.iter().find(|(probed_dir, _)| *probed_dir == dir) {
             Some((_, cached)) => cached.clone(),
             None => {
-                let root = same_repo_link_home(&dir)
-                    .map(|home| home.checkout_root.join(".agents").join("skills"));
-                probed.push((dir, root.clone()));
-                root
+                let roots = match same_repo_link_home(&dir) {
+                    Some(home) => vec![home.checkout_root.join(".agents").join("skills")],
+                    // Partial sharing keeps the dir real and links each
+                    // skill CHILD into the shared checkout; the children
+                    // are then the only evidence of the anchor.
+                    None => child_level_anchored_roots(&dir),
+                };
+                probed.push((dir, roots.clone()));
+                roots
             }
         };
-        let Some(root) = root else { continue };
-        match anchored.iter_mut().find(|(anchored_root, _)| *anchored_root == root) {
-            Some((_, sharing)) => sharing.push(*harness),
-            None => anchored.push((root, vec![*harness])),
+        for root in roots {
+            match anchored
+                .iter_mut()
+                .find(|(anchored_root, _)| *anchored_root == root)
+            {
+                Some((_, sharing)) => {
+                    if !sharing.contains(harness) {
+                        sharing.push(*harness);
+                    }
+                }
+                None => anchored.push((root, vec![*harness])),
+            }
         }
     }
     anchored
+}
+
+/// Anchored roots reachable through child-level skill links in `dir`,
+/// including DANGLING children whose canonical is already gone — pruning
+/// must still classify those under a managed root. Non-symlink children are
+/// skipped without any git probing, so ordinary layouts pay one read_dir.
+fn child_level_anchored_roots(dir: &Path) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut probed_parents: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return roots;
+    };
+    for entry in entries.flatten() {
+        let child = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&child) else {
+            continue;
+        };
+        if !meta.file_type().is_symlink() {
+            continue;
+        }
+        let lexical = normalize_absolute_path(&child);
+        let Some(physical) = canonicalize_allowing_missing(&child) else {
+            continue;
+        };
+        if physical == lexical {
+            continue;
+        }
+        let Some(parent) = physical.parent().map(Path::to_path_buf) else {
+            continue;
+        };
+        let root = match probed_parents.iter().find(|(probed, _)| *probed == parent) {
+            Some((_, cached)) => cached.clone(),
+            None => {
+                let root = anchored_link_home(parent.clone())
+                    .map(|home| home.checkout_root.join(".agents").join("skills"));
+                probed_parents.push((parent, root.clone()));
+                root
+            }
+        };
+        if let Some(root) = root
+            && !roots.contains(&root)
+        {
+            roots.push(root);
+        }
+    }
+    roots
 }
 
 /// The physical home of a project-scope harness link whose parent directory
@@ -1310,6 +1384,121 @@ mod tests {
             outcome.anchored_left.contains(&expected),
             "the anchor must be resolved before unlinking destroys the evidence, got {:?}",
             outcome.anchored_left
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A canonical copy that existed SOLELY for this worktree's install must
+    /// not resurrect after removal: the owning checkout's reconciliation
+    /// adopts any marked dir in its own root (deliberately — see
+    /// reconcile_does_not_attribute_orphaned_skill_to_source_hint), so the
+    /// foreign remover must clear the managed marker on the copy it leaves
+    /// behind. A checkout that still references the skill re-marks it on its
+    /// next refresh.
+    #[cfg(unix)]
+    #[test]
+    fn foreign_removal_does_not_let_owning_checkout_resurrect_the_skill() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_resurrect_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        // Skill exists only for the worktree's Claude install, anchored in
+        // main; then the worktree removes it.
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+        crate::test_util::with_project_root(&wt, || {
+            remove_item(
+                "github",
+                Some(ItemKind::Skill),
+                &[Harness::ClaudeCode],
+                false,
+            )
+            .unwrap()
+        });
+        assert!(
+            main.join(".agents/skills/github/SKILL.md").is_file(),
+            "conservative rule leaves the copy in place"
+        );
+
+        // The owning checkout's reconciliation must not adopt it back.
+        let mut lock = LockFile::default();
+        crate::test_util::with_project_root(&main, || {
+            crate::config::reconcile_lock_with_disk(&mut lock, false, "source")
+        });
+        assert!(
+            !lock.entries.contains_key("github"),
+            "owning checkout must not resurrect the removed skill"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Anchored-root discovery must see child-level anchors: in the
+    /// partial-sharing layout a dangling child link (its external canonical
+    /// already deleted) is the ONLY evidence of the anchor, and without it
+    /// the pruning pass cannot classify the link under a managed root.
+    #[cfg(unix)]
+    #[test]
+    fn reconcile_prunes_dangling_child_link_after_canonical_removal() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_dangling_child_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        // Partial sharing: real .agents/skills, child linked into main —
+        // whose canonical has since been deleted, dangling the child.
+        std::fs::create_dir_all(main.join(".agents").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents").join("skills")).unwrap();
+        let child = wt.join(".agents").join("skills").join("github");
+        symlink(main.join(".agents").join("skills").join("github"), &child).unwrap();
+
+        let mut lock = LockFile::default();
+        crate::test_util::with_project_root(&wt, || {
+            crate::config::reconcile_lock_with_disk(&mut lock, false, "source")
+        });
+
+        assert!(
+            std::fs::symlink_metadata(&child).is_err(),
+            "dangling child link must be pruned once its anchor is classified"
         );
 
         let _ = std::fs::remove_dir_all(&root);
