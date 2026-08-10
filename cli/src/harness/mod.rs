@@ -478,8 +478,8 @@ mod tests {
             std::fs::read_to_string(path).unwrap()
         });
         assert!(
-            content.contains("`.agents/skill-failure-reporting.md`"),
-            "project scope substitutes the relative path: {content}"
+            content.contains("`<project-root>/.agents/skill-failure-reporting.md`"),
+            "project scope substitutes the project-root-anchored path: {content}"
         );
         assert!(
             !content.contains("{{"),

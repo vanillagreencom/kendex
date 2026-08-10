@@ -569,13 +569,17 @@ pub fn failure_reporting_reference_path(global: bool) -> std::path::PathBuf {
 /// scope-agnostic.
 pub const FAILURE_REF_TOKEN: &str = "{{VSTACK_FAILURE_REF}}";
 
-/// The path substituted for [`FAILURE_REF_TOKEN`]: project-relative for
+/// The path substituted for [`FAILURE_REF_TOKEN`]: project-root-anchored for
 /// project scope, the resolved platform config-dir path for global scope.
+/// The project spelling stays relative on purpose — generated agent files are
+/// committed and synced across machines, so an absolute path would embed one
+/// machine's checkout location. The `<project-root>/` anchor tells sessions
+/// started in a subdirectory where to resolve it from.
 pub fn failure_reference_display(global: bool) -> String {
     if global {
         crate::config::display_path(&failure_reporting_reference_path(true))
     } else {
-        ".agents/skill-failure-reporting.md".to_string()
+        "<project-root>/.agents/skill-failure-reporting.md".to_string()
     }
 }
 
