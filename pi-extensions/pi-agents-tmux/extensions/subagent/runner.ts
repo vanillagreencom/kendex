@@ -18,6 +18,8 @@ import { safeFileName } from "./names.js";
 import {
 	getPiInvocation,
 	PI_SUBAGENT_CHILD_PANE_ENV,
+	PI_SUBAGENT_DEPTH_ENV,
+	removePromptTempDir,
 	writePromptToTempFile,
 } from "./pane.js";
 import {
@@ -665,8 +667,12 @@ async function runSingleAgentAttempt(
 		let wasAborted = false;
 		let timedOut = false;
 
+		// Resolved outside the spawn promise, after the last args push, so an
+		// entry-resolution or depth-guard throw (vstack#192) rejects through the
+		// finally cleanup below instead of wedging inside the promise executor.
+		const invocation = getPiInvocation(args);
+
 		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
 			// Child identity env mirrors the pane launcher's agent identity
 			// for bg one-shot lanes (issue #228). Restricted delegation reads
 			// PI_SUBAGENT_CHILD_AGENT to authorize the caller. Strip pane-only
@@ -679,6 +685,7 @@ async function runSingleAgentAttempt(
 			// `runtimeSessionId()` would attach the child to the wrong
 			// runtime root.
 			const childEnv: NodeJS.ProcessEnv = { ...process.env, PI_SUBAGENT_CHILD_AGENT: agent.name };
+			childEnv[PI_SUBAGENT_DEPTH_ENV] = String(invocation.childDepth);
 			if (agent.color) childEnv.PI_SUBAGENT_CHILD_COLOR = agent.color;
 			else delete childEnv.PI_SUBAGENT_CHILD_COLOR;
 			delete childEnv[PI_SUBAGENT_CHILD_PANE_ENV];
@@ -1284,17 +1291,8 @@ async function runSingleAgentAttempt(
 		return currentResult;
 	} finally {
 		await Promise.allSettled(transcriptWrites);
-		if (tmpPromptPath)
-			try {
-				fs.unlinkSync(tmpPromptPath);
-			} catch {
-				/* ignore */
-			}
-		if (tmpPromptDir)
-			try {
-				fs.rmdirSync(tmpPromptDir);
-			} catch {
-				/* ignore */
-			}
+		// vstack#192: recursive+force removal so the session tmp dir is reclaimed
+		// on child failure/refusal paths too, not only after a clean unlink.
+		if (tmpPromptDir) removePromptTempDir(tmpPromptDir);
 	}
 }

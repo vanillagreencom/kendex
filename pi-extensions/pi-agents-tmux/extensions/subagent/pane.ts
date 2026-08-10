@@ -489,28 +489,115 @@ export async function ensurePaneBridgeMetadata(runtimeRoot: string, entry: PaneR
 	return metadata;
 }
 
-export function getPiInvocation(args: string[]): { command: string; args: string[] } {
-	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
-		return { command: process.execPath, args: [currentScript, ...args] };
+// vstack#192: explicit override for harnesses/tests that import these modules
+// directly. Points at the pi entry to spawn children with — either a script
+// run under the current runtime or an executable resolved as-is.
+export const PI_SUBAGENT_ENTRY_ENV = "PI_SUBAGENT_ENTRY";
+// vstack#192: recursion guard independent of entry resolution. Each spawned
+// child carries its generation in this env var; spawning refuses past the cap
+// so a mis-resolved entry (e.g. a harness script re-running itself) dies at
+// depth 3 instead of fork-bombing the machine.
+export const PI_SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
+export const MAX_SUBAGENT_DEPTH = 3;
+
+// Basenames that verifiably belong to pi's own entry: the installed `pi` bin
+// (@earendil-works/pi-coding-agent bin maps `pi` -> dist/cli.js) and the
+// packaged/dev CLI entry (`cli.js` / `cli.ts`). Anything else in argv[1] —
+// a test harness, a script that imported runner.ts directly — must NOT be
+// self-re-invoked as if it were pi.
+const PI_ENTRY_BASENAMES = new Set(["pi", "pi.js", "pi.mjs", "pi.ts", "cli.js", "cli.mjs", "cli.ts"]);
+
+export interface PiInvocation {
+	command: string;
+	args: string[];
+	/** Generation the spawned child must export as PI_SUBAGENT_DEPTH. */
+	childDepth: number;
+}
+
+export interface PiInvocationRuntime {
+	argv1: string | undefined;
+	execPath: string;
+	env: NodeJS.ProcessEnv;
+}
+
+function defaultInvocationRuntime(): PiInvocationRuntime {
+	return { argv1: process.argv[1], execPath: process.execPath, env: process.env };
+}
+
+export function currentSubagentDepth(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env[PI_SUBAGENT_DEPTH_ENV];
+	if (raw === undefined || raw.trim() === "") return 0;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+export function assertSubagentSpawnDepth(env: NodeJS.ProcessEnv = process.env): number {
+	const childDepth = currentSubagentDepth(env) + 1;
+	if (childDepth > MAX_SUBAGENT_DEPTH) {
+		throw new Error(
+			`${PI_SUBAGENT_DEPTH_ENV} recursion guard: refusing to spawn a subagent at depth ${childDepth} (max ${MAX_SUBAGENT_DEPTH}). ` +
+				`A process chain is re-spawning subagents recursively — check that pi entry resolution (${PI_SUBAGENT_ENTRY_ENV} or argv[1]) points at pi itself, not at a harness script.`,
+		);
+	}
+	return childDepth;
+}
+
+function isPiEntryScript(scriptPath: string): boolean {
+	return PI_ENTRY_BASENAMES.has(path.basename(scriptPath).toLowerCase());
+}
+
+export function getPiInvocation(args: string[], runtime: PiInvocationRuntime = defaultInvocationRuntime()): PiInvocation {
+	const childDepth = assertSubagentSpawnDepth(runtime.env);
+
+	const entryOverride = runtime.env[PI_SUBAGENT_ENTRY_ENV]?.trim();
+	if (entryOverride) {
+		if (/\.(ts|js|mjs|cjs)$/i.test(entryOverride) && fs.existsSync(entryOverride)) {
+			return { command: runtime.execPath, args: [entryOverride, ...args], childDepth };
+		}
+		return { command: entryOverride, args, childDepth };
 	}
 
-	const execName = path.basename(process.execPath).toLowerCase();
+	// Compiled pi binary: argv[1] is bun's virtual bundle path; execPath is the
+	// pi executable itself and is re-invoked directly below.
+	const currentScript = runtime.argv1;
+	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
+	// Dev-mode pi (`bun src/cli.ts`, `node dist/cli.js`, or the `pi` bin shim):
+	// re-run the same script under the same runtime. Only entries verifiably
+	// belonging to pi qualify — argv[1] of a process that merely imported these
+	// modules (vstack#192: a `bun harness.mjs` calling runSingleAgent) is the
+	// harness itself, and re-invoking it forks the harness unboundedly.
+	if (currentScript && !isBunVirtualScript && isPiEntryScript(currentScript) && fs.existsSync(currentScript)) {
+		return { command: runtime.execPath, args: [currentScript, ...args], childDepth };
+	}
+
+	const execName = path.basename(runtime.execPath).toLowerCase();
 	const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(execName);
 	if (!isGenericRuntime) {
-		return { command: process.execPath, args };
+		return { command: runtime.execPath, args, childDepth };
 	}
 
-	return { command: "pi", args };
+	return { command: "pi", args, childDepth };
 }
 
 export async function writePromptToTempFile(agentName: string, prompt: string): Promise<{ dir: string; filePath: string }> {
 	const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-subagent-"));
 	const safeName = agentName.replace(/[^\w.-]+/g, "_");
 	const filePath = path.join(tmpDir, `prompt-${safeName}.md`);
-	await atomicWriteFile(filePath, prompt);
+	try {
+		await atomicWriteFile(filePath, prompt);
+	} catch (error) {
+		await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+		throw error;
+	}
 	return { dir: tmpDir, filePath };
+}
+
+export function removePromptTempDir(tmpDir: string): void {
+	try {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	} catch {
+		/* best-effort; tmp reaper handles leftovers */
+	}
 }
 
 export async function mapWithConcurrencyLimit<TIn, TOut>(
@@ -570,6 +657,7 @@ async function writeLauncher(
 	const script = `#!/usr/bin/env bash
 set -euo pipefail
 cd ${shellQuote(cwd)}
+export ${PI_SUBAGENT_DEPTH_ENV}=${invocation.childDepth}
 export PI_SUBAGENT_CHILD_AGENT=${shellQuote(agent.name)}
 ${agent.color ? `export PI_SUBAGENT_CHILD_COLOR=${shellQuote(agent.color)}` : "unset PI_SUBAGENT_CHILD_COLOR"}
 export ${PI_SUBAGENT_CHILD_PANE_ENV}=1

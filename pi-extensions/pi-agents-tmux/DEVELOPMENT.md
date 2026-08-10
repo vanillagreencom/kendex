@@ -76,6 +76,8 @@ Bg one-shot children complete through their final assistant output, which the ru
 
 Child process environment is split by identity vs visible pane ownership. `PI_SUBAGENT_CHILD_AGENT` exists for both persistent pane children and bg one-shot children so statusline context and `delegate_subagent` authorization work everywhere. `PI_SUBAGENT_CHILD_PANE=1` is exported only by the persistent pane launcher; only that marker allows session-start code to set the tmux pane title or poll the pane inbox. The bg runner must delete inherited `PI_SUBAGENT_CHILD_PANE`, `PI_SUBAGENT_PARENT_SESSION_ID`, and `PI_BRIDGE_*` vars because bg children run inside the parent process tree and often inherit `TMUX_PANE` from the master pane.
 
+Child spawning resolves the pi entry through `pane.ts::getPiInvocation` (vstack#192). `argv[1]` is self-re-invoked only when its basename verifiably belongs to pi (`pi`, `pi.js`, `pi.mjs`, `pi.ts`, `cli.js`, `cli.mjs`, `cli.ts`); a process that merely imported these modules — a standalone harness or test calling `runSingleAgent` — falls back to `pi` on PATH instead of forking itself. Direct-import callers can set `PI_SUBAGENT_ENTRY` to pin the entry explicitly. Independently of entry resolution, every spawned child (bg one-shot env and pane launcher script) carries `PI_SUBAGENT_DEPTH`, and `assertSubagentSpawnDepth` refuses any spawn past depth 3 so a mis-resolved entry dies loudly instead of fork-bombing the machine.
+
 ## Restricted delegation (`delegate_subagent`) — issue #228
 
 `delegate_subagent` is a single-mode wrapper around the same dispatch helpers `subagent` uses (`runSingleDispatch` → `runSingleAgent`). Differences from `subagent`:
