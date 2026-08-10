@@ -235,9 +235,10 @@ describe("getPiInvocation entry resolution (vstack#192)", () => {
 		// which resolves the command from the delegated cwd. Bun's own spawnSync
 		// resolves relative commands against the parent cwd, so only this form
 		// can distinguish a resolved absolute entry from the pre-fix relative
-		// one.
+		// one. The command/args pass as argv ($0/$@), never spliced into shell
+		// text (CodeQL: shell command built from environment values).
 		rmSync(marker, { force: true });
-		const viaLauncher = spawnSync("bash", ["-c", `exec ${JSON.stringify(invocation.command)}`], { cwd: delegatedCwd });
+		const viaLauncher = spawnSync("bash", ["-c", 'exec "$0" "$@"', invocation.command, ...invocation.args], { cwd: delegatedCwd });
 		expect(viaLauncher.status).toBe(0);
 		expect(readFileSync(marker, "utf-8")).toBe("ran");
 
@@ -246,7 +247,7 @@ describe("getPiInvocation entry resolution (vstack#192)", () => {
 		// the boundary the way the pane launcher does — bash `cd`s into the
 		// delegated cwd and execs the command — where the relative form fails
 		// command lookup (exit 127).
-		const broken = spawnSync("bash", ["-c", `exec ${JSON.stringify(relativeExecutable)}`], { cwd: delegatedCwd });
+		const broken = spawnSync("bash", ["-c", 'exec "$0"', relativeExecutable], { cwd: delegatedCwd });
 		expect(broken.status).toBe(127);
 	});
 
