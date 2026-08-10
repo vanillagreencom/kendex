@@ -73,11 +73,20 @@ jobs:
             # merge-group ref (identical head_branch): take the newest
             # attempt's group, and within it the failure-shaped run —
             # never a sibling workflow that merely started latest.
-            run_json="$(jq -s 'add
+            # Attempt scoping: a re-armed unchanged PR reuses the same
+            # merge-group branch name, so the head_branch group can span
+            # attempts. The dequeue fired moments ago — bound to runs
+            # created in the last 4 hours, then take the NEWEST
+            # failure-shaped run (sorted; API order is not a contract),
+            # falling back to the newest run of the group.
+            cutoff="$(date -u -d '4 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+            run_json="$(jq -s --arg cutoff "$cutoff" 'add
               | group_by(.head_branch)
               | (max_by(map(.created_at) | max) // [])
+              | map(select(.created_at >= $cutoff))
+              | sort_by(.created_at)
               | (map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")) | last)
-                // (sort_by(.created_at) | last)
+                // last
                 // empty' "$runs_file")"
           fi
 
@@ -95,7 +104,7 @@ jobs:
           fi
           if [ -n "$run_id" ]; then
             failing_jobs="$(gh api "/repos/${GH_REPO}/actions/runs/${run_id}/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | "- `\(.name)` (\(.conclusion)): \(.html_url)"] | join("\n")')"
+              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out") | "- `\(.name)` (\(.conclusion)): \(.html_url)"] | join("\n")')"
             [ -n "$failing_jobs" ] || failing_jobs="(run $run_id has no failure-shaped jobs recorded — it may be the attempt's still-running or non-ejecting sibling; inspect the run link above)"
           fi
 
@@ -107,7 +116,7 @@ jobs:
             head_checks="$(gh api "/repos/${GH_REPO}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
               --jq '[.check_runs[] | {name, conclusion}]')"
             failed_names="$(gh api "/repos/${GH_REPO}/actions/runs/${run_id}/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | .name]')"
+              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out") | .name]')"
             # Flake requires POSITIVE evidence: every ejecting job name must
             # have a same-named SUCCESSFUL check on the PR head. Queue-only
             # jobs (this repo's normal heavy-suite shape) have no head
