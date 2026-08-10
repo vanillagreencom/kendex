@@ -47,14 +47,22 @@ jobs:
           set -euo pipefail
 
           # The ejecting failure ran on the merge-group ref, not the PR head:
-          # gh-readonly-queue/<base>/pr-<N>-<sha>. Newest failed merge_group
-          # run for this PR is the ejection's evidence.
-          # --paginate: an active queue can push the ejecting run past the
-          # first page. head_branch is null-guarded (jq test() on a null
-          # errors out the whole step under set -e).
-          run_json="$(gh api --paginate "/repos/${GH_REPO}/actions/runs?event=merge_group&status=failure&per_page=100" \
+          # gh-readonly-queue/<base>/pr-<N>-<sha>. The NEWEST matching
+          # merge_group run is the current attempt — no status filter, so a
+          # still-running or cancelled current attempt is never passed over
+          # for an older historical failure (which would also reuse its
+          # dedupe marker and suppress the new intake issue). Two-step
+          # paginated capture with a zero-byte guard, per the pagination-read
+          # pattern; head_branch is null-guarded (jq test() on a null errors
+          # the step under set -e).
+          runs_file="$(mktemp)"
+          gh api --paginate "/repos/${GH_REPO}/actions/runs?event=merge_group&per_page=100" \
             --jq "[.workflow_runs[] | select(.head_branch | strings | test(\"/pr-${PR_NUMBER}-\"))]" \
-            | jq -s 'add | sort_by(.created_at) | last // empty')"
+            > "$runs_file" || true
+          run_json=""
+          if [ -s "$runs_file" ]; then
+            run_json="$(jq -s 'add | sort_by(.created_at) | last // empty' "$runs_file")"
+          fi
 
           run_id=""; run_url=""; run_name=""
           if [ -n "$run_json" ]; then
@@ -83,10 +91,15 @@ jobs:
             # have a same-named SUCCESSFUL check on the PR head. Queue-only
             # jobs (this repo's normal heavy-suite shape) have no head
             # counterpart — that is "no comparison", never a flake claim.
+            # "Red on head" means a failure-shaped conclusion ONLY —
+            # skipped same-named PR-head jobs (this repo's heavy suites
+            # run real work only in the queue) and still-running checks
+            # (null conclusion) are "no comparison available", never a
+            # fix-before-re-arm claim.
             all_green_on_head="$(jq -cn --argjson head "$head_checks" --argjson failed "$failed_names" \
               '($failed | length > 0) and ([$failed[] as $n | ($head | map(select(.name == $n and .conclusion == "success")) | length > 0)] | all)')"
             any_red_on_head="$(jq -cn --argjson head "$head_checks" --argjson failed "$failed_names" \
-              '[$failed[] as $n | $head[] | select(.name == $n and .conclusion != "success")] | length > 0')"
+              '[$failed[] as $n | $head[] | select(.name == $n and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required"))] | length > 0')"
             if [ "$all_green_on_head" = "true" ]; then
               hint="Every ejecting check has a same-named GREEN check on the PR's own head — this looks like a queue-only flake; re-arming \`--auto\` once is plausibly safe. Never re-arm past a check that is also red on the PR head."
             elif [ "$any_red_on_head" = "true" ]; then
