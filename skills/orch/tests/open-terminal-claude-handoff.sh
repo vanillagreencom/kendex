@@ -377,7 +377,7 @@ assert_eq "$c8_resends" "1" "composer-only screen still gets exactly one re-send
 # scan would SIGPIPE its upstream under pipefail (exit 141) and misread the
 # submitted prompt as missing, duplicating the brief into a running session.
 new_tmux_state c8b
-{ printf '%s\n' "$DELIVERED_SCREEN"; yes 'transcript filler line' | head -20000; } > "$OT_TMUX_CAPTURES/1"
+{ printf '%s\n' "$DELIVERED_SCREEN"; awk 'BEGIN { for (i = 0; i < 20000; i++) print "transcript filler line" }'; } > "$OT_TMUX_CAPTURES/1"
 set +e
 c8b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c8b.err")
 c8b_code=$?
