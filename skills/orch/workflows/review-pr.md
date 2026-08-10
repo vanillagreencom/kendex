@@ -94,6 +94,45 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 
 `list-review-agents` scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agents` for `reviewer-*` files, dedupes, and exits non-zero if none found. Output: one agent name per line.
 
+**Risk-sized panel (opt-in, VST-200)** — a repo may declare a risk
+classifier that sizes this fan-out from the change set instead of always
+running the full fleet:
+
+```bash
+.agents/skills/orch/scripts/orch-env REVIEW_RISK_COMMAND ""
+```
+
+If empty: skip this block — full `[AGENTS]` (today's behavior). If set, run
+it from the worktree root against the current change set:
+
+```bash
+(cd [WORKTREE_PATH] && [REVIEW_RISK_COMMAND])
+```
+
+Contract: prints exactly `high`, `medium`, or `low` on stdout, exit 0. ANY
+other outcome — non-zero exit, empty or unrecognized output, command not
+found — is a note in the review summary and the full fleet runs: the key
+fails open to DEPTH, never to shallowness. On a valid answer, record it
+before sizing (the PR body publishes this line tool-emitted, never
+hand-written):
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_risk '{"level": "[LEVEL]", "command": "[REVIEW_RISK_COMMAND]"}'
+```
+
+Then size `[AGENTS]`:
+
+| Level | Panel | Round expectation |
+|-------|-------|-------------------|
+| `high` | Full `[AGENTS]`, plus the adversarial-test expectation: reviewers are told a red-first test per finding is expected, not optional | Default cycle budget |
+| `medium` | Full `[AGENTS]` (default — identical to unset) | Default cycle budget |
+| `low` | `reviewer-correctness` + `reviewer-doc` + ONE domain reviewer chosen from the diff's domains (`.agents/skills/github/scripts/git-diff-summary [BASE_BRANCH]` — pick the reviewer matching the dominant domain; none matching → just the two) | Accept convergence after the first clean round — do not run extra rounds hunting on a low-risk diff |
+
+A `low` sizing never overrides explicit caller `agents` context, and the
+slot-budget/wave machinery below applies to the sized panel unchanged. The
+path→risk table itself is per-repo domain knowledge and stays in the
+consumer's classifier command; only this sizing contract is orch's.
+
 **Resolve the reviewer slot budget** — some runtimes cap concurrent agent threads, so the full reviewer set may not fit alongside the primary and persistent dev/QA sessions:
 
 ```bash

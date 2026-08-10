@@ -129,6 +129,7 @@ Put non-secret workflow settings in committed `vstack.settings.toml` under `[env
 | `ORCH_STATE_DIR` | State-file directory (env fallback for the `--state-dir` flag, which wins when both are set) | `tmp` |
 | `ORCH_CACHE_DIR` | Parallel-group safety cache directory | `.cache/orch` |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names (case-insensitive match, then canonical key case: `issue-N` lowercase, Linear-style uppercase) | — |
+| `REVIEW_RISK_COMMAND` | Opt-in change-risk classifier command; `review-pr` sizes the reviewer fan-out from its `high`/`medium`/`low` stdout (failure/unset = full fleet, fail-open to depth) | — |
 | `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission / merge recovery (read via `orch-env CI_FIX_MAX_CYCLES 6`) | `6` |
 | `PR_REVIEW_REFIX_MAX_LINES` | Changed-line ceiling a support-scope fix round may reach before `review-pr` re-reviews it anyway; a round that cleared blockers is re-reviewed regardless (read via `refix-route`) | `200` |
 | `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session (read via `orch-env REVIEWER_SLOT_BUDGET 0`; `0` = unlimited). On the Codex collaboration runtime, set it to the config-declared cap (`features.multi_agent_v2.max_concurrent_threads_per_session`) reported by `spawn-adapter slots` | `0` |

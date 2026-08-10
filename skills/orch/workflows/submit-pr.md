@@ -176,6 +176,9 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    ## QA Metrics
    [QA_METRICS] — project-configurable. Include results from QA agents that ran during review.
 
+   ## Review Risk
+   [REVIEW_RISK_LINE — only when workflow state has `review_risk`: `Declared change risk: **[LEVEL]** (via `REVIEW_RISK_COMMAND`); review panel sized accordingly.`]
+
    ## Test Plan
    [validation steps]
    ```
@@ -183,6 +186,7 @@ Bot reviews are **asynchronous** in this workflow: GitHub review bots post on th
    - **Completed Issues**: Use `Closes` keyword for issue tracker linkage. Indent sub-issues.
    - **Created Issues**: Include if issues created during local review or comment triage.
    - **QA Metrics**: Include if QA agents ran. Format is project-configurable based on which QA agent types are active.
+   - **Review Risk**: Include only when workflow state carries `review_risk` (the opt-in `REVIEW_RISK_COMMAND` sizing from `review-pr.md` § 2) — the line is tool-emitted from that state, never hand-written.
    - **Commit SHAs**: every SHA published in the body (fix commits, perf `benchmark_commit`) must be post-reconciliation — resolve through the step 1 rebase map when one was recorded (vstack#728).
 
 4. **Create or update PR**. CI configured on `pull_request` runs from the moment the PR exists — orch never defers, queues, or gates it behind bot review activity. Approval-gated repos start their heavy CI only after the § 4 review-gate verdict instead; that is repo-side configuration (see orch `DEVELOPMENT.md` § CI Triggering Patterns) and needs no detection here.

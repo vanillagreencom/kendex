@@ -353,3 +353,13 @@ WORKTREE_CLI = ".agents/skills/worktree/scripts/worktree"
 
 GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 # Used by: orch (`ci-wait`).
+
+# Used by: orch (`review-pr`). OPT-IN change-risk classifier: a repo-relative
+# command run against the change set before the review cycle. Contract:
+# prints `high`, `medium`, or `low` on stdout, exit 0. The reviewer fan-out
+# is sized from the answer (low -> small panel, first-clean-round
+# convergence; medium -> default; high -> full fleet + adversarial-test
+# expectation). Any failure or unset key = full fleet: fail-open to depth,
+# never to shallowness. The path->risk table is the repo's own knowledge —
+# keep the classifier local to the repo.
+# REVIEW_RISK_COMMAND = "tools/review-risk"
