@@ -194,7 +194,9 @@ not a failure. `warning` is `null` in every other case.
 - Without `--expect-items` (kind `fix` OR `bundled: true`): `items[]` must be a
   non-empty array of well-formed elements. Bundled sub-issue *completeness* is
   covered by the orchestrator's Linear `validate-completion --include-children-of`
-  tracker check (B), not by the artifact.
+  tracker check (B), not by the artifact. (Bundled delegation exists only for
+  explicit single-PR bundles — `(one PR)` title marker; a container's child is
+  a plain single delegation that validates alone.)
 - kind `implement` without `bundled` allows `items: []`.
 - kind `analysis` always has `items: []`; its completeness gate is the `summary`
   (non-empty string — the recommendation), not items.

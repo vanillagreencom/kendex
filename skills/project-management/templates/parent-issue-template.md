@@ -2,6 +2,8 @@
 
 Format for parent/bundle issues that coordinate sub-issues across domains.
 
+A parent with children is a **CONTAINER by default**: it is never orchestrated directly and never gets a PR — each child ships as its own PR, selection operates on the container's unblocked children, and the container closes LAST (completed by merge-pr when the final child merges). A **single-PR bundle** — one session and one PR covering all children — is the explicit opt-in exception: mark it with `(one PR)` in the parent title (or keep the work a leaf issue with an internal checklist instead of children). Wherever bundles are described, the container reading is the default and the single-PR reading must be stated as the exception.
+
 ## Template
 
 ```markdown
@@ -31,8 +33,8 @@ Format for parent/bundle issues that coordinate sub-issues across domains.
 1. **Use `## Sub-Issues`** (not `## Requirements`) — parent coordinates, children implement
 2. **Same-project**: All children must be in the parent's project. See [dependencies.md](../../project-management/references/dependencies.md)
 3. **Each child entry**: `- [ISSUE_ID]: [title] (agent:X) [blocks [ISSUE_ID]]` — include blocking relations
-4. **Label**: `agent:multi` if children span 2+ distinct `agent:X` domains
-5. **Blocking relations**: Read [agent-sequencing.md](../../orch/workflows/agent-sequencing.md)
+4. **Label**: `agent:multi` marks the parent as a container (apply whenever children span 2+ distinct `agent:X` domains; a parent with children and no `(one PR)` title marker reads as a container even unlabeled)
+5. **Blocking relations**: sequence dependent children with sibling child-blocks-child relations (selection dispatches only unblocked children); cross-bundle dependencies go on the parents. Read [agent-sequencing.md](../../orch/workflows/agent-sequencing.md)
 6. **No implementation detail** — requirements live in children, parent holds only coordination context
    - Coordination-only parents carry no estimate — clear it with `issues update [ISSUE_ID] --clear-estimate` (or `--estimate 0`). See [issues.md](../references/issues.md) § Sub-Issues.
 7. **Omit empty lines** — drop Research, Decision, Source, Acceptance Criteria lines with no data

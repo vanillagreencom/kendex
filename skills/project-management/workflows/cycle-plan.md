@@ -181,6 +181,8 @@ Before executing any `actions.set_labels[]` entry:
    - Assigned parent (has children): assign all pending children to the same cycle and state.
    - Assigned child (has `parent_id`): if parent is Backlog → update parent to Todo and assign same cycle.
 
+   Cycle membership and state promotion are bookkeeping only — a parent with children is a container by default (never orchestrated directly, never a PR; each child is the PR unit and the parent completes last, via orch merge-pr). Only a parent marked `(one PR)` in its title is itself a work item.
+
 ### 4.3 Set Missing Blocking Relations
 
 If `actions.add_relations[]` exists (from TPM architecture analysis):

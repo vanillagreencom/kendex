@@ -220,6 +220,8 @@ git -C "[WORKTREE_PATH]" status --porcelain
 .agents/skills/linear/scripts/linear.sh issues validate-completion [ISSUE_ID] --include-children-of [ISSUE_ID]
 ```
 
+The `--include-children-of` expansion is for explicit single-PR bundles (`(one PR)` title marker) and audit-created sub-issues worked inside this session. A session whose work item is the child of a CONTAINER parent validates alone — the flag expands `[ISSUE_ID]`'s own children (it has none as a leaf), and sibling or parent state never gates this session's completion; the container closes later, via `merge-pr.md`, when its final child merges.
+
 **GitHub/ad-hoc**: no tracker validation — `B` requires a new commit (`HEAD` advanced from `pre_delegate_sha`) and a clean worktree.
 
 Per-field B failures and the targeted re-delegation each one implies (used by the decision table's re-delegate action):

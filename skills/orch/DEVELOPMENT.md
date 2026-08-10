@@ -2,6 +2,12 @@
 
 Implementation details and contributor notes. End-user setup: [`README.md`](./README.md). Agent-facing instructions: [`SKILL.md`](./SKILL.md).
 
+## Bundle Containers — Convention Inversion & Migration
+
+The bundle default inverted: a parent with children is now a CONTAINER — never orchestrated directly, never a PR; each child is the PR unit, selection operates on unblocked children, and the container completes LAST (merge-pr closes it when the final child merges). The old delegate-the-parent reading survives only as the explicit single-PR opt-in: a `(one PR)` title marker, or a leaf issue with an internal checklist. Completion validation inverted with it: a container child validates alone as its own session root, and the container validates via `validate-completion --container` (children all Done gate it; its own summary is posted at completion time).
+
+**Migration is per-bundle, no flag-day.** Live bundles created under either reading cut over via the marker alone: an unmarked parent with children now reads as a container; a bundle that must keep the old single-session/single-PR flow (e.g. one already mid-flight with a shared branch) opts out by adding `(one PR)` to its title. No state, script, or cache migration is required — the markers are evaluated at selection/validation time.
+
 ## GitHub Auth Fallback
 
 `approval-wait` and `ci-wait` use `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's shared `scripts/lib/gh-auth.sh` helpers. Each candidate source is probed at most once during startup:
@@ -130,7 +136,7 @@ remains, now solely as the stall watchdog deadline.
 - `invalid` — internal `round_id` != expected; OR not parseable JSON; OR a required field wrong-typed/empty: `.kind ∈ {implement,fix,analysis}`; `.issue`/`.branch` non-empty **strings** (arrays/objects/bools/numbers fail, not just `""`); `.round_id` a non-empty string; `.schema_version` a number. implement/fix additionally require `.commit`/`.validate` non-empty strings; kind `analysis` requires the **inverse** — no `.commit`, `.validate`, or `.validate_note` key present at all (an analysis round runs no validation, so their presence is a fabricated claim — vstack#952).
 - `incomplete` — items rule fails:
   - with `--expect-items N,N,...` (fix rounds — the orchestrator passes the delegated item numbers): `items[]` must cover **exactly** that set (each expected `n` once, no unknown/duplicate, `decision ∈ {Applied,Skipped,Blocked}`, `reasoning` non-empty). A 1-item artifact cannot satisfy a 10-item delegation.
-  - without `--expect-items` (kind `fix` OR `bundled: true`): a non-empty, well-formed `items[]`. Bundled sub-issue *completeness* is covered by the orchestrator's Linear `validate-completion --include-children-of` (the git/tracker "B" check), not the artifact.
+  - without `--expect-items` (kind `fix` OR `bundled: true`): a non-empty, well-formed `items[]`. Bundled sub-issue *completeness* is covered by the orchestrator's Linear `validate-completion --include-children-of` (the git/tracker "B" check; explicit single-PR bundles only — container children validate alone), not the artifact.
   - kind `implement` without `bundled` allows `items: []`.
   - kind `analysis` is complete-without-code: its gate is `.summary` being a non-empty string (the recommendation/evidence — the round's deliverable), not items.
 

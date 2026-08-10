@@ -38,7 +38,7 @@ Issues:
   issues get <ID> [--with-bundle] [--format=safe|compact|raw]
   issues children <ID> [--recursive] [--pending] [--format=safe|ids]
   issues list-relations <ID>
-  issues validate-completion <ID> [--include-children-of <ID>]
+  issues validate-completion <ID> [--include-children-of <ID>] [--container]
   issues bulk-get <ID1> <ID2> ...
 
 Projects:
@@ -547,10 +547,12 @@ cache_list_relations() {
 
 cache_validate_completion() {
     local issue_ids=()
-    # Roles parallel issue_ids: positional targets are managed session roots;
-    # bundle-expanded children (below) are bundle sub-issues.
+    # Roles parallel issue_ids: positional targets are managed session roots
+    # (container parents under --container); bundle-expanded children (below)
+    # are bundle sub-issues.
     local roles=()
     local include_children_of=""
+    local container_mode="false"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -560,6 +562,10 @@ cache_validate_completion() {
             ;;
         --include-children-of=*)
             include_children_of="${1#--include-children-of=}"
+            shift
+            ;;
+        --container)
+            container_mode="true"
             shift
             ;;
         *)
@@ -573,6 +579,18 @@ cache_validate_completion() {
     if [[ ${#issue_ids[@]} -eq 0 ]]; then
         echo '{"error": "At least one issue ID required"}' >&2
         return 1
+    fi
+
+    # --container may appear after the positional targets, so rewrite the
+    # roles once parsing is complete; children expand below with their own
+    # role either way. Container parents close LAST (each child is its own PR
+    # unit): any live state passes, canceled fails closed, no pre-posted
+    # summary is required. Mirrors the live issues.sh path.
+    if [[ "$container_mode" == "true" ]]; then
+        local r
+        for r in "${!roles[@]}"; do
+            roles[$r]="container"
+        done
     fi
 
     # If --include-children-of specified, fetch the bundle from cache and expand
@@ -613,6 +631,8 @@ cache_validate_completion() {
 
         local state
         state=$(echo "$issue" | jq -r '.state.name // ""')
+        local state_type
+        state_type=$(echo "$issue" | jq -r '.state.type // ""')
         local parent_id
         parent_id=$(echo "$issue" | jq -r '.parent.identifier // ""')
 
@@ -624,7 +644,7 @@ cache_validate_completion() {
         fi
 
         local result
-        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role")
+        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role" "$state_type")
 
         if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
             all_ok="false"

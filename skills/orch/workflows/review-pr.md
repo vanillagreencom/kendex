@@ -655,7 +655,7 @@ Issue suggestions: [N] items → § 9 audit
    .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]
    ```
    Read matching comments from the JSON output with the filter `.[] | select(.body | contains("Discovered Work")) | .body`.
-   If bundled: also run `.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle` and read `.children[].id` from the JSON output.
+   If bundled (explicit single-PR bundle worked in this session): also run `.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle` and read `.children[].id` from the JSON output.
    Parse "Discovered Work" bullets into audit items with `origin: "discovered"`, `found_by: [agent]`. Skip if section absent or "(Skip if none)".
 
    **Filter out workflow-internal handoffs.** Skip any Discovered Work bullet whose leading token after `- ` is one of the markers below. The marker MUST be the first token — anything before it (such as `[Type]`) prevents the match. The canonical bullet form is documented in `dev/workflows/dev-implement.md` § 9:

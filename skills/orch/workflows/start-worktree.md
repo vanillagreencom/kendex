@@ -25,7 +25,13 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
    - `tracker`: `[TRACKER]` when parsed
    - `github_repo`: `[GITHUB_REPO]` when parsed
 
-2. **Gate on base freshness.** This expedited path reuses a worktree created earlier, so prove the base is current before any agent spends budget on it:
+2. **Refuse containers.** Linear only, mechanical: fetch the work item and check the container marker before any budget is spent on it:
+   ```bash
+   .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
+   ```
+   The issue is a CONTAINER when it carries the `agent:multi` label, or when it has children and its title carries no `(one PR)` marker. A container is never orchestrated directly and never gets a PR — each child is the PR unit and the container closes last. If the work item is a container: stop, list its unblocked children (non-terminal `state_type`, no incomplete blocker), and tell the operator to start a child instead (`/orch start [CHILD_ID]`); this worktree should not exist for the container. An explicit single-PR bundle (`(one PR)` title marker) proceeds as one session covering all children.
+
+3. **Gate on base freshness.** This expedited path reuses a worktree created earlier, so prove the base is current before any agent spends budget on it:
    ```bash
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
    ```

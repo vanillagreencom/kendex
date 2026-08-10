@@ -15,12 +15,23 @@ set -euo pipefail
 #                 § 5.3), so it may be "In Progress" OR "In Review" at
 #                 validation time. This is the default role.
 #
+#   container     A bundle parent whose children are each worked as their own
+#                 PR unit; the container itself is never orchestrated and
+#                 closes LAST, after its final child. Its own state name is
+#                 not checked here (see build_completion_validation_result:
+#                 the container role gates on state_type instead), so this
+#                 helper emits nothing for it.
+#
 # Emits one accepted state per line.
 completion_expected_states() {
 	local role="${1:-session-root}"
 
 	if [[ "$role" == "bundle-child" ]]; then
 		printf 'Done\n'
+		return 0
+	fi
+
+	if [[ "$role" == "container" ]]; then
 		return 0
 	fi
 
@@ -46,15 +57,23 @@ completion_state_matches() {
 
 # Build the completion-validation result JSON for one issue.
 #
-# Args: issue_id state parent_id has_summary [role]
+# Args: issue_id state parent_id has_summary [role] [state_type]
 #
 # The distinguishing "role" is supplied explicitly by the caller (positional
-# target => session-root; bundle-expanded child => bundle-child); it — not
-# parent_id — drives the expected-state decision, so a parented issue run as
-# the managed session root is no longer forced to Done. It is the last,
-# defaulted argument so the first four positions stay compatible with the
-# original signature. parent_id is retained for call-site provenance and to
-# keep the record shape self-describing.
+# target => session-root; bundle-expanded child => bundle-child; positional
+# target under --container => container); it — not parent_id — drives the
+# expected-state decision, so a parented issue run as the managed session root
+# is no longer forced to Done. It is a late, defaulted argument so the first
+# four positions stay compatible with the original signature. parent_id is
+# retained for call-site provenance and to keep the record shape
+# self-describing.
+#
+# The container role inverts the bundle contract: children complete first,
+# each as its own PR unit, and the container closes LAST. Its state check is
+# therefore keyed on state_type, not state name — any live state passes, a
+# canceled container (or one with no state_type evidence) fails closed — and
+# has_summary does not gate `ok`: the summary is posted by `issues complete
+# --summary` at completion time, after this validation runs.
 #
 # Output shape is stable: {id, state, state_ok, has_summary, ok}
 build_completion_validation_result() {
@@ -64,15 +83,23 @@ build_completion_validation_result() {
 	local parent_id="$3"
 	local has_summary="$4"
 	local role="${5:-session-root}"
+	local state_type="${6:-}"
 	local state_ok="false"
 	local ok="false"
 
-	if completion_state_matches "$state" "$role"; then
-		state_ok="true"
-	fi
+	if [[ "$role" == "container" ]]; then
+		if [[ -n "$state_type" && "$state_type" != "canceled" ]]; then
+			state_ok="true"
+			ok="true"
+		fi
+	else
+		if completion_state_matches "$state" "$role"; then
+			state_ok="true"
+		fi
 
-	if [[ "$state_ok" == "true" && "$has_summary" == "true" ]]; then
-		ok="true"
+		if [[ "$state_ok" == "true" && "$has_summary" == "true" ]]; then
+			ok="true"
+		fi
 	fi
 
 	jq -n \

@@ -227,3 +227,5 @@ When `label_cooccurrence.missing` is present without `label_updates[]`, callers 
 | `make_child` | `[ISSUE_ID]` | Create as sub-issue of existing issue |
 | `make_child` | `#N` | Create as sub-issue of issue #N in this batch |
 | `make_child` | null | Create as sub-issue of `parent_issue` context |
+
+A parent created or extended this way (`is_bundle_parent`, `make_parent`, `bundle`) is a container by default: each child ships as its own PR and the parent closes last. Add `(one PR)` to the parent title only when the bundle is explicitly meant to be delegated as one session with a single PR — that is the opt-in exception (see `templates/parent-issue-template.md`).

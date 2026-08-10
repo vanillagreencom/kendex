@@ -13,6 +13,8 @@ Skip issue tracker updates for ad-hoc requests (no issue reference).
 
 **If bundled**: Execute § 4-10 per **pending** sub-issue (one task each), then § 11 aggregates and returns.
 
+A bundled delegation exists only for explicit single-PR bundles — a parent marked `(one PR)` in its title (or a leaf issue with an internal checklist). That is the opt-in exception: by default a parent with children is a CONTAINER the orchestrator never delegates whole — each child arrives here as its own Single delegation with its own PR, and the container closes last on the orchestrator's side. If a delegation names a parent that is a container (children but no `(one PR)` marker), stop and report the mis-delegation instead of working the bundle.
+
 **Nested sub-issues**: Sub-issues may have children (3-level hierarchy: parent → sub → nested). Blocking relations shown when present:
 ```
 ↳ [SUB_ISSUE_1]: [TITLE] | blocks: [SUB_ISSUE_2]

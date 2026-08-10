@@ -52,7 +52,11 @@ Start one work item. Never watches or manages other sessions.
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
 ```
 
-If the issue has a parent bundle, use the parent unless the user explicitly chose the child.
+**Container check** — mechanical, from the `--with-bundle` output. The issue is a CONTAINER when it carries the `agent:multi` label, or when it has children and its title carries no `(one PR)` marker. A container is never the work item: it gets no worktree, no session, and no PR — each child is the PR unit and the container closes last (via `merge-pr.md`, after its final child).
+
+- **Container** → do not proceed with it. List its unblocked children (`.children[]` with a non-terminal `state_type` and no incomplete blocker in `blocked_by`), pick one as the work item — or present them if the choice is not obvious — and re-run this section for the chosen child. Independent children may also run in parallel sessions (`workflows/parallel-check.md`).
+- **Explicit single-PR bundle** (`(one PR)` in the title, or a leaf issue whose description carries an internal checklist) → the parent IS the work item: one session, one PR covering all children. This is the exception, not the default, and must be opted into via the marker.
+- **Child of a container** → keep the child; it is the PR unit. (Only for a child of a `(one PR)` bundle does the old rule apply: use the parent unless the user explicitly chose the child.)
 
 ### GitHub
 

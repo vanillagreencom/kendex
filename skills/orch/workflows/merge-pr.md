@@ -318,10 +318,29 @@ merge. Detach them first.
       ```
    3. **Re-arm and resume**: re-run `pr-merge [PR_NUMBER] --auto` (command above), then re-run `queue-wait [PR_NUMBER] 30 600 --json` with a fresh poll budget.
 
-3. **Sync issue tracker cache** — **Linear only** (merged PRs close issues via magic words; cache must reflect done states):
+3. **Sync issue tracker cache, then close a finished container** — **Linear only** (merged PRs close issues via magic words; cache must reflect done states):
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh sync --reconcile
    ```
+
+   **Container completion — the container closes LAST.** The merge just closed `[ISSUE]` (from § 4.1); if that was the final open child of a container parent, complete the container now. Skip if no `[ISSUE]` was extracted in § 4.1. Mechanical check:
+
+   a. Read the parent:
+      ```bash
+      [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE]
+      ```
+      `.parent_id` empty → continue to step 4.
+   b. Fetch the parent with its bundle (`cache issues get [PARENT_ID] --with-bundle`). The parent is a CONTAINER when it carries the `agent:multi` label, or when it has children and its title carries no `(one PR)` marker. Not a container → continue to step 4.
+   c. Confirm nothing is still open, then complete:
+      ```bash
+      [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues children [PARENT_ID] --recursive --pending
+      ```
+      Pending children remain → report "container [PARENT_ID] stays open ([N] children pending)" in § 7 and continue to step 4. Empty → validate and complete with a bundle summary listing each child and its PR:
+      ```bash
+      [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues validate-completion [PARENT_ID] --include-children-of [PARENT_ID] --container
+      [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [PARENT_ID] --summary-file [SUMMARY_FILE]
+      ```
+      The summary starts with `## Bundle Complete`. Containers hold no implementation state — no worktree, no branch, no workflow-state beyond bookkeeping — so there is nothing else to clean up. Report the closed container in § 7. If `[PARENT_ID]` itself has a container parent whose children are now all Done, repeat a-c for it.
 
 4. **Sync main repo** (ALWAYS runs after merge):
    ```bash

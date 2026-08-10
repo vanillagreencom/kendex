@@ -134,7 +134,7 @@ Add discovered relations to `actions.add_relations[]`:
 {"from": "[ISSUE_ID]", "rel": "blocks", "to": "[OTHER_ISSUE_ID]", "reason": "A creates [type] consumed by B"}
 ```
 
-**Blocking level rule**: Before adding, resolve `from`/`to` to parent if either has `parent_id`. Child→external relations must be lifted to parent level. If both resolve to same parent, skip (intra-bundle).
+**Blocking level rule**: Child→external relations must be lifted to parent level — before adding a cross-bundle relation, resolve `from`/`to` to the parent if either has `parent_id`. If both resolve to the same parent, keep the relation at CHILD level (sibling child-blocks-child): the parent is a container by default and dependent children are sequenced by exactly these sibling relations — selection dispatches only unblocked children. (Inside an explicit `(one PR)` single-PR bundle the sibling relation is still valid but only informs the delegated session's internal order.)
 
 #### 1.4.4 Compute Final Order
 

@@ -84,5 +84,17 @@ assert_result "case4 summary but bad state"    false false "CC-R3" "Backlog"   "
 assert_result "case4 state ok and summary"     true  true  "CC-R3" "In Review" "" "true"  "session-root"
 assert_result "case4 bundle child ok"          true  true  "CC-C2" "Done"      "CC-PARENT" "true"  "bundle-child"
 
+# --- Case 5: container role (bundle parent completing LAST) ---
+# Args order gains a 6th value: state_type. A container never runs as a
+# session, so any live state passes regardless of name, the summary is not
+# required (it is posted by `issues complete` at completion time), and only a
+# canceled container — or one with no state_type evidence — fails closed.
+assert_result "case5 container Todo, no summary"     true  true  "CC-P1" "Todo"        "" "false" "container" "unstarted"
+assert_result "case5 container Backlog, no summary"  true  true  "CC-P1" "Backlog"     "" "false" "container" "backlog"
+assert_result "case5 container In Progress"          true  true  "CC-P1" "In Progress" "" "false" "container" "started"
+assert_result "case5 container already Done"         true  true  "CC-P1" "Done"        "" "false" "container" "completed"
+assert_result "case5 container canceled fails"       false false "CC-P1" "Canceled"    "" "false" "container" "canceled"
+assert_result "case5 container missing state_type fails closed" false false "CC-P1" "Todo" "" "false" "container" ""
+
 echo "pass: $pass fail: $fail"
 [[ "$fail" -eq 0 ]]

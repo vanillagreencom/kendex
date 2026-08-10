@@ -62,11 +62,12 @@ bundle_child() {
     "$id" "$id" "$id" "$sname" "$stype" "$parent"
 }
 
-# A bundle (GetIssueWithBundle) for a parent in state In Review, given a
-# pre-rendered comma-joined children.nodes array body.
+# A bundle (GetIssueWithBundle) for a parent, given a pre-rendered
+# comma-joined children.nodes array body. State defaults to the single-PR
+# bundle's pre-merge In Review; container scenarios pass Todo/unstarted.
 bundle_parent() {
-  local id="$1" children="$2"
-  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"In Review\",\"type\":\"started\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"${id,,}\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":null,\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]},\"children\":{\"nodes\":[$children]}}}}"
+  local id="$1" children="$2" sname="${3:-In Review}" stype="${4:-started}"
+  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"${id,,}\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":null,\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]},\"children\":{\"nodes\":[$children]}}}}"
 }
 
 comments_with_summary() {
@@ -82,12 +83,16 @@ if [[ "$query" == *"GetIssueWithBundle"* ]]; then
   CC-900) bundle_parent CC-900 "$(bundle_child CC-901 Done completed CC-900),$(bundle_child CC-902 Done completed CC-900)" ;;
   CC-910) bundle_parent CC-910 "$(bundle_child CC-911 Done completed CC-910),$(bundle_child CC-912 'In Progress' started CC-910)" ;;
   CC-920) bundle_parent CC-920 "$(bundle_child CC-921 Done completed CC-920),$(bundle_child CC-922 Canceled canceled CC-920)" ;;
+  CC-930) bundle_parent CC-930 "$(bundle_child CC-931 Done completed CC-930),$(bundle_child CC-932 Done completed CC-930)" Todo unstarted ;;
+  CC-940) bundle_parent CC-940 "$(bundle_child CC-941 Done completed CC-940),$(bundle_child CC-942 'In Progress' started CC-940)" Todo unstarted ;;
   *) emit '{"errors":[{"message":"unknown bundle"}]}' ;;
   esac
 elif [[ "$query" == *"ListComments"* ]]; then
-  # Every issue except the canceled one carries a summary comment.
+  # Every issue except the canceled one carries a summary comment. Container
+  # parents (CC-930/CC-940) have none: their summary is posted by `issues
+  # complete` at completion time, after validation.
   case "$vid" in
-  CC-922) comments_empty ;;
+  CC-922 | CC-930 | CC-940) comments_empty ;;
   *) comments_with_summary ;;
   esac
 elif [[ "$query" == *"GetIssue"* ]]; then
@@ -101,6 +106,12 @@ elif [[ "$query" == *"GetIssue"* ]]; then
   CC-920) single_issue CC-920 'In Review' started "" ;;
   CC-921) single_issue CC-921 Done completed CC-920 ;;
   CC-922) single_issue CC-922 Canceled canceled CC-920 ;;
+  CC-930) single_issue CC-930 Todo unstarted "" ;;
+  CC-931) single_issue CC-931 Done completed CC-930 ;;
+  CC-932) single_issue CC-932 Done completed CC-930 ;;
+  CC-940) single_issue CC-940 Todo unstarted "" ;;
+  CC-941) single_issue CC-941 Done completed CC-940 ;;
+  CC-942) single_issue CC-942 'In Progress' started CC-940 ;;
   *) emit '{"errors":[{"message":"unknown issue"}]}' ;;
   esac
 else
@@ -163,6 +174,29 @@ check "C: Done child CC-921 passes" "$outC" \
 check "C: canceled child CC-922 is NOT in results" "$outC" \
   '([.results[] | select(.id == "CC-922")] | length) == 0'
 check "C: all_ok true (canceled child does not block)" "$outC" '.all_ok == true'
+
+# --- Scenario D: container parent, all children Done (--container) ---------
+# Containers close LAST: the parent never runs as a session, so at completion
+# time it sits in an unstarted state with no pre-posted summary. With
+# --container the root must validate cleanly on children-all-Done alone.
+outD="$(run_validate CC-930 --include-children-of CC-930 --container 2>/dev/null)"
+check "D: three results (container root + 2 Done children)" "$outD" \
+  '(.results | length) == 3'
+check "D: container root CC-930 passes in Todo without a summary" "$outD" \
+  '.results[] | select(.id == "CC-930") | .state == "Todo" and .state_ok == true and .has_summary == false and .ok == true'
+check "D: child CC-931 passes as Done" "$outD" \
+  '.results[] | select(.id == "CC-931") | .ok == true'
+check "D: child CC-932 passes as Done" "$outD" \
+  '.results[] | select(.id == "CC-932") | .ok == true'
+check "D: all_ok true — container may complete" "$outD" '.all_ok == true'
+
+# --- Scenario E: container with a still-pending child must not complete ----
+outE="$(run_validate CC-940 --include-children-of CC-940 --container 2>/dev/null)"
+check "E: container root CC-940 itself passes state check" "$outE" \
+  '.results[] | select(.id == "CC-940") | .state_ok == true'
+check "E: pending child CC-942 fails" "$outE" \
+  '.results[] | select(.id == "CC-942") | .state_ok == false and .ok == false'
+check "E: all_ok false while a child is open" "$outE" '.all_ok == false'
 
 # --- Preserve single-issue behavior (no --include-children-of) -------------
 outS="$(run_validate CC-901 2>/dev/null)"

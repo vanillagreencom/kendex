@@ -97,7 +97,8 @@ Workflow Actions (composite operations for dev):
   unblock        Unblock issue: remove label + comment
   complete       Complete issue: post optional summary comment, then set "Done"
   validate-completion  Pre-merge check: state + summary comment
-                 (--include-children-of <ID> for bundles)
+                 (--include-children-of <ID> for bundles; --container when the
+                 target is a container parent closing after its children)
 
 Output Formats (all query commands):
   --format=safe         Flat, null-safe array (DEFAULT)
@@ -228,6 +229,14 @@ Validate-Completion:
   abandoned work can never be "Done" and is not a pending gap. Each validated
   issue must also have a comment containing "Completion Summary" or
   "Bundle Complete".
+  --container marks the positional target as a CONTAINER parent — a bundle
+  whose children are each worked as their own PR unit, with the container
+  closing LAST. The container's own state passes for any live state (canceled
+  fails closed) and needs no pre-posted summary: `issues complete --summary`
+  posts it at completion time. The expanded children still gate as above, so
+  all_ok answers "may this container complete now?". Use it only for
+  containers; explicit single-PR bundles keep the default children-Done-first
+  contract.
 
 Examples:
   # Basic operations
@@ -272,7 +281,8 @@ Examples:
   issues.sh unblock PROJ-42                      # Resume after blocker resolved
   issues.sh complete PROJ-42                     # Mark done
   issues.sh complete PROJ-42 --summary-file tmp/completion-summary-PROJ-42.md  # Summary comment, then done
-  issues.sh validate-completion PROJ-42 --include-children-of PROJ-42  # Bundle validation
+  issues.sh validate-completion PROJ-42 --include-children-of PROJ-42  # Single-PR bundle validation
+  issues.sh validate-completion PROJ-42 --include-children-of PROJ-42 --container  # May the container close?
 
   # Bundle operations (single API call)
   issues.sh get PROJ-42 --with-bundle            # Issue + recursive children + pending_count
@@ -2911,13 +2921,19 @@ complete_issue() {
 # Validate issue completion: check state is "In Progress" and has Completion Summary comment
 # Usage: validate_completion CC-XXX [CC-YYY ...]
 #        validate_completion CC-XXX --include-children-of CC-XXX
-# Supports multiple issues for bundle validation
+#        validate_completion CC-XXX --include-children-of CC-XXX --container
+# Supports multiple issues for bundle validation. With --container the
+# positional targets are container parents (each child is its own PR unit and
+# the container closes LAST): any live state passes, canceled fails closed,
+# and no pre-posted summary is required.
 validate_completion() {
     local issue_ids=()
-    # Roles parallel issue_ids: positional targets are managed session roots;
-    # bundle-expanded children (below) are bundle sub-issues.
+    # Roles parallel issue_ids: positional targets are managed session roots
+    # (container parents under --container); bundle-expanded children (below)
+    # are bundle sub-issues.
     local roles=()
     local include_children_of=""
+    local container_mode="false"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -2928,6 +2944,10 @@ validate_completion() {
             ;;
         --include-children-of=*)
             include_children_of="${1#--include-children-of=}"
+            shift
+            ;;
+        --container)
+            container_mode="true"
             shift
             ;;
         *)
@@ -2941,6 +2961,16 @@ validate_completion() {
     if [ ${#issue_ids[@]} -eq 0 ]; then
         echo '{"error": "At least one issue ID required"}' >&2
         return 1
+    fi
+
+    # --container may appear after the positional targets, so rewrite the
+    # roles once parsing is complete; children expand below with their own
+    # role either way.
+    if [ "$container_mode" = "true" ]; then
+        local r
+        for r in "${!roles[@]}"; do
+            roles[$r]="container"
+        done
     fi
 
     # If --include-children-of specified, fetch the bundle and expand its
@@ -2982,6 +3012,8 @@ validate_completion() {
         issue=$(get_issue "$issue_id")
         local state
         state=$(echo "$issue" | jq -r '.state // ""')
+        local state_type
+        state_type=$(echo "$issue" | jq -r '.state_type // ""')
         local parent_id
         parent_id=$(echo "$issue" | jq -r '.parent_id // ""')
 
@@ -2992,7 +3024,7 @@ validate_completion() {
         has_summary=$(echo "$comments" | jq 'any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))')
 
         local result
-        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role")
+        result=$(build_completion_validation_result "$issue_id" "$state" "$parent_id" "$has_summary" "$role" "$state_type")
 
         if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
             all_ok="false"
