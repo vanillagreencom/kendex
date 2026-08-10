@@ -742,6 +742,17 @@ fn extract_toml_table_section(path: &Path, table: &str) -> Vec<u8> {
     result
 }
 
+/// The config keys whose sections feed an item's source hash: the item's own
+/// name plus the shared instruction keys (`all` and its `"*"` alias), which
+/// merge into every rendered agent/skill.
+fn instruction_keys_for(name: &str) -> [&str; 3] {
+    [
+        name,
+        crate::project_config::SHARED_INSTRUCTIONS_KEY,
+        crate::project_config::SHARED_INSTRUCTIONS_KEY_ALIAS,
+    ]
+}
+
 /// Extract the relevant section for a given name from a TOML file.
 /// Returns the raw text of lines belonging to that key, or empty if not found.
 /// This avoids hashing the entire config when only one agent/skill's section matters.
@@ -938,11 +949,15 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
             {
                 state = fnv1a_chain(state, &hash_dir_bytes(dir).to_le_bytes());
             }
-            // Only hash this skill's section from project vstack.toml
+            // Hash this skill's section plus the shared `all`/`*` entries from
+            // project vstack.toml — a shared-key edit changes every rendered
+            // skill, so it must stale every skill install.
             let project_config = proj_root.join("vstack.toml");
-            let section = extract_toml_section_for(&project_config, &entry.name);
-            if !section.is_empty() {
-                state = fnv1a_chain(state, &section);
+            for key in instruction_keys_for(&entry.name) {
+                let section = extract_toml_section_for(&project_config, key);
+                if !section.is_empty() {
+                    state = fnv1a_chain(state, &section);
+                }
             }
         }
         ItemKind::Agent => {
@@ -952,12 +967,16 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
             {
                 state = fnv1a_chain(state, &hash_file_bytes(file).to_le_bytes());
             }
-            // Hash this agent's sections from both configs
+            // Hash this agent's sections plus the shared `all`/`*` entries
+            // from both configs — a shared-key edit changes every rendered
+            // agent, so it must stale every agent install.
             let source_config = source_root.join("vstack.toml");
             for config_path in [&source_config, &proj_root.join("vstack.toml")] {
-                let section = extract_toml_section_for(config_path, &entry.name);
-                if !section.is_empty() {
-                    state = fnv1a_chain(state, &section);
+                for key in instruction_keys_for(&entry.name) {
+                    let section = extract_toml_section_for(config_path, key);
+                    if !section.is_empty() {
+                        state = fnv1a_chain(state, &section);
+                    }
                 }
             }
         }
@@ -2171,6 +2190,57 @@ mod source_registry_tests {
 
         assert!(!h1.is_empty());
         assert_ne!(h1, h2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_source_hash_tracks_shared_instruction_key() {
+        let dir = sandbox("shared_key_hash_agent");
+        let agents_dir = dir.join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("demo.md"),
+            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("vstack.toml"),
+            "[agent-additional-instructions]\nall = \"Fleet rule v1\"\n",
+        )
+        .unwrap();
+
+        let entry = LockEntry {
+            name: "demo".to_string(),
+            kind: ItemKind::Agent,
+            source: dir.display().to_string(),
+            source_repo: None,
+            harnesses: vec!["claude-code".to_string()],
+            method: InstallMethod::Symlink,
+            installed_at: "2026-08-09T00:00:00Z".to_string(),
+            source_hash: String::new(),
+        };
+
+        let h1 = compute_source_hash(&entry);
+        fs::write(
+            dir.join("vstack.toml"),
+            "[agent-additional-instructions]\nall = \"Fleet rule v2\"\n",
+        )
+        .unwrap();
+        let h2 = compute_source_hash(&entry);
+        assert!(!h1.is_empty());
+        assert_ne!(
+            h1, h2,
+            "editing the shared `all` entry must stale every agent install"
+        );
+
+        // The `\"*\"` alias spelling must stale installs the same way.
+        fs::write(
+            dir.join("vstack.toml"),
+            "[agent-additional-instructions]\n\"*\" = \"Fleet rule v3\"\n",
+        )
+        .unwrap();
+        let h3 = compute_source_hash(&entry);
+        assert_ne!(h2, h3);
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -598,12 +598,22 @@ pub fn install_failure_reporting_reference(global: bool) -> Result<bool> {
         return install_failure_reporting_reference(true);
     }
     let path = failure_reporting_reference_path(global);
-    if std::fs::read_to_string(&path).is_ok_and(|existing| existing == FAILURE_REPORTING_DOC) {
+    if reference_is_fresh(&path) {
         return Ok(global);
     }
     crate::path_safety::write_file_no_follow(&path, FAILURE_REPORTING_DOC)
         .with_context(|| format!("installing {}", path.display()))?;
     Ok(global)
+}
+
+/// Freshness fast path for the on-disk reference copy. Never follows a
+/// symlink: a link whose target currently matches the expected text would
+/// bypass `write_file_no_follow`'s rejection and leave the reference
+/// externally mutable after generation.
+fn reference_is_fresh(path: &std::path::Path) -> bool {
+    let is_symlink = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    !is_symlink
+        && std::fs::read_to_string(path).is_ok_and(|existing| existing == FAILURE_REPORTING_DOC)
 }
 
 /// Emit the load-skills preamble injected into every generated agent body.
@@ -663,6 +673,35 @@ mod tests {
             model_id_for("openai", "openai-codex/gpt-5.6-sol"),
             "openai-codex/gpt-5.6-sol"
         );
+    }
+
+    #[test]
+    fn reference_freshness_rejects_symlink_even_with_matching_target() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_ref_symlink_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("external.md");
+        std::fs::write(&target, FAILURE_REPORTING_DOC).unwrap();
+
+        let regular = dir.join("regular.md");
+        std::fs::write(&regular, FAILURE_REPORTING_DOC).unwrap();
+        assert!(reference_is_fresh(&regular));
+
+        let link = dir.join("link.md");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        // A symlink is never fresh, even when its target matches: accepting it
+        // would leave the reference externally mutable after generation.
+        assert!(!reference_is_fresh(&link));
+
+        std::fs::write(&regular, "tampered").unwrap();
+        assert!(!reference_is_fresh(&regular));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

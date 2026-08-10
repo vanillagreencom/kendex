@@ -111,7 +111,7 @@ fn default_hook_agents() -> CustomHookTarget {
 /// (enforced in `path_safety::validate_new_item_name`); removal accepts it so
 /// legacy items installed before the reservation stay deletable.
 pub const SHARED_INSTRUCTIONS_KEY: &str = "all";
-const SHARED_INSTRUCTIONS_KEY_ALIAS: &str = "*";
+pub(crate) const SHARED_INSTRUCTIONS_KEY_ALIAS: &str = "*";
 
 /// Invisible markers wrapped around the shared (`all`) portion when it is
 /// rendered into a generated agent file. Extraction drops the marked region
