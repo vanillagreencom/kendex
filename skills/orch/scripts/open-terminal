@@ -250,7 +250,11 @@ tmux_verify_brief() {
 tmux_wait_composer() {
   local pane="$1" waited=0 screen
   while (( waited < TMUX_VERIFY_SECS )); do
-    screen="$(tmux capture-pane -pJ -S - -t "$pane" 2>/dev/null)" || return 1
+    # VISIBLE viewport only (no -S -): readiness is a property of the
+    # current screen — a footer buried in scrollback behind a first-run
+    # dialog must not read as "composer ready" and send the brief into the
+    # dialog again.
+    screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
     [[ "$screen" == *'? for shortcuts'* ]] && return 0
     tmux send-keys -t "$pane" Enter || return 1
     sleep 1
