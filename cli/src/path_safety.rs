@@ -73,7 +73,7 @@ pub(crate) fn write_file_no_follow(path: &Path, contents: impl AsRef<[u8]>) -> R
 /// `git rev-parse --git-common-dir` for `dir`, canonicalized. `None` when `dir`
 /// is not inside a Git repository, when git is unavailable, or when the answer
 /// cannot be resolved — every one of which must fail closed at the call site.
-fn git_common_dir(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn git_common_dir(dir: &Path) -> Option<PathBuf> {
     let output = std::process::Command::new("git")
         .args(["-C", dir.to_str()?, "rev-parse", "--git-common-dir"])
         .output()
@@ -97,23 +97,43 @@ fn git_common_dir(dir: &Path) -> Option<PathBuf> {
     absolute.canonicalize().ok()
 }
 
-/// `git rev-parse --show-toplevel` for `dir`, canonicalized: the root of the
-/// working tree that physically contains `dir`. `None` when `dir` is not
-/// inside a working tree, when git is unavailable, or when the answer cannot
-/// be resolved — callers must fail closed.
-pub(crate) fn git_worktree_root(dir: &Path) -> Option<PathBuf> {
+/// Repository identity of the working tree physically containing `dir`, from
+/// a single `git rev-parse` invocation: `(--git-common-dir, --show-toplevel)`,
+/// both canonicalized. `None` when `dir` is not inside a working tree, when
+/// git is unavailable, or when either answer cannot be resolved — callers
+/// must fail closed.
+pub(crate) fn git_repo_identity(dir: &Path) -> Option<(PathBuf, PathBuf)> {
     let output = std::process::Command::new("git")
-        .args(["-C", dir.to_str()?, "rev-parse", "--show-toplevel"])
+        .args([
+            "-C",
+            dir.to_str()?,
+            "rev-parse",
+            "--git-common-dir",
+            "--show-toplevel",
+        ])
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if raw.is_empty() {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    let common_raw = lines.next()?.trim();
+    let toplevel_raw = lines.next()?.trim();
+    if common_raw.is_empty() || toplevel_raw.is_empty() {
         return None;
     }
-    Path::new(&raw).canonicalize().ok()
+    // `--git-common-dir` may be reported relative to the queried directory;
+    // resolve it against `dir` rather than the process cwd.
+    let common_reported = Path::new(common_raw);
+    let common_absolute = if common_reported.is_absolute() {
+        common_reported.to_path_buf()
+    } else {
+        dir.join(common_reported)
+    };
+    let common = common_absolute.canonicalize().ok()?;
+    let toplevel = Path::new(toplevel_raw).canonicalize().ok()?;
+    Some((common, toplevel))
 }
 
 /// Positive proof that `target` lives in a working tree of the SAME repository

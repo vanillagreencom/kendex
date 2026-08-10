@@ -137,9 +137,14 @@ pub fn install_skill(
             // at the canonical copy — we're done. Linking a physically
             // canonical dest would replace the copy with a self-referential
             // symlink.
-            let physically_canonical = link_home
-                .as_ref()
-                .is_some_and(|home| home.physical_parent.join(&skill.name) == canonical);
+            let physically_canonical = link_home.as_ref().is_some_and(|home| {
+                // Compare physical locations, not spellings: the constructed
+                // canonical path may run through a symlinked `.agents` while
+                // physical_parent is already resolved.
+                let canonical_physical = canonicalize_allowing_missing(&canonical)
+                    .unwrap_or_else(|| normalize_absolute_path(&canonical));
+                home.physical_parent.join(&skill.name) == canonical_physical
+            });
             if dest == canonical || physically_canonical {
                 format!(
                     "{} → {} (canonical, {})",
@@ -308,12 +313,14 @@ pub fn remove_item(
                 crate::config::codex_home_dir().join("skills").join(name),
             ]
         } else {
-            vec![
-                crate::config::project_root()
-                    .join(".agents")
-                    .join("skills")
-                    .join(name),
-            ]
+            // Symmetric with install_skill's anchoring: the canonical copy
+            // lives in the checkout where each harness link physically lands,
+            // so removal from a worktree must also clear a copy anchored in
+            // the main checkout — not just the project-rooted one.
+            project_canonical_skill_roots()
+                .into_iter()
+                .map(|root| root.join(name))
+                .collect()
         };
 
         for path in canonical_skill_paths {
@@ -433,6 +440,30 @@ fn normalize_absolute_path(path: &Path) -> PathBuf {
     normalized
 }
 
+/// Every `.agents/skills` root a project-scope canonical skill copy may live
+/// in: the project's own, plus the anchored root of any same-repository
+/// checkout a shared harness dir physically lands in (VST-195). Install
+/// anchors per harness link; removal and lock reconciliation consult this
+/// full set so all three agree on where a canonical copy may live.
+pub(crate) fn project_canonical_skill_roots() -> Vec<PathBuf> {
+    let mut roots = vec![crate::config::project_root().join(".agents").join("skills")];
+    let mut probed: Vec<PathBuf> = Vec::new();
+    for harness in Harness::ALL {
+        let dir = harness.skills_dir(false);
+        if probed.contains(&dir) {
+            continue;
+        }
+        probed.push(dir.clone());
+        if let Some(home) = same_repo_link_home(&dir) {
+            let root = home.checkout_root.join(".agents").join("skills");
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+    }
+    roots
+}
+
 /// The physical home of a project-scope harness link whose parent directory
 /// is symlinked into another checkout of the same repository.
 struct LinkHome {
@@ -446,24 +477,76 @@ struct LinkHome {
 /// shared harness dirs into the main checkout (vstack#886), so a link created
 /// at an apparent worktree path may physically land in another checkout of
 /// the project's repository. Returns `None` for the ordinary case (no symlink
-/// indirection) and for indirection into unrelated trees (for example a
-/// `.claude` dir symlinked into a dotfiles checkout), both of which keep
+/// indirection), for indirection into unrelated trees (for example a
+/// `.claude` dir symlinked into a dotfiles checkout), and for a checkout
+/// whose `.agents` fails the containment boundary — all of which keep
 /// `relative_path`'s behavior.
 fn same_repo_link_home(dest_parent: &Path) -> Option<LinkHome> {
     let lexical = normalize_absolute_path(dest_parent);
-    let physical = std::fs::canonicalize(dest_parent).ok()?;
+    let physical = canonicalize_allowing_missing(dest_parent)?;
     if physical == lexical {
         return None;
     }
-    let project_root = crate::config::project_root();
-    if !crate::path_safety::is_same_repository_worktree(&project_root, &physical) {
+    // git needs an existing directory; the harness dir itself may not exist
+    // on the physical side yet.
+    let mut probe = physical.as_path();
+    while !probe.is_dir() {
+        probe = probe.parent()?;
+    }
+    let project_common = crate::path_safety::git_common_dir(&crate::config::project_root())?;
+    let (probe_common, checkout_root) = crate::path_safety::git_repo_identity(probe)?;
+    if probe_common != project_common {
         return None;
     }
-    let checkout_root = crate::path_safety::git_worktree_root(&physical)?;
+    // Anchoring writes beneath the other checkout's .agents, so it gets the
+    // same containment boundary the project's own .agents writes get. An
+    // escaping .agents must never be written through.
+    if let Err(err) = crate::path_safety::ensure_agents_dir_within_project(&checkout_root) {
+        eprintln!(
+            "  Warning: not anchoring skills in {}: {err} (VST-195)",
+            checkout_root.display()
+        );
+        return None;
+    }
     Some(LinkHome {
         physical_parent: physical,
         checkout_root,
     })
+}
+
+/// Canonicalize `path`, tolerating missing trailing components: the nearest
+/// resolvable ancestor is canonicalized and the missing remainder re-appended.
+/// Symlinked ancestors still redirect — a shared `.claude` whose `skills`
+/// child does not exist yet must resolve to the shared side, and a dangling
+/// symlink is followed by hand rather than mistaken for its apparent path.
+fn canonicalize_allowing_missing(path: &Path) -> Option<PathBuf> {
+    let mut missing: Vec<std::ffi::OsString> = Vec::new();
+    let mut current = path.to_path_buf();
+    // Bounded like the kernel's symlink-resolution limit so a dangling
+    // symlink cycle cannot spin forever.
+    for _ in 0..40 {
+        match std::fs::canonicalize(&current) {
+            Ok(mut resolved) => {
+                for name in missing.iter().rev() {
+                    resolved.push(name);
+                }
+                return Some(resolved);
+            }
+            Err(_) => {
+                if let Ok(target) = std::fs::read_link(&current) {
+                    current = if target.is_absolute() {
+                        target
+                    } else {
+                        current.parent()?.join(target)
+                    };
+                    continue;
+                }
+                missing.push(current.file_name()?.to_os_string());
+                current = current.parent()?.to_path_buf();
+            }
+        }
+    }
+    None
 }
 
 #[cfg(unix)]
@@ -887,6 +970,311 @@ mod tests {
             same_repo_link_home(&wt.join(".agents").join("skills"))
         });
         assert!(local.is_none(), "real dir must not get a link home");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Removal must be symmetric with install's anchoring: a skill installed
+    /// from a worktree in the split layout places the canonical copy in the
+    /// MAIN checkout, so removal from the worktree must clear the main-side
+    /// canonical copy (and the worktree's own, if any) along with the link —
+    /// leaving nothing behind in either checkout.
+    #[cfg(unix)]
+    #[test]
+    fn remove_item_clears_canonical_copies_in_every_anchored_checkout() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_remove_symmetry_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+        assert!(main.join(".agents/skills/github/SKILL.md").is_file());
+
+        crate::test_util::with_project_root(&wt, || {
+            remove_item(
+                "github",
+                Some(ItemKind::Skill),
+                &[Harness::ClaudeCode],
+                false,
+            )
+            .unwrap()
+        });
+
+        assert!(
+            std::fs::symlink_metadata(main_skills.join("github")).is_err(),
+            "harness link must be removed"
+        );
+        assert!(
+            std::fs::symlink_metadata(main.join(".agents/skills/github")).is_err(),
+            "main checkout's canonical copy must be removed"
+        );
+        assert!(
+            std::fs::symlink_metadata(wt.join(".agents/skills/github")).is_err(),
+            "worktree's canonical copy must be removed"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Anchoring in another checkout must apply the same `.agents`
+    /// containment boundary the project's own writes get: when that
+    /// checkout's `.agents` symlinks outside the repository, no write may
+    /// follow it — install falls back to the unanchored path.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_never_writes_through_an_escaping_agents_in_the_link_checkout() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_escaping_agents_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+        // Main's .agents escapes the repository entirely.
+        symlink(&outside, main.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+
+        assert_eq!(
+            std::fs::read_dir(&outside).unwrap().count(),
+            0,
+            "no write may land outside the repository"
+        );
+        // Fallback taken: unanchored canonical in the worktree, absolute link
+        // target (the pre-anchoring behavior, with a warning on stderr).
+        assert!(wt.join(".agents/skills/github/SKILL.md").is_file());
+        let target = std::fs::read_link(main_skills.join("github")).unwrap();
+        assert!(
+            target.is_absolute() && target.starts_with(&wt),
+            "expected absolute fallback target into the worktree, got {target:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Sharing the whole `.claude` dir leaves `main/.claude/skills` absent
+    /// until first install; the redirect must still be detected by resolving
+    /// through the nearest existing ancestor, and the install must create and
+    /// anchor everything on the main side.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_resolves_link_home_through_missing_harness_dir() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_missing_leaf_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        // Whole .claude shared; skills subdir does not exist yet anywhere.
+        std::fs::create_dir_all(main.join(".claude")).unwrap();
+        symlink(main.join(".claude"), wt.join(".claude")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+
+        assert!(
+            main.join(".agents/skills/github/SKILL.md").is_file(),
+            "canonical copy must anchor in the main checkout"
+        );
+        let link = main.join(".claude").join("skills").join("github");
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            PathBuf::from("../../.agents/skills/github")
+        );
+        assert!(link.canonicalize().unwrap().join("SKILL.md").is_file());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Reconciliation must agree with install's anchoring: a skill installed
+    /// only for a shared-into-main harness has its sole canonical copy in the
+    /// MAIN checkout, and a reconcile pass run from the worktree must not
+    /// treat it as missing and drop the lock entry.
+    #[cfg(unix)]
+    #[test]
+    fn reconcile_keeps_lock_entry_for_skill_anchored_in_main_checkout() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_reconcile_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+        assert!(main.join(".agents/skills/github/.vstack-refreshed").is_file());
+        assert!(
+            !wt.join(".agents/skills/github").exists(),
+            "split layout: no worktree-local canonical copy"
+        );
+
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "github".into(),
+            kind: ItemKind::Skill,
+            source: "source".into(),
+            source_repo: None,
+            harnesses: vec![Harness::ClaudeCode.id().to_string()],
+            method: InstallMethod::Symlink,
+            installed_at: "2026-08-10T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        crate::test_util::with_project_root(&wt, || {
+            crate::config::reconcile_lock_with_disk(&mut lock, false, "source")
+        });
+
+        assert!(
+            lock.entries.contains_key("github"),
+            "lock entry must survive reconciliation from the worktree"
+        );
+        assert!(
+            main.join(".agents/skills/github/SKILL.md").is_file(),
+            "main checkout's canonical copy must survive reconciliation"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The physically-canonical guard must compare physical locations, not
+    /// spellings: with `.agents` itself a symlink (`main/.agents ->
+    /// main/agents-store`), the constructed canonical spelling and the
+    /// resolved dest differ as strings while naming the same directory. Raw
+    /// equality misses, and install would delete the canonical copy and
+    /// self-link it.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_does_not_self_link_through_a_symlinked_agents_spelling() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_agents_spelling_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        // Main spells its .agents through a symlink to a real store inside
+        // the checkout; the worktree chains through it.
+        std::fs::create_dir_all(main.join("agents-store").join("skills")).unwrap();
+        symlink(main.join("agents-store"), main.join(".agents")).unwrap();
+        symlink(main.join(".agents"), wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(&skill, Harness::Codex, false, InstallMethod::Symlink, None).unwrap()
+        });
+
+        let canonical = main.join("agents-store").join("skills").join("github");
+        let meta = std::fs::symlink_metadata(&canonical).unwrap();
+        assert!(
+            meta.file_type().is_dir(),
+            "canonical copy must stay a real directory, not a symlink"
+        );
+        assert!(canonical.join("SKILL.md").is_file());
 
         let _ = std::fs::remove_dir_all(&root);
     }

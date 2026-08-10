@@ -1085,14 +1085,16 @@ struct DiskHookItem {
 pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
     let mut items = Vec::new();
 
-    // Canonical skill location: .agents/skills/<name>/
+    // Canonical skill location: .agents/skills/<name>/. Project scope also
+    // consults checkout-anchored roots so a copy anchored in the main
+    // checkout by a worktree-run install (VST-195) is still discovered.
     let canonical_skills = if global {
         vec![
             global_state_dir().join("skills"),
             codex_home_dir().join("skills"),
         ]
     } else {
-        vec![project_root().join(".agents").join("skills")]
+        crate::installer::project_canonical_skill_roots()
     };
 
     let mut seen = std::collections::HashSet::new();
@@ -1649,17 +1651,20 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
         .filter(|(_, e)| e.kind == ItemKind::Skill && !disk_names.contains(e.name.as_str()))
         .map(|(name, _)| name.clone())
         .collect();
-    for name in stale_skills {
-        // Verify the canonical dir is actually gone (not just missing the marker)
-        let canonical = if global {
-            global_state_dir().join("skills").join(&name)
+    if !stale_skills.is_empty() {
+        // Verify the canonical dir is actually gone (not just missing the
+        // marker) in every root a copy may live in.
+        let canonical_roots = if global {
+            vec![global_state_dir().join("skills")]
         } else {
-            project_root().join(".agents").join("skills").join(&name)
+            crate::installer::project_canonical_skill_roots()
         };
-        if !canonical.exists() {
-            eprintln!("  Removed stale lock entry (files missing): {name}");
-            lock.remove(&name);
-            modified = true;
+        for name in stale_skills {
+            if !canonical_roots.iter().any(|root| root.join(&name).exists()) {
+                eprintln!("  Removed stale lock entry (files missing): {name}");
+                lock.remove(&name);
+                modified = true;
+            }
         }
     }
 
