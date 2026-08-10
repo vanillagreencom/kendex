@@ -12,13 +12,19 @@
 # de-duplicate against the existing open issue.
 name: Merge queue ejection alert
 
+# pull_request_target, not pull_request: a fork PR's dequeue would hand a
+# plain pull_request workflow a read-only GITHUB_TOKEN, silencing both the
+# comment and the intake issue. This workflow never checks out or executes
+# PR-controlled code (same posture as review-gate-writer.yml), so the
+# base-repository context is safe.
 "on":
-  pull_request:
+  pull_request_target:
     types: [dequeued]
 
 permissions:
   contents: read
   actions: read
+  checks: read
   issues: write
   pull-requests: write
 
@@ -43,8 +49,12 @@ jobs:
           # The ejecting failure ran on the merge-group ref, not the PR head:
           # gh-readonly-queue/<base>/pr-<N>-<sha>. Newest failed merge_group
           # run for this PR is the ejection's evidence.
-          run_json="$(gh api "/repos/${GH_REPO}/actions/runs?event=merge_group&status=failure&per_page=50" \
-            --jq "[.workflow_runs[] | select(.head_branch | test(\"/pr-${PR_NUMBER}-\"))] | sort_by(.created_at) | last // empty")"
+          # --paginate: an active queue can push the ejecting run past the
+          # first page. head_branch is null-guarded (jq test() on a null
+          # errors out the whole step under set -e).
+          run_json="$(gh api --paginate "/repos/${GH_REPO}/actions/runs?event=merge_group&status=failure&per_page=100" \
+            --jq "[.workflow_runs[] | select(.head_branch | strings | test(\"/pr-${PR_NUMBER}-\"))]" \
+            | jq -s 'add | sort_by(.created_at) | last // empty')"
 
           run_id=""; run_url=""; run_name=""
           if [ -n "$run_json" ]; then
@@ -68,13 +78,21 @@ jobs:
             head_checks="$(gh api "/repos/${GH_REPO}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
               --jq '[.check_runs[] | {name, conclusion}]')"
             failed_names="$(gh api "/repos/${GH_REPO}/actions/runs/${run_id}/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.conclusion == "failure") | .name]')"
-            overlap_red="$(jq -cn --argjson head "$head_checks" --argjson failed "$failed_names" \
-              '[$failed[] as $n | $head[] | select(.name == $n and .conclusion != "success")] | length')"
-            if [ "$overlap_red" = "0" ] && [ "$(printf '%s' "$failed_names" | jq 'length')" != "0" ]; then
-              hint="The same-named check(s) are green on the PR's own head — this looks like a queue-only flake; re-arming \`--auto\` once is plausibly safe. Never re-arm past a check that is also red on the PR head."
-            else
+              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | .name]')"
+            # Flake requires POSITIVE evidence: every ejecting job name must
+            # have a same-named SUCCESSFUL check on the PR head. Queue-only
+            # jobs (this repo's normal heavy-suite shape) have no head
+            # counterpart — that is "no comparison", never a flake claim.
+            all_green_on_head="$(jq -cn --argjson head "$head_checks" --argjson failed "$failed_names" \
+              '($failed | length > 0) and ([$failed[] as $n | ($head | map(select(.name == $n and .conclusion == "success")) | length > 0)] | all)')"
+            any_red_on_head="$(jq -cn --argjson head "$head_checks" --argjson failed "$failed_names" \
+              '[$failed[] as $n | $head[] | select(.name == $n and .conclusion != "success")] | length > 0')"
+            if [ "$all_green_on_head" = "true" ]; then
+              hint="Every ejecting check has a same-named GREEN check on the PR's own head — this looks like a queue-only flake; re-arming \`--auto\` once is plausibly safe. Never re-arm past a check that is also red on the PR head."
+            elif [ "$any_red_on_head" = "true" ]; then
               hint="At least one ejecting check is not green on the PR's own head — fix before re-arming."
+            else
+              hint="The ejecting check(s) run only in the merge queue (no same-named check on the PR head) — no flake-vs-genuine comparison is available; inspect the failing run before re-arming."
             fi
           fi
 
@@ -94,7 +112,9 @@ jobs:
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
           # Intake issue (deduped per PR + ejection run).
-          marker="ejection-alert:pr-${PR_NUMBER}:run-${run_id:-unknown}"
+          # An unidentified ejecting run must not collapse successive
+          # ejections into one marker: fall back to this alert run's own id.
+          marker="ejection-alert:pr-${PR_NUMBER}:run-${run_id:-alert-${GITHUB_RUN_ID}}"
           existing="$(gh issue list --search "\"$marker\" in:body" --state open --json number --jq 'length')"
           if [ "$existing" = "0" ]; then
             issue_file="$(mktemp)"
