@@ -208,7 +208,7 @@ fi
 # The full whitespace class, not just space/tab: a CR- or LF-only pattern
 # passed the old check, the jq trim then emptied every term, and an
 # 'or: []' filter reached Linear.
-for ws_pat in "$(printf '\r')" "$(printf '\n|\n')" "$(printf '\302\240')"; do
+for ws_pat in $'\r' $'\n' $'\n|\n' $'\302\240'; do
   if run_list "$log7b" --format=raw --search "$ws_pat" >/dev/null 2>&1; then
     echo "FAIL --search CR/LF-only pattern must exit non-zero"
     exit 1
