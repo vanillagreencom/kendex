@@ -17,11 +17,12 @@ initialized=false
 # `issue-N` keys are canonically lowercase, Linear-style `ABC-N` uppercase.
 issue_id="$(printf '%s\n' "$branch" | grep -oiE "$pattern" | head -1 || true)"
 if [[ -n "$issue_id" ]]; then
-    if [[ "${issue_id,,}" == issue-* ]]; then
-        issue_id="${issue_id,,}"
-    else
-        issue_id="${issue_id^^}"
-    fi
+    # tr, not ${var,,}/${var^^}: skill scripts run on macOS Bash 3.2.
+    issue_id_lower="$(printf '%s' "$issue_id" | tr '[:upper:]' '[:lower:]')"
+    case "$issue_id_lower" in
+    issue-*) issue_id="$issue_id_lower" ;;
+    *) issue_id="$(printf '%s' "$issue_id" | tr '[:lower:]' '[:upper:]')" ;;
+    esac
 fi
 
 if [[ -n "$issue_id" ]]; then
