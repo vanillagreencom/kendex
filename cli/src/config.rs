@@ -1134,6 +1134,16 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
             if gate.is_none() && !path.join(".vstack-refreshed").exists() {
                 continue;
             }
+            // An UNMARKED anchored canonical is admitted only when it also
+            // LOOKS like a skill: reference evidence alone would let a
+            // manually maintained same-named directory (no SKILL.md) be
+            // recovered into the lock as a vstack install.
+            if gate.is_some()
+                && !path.join(".vstack-refreshed").exists()
+                && !path.join("SKILL.md").exists()
+            {
+                continue;
+            }
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
@@ -1198,7 +1208,34 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
                             Err(_) => continue,
                         }
                     } else {
-                        None
+                        // Plain LOCAL canonical: when a same-named harness
+                        // artifact resolves somewhere ELSE (an independent
+                        // install in another checkout), an unscoped entry
+                        // would let recovery claim it. Scope to the
+                        // harnesses actually resolving here in that case;
+                        // otherwise keep the legacy full detection.
+                        let local_canonical = path.canonicalize().ok();
+                        let mut resolving: Vec<String> = Vec::new();
+                        let mut foreign_resolving = false;
+                        for harness in crate::harness::Harness::ALL.iter() {
+                            let artifact = harness.skills_dir(false).join(name);
+                            if std::fs::symlink_metadata(&artifact)
+                                .is_ok_and(|meta| meta.file_type().is_symlink())
+                            {
+                                match (artifact.canonicalize().ok(), &local_canonical) {
+                                    (Some(resolved), Some(local)) if resolved == *local => {
+                                        resolving.push(harness.id().to_string());
+                                    }
+                                    (Some(_), _) => foreign_resolving = true,
+                                    _ => {}
+                                }
+                            }
+                        }
+                        if foreign_resolving {
+                            Some(resolving)
+                        } else {
+                            None
+                        }
                     }
                 }
             };
