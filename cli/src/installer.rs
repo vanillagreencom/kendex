@@ -72,14 +72,17 @@ pub fn install_skill(
     instructions: Option<&str>,
 ) -> Result<InstallResult> {
     validate_new_item_name(&skill.name)?;
-    if !global && method == InstallMethod::Symlink {
-        // The containment preflight must also cover the invoking checkout's
-        // own canonical writes (link_home == None): without it, an aliased
-        // in-repo `.agents` (e.g. `.agents -> cli/src`) makes install create
-        // — and refresh later recursively replace — repository sources.
-        // Copy-mode installs never write through `.agents`, so they skip it
-        // (a copy install must keep working beside an unrelated linked
-        // agents root). In-project validation is pure path comparison.
+    // The containment preflight must cover every install that writes
+    // through `.agents`: all project-scope symlink installs (their
+    // canonical lives there), and ANY install whose harness dest itself
+    // sits under `.agents` (Codex/Pi copy mode included — the TUI
+    // global→project move calls install_skill with no other preflight).
+    // Copy installs into non-.agents harness dirs skip it: they must keep
+    // working beside an unrelated linked agents root.
+    let dest_under_agents = harness
+        .skills_dir(global)
+        .starts_with(crate::config::project_root().join(".agents"));
+    if !global && (method == InstallMethod::Symlink || dest_under_agents) {
         crate::path_safety::ensure_agents_dir_within_project(&crate::config::project_root())?;
     }
     let dest = harness.install_skill(skill, global)?;
