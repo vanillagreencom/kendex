@@ -187,11 +187,30 @@ while IFS= read -r -d '' f; do
     *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV (exclude it to skip the gate): '$f'" ;;
   esac
   [ -h "$f" ] && continue # a symlink's own content has no meaningful line count
+  if [ -d "$f" ]; then
+    # A directory at a tracked file path is a submodule gitlink — not a
+    # countable file. Its baseline row (if any) is stale by definition and
+    # the evaluate pass flags it through the absent list's stale side.
+    continue
+  fi
   if [ ! -f "$f" ]; then
     # In the index but absent from the worktree (unstaged deletion, sparse
-    # checkout): the size is unknowable. Never classify as gone — that would
-    # fail the check as stale and let --update drop the row, silently
-    # loosening the ratchet on a tree that merely hasn't materialized it.
+    # checkout): count the INDEX blob so the "every tracked file" contract
+    # holds without the worktree copy — a sparse checkout cannot smuggle a
+    # new offender past the gate, and baselined rows evaluate against real
+    # content instead of being skipped as unknown. A path git cannot show
+    # (e.g. a gitlink) falls back to the absent list.
+    if n="$(git show ":$f" 2>/dev/null | wc -l)"; then
+      case "$n" in *[!0-9\ ]*) n="" ;; esac
+    else
+      n=""
+    fi
+    if [ -n "$n" ] && git cat-file -e ":$f" 2>/dev/null; then
+      n=$((n))
+      printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
+      checked=$((checked + 1))
+      continue
+    fi
     printf '%s\n' "$f" >>"$TMP/absent.raw"
     continue
   fi
@@ -299,9 +318,9 @@ if [ "$MODE" = "update" ]; then
     # the pre-rewrite length.
     # Literal path match (awk string equality, never a grep regex): a
     # baseline path with regex-significant characters must still recount.
-    if awk -F'\t' -v p="$BASELINE_FILE" '$1 == p { found = 1 } END { exit found ? 0 : 1 }' "$TMP/counts.tsv"; then
+    if BASELINE_PATH="$BASELINE_FILE" awk -F'\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"] } $1 == p { found = 1 } END { exit found ? 0 : 1 }' "$TMP/counts.tsv"; then
       new_n="$(wc -l <"$BASELINE_FILE" | tr -d ' ')"
-      awk -F'\t' -v OFS='\t' -v p="$BASELINE_FILE" -v n="$new_n" '$1 == p { print p, n; next } { print }' "$TMP/counts.tsv" >"$TMP/counts.rewrite"
+      BASELINE_PATH="$BASELINE_FILE" NEW_N="$new_n" awk -F'\t' -v OFS='\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"] } $1 == p { print p, n; next } { print }' "$TMP/counts.tsv" >"$TMP/counts.rewrite"
       mv "$TMP/counts.rewrite" "$TMP/counts.tsv"
     fi
   else

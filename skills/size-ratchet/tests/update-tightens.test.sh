@@ -79,9 +79,10 @@ run_sr
 [ "$RC" -eq 0 ] && ok "hand-edited acceptance rows pass (control: growth is a reviewed human edit)" \
   || bad "hand-edited acceptance rows pass" "rc=$RC out=$OUT"
 
-# A tracked-but-absent file (unstaged deletion / sparse checkout) has an
-# unknowable size: --update must preserve its row verbatim, never drop it —
-# dropping would loosen the ratchet with a green exit.
+# A tracked-but-absent file (unstaged deletion / sparse checkout) counts
+# from the INDEX blob — "every tracked file" holds without the worktree
+# copy. An over-threshold baselined row therefore survives --update at its
+# real size, and a sparse tree cannot smuggle a new offender past the gate.
 R="$TMP/upd-absent"
 mkdir -p "$R"
 git -C "$R" -c init.defaultBranch=main init -q
@@ -91,12 +92,26 @@ mkfile keep.txt 15
 mkdir -p "$R/tools"
 printf 'keep.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
-rm "$R/keep.txt" # unstaged: keep.txt stays in git ls-files
+rm "$R/keep.txt" # unstaged: keep.txt stays in git ls-files; index holds 15 lines
 run_sr --update
 row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
-[ "$RC" -eq 0 ] && [ "$row" = "$(printf 'keep.txt\t15')" ] && case "$OUT" in *"preserved"*) true ;; *) false ;; esac \
-  && ok "--update preserves the row of a tracked-but-absent file verbatim and says so" \
-  || bad "--update preserves the row of a tracked-but-absent file" "rc=$RC row=$row out=$OUT"
+[ "$RC" -eq 0 ] && [ "$row" = "$(printf 'keep.txt\t15')" ] \
+  && ok "--update keeps a tracked-but-absent over-threshold row at its index-counted size" \
+  || bad "--update keeps the tracked-but-absent row (index count)" "rc=$RC row=$row out=$OUT"
+
+# Sparse fail-open guard: a tracked-but-absent NEW offender still fails.
+R="$TMP/sparse-offender"
+mkdir -p "$R"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile huge.txt 40
+git -C "$R" add -A
+rm "$R/huge.txt"
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"huge.txt"*) true ;; *) false ;; esac \
+  && ok "a tracked-but-absent new offender is counted from the index and fails" \
+  || bad "sparse new offender fails" "rc=$RC out=$OUT"
 
 # --update with no baseline file: never creates one (it cannot add rows).
 R="$TMP/upd2"

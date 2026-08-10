@@ -9,11 +9,12 @@ reviewed diff, with the justification on the record.
 ## Semantics
 
 - **Scope**: every tracked file (`git ls-files`), tests included, minus the
-  exclusion list. Symlinks are skipped. A tracked file absent from the
-  worktree (unstaged deletion, sparse checkout) has an unknowable size: it
-  is never counted, never flagged, and its baseline row is preserved
-  verbatim — including through `--update` — so a partial tree can never
-  loosen the ratchet. A tracked path containing a tab or newline is refused
+  exclusion list. Symlinks are skipped; a submodule gitlink at a tracked
+  path is not a countable file (a baseline row for one is stale). A tracked
+  file absent from the worktree (unstaged deletion, sparse checkout) is
+  counted from the INDEX blob, so "every tracked file" holds on partial
+  trees too — a sparse checkout can neither smuggle a new offender past the
+  gate nor loosen a baselined row. A tracked path containing a tab or newline is refused
   loudly (exit 2; exclude it to skip the gate) — it cannot be represented
   in the line-oriented records. Lines are newline counts (`wc -l`).
 - **Threshold**: default `1000` lines, override via

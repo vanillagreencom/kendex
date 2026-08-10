@@ -51,7 +51,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     return 0
   fi
   # Env-file overrides (standard project layering: .env.local beats the
-  # committed settings, .env is the base) — first matching KEY= line wins,
+  # committed settings, .env is the base) — LAST matching KEY= line wins (shell-sourcing semantics),
   # optional surrounding quotes stripped. Parsed, never sourced.
   if [ -f ".env.local" ]; then
     line="$(grep -E -- "^[[:space:]]*(export[[:space:]]+)?${name}=" .env.local | tail -n 1 || true)"
