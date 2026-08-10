@@ -103,7 +103,7 @@ pub fn inject_vstack_notice(skill_md_path: &Path) {
         return;
     };
 
-    let notice = "> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in `vstack.toml` at the repository root. Then run `vstack refresh`.";
+    let notice = "> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in the managing project's vstack config — `vstack.toml` at the vstack project root, or `vstack-local.toml` in a source-catalog checkout. Then run `vstack refresh`.";
 
     // Already present? Skip.
     if content.contains("Never edit this file directly") {
