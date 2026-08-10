@@ -104,10 +104,33 @@ if [ -n "$EXCLUDES_OPT" ]; then
 else
   EXCLUDES_FILE="$(sr_setting SIZE_RATCHET_EXCLUDES "tools/size-ratchet-excludes")" || exit 2
 fi
-# Normalize leading ./ segments: git ls-files records canonical relative
-# paths, and every literal comparison against them must agree.
-while [ "${BASELINE_FILE#./}" != "$BASELINE_FILE" ]; do BASELINE_FILE="${BASELINE_FILE#./}"; done
-while [ "${EXCLUDES_FILE#./}" != "$EXCLUDES_FILE" ]; do EXCLUDES_FILE="${EXCLUDES_FILE#./}"; done
+# Lexically normalize configured paths (leading ./, internal ./ and ..
+# segments): git ls-files records canonical relative paths, and every
+# literal comparison against them must agree. Pure string surgery — no
+# symlink resolution, Bash 3.2-safe.
+normalize_rel_path() { # PATH -> normalized on stdout; nonzero if it escapes
+  local input="$1" out="" seg rest
+  rest="$input"
+  while [ -n "$rest" ]; do
+    seg="${rest%%/*}"
+    if [ "$seg" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+    case "$seg" in
+      "" | ".") ;;
+      "..")
+        case "$out" in
+          "") return 1 ;;
+          */*) out="${out%/*}" ;;
+          *) out="" ;;
+        esac
+        ;;
+      *) out="${out:+$out/}$seg" ;;
+    esac
+  done
+  [ -n "$out" ] || return 1
+  printf '%s' "$out"
+}
+BASELINE_FILE="$(normalize_rel_path "$BASELINE_FILE")" || config_error "baseline path escapes the repository or normalizes empty"
+EXCLUDES_FILE="$(normalize_rel_path "$EXCLUDES_FILE")" || config_error "excludes path escapes the repository or normalizes empty"
 [ -n "$BASELINE_FILE" ] || config_error "baseline path resolved empty"
 [ -n "$EXCLUDES_FILE" ] || config_error "excludes path resolved empty"
 # A path beginning with '-' would read as an option to the line utilities
