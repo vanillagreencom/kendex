@@ -1683,6 +1683,56 @@ else
   run "configured: unresolved thread fails closed (threads=enforce)" threads-open
 fi
 
+# Carry-exclude probes (vstack#1174). Both use the predicate's matcher shape
+# — an unquoted pattern in a bash `case` — so the probes pin the real glob
+# semantics ('*' crosses '/', whole-path anchoring, ';' separators) against
+# the repo's COMMITTED exclude list, not a hardcoded example.
+carry_class_has() { # is this class among the repo's enabled carry classes?
+  printf '%s' "$ACTIVE_CARRY" | tr ';|' '\n\n' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx "$1"
+}
+glob_matches() { # path, glob — the predicate's exact `case` matcher
+  case "$1" in $2) return 0 ;; esac
+  return 1
+}
+exclude_match_path() { # ext -> a path the first usable committed glob matches
+  # Usable: '*'-only globs (no '?'/'['/escape metacharacters) whose derived
+  # path can end in ext, so the path classifies into the enabled carry class
+  # and the refusal below is attributable to the exclusion alone. Every '*'
+  # becomes a literal filler; the concrete path is then re-proven against
+  # its source glob before use, never assumed.
+  local ext="$1" pat candidate
+  while IFS= read -r pat; do
+    [ -z "$pat" ] && continue
+    case "$pat" in *'?'*|*'['*|*'\'*) continue ;; esac
+    case "$pat" in
+      *"$ext") candidate="${pat//\*/probe}" ;;
+      *'*')    candidate="${pat//\*/probe}$ext" ;;
+      *)       continue ;;
+    esac
+    glob_matches "$candidate" "$pat" || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done <<EOF_MATCH_PROBE
+$(list_items "$ACTIVE_CARRY_EXCLUDE")
+EOF_MATCH_PROBE
+  return 1
+}
+exclude_free_path() { # ext -> a path NO committed glob matches
+  local ext="$1" candidate pat hit
+  for candidate in "carry-probe/unrelated$ext" "carry-probe-unrelated$ext"; do
+    hit=""
+    while IFS= read -r pat; do
+      [ -z "$pat" ] && continue
+      if glob_matches "$candidate" "$pat"; then hit=1; break; fi
+    done <<EOF_FREE_PROBE
+$(list_items "$ACTIVE_CARRY_EXCLUDE")
+EOF_FREE_PROBE
+    if [ -z "$hit" ]; then printf '%s\n' "$candidate"; return 0; fi
+  done
+  return 1
+}
+
 # The repo's carry-forward posture: with classes enabled, an identical tree
 # must carry and a code delta must still refuse (the conservative floor no
 # class configuration may widen).
@@ -1698,6 +1748,48 @@ if [ -n "$ACTIVE_CARRY" ]; then
   reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
   compare_fix ahead "[$CODE_DELTA]"
   run "configured: carry-forward — a code delta still refuses" awaiting
+
+  # The repo's exclude list must be shown to MATCH (vstack#1174): a typo'd
+  # or wrongly-anchored committed glob leaves the exclusion dead while every
+  # case above stays green in both directions. So: a carry-class path a
+  # committed glob matches must refuse the carry, and a sibling path outside
+  # every committed glob must still carry (the exclusion neither dead nor
+  # over-broad).
+  if [ -n "$ACTIVE_CARRY_EXCLUDE" ]; then
+    if carry_class_has docs; then
+      probe_ext=".md"
+      probe_patch='@@ -1 +1 @@
+-old prose
++new prose'
+    else
+      probe_ext=".sh"
+      probe_patch='@@ -1 +1 @@
+-# old comment
++# new comment'
+    fi
+    probe_match="$(exclude_match_path "$probe_ext")" || probe_match=""
+    probe_free="$(exclude_free_path "$probe_ext")" || probe_free=""
+
+    if [ -n "$probe_match" ]; then
+      reset
+      CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
+      reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
+      compare_fix ahead "[$(delta_file "$probe_match" modified "$probe_patch")]"
+      run "configured: carry-exclude — a committed glob matches '$probe_match', refusing the carry" awaiting
+    else
+      echo "note  configured: carry-exclude — no committed glob can derive a carry-class path; match case skipped"
+    fi
+
+    if [ -n "$probe_free" ]; then
+      reset
+      CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
+      reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
+      compare_fix ahead "[$(delta_file "$probe_free" modified "$probe_patch")]"
+      run "configured: carry-exclude — '$probe_free' is outside every committed glob and still carries" approved
+    else
+      echo "note  configured: carry-exclude — every probe path matched a committed glob; carry case skipped"
+    fi
+  fi
 fi
 
 # The repo's retry budget: a read failing (attempts - 1) times must still
