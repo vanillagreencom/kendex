@@ -1070,6 +1070,12 @@ pub fn is_source_changed(entry: &LockEntry) -> bool {
 pub struct DiskItem {
     pub name: String,
     pub kind: ItemKind,
+    /// For a skill admitted through an anchored root's gate: the harnesses
+    /// whose artifacts resolve to that canonical. Recovery must scope the
+    /// entry to exactly these — a same-named non-resolving harness dir is an
+    /// independent copy-mode install, and recording it under the recovered
+    /// Symlink entry would let the next refresh replace the copy.
+    pub anchored_harnesses: Option<Vec<String>>,
 }
 
 /// Discovered hook artifacts on disk that match hooks available in the source.
@@ -1126,30 +1132,41 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
             };
-            if let Some(sharing) = &gate {
-                // A reference must RESOLVE to this canonical dir. A
-                // same-named copy-mode dir in a harness dir is that
-                // harness's own install, not a reference — recovering
-                // through it would re-type the skill as symlink-mode and
-                // let the next refresh replace the copy.
-                let canonical = path.canonicalize().ok();
-                let referenced = canonical.is_some_and(|canonical| {
-                    sharing.iter().any(|(harness, _)| {
-                        harness
-                            .skills_dir(false)
-                            .join(name)
-                            .canonicalize()
-                            .is_ok_and(|resolved| resolved == canonical)
-                    })
-                });
-                if !referenced {
-                    continue;
+            let anchored_harnesses = match &gate {
+                Some(sharing) => {
+                    // A reference must RESOLVE to this canonical dir. A
+                    // same-named copy-mode dir in a harness dir is that
+                    // harness's own install, not a reference — recovering
+                    // through it would re-type the skill as symlink-mode and
+                    // let the next refresh replace the copy. Only the
+                    // resolving harnesses are recorded, so recovery cannot
+                    // attach that independent install to the anchored entry.
+                    let referencing: Vec<String> = match path.canonicalize() {
+                        Ok(canonical) => sharing
+                            .iter()
+                            .filter(|(harness, _)| {
+                                harness
+                                    .skills_dir(false)
+                                    .join(name)
+                                    .canonicalize()
+                                    .is_ok_and(|resolved| resolved == canonical)
+                            })
+                            .map(|(harness, _)| harness.id().to_string())
+                            .collect(),
+                        Err(_) => Vec::new(),
+                    };
+                    if referencing.is_empty() {
+                        continue;
+                    }
+                    Some(referencing)
                 }
-            }
+                None => None,
+            };
             if seen.insert(name.to_string()) {
                 items.push(DiskItem {
                     name: name.to_string(),
                     kind: ItemKind::Skill,
+                    anchored_harnesses,
                 });
             }
         }
@@ -1665,18 +1682,27 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
     let now = now_iso();
     for item in &disk_skills {
         if !lock.entries.contains_key(&item.name) {
-            // Determine which harnesses have this skill by checking dirs
-            let mut harnesses = Vec::new();
-            for harness in crate::harness::Harness::ALL {
-                let skill_path = harness.skills_dir(global).join(&item.name);
-                if skill_path.exists() || skill_path.is_symlink() {
-                    harnesses.push(harness.id().to_string());
+            // Determine which harnesses have this skill by checking dirs.
+            // An anchored item carries the harnesses that resolve to its
+            // canonical; a same-named artifact for any OTHER harness is an
+            // independent install this entry must not claim.
+            let harnesses = match &item.anchored_harnesses {
+                Some(referencing) => referencing.clone(),
+                None => {
+                    let mut harnesses = Vec::new();
+                    for harness in crate::harness::Harness::ALL {
+                        let skill_path = harness.skills_dir(global).join(&item.name);
+                        if skill_path.exists() || skill_path.is_symlink() {
+                            harnesses.push(harness.id().to_string());
+                        }
+                    }
+                    if harnesses.is_empty() {
+                        // At minimum it's in the canonical location
+                        harnesses.push("claude-code".to_string());
+                    }
+                    harnesses
                 }
-            }
-            if harnesses.is_empty() {
-                // At minimum it's in the canonical location
-                harnesses.push("claude-code".to_string());
-            }
+            };
             let mut entry = LockEntry {
                 name: item.name.clone(),
                 kind: item.kind,

@@ -113,13 +113,27 @@ pub fn install_skill(
             // Foreign canonicals are write-shy: an existing canonical in
             // another checkout is linked to AS-IS — its content and marker
             // belong to that checkout's installs, and refreshing it is the
-            // owning checkout's job.
-            let foreign_existing = link_home.is_some() && canonical.exists();
+            // owning checkout's job. A LinkHome alone does not make the
+            // canonical foreign: an ordinary existing child link
+            // (`.claude/skills/<name>` → `../../.agents/skills/<name>`)
+            // resolves to a LinkHome whose checkout IS this project, and
+            // treating that as foreign would skip every refresh after the
+            // first install.
+            let project_checkout = std::fs::canonicalize(crate::config::project_root())
+                .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
+            let mut foreign_existing = link_home
+                .as_ref()
+                .is_some_and(|home| home.checkout_root != project_checkout)
+                && canonical.exists();
             if foreign_existing && !canonical.join("SKILL.md").is_file() {
+                // Write-shy protects the owning checkout's valid installs; a
+                // canonical without SKILL.md was never one, and linking to it
+                // AS-IS ships a broken skill. Repair it from source instead.
                 eprintln!(
-                    "  Warning: existing canonical {} has no SKILL.md; leaving it for its own checkout's refresh (VST-195)",
+                    "  Warning: existing canonical {} has no SKILL.md; repairing it from source (VST-195)",
                     canonical.display()
                 );
+                foreign_existing = false;
             }
             let marker = canonical.join(".vstack-refreshed");
             let current_pid = std::process::id().to_string();
@@ -313,6 +327,23 @@ pub fn remove_item(
         canonicals
     };
 
+    // A skill path whose final component is not itself a symlink can still
+    // RESOLVE to a snapshotted anchored canonical through a symlinked
+    // ancestor (a fully shared `.agents`): remove_expected_path would follow
+    // that ancestor and recursively delete the other checkout's copy before
+    // the preservation pass below could report it. Unlinking a symlink final
+    // component only removes the link itself and stays allowed.
+    let anchored_resolved: Vec<PathBuf> = anchored_canonicals
+        .iter()
+        .filter_map(|path| canonicalize_allowing_missing(path))
+        .collect();
+    let resolves_to_anchored = |path: &Path| -> bool {
+        !anchored_resolved.is_empty()
+            && !std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+            && canonicalize_allowing_missing(path)
+                .is_some_and(|resolved| anchored_resolved.contains(&resolved))
+    };
+
     for harness in harnesses {
         // Agent files
         if remove_agents {
@@ -341,15 +372,18 @@ pub fn remove_item(
         // Skill directories
         if remove_skills {
             let skill_path = harness.skills_dir(global).join(name);
-            match remove_expected_path(&skill_path, ExpectedArtifact::Any) {
-                Ok(true) => removed.push(skill_path),
-                Ok(false) => {}
-                Err(err) => cleanup_errors.push(format!(
-                    "skill {name} removal failed for {} {} scope at {}: {err:#}",
-                    harness.name(),
-                    if global { "global" } else { "project" },
-                    skill_path.display()
-                )),
+            // An anchored path is the preservation pass's to report and keep.
+            if !resolves_to_anchored(&skill_path) {
+                match remove_expected_path(&skill_path, ExpectedArtifact::Any) {
+                    Ok(true) => removed.push(skill_path),
+                    Ok(false) => {}
+                    Err(err) => cleanup_errors.push(format!(
+                        "skill {name} removal failed for {} {} scope at {}: {err:#}",
+                        harness.name(),
+                        if global { "global" } else { "project" },
+                        skill_path.display()
+                    )),
+                }
             }
         }
 
@@ -381,6 +415,13 @@ pub fn remove_item(
         };
 
         for path in canonical_skill_paths {
+            // The project-spelled canonical resolves to a FOREIGN anchored
+            // canonical when `.agents` itself is symlinked into the shared
+            // checkout; deleting through that ancestor would destroy the copy
+            // the preservation pass below promises to leave in place.
+            if resolves_to_anchored(&path) {
+                continue;
+            }
             match remove_expected_path(&path, ExpectedArtifact::Any) {
                 Ok(true) => removed.push(path),
                 Ok(false) => {}
@@ -2090,6 +2131,283 @@ mod tests {
         assert!(
             std::fs::symlink_metadata(&canonical).is_err(),
             "the owning checkout's removal must delete its canonical copy"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Fully shared layout: the worktree's `.agents` is itself a symlink into
+    /// the main checkout, so the project-spelled canonical (and Codex/Pi's
+    /// skill dir, which is the same path) RESOLVES to the anchored canonical
+    /// through the symlinked ancestor. Deletion must not follow it —
+    /// `remove_dir_all` through that spelling destroys the main checkout's
+    /// copy before the preservation pass can report it.
+    #[cfg(unix)]
+    #[test]
+    fn remove_item_does_not_delete_foreign_canonical_through_shared_agents() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_shared_agents_remove_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(main.join(".agents").join("skills")).unwrap();
+        symlink(main.join(".agents"), wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+        let canonical = main.join(".agents").join("skills").join("github");
+        assert!(canonical.join("SKILL.md").is_file());
+
+        let outcome = crate::test_util::with_project_root(&wt, || {
+            remove_item(
+                "github",
+                Some(ItemKind::Skill),
+                &[Harness::ClaudeCode, Harness::Codex],
+                false,
+            )
+            .unwrap()
+        });
+
+        assert!(
+            std::fs::symlink_metadata(main_skills.join("github")).is_err(),
+            "the Claude link must be removed"
+        );
+        assert!(
+            canonical.join("SKILL.md").is_file(),
+            "deletion must not follow the shared .agents into the main checkout's canonical"
+        );
+        let expected = main
+            .canonicalize()
+            .unwrap()
+            .join(".agents")
+            .join("skills")
+            .join("github");
+        assert!(
+            outcome.anchored_left.contains(&expected),
+            "the surviving canonical must be reported, got {:?}",
+            outcome.anchored_left
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An ordinary existing child link (`.claude/skills/<name>` →
+    /// `../../.agents/skills/<name>`) resolves to a LinkHome whose checkout
+    /// IS this project. That must not be mistaken for a foreign canonical:
+    /// write-shyness there would skip every refresh after the first install
+    /// while still reporting success.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_refreshes_own_canonical_behind_existing_child_link() {
+        let root = std::env::temp_dir().join(format!(
+            "vstack_own_canonical_refresh_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        if !init_repo_with_commit(&project) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&project, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+        let canonical = project.join(".agents").join("skills").join("github");
+        assert!(canonical.join("SKILL.md").is_file());
+
+        // A later run: the source changed and the same-process marker no
+        // longer matches.
+        std::fs::write(
+            skill.source_dir.join("SKILL.md"),
+            "---\nname: github\ndescription: Test skill\n---\n\n# github\n\nupdated body\n",
+        )
+        .unwrap();
+        std::fs::write(canonical.join(".vstack-refreshed"), "0").unwrap();
+
+        crate::test_util::with_project_root(&project, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+
+        let refreshed = std::fs::read_to_string(canonical.join("SKILL.md")).unwrap();
+        assert!(
+            refreshed.contains("updated body"),
+            "the project's own canonical must refresh from source, got: {refreshed}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Write-shyness protects the owning checkout's VALID installs. A foreign
+    /// canonical without SKILL.md was never one — linking to it AS-IS ships a
+    /// broken skill — so install must repair it from source instead.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_repairs_foreign_canonical_missing_skill_md() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_repair_canonical_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        // Main's canonical pre-exists but is not a valid skill install.
+        let canonical = main.join(".agents").join("skills").join("github");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::fs::write(canonical.join("notes.txt"), "junk\n").unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+
+        assert!(
+            canonical.join("SKILL.md").is_file(),
+            "an invalid foreign canonical must be repaired from source"
+        );
+        assert!(
+            !canonical.join("notes.txt").exists(),
+            "repair replaces the invalid directory wholesale"
+        );
+        let link = main_skills.join("github");
+        assert!(link.canonicalize().unwrap().join("SKILL.md").is_file());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Anchored recovery must scope the entry to the harnesses whose
+    /// artifacts RESOLVE to the canonical: a same-named copy-mode directory
+    /// for another harness is an independent install, and claiming it under
+    /// the recovered Symlink entry would let the next refresh replace the
+    /// copy with a link.
+    #[cfg(unix)]
+    #[test]
+    fn reconcile_scopes_anchored_recovery_to_resolving_harnesses() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_mixed_copy_recovery_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents").join("skills")).unwrap();
+
+        // Anchored canonical in main, referenced by the shared Claude link.
+        let canonical = main.join(".agents").join("skills").join("github");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::fs::write(canonical.join("SKILL.md"), "# github\n").unwrap();
+        std::fs::write(canonical.join(".vstack-refreshed"), "0").unwrap();
+        symlink(
+            PathBuf::from("../../.agents/skills/github"),
+            main_skills.join("github"),
+        )
+        .unwrap();
+
+        // Independent same-named copy-mode install for Cursor in the worktree.
+        let cursor_copy = wt.join(".cursor").join("rules").join("github");
+        std::fs::create_dir_all(&cursor_copy).unwrap();
+        std::fs::write(cursor_copy.join("SKILL.md"), "cursor copy\n").unwrap();
+        std::fs::write(cursor_copy.join(".vstack-refreshed"), "0").unwrap();
+
+        let mut lock = LockFile::default();
+        crate::test_util::with_project_root(&wt, || {
+            crate::config::reconcile_lock_with_disk(&mut lock, false, "source")
+        });
+
+        let entry = lock
+            .entries
+            .get("github")
+            .expect("anchored skill must be recovered");
+        assert!(
+            entry
+                .harnesses
+                .contains(&Harness::ClaudeCode.id().to_string()),
+            "the resolving harness must be recorded, got {:?}",
+            entry.harnesses
+        );
+        assert!(
+            !entry.harnesses.contains(&Harness::Cursor.id().to_string()),
+            "the independent copy install must not be claimed by the anchored entry, got {:?}",
+            entry.harnesses
+        );
+        assert_eq!(
+            std::fs::read_to_string(cursor_copy.join("SKILL.md")).unwrap(),
+            "cursor copy\n"
         );
 
         let _ = std::fs::remove_dir_all(&root);
