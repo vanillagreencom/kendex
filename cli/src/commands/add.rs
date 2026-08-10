@@ -2132,21 +2132,6 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
 
     let source_dir = resolved_source.dir.clone();
     let project_root = config::project_root();
-
-    // Preflight every selected name before the first mutation: a reserved
-    // name failing only inside an install loop would leave earlier items
-    // installed and the project config mutated with no lock entries written.
-    // The per-installer checks stay as defense in depth.
-    for name in selected_agents
-        .iter()
-        .map(|a| a.name.as_str())
-        .chain(selected_skills.iter().map(|s| s.name.as_str()))
-        .chain(selected_hooks.iter().map(|h| h.name.as_str()))
-    {
-        crate::path_safety::validate_new_item_name(name)
-            .with_context(|| format!("cannot install {name:?}"))?;
-    }
-
     let mapping = crate::mapping::MappingConfig::load(&source_dir);
     let mut auto_included_skill_names = std::collections::HashSet::new();
 
@@ -2169,6 +2154,21 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             eprintln!("Auto-installed dependent skills: {}", added.join(", "));
         }
         auto_included_skill_names.extend(added);
+    }
+
+    // Preflight every name — including auto-included skills — before the
+    // first mutation: a reserved name failing only inside an install loop
+    // would leave earlier items installed and the project config mutated with
+    // no lock entries written. The per-installer checks stay as defense in
+    // depth.
+    for name in selected_agents
+        .iter()
+        .map(|a| a.name.as_str())
+        .chain(selected_skills.iter().map(|s| s.name.as_str()))
+        .chain(selected_hooks.iter().map(|h| h.name.as_str()))
+    {
+        crate::path_safety::validate_new_item_name(name)
+            .with_context(|| format!("cannot install {name:?}"))?;
     }
     if add_writes_project_skill_root(
         global,

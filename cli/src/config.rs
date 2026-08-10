@@ -771,8 +771,14 @@ fn extract_shared_instruction_sections(path: &Path, tables: &[&str]) -> Vec<u8> 
 }
 
 /// The instruction tables whose shared `all`/`"*"` entries render into items
-/// of each kind.
-const AGENT_SHARED_TABLES: &[&str] = &["agent-launch-instructions", "agent-additional-instructions"];
+/// of each kind, including the legacy serde aliases ProjectConfig accepts
+/// (`agent-guidance`, `agent-instructions`).
+const AGENT_SHARED_TABLES: &[&str] = &[
+    "agent-launch-instructions",
+    "agent-guidance",
+    "agent-additional-instructions",
+    "agent-instructions",
+];
 const SKILL_SHARED_TABLES: &[&str] = &["skill-instructions"];
 
 /// Extract the values for a given key from a TOML file, wherever the key
@@ -999,6 +1005,11 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
                     state = fnv1a_chain(state, &shared);
                 }
             }
+            // The failure-reporting reference renders into every agent (and
+            // is installed alongside them); a release that changes only the
+            // canonical document must stale agent installs so refresh rewrites
+            // the on-disk copy.
+            state = fnv1a_chain(state, crate::agent::FAILURE_REPORTING_DOC.as_bytes());
         }
         ItemKind::Hook => {
             let file = crate::catalog::find_item_path(&source_root, entry.kind, &entry.name);
