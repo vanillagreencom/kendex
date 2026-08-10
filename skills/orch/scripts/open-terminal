@@ -58,7 +58,8 @@ Claude handoff lanes launch with the permission argument from
 $ORCH_LANE_CLAUDE_PERMISSION_ARG (default: --dangerously-skip-permissions —
 handoff is launch-only autonomy, nobody is attached to answer prompts). On
 tmux lanes the brief's delivery is verified against the pane and re-sent once
-if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass, default 15).
+if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass, default 15,
+positive integer clamped to 120).
 USAGE
 }
 
@@ -89,10 +90,34 @@ done
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { echo "Error: --harness or --cmd required" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { echo "Error: codex-app handoff requires Codex Desktop codex_app thread tools; open-terminal only launches terminal harnesses" >&2; exit 1; }
 
-# A prompting permission mode makes every launched lane stall at its first
-# tool call with nobody attached — warn loudly, but launch: the override is
-# the operator's explicit call (vstack#1173).
+# ORCH_TMUX_VERIFY_SECS feeds a per-pass sleep loop (two passes per tmux
+# lane): a runaway value hangs every lane in the launch and a non-integer
+# breaks the loop arithmetic, so anything but a positive integer is a config
+# error and oversized values are clamped to a bound that still fails fast.
+# Validated after argument parsing so --help never dies on project settings.
+if [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ || "$TMUX_VERIFY_SECS" -eq 0 ]]; then
+  echo "Error: ORCH_TMUX_VERIFY_SECS must be a positive integer (seconds), got '$TMUX_VERIFY_SECS'." >&2
+  exit 1
+fi
+if (( TMUX_VERIFY_SECS > 120 )); then
+  echo "WARNING: ORCH_TMUX_VERIFY_SECS=$TMUX_VERIFY_SECS clamped to 120 seconds per verification pass." >&2
+  TMUX_VERIFY_SECS=120
+fi
+
 if [[ "$HARNESS" == "claude" && -z "$CMD_TEMPLATE" ]]; then
+  # $CLAUDE_PERMISSION_ARG is interpolated verbatim into a shell-executed
+  # launch command (bash -lc on GUI lanes, keystrokes into the pane shell on
+  # tmux lanes) and its value comes from project [env] settings — a shell
+  # metacharacter here is arbitrary command execution at launch. Only plain
+  # flag words may pass; anything else is a config error, not a launch.
+  perm_arg_pattern='^[A-Za-z0-9._=/-]+( [A-Za-z0-9._=/-]+)*$'
+  if [[ -n "$CLAUDE_PERMISSION_ARG" && ! "$CLAUDE_PERMISSION_ARG" =~ $perm_arg_pattern ]]; then
+    echo "Error: ORCH_LANE_CLAUDE_PERMISSION_ARG='$CLAUDE_PERMISSION_ARG' contains characters outside [A-Za-z0-9._=/-] words separated by single spaces — refusing to interpolate it into a shell command." >&2
+    exit 1
+  fi
+  # A prompting permission mode makes every launched lane stall at its first
+  # tool call with nobody attached — warn loudly, but launch: the override is
+  # the operator's explicit call (vstack#1173).
   case "$CLAUDE_PERMISSION_ARG" in
     *dangerously-skip-permissions*|*bypassPermissions*|*dontAsk*) ;;
     *)
@@ -177,13 +202,19 @@ start_cmd() {
   esac
 }
 
-# The brief is delivered when it is visible in the pane on a line other than
-# the echoed launch command (the launch line contains `claude -n`, transcript
-# and composer lines never do). -J joins wrapped lines so a narrow pane cannot
-# split the brief across a line break and fake an undelivered screen.
+# Delivered means SUBMITTED, not merely present: the brief echoed in the
+# launch command (`claude -n` line) or sitting unsent in the composer's
+# │-bordered input box is not delivery. The predicate requires the brief on a
+# plain transcript line (neither of those) AND a transcript-activity marker
+# proving the TUI accepted the prompt: a ●/⏺ response bullet, a ✻/✳ working
+# spinner, or the esc-to-interrupt processing hint. -J joins wrapped lines so
+# a narrow pane cannot split the brief across a line break and fake an
+# undelivered screen.
 tmux_brief_visible() {
-  local pane="$1" brief="$2"
-  tmux capture-pane -pJ -t "$pane" 2>/dev/null | grep -vF 'claude -n' | grep -qF -- "$brief"
+  local pane="$1" brief="$2" screen
+  screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
+  printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│' | grep -qF -- "$brief" || return 1
+  printf '%s\n' "$screen" | grep -qE '●|⏺|✻|✳|esc to interrupt'
 }
 
 tmux_verify_brief() {
@@ -198,13 +229,27 @@ tmux_verify_brief() {
 
 open_tmux() {
   local dir="$1" title="$2" cmd="$3" brief="${4:-}"
+  # Called on the left of `||` at the launch loop, which suspends errexit for
+  # this whole function body — every tmux step is checked explicitly so a
+  # failed window creation or keystroke cannot fall through to a success
+  # return (most visibly on briefless lanes, whose early return would
+  # otherwise count a broken window as launched).
   [[ -n "${TMUX:-}" ]] || { echo "Error: not inside tmux" >&2; return 1; }
   local last_idx pane
-  last_idx=$(tmux list-windows -F '#{window_index}' | tail -1)
-  pane=$(tmux new-window -a -t ":${last_idx}" -n "$title" -c "$dir" -P -F '#{pane_id}')
-  tmux send-keys -t "$pane" "clear" Enter
-  tmux send-keys -t "$pane" -l "$cmd"
-  tmux send-keys -t "$pane" Enter
+  if ! last_idx=$(tmux list-windows -F '#{window_index}' | tail -1) || [[ -z "$last_idx" ]]; then
+    echo "Error: tmux list-windows failed; cannot place window '$title'" >&2
+    return 1
+  fi
+  if ! pane=$(tmux new-window -a -t ":${last_idx}" -n "$title" -c "$dir" -P -F '#{pane_id}') || [[ -z "$pane" ]]; then
+    echo "Error: tmux new-window failed for '$title'" >&2
+    return 1
+  fi
+  if ! tmux send-keys -t "$pane" "clear" Enter ||
+     ! tmux send-keys -t "$pane" -l "$cmd" ||
+     ! tmux send-keys -t "$pane" Enter; then
+    echo "Error: tmux send-keys failed launching '$title'" >&2
+    return 1
+  fi
   echo "Opened tmux window '$title' in $dir"
   [[ -n "$brief" ]] || return 0
   # Delivery verification (vstack#1173): a first-run dialog (theme / trust /
@@ -214,8 +259,10 @@ open_tmux() {
   # re-verify; if still absent, fail this lane loudly instead of reporting
   # success. Sibling of the codex kickoff fix in vstack#976.
   tmux_verify_brief "$pane" "$brief" && return 0
-  tmux send-keys -t "$pane" -l "$brief"
-  tmux send-keys -t "$pane" Enter
+  if ! tmux send-keys -t "$pane" -l "$brief" || ! tmux send-keys -t "$pane" Enter; then
+    echo "Error: tmux send-keys failed re-delivering the brief to '$title'" >&2
+    return 1
+  fi
   if tmux_verify_brief "$pane" "$brief"; then
     echo "Re-delivered brief to '$title' (initial CLI-arg prompt was consumed at boot)"
     return 0

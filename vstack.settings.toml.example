@@ -73,6 +73,11 @@ ORCH_LANE_CLAUDE_PERMISSION_ARG = "--dangerously-skip-permissions"
 # "--permission-mode manual") voids handoff autonomy; open-terminal warns
 # loudly at launch but still launches.
 
+ORCH_TMUX_VERIFY_SECS = "15"
+# Used by: orch (`open-terminal`). Bounded seconds per brief-delivery
+# verification pass on tmux claude handoff lanes (one initial pass plus one
+# after the single re-send). Positive integer; values over 120 are clamped.
+
 REVIEWER_SLOT_BUDGET = "0"
 # Used by: orch (`review-pr` / `review` / `review-codebase`). Total concurrent
 # agent-session budget of the harness runtime, counting the primary

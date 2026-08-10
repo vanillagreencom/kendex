@@ -88,6 +88,12 @@ EOF
 cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
+# $OT_TMUX_FAIL names one tmux subcommand that fails (after logging), so a
+# case can prove open-terminal checks each tmux step instead of falling
+# through to a success return.
+if [[ -n "${OT_TMUX_FAIL:-}" && "${1:-}" == "$OT_TMUX_FAIL" ]]; then
+  exit 1
+fi
 case "${1:-}" in
   list-windows) echo "1" ;;
   new-window) echo "%7" ;;
@@ -171,9 +177,18 @@ ECHO_SCREEN="\$ claude -n CC-737 --model 'opus[1m]' --effort max --dangerously-s
 ╭─ Enable browser integration? ─╮
 > "
 # Pane screen after the brief reached the TUI: the brief is visible on its own
-# transcript line, distinct from the echoed launch command.
+# transcript line, distinct from the echoed launch command, and the response
+# has begun (● transcript marker).
 DELIVERED_SCREEN="> /orch start CC-737
 ● Reading workflows/start.md"
+# Pane screen where the brief sits UNSENT in the composer's │-bordered input
+# box — visible outside the echoed launch command, but with no transcript
+# activity anywhere. Delivery means SUBMITTED, so this must count as
+# UNDELIVERED.
+COMPOSER_SCREEN="╭──────────────────────────────────────────╮
+│ > /orch start CC-737                      │
+╰──────────────────────────────────────────╯
+  ? for shortcuts"
 
 echo "=== open-terminal claude handoff: permission mode ==="
 
@@ -304,6 +319,114 @@ assert_contains "$c7_err" "handoff lane(s) failed" "summary reports the failed l
 assert_not_contains "$c7_out" "Done: launched 1" "a failed lane is not counted as launched"
 c7_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG")"
 assert_eq "$c7_resends" "1" "re-send is attempted exactly once before failing"
+
+# Case 8: the brief sitting unsent in the composer box is NOT delivery —
+# submission evidence (transcript activity) is required, so the lane re-sends
+# once and then fails when the screen never advances past the composer.
+new_tmux_state c8
+printf '%s\n' "$COMPOSER_SCREEN" > "$OT_TMUX_CAPTURES/1"
+set +e
+c8_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c8.err")
+c8_code=$?
+set -e
+assert_eq "$c8_code" "1" "composer-only screen exits nonzero"
+assert_contains "$(cat "$TMP_ROOT/c8.err")" "brief undelivered to 'CC-737'" \
+  "unsubmitted composer text is reported undelivered"
+# `|| true` keeps set -e alive when the buggy no-re-send path yields count 0
+# (grep -c still prints the 0 but exits 1).
+c8_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG" || true)"
+assert_eq "$c8_resends" "1" "composer-only screen still gets exactly one re-send"
+
+echo
+echo "=== open-terminal claude handoff: tmux failure detection ==="
+
+# Case 9: new-window fails — the lane must fail instead of verifying (and
+# counting) a pane that was never created.
+new_tmux_state c9
+printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
+set +e
+c9_out=$(TMUX=stub,1,0 OT_TMUX_FAIL=new-window ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c9.err")
+c9_code=$?
+set -e
+assert_eq "$c9_code" "1" "new-window failure exits nonzero"
+assert_contains "$(cat "$TMP_ROOT/c9.err")" "handoff lane(s) failed" \
+  "new-window failure counts the lane as failed"
+assert_not_contains "$c9_out" "Done: launched 1" \
+  "a window that was never created is not counted as launched"
+
+# Case 10: send-keys fails on a briefless (codex) lane — the empty-brief
+# early return must not count a window whose launch keystrokes failed.
+new_tmux_state c10
+set +e
+c10_out=$(TMUX=stub,1,0 OT_TMUX_FAIL=send-keys ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness codex cc-737 2>"$TMP_ROOT/c10.err")
+c10_code=$?
+set -e
+assert_eq "$c10_code" "1" "send-keys failure exits nonzero on a briefless lane"
+assert_not_contains "$c10_out" "Done: launched 1" \
+  "a lane whose launch keystrokes failed is not counted as launched"
+
+echo
+echo "=== open-terminal claude handoff: config validation ==="
+
+# Case 11: a permission arg carrying shell metacharacters is rejected before
+# anything launches — the value comes from project [env] settings and is
+# interpolated into a shell-executed launch command, so it must never pass
+# through unvalidated.
+REPO_C="$TMP_ROOT/repo-c"
+OT_C="$(make_ot_repo "$REPO_C" "[env]
+ORCH_LANE_CLAUDE_PERMISSION_ARG = \"--flag; touch $TMP_ROOT/pwned\"")"
+CAP11="$TMP_ROOT/cap11"
+set +e
+c11_out=$(OT_CAPTURE="$CAP11" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_C" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c11.err")
+c11_code=$?
+set -e
+assert_eq "$c11_code" "1" "metacharacter permission arg refuses to launch"
+assert_contains "$(cat "$TMP_ROOT/c11.err")" "ORCH_LANE_CLAUDE_PERMISSION_ARG" \
+  "rejection names the offending setting"
+if [[ -e "$TMP_ROOT/pwned" || -s "$CAP11" ]]; then
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  rejected permission arg still reached a shell or terminal launch\n'
+else
+  PASS=$((PASS + 1))
+  printf '  ok    nothing was launched with the rejected value\n'
+fi
+
+# Case 12: non-integer ORCH_TMUX_VERIFY_SECS is a clear config error, not a
+# zero-pass verify loop misreported as a delivery failure.
+new_tmux_state c12
+printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
+set +e
+c12_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c12.err")
+c12_code=$?
+set -e
+assert_eq "$c12_code" "1" "non-integer verify secs exits nonzero"
+assert_contains "$(cat "$TMP_ROOT/c12.err")" "ORCH_TMUX_VERIFY_SECS" \
+  "verify-secs rejection names the setting"
+assert_not_contains "$(cat "$TMP_ROOT/c12.err")" "brief undelivered" \
+  "config error is not misreported as a delivery failure"
+
+# Case 13: zero is rejected the same way (a zero-second loop never verifies).
+new_tmux_state c13
+printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
+set +e
+c13_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=0 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13.err")
+c13_code=$?
+set -e
+assert_eq "$c13_code" "1" "zero verify secs exits nonzero"
+assert_contains "$(cat "$TMP_ROOT/c13.err")" "ORCH_TMUX_VERIFY_SECS" \
+  "zero rejection names the setting"
+
+# Case 14: a runaway value is clamped loudly (the lane still verifies)
+# instead of hanging the launch for hours.
+new_tmux_state c14
+printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
+set +e
+c14_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=99999 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c14.err")
+c14_code=$?
+set -e
+assert_eq "$c14_code" "0" "clamped verify secs still launches"
+assert_contains "$(cat "$TMP_ROOT/c14.err")" "clamped to 120" \
+  "runaway verify secs is clamped loudly"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
