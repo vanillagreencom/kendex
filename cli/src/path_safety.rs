@@ -202,6 +202,33 @@ pub(crate) fn ensure_agents_dir_within_project(project_root: &Path) -> Result<()
             agents_dir.display()
         );
     }
+    // Same boundary one level down: a real in-repo .agents whose skills
+    // subdir symlinks outside the repository would otherwise pass, and every
+    // skill write goes through .agents/skills.
+    let skills_dir = agents_dir.join("skills");
+    match std::fs::symlink_metadata(&skills_dir) {
+        // Missing is fine: create_dir_all will make it inside the project.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => bail!("failed to inspect project .agents/skills directory: {err}"),
+        Ok(_) => {}
+    }
+    let skills_dir_canon = skills_dir
+        .canonicalize()
+        .map_err(|err| anyhow::anyhow!("failed to resolve .agents/skills directory: {err}"))?;
+    if !skills_dir_canon.starts_with(&project_root_canon)
+        && !is_same_repository_worktree(&project_root_canon, &skills_dir_canon)
+    {
+        bail!(
+            "refusing .agents/skills path outside project root: {}",
+            skills_dir.display()
+        );
+    }
+    if !skills_dir_canon.is_dir() {
+        bail!(
+            "project .agents/skills path is not a directory: {}",
+            skills_dir.display()
+        );
+    }
     Ok(())
 }
 

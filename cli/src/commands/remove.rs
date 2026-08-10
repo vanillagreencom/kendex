@@ -73,6 +73,7 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
                 crate::pi_extension::remove_pi_extension(name, global)
             } else {
                 installer::remove_item(name, kind, &harnesses, global)
+                    .map(|outcome| outcome.removed)
             };
             match remove_result {
                 Ok(paths) => removed.extend(paths),

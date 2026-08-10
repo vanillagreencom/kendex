@@ -1127,9 +1127,20 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
                 continue;
             };
             if let Some(sharing) = &gate {
-                let referenced = sharing.iter().any(|harness| {
-                    let link = harness.skills_dir(false).join(name);
-                    link.exists() || link.is_symlink()
+                // A reference must RESOLVE to this canonical dir. A
+                // same-named copy-mode dir in a harness dir is that
+                // harness's own install, not a reference — recovering
+                // through it would re-type the skill as symlink-mode and
+                // let the next refresh replace the copy.
+                let canonical = path.canonicalize().ok();
+                let referenced = canonical.is_some_and(|canonical| {
+                    sharing.iter().any(|harness| {
+                        harness
+                            .skills_dir(false)
+                            .join(name)
+                            .canonicalize()
+                            .is_ok_and(|resolved| resolved == canonical)
+                    })
                 });
                 if !referenced {
                     continue;

@@ -232,6 +232,16 @@ pub fn install_skill(
     })
 }
 
+/// What [`remove_item`] did and deliberately did not do.
+#[derive(Debug)]
+pub struct RemoveOutcome {
+    /// Paths deleted from disk.
+    pub removed: Vec<PathBuf>,
+    /// Anchored canonical copies left in place (noted on stderr) for their
+    /// own checkout's removal to collect.
+    pub anchored_left: Vec<PathBuf>,
+}
+
 /// Remove an installed item.
 ///
 /// Agent/skill deletion and hook cleanup are attempted for every requested
@@ -242,13 +252,43 @@ pub fn remove_item(
     kind: Option<ItemKind>,
     harnesses: &[Harness],
     global: bool,
-) -> Result<Vec<PathBuf>> {
+) -> Result<RemoveOutcome> {
     validate_item_name(name)?;
     let mut removed = Vec::new();
+    let mut anchored_left = Vec::new();
     let mut cleanup_errors = Vec::new();
     let remove_agents = kind.is_none_or(|kind| kind == ItemKind::Agent);
     let remove_skills = kind.is_none_or(|kind| kind == ItemKind::Skill);
     let remove_hooks = kind.is_none_or(|kind| kind == ItemKind::Hook);
+
+    // Resolve anchored canonical homes for every requested dest BEFORE any
+    // unlinking: removal destroys the evidence it needs (deleting a
+    // child-level link makes the parent look purely local), so anchored-side
+    // bookkeeping must act on a snapshot.
+    let anchored_canonicals: Vec<PathBuf> = if global || !remove_skills {
+        Vec::new()
+    } else {
+        let mut canonicals: Vec<PathBuf> = Vec::new();
+        let mut probed: Vec<PathBuf> = Vec::new();
+        for harness in harnesses {
+            let dest = harness.skills_dir(false).join(name);
+            if probed.contains(&dest) {
+                continue;
+            }
+            probed.push(dest.clone());
+            if let Some(home) = skill_link_home(&dest) {
+                let canonical = home
+                    .checkout_root
+                    .join(".agents")
+                    .join("skills")
+                    .join(name);
+                if !canonicals.contains(&canonical) {
+                    canonicals.push(canonical);
+                }
+            }
+        }
+        canonicals
+    };
 
     for harness in harnesses {
         // Agent files
@@ -334,15 +374,13 @@ pub fn remove_item(
         // IS the canonical dir itself, indistinguishable on disk from a
         // leftover. Never delete it from a foreign worktree; that checkout's
         // own remove collects it.
-        if !global {
-            for (root, _) in anchored_canonical_skill_roots(harnesses) {
-                let anchored = root.join(name);
-                if anchored.exists() {
-                    eprintln!(
-                        "  Note: leaving canonical copy {} in place — it may back that checkout's own installs; remove it from that checkout to delete it (VST-195)",
-                        anchored.display()
-                    );
-                }
+        for anchored in &anchored_canonicals {
+            if anchored.exists() {
+                eprintln!(
+                    "  Note: leaving canonical copy {} in place — it may back that checkout's own installs; remove it from that checkout to delete it (VST-195)",
+                    anchored.display()
+                );
+                anchored_left.push(anchored.clone());
             }
         }
     }
@@ -351,7 +389,10 @@ pub fn remove_item(
         anyhow::bail!(cleanup_errors.join("; "));
     }
 
-    Ok(removed)
+    Ok(RemoveOutcome {
+        removed,
+        anchored_left,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -814,7 +855,9 @@ mod tests {
         std::fs::write(&legacy_agent, "# all\n").unwrap();
 
         let removed = crate::test_util::with_project_root(&project, || {
-            remove_item("all", Some(ItemKind::Agent), &[Harness::ClaudeCode], false).unwrap()
+            remove_item("all", Some(ItemKind::Agent), &[Harness::ClaudeCode], false)
+                .unwrap()
+                .removed
         });
         assert!(removed.contains(&legacy_agent), "removed: {removed:?}");
         assert!(!legacy_agent.exists());
@@ -1209,6 +1252,184 @@ mod tests {
         assert!(
             main.join(".agents/skills/github/SKILL.md").is_file(),
             "main checkout's canonical copy must survive reconciliation"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Partial-sharing layout: the only evidence of the anchor is the child
+    /// link removal is about to delete, so the anchor must be resolved
+    /// BEFORE any unlinking — a post-unlink probe sees a purely local parent
+    /// and the anchored-side bookkeeping (the surviving-copy note) misfires.
+    #[cfg(unix)]
+    #[test]
+    fn remove_item_snapshots_child_link_anchor_before_unlinking() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_remove_snapshot_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_copy = main.join(".agents").join("skills").join("github");
+        std::fs::create_dir_all(&main_copy).unwrap();
+        std::fs::write(main_copy.join("SKILL.md"), "# github\n").unwrap();
+        std::fs::write(main_copy.join(".vstack-refreshed"), "0").unwrap();
+        std::fs::create_dir_all(wt.join(".agents").join("skills")).unwrap();
+        let child = wt.join(".agents").join("skills").join("github");
+        symlink(&main_copy, &child).unwrap();
+
+        let outcome = crate::test_util::with_project_root(&wt, || {
+            remove_item("github", Some(ItemKind::Skill), &[Harness::Codex], false).unwrap()
+        });
+
+        assert!(
+            std::fs::symlink_metadata(&child).is_err(),
+            "the child link must be removed"
+        );
+        assert!(
+            main_copy.join("SKILL.md").is_file(),
+            "main's shared copy must survive"
+        );
+        let expected = main
+            .canonicalize()
+            .unwrap()
+            .join(".agents")
+            .join("skills")
+            .join("github");
+        assert!(
+            outcome.anchored_left.contains(&expected),
+            "the anchor must be resolved before unlinking destroys the evidence, got {:?}",
+            outcome.anchored_left
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Containment must extend to `.agents/skills`: a real in-repo `.agents`
+    /// whose `skills` subdir symlinks OUTSIDE the repository must fail the
+    /// anchored-side validation, or install deletes/overwrites the external
+    /// directory through it.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_never_writes_through_an_escaping_agents_skills_subdir() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_escaping_skills_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+        // Main's .agents is a REAL in-repo dir; only its skills subdir
+        // escapes the repository.
+        std::fs::create_dir_all(main.join(".agents")).unwrap();
+        symlink(&outside, main.join(".agents").join("skills")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+
+        assert_eq!(
+            std::fs::read_dir(&outside).unwrap().count(),
+            0,
+            "no write may follow the escaping .agents/skills"
+        );
+        assert!(
+            wt.join(".agents/skills/github/SKILL.md").is_file(),
+            "install must fall back to the unanchored worktree canonical"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A reference must RESOLVE to the canonical dir it gates: a same-named
+    /// COPY-mode harness dir is that harness's own install, not a reference
+    /// to the canonical — recovering through it would re-type the skill as
+    /// symlink-mode and let the next refresh replace the copy.
+    #[cfg(unix)]
+    #[test]
+    fn reconcile_does_not_count_copy_mode_artifact_as_canonical_reference() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_copy_mode_gate_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        // Canonical copy backing main's own Codex install.
+        let canonical = main.join(".agents").join("skills").join("github");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::fs::write(canonical.join("SKILL.md"), "# github\n").unwrap();
+        std::fs::write(canonical.join(".vstack-refreshed"), "0").unwrap();
+        // Same-named Claude COPY-mode install: a real dir, not a symlink.
+        let copy_mode = main_skills.join("github");
+        std::fs::create_dir_all(&copy_mode).unwrap();
+        std::fs::write(copy_mode.join("SKILL.md"), "# github copy\n").unwrap();
+        std::fs::write(copy_mode.join(".vstack-refreshed"), "0").unwrap();
+
+        let mut lock = LockFile::default();
+        crate::test_util::with_project_root(&wt, || {
+            crate::config::reconcile_lock_with_disk(&mut lock, false, "source")
+        });
+
+        assert!(
+            !lock.entries.contains_key("github"),
+            "a copy-mode artifact must not count as a reference to the canonical"
+        );
+        assert!(
+            std::fs::symlink_metadata(&copy_mode)
+                .unwrap()
+                .file_type()
+                .is_dir(),
+            "the copy-mode install must be left untouched"
         );
 
         let _ = std::fs::remove_dir_all(&root);
