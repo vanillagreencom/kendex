@@ -142,5 +142,26 @@ echo "=== usage errors ==="
 run_raw SIZE_RATCHET_THRESHOLD=10 -- --no-such-flag || true
 [ "$RC" -eq 2 ] && ok "unknown flag is exit 2" || bad "unknown flag is exit 2" "rc=$RC out=$OUT"
 
+echo "=== env-file layering: .env.local > settings > .vstack > .env ==="
+new_repo layering
+mkfile f.txt 20
+git -C "$R" add -A
+printf 'SIZE_RATCHET_THRESHOLD=7\n' > "$R/.env"
+run_raw || true
+case "$OUT" in *"threshold 7"*) ok "SIZE_RATCHET_THRESHOLD from .env applies" ;; *) bad ".env layering" "rc=$RC out=$OUT" ;; esac
+printf 'SIZE_RATCHET_THRESHOLD = "9"\n' > "$R/vstack.settings.toml"
+run_raw || true
+case "$OUT" in *"threshold 9"*) ok "vstack.settings.toml beats .env" ;; *) bad "settings-over-.env layering" "rc=$RC out=$OUT" ;; esac
+printf 'SIZE_RATCHET_THRESHOLD="11"\n' > "$R/.env.local"
+run_raw || true
+case "$OUT" in *"threshold 11"*) ok ".env.local beats vstack.settings.toml (quotes stripped)" ;; *) bad ".env.local layering" "rc=$RC out=$OUT" ;; esac
+
+echo "=== option-like configured paths ==="
+new_repo optpath
+mkfile f.txt 20
+git -C "$R" add -A
+run_raw SIZE_RATCHET_BASELINE=-b || true
+if [ "$RC" -eq 2 ]; then ok "option-like baseline path refuses as config (no cut/sort option injection)"; else bad "option-like baseline path" "rc=$RC out=$OUT"; fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

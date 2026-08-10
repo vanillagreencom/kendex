@@ -11,10 +11,12 @@
 # family):
 #   1. explicit environment — a SET variable wins even when set to the empty
 #      string, so a caller can force "explicitly empty";
-#   2. the repo's committed vstack.settings.toml (the file's sole uncommented
-#      `KEY = "value"` assignment; the file path can be overridden with
-#      SIZE_RATCHET_SETTINGS_FILE, e.g. /dev/null to force built-in defaults);
-#   3. the built-in default passed by the caller.
+#   2. .env.local (KEY=value, quotes optional — parsed, never sourced);
+#   3. the repo's committed vstack.settings.toml (sole uncommented
+#      `KEY = "value"` assignment; path overridable with
+#      SIZE_RATCHET_SETTINGS_FILE, e.g. /dev/null), then .vstack/settings.toml;
+#   4. .env (same shape);
+#   5. the built-in default passed by the caller.
 #
 # The parser reads flat single-line basic-string TOML assignments only —
 # exactly the shape vstack.settings.toml [env] blocks use.
@@ -48,7 +50,22 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     printf '%s' "${!name}"
     return 0
   fi
-  file="${SIZE_RATCHET_SETTINGS_FILE:-vstack.settings.toml}"
+  # Env-file overrides (standard project layering: .env.local beats the
+  # committed settings, .env is the base) — first matching KEY= line wins,
+  # optional surrounding quotes stripped. Parsed, never sourced.
+  if [ -f ".env.local" ]; then
+    line="$(grep -E -- "^[[:space:]]*${name}=" .env.local | head -n 1 || true)"
+    if [ -n "$line" ]; then
+      val="${line#*=}"
+      case "$val" in
+        \"*\") val="${val%\"}"; val="${val#\"}" ;;
+        \'*\') val="${val%\'}"; val="${val#\'}" ;;
+      esac
+      printf '%s' "$val"
+      return 0
+    fi
+  fi
+  for file in "${SIZE_RATCHET_SETTINGS_FILE:-vstack.settings.toml}" ".vstack/settings.toml"; do
   if [ -f "$file" ]; then
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment and must override the built-in default, exactly like a
@@ -78,6 +95,19 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
         return 1
       fi
       val="$(printf '%s\n' "$line" | sed -n "s/^[[:space:]]*${name}[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*\$/\1/p")"
+      printf '%s' "$val"
+      return 0
+    fi
+  fi
+  done
+  if [ -f ".env" ]; then
+    line="$(grep -E -- "^[[:space:]]*${name}=" .env | head -n 1 || true)"
+    if [ -n "$line" ]; then
+      val="${line#*=}"
+      case "$val" in
+        \"*\") val="${val%\"}"; val="${val#\"}" ;;
+        \'*\') val="${val%\'}"; val="${val#\'}" ;;
+      esac
       printf '%s' "$val"
       return 0
     fi

@@ -105,6 +105,11 @@ else
 fi
 [ -n "$BASELINE_FILE" ] || config_error "baseline path resolved empty"
 [ -n "$EXCLUDES_FILE" ] || config_error "excludes path resolved empty"
+# A path beginning with '-' would read as an option to the line utilities
+# that touch it — refuse it as configuration rather than trusting every
+# call site's `--` guard forever.
+case "$BASELINE_FILE" in -*) config_error "baseline path must not begin with '-': $BASELINE_FILE" ;; esac
+case "$EXCLUDES_FILE" in -*) config_error "excludes path must not begin with '-': $EXCLUDES_FILE" ;; esac
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -142,20 +147,20 @@ is_excluded() { # PATH — 0 when some exclusion glob matches the full path
 
 # --- baseline: path<TAB>lines, LC_ALL=C sorted, unique paths -----------------
 if [ -f "$BASELINE_FILE" ]; then
-  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" "$BASELINE_FILE" || true)"
+  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$BASELINE_FILE" || true)"
   if [ -n "$bad_rows" ]; then
     printf '%s\n' "$bad_rows" >&2
     config_error "$BASELINE_FILE: malformed row(s) above (expected 'path<TAB>lines' with a positive line count)"
   fi
-  if ! LC_ALL=C sort -c "$BASELINE_FILE" 2>/dev/null; then
+  if ! LC_ALL=C sort -c -- "$BASELINE_FILE" 2>/dev/null; then
     config_error "$BASELINE_FILE: rows must be LC_ALL=C sorted (LC_ALL=C sort -o $BASELINE_FILE $BASELINE_FILE)"
   fi
-  dup_paths="$(cut -f1 "$BASELINE_FILE" | LC_ALL=C uniq -d)"
+  dup_paths="$(cut -f1 -- "$BASELINE_FILE" | LC_ALL=C uniq -d)"
   if [ -n "$dup_paths" ]; then
     printf '%s\n' "$dup_paths" >&2
     config_error "$BASELINE_FILE: duplicate path row(s) above"
   fi
-  cp "$BASELINE_FILE" "$TMP/baseline.tsv"
+  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
 else
   : >"$TMP/baseline.tsv"
 fi
@@ -281,9 +286,17 @@ if [ "$MODE" = "update" ]; then
     }
   ' "$TMP/baseline.tsv" "$TMP/absent.lst" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
   if [ -f "$BASELINE_FILE" ]; then
-    mv "$TMP/baseline.new" "$BASELINE_FILE"
-    cp "$BASELINE_FILE" "$TMP/baseline.tsv"
-    echo "size-ratchet --update: baseline tightened at $BASELINE_FILE ($(grep -c . "$BASELINE_FILE" || true) row(s))"
+    mv -- "$TMP/baseline.new" "$BASELINE_FILE"
+    cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
+    echo "size-ratchet --update: baseline tightened at $BASELINE_FILE ($(grep -c . -- "$BASELINE_FILE" || true) row(s))"
+    # The baseline file is itself a tracked file whose length just changed;
+    # refresh its counts row so the post-update verdict sees reality, not
+    # the pre-rewrite length.
+    if grep -q "^${BASELINE_FILE}${TAB}" -- "$TMP/counts.tsv"; then
+      new_n="$(wc -l <"$BASELINE_FILE" | tr -d ' ')"
+      awk -F'\t' -v OFS='\t' -v p="$BASELINE_FILE" -v n="$new_n" '$1 == p { print p, n; next } { print }' "$TMP/counts.tsv" >"$TMP/counts.rewrite"
+      mv "$TMP/counts.rewrite" "$TMP/counts.tsv"
+    fi
   else
     # No baseline exists and --update never adds rows, so there is nothing
     # to write; fall through to the plain check.
