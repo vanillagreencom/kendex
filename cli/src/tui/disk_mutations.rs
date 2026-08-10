@@ -422,7 +422,7 @@ fn generate_moved_agents(
     let mut moved_names = Vec::new();
 
     for intent in intents {
-        if let Err(err) = crate::path_safety::validate_item_name(&intent.name) {
+        if let Err(err) = crate::path_safety::validate_new_item_name(&intent.name) {
             report.fail(&intent.name, format!("invalid agent name: {err:#}"));
             continue;
         }

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 mod hooks;
 
-pub(crate) use crate::path_safety::validate_item_name;
+pub(crate) use crate::path_safety::{validate_item_name, validate_new_item_name};
 pub(crate) use hooks::{
     codex_event_for, codex_root, cursor_hook_rule_contents, cursor_hook_rule_path,
     install_codex_fallback_hooks_for_agents, install_hook, migrate_codex_config,
@@ -37,7 +37,7 @@ pub fn install_agent(
     hooks: &[crate::hook::Hook],
     extras: &crate::agent::AgentExtras,
 ) -> Result<InstallResult> {
-    validate_item_name(&agent.name)?;
+    validate_new_item_name(&agent.name)?;
     let output_path = harness.generate_agent(agent, global, skills, hooks, extras)?;
 
     let detail = format!(
@@ -70,7 +70,7 @@ pub fn install_skill(
     method: InstallMethod,
     instructions: Option<&str>,
 ) -> Result<InstallResult> {
-    validate_item_name(&skill.name)?;
+    validate_new_item_name(&skill.name)?;
     let dest = harness.install_skill(skill, global)?;
 
     // Canonical location: .agents/skills/<name>/ (universal, like Vercel npx skills)
@@ -572,6 +572,76 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_item_accepts_reserved_name_for_legacy_installs() {
+        // `all` is reserved for NEW installs only; a project that installed an
+        // item named `all` under a previous release must still be able to
+        // remove it.
+        let root = std::env::temp_dir().join(format!(
+            "vstack_remove_reserved_name_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let project = root.join("project");
+        let legacy_agent = project.join(".claude").join("agents").join("all.md");
+        std::fs::create_dir_all(legacy_agent.parent().unwrap()).unwrap();
+        std::fs::write(&legacy_agent, "# all\n").unwrap();
+
+        let removed = crate::test_util::with_project_root(&project, || {
+            remove_item("all", Some(ItemKind::Agent), &[Harness::ClaudeCode], false).unwrap()
+        });
+        assert!(removed.contains(&legacy_agent), "removed: {removed:?}");
+        assert!(!legacy_agent.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_rejects_reserved_name() {
+        let agent = Agent {
+            name: "all".into(),
+            description: "reserved".into(),
+            model: "sonnet".into(),
+            role: Default::default(),
+            color: None,
+            effort: None,
+            body: String::new(),
+            source_path: PathBuf::new(),
+        };
+        let err = install_agent(
+            &agent,
+            Harness::ClaudeCode,
+            false,
+            &[],
+            &[],
+            &crate::agent::AgentExtras::default(),
+        )
+        .err()
+        .expect("install_agent must reject the reserved name");
+        assert!(err.to_string().contains("reserved"), "got: {err}");
+
+        let skill = Skill {
+            name: "all".into(),
+            description: "reserved".into(),
+            license: None,
+            user_invocable: None,
+            dependencies: None,
+            body: String::new(),
+            source_dir: PathBuf::new(),
+            resolved_deps: Vec::new(),
+        };
+        let err = install_skill(
+            &skill,
+            Harness::ClaudeCode,
+            false,
+            InstallMethod::Copy,
+            None,
+        )
+        .err()
+        .expect("install_skill must reject the reserved name");
+        assert!(err.to_string().contains("reserved"), "got: {err}");
     }
 
     #[test]

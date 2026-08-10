@@ -273,7 +273,7 @@ pub fn refresh_items_in_scope(
         .filter(|(_, e)| e.kind == ItemKind::Agent)
         .filter(|(n, _)| pass(n))
     {
-        if let Err(err) = crate::path_safety::validate_item_name(name) {
+        if let Err(err) = crate::path_safety::validate_new_item_name(name) {
             stats.fail(name, None, format!("invalid agent name: {err:#}"));
             continue;
         }
@@ -655,7 +655,7 @@ fn link_relocated_project_skills(
         let Some(name) = source.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if !pass(name) || crate::path_safety::validate_item_name(name).is_err() {
+        if !pass(name) || crate::path_safety::validate_new_item_name(name).is_err() {
             continue;
         }
         if !source.join("SKILL.md").is_file() {
@@ -844,7 +844,7 @@ fn refresh_project_owned_skill_instructions(
         if !pass(name) || lock.entries.contains_key(name) {
             continue;
         }
-        if crate::path_safety::validate_item_name(name).is_err() {
+        if crate::path_safety::validate_new_item_name(name).is_err() {
             continue;
         }
         let skill_dir_canon = match skill_dir.canonicalize() {

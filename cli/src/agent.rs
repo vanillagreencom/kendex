@@ -536,26 +536,35 @@ pub fn resolve_failure_reference(agent: &Agent, global: bool) -> Agent {
 
 /// Install or refresh the canonical failure-reporting reference for a scope.
 /// Idempotent: only writes when the on-disk copy is missing or stale.
-pub fn install_failure_reporting_reference(global: bool) -> Result<()> {
+///
+/// Returns the scope generated bodies must point at: normally the requested
+/// scope, but a project `.agents` that resolves outside the project falls
+/// back to the global copy — the global config dir cannot be redirected by a
+/// project symlink — so the substituted path never dangles.
+pub fn install_failure_reporting_reference(global: bool) -> Result<bool> {
     // The project-scope reference lands under `.agents`; a symlinked `.agents`
     // ancestor must not let the write (or the freshness read) escape the
-    // project, no matter which command path triggered generation. Skip rather
-    // than fail: installs that never write through `.agents` (e.g. claude-code
-    // copy-method) stay allowed with an escaped `.agents`, and only the
-    // `.agents`-routed write is withheld.
+    // project, no matter which command path triggered generation. Fall back
+    // rather than fail: installs that never write through `.agents` (e.g.
+    // claude-code copy-method) stay allowed with an escaped `.agents`, and
+    // only the `.agents`-routed write is withheld.
     if !global
         && let Err(err) =
             crate::path_safety::ensure_agents_dir_within_project(&crate::config::project_root())
     {
-        eprintln!("Warning: skipping skill-failure reference install: {err}");
-        return Ok(());
+        eprintln!(
+            "Warning: skipping project skill-failure reference install ({err}); \
+             generated agents will point at the global copy instead"
+        );
+        return install_failure_reporting_reference(true);
     }
     let path = failure_reporting_reference_path(global);
     if std::fs::read_to_string(&path).is_ok_and(|existing| existing == FAILURE_REPORTING_DOC) {
-        return Ok(());
+        return Ok(global);
     }
     crate::path_safety::write_file_no_follow(&path, FAILURE_REPORTING_DOC)
-        .with_context(|| format!("installing {}", path.display()))
+        .with_context(|| format!("installing {}", path.display()))?;
+    Ok(global)
 }
 
 /// Emit the load-skills preamble injected into every generated agent body.

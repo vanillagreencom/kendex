@@ -107,8 +107,9 @@ fn default_hook_agents() -> CustomHookTarget {
 
 /// Key in `[agent-launch-instructions]`, `[agent-additional-instructions]`,
 /// and `[skill-instructions]` whose value applies to every agent/skill.
-/// `"*"` is accepted as an alias. The name is reserved: no installable item
-/// may be called `all` (enforced in `path_safety::validate_item_name`).
+/// `"*"` is accepted as an alias. The name is reserved for new installs
+/// (enforced in `path_safety::validate_new_item_name`); removal accepts it so
+/// legacy items installed before the reservation stay deletable.
 pub const SHARED_INSTRUCTIONS_KEY: &str = "all";
 const SHARED_INSTRUCTIONS_KEY_ALIAS: &str = "*";
 
@@ -417,17 +418,33 @@ impl ProjectConfig {
 
     /// Value-comparison fallback for files generated before the shared region
     /// was marked: strip the currently configured shared value as a prefix.
+    ///
+    /// A merged render always separates shared from specific with a blank
+    /// line, so the prefix is only stripped when the remainder starts at that
+    /// boundary (or the text equals the shared value exactly). Authored text
+    /// that merely starts with the shared value — shared "Run tests" against
+    /// "Run tests before X" — passes through untouched.
     pub fn strip_shared_prefix<'a>(shared: Option<&str>, extracted: &'a str) -> Option<&'a str> {
         let Some(shared) = shared.map(str::trim).filter(|s| !s.is_empty()) else {
             return Some(extracted);
         };
-        match extracted.trim().strip_prefix(shared) {
-            Some(rest) => {
-                let rest = rest.trim();
-                (!rest.is_empty()).then_some(rest)
-            }
-            None => Some(extracted),
+        let trimmed = extracted.trim();
+        if trimmed == shared {
+            return None;
         }
+        if let Some(rest) = trimmed.strip_prefix(shared) {
+            let blank_line_boundary = rest
+                .chars()
+                .take_while(|c| c.is_whitespace())
+                .filter(|&c| c == '\n')
+                .count()
+                >= 2;
+            if blank_line_boundary {
+                let rest = rest.trim();
+                return (!rest.is_empty()).then_some(rest);
+            }
+        }
+        Some(extracted)
     }
 
     /// Get custom hooks that apply to a specific agent, as CustomHookEntry for agent frontmatter
@@ -3180,6 +3197,32 @@ trading-design = "Dark theme."
         assert_eq!(
             ProjectConfig::strip_shared_prefix(None, "anything"),
             Some("anything")
+        );
+    }
+
+    #[test]
+    fn strip_shared_prefix_requires_blank_line_boundary() {
+        // Authored text that merely STARTS with the shared value is not a
+        // merged render and must pass through unmodified — stripping would
+        // corrupt "Run tests before X" into "before X".
+        assert_eq!(
+            ProjectConfig::strip_shared_prefix(Some("Run tests"), "Run tests before X"),
+            Some("Run tests before X")
+        );
+        // A single newline is not the merged-render blank-line boundary.
+        assert_eq!(
+            ProjectConfig::strip_shared_prefix(Some("Run tests"), "Run tests\nbefore X"),
+            Some("Run tests\nbefore X")
+        );
+        // Blank line with interior spaces still counts as the boundary.
+        assert_eq!(
+            ProjectConfig::strip_shared_prefix(Some("Run tests"), "Run tests\n  \nmine"),
+            Some("mine")
+        );
+        // Exact equality (whitespace-trimmed) strips to None.
+        assert_eq!(
+            ProjectConfig::strip_shared_prefix(Some("Run tests"), "  Run tests\n"),
+            None
         );
     }
 

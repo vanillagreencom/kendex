@@ -137,7 +137,7 @@ pub fn install_hook(
     global: bool,
     agents: &[Agent],
 ) -> Result<String> {
-    validate_item_name(&hook.name)?;
+    crate::path_safety::validate_new_item_name(&hook.name)?;
     if !hook.applies_to(harness.id()) {
         return Ok(format!(
             "[hook] {} → {} (skipped: harness not in `harnesses:`)",

@@ -3,6 +3,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Path-safety validation for any code path that joins an item name into a
+/// filesystem path. Removal must stay on this check alone: an item named after
+/// a later-reserved word may have been installed by a previous release, and
+/// deleting it has to keep working.
 pub(crate) fn validate_item_name(name: &str) -> Result<()> {
     if name.is_empty() {
         bail!("item name must not be empty");
@@ -17,6 +21,13 @@ pub(crate) fn validate_item_name(name: &str) -> Result<()> {
     if !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')) {
         bail!("item name {name:?} must contain only ASCII letters, digits, '.', '_', or '-'");
     }
+    Ok(())
+}
+
+/// Install/add-time validation: path safety plus the reserved shared key.
+/// Only paths that create or regenerate an install reject `all`.
+pub(crate) fn validate_new_item_name(name: &str) -> Result<()> {
+    validate_item_name(name)?;
     if name.eq_ignore_ascii_case(crate::project_config::SHARED_INSTRUCTIONS_KEY) {
         bail!(
             "item name {name:?} is reserved: `all` is the shared key in \
@@ -205,17 +216,20 @@ mod tests {
     }
 
     #[test]
-    fn validate_item_name_rejects_reserved_shared_instruction_key() {
+    fn validate_new_item_name_rejects_reserved_shared_instruction_key() {
         for name in ["all", "All", "ALL"] {
-            let err = validate_item_name(name).unwrap_err();
+            let err = validate_new_item_name(name).unwrap_err();
             assert!(
                 err.to_string().contains("reserved"),
                 "expected reserved-name error for {name:?}, got: {err}"
             );
+            // Path-safety validation (used by removal) must keep accepting the
+            // name so legacy installs stay deletable.
+            assert!(validate_item_name(name).is_ok(), "rejected {name:?}");
         }
-        // Names merely containing "all" stay valid.
-        assert!(validate_item_name("allow").is_ok());
-        assert!(validate_item_name("all-agents").is_ok());
+        // Names merely containing "all" stay valid everywhere.
+        assert!(validate_new_item_name("allow").is_ok());
+        assert!(validate_new_item_name("all-agents").is_ok());
     }
 
     #[cfg(unix)]
