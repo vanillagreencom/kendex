@@ -299,7 +299,10 @@ list_issues() {
             paginate_all="true"
             ;;
         --format)
-            if [ $# -lt 2 ]; then
+            # A following option token is a missing value, not a format:
+            # otherwise `--format --search x` eats --search as the format
+            # and silently drops the filter.
+            if [ $# -lt 2 ] || [ "${2#--}" != "$2" ]; then
                 echo '{"error": "--format requires a value"}' >&2
                 return 1
             fi
@@ -310,7 +313,11 @@ list_issues() {
             FORMAT="${1#--format=}"
             ;;
         --search)
-            if [ $# -lt 2 ]; then
+            # A following option token is a missing value, not a term:
+            # `--search --state Todo` must refuse, not search for
+            # "--state" and drop the state filter. An intentional
+            # option-like term can still use --search='--like-this'.
+            if [ $# -lt 2 ] || [ "${2#--}" != "$2" ]; then
                 echo '{"error": "--search requires a value"}' >&2
                 return 1
             fi
@@ -331,7 +338,9 @@ list_issues() {
 
     # A given-but-empty pattern must refuse, not degrade to an unfiltered
     # list: the dedupe preflight reads "rows came back" as "search ran".
-    if [ "$search_given" = "true" ] && [ -z "${search_pattern//|/}" ]; then
+    # Whitespace counts as empty — "a | b" searches trimmed terms, and
+    # " | " has none, so it fails closed rather than matching broadly.
+    if [ "$search_given" = "true" ] && [ -z "$(printf '%s' "$search_pattern" | tr -d '| \t')" ]; then
         echo '{"error": "--search requires a non-empty value"}' >&2
         return 1
     fi
@@ -343,8 +352,12 @@ list_issues() {
     # IssueFilter. Top-level filter fields AND with the or-clause, so
     # --state/--project/... still narrow the result.
     if [ -n "$search_pattern" ]; then
+        # Terms are trimmed so "a | b" matches "a"/"b", not " b" — and
+        # whitespace-only fragments are dropped, never matched broadly.
         FILTER_JSON=$(jq -cn --arg pattern "$search_pattern" --argjson base "$FILTER_JSON" '
-            ($pattern | split("|") | map(select(length > 0))) as $terms |
+            ($pattern | split("|")
+                | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
+                | map(select(length > 0))) as $terms |
             $base + {or: [$terms[] |
                 {title: {containsIgnoreCase: .}},
                 {description: {containsIgnoreCase: .}}]}')

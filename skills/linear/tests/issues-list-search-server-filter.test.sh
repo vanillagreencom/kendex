@@ -175,6 +175,51 @@ for empty in '--search=' '--search=|'; do
   fi
 done
 
+# --- Case 7b: option token after --search/--format is a missing value --------
+log7b="$TMP_ROOT/option-as-value.jsonl"
+if run_list "$log7b" --format=raw --search --state Todo >/dev/null 2>&1; then
+  echo "FAIL '--search --state Todo' must refuse (--state is not a term)"
+  exit 1
+fi
+if [ -s "$log7b" ]; then
+  echo "FAIL '--search --state Todo' must not reach the API"
+  cat "$log7b"
+  exit 1
+fi
+if run_list "$log7b" --format --search market_data >/dev/null 2>&1; then
+  echo "FAIL '--format --search market_data' must refuse (--search is not a format)"
+  exit 1
+fi
+if [ -s "$log7b" ]; then
+  echo "FAIL '--format --search ...' must not reach the API"
+  cat "$log7b"
+  exit 1
+fi
+# Whitespace-only patterns have no usable term and must fail closed.
+if run_list "$log7b" --format=raw --search ' | ' >/dev/null 2>&1; then
+  echo "FAIL --search ' | ' (whitespace-only) must exit non-zero"
+  exit 1
+fi
+if [ -s "$log7b" ]; then
+  echo "FAIL --search ' | ' must not reach the API"
+  cat "$log7b"
+  exit 1
+fi
+
+# --- Case 7c: padded terms are trimmed before matching ------------------------
+log7c="$TMP_ROOT/trimmed-terms.jsonl"
+run_list "$log7c" --format=raw --search 'market_data | order_book' >/dev/null
+if ! jq -s -e '[.[0].variables.filter.or[] | .. | strings]
+      | all(test("^[^ ].*[^ ]$|^[^ ]$"))' "$log7c" >/dev/null; then
+  echo "FAIL padded 'a | b' terms must be trimmed in the or-clause"
+  jq -s '.[0].variables.filter.or' "$log7c"
+  exit 1
+fi
+if ! jq -s -e '.[0].variables.filter.or | length == 4' "$log7c" >/dev/null; then
+  echo "FAIL trimmed alternation should still produce 4 or-clauses"
+  exit 1
+fi
+
 # --- Case 8: space-separated --format is honored (same dropped-flag bug) -----
 log8="$TMP_ROOT/format-space.jsonl"
 out8="$(run_list "$log8" --format raw --search market_data)"
