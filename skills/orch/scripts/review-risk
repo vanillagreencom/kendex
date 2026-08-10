@@ -4,15 +4,29 @@
 # harness approval policies never see a subshell/&&/expansion command shape
 # and silently push every classification onto the full-fleet fallback.
 #
+# TRUST BOUNDARY: both the configuration (REVIEW_RISK_COMMAND, via orch-env
+# from THIS process's project root) and the classifier executable resolve
+# from the TRUSTED invoking checkout — never from the reviewed worktree. A
+# PR under review controls that worktree's files and settings, and reading
+# either from it would execute attacker-controlled code with the session's
+# credentials before any review happened. Only the classifier's working
+# directory is the worktree (that is the change set it classifies).
+#
+# REVIEW_RISK_COMMAND is a repo-relative executable path plus optional
+# arguments — whitespace-split, no shell string, no metacharacters (a file,
+# not a `bash -c` string: shell-string contracts break Windows consumers).
+#
 # Usage: review-risk WORKTREE_PATH
 #
 # stdout + exit codes:
 #   high|medium|low, exit 0 — the classifier's validated answer
 #   exit 3                  — REVIEW_RISK_COMMAND is unset (opt-in not taken)
-#   exit 1                  — classifier failed, or printed anything else;
-#                             detail on stderr. Callers fail OPEN to depth:
-#                             any nonzero means "run the full fleet" (and
-#                             clear stale review_risk state).
+#   exit 1                  — classifier failed or violated the contract;
+#                             terse detail on stderr (never the captured
+#                             output — workflow logs must not leak it).
+#                             Callers fail OPEN to depth: any nonzero means
+#                             "run the full fleet" (and clear stale
+#                             review_risk state).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,8 +42,36 @@ if [ -z "$cmd" ]; then
   exit 3
 fi
 
-if ! out="$(cd "$WORKTREE" && bash -c "$cmd" 2>&1)"; then
-  echo "Error: review-risk: REVIEW_RISK_COMMAND ('$cmd') failed: $out" >&2
+# Executable + args, split on whitespace; anything shell-flavored refuses.
+case "$cmd" in
+*[';|&<>$`(){}!*?'\''"']*)
+  echo "Error: review-risk: REVIEW_RISK_COMMAND must be a repo-relative executable path plus plain arguments — shell metacharacters refuse (a file, not a shell string)." >&2
+  exit 1
+  ;;
+esac
+# shellcheck disable=SC2206 # deliberate whitespace split of a vetted string
+parts=($cmd)
+exe_rel="${parts[0]}"
+case "$exe_rel" in
+/* | *..*)
+  echo "Error: review-risk: classifier path must be repo-relative without '..': $exe_rel" >&2
+  exit 1
+  ;;
+esac
+
+# Trusted root = the checkout this helper runs from (the steward's project),
+# resolved from the script's own location: .agents/skills/orch/scripts -> root.
+trusted_root="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+exe="$trusted_root/$exe_rel"
+if [ ! -x "$exe" ]; then
+  echo "Error: review-risk: classifier '$exe_rel' is not an executable file in the trusted checkout ($trusted_root)." >&2
+  exit 1
+fi
+
+# stdout is the contract channel; classifier stderr passes through for
+# diagnostics without polluting the parsed answer.
+if ! out="$(cd "$WORKTREE" && "$exe" "${parts[@]:1}")"; then
+  echo "Error: review-risk: classifier '$exe_rel' exited non-zero." >&2
   exit 1
 fi
 level="$(printf '%s' "$out" | tr -d '[:space:]')"
@@ -38,7 +80,7 @@ high | medium | low)
   printf '%s\n' "$level"
   ;;
 *)
-  echo "Error: review-risk: REVIEW_RISK_COMMAND ('$cmd') printed '$out' — contract is exactly high|medium|low on stdout, exit 0" >&2
+  echo "Error: review-risk: classifier '$exe_rel' printed an unrecognized level — contract is exactly high|medium|low on stdout, exit 0." >&2
   exit 1
   ;;
 esac

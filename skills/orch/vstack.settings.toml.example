@@ -96,7 +96,9 @@ REVIEWER_SLOT_BUDGET = "0"
 ORCH_DECISION_MODE = "ask"
 
 # Used by: orch (`review-pr`). OPT-IN change-risk classifier: a repo-relative
-# command run against the change set before the review cycle. Contract:
+# EXECUTABLE path plus optional plain arguments (a file, not a shell string;
+# resolved from the trusted invoking checkout, run with the reviewed worktree
+# as cwd) against the change set before the review cycle. Contract:
 # prints `high`, `medium`, or `low` on stdout, exit 0. The reviewer fan-out
 # is sized from the answer (low -> small panel, first-clean-round
 # convergence; medium -> default; high -> full fleet + adversarial-test

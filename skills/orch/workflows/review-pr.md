@@ -98,7 +98,11 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 sizes this fan-out from the change set instead of always running the full
 fleet. One checked helper invocation (simple executable + argument, safe
 under restrictive harness approval policies — a subshell/`&&` shape could be
-rejected and silently force the fallback):
+rejected and silently force the fallback). The helper resolves BOTH the
+configuration and the classifier executable from the trusted invoking
+checkout — never from the reviewed worktree, whose files and settings the PR
+under review controls; only the classifier's working directory is the
+worktree:
 
 ```bash
 .agents/skills/orch/scripts/review-risk [WORKTREE_PATH]
@@ -130,7 +134,7 @@ Then size `[AGENTS]`:
 |-------|-------|-------------------|
 | `high` | Full `[AGENTS]`; § 2.2 appends the high-risk line to every reviewer delegation prompt (the expectation must reach reviewers, not just this table) | Default cycle budget |
 | `medium` | Full `[AGENTS]` (default — identical to unset) | Default cycle budget |
-| `low` | `reviewer-correctness` + `reviewer-doc` + ONE domain reviewer chosen from the diff's domains (`.agents/skills/github/scripts/git-diff-summary -C [WORKTREE_PATH] [BASE_BRANCH]` — pick the reviewer matching the dominant domain; none matching → just the two) | Accept convergence after the first clean round — do not run extra rounds hunting on a low-risk diff |
+| `low` | The intersection of `[AGENTS]` with {`reviewer-correctness`, `reviewer-doc`} plus ONE discovered domain reviewer chosen from the diff's domains (`.agents/skills/github/scripts/git-diff-summary -C [WORKTREE_PATH] [BASE_BRANCH]` — pick the `[AGENTS]` member matching the dominant domain). Names never leave the discovered `[AGENTS]` list; if the intersection is empty, run the full `[AGENTS]` | Accept convergence after the first clean round — do not run extra rounds hunting on a low-risk diff |
 
 A `low` sizing never overrides explicit caller `agents` context, and the
 slot-budget/wave machinery below applies to the sized panel unchanged. The
