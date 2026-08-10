@@ -65,7 +65,7 @@ pub fn generate_agent(
 
     // Build TOML manually to control format (triple-quoted developer_instructions)
     let mut output = String::new();
-    output.push_str("# Never edit this file directly. To make additions or modifications, edit the appropriate section in ./vstack.toml. Then run `vstack refresh`.\n\n");
+    output.push_str("# Never edit this file directly. To make additions or modifications, edit the appropriate section in the managing project's vstack config — vstack.toml at the vstack project root, or vstack-local.toml in a source-catalog checkout. Then run `vstack refresh`.\n\n");
     output.push_str(&format!("name = \"{}\"\n", escape_toml(&agent.name)));
     output.push_str(&format!(
         "nickname_candidates = {}\n",

@@ -29,7 +29,7 @@ keeping the two separate is what makes this small enough to trust.
               │                              ┌────────▼─────────┐
               │                              │   THE PREDICATE  │
               │                              │ is this exact    │
-              │                              │ head reviewed?   │
+              │                              │ head reviewed? * │
               │                              └────────┬─────────┘
               │                                       │
               │                              ┌────────▼─────────┐
@@ -39,7 +39,7 @@ keeping the two separate is what makes this small enough to trust.
               │                                       │
      ┌────────▼────────┐                     ┌────────▼─────────┐
      │ "tests" ✓/✗     │                     │ "Review gate"    │
-     │ (your checks)   │                     │ ✓ reviewed       │
+     │ (your checks)   │                     │ ✓ reviewed *     │
      │                 │                     │ … awaiting       │
      │                 │                     │ ✗ changes wanted │
      └────────┬────────┘                     └────────┬─────────┘
@@ -57,6 +57,17 @@ keeping the two separate is what makes this small enough to trust.
                     │           MAIN             │
                     └────────────────────────────┘
 ```
+
+\* Unless the repo sets `REVIEW_GATE_MODE = "off"`: the predicate then
+evaluates no evidence at all, and the writer converges the status to green
+with a "gate disabled by settings" description. On such a repo a green
+PR-head `Review gate` attests only that the gate is off — it never proves a
+review happened. That attestation is scoped to evaluated PR-head statuses:
+merge-group (queue) statuses bypass the predicate entirely and always post
+green as "merge-queue entry: post-approval by construction" without reading
+the mode, so a green queue status is not a disabled-gate attestation.
+Caveats: [references/settings.md](references/settings.md)
+§ `REVIEW_GATE_MODE`.
 
 The two columns are independent on purpose. The gate never inspects your CI,
 and your CI never waits on the gate. Your branch rules require both.
@@ -112,17 +123,21 @@ as satisfied. A reviewed PR would merge untested.
 
 ## Files
 
+Paths are as installed in a consuming repo, under
+`.agents/skills/review-gate/`.
+
 | File | What it is |
 |---|---|
-| `SKILL.md` | The agent-facing contract: decision table, settings, operations. |
-| `scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. |
-| `scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
-| `scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" — unresolved threads (queued PRs annotated), standing objections, a gate the writer hasn't converged (`--heal` dispatches it once), a mergeable PR nothing will merge, reviewer silence past the quiet period. Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate. |
-| `scripts/review-predicate-selftest.sh` | Offline proof of the decision table; runs ungated in CI so a broken predicate reds its own job instead of approving everything. |
-| `templates/review-gate-writer.yml` | The one workflow to copy in. Repo-owned after copying. |
-| `tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
-| `references/adoption.md` | Wiring, branch rules, per-repo settings. |
-| `references/settings.md` | Every `REVIEW_GATE_*` key and the security reasoning behind the trust ones. |
+| `.agents/skills/review-gate/SKILL.md` | The agent-facing contract: decision table, settings, operations. |
+| `.agents/skills/review-gate/scripts/review-predicate.sh` | Answers "is this head reviewed?" — verdict on stdout, exit 2 means no verdict, take no action. Under `REVIEW_GATE_MODE = "off"` it evaluates nothing and answers `approved` with a gate-disabled attestation. |
+| `.agents/skills/review-gate/scripts/review-writer.sh` | Posts that answer as the commit status. The whole writer. |
+| `.agents/skills/review-gate/scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" — unresolved threads (queued PRs annotated), standing objections, a gate the writer hasn't converged (`--heal` dispatches it once), a mergeable PR nothing will merge, reviewer silence past the quiet period. Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate. |
+| `.agents/skills/review-gate/scripts/review-predicate-selftest.sh` | Offline proof of the decision table; runs ungated in CI so a broken predicate reds its own job instead of approving everything. |
+| `.agents/skills/review-gate/templates/review-gate-writer.yml` | The one workflow to copy in. Repo-owned after copying. |
+| `.agents/skills/review-gate/tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
+| `.agents/skills/review-gate/references/adoption.md` | Wiring, branch rules, per-repo settings. |
+| `.agents/skills/review-gate/references/settings.md` | Every `REVIEW_GATE_*` key and the security reasoning behind the trust ones. |
 
-Nothing repo-specific is hard-coded: consumers vendor `scripts/` via
-`vstack refresh` and configure trust in their own `vstack.settings.toml`.
+Nothing repo-specific is hard-coded: consumers vendor the skill at
+`.agents/skills/review-gate/` via `vstack refresh` and configure trust in
+their own `vstack.settings.toml`.

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
 	completionPath,
 	oneShotTranscriptPath,
@@ -16,8 +16,16 @@ import {
 } from "../extensions/subagent/tasks.js";
 import type { PaneTaskRecord } from "../extensions/subagent/types.js";
 
+const tempDirs: string[] = [];
+
+after(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
+
 function tempRuntime(): string {
-	return mkdtempSync(join(tmpdir(), "pi-agents-dashboard-"));
+	const dir = mkdtempSync(join(tmpdir(), "pi-agents-dashboard-"));
+	tempDirs.push(dir);
+	return dir;
 }
 
 test("bg records stay bg even after legacy pane artifact pollution", async () => {

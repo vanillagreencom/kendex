@@ -18,6 +18,9 @@ import { safeFileName } from "./names.js";
 import {
 	getPiInvocation,
 	PI_SUBAGENT_CHILD_PANE_ENV,
+	PI_SUBAGENT_DEPTH_ENV,
+	PI_SUBAGENT_ENTRY_ENV,
+	removePromptTempDir,
 	writePromptToTempFile,
 } from "./pane.js";
 import {
@@ -637,6 +640,26 @@ async function runSingleAgentAttempt(
 	try {
 		await fs.promises.mkdir(path.dirname(transcriptPath), { recursive: true, mode: 0o700 });
 		await fs.promises.writeFile(transcriptPath, "", { encoding: "utf-8", mode: 0o600 });
+		if (agent.systemPrompt.trim()) {
+			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
+			tmpPromptDir = tmp.dir;
+			tmpPromptPath = tmp.filePath;
+			args.push("--append-system-prompt", tmpPromptPath);
+		}
+
+		args.push(`Task: ${task}`);
+		let wasAborted = false;
+		let timedOut = false;
+
+		// Resolved after the last args push but BEFORE subagents:started, so a
+		// refused spawn (depth guard, vstack#192) never announces itself — a
+		// throw after `started` would leave the task permanently "running" in
+		// the dashboard/registry because nothing emits a terminal event for the
+		// taskId (PR #1178 round 4). Also outside the spawn promise so the
+		// throw rejects through the finally cleanup below instead of wedging
+		// inside the promise executor.
+		const invocation = getPiInvocation(args);
+
 		emitSubagentEvent(pi, "subagents:started", {
 			mode: "oneshot",
 			agent: agent.name,
@@ -654,19 +677,7 @@ async function runSingleAgentAttempt(
 		});
 		appendTranscript({ type: "start", agent: agent.name, taskId: oneShotTaskId, task, cwd: cwd ?? defaultCwd, sessionMode: currentResult.sessionMode, sessionKey: session.explicit ? session.key : undefined, sessionPath: session.path, ephemeralSession: session.ephemeral, attempt });
 
-		if (agent.systemPrompt.trim()) {
-			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
-			tmpPromptDir = tmp.dir;
-			tmpPromptPath = tmp.filePath;
-			args.push("--append-system-prompt", tmpPromptPath);
-		}
-
-		args.push(`Task: ${task}`);
-		let wasAborted = false;
-		let timedOut = false;
-
 		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
 			// Child identity env mirrors the pane launcher's agent identity
 			// for bg one-shot lanes (issue #228). Restricted delegation reads
 			// PI_SUBAGENT_CHILD_AGENT to authorize the caller. Strip pane-only
@@ -679,6 +690,11 @@ async function runSingleAgentAttempt(
 			// `runtimeSessionId()` would attach the child to the wrong
 			// runtime root.
 			const childEnv: NodeJS.ProcessEnv = { ...process.env, PI_SUBAGENT_CHILD_AGENT: agent.name };
+			childEnv[PI_SUBAGENT_DEPTH_ENV] = String(invocation.childDepth);
+			// PR #1178 round 3: a relative script override was resolved for THIS
+			// spawn only; the child would inherit the relative form and
+			// re-resolve it from its delegated cwd. Hand down the resolved value.
+			if (invocation.childEntryOverride) childEnv[PI_SUBAGENT_ENTRY_ENV] = invocation.childEntryOverride;
 			if (agent.color) childEnv.PI_SUBAGENT_CHILD_COLOR = agent.color;
 			else delete childEnv.PI_SUBAGENT_CHILD_COLOR;
 			delete childEnv[PI_SUBAGENT_CHILD_PANE_ENV];
@@ -1284,17 +1300,8 @@ async function runSingleAgentAttempt(
 		return currentResult;
 	} finally {
 		await Promise.allSettled(transcriptWrites);
-		if (tmpPromptPath)
-			try {
-				fs.unlinkSync(tmpPromptPath);
-			} catch {
-				/* ignore */
-			}
-		if (tmpPromptDir)
-			try {
-				fs.rmdirSync(tmpPromptDir);
-			} catch {
-				/* ignore */
-			}
+		// vstack#192: recursive+force removal so the session tmp dir is reclaimed
+		// on child failure/refusal paths too, not only after a clean unlink.
+		if (tmpPromptDir) removePromptTempDir(tmpPromptDir);
 	}
 }

@@ -94,6 +94,60 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 
 `list-review-agents` scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agents` for `reviewer-*` files, dedupes, and exits non-zero if none found. Output: one agent name per line.
 
+**Risk-sized panel (opt-in)** — skip this ENTIRE block (no classification,
+no recording) when the caller provided explicit `agents` context: a
+targeted panel is the caller's decision, and recording a risk level for it
+would let the PR body claim a sizing that never happened. Otherwise, a repo
+may declare a risk classifier that
+sizes this fan-out from the change set instead of always running the full
+fleet. One checked helper invocation (simple executable + argument, safe
+under restrictive harness approval policies — a subshell/`&&` shape could be
+rejected and silently force the fallback). The helper resolves BOTH the
+configuration and the classifier executable from the trusted invoking
+checkout — never from the reviewed worktree, whose files and settings the PR
+under review controls; only the classifier's working directory is the
+worktree:
+
+```bash
+.agents/skills/orch/scripts/review-risk [WORKTREE_PATH]
+```
+
+Outcomes:
+- **exit 0** — stdout is the validated level (`high`/`medium`/`low`). Record
+  it before sizing (the PR body publishes this line tool-emitted, never
+  hand-written):
+  ```bash
+  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_risk '{"level": "[LEVEL]", "command": "REVIEW_RISK_COMMAND"}'
+  ```
+- **exit 3** — `REVIEW_RISK_COMMAND` is unset: full `[AGENTS]` (today's
+  behavior).
+- **any other exit** — classifier failure or contract violation (detail on
+  stderr): note it in the review summary and run the full fleet. The key
+  fails open to DEPTH, never to shallowness.
+
+On every non-zero exit, ALSO clear any stale recorded risk so the PR body
+cannot claim a sizing this run did not perform:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_risk null
+```
+
+Then size `[AGENTS]`:
+
+| Level | Panel | Round expectation |
+|-------|-------|-------------------|
+| `high` | Full `[AGENTS]`; § 2.2 appends the high-risk line to every reviewer delegation prompt (the expectation must reach reviewers, not just this table) | Default cycle budget |
+| `medium` | Full `[AGENTS]` (default — identical to unset) | Default cycle budget |
+| `low` | The intersection of `[AGENTS]` with {`reviewer-correctness`, `reviewer-doc`} plus ONE discovered domain reviewer chosen from the diff's domains (`.agents/skills/github/scripts/git-diff-summary -C [WORKTREE_PATH] [BASE_BRANCH]` — pick the `[AGENTS]` member matching the dominant domain). Names never leave the discovered `[AGENTS]` list; if the intersection is empty, run the full `[AGENTS]` | Accept convergence after the first clean round — do not run extra rounds hunting on a low-risk diff |
+
+On a RE-REVIEW whose sizing shrank the panel (a prior `medium`/`high`
+cycle left persistent reviewers alive outside the new panel), retire those
+out-of-panel sessions first — wave-mode retire semantics; state lives in
+artifacts, so nothing is lost — before delegating to the sized panel. The
+slot-budget/wave machinery below applies to the sized panel unchanged. The
+path→risk table itself is per-repo domain knowledge and stays in the
+consumer's classifier command; only this sizing contract is orch's.
+
 **Resolve the reviewer slot budget** — some runtimes cap concurrent agent threads, so the full reviewer set may not fit alongside the primary and persistent dev/QA sessions:
 
 ```bash
@@ -213,6 +267,9 @@ Re-review cycle [N]. Already resolved — do NOT re-report:
 </if>
 <if re-review cycle and this reviewer session was recreated fresh (wave mode or respawn)>
 Fresh session — you have no memory of earlier cycles. Read your prior report [PRIOR_REPORT_PATH] and re-read the current diff before reviewing.
+</if>
+<if workflow state review_risk.level is "high">
+Declared change risk: HIGH. A red-first regression test per finding is expected, not optional — flag any finding you cannot pair with one.
 </if>
 </delegation_format>
 

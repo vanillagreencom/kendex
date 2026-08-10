@@ -1,11 +1,18 @@
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoverAgents } from "../extensions/subagent/agents.js";
 
+const tempDirs: string[] = [];
+
+afterAll(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
+
 function tempProject(): string {
 	const root = mkdtempSync(join(tmpdir(), "pi-agents-allowed-"));
+	tempDirs.push(root);
 	mkdirSync(join(root, ".pi", "agents"), { recursive: true });
 	return root;
 }

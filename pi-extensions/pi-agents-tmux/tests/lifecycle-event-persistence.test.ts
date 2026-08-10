@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { removeSettled } from "./remove-settled.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -11,6 +12,8 @@ import { readTaskRegistry, writeTaskRegistry } from "../extensions/subagent/task
 function tempRuntime(): string {
 	return mkdtempSync(join(tmpdir(), "subagent-lifecycle-event-"));
 }
+
+
 
 async function waitForTask(runtimeRoot: string, taskId: string) {
 	for (let i = 0; i < 20; i += 1) {
@@ -80,7 +83,7 @@ describe("subagent lifecycle event persistence", () => {
 			expect(record?.diagnostics?.join("\n")).not.toContain("\u001b");
 			expect(record?.diagnostics?.join("\n")).not.toContain("```");
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 		}
 	});
 
@@ -151,7 +154,7 @@ describe("subagent lifecycle event persistence", () => {
 			expect(record?.usage?.output).toBe(3);
 		} finally {
 			await releaseLock?.();
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 		}
 	});
 });

@@ -32,3 +32,12 @@ Deep halves of SKILL.md § Wait for Agent Return Before Acting:
 - **The round token binds A to exactly THIS delegation's receipt** (`tmp/dev-return-[ISSUE_ID]-[dev_round_id].json`, internal `round_id` matched), so a stale, same-second, cross-group, or cross-workflow receipt at a shared path can never be mis-accepted.
 - **A path whose agent writes no dev-return artifact** (`ci-fix.md` § 3.2 pushes directly) always has A `ok==false`: it is accepted by its own return message and the escalation ladder on a real stall, outside the A/B table, never by a stale artifact.
 - **Composite B never accepts on its own.** Return-message timeout, clean git status/diff/log, and no modified files reflect worktree state only. The sole positive signal that overrides a missing return is a valid `dev-artifact-check` for the current `dev_round_id`; every path converges on it.
+
+## Dev-vs-reviewer asymmetry (intentional — do not "align")
+
+Reviewers have no independent git/tracker signal — their JSON *is* the
+deliverable — so a reviewer `ok==false` after a return is `incomplete` →
+re-delegate (`review-pr.md` § 3.1). Dev's B signal only distinguishes "code
+landed, recover the tail" (`ok==false` + pass → one report-only nudge) from
+"not done" (`ok==false` + fail → escalate); neither branch re-runs the work,
+and neither accepts without the round-scoped artifact.

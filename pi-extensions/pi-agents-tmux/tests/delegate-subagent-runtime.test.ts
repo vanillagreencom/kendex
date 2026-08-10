@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
+import { removeSettled } from "./remove-settled.js";
 
 interface RegisteredTool {
 	name: string;
@@ -29,12 +30,38 @@ interface Harness {
 	};
 }
 
+const tempDirs: string[] = [];
+
+// Post-dispatch task-registry persistence is fire-and-forget and can recreate
+// a harness cwd after the per-test teardown rmSync; sweep again once the file
+// is done so nothing is left in tmpdir.
+afterAll(async () => {
+	for (const dir of tempDirs) await removeSettled(dir);
+});
+
 function createTempProject(): { cwd: string; piUserDir: string } {
 	const cwd = mkdtempSync(join(tmpdir(), "delegate-subagent-runtime-"));
+	tempDirs.push(cwd);
 	mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
 	const piUserDir = join(cwd, ".pi-agent-home");
 	mkdirSync(piUserDir, { recursive: true });
 	return { cwd, piUserDir };
+}
+
+// The queued/running/completed task-registry updates behind a dispatch are
+// fire-and-forget (`void updateTaskRegistry(...)`); the terminal write can
+// land after teardown's rmSync and recreate the harness cwd in tmpdir. Wait
+// for it so teardown deletes settled state.
+async function waitForTerminalRegistryWrite(cwd: string): Promise<void> {
+	const deadline = Date.now() + 2000;
+	while (Date.now() < deadline) {
+		const registry = (readdirSync(cwd, { recursive: true }) as string[])
+			.map((entry) => entry.toString())
+			.find((entry) => entry.endsWith("tasks.json"));
+		if (registry && readFileSync(join(cwd, registry), "utf8").includes('"completed"')) return;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	throw new Error("task registry never recorded a completed dispatch (VST-199)");
 }
 
 function writeAgent(cwd: string, name: string, frontmatter: string[]): void {
@@ -198,6 +225,7 @@ describe("delegate_subagent runtime behavior (issue #228)", () => {
 		// Child identity env (issue #228) is set, bridge env is stripped.
 		expect(calls[0]?.env?.PI_SUBAGENT_CHILD_AGENT).toBe("scout");
 		expect(calls[0]?.env?.PI_BRIDGE_PARENT_SESSION_ID).toBeUndefined();
+		await waitForTerminalRegistryWrite(harness.cwd);
 	});
 
 	test("refuses when caller identity is missing (no PI_SUBAGENT_CHILD_AGENT)", async () => {

@@ -16,6 +16,11 @@ ROOT_TEMPLATE="$SCRIPT_DIR/../../../vstack.settings.toml.example"
 # one-switch gate disable even where the review-gate engine is not installed.
 ORCH_KEYS="PR_REVIEW_GATE REVIEW_GATE_MODE PR_REVIEW_WAIT_SECS PR_REVIEW_NUDGE_SECS PR_REVIEW_NUDGE PR_REVIEW_CHECK PR_REVIEW_ON_TIMEOUT CI_WAIT_NO_CHECKS_GRACE CI_FIX_MAX_CYCLES REVIEWER_SLOT_BUDGET PR_REVIEW_REFIX_MAX_LINES ORCH_DECISION_MODE ORCH_LANE_CLAUDE_PERMISSION_ARG ORCH_TMUX_VERIFY_SECS"
 
+# Opt-in keys with no shipped default: templates carry a COMMENTED example
+# (nothing to merge, so no uncommented assignment), but both templates must
+# still document them so the two places users learn the options agree.
+ORCH_OPTIN_KEYS="REVIEW_RISK_COMMAND"
+
 fail=0
 
 check() {
@@ -44,6 +49,11 @@ for key in $ORCH_KEYS; do
     echo "FAIL: $key default drift: skill='$skill_val' root='$root_val'"
     fail=1
   fi
+done
+
+for key in $ORCH_OPTIN_KEYS; do
+  check "$key commented example present in skill template" "grep -Eq \"^#[[:space:]]*$key[[:space:]]*=\" \"\$SKILL_TEMPLATE\""
+  check "$key commented example present in root template" "grep -Eq \"^#[[:space:]]*$key[[:space:]]*=\" \"\$ROOT_TEMPLATE\""
 done
 
 # The security caveat for name-matched evidence must travel with the key.

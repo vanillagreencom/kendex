@@ -28,7 +28,8 @@ trusting an adoption.
    `.agents/skills/review-gate/scripts/` and these references). The
    consumer's drift check asserts the vendored copy matches the catalog
    byte-for-byte.
-2. **Copy `templates/review-gate-writer.yml`** into `.github/workflows/`.
+2. **Copy `.agents/skills/review-gate/templates/review-gate-writer.yml`**
+   into `.github/workflows/`.
    Repo-owned after the copy — workflow YAML is not an ongoing sync target.
    The one workflow is the ONLY writer of the gate status: it runs the
    default-branch engine on every leg, so no PR can influence its own gate
@@ -129,7 +130,8 @@ scheduling.
 
 ## Watching PRs as an agent (pr-watch)
 
-The predicate and writer keep the GATE correct; `scripts/pr-watch.sh` is the
+The predicate and writer keep the GATE correct;
+`.agents/skills/review-gate/scripts/pr-watch.sh` is the
 agent-side third piece — a needs-attention reducer for sessions shepherding
 one or many PRs across hours. The failure mode it removes: an agent watching
 gate-state *transitions* sleeps forever through a PR sitting steadily at
@@ -171,5 +173,5 @@ reducer they and harness monitors share.
   this repo's trust values).
 - The consumer's vendored-copy drift check passes.
 - For engine changes (not adoptions): the live sandbox replay
-  (`tests/e2e-sandbox.sh`) against the org sandbox, which mirrors the fleet
-  ruleset shape.
+  (`.agents/skills/review-gate/tests/e2e-sandbox.sh`) against the org
+  sandbox, which mirrors the fleet ruleset shape.

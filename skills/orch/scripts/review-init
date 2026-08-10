@@ -11,10 +11,18 @@ issue_id=""
 state_path=""
 initialized=false
 
-if issue_id="$(printf '%s\n' "$branch" | grep -oiP "$pattern" | head -1)"; then
-    :
-else
-    issue_id=""
+# Match case-insensitively (ERE — macOS grep has no -P), then normalize to the
+# canonical key case: workflow-state keys are case-sensitive, and this must
+# agree with session-init and git-context issue-from-branch — GitHub-style
+# `issue-N` keys are canonically lowercase, Linear-style `ABC-N` uppercase.
+issue_id="$(printf '%s\n' "$branch" | grep -oiE "$pattern" | head -1 || true)"
+if [[ -n "$issue_id" ]]; then
+    # tr, not ${var,,}/${var^^}: skill scripts run on macOS Bash 3.2.
+    issue_id_lower="$(printf '%s' "$issue_id" | tr '[:upper:]' '[:lower:]')"
+    case "$issue_id_lower" in
+    issue-*) issue_id="$issue_id_lower" ;;
+    *) issue_id="$(printf '%s' "$issue_id" | tr '[:lower:]' '[:upper:]')" ;;
+    esac
 fi
 
 if [[ -n "$issue_id" ]]; then

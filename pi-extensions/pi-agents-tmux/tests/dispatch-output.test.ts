@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { formatPreparedParallelSection, parallelResultLimits } from "../extensions/subagent/dispatch.js";
 import { prepareSingleResultForReturn } from "../extensions/subagent/runner.js";
 import { recordProjectTrust } from "../extensions/subagent/settings.js";
@@ -16,8 +16,15 @@ function writeProjectSettings(cwd: string, config: Record<string, unknown>): voi
 	recordProjectTrust({ cwd, isProjectTrusted: () => true });
 }
 
+const tempDirs: string[] = [];
+
+after(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
+
 test("parallel output divides total result budgets across returned agents", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-agents-parallel-limits-"));
+	tempDirs.push(cwd);
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
 	try {
@@ -36,6 +43,7 @@ test("parallel output divides total result budgets across returned agents", () =
 
 test("parallel result preparation writes artifacts and section surfaces them before inline output", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-agents-parallel-artifacts-"));
+	tempDirs.push(cwd);
 	const runtimeRoot = join(cwd, "runtime");
 	writeProjectSettings(cwd, { resultMaxBytes: 128, resultMaxLines: 3, preserveFullOutput: true });
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;

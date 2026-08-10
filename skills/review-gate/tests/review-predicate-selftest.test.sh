@@ -114,6 +114,48 @@ grep -q "configured: carry-forward (docs) — identical tree carries" "$work/con
 grep -q "carry off (default): the same docs delta does NOT carry" "$work/defaults.out" \
   || note "carry-forward off-default near-miss missing"
 
+# --- layer 2b: EVERY committed carry-exclude glob is exercised --------------
+# One battery case per committed glob — a later typo'd addition must not
+# hide behind an earlier glob's green — and a leading-'/' glob (which can
+# never match a repository-relative compare filename) must FAIL the suite,
+# not skip silently.
+mkdir -p "$work/excludes"
+# BSD/macOS sed has no \n replacement extension — build fixtures with
+# grep -v + printf instead.
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/excludes/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;guides/*"\n' \
+  >>"$work/excludes/vstack.settings.toml"
+if ! (cd "$work/excludes" && "$SELFTEST") >"$work/excludes.out" 2>&1; then
+  cat "$work/excludes.out"
+  note "selftest failed under a committed carry-exclude list"
+fi
+grep -q "carry-exclude — '\*AGENTS.md' matches" "$work/excludes.out" \
+  || note "committed glob '*AGENTS.md' not exercised"
+grep -q "carry-exclude — 'guides/\*' matches" "$work/excludes.out" \
+  || note "committed glob 'guides/*' not exercised (every glob must probe, not just the first)"
+grep -q "outside every committed glob and still carries" "$work/excludes.out" \
+  || note "committed exclude-free carry case not exercised"
+
+# One combined FAILING run pins BOTH guards (each fixture run replays the
+# full decision table, so failure cases share a run): a leading-'/' glob can
+# never match a repository-relative compare filename (dead anchoring), and a
+# '*' exclusion swallowing every carry-class probe path means the enabled
+# class can never apply (over-broad).
+mkdir -p "$work/deadglob"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/deadglob/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "/docs/*;*"\n' \
+  >>"$work/deadglob/vstack.settings.toml"
+if (cd "$work/deadglob" && "$SELFTEST") >"$work/deadglob.out" 2>&1; then
+  note "selftest passed with dead ('/docs/*') and over-broad ('*') carry-excludes — the guards no longer fire"
+else
+  grep -q "leading '/'" "$work/deadglob.out" \
+    || note "the dead-glob failure does not explain the leading-'/' anchoring"
+  grep -q "can never apply" "$work/deadglob.out" \
+    || note "the over-broad failure does not explain that the carry class is dead"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "review-predicate-selftest.test: FAIL"
   exit 1

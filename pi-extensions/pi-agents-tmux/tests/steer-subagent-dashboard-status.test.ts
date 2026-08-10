@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import test, { after } from "node:test";
 import { registerPaneSupportTools } from "../extensions/subagent/pane-support-tools.js";
 import type { PaneTaskRecord } from "../extensions/subagent/types.js";
 
@@ -15,8 +15,16 @@ interface CapturedTool {
 	execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx: any) => Promise<any>;
 }
 
+const tempDirs: string[] = [];
+
+after(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
+
 function tempRuntime(): string {
-	return mkdtempSync(join(tmpdir(), "pi-agents-steer-status-"));
+	const dir = mkdtempSync(join(tmpdir(), "pi-agents-steer-status-"));
+	tempDirs.push(dir);
+	return dir;
 }
 
 function buildDeps(opts: {

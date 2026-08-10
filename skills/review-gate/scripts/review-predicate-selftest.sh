@@ -1683,6 +1683,123 @@ else
   run "configured: unresolved thread fails closed (threads=enforce)" threads-open
 fi
 
+# Carry-exclude probes (vstack#1174). Both use the predicate's matcher shape
+# — an unquoted pattern in a bash `case` — so the probes pin the real glob
+# semantics ('*' crosses '/', whole-path anchoring, ';' separators) against
+# the repo's COMMITTED exclude list, not a hardcoded example.
+carry_class_has() { # is this class among the repo's enabled carry classes?
+  printf '%s' "$ACTIVE_CARRY" | tr ';|' '\n\n' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -qx "$1"
+}
+glob_matches() { # path, glob — the predicate's exact `case` matcher
+  case "$1" in $2) return 0 ;; esac
+  return 1
+}
+# The invoking repo's tracked tree, when this script lives inside one:
+# probes derived from REAL tracked paths prove a committed glob matches the
+# repository, not merely the string the probe itself manufactured from that
+# same glob (a typo'd `skils/*` matches `skils/probe.md` forever). Empty in
+# hermetic harnesses — the manufactured fallback keeps those deterministic.
+# Resolved from the INVOKING directory's repository — the settings under
+# test belong to that repo, so its tracked tree is the evidence base. Empty
+# when the selftest runs outside a repository (hermetic harnesses): only
+# there do manufactured probe paths apply. Loaded LAZILY at the exclude
+# battery (the only consumer), not at script start, and via -z so quoted
+# unusual pathnames round-trip instead of mis-probing globs.
+EXCLUDE_TRACKED=""
+EXCLUDE_TRACKED_ERROR=""
+exclude_tracked_loaded=""
+load_exclude_tracked() {
+  [ -n "$exclude_tracked_loaded" ] && return 0
+  exclude_tracked_loaded=1
+  # A real repository whose ls-files FAILS must not silently degrade into
+  # hermetic synthetic probing — that would shrink coverage exactly when
+  # git is broken. Only a genuinely-not-a-repo cwd is hermetic.
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if ! EXCLUDE_TRACKED="$(git ls-files -z 2>/dev/null | tr '\0' '\n')"; then
+      EXCLUDE_TRACKED_ERROR=1
+    fi
+  fi
+}
+exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
+  # Tracked mode (a real repository): ONLY real tracked matches count — a
+  # synthetic filler manufactured from the glob under test would let a
+  # typo'd `skils/*` verify itself against its own fabrication. No tracked
+  # match returns 2 so the caller can say so out loud. Hermetic mode (no
+  # repository): the '*'-filler fallback keeps harness runs deterministic,
+  # and the concrete path is still re-proven against its source glob.
+  local pat="$1" ext candidate
+  shift
+  if [ -n "$EXCLUDE_TRACKED" ]; then
+    while IFS= read -r candidate; do
+      [ -z "$candidate" ] && continue
+      glob_matches "$candidate" "$pat" || continue
+      for ext in "$@"; do
+        case "$candidate" in *"$ext")
+          printf '%s\n' "$candidate"
+          return 0 ;;
+        esac
+      done
+    done <<EOF_TRACKED_PROBE
+$EXCLUDE_TRACKED
+EOF_TRACKED_PROBE
+    return 2
+  fi
+  case "$pat" in *'?'*|*'['*|*'\'*) return 1 ;; esac
+  for ext in "$@"; do
+    case "$pat" in
+      *"$ext") candidate="${pat//\*/probe}" ;;
+      *'*')    candidate="${pat//\*/probe}$ext" ;;
+      *)       continue ;;
+    esac
+    glob_matches "$candidate" "$pat" || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+exclude_free_path() { # ext... -> a path NO committed glob matches
+  # Tracked mode: a REAL tracked carry-class file outside every glob is the
+  # positive proof (a committed `carry-probe*` exclusion must not read as
+  # "nothing can carry" while README.md still carries). Hermetic mode:
+  # synthetic candidates per extension.
+  local ext candidate pat hit
+  if [ -n "$EXCLUDE_TRACKED" ]; then
+    while IFS= read -r candidate; do
+      [ -z "$candidate" ] && continue
+      hit=""
+      for ext in "$@"; do
+        case "$candidate" in *"$ext") hit=ext-ok ;; esac
+      done
+      [ "$hit" = "ext-ok" ] || continue
+      hit=""
+      while IFS= read -r pat; do
+        [ -z "$pat" ] && continue
+        if glob_matches "$candidate" "$pat"; then hit=1; break; fi
+      done <<EOF_FREE_TRACKED
+$(list_items "$ACTIVE_CARRY_EXCLUDE")
+EOF_FREE_TRACKED
+      if [ -z "$hit" ]; then printf '%s\n' "$candidate"; return 0; fi
+    done <<EOF_TRACKED_FREE
+$EXCLUDE_TRACKED
+EOF_TRACKED_FREE
+    return 1
+  fi
+  for ext in "$@"; do
+    for candidate in "carry-probe/unrelated$ext" "carry-probe-unrelated$ext"; do
+      hit=""
+      while IFS= read -r pat; do
+        [ -z "$pat" ] && continue
+        if glob_matches "$candidate" "$pat"; then hit=1; break; fi
+      done <<EOF_FREE_PROBE
+$(list_items "$ACTIVE_CARRY_EXCLUDE")
+EOF_FREE_PROBE
+      if [ -z "$hit" ]; then printf '%s\n' "$candidate"; return 0; fi
+    done
+  done
+  return 1
+}
+
 # The repo's carry-forward posture: with classes enabled, an identical tree
 # must carry and a code delta must still refuse (the conservative floor no
 # class configuration may widen).
@@ -1698,6 +1815,105 @@ if [ -n "$ACTIVE_CARRY" ]; then
   reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
   compare_fix ahead "[$CODE_DELTA]"
   run "configured: carry-forward — a code delta still refuses" awaiting
+
+  # The repo's exclude list must be shown to MATCH (vstack#1174): a typo'd
+  # or wrongly-anchored committed glob leaves the exclusion dead while every
+  # case above stays green in both directions. So: a carry-class path a
+  # committed glob matches must refuse the carry, and a sibling path outside
+  # every committed glob must still carry (the exclusion neither dead nor
+  # over-broad).
+  if [ -n "$ACTIVE_CARRY_EXCLUDE" ]; then
+    load_exclude_tracked
+    if [ -n "$EXCLUDE_TRACKED_ERROR" ]; then
+      cases=$((cases + 1))
+      echo "FAIL  configured: carry-exclude — this IS a git repository but 'git ls-files' failed; refusing to degrade to synthetic probes (fix git, or run the harness outside a repository)" >&2
+      failures=$((failures + 1))
+    fi
+    # Probe extensions span EVERY enabled class — docs alone must not leave
+    # a comments-class exclusion (`src/*.sh`) untested, and an exclusion set
+    # covering all Markdown is not "carry disabled" while comment-only
+    # changes still carry.
+    probe_exts=""
+    carry_class_has docs && probe_exts=".md .markdown"
+    # Every extension the predicate's comment-token table classifies —
+    # both the '#' and the '//' families — so an exclusion like
+    # cli/src/*.rs is exercised, not skipped as "no probe".
+    carry_class_has comments && probe_exts="${probe_exts:+$probe_exts }.sh .bash .py .rb .toml .yml .yaml .js .mjs .cjs .ts .tsx .jsx .rs .go .c .h .cc .cpp .hpp .java .kt .swift"
+    [ -n "$probe_exts" ] || probe_exts=".md .markdown"
+    # Per-extension patches: a docs probe changes prose, a comments probe
+    # changes a comment line, so the delta classifies into its class and the
+    # refusal below is attributable to the exclusion alone.
+    probe_patch_for() {
+      case "$1" in
+      *.js | *.mjs | *.cjs | *.ts | *.tsx | *.jsx | *.rs | *.go | *.c | *.h | *.cc | *.cpp | *.hpp | *.java | *.kt | *.swift)
+        printf '%s' '@@ -1 +1 @@
+-// old comment
++// new comment' ;;
+      *.sh | *.bash | *.py | *.rb | *.toml | *.yml | *.yaml)
+        printf '%s' '@@ -1 +1 @@
+-# old comment
++# new comment' ;;
+      *) printf '%s' '@@ -1 +1 @@
+-old prose
++new prose' ;;
+      esac
+    }
+    # shellcheck disable=SC2086 # probe_exts is a controlled word list
+    probe_free="$(exclude_free_path $probe_exts)" || probe_free=""
+
+    # EVERY committed glob is exercised, not just the first usable one: a
+    # later typo'd or wrongly-anchored addition must not hide behind an
+    # earlier glob's green. Compare filenames are repository-relative, so a
+    # leading-'/' glob can never match any real delta — structurally dead,
+    # and a FAIL rather than a skip.
+    while IFS= read -r probe_pat; do
+      [ -z "$probe_pat" ] && continue
+      case "$probe_pat" in
+      /*)
+        cases=$((cases + 1))
+        echo "FAIL  configured: carry-exclude glob '$probe_pat' is anchored with a leading '/' — compare filenames are repository-relative, so this exclusion can never match and is dead" >&2
+        failures=$((failures + 1))
+        continue
+        ;;
+      esac
+      # shellcheck disable=SC2086 # probe_exts is a controlled word list
+      probe_match="$(exclude_glob_probe "$probe_pat" $probe_exts)"
+      probe_rc=$?
+      if [ "$probe_rc" -eq 0 ] && [ -n "$probe_match" ]; then
+        reset
+        CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
+        reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
+        compare_fix ahead "[$(delta_file "$probe_match" modified "$(probe_patch_for "$probe_match")")]"
+        run "configured: carry-exclude — '$probe_pat' matches '$probe_match', refusing the carry" awaiting
+      elif [ "$probe_rc" -eq 2 ]; then
+        echo "note  configured: carry-exclude — '$probe_pat' matches NO tracked carry-class ($probe_exts) path in this repository: prophylactic, or a typo/wrong anchor — verify the spelling; not exercised here"
+      else
+        echo "note  configured: carry-exclude — '$probe_pat' derives no carry-class ($probe_exts) probe: it guards paths the enabled carry class never carries, or uses ?/[/\\ metacharacters; not exercised here"
+      fi
+    done <<EOF_EXCLUDE_BATTERY
+$(list_items "$ACTIVE_CARRY_EXCLUDE")
+EOF_EXCLUDE_BATTERY
+
+    if [ -n "$probe_free" ]; then
+      reset
+      CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
+      reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
+      compare_fix ahead "[$(delta_file "$probe_free" modified "$(probe_patch_for "$probe_free")")]"
+      run "configured: carry-exclude — '$probe_free' is outside every committed glob and still carries" approved
+    elif [ -z "$EXCLUDE_TRACKED" ]; then
+      # Hermetic mode with every synthetic candidate matched: only a
+      # universal exclusion does that — dead config, FAIL.
+      cases=$((cases + 1))
+      echo "FAIL  configured: carry-exclude — the committed exclusions match every carry-class ($probe_exts) path; the enabled carry class can never apply (over-broad exclusion set, or disable REVIEW_GATE_CARRY_FORWARD instead)" >&2
+      failures=$((failures + 1))
+    else
+      # Tracked mode: the CURRENT tree has no carry-free carry-class file,
+      # but future files outside the globs can still carry (a repo whose
+      # only Markdown is an intentionally excluded README is legitimate).
+      # Loud note, not a FAIL — the current tree cannot prove universality.
+      echo "note  configured: carry-exclude — no TRACKED carry-class ($probe_exts) file escapes the committed exclusions today; the positive carry case is unproven against this tree (future non-excluded files still carry)"
+    fi
+  fi
 fi
 
 # The repo's retry budget: a read failing (attempts - 1) times must still

@@ -489,28 +489,197 @@ export async function ensurePaneBridgeMetadata(runtimeRoot: string, entry: PaneR
 	return metadata;
 }
 
-export function getPiInvocation(args: string[]): { command: string; args: string[] } {
-	const currentScript = process.argv[1];
-	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
-	if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
-		return { command: process.execPath, args: [currentScript, ...args] };
+// vstack#192: explicit override for harnesses/tests that import these modules
+// directly. Points at the pi entry to spawn children with — either a script
+// run under the current runtime or an executable resolved as-is.
+export const PI_SUBAGENT_ENTRY_ENV = "PI_SUBAGENT_ENTRY";
+// vstack#192: recursion guard independent of entry resolution. Each spawned
+// child carries its generation in this env var; spawning refuses past the cap
+// so a mis-resolved entry (e.g. a harness script re-running itself) dies at
+// depth 3 instead of fork-bombing the machine.
+export const PI_SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
+export const MAX_SUBAGENT_DEPTH = 3;
+
+// Basenames that plausibly belong to pi's own entry: the installed `pi` bin
+// (@earendil-works/pi-coding-agent bin maps `pi` -> dist/cli.js) and the
+// packaged/dev CLI entry (`cli.js` / `cli.ts`). A cheap pre-filter only —
+// basenames are spoofable (a harness literally named cli.ts), so a matching
+// name must additionally prove pi package identity via entryBelongsToPiPackage.
+const PI_ENTRY_BASENAMES = new Set(["pi", "pi.js", "pi.mjs", "pi.ts", "cli.js", "cli.mjs", "cli.ts"]);
+
+export const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+
+// PR #1178 finding 1 (tightened in round 3): verify the entry belongs to the
+// pi PACKAGE, not just that its basename looks right. Walk up from the
+// realpathed script to the NEAREST package.json and accept only when that
+// manifest identifies pi: name === PI_PACKAGE_NAME, or its `pi` bin entry
+// (object form, or string form on a package literally named `pi`) resolves to
+// this very script — merely declaring a `pi` bin is not identity. A missing
+// manifest continues the walk (monorepo src/ dirs); any other read failure
+// (EACCES, EIO, ...) fails closed immediately so an unreadable nearest
+// manifest cannot defer to an ancestor. Unrecognized manifests fail closed —
+// the caller falls through to resolving `pi` on PATH.
+function entryBelongsToPiPackage(scriptPath: string): boolean {
+	let realScript: string;
+	try {
+		realScript = fs.realpathSync(scriptPath);
+	} catch {
+		return false;
+	}
+	const binResolvesToScript = (manifestDir: string, binValue: unknown): boolean => {
+		if (typeof binValue !== "string" || !binValue.trim()) return false;
+		const resolved = path.resolve(manifestDir, binValue);
+		let real: string;
+		try {
+			real = fs.realpathSync(resolved);
+		} catch {
+			real = resolved;
+		}
+		return real === realScript;
+	};
+	let dir = path.dirname(realScript);
+	while (true) {
+		const manifestPath = path.join(dir, "package.json");
+		let manifestRaw: string | undefined;
+		try {
+			manifestRaw = fs.readFileSync(manifestPath, "utf-8");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return false;
+			manifestRaw = undefined;
+		}
+		if (manifestRaw !== undefined) {
+			try {
+				const manifest = JSON.parse(manifestRaw) as { name?: unknown; bin?: unknown };
+				if (manifest.name === PI_PACKAGE_NAME) return true;
+				if (manifest.bin && typeof manifest.bin === "object" && binResolvesToScript(dir, (manifest.bin as Record<string, unknown>).pi)) return true;
+				if (manifest.name === "pi" && binResolvesToScript(dir, manifest.bin)) return true;
+			} catch {
+				/* fall through to reject: nearest manifest decides */
+			}
+			return false;
+		}
+		const parent = path.dirname(dir);
+		if (parent === dir) return false;
+		dir = parent;
+	}
+}
+
+export interface PiInvocation {
+	command: string;
+	args: string[];
+	/** Generation the spawned child must export as PI_SUBAGENT_DEPTH. */
+	childDepth: number;
+	/**
+	 * Entry the spawned child must inherit as PI_SUBAGENT_ENTRY. For
+	 * script-form overrides this is the RESOLVED absolute path: a relative
+	 * override resolved for THIS spawn would otherwise reach the child
+	 * verbatim through process.env and re-resolve from the child's delegated
+	 * cwd (PR #1178 round 3). Bare commands propagate unchanged (PATH or an
+	 * absolute executable — cwd-independent, but tmux pane children do not
+	 * reliably inherit the parent's env, so the launcher must export it).
+	 * Unset when no override is active.
+	 */
+	childEntryOverride?: string;
+}
+
+export interface PiInvocationRuntime {
+	argv1: string | undefined;
+	execPath: string;
+	env: NodeJS.ProcessEnv;
+}
+
+function defaultInvocationRuntime(): PiInvocationRuntime {
+	return { argv1: process.argv[1], execPath: process.execPath, env: process.env };
+}
+
+export function currentSubagentDepth(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env[PI_SUBAGENT_DEPTH_ENV];
+	if (raw === undefined || raw.trim() === "") return 0;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+export function assertSubagentSpawnDepth(env: NodeJS.ProcessEnv = process.env): number {
+	const childDepth = currentSubagentDepth(env) + 1;
+	if (childDepth > MAX_SUBAGENT_DEPTH) {
+		throw new Error(
+			`${PI_SUBAGENT_DEPTH_ENV} recursion guard: refusing to spawn a subagent at depth ${childDepth} (max ${MAX_SUBAGENT_DEPTH}). ` +
+				`A process chain is re-spawning subagents recursively — check that pi entry resolution (${PI_SUBAGENT_ENTRY_ENV} or argv[1]) points at pi itself, not at a harness script.`,
+		);
+	}
+	return childDepth;
+}
+
+function isPiEntryScript(scriptPath: string): boolean {
+	return PI_ENTRY_BASENAMES.has(path.basename(scriptPath).toLowerCase());
+}
+
+export function getPiInvocation(args: string[], runtime: PiInvocationRuntime = defaultInvocationRuntime()): PiInvocation {
+	const childDepth = assertSubagentSpawnDepth(runtime.env);
+
+	const entryOverride = runtime.env[PI_SUBAGENT_ENTRY_ENV]?.trim();
+	if (entryOverride) {
+		if (/\.(ts|js|mjs|cjs)$/i.test(entryOverride)) {
+			// PR #1178 findings 2+3: resolve against the PARENT's cwd now — the
+			// child later spawns from the delegated agent cwd, where a relative
+			// override would ENOENT. Bare commands stay as-is (PATH resolves them).
+			const resolvedEntry = path.resolve(entryOverride);
+			if (fs.existsSync(resolvedEntry)) {
+				return { command: runtime.execPath, args: [resolvedEntry, ...args], childDepth, childEntryOverride: resolvedEntry };
+			}
+		}
+		// PR #1178 round 4: a command containing a path separator is never
+		// PATH-resolved by the OS, so a relative form like ./bin/pi would ENOENT
+		// when the child spawns from the delegated agent cwd. Resolve it against
+		// the parent cwd now and propagate the resolved form; separator-free
+		// names stay verbatim for PATH resolution.
+		const hasSeparator = entryOverride.includes("/") || (path.sep === "\\" && entryOverride.includes("\\"));
+		const resolvedCommand = hasSeparator ? path.resolve(entryOverride) : entryOverride;
+		return { command: resolvedCommand, args, childDepth, childEntryOverride: resolvedCommand };
 	}
 
-	const execName = path.basename(process.execPath).toLowerCase();
+	// Compiled pi binary: argv[1] is bun's virtual bundle path; execPath is the
+	// pi executable itself and is re-invoked directly below.
+	const currentScript = runtime.argv1;
+	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
+	// Dev-mode pi (`bun src/cli.ts`, `node dist/cli.js`, or the `pi` bin shim):
+	// re-run the same script under the same runtime. Only entries verifiably
+	// belonging to the pi package qualify — argv[1] of a process that merely
+	// imported these modules (vstack#192: a `bun harness.mjs` calling
+	// runSingleAgent) is the harness itself, and re-invoking it forks the
+	// harness unboundedly, even when the harness borrows a pi-like basename.
+	if (currentScript && !isBunVirtualScript && isPiEntryScript(currentScript) && fs.existsSync(currentScript) && entryBelongsToPiPackage(currentScript)) {
+		return { command: runtime.execPath, args: [currentScript, ...args], childDepth };
+	}
+
+	const execName = path.basename(runtime.execPath).toLowerCase();
 	const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(execName);
 	if (!isGenericRuntime) {
-		return { command: process.execPath, args };
+		return { command: runtime.execPath, args, childDepth };
 	}
 
-	return { command: "pi", args };
+	return { command: "pi", args, childDepth };
 }
 
 export async function writePromptToTempFile(agentName: string, prompt: string): Promise<{ dir: string; filePath: string }> {
 	const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-subagent-"));
 	const safeName = agentName.replace(/[^\w.-]+/g, "_");
 	const filePath = path.join(tmpDir, `prompt-${safeName}.md`);
-	await atomicWriteFile(filePath, prompt);
+	try {
+		await atomicWriteFile(filePath, prompt);
+	} catch (error) {
+		await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+		throw error;
+	}
 	return { dir: tmpDir, filePath };
+}
+
+export function removePromptTempDir(tmpDir: string): void {
+	try {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	} catch {
+		/* best-effort; tmp reaper handles leftovers */
+	}
 }
 
 export async function mapWithConcurrencyLimit<TIn, TOut>(
@@ -533,7 +702,7 @@ export async function mapWithConcurrencyLimit<TIn, TOut>(
 	return results;
 }
 
-async function writeLauncher(
+export async function writeLauncher(
 	runtimeRoot: string,
 	parentSessionId: string,
 	cwd: string,
@@ -570,6 +739,8 @@ async function writeLauncher(
 	const script = `#!/usr/bin/env bash
 set -euo pipefail
 cd ${shellQuote(cwd)}
+export ${PI_SUBAGENT_DEPTH_ENV}=${invocation.childDepth}
+${invocation.childEntryOverride ? `export ${PI_SUBAGENT_ENTRY_ENV}=${shellQuote(invocation.childEntryOverride)}` : `unset ${PI_SUBAGENT_ENTRY_ENV}`}
 export PI_SUBAGENT_CHILD_AGENT=${shellQuote(agent.name)}
 ${agent.color ? `export PI_SUBAGENT_CHILD_COLOR=${shellQuote(agent.color)}` : "unset PI_SUBAGENT_CHILD_COLOR"}
 export ${PI_SUBAGENT_CHILD_PANE_ENV}=1

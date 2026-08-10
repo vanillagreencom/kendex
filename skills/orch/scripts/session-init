@@ -214,7 +214,18 @@ _ISSUE_PAT="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
 if [[ -n "$ISSUE_ID_ARG" ]]; then
   ISSUE_ID="$ISSUE_ID_ARG"
 else
-  ISSUE_ID=$(printf '%s' "$BRANCH" | grep -oiE "$_ISSUE_PAT" | head -1 | tr '[:lower:]' '[:upper:]' || true)
+  ISSUE_ID=$(printf '%s' "$BRANCH" | grep -oiE "$_ISSUE_PAT" | head -1 || true)
+  # Canonical key case, agreeing with git-context issue-from-branch and
+  # review-init: GitHub `issue-N` lowercase, Linear `ABC-N` uppercase. The
+  # old unconditional uppercase also broke the tracker probe below (ISSUE-42
+  # never matches issue-*). tr, not ${var,,}/${var^^}: macOS Bash 3.2.
+  if [[ -n "$ISSUE_ID" ]]; then
+    _issue_id_lower="$(printf '%s' "$ISSUE_ID" | tr '[:upper:]' '[:lower:]')"
+    case "$_issue_id_lower" in
+    issue-*) ISSUE_ID="$_issue_id_lower" ;;
+    *) ISSUE_ID="$(printf '%s' "$ISSUE_ID" | tr '[:lower:]' '[:upper:]')" ;;
+    esac
+  fi
 fi
 ISSUE_ID="${ISSUE_ID:-}"
 if [[ -z "$TRACKER_ARG" && -n "$ISSUE_ID" ]]; then

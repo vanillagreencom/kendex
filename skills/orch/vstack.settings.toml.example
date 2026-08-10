@@ -108,3 +108,15 @@ ORCH_LANE_CLAUDE_PERMISSION_ARG = "--dangerously-skip-permissions"
 # verification pass on tmux claude handoff lanes (one initial pass plus one
 # after the single re-send). Positive integer; values over 120 are clamped.
 ORCH_TMUX_VERIFY_SECS = "15"
+
+# Used by: orch (`review-pr`). OPT-IN change-risk classifier: a repo-relative
+# EXECUTABLE path plus optional plain arguments (a file, not a shell string;
+# resolved from the trusted invoking checkout, run with the reviewed worktree
+# as cwd) against the change set before the review cycle. Contract:
+# prints `high`, `medium`, or `low` on stdout, exit 0. The reviewer fan-out
+# is sized from the answer (low -> small panel, first-clean-round
+# convergence; medium -> default; high -> full fleet + adversarial-test
+# expectation). Any failure or unset key = full fleet: fail-open to depth,
+# never to shallowness. The path->risk table is the repo's own knowledge —
+# keep the classifier local to the repo.
+# REVIEW_RISK_COMMAND = "tools/review-risk"
