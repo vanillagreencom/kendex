@@ -38,8 +38,13 @@ output omits children entirely, so the bundle read is mandatory:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh cache issues children [ISSUE_ID]
 ```
+
+(The sync precedes the children read: the cache can predate children added
+since the last reconcile, and a stale empty read would wave a container
+through.)
 
 Check the title FIRST — `(one PR)` always wins, even over `agent:multi`.
 Otherwise, an issue with the `agent:multi` label or with children is a
