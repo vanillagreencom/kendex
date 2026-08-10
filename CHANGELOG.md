@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **orch: claude handoff lanes launch autonomous and verify brief delivery**
+  (VST-191 / #1173). `open-terminal` now renders a permission argument into
+  claude lane launch commands, sourced from the new
+  `ORCH_LANE_CLAUDE_PERMISSION_ARG` `[env]` key and defaulting to
+  `--dangerously-skip-permissions` — handoff is launch-only autonomy, and a
+  session in prompting mode stalled on its first tool call with nobody
+  attached. A prompting override still launches but warns loudly that handoff
+  autonomy is void. On tmux lanes the launcher now verifies the CLI-arg brief
+  actually reached the TUI (first-run dialogs were silently consuming it),
+  re-sends it once into the composer if absent, and otherwise emits a
+  per-lane failure and exits nonzero instead of reporting success — the
+  claude-path sibling of the #976 codex kickoff fix.
+
 - **agents: the skill-failure reporting blockquote is condensed to a
   three-line pointer** (VST-177). The full routing/attribution decision tree
   now lives in one canonical file, `docs/skill-failure-reporting.md`, which

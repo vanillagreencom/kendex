@@ -64,6 +64,15 @@ ORCH_DECISION_MODE = "ask"
 # beyond the issue, anything touching benchmark-host protocol, and merge
 # ALWAYS ask, in every mode.
 
+ORCH_LANE_CLAUDE_PERMISSION_ARG = "--dangerously-skip-permissions"
+# Used by: orch (`open-terminal`). Claude permission argument rendered into
+# claude handoff-lane launch commands. Handoff is launch-only autonomy — no
+# one is attached to answer a permission prompt — so the default bypasses
+# permission checks, the claude-path peer of the codex generalist's
+# danger-full-access sandbox. Overriding it with a prompting mode (e.g.
+# "--permission-mode manual") voids handoff autonomy; open-terminal warns
+# loudly at launch but still launches.
+
 REVIEWER_SLOT_BUDGET = "0"
 # Used by: orch (`review-pr` / `review` / `review-codebase`). Total concurrent
 # agent-session budget of the harness runtime, counting the primary
