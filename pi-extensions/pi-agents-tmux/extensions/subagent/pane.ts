@@ -500,12 +500,53 @@ export const PI_SUBAGENT_ENTRY_ENV = "PI_SUBAGENT_ENTRY";
 export const PI_SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
 export const MAX_SUBAGENT_DEPTH = 3;
 
-// Basenames that verifiably belong to pi's own entry: the installed `pi` bin
+// Basenames that plausibly belong to pi's own entry: the installed `pi` bin
 // (@earendil-works/pi-coding-agent bin maps `pi` -> dist/cli.js) and the
-// packaged/dev CLI entry (`cli.js` / `cli.ts`). Anything else in argv[1] —
-// a test harness, a script that imported runner.ts directly — must NOT be
-// self-re-invoked as if it were pi.
+// packaged/dev CLI entry (`cli.js` / `cli.ts`). A cheap pre-filter only —
+// basenames are spoofable (a harness literally named cli.ts), so a matching
+// name must additionally prove pi package identity via entryBelongsToPiPackage.
 const PI_ENTRY_BASENAMES = new Set(["pi", "pi.js", "pi.mjs", "pi.ts", "cli.js", "cli.mjs", "cli.ts"]);
+
+export const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+
+// PR #1178 finding 1: verify the entry belongs to the pi PACKAGE, not just
+// that its basename looks right. Walk up from the realpathed script to the
+// NEAREST package.json and accept only when that manifest identifies pi:
+// name === PI_PACKAGE_NAME, an object bin map exposing a `pi` key, or a
+// package literally named `pi` whose string-form bin exposes it under the
+// package name. Missing, unreadable, or unrecognized manifests fail closed —
+// the caller falls through to resolving `pi` on PATH.
+function entryBelongsToPiPackage(scriptPath: string): boolean {
+	let dir: string;
+	try {
+		dir = path.dirname(fs.realpathSync(scriptPath));
+	} catch {
+		return false;
+	}
+	while (true) {
+		const manifestPath = path.join(dir, "package.json");
+		let manifestRaw: string | undefined;
+		try {
+			manifestRaw = fs.readFileSync(manifestPath, "utf-8");
+		} catch {
+			manifestRaw = undefined;
+		}
+		if (manifestRaw !== undefined) {
+			try {
+				const manifest = JSON.parse(manifestRaw) as { name?: unknown; bin?: unknown };
+				if (manifest.name === PI_PACKAGE_NAME) return true;
+				if (manifest.bin && typeof manifest.bin === "object" && Object.prototype.hasOwnProperty.call(manifest.bin, "pi")) return true;
+				if (manifest.name === "pi" && typeof manifest.bin === "string") return true;
+			} catch {
+				/* fall through to reject: nearest manifest decides */
+			}
+			return false;
+		}
+		const parent = path.dirname(dir);
+		if (parent === dir) return false;
+		dir = parent;
+	}
+}
 
 export interface PiInvocation {
 	command: string;
@@ -551,8 +592,14 @@ export function getPiInvocation(args: string[], runtime: PiInvocationRuntime = d
 
 	const entryOverride = runtime.env[PI_SUBAGENT_ENTRY_ENV]?.trim();
 	if (entryOverride) {
-		if (/\.(ts|js|mjs|cjs)$/i.test(entryOverride) && fs.existsSync(entryOverride)) {
-			return { command: runtime.execPath, args: [entryOverride, ...args], childDepth };
+		if (/\.(ts|js|mjs|cjs)$/i.test(entryOverride)) {
+			// PR #1178 findings 2+3: resolve against the PARENT's cwd now — the
+			// child later spawns from the delegated agent cwd, where a relative
+			// override would ENOENT. Bare commands stay as-is (PATH resolves them).
+			const resolvedEntry = path.resolve(entryOverride);
+			if (fs.existsSync(resolvedEntry)) {
+				return { command: runtime.execPath, args: [resolvedEntry, ...args], childDepth };
+			}
 		}
 		return { command: entryOverride, args, childDepth };
 	}
@@ -563,10 +610,11 @@ export function getPiInvocation(args: string[], runtime: PiInvocationRuntime = d
 	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
 	// Dev-mode pi (`bun src/cli.ts`, `node dist/cli.js`, or the `pi` bin shim):
 	// re-run the same script under the same runtime. Only entries verifiably
-	// belonging to pi qualify — argv[1] of a process that merely imported these
-	// modules (vstack#192: a `bun harness.mjs` calling runSingleAgent) is the
-	// harness itself, and re-invoking it forks the harness unboundedly.
-	if (currentScript && !isBunVirtualScript && isPiEntryScript(currentScript) && fs.existsSync(currentScript)) {
+	// belonging to the pi package qualify — argv[1] of a process that merely
+	// imported these modules (vstack#192: a `bun harness.mjs` calling
+	// runSingleAgent) is the harness itself, and re-invoking it forks the
+	// harness unboundedly, even when the harness borrows a pi-like basename.
+	if (currentScript && !isBunVirtualScript && isPiEntryScript(currentScript) && fs.existsSync(currentScript) && entryBelongsToPiPackage(currentScript)) {
 		return { command: runtime.execPath, args: [currentScript, ...args], childDepth };
 	}
 
@@ -620,7 +668,7 @@ export async function mapWithConcurrencyLimit<TIn, TOut>(
 	return results;
 }
 
-async function writeLauncher(
+export async function writeLauncher(
 	runtimeRoot: string,
 	parentSessionId: string,
 	cwd: string,
