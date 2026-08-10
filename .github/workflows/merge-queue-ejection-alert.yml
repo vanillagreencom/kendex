@@ -93,7 +93,7 @@ jobs:
               # in_progress run (a dequeue often fires while the ejecting
               # run is still finishing its sibling jobs — its failed jobs
               # are already queryable); else the newest run.
-              | (map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")) | last)
+              | (map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")) | last)
                 // (map(select(.status == "in_progress")) | last)
                 // last
                 // empty' "$runs_file")"
@@ -113,7 +113,7 @@ jobs:
           fi
           if [ -n "$run_id" ]; then
             failing_jobs="$(gh api "/repos/${GH_REPO}/actions/runs/${run_id}/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out") | "- `\(.name)` (\(.conclusion)): \(.html_url)"] | join("\n")')"
+              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | "- `\(.name)` (\(.conclusion)): \(.html_url)"] | join("\n")')"
             [ -n "$failing_jobs" ] || failing_jobs="(run $run_id has no failure-shaped jobs recorded — it may be the attempt's still-running or non-ejecting sibling; inspect the run link above)"
           fi
 
@@ -125,7 +125,7 @@ jobs:
             head_checks="$(gh api "/repos/${GH_REPO}/commits/${PR_HEAD_SHA}/check-runs?per_page=100" \
               --jq '[.check_runs[] | {name, conclusion}]')"
             failed_names="$(gh api "/repos/${GH_REPO}/actions/runs/${run_id}/jobs?per_page=100" \
-              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out") | .name]')"
+              --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | .name]')"
             # Flake requires POSITIVE evidence: every ejecting job name must
             # have a same-named SUCCESSFUL check on the PR head. Queue-only
             # jobs (this repo's normal heavy-suite shape) have no head
