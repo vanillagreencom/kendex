@@ -491,6 +491,17 @@ assert_contains "$(cat "$TMP_ROOT/c13c.err")" "clamped to 120" \
 c13c_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG" || true)"
 assert_eq "$c13c_resends" "0" "no instant resend from a zero-pass verify loop"
 
+# Case 13d: a broken tmux-only setting must not abort a GUI launch that
+# never reads it.
+CAP13D="$TMP_ROOT/cap13d"
+set +e
+c13d_out=$(ORCH_TMUX_VERIFY_SECS=abc OT_CAPTURE="$CAP13D" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c13d.err")
+c13d_code=$?
+set -e
+assert_eq "$c13d_code" "0" "invalid verify secs does not abort a GUI launch"
+assert_not_contains "$(cat "$TMP_ROOT/c13d.err")" "ORCH_TMUX_VERIFY_SECS" \
+  "GUI launches never validate the tmux-only setting"
+
 # Case 14: a runaway value is clamped loudly (the lane still verifies)
 # instead of hanging the launch for hours.
 new_tmux_state c14

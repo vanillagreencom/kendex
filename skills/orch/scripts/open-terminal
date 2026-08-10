@@ -94,8 +94,12 @@ done
 # lane): a runaway value hangs every lane in the launch and a non-integer
 # breaks the loop arithmetic, so anything but a positive integer is a config
 # error and oversized values are clamped to a bound that still fails fast.
-# Validated after argument parsing so --help never dies on project settings.
-if [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ ]]; then
+# Validated after argument parsing so --help never dies on project settings,
+# and ONLY for tmux launches — GUI/custom-command lanes never read it, and a
+# broken tmux-only setting must not abort unrelated launches.
+if [[ "$TERMINAL_MODE" != "tmux" ]]; then
+  TMUX_VERIFY_SECS=15
+elif [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ ]]; then
   echo "Error: ORCH_TMUX_VERIFY_SECS must be a positive integer (seconds), got '$TMUX_VERIFY_SECS'." >&2
   exit 1
 fi
