@@ -30,11 +30,22 @@ first (Linear items only):
 Per item, check the title FIRST — a `(one PR)` marker always makes it
 launchable, even with `agent:multi`. Otherwise, an item with the
 `agent:multi` label, or with children in the bundle read, is a CONTAINER:
-drop it from the launch list and surface its unblocked children (each
-child's `blocked_by` plus the container's own, resolved by blocker state)
-as the launchable items instead — containers are never orchestrated and
-never own a worktree; open-terminal would create one before the launched
-session could refuse.
+drop it from the launch list and surface its unblocked children as the
+launchable items instead — containers are never orchestrated and never own
+a worktree; open-terminal would create one before the launched session
+could refuse.
+
+Resolve "unblocked" mechanically: collect each child's `blocked_by` ids
+plus the container's own `blocked_by` (parent-carried cross-bundle
+relations apply to every child), fetch those blockers' live states in one
+call —
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues bulk-get [BLOCKER_IDS]
+```
+
+— and a child is dispatchable only when its own state is non-terminal and
+every collected blocker is Done or Canceled.
 
 Present:
 
