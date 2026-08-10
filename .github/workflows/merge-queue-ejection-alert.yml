@@ -56,12 +56,29 @@ jobs:
           # pattern; head_branch is null-guarded (jq test() on a null errors
           # the step under set -e).
           runs_file="$(mktemp)"
-          gh api --paginate "/repos/${GH_REPO}/actions/runs?event=merge_group&per_page=100" \
+          lookup_failed=""
+          if ! gh api --paginate "/repos/${GH_REPO}/actions/runs?event=merge_group&per_page=100" \
             --jq "[.workflow_runs[] | select(.head_branch | strings | test(\"/pr-${PR_NUMBER}-\"))]" \
-            > "$runs_file" || true
+            > "$runs_file"; then
+            lookup_failed=1
+          fi
+          if [ ! -s "$runs_file" ] && [ -z "$lookup_failed" ]; then
+            # Zero bytes from a successful paginated read is a broken read,
+            # not an empty result set — treat it like a failed lookup.
+            lookup_failed=1
+          fi
           run_json=""
-          if [ -s "$runs_file" ]; then
-            run_json="$(jq -s 'add | sort_by(.created_at) | last // empty' "$runs_file")"
+          if [ -z "$lookup_failed" ]; then
+            # One queue ATTEMPT triggers several workflows sharing one
+            # merge-group ref (identical head_branch): take the newest
+            # attempt's group, and within it the failure-shaped run —
+            # never a sibling workflow that merely started latest.
+            run_json="$(jq -s 'add
+              | group_by(.head_branch)
+              | (max_by(map(.created_at) | max) // [])
+              | (map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")) | last)
+                // (sort_by(.created_at) | last)
+                // empty' "$runs_file")"
           fi
 
           run_id=""; run_url=""; run_name=""
@@ -71,11 +88,15 @@ jobs:
             run_name="$(printf '%s' "$run_json" | jq -r '.name')"
           fi
 
-          failing_jobs="(failing run not identified — the dequeue may predate run completion; check the queue insights page)"
+          if [ -n "$lookup_failed" ]; then
+            failing_jobs="(merge-group run lookup FAILED — API error or broken read; inspect the queue insights page and this alert run's logs)"
+          else
+            failing_jobs="(failing run not identified — the dequeue may predate run completion; check the queue insights page)"
+          fi
           if [ -n "$run_id" ]; then
             failing_jobs="$(gh api "/repos/${GH_REPO}/actions/runs/${run_id}/jobs?per_page=100" \
               --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | "- `\(.name)` (\(.conclusion)): \(.html_url)"] | join("\n")')"
-            [ -n "$failing_jobs" ] || failing_jobs="(run $run_id failed with no per-job failure recorded)"
+            [ -n "$failing_jobs" ] || failing_jobs="(run $run_id has no failure-shaped jobs recorded — it may be the attempt's still-running or non-ejecting sibling; inspect the run link above)"
           fi
 
           # Flake hint: the same-named jobs' state on the PR's OWN head.
@@ -105,7 +126,7 @@ jobs:
             elif [ "$any_red_on_head" = "true" ]; then
               hint="At least one ejecting check is not green on the PR's own head — fix before re-arming."
             else
-              hint="The ejecting check(s) run only in the merge queue (no same-named check on the PR head) — no flake-vs-genuine comparison is available; inspect the failing run before re-arming."
+              hint="No usable same-named comparison on the PR head (checks absent, skipped, or still running) — no flake-vs-genuine call is available; inspect the failing run before re-arming."
             fi
           fi
 
