@@ -30,10 +30,12 @@ first (Linear items only):
 Per item, check the title FIRST — a `(one PR)` marker always makes it
 launchable, even with `agent:multi`. Otherwise, an item with the
 `agent:multi` label, or with children in the bundle read, is a CONTAINER:
-drop it from the launch list and surface its unblocked children as the
-launchable items instead — containers are never orchestrated and never own
-a worktree; open-terminal would create one before the launched session
-could refuse.
+drop it from the launch list and surface its unblocked DIRECT children
+(`depth == 0` in the bundle's flattened `.children`) as the launchable
+items instead — then rerun this preflight on each replacement, since a
+direct child can itself be a container. Containers are never orchestrated
+and never own a worktree; open-terminal would create one before the
+launched session could refuse.
 
 Resolve "unblocked" mechanically: collect each child's `blocked_by` ids
 plus the container's own `blocked_by` (parent-carried cross-bundle
@@ -44,8 +46,10 @@ call —
 .agents/skills/linear/scripts/linear.sh issues bulk-get [BLOCKER_IDS]
 ```
 
-— and a child is dispatchable only when its own state is non-terminal and
-every collected blocker is Done or Canceled.
+— and a child is dispatchable only when its own `state_type` is
+non-terminal and every collected blocker's `state_type` IS terminal
+(`completed` or `canceled`) — terminality by type, never by
+workspace-configurable state names.
 
 Present:
 
