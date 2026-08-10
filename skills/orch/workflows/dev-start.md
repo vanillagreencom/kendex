@@ -33,10 +33,12 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 Use the output as `TRACKER`.
 
 **Container preflight** (Linear only, before any workflow-state
-initialization): fetch the issue —
+initialization): fetch the issue and its children — the default single-issue
+output omits children entirely, so the bundle read is mandatory:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh cache issues children [ISSUE_ID]
 ```
 
 Check the title FIRST — `(one PR)` always wins, even over `agent:multi`.
