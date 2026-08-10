@@ -1737,17 +1737,22 @@ EOF_TRACKED_PROBE
   done
   return 1
 }
-exclude_free_path() { # ext -> a path NO committed glob matches
-  local ext="$1" candidate pat hit
-  for candidate in "carry-probe/unrelated$ext" "carry-probe-unrelated$ext"; do
-    hit=""
-    while IFS= read -r pat; do
-      [ -z "$pat" ] && continue
-      if glob_matches "$candidate" "$pat"; then hit=1; break; fi
-    done <<EOF_FREE_PROBE
+exclude_free_path() { # ext... -> a path NO committed glob matches
+  # Every carry-class extension gets candidates: an exclude list covering
+  # all .md probe paths while .markdown stays carry-eligible must still
+  # prove the positive (non-matching deltas carry).
+  local ext candidate pat hit
+  for ext in "$@"; do
+    for candidate in "carry-probe/unrelated$ext" "carry-probe-unrelated$ext"; do
+      hit=""
+      while IFS= read -r pat; do
+        [ -z "$pat" ] && continue
+        if glob_matches "$candidate" "$pat"; then hit=1; break; fi
+      done <<EOF_FREE_PROBE
 $(list_items "$ACTIVE_CARRY_EXCLUDE")
 EOF_FREE_PROBE
-    if [ -z "$hit" ]; then printf '%s\n' "$candidate"; return 0; fi
+      if [ -z "$hit" ]; then printf '%s\n' "$candidate"; return 0; fi
+    done
   done
   return 1
 }
@@ -1788,7 +1793,8 @@ if [ -n "$ACTIVE_CARRY" ]; then
 -# old comment
 +# new comment'
     fi
-    probe_free="$(exclude_free_path "${probe_exts%% *}")" || probe_free=""
+    # shellcheck disable=SC2086 # probe_exts is a controlled word list
+    probe_free="$(exclude_free_path $probe_exts)" || probe_free=""
 
     # EVERY committed glob is exercised, not just the first usable one: a
     # later typo'd or wrongly-anchored addition must not hide behind an
@@ -1827,7 +1833,13 @@ EOF_EXCLUDE_BATTERY
       compare_fix ahead "[$(delta_file "$probe_free" modified "$probe_patch")]"
       run "configured: carry-exclude — '$probe_free' is outside every committed glob and still carries" approved
     else
-      echo "note  configured: carry-exclude — every probe path matched a committed glob; carry case skipped"
+      # Exclusions swallowing EVERY carry-class candidate mean no docs/
+      # comments delta can ever carry — the enabled class is dead config,
+      # exactly the over-broadness this battery exists to catch. FAIL, not
+      # a note: a repo intending that posture should disable the class.
+      cases=$((cases + 1))
+      echo "FAIL  configured: carry-exclude — the committed exclusions match every carry-class probe path ($probe_exts); the enabled carry class can never apply (over-broad exclusion set, or disable REVIEW_GATE_CARRY_FORWARD instead)" >&2
+      failures=$((failures + 1))
     fi
   fi
 fi

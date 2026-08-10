@@ -133,6 +133,19 @@ grep -q "carry-exclude — 'guides/\*' matches" "$work/excludes.out" \
 grep -q "outside every committed glob and still carries" "$work/excludes.out" \
   || note "committed exclude-free carry case not exercised"
 
+# An exclusion set that swallows every carry-class probe path means the
+# enabled class can never apply — that over-broadness must FAIL the suite,
+# not print a note.
+mkdir -p "$work/overbroad"
+sed 's/^REVIEW_GATE_CARRY_FORWARD = .*/REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"/' \
+  "$work/configured/vstack.settings.toml" >"$work/overbroad/vstack.settings.toml"
+if (cd "$work/overbroad" && "$SELFTEST") >"$work/overbroad.out" 2>&1; then
+  note "selftest passed with a '*' carry-exclude — the over-broad-exclusion guard no longer fires"
+else
+  grep -q "can never apply" "$work/overbroad.out" \
+    || note "the over-broad failure does not explain that the carry class is dead"
+fi
+
 mkdir -p "$work/deadglob"
 sed 's/^REVIEW_GATE_CARRY_FORWARD = .*/REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "\/docs\/*"/' \
   "$work/configured/vstack.settings.toml" >"$work/deadglob/vstack.settings.toml"
