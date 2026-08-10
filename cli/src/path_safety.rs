@@ -220,6 +220,39 @@ pub(crate) fn ensure_agents_dir_within_project(project_root: &Path) -> Result<()
             agents_dir.display()
         );
     }
+    // `.agents` itself must be a checkout-owned canonical root BEFORE the
+    // skills child is considered: an alias like `.agents -> cli/src` with no
+    // `skills` child yet would otherwise ride the NotFound early-return
+    // below, and the subsequent install creates (and later recursively
+    // replaces) `<aliased-dir>/skills/<name>` inside repository sources.
+    if agents_dir_canon.starts_with(&project_root_canon) {
+        if agents_dir_canon != project_root_canon.join(".agents") {
+            bail!(
+                "refusing .agents that resolves to a non-canonical in-project directory: {} -> {}",
+                agents_dir.display(),
+                agents_dir_canon.display()
+            );
+        }
+    } else {
+        let claimed_checkout = agents_dir_canon
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cannot derive a checkout root from {}",
+                    agents_dir_canon.display()
+                )
+            })?;
+        if !agents_dir_canon.ends_with(Path::new(".agents"))
+            || git_toplevel(&claimed_checkout).as_deref() != Some(claimed_checkout.as_path())
+        {
+            bail!(
+                "refusing .agents that does not resolve to a checkout toplevel's .agents: {} -> {}",
+                agents_dir.display(),
+                agents_dir_canon.display()
+            );
+        }
+    }
     // Same boundary one level down: a real in-repo .agents whose skills
     // subdir symlinks outside the repository would otherwise pass, and every
     // skill write goes through .agents/skills.
@@ -397,6 +430,37 @@ mod tests {
                 .contains("refusing to write through symlink")
         );
         assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `.agents` aliased to an arbitrary in-repo directory must refuse even
+    /// when its `skills` child does not exist yet — the NotFound early
+    /// return must not skip root validation, or install creates (and later
+    /// recursively replaces) `<aliased>/skills/<name>` inside sources.
+    #[cfg(unix)]
+    #[test]
+    fn agents_alias_without_skills_child_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_agents_alias_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let decoy = root.join("src");
+        std::fs::create_dir_all(&decoy).unwrap();
+        symlink(&decoy, root.join(".agents")).unwrap();
+
+        let err = ensure_agents_dir_within_project(&root).unwrap_err();
+        assert!(
+            err.to_string().contains("non-canonical in-project"),
+            "expected the .agents alias refusal, got: {err}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
