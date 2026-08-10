@@ -446,14 +446,53 @@ fn extract_section(content: &str, header: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    // End at next ## heading or end of content
-    let end = trimmed.find("\n## ").unwrap_or(trimmed.len());
-    let text = trimmed[..end].trim();
+    let text = trimmed[..section_end(trimmed)].trim();
     if text.is_empty() {
         None
     } else {
         Some(text.to_string())
     }
+}
+
+/// End of a section body: the next `\n## ` heading, or end of content.
+/// Headings inside a marked shared-instructions region never terminate the
+/// section — a shared `all` value may itself contain `## ` headings, and
+/// splitting the region there would leave an unmatched start marker that
+/// `ProjectConfig::strip_shared_block` cannot drop, persisting a truncated
+/// shared fragment as item-specific text on re-extraction.
+fn section_end(text: &str) -> usize {
+    let mut from = 0;
+    loop {
+        let Some(rel) = text[from..].find("\n## ") else {
+            return text.len();
+        };
+        let candidate = from + rel;
+        match enclosing_marked_region_end(text, candidate) {
+            Some(region_end) => from = region_end,
+            None => return candidate,
+        }
+    }
+}
+
+/// If `pos` falls inside a `SHARED_INSTRUCTIONS_START`..`SHARED_INSTRUCTIONS_END`
+/// region of `text`, return the offset just past that region's end marker.
+fn enclosing_marked_region_end(text: &str, pos: usize) -> Option<usize> {
+    use crate::project_config::{SHARED_INSTRUCTIONS_END, SHARED_INSTRUCTIONS_START};
+    let mut from = 0;
+    while let Some(rel_start) = text[from..].find(SHARED_INSTRUCTIONS_START) {
+        let start = from + rel_start;
+        if start > pos {
+            return None;
+        }
+        let end = start
+            + text[start..].find(SHARED_INSTRUCTIONS_END)?
+            + SHARED_INSTRUCTIONS_END.len();
+        if pos > start && pos < end {
+            return Some(end);
+        }
+        from = end;
+    }
+    None
 }
 
 /// Extract the developer_instructions body from a Codex TOML agent file.
@@ -623,6 +662,26 @@ mod tests {
         assert_eq!(
             model_id_for("openai", "openai-codex/gpt-5.6-sol"),
             "openai-codex/gpt-5.6-sol"
+        );
+    }
+
+    #[test]
+    fn extract_section_keeps_marked_shared_region_with_nested_headings() {
+        use crate::project_config::ProjectConfig;
+        let shared = "Fleet rules.\n\n## Escalation\n\nPing the owner.";
+        let body = ProjectConfig::merge_marked_shared_and_specific(Some(shared), Some("Own text."))
+            .unwrap();
+        let content = format!("# Agent\n\n## Additional Instructions\n\n{body}\n\n## Hook Rules\n\nSome hook.\n");
+        let extracted = extract_section(&content, "## Additional Instructions").unwrap();
+        // The `## Escalation` heading inside the marked region must not
+        // terminate extraction: both markers and the specific text survive.
+        assert!(extracted.contains(crate::project_config::SHARED_INSTRUCTIONS_END));
+        assert!(extracted.contains("Own text."));
+        assert!(!extracted.contains("Some hook."));
+        // Round trip: stripping the marked region leaves only the specific text.
+        assert_eq!(
+            ProjectConfig::strip_shared_block(Some(shared), &extracted).as_deref(),
+            Some("Own text.")
         );
     }
 
