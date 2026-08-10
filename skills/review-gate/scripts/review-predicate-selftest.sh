@@ -1703,8 +1703,16 @@ glob_matches() { # path, glob — the predicate's exact `case` matcher
 # Resolved from the INVOKING directory's repository — the settings under
 # test belong to that repo, so its tracked tree is the evidence base. Empty
 # when the selftest runs outside a repository (hermetic harnesses): only
-# there do manufactured probe paths apply.
-EXCLUDE_TRACKED="$(git ls-files --full-name 2>/dev/null || true)"
+# there do manufactured probe paths apply. Loaded LAZILY at the exclude
+# battery (the only consumer), not at script start, and via -z so quoted
+# unusual pathnames round-trip instead of mis-probing globs.
+EXCLUDE_TRACKED=""
+exclude_tracked_loaded=""
+load_exclude_tracked() {
+  [ -n "$exclude_tracked_loaded" ] && return 0
+  exclude_tracked_loaded=1
+  EXCLUDE_TRACKED="$(git ls-files -z 2>/dev/null | tr '\0' '\n' || true)"
+}
 exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
   # Tracked mode (a real repository): ONLY real tracked matches count — a
   # synthetic filler manufactured from the glob under test would let a
@@ -1807,6 +1815,7 @@ if [ -n "$ACTIVE_CARRY" ]; then
   # every committed glob must still carry (the exclusion neither dead nor
   # over-broad).
   if [ -n "$ACTIVE_CARRY_EXCLUDE" ]; then
+    load_exclude_tracked
     # Probe extensions span EVERY enabled class — docs alone must not leave
     # a comments-class exclusion (`src/*.sh`) untested, and an exclusion set
     # covering all Markdown is not "carry disabled" while comment-only

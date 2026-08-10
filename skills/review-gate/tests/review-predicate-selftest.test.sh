@@ -137,31 +137,23 @@ grep -q "carry-exclude — 'guides/\*' matches" "$work/excludes.out" \
 grep -q "outside every committed glob and still carries" "$work/excludes.out" \
   || note "committed exclude-free carry case not exercised"
 
-# An exclusion set that swallows every carry-class probe path means the
-# enabled class can never apply — that over-broadness must FAIL the suite,
-# not print a note.
-mkdir -p "$work/overbroad"
-grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
-  >"$work/overbroad/vstack.settings.toml"
-printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"\n' \
-  >>"$work/overbroad/vstack.settings.toml"
-if (cd "$work/overbroad" && "$SELFTEST") >"$work/overbroad.out" 2>&1; then
-  note "selftest passed with a '*' carry-exclude — the over-broad-exclusion guard no longer fires"
-else
-  grep -q "can never apply" "$work/overbroad.out" \
-    || note "the over-broad failure does not explain that the carry class is dead"
-fi
-
+# One combined FAILING run pins BOTH guards (each fixture run replays the
+# full decision table, so failure cases share a run): a leading-'/' glob can
+# never match a repository-relative compare filename (dead anchoring), and a
+# '*' exclusion swallowing every carry-class probe path means the enabled
+# class can never apply (over-broad).
 mkdir -p "$work/deadglob"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
   >"$work/deadglob/vstack.settings.toml"
-printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "/docs/*"\n' \
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "/docs/*;*"\n' \
   >>"$work/deadglob/vstack.settings.toml"
 if (cd "$work/deadglob" && "$SELFTEST") >"$work/deadglob.out" 2>&1; then
-  note "selftest passed with a leading-'/' carry-exclude glob — the dead-anchoring guard no longer fires"
+  note "selftest passed with dead ('/docs/*') and over-broad ('*') carry-excludes — the guards no longer fire"
 else
   grep -q "leading '/'" "$work/deadglob.out" \
     || note "the dead-glob failure does not explain the leading-'/' anchoring"
+  grep -q "can never apply" "$work/deadglob.out" \
+    || note "the over-broad failure does not explain that the carry class is dead"
 fi
 
 if [ "$fail" -ne 0 ]; then
