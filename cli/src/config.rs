@@ -1112,7 +1112,6 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
         roots
     };
 
-    let mut seen = std::collections::HashSet::new();
     for (skills_dir, gate) in canonical_skills {
         if !skills_dir.is_dir() {
             continue;
@@ -1212,26 +1211,36 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
                         // artifact resolves somewhere ELSE (an independent
                         // install in another checkout), an unscoped entry
                         // would let recovery claim it. Scope to the
-                        // harnesses actually resolving here in that case;
-                        // otherwise keep the legacy full detection.
+                        // harnesses actually attached here in that case —
+                        // symlink artifacts resolving to this canonical AND
+                        // direct-canonical harnesses (Codex/Pi, whose
+                        // artifact IS this directory). No locally attached
+                        // harness at all means the foreign install owns
+                        // every artifact: skip rather than mint a
+                        // zero-harness entry. Without a foreign-resolving
+                        // artifact, keep the legacy full detection.
                         let local_canonical = path.canonicalize().ok();
                         let mut resolving: Vec<String> = Vec::new();
                         let mut foreign_resolving = false;
                         for harness in crate::harness::Harness::ALL.iter() {
                             let artifact = harness.skills_dir(false).join(name);
-                            if std::fs::symlink_metadata(&artifact)
-                                .is_ok_and(|meta| meta.file_type().is_symlink())
-                            {
-                                match (artifact.canonicalize().ok(), &local_canonical) {
-                                    (Some(resolved), Some(local)) if resolved == *local => {
-                                        resolving.push(harness.id().to_string());
-                                    }
-                                    (Some(_), _) => foreign_resolving = true,
-                                    _ => {}
+                            let Ok(meta) = std::fs::symlink_metadata(&artifact) else {
+                                continue;
+                            };
+                            match (artifact.canonicalize().ok(), &local_canonical) {
+                                (Some(resolved), Some(local)) if resolved == *local => {
+                                    resolving.push(harness.id().to_string());
                                 }
+                                (Some(_), _) if meta.file_type().is_symlink() => {
+                                    foreign_resolving = true;
+                                }
+                                _ => {}
                             }
                         }
                         if foreign_resolving {
+                            if resolving.is_empty() {
+                                continue;
+                            }
                             Some(resolving)
                         } else {
                             None
@@ -1239,7 +1248,27 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
                     }
                 }
             };
-            if seen.insert(name.to_string()) {
+            // A skill can hold canonicals in MORE than one root (split
+            // layout: Codex/Pi local, Claude anchored in main): merge
+            // harness scopes across roots instead of first-root-wins. An
+            // unscoped (None) side means full legacy detection and absorbs
+            // any scoped one.
+            if let Some(existing) = items
+                .iter_mut()
+                .find(|item: &&mut DiskItem| item.name == name && item.kind == ItemKind::Skill)
+            {
+                match (&mut existing.anchored_harnesses, anchored_harnesses) {
+                    (Some(current), Some(mut incoming)) => {
+                        for harness_id in incoming.drain(..) {
+                            if !current.contains(&harness_id) {
+                                current.push(harness_id);
+                            }
+                        }
+                    }
+                    (current @ Some(_), None) => *current = None,
+                    (None, _) => {}
+                }
+            } else {
                 items.push(DiskItem {
                     name: name.to_string(),
                     kind: ItemKind::Skill,
