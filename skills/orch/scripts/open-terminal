@@ -212,7 +212,11 @@ start_cmd() {
 # undelivered screen.
 tmux_brief_visible() {
   local pane="$1" brief="$2" screen
-  screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
+  # -S -: capture from the start of history, not just the visible viewport —
+  # a fast response can scroll the submitted prompt out of view before the
+  # first poll, and a viewport-only capture would misread that as
+  # undelivered and queue a duplicate brief into a running session.
+  screen="$(tmux capture-pane -pJ -S - -t "$pane" 2>/dev/null)" || return 1
   printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│' | grep -qF -- "$brief" || return 1
   printf '%s\n' "$screen" | grep -qE '●|⏺|✻|✳|esc to interrupt'
 }
@@ -223,6 +227,26 @@ tmux_verify_brief() {
     sleep 1
     waited=$((waited + 1))
     tmux_brief_visible "$pane" "$brief" && return 0
+  done
+  return 1
+}
+
+# Before re-typing the brief, get the TUI to a ready composer: while a
+# first-run dialog (theme / trust / browser integration) is still up, brief
+# characters land in the DIALOG and are lost — only the trailing Enter
+# survives to dismiss it, leaving an empty composer and a dead lane. Each
+# pass sends one Enter (accepting the dialog's default, which is also what
+# an unattended lane needs) and waits for the main TUI's composer footer.
+# An Enter into an already-ready empty composer is a no-op, so the nudge is
+# safe when the screen is merely slow.
+tmux_wait_composer() {
+  local pane="$1" waited=0 screen
+  while (( waited < TMUX_VERIFY_SECS )); do
+    screen="$(tmux capture-pane -pJ -S - -t "$pane" 2>/dev/null)" || return 1
+    printf '%s\n' "$screen" | grep -qF '? for shortcuts' && return 0
+    tmux send-keys -t "$pane" Enter || return 1
+    sleep 1
+    waited=$((waited + 1))
   done
   return 1
 }
@@ -259,6 +283,10 @@ open_tmux() {
   # re-verify; if still absent, fail this lane loudly instead of reporting
   # success. Sibling of the codex kickoff fix in vstack#976.
   tmux_verify_brief "$pane" "$brief" && return 0
+  if ! tmux_wait_composer "$pane"; then
+    echo "Error: '$title' never reached a ready composer (first-run dialog stuck?) — attach and start it manually: $brief" >&2
+    return 1
+  fi
   if ! tmux send-keys -t "$pane" -l "$brief" || ! tmux send-keys -t "$pane" Enter; then
     echo "Error: tmux send-keys failed re-delivering the brief to '$title'" >&2
     return 1

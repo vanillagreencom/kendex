@@ -189,6 +189,12 @@ COMPOSER_SCREEN="╭────────────────────
 │ > /orch start CC-737                      │
 ╰──────────────────────────────────────────╯
   ? for shortcuts"
+# Main TUI at a ready, EMPTY composer (the '? for shortcuts' footer is the
+# readiness marker) — where the re-send must land, never in a dialog.
+READY_SCREEN="╭──────────────────────────────────────────╮
+│ >                                         │
+╰──────────────────────────────────────────╯
+  ? for shortcuts"
 
 echo "=== open-terminal claude handoff: permission mode ==="
 
@@ -284,15 +290,18 @@ c5_log="$(cat "$OT_TMUX_LOG")"
 assert_contains "$c5_log" "--effort max --dangerously-skip-permissions '/orch start CC-737'" \
   "tmux-sent launch command carries the autonomy flag"
 assert_contains "$c5_log" "capture-pane" "delivery was verified via capture-pane"
+assert_contains "$c5_log" "capture-pane -pJ -S - -t %7" \
+  "capture includes scrollback (-S -): a fast response scrolling the prompt out of the viewport must not read as undelivered"
 assert_not_contains "$c5_log" "send-keys -t %7 -l /orch start CC-737" \
   "brief is not re-sent when already delivered"
 
 # Case 6: first capture shows the brief only inside the echoed launch command
-# (dialog ate the arg); the launcher re-sends the brief once and the second
-# capture shows it in the transcript.
+# (dialog ate the arg); the launcher waits for a ready composer, re-sends the
+# brief once, and the next capture shows it in the transcript.
 new_tmux_state c6
 printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/1"
-printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/2"
+printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/2"
+printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/3"
 set +e
 c6_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c6.err")
 c6_code=$?
@@ -303,11 +312,37 @@ c6_log="$(cat "$OT_TMUX_LOG")"
 c6_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG")"
 assert_eq "$c6_resends" "1" "brief is re-sent exactly once"
 
-# Case 7: the brief never leaves the echoed launch line (screen stays the
-# ECHO_SCREEN for every capture) — proves the echoed command alone is NOT
-# delivery evidence, and the lane fails loudly with a nonzero exit.
+# Case 6b: TWO dialog screens before the composer is ready — each
+# wait-composer pass sends one dismissing Enter, and the brief goes in only
+# once the '? for shortcuts' footer appears. Proves brief characters are
+# never typed into a dialog.
+new_tmux_state c6b
+printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/1"
+printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/2"
+printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/3"
+printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/4"
+printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/5"
+set +e
+c6b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=2 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c6b.err")
+c6b_code=$?
+set -e
+assert_eq "$c6b_code" "0" "dialog-then-ready path exits 0"
+assert_contains "$c6b_out" "Re-delivered brief to 'CC-737'" "re-delivery after dialog dismissal is reported"
+# Bare Enters: 1 at launch + 1 dialog dismissal nudge + 1 submitting the
+# re-sent brief. The brief itself is typed exactly once, after readiness.
+c6b_enters="$(grep -c "send-keys -t %7 Enter$" "$OT_TMUX_LOG" || true)"
+assert_eq "$c6b_enters" "3" "one dismissing Enter per dialog pass, none extra"
+c6b_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG")"
+assert_eq "$c6b_resends" "1" "brief typed exactly once, after the composer is ready"
+
+# Case 7: the brief never leaves the echoed launch line (the TUI reaches a
+# ready composer but the re-sent brief never shows as submitted) — proves
+# the echoed command alone is NOT delivery evidence, and the lane fails
+# loudly with a nonzero exit.
 new_tmux_state c7
 printf '%s\n' "$ECHO_SCREEN" > "$OT_TMUX_CAPTURES/1"
+printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/2"
+printf '%s\n' "$READY_SCREEN" > "$OT_TMUX_CAPTURES/3"
 set +e
 c7_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c7.err")
 c7_code=$?
