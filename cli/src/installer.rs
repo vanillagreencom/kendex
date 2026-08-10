@@ -312,13 +312,20 @@ pub fn remove_item(
     } else {
         let mut canonicals: Vec<PathBuf> = Vec::new();
         let mut probed: Vec<PathBuf> = Vec::new();
+        // Anchored preservation is for OTHER checkouts' canonicals only: an
+        // ordinary project-scope child link also yields a LinkHome, but its
+        // checkout IS this project — admitting it would make every normal
+        // `vstack remove` skip deleting its own canonical (and clear its
+        // marker) while reporting success.
+        let project_checkout = std::fs::canonicalize(crate::config::project_root())
+            .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
         for harness in harnesses {
             let dest = harness.skills_dir(false).join(name);
             if probed.contains(&dest) {
                 continue;
             }
             probed.push(dest.clone());
-            if let Some(home) = skill_link_home(&dest) {
+            if let Some(home) = skill_link_home(&dest).filter(|home| home.checkout_root != project_checkout) {
                 let canonical = home
                     .checkout_root
                     .join(".agents")
@@ -2233,6 +2240,61 @@ mod tests {
         assert!(
             outcome.anchored_left.contains(&expected),
             "the surviving canonical must be reported, got {:?}",
+            outcome.anchored_left
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An ordinary project-scope remove must DELETE its own canonical: the
+    /// child link's LinkHome names this project as checkout, and admitting
+    /// that into the anchored-preservation set would skip the canonical,
+    /// clear its marker, and still report success.
+    #[cfg(unix)]
+    #[test]
+    fn remove_item_deletes_own_canonical_for_ordinary_install() {
+        let root = std::env::temp_dir().join(format!(
+            "vstack_own_remove_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        if !init_repo_with_commit(&project) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&project, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+        let canonical = project.join(".agents").join("skills").join("github");
+        assert!(canonical.join("SKILL.md").is_file());
+
+        let outcome = crate::test_util::with_project_root(&project, || {
+            remove_item(
+                "github",
+                Some(ItemKind::Skill),
+                &[Harness::ClaudeCode],
+                false,
+            )
+            .unwrap()
+        });
+        assert!(
+            !canonical.exists(),
+            "an ordinary remove must delete the project's own canonical"
+        );
+        assert!(
+            outcome.anchored_left.is_empty(),
+            "nothing is anchored elsewhere in an ordinary remove, got {:?}",
             outcome.anchored_left
         );
 

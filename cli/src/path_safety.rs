@@ -70,6 +70,24 @@ pub(crate) fn write_file_no_follow(path: &Path, contents: impl AsRef<[u8]>) -> R
     write_result
 }
 
+/// `git rev-parse --show-toplevel` for `dir`, canonicalized. `None` when `dir`
+/// is not inside a Git repository or the answer cannot be resolved — callers
+/// fail closed.
+pub(crate) fn git_toplevel(dir: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args(["-C", dir.to_str()?, "rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    Path::new(&raw).canonicalize().ok()
+}
+
 /// `git rev-parse --git-common-dir` for `dir`, canonicalized. `None` when `dir`
 /// is not inside a Git repository, when git is unavailable, or when the answer
 /// cannot be resolved — every one of which must fail closed at the call site.
@@ -225,18 +243,58 @@ pub(crate) fn ensure_agents_dir_within_project(project_root: &Path) -> Result<()
     }
     // Same-repository containment is necessary but not sufficient: a
     // `.agents/skills` symlinked to an arbitrary in-repo directory (e.g.
-    // `../cli/src`) would make install treat `<target>/<name>` as canonical
-    // and recursively DELETE it on refresh. The resolved target must itself
-    // be an `.agents/skills` root — either this `.agents`'s own subdir or an
-    // approved checkout's.
-    if skills_dir_canon != agents_dir_canon.join("skills")
-        && !skills_dir_canon.ends_with(Path::new(".agents/skills"))
-    {
-        bail!(
-            "refusing .agents/skills that resolves to a non-skills-root directory: {} -> {}",
-            skills_dir.display(),
-            skills_dir_canon.display()
-        );
+    // `../cli/src`, or `.agents -> .` making it the project's own `skills/`
+    // source) would make install treat `<target>/<name>` as canonical and
+    // recursively DELETE it on refresh. The resolved target must be exactly
+    // `<checkout toplevel>/.agents/skills` of a checkout sharing this
+    // project's Git common directory — the spelling suffix alone would still
+    // admit a nested decoy like `<repo>/decoy/.agents/skills`.
+    if skills_dir_canon.starts_with(&project_root_canon) {
+        // In-project, the ONLY legitimate resolution is this project's own
+        // `.agents/skills` — an alias like `.agents -> .` (making it the
+        // project's `skills/` source dir) or a nested decoy such as
+        // `<root>/decoy/.agents/skills` would otherwise become a canonical
+        // destination that refresh recursively deletes.
+        if skills_dir_canon != project_root_canon.join(".agents").join("skills") {
+            bail!(
+                "refusing .agents/skills that resolves to a non-canonical in-project directory: {} -> {}",
+                skills_dir.display(),
+                skills_dir_canon.display()
+            );
+        }
+    } else {
+        // Out-of-project (same-repository worktree sharing): the target must
+        // be exactly `<checkout toplevel>/.agents/skills` — the spelling
+        // suffix alone would still admit a nested decoy in that worktree.
+        if !skills_dir_canon.ends_with(Path::new(".agents/skills")) {
+            bail!(
+                "refusing .agents/skills that resolves to a non-skills-root directory: {} -> {}",
+                skills_dir.display(),
+                skills_dir_canon.display()
+            );
+        }
+        let claimed_checkout = skills_dir_canon
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cannot derive a checkout root from {}",
+                    skills_dir_canon.display()
+                )
+            })?;
+        let claimed_toplevel = git_toplevel(&claimed_checkout);
+        if claimed_toplevel.as_deref() != Some(claimed_checkout.as_path()) {
+            bail!(
+                "refusing .agents/skills whose parent is not a checkout toplevel: {} -> {} (toplevel: {})",
+                skills_dir.display(),
+                skills_dir_canon.display(),
+                claimed_toplevel
+                    .as_deref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "none".to_string())
+            );
+        }
     }
     if !skills_dir_canon.is_dir() {
         bail!(
@@ -369,8 +427,8 @@ mod tests {
 
         let err = ensure_agents_dir_within_project(&root).unwrap_err();
         assert!(
-            err.to_string().contains("non-skills-root"),
-            "expected the non-skills-root refusal, got: {err}"
+            err.to_string().contains("non-canonical in-project"),
+            "expected the in-project refusal, got: {err}"
         );
 
         // The ordinary real layout stays accepted.
