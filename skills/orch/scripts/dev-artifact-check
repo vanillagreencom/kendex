@@ -73,7 +73,8 @@ fix/bundled artifact only needs a non-empty, well-formed items[].
 
 Prints JSON: {ok: bool, path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|"incomplete",
-              warning: "commit_unreachable"|null}
+              warning: "commit_unreachable"|null,
+              hint: usage diagnosis (count-vs-set --expect-items misuse)|null}
 
 Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
 commit object → commit_unresolvable → items → incomplete → valid.
@@ -133,15 +134,17 @@ check_id_token() {
 # one that was never recorded (vstack#884). Both are null when the artifact is
 # missing or unparseable.
 emit() {
-  local ok="$1" path="$2" reason="$3" warning="${4:-}" validate=null validate_note=null
+  local ok="$1" path="$2" reason="$3" warning="${4:-}" hint="${5:-}" validate=null validate_note=null
   if [[ -n "$path" && -f "$path" ]]; then
     validate="$(jq -c 'if (.validate? | type) == "string" then .validate else null end' "$path" 2>/dev/null || printf 'null')"
     validate_note="$(jq -c 'if (.validate_note? | type) == "string" then .validate_note else null end' "$path" 2>/dev/null || printf 'null')"
   fi
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" --arg warning "$warning" \
+    --arg hint "$hint" \
     --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
     '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason,
       warning: (if $warning == "" then null else $warning end),
+      hint: (if $hint == "" then null else $hint end),
       validate: $validate, validate_note: $validate_note}'
 }
 
@@ -274,11 +277,17 @@ validate_artifact() {
   if [[ -n "$expect_items" ]]; then
     if ! items_exact_ok "$file" "$expect_items"; then
       # Count-vs-set misuse reads as "the dev agent skipped items" and points
-      # at the wrong party: a bare integer N alongside an N-item artifact is
-      # almost certainly a count where the flag wants the delegated item
-      # NUMBERS. Name the real problem in the emitted warning.
-      if [[ "$expect_items" =~ ^[0-9]+$ ]]         && jq -e --argjson n "$expect_items"           '((.items? | type) == "array") and ((.items | length) == $n)'           "$file" >/dev/null 2>&1; then
-        emit false "$file" "incomplete"           "--expect-items takes the delegated item NUMBERS (a set, e.g. 1,2,3), not a count: the artifact carries exactly $expect_items item(s), whose numbers do not equal {$expect_items}"
+      # at the wrong party. The unambiguous signature: a bare integer N > 1
+      # while the artifact's item numbers are EXACTLY 1..N — a legitimate
+      # singleton re-fix (--expect-items 2) or a shifted set never matches.
+      # The hint rides in its own field; `warning` keeps its documented
+      # commit_unreachable|null contract.
+      if [[ "$expect_items" =~ ^[0-9]+$ ]] && [ "$expect_items" -gt 1 ] \
+        && jq -e --argjson n "$expect_items" \
+          '((.items? | type) == "array") and (([ .items[].n ] | sort) == [range(1; $n + 1)])' \
+          "$file" >/dev/null 2>&1; then
+        emit false "$file" "incomplete" "" \
+          "--expect-items takes the delegated item NUMBERS (a set, e.g. 1,2,3), not a count: the artifact carries items 1..$expect_items while the expected set was {$expect_items}"
         return 1
       fi
       emit false "$file" "incomplete"

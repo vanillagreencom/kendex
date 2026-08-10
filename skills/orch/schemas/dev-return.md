@@ -178,6 +178,12 @@ Orch validates the artifact deterministically with
 | 4 | `incomplete` | `items[]` fails the applicable rule (below), or an `analysis` artifact's `summary` is not a non-empty string |
 | — | `valid` | All gates pass |
 
+**`hint` (fatal-path diagnosis):** null except for the `--expect-items`
+count-vs-set misuse signature (a bare integer N > 1 while the artifact's item
+numbers are exactly 1..N) — free text naming the caller's usage error so an
+`incomplete` verdict is not misread as the dev agent skipping items. `warning`
+never carries it.
+
 **`warning: "commit_unreachable"` (non-fatal, vstack#994):** the `commit`
 resolves as a commit object but is not an ancestor of the current `HEAD` — the
 signature of a receipt orphaned by a later rebase. `ok` stays `true` and
