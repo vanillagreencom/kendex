@@ -45,7 +45,9 @@ Restart Pi after installation.
 
 ## Prompt context
 
-Default behavior matches upstream: append `AGENTS.md` plus Pi's skills block to Claude Code's `claude_code` preset prompt.
+Default behavior matches upstream: append your context file plus Pi's skills block to Claude Code's `claude_code` preset prompt.
+
+The context file is the nearest one found walking up from the working directory, falling back to `<PI_CODING_AGENT_DIR>/AGENTS.md`. Within each directory the bridge follows Pi's own order — `AGENTS.override.md`, then `AGENTS.md`, then `AGENTS.MD` — so an `AGENTS.override.md` replaces `AGENTS.md` in the same directory, exactly as it does for Pi itself. `CLAUDE.md` is deliberately not forwarded: Claude Code already loads it natively, so forwarding it would apply the same context twice.
 
 Extra Pi context is off by default. Enable per item in the extension manager when you want Claude Code to see prompt blocks that other Pi extensions add to your session. Forwarded blocks are wrapped in explicit XML tags so Pi 0.75+ project-context boundaries do not bleed into adjacent sections.
 
@@ -67,7 +69,7 @@ The bridge also reads `claude-bridge.json` (`~/.pi/agent/claude-bridge.json`, an
 
 | Setting | What it does |
 | --- | --- |
-| Forward AGENTS.md + skills | Append AGENTS.md and Pi's skills block. |
+| Forward AGENTS.md + skills | Append the nearest context file (`AGENTS.override.md`, `AGENTS.md`, or `AGENTS.MD`) and Pi's skills block. |
 
 ### Pi prompt context
 
@@ -170,7 +172,7 @@ Connectors mode also makes the child Claude Code resolve its filesystem settings
 
 Host apps that embed the bridge and own every config dir explicitly can set `CLAUDE_BRIDGE_ISOLATED=1` in the bridge process env. Isolated mode disables every cwd/home discovery fallback so nothing outside the host-owned dirs is read:
 
-- no `AGENTS.md` discovery, including cwd ancestors and the shared `<PI_CODING_AGENT_DIR>/AGENTS.md`;
+- no context-file discovery (`AGENTS.override.md` / `AGENTS.md` / `AGENTS.MD`), including cwd ancestors and the shared `<PI_CODING_AGENT_DIR>` fallback;
 - no extension-manager overlay from `<PI_CODING_AGENT_DIR>/settings.json`;
 - no project `.pi/settings.json` / `.pi/claude-bridge.json` reads (even for trusted projects);
 - no project `.pi/APPEND_SYSTEM.md`;

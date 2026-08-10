@@ -34,7 +34,7 @@
         {
           "key": "appendSystemPrompt",
           "label": "Forward AGENTS.md + skills",
-          "description": "Original bridge behavior: append AGENTS.md and Pi's skills block to Claude Code's claude_code preset prompt.",
+          "description": "Original bridge behavior: append the nearest context file (AGENTS.override.md, AGENTS.md, or AGENTS.MD) and Pi's skills block to Claude Code's claude_code preset prompt.",
           "type": "boolean",
           "default": true,
           "category": "Base Prompt",
