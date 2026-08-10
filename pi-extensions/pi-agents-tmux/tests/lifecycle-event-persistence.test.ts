@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { removeSettled } from "./remove-settled.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
