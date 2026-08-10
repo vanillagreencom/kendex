@@ -99,8 +99,15 @@ if [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ ]]; then
   echo "Error: ORCH_TMUX_VERIFY_SECS must be a positive integer (seconds), got '$TMUX_VERIFY_SECS'." >&2
   exit 1
 fi
-# Base-10 normalization: leading zeros ('08', '015') otherwise read as octal
-# in bash arithmetic — an error or a silently shorter wait.
+# Strip leading zeros (octal hazard), then bound the digit count BEFORE any
+# arithmetic: a huge value would overflow signed math to negative, dodge the
+# 120 clamp, and zero out both verification loops.
+TMUX_VERIFY_SECS="$(printf '%s' "$TMUX_VERIFY_SECS" | sed 's/^0*//')"
+TMUX_VERIFY_SECS="${TMUX_VERIFY_SECS:-0}"
+if (( ${#TMUX_VERIFY_SECS} > 9 )); then
+  echo "WARNING: ORCH_TMUX_VERIFY_SECS is absurdly large; clamped to 120 seconds per verification pass." >&2
+  TMUX_VERIFY_SECS=120
+fi
 TMUX_VERIFY_SECS=$((10#$TMUX_VERIFY_SECS))
 if ((TMUX_VERIFY_SECS == 0)); then
   echo "Error: ORCH_TMUX_VERIFY_SECS must be a positive integer (seconds), got '0'." >&2

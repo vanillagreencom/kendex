@@ -477,6 +477,20 @@ assert_eq "$c13b_code" "0" "leading-zero verify secs is base-10 and launches"
 assert_not_contains "$(cat "$TMP_ROOT/c13b.err")" "value too great" \
   "no octal arithmetic error for '08'"
 
+# Case 13c: an overflow-sized value cannot dodge the clamp into negative
+# arithmetic (zero-pass loops + instant resend).
+new_tmux_state c13c
+printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
+set +e
+c13c_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=10000000000000000000 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13c.err")
+c13c_code=$?
+set -e
+assert_eq "$c13c_code" "0" "overflow-sized verify secs still launches (clamped)"
+assert_contains "$(cat "$TMP_ROOT/c13c.err")" "clamped to 120" \
+  "overflow-sized value is clamped loudly"
+c13c_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG" || true)"
+assert_eq "$c13c_resends" "0" "no instant resend from a zero-pass verify loop"
+
 # Case 14: a runaway value is clamped loudly (the lane still verifies)
 # instead of hanging the launch for hours.
 new_tmux_state c14
