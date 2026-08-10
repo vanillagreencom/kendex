@@ -1160,7 +1160,42 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
                     }
                     Some(referencing)
                 }
-                None => None,
+                None => {
+                    // Child-level anchor in the ungated local root: a real
+                    // `.agents/skills` whose `<name>` entry is a symlink into
+                    // another checkout (partial sharing). This root scans
+                    // FIRST, so an unscoped entry here would win `seen` and
+                    // recovery would claim every same-named harness artifact
+                    // — retyping an independent copy-mode install as
+                    // Symlink. Scope it to the resolving harnesses, exactly
+                    // like root-level anchors.
+                    let is_link = std::fs::symlink_metadata(&path)
+                        .is_ok_and(|meta| meta.file_type().is_symlink());
+                    if is_link {
+                        match path.canonicalize() {
+                            Ok(canonical) => {
+                                let referencing: Vec<String> = crate::harness::Harness::ALL
+                                    .iter()
+                                    .filter(|harness| {
+                                        harness
+                                            .skills_dir(false)
+                                            .join(name)
+                                            .canonicalize()
+                                            .is_ok_and(|resolved| resolved == canonical)
+                                    })
+                                    .map(|harness| harness.id().to_string())
+                                    .collect();
+                                if referencing.is_empty() {
+                                    continue;
+                                }
+                                Some(referencing)
+                            }
+                            Err(_) => continue,
+                        }
+                    } else {
+                        None
+                    }
+                }
             };
             if seen.insert(name.to_string()) {
                 items.push(DiskItem {
