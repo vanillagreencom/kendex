@@ -570,6 +570,14 @@ fn canonicalize_allowing_missing(path: &Path) -> Option<PathBuf> {
             }
         }
     }
+    // Exhausting the hop bound is a genuine resolution failure (a dangling or
+    // cyclic symlink chain), not the ordinary "no indirection" case — say so,
+    // since the caller's None silently skips anchoring (VST-195).
+    eprintln!(
+        "  Warning: could not resolve {} within {} symlink hops; treating as unanchored (VST-195)",
+        path.display(),
+        40
+    );
     None
 }
 
