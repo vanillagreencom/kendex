@@ -11,7 +11,12 @@ export const STATS_BRIDGE_SYMBOL = Symbol.for("vstack.pi.agents");
 export const SUBAGENT_STATE_TYPE = "vstack-subagents:runtime-state";
 export const MAX_CONCURRENCY = 4;
 export const COLLAPSED_ITEM_COUNT = 10;
-export const PANE_LAUNCHER_VERSION = 9;
+// Bump whenever writeLauncher's generated script content changes:
+// cleanupPaneRegistry kills and recycles live panes recorded at an older
+// version, so a stale constant leaves running panes on the previous launcher
+// (vstack#192 shipped the depth-guard/entry exports this way). A pinning test
+// in tests/pi-invocation.test.ts ties this constant to the template text.
+export const PANE_LAUNCHER_VERSION = 10;
 export const SUBAGENT_WIDGET_KEY = "vstack-agents-dashboard";
 export const FIRST_AGENT_COLUMN_ROWS = 3;
 export const NEXT_AGENT_COLUMN_ROWS = 4;

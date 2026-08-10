@@ -1,10 +1,13 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
+import { shellQuote } from "../extensions/subagent/names.js";
+import { PANE_LAUNCHER_VERSION } from "../extensions/subagent/types.js";
 import {
 	assertSubagentSpawnDepth,
 	currentSubagentDepth,
@@ -209,6 +212,15 @@ describe("getPiInvocation entry resolution (vstack#192)", () => {
 		// needs a shebang, so skip on Windows.
 		if (process.platform === "win32") return;
 		const fixtureRoot = tempDir("pi-agents-real-spawn-");
+		// PR #1178 r7: probe that this environment can exec shebang scripts from
+		// the temp dir at all — noexec temp mounts or bashless CI would
+		// false-fail the assertions below. Same pattern as the chmod probe.
+		const probe = join(fixtureRoot, "probe.sh");
+		writeFileSync(probe, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(probe, 0o755);
+		const probeRun = spawnSync(probe, []);
+		if (probeRun.error || probeRun.status !== 0) return; // temp dir not executable or bash unavailable; skip
+
 		const binDir = join(fixtureRoot, "bin");
 		mkdirSync(binDir, { recursive: true });
 		const marker = join(fixtureRoot, "marker.txt");
@@ -231,23 +243,26 @@ describe("getPiInvocation entry resolution (vstack#192)", () => {
 		expect(result.status).toBe(0);
 		expect(readFileSync(marker, "utf-8")).toBe("ran");
 
-		// Same command through the pane launcher's exact shape (bash cd + exec),
-		// which resolves the command from the delegated cwd. Bun's own spawnSync
-		// resolves relative commands against the parent cwd, so only this form
-		// can distinguish a resolved absolute entry from the pre-fix relative
-		// one. The command/args pass as argv ($0/$@), never spliced into shell
-		// text (CodeQL: shell command built from environment values).
+		// Same command through the production boundary: a launcher script FILE
+		// embedding the invocation via the same shellQuote writeLauncher uses,
+		// executed with cwd = the delegated dir, which resolves the command from
+		// that cwd. Bun's own spawnSync resolves relative commands against the
+		// parent cwd, so only this form can distinguish a resolved absolute
+		// entry from the pre-fix relative one.
+		const writeTestLauncher = (name: string, command: string, args: string[]): string => {
+			const launcherPath = join(fixtureRoot, name);
+			writeFileSync(launcherPath, `#!/usr/bin/env bash\nset -euo pipefail\nexec ${[command, ...args].map(shellQuote).join(" ")}\n`);
+			chmodSync(launcherPath, 0o755);
+			return launcherPath;
+		};
 		rmSync(marker, { force: true });
-		const viaLauncher = spawnSync("bash", ["-c", 'exec "$0" "$@"', invocation.command, ...invocation.args], { cwd: delegatedCwd });
+		const viaLauncher = spawnSync(writeTestLauncher("launcher.sh", invocation.command, invocation.args), [], { cwd: delegatedCwd });
 		expect(viaLauncher.status).toBe(0);
 		expect(readFileSync(marker, "utf-8")).toBe("ran");
 
-		// Negative control: the pre-fix behavior. Bun's spawnSync resolves a
-		// relative executable against the PARENT cwd before chdir, so exercise
-		// the boundary the way the pane launcher does — bash `cd`s into the
-		// delegated cwd and execs the command — where the relative form fails
-		// command lookup (exit 127).
-		const broken = spawnSync("bash", ["-c", 'exec "$0"', relativeExecutable], { cwd: delegatedCwd });
+		// Negative control: a launcher embedding the pre-fix RELATIVE form fails
+		// command lookup from the delegated cwd (exit 127).
+		const broken = spawnSync(writeTestLauncher("launcher-broken.sh", relativeExecutable, []), [], { cwd: delegatedCwd });
 		expect(broken.status).toBe(127);
 	});
 
@@ -418,6 +433,21 @@ describe("persistent pane launcher depth export (vstack#192 / PR #1178 f4)", () 
 			if (previousEntry === undefined) delete process.env[PI_SUBAGENT_ENTRY_ENV];
 			else process.env[PI_SUBAGENT_ENTRY_ENV] = previousEntry;
 		}
+	});
+
+	test("PANE_LAUNCHER_VERSION is bumped when the launcher template changes (PR #1178 r7)", () => {
+		// cleanupPaneRegistry recycles live panes only when their recorded
+		// launcherVersion differs from this constant — a template change
+		// without a bump leaves running panes on the OLD launcher (the depth
+		// guard shipped exactly that way at first). If this test fails: bump
+		// PANE_LAUNCHER_VERSION in types.ts AND update the pinned digest here.
+		const paneSource = readFileSync(join(import.meta.dir, "..", "extensions", "subagent", "pane.ts"), "utf-8");
+		const templateStart = paneSource.indexOf("const script = `#!/usr/bin/env bash");
+		expect(templateStart).toBeGreaterThan(-1);
+		const templateEnd = paneSource.indexOf("`;", templateStart);
+		expect(templateEnd).toBeGreaterThan(templateStart);
+		const templateDigest = createHash("sha256").update(paneSource.slice(templateStart, templateEnd)).digest("hex").slice(0, 16);
+		expect({ version: PANE_LAUNCHER_VERSION, templateDigest }).toEqual({ version: 10, templateDigest: "ed747d117275e537" });
 	});
 
 	test("launcher exports the RESOLVED absolute entry when the parent had a relative override (PR #1178 r3)", async () => {
