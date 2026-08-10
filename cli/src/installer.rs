@@ -138,23 +138,59 @@ pub fn install_skill(
             // remove_existing another checkout's copy.
             let canonical_physical = canonicalize_allowing_missing(&canonical)
                 .unwrap_or_else(|| normalize_absolute_path(&canonical));
-            let mut foreign_existing =
-                !canonical_physical.starts_with(&project_checkout) && canonical.exists();
+            // ... but a canonical THIS project already references is OURS to
+            // refresh wherever it physically lives: the worktree that
+            // installed through a shared layout must keep receiving source
+            // updates (write-shy is for canonicals we find, not ones we
+            // made). The dest artifact resolving to the canonical is that
+            // ownership evidence.
+            // Ownership evidence follows the anchor TYPE: SharedDir — the
+            // dest's PARENT directory itself resolves into the other
+            // checkout, so this project operates inside the shared surface
+            // and the canonical it references there is its own install to
+            // refresh. Children — a local parent whose final component
+            // links out — stays write-shy: that linked copy is the owning
+            // checkout's.
+            let dest_references_canonical = std::fs::symlink_metadata(&dest)
+                .is_ok_and(|meta| meta.file_type().is_symlink())
+                && dest
+                    .canonicalize()
+                    .is_ok_and(|resolved| resolved == canonical_physical)
+                && dest
+                    .parent()
+                    .and_then(|parent| parent.canonicalize().ok())
+                    .is_some_and(|parent| !parent.starts_with(&project_checkout));
+            let mut foreign_existing = !canonical_physical.starts_with(&project_checkout)
+                && !dest_references_canonical
+                && canonical.exists();
             if foreign_existing
                 && std::fs::symlink_metadata(&canonical)
                     .is_ok_and(|meta| meta.file_type().is_symlink())
             {
-                // exists()/is_file() follow symlinks: a malformed "canonical"
-                // whose final component is a symlink could smuggle the link
-                // target (possibly outside the repository) past the write-shy
-                // fast path and containment. A real canonical is a directory;
-                // a symlink there is repaired from source (remove_existing
-                // unlinks the symlink itself, never its target).
-                eprintln!(
-                    "  Warning: existing canonical {} is a symlink, not a directory; repairing it from source (VST-195)",
-                    canonical.display()
-                );
-                foreign_existing = false;
+                // A symlink canonical is legitimate when it stays inside its
+                // OWN checkout — the supported project-skills-dir layout
+                // spells `.agents/skills/<name>` as a link to the tracked
+                // project-owned skill. Only a link escaping its checkout is
+                // the smuggle case (exists()/is_file() would follow it past
+                // containment): that one is repaired from source
+                // (remove_existing unlinks the symlink itself, never its
+                // target).
+                let owning_checkout = canonical
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::parent)
+                    .and_then(|root| root.canonicalize().ok());
+                let escapes_checkout = match owning_checkout {
+                    Some(root) => !canonical_physical.starts_with(&root),
+                    None => true,
+                };
+                if escapes_checkout {
+                    eprintln!(
+                        "  Warning: existing canonical {} is a symlink escaping its checkout; repairing it from source (VST-195)",
+                        canonical.display()
+                    );
+                    foreign_existing = false;
+                }
             }
             if foreign_existing && !canonical.join("SKILL.md").is_file() {
                 if canonical.join(".vstack-refreshed").exists() {
@@ -2517,6 +2553,76 @@ mod tests {
             std::fs::read_to_string(canonical.join("precious.txt")).unwrap(),
             "handmade\n",
             "the foreign directory must be untouched"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A worktree that INSTALLED through a fully shared harness dir owns
+    /// that anchored canonical: a second refresh must copy updated source,
+    /// not ride the write-shy fast path forever (SharedDir ownership
+    /// evidence — the dest's parent resolves into the shared checkout).
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_refreshes_own_anchored_canonical_through_shared_dir() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_shared_refresh_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+        let canonical = main.join(".agents").join("skills").join("github");
+        assert!(canonical.join("SKILL.md").is_file());
+
+        // Source changes; a NEW process refreshes (fresh PID → marker miss).
+        std::fs::write(
+            skill.source_dir.join("SKILL.md"),
+            "---\nname: github\ndescription: Updated\n---\n\n# github v2\n",
+        )
+        .unwrap();
+        let marker = canonical.join(".vstack-refreshed");
+        std::fs::write(&marker, "0").unwrap();
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+        let refreshed = std::fs::read_to_string(canonical.join("SKILL.md")).unwrap();
+        assert!(
+            refreshed.contains("github v2"),
+            "the worktree's own anchored canonical must receive source updates, got: {refreshed}"
         );
 
         let _ = std::fs::remove_dir_all(&root);
