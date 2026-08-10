@@ -299,7 +299,7 @@ Use visual QA skills to validate that UI changes render correctly. Focus on what
 **Action**: Update the relevant documentation:
 
 - **Architecture docs** → Update if patterns, APIs, or documented behavior changed.
-- **Project config** → Add to `./vstack.toml` (`[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`). Run `vstack refresh` to apply.
+- **Project config** → Add to `vstack.toml` at the repository root (`[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`). Run `vstack refresh` to apply.
 
 Criteria: Would this save 5+ minutes in a future session? If yes, update. One surgical addition per lesson. No verbose examples.
 

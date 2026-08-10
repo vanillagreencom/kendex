@@ -80,7 +80,7 @@ pub fn generate_agent(
     }
 
     output.push_str("---\n\n");
-    output.push_str("> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in `./vstack.toml`. Then run `vstack refresh`.\n\n");
+    output.push_str("> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in `vstack.toml` at the repository root. Then run `vstack refresh`.\n\n");
 
     // Insert guidance + skills after first heading's intro
     let guidance = agent::guidance_section(extras.guidance.as_deref());
