@@ -75,7 +75,7 @@ completion_state_matches() {
 # has_summary does not gate `ok`: the summary is posted by `issues complete
 # --summary` at completion time, after this validation runs.
 #
-# Output shape is stable: {id, state, state_ok, has_summary, ok}
+# Output shape is stable: {id, state, state_type, state_ok, has_summary, ok}
 build_completion_validation_result() {
 	local issue_id="$1"
 	local state="$2"
@@ -105,10 +105,11 @@ build_completion_validation_result() {
 	jq -n \
 		--arg id "$issue_id" \
 		--arg state "$state" \
+		--arg state_type "$state_type" \
 		--argjson state_ok "$state_ok" \
 		--argjson has_summary "$has_summary" \
 		--argjson ok "$ok" \
-		'{id: $id, state: $state, state_ok: $state_ok, has_summary: $has_summary, ok: $ok}'
+		'{id: $id, state: $state, state_type: $state_type, state_ok: $state_ok, has_summary: $has_summary, ok: $ok}'
 }
 
 # --- Blocking-relation hierarchy guard (add-relation / block) ---

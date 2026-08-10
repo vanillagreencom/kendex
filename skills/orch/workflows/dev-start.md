@@ -15,14 +15,6 @@ Delegate development work to specialist agent(s). Handles single issues and bund
 - `lifecycle` (optional): `"managed"` (return to caller at § 4) | `"self"` (default, standalone).
 - `issue_id` (optional): workflow-state key — the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number. If absent, extracted from branch.
 
-**Container preflight** (`lifecycle: "self"` only, before any state
-initialization): check the title FIRST — `(one PR)` always wins, even over
-`agent:multi`. Otherwise, an issue with the `agent:multi` label or with
-children is a CONTAINER — refuse before initializing anything (containers
-never hold workflow state) and surface its unblocked children as the
-startable work items. Managed callers already ran this check in
-start/start-worktree.
-
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
 # If ARG was provided, use it as ISSUE_ID. Otherwise:
@@ -39,6 +31,19 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 .agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
 ```
 Use the output as `TRACKER`.
+
+**Container preflight** (Linear only, before any workflow-state
+initialization): fetch the issue —
+
+```bash
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
+```
+
+Check the title FIRST — `(one PR)` always wins, even over `agent:multi`.
+Otherwise, an issue with the `agent:multi` label or with children is a
+CONTAINER — refuse before initializing anything (containers never hold
+workflow state) and surface its unblocked children as the startable work
+items. Managed callers already ran this check in start/start-worktree.
 
 If workflow state already exists, skip initialization:
 
