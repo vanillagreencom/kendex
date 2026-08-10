@@ -1707,11 +1707,19 @@ glob_matches() { # path, glob — the predicate's exact `case` matcher
 # battery (the only consumer), not at script start, and via -z so quoted
 # unusual pathnames round-trip instead of mis-probing globs.
 EXCLUDE_TRACKED=""
+EXCLUDE_TRACKED_ERROR=""
 exclude_tracked_loaded=""
 load_exclude_tracked() {
   [ -n "$exclude_tracked_loaded" ] && return 0
   exclude_tracked_loaded=1
-  EXCLUDE_TRACKED="$(git ls-files -z 2>/dev/null | tr '\0' '\n' || true)"
+  # A real repository whose ls-files FAILS must not silently degrade into
+  # hermetic synthetic probing — that would shrink coverage exactly when
+  # git is broken. Only a genuinely-not-a-repo cwd is hermetic.
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if ! EXCLUDE_TRACKED="$(git ls-files -z 2>/dev/null | tr '\0' '\n')"; then
+      EXCLUDE_TRACKED_ERROR=1
+    fi
+  fi
 }
 exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
   # Tracked mode (a real repository): ONLY real tracked matches count — a
@@ -1816,20 +1824,33 @@ if [ -n "$ACTIVE_CARRY" ]; then
   # over-broad).
   if [ -n "$ACTIVE_CARRY_EXCLUDE" ]; then
     load_exclude_tracked
+    if [ -n "$EXCLUDE_TRACKED_ERROR" ]; then
+      cases=$((cases + 1))
+      echo "FAIL  configured: carry-exclude — this IS a git repository but 'git ls-files' failed; refusing to degrade to synthetic probes (fix git, or run the harness outside a repository)" >&2
+      failures=$((failures + 1))
+    fi
     # Probe extensions span EVERY enabled class — docs alone must not leave
     # a comments-class exclusion (`src/*.sh`) untested, and an exclusion set
     # covering all Markdown is not "carry disabled" while comment-only
     # changes still carry.
     probe_exts=""
     carry_class_has docs && probe_exts=".md .markdown"
-    carry_class_has comments && probe_exts="${probe_exts:+$probe_exts }.sh"
+    # Every extension the predicate's comment-token table classifies —
+    # both the '#' and the '//' families — so an exclusion like
+    # cli/src/*.rs is exercised, not skipped as "no probe".
+    carry_class_has comments && probe_exts="${probe_exts:+$probe_exts }.sh .bash .py .rb .toml .yml .yaml .js .mjs .cjs .ts .tsx .jsx .rs .go .c .h .cc .cpp .hpp .java .kt .swift"
     [ -n "$probe_exts" ] || probe_exts=".md .markdown"
     # Per-extension patches: a docs probe changes prose, a comments probe
     # changes a comment line, so the delta classifies into its class and the
     # refusal below is attributable to the exclusion alone.
     probe_patch_for() {
       case "$1" in
-      *.sh) printf '%s' '@@ -1 +1 @@
+      *.js | *.mjs | *.cjs | *.ts | *.tsx | *.jsx | *.rs | *.go | *.c | *.h | *.cc | *.cpp | *.hpp | *.java | *.kt | *.swift)
+        printf '%s' '@@ -1 +1 @@
+-// old comment
++// new comment' ;;
+      *.sh | *.bash | *.py | *.rb | *.toml | *.yml | *.yaml)
+        printf '%s' '@@ -1 +1 @@
 -# old comment
 +# new comment' ;;
       *) printf '%s' '@@ -1 +1 @@
@@ -1879,16 +1900,18 @@ EOF_EXCLUDE_BATTERY
       reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
       compare_fix ahead "[$(delta_file "$probe_free" modified "$(probe_patch_for "$probe_free")")]"
       run "configured: carry-exclude — '$probe_free' is outside every committed glob and still carries" approved
-    else
-      # No carry-class path escapes the exclusions — tracked mode proved it
-      # against the repository's real tree (a committed `carry-probe*` glob
-      # cannot trip this while README.md still carries), hermetic mode
-      # against every synthetic candidate. Either way the enabled classes
-      # are dead config: FAIL, not a note — a repo intending that posture
-      # should disable the class.
+    elif [ -z "$EXCLUDE_TRACKED" ]; then
+      # Hermetic mode with every synthetic candidate matched: only a
+      # universal exclusion does that — dead config, FAIL.
       cases=$((cases + 1))
       echo "FAIL  configured: carry-exclude — the committed exclusions match every carry-class ($probe_exts) path; the enabled carry class can never apply (over-broad exclusion set, or disable REVIEW_GATE_CARRY_FORWARD instead)" >&2
       failures=$((failures + 1))
+    else
+      # Tracked mode: the CURRENT tree has no carry-free carry-class file,
+      # but future files outside the globs can still carry (a repo whose
+      # only Markdown is an intentionally excluded README is legitimate).
+      # Loud note, not a FAIL — the current tree cannot prove universality.
+      echo "note  configured: carry-exclude — no TRACKED carry-class ($probe_exts) file escapes the committed exclusions today; the positive carry case is unproven against this tree (future non-excluded files still carry)"
     fi
   fi
 fi
