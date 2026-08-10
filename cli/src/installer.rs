@@ -160,7 +160,12 @@ pub fn install_skill(
                     .parent()
                     .and_then(|parent| parent.canonicalize().ok())
                     .is_some_and(|parent| !parent.starts_with(&project_checkout));
-            let mut foreign_existing = !canonical_physical.starts_with(&project_checkout)
+            // Global installs live under user homes by definition — the
+            // anchoring/write-shy machinery is project-scope only, and a
+            // global Codex canonical (canonical == dest, outside any
+            // project) must keep refreshing.
+            let mut foreign_existing = !global
+                && !canonical_physical.starts_with(&project_checkout)
                 && !dest_references_canonical
                 && canonical.exists();
             if foreign_existing
@@ -478,17 +483,26 @@ pub fn remove_item(
             let survives_this_removal = candidate_parent_canon
                 .as_ref()
                 .is_some_and(|parent| !removing_parent_canons.contains(parent));
-            // Only a SYMLINK is affirmative owner evidence: for harnesses
-            // whose project artifact IS the canonical directory (Codex/Pi
-            // under .agents/skills), the canonical would otherwise count as
-            // referencing itself and no marker could ever clear.
+            // A SYMLINK is affirmative owner evidence. For harnesses whose
+            // project artifact IS the canonical directory (Codex/Pi), the
+            // path would count as referencing itself, so DIRECT ownership
+            // is evidenced by the owner's LOCK instead (checked below).
             survives_this_removal
                 && std::fs::symlink_metadata(&candidate)
                     .is_ok_and(|meta| meta.file_type().is_symlink())
                 && candidate
                     .canonicalize()
                     .is_ok_and(|resolved| resolved == anchored_resolved)
-        });
+        }) || {
+            // Direct-canonical owner evidence: the owning checkout's lock
+            // names this skill — its Codex/Pi install IS the canonical dir
+            // and must keep its recovery marker through our removal.
+            let owner_lock = owning_root.join(".vstack-lock.json");
+            std::fs::read_to_string(&owner_lock)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<crate::config::LockFile>(&raw).ok())
+                .is_some_and(|lock| lock.entries.contains_key(name.to_str().unwrap_or_default()))
+        };
         if owner_still_references {
             continue;
         }
