@@ -1695,16 +1695,37 @@ glob_matches() { # path, glob — the predicate's exact `case` matcher
   case "$1" in $2) return 0 ;; esac
   return 1
 }
-exclude_match_path() { # ext -> a path the first usable committed glob matches
-  # Usable: '*'-only globs (no '?'/'['/escape metacharacters) whose derived
-  # path can end in ext, so the path classifies into the enabled carry class
-  # and the refusal below is attributable to the exclusion alone. Every '*'
-  # becomes a literal filler; the concrete path is then re-proven against
-  # its source glob before use, never assumed.
-  local ext="$1" pat candidate
-  while IFS= read -r pat; do
-    [ -z "$pat" ] && continue
-    case "$pat" in *'?'*|*'['*|*'\'*) continue ;; esac
+# The invoking repo's tracked tree, when this script lives inside one:
+# probes derived from REAL tracked paths prove a committed glob matches the
+# repository, not merely the string the probe itself manufactured from that
+# same glob (a typo'd `skils/*` matches `skils/probe.md` forever). Empty in
+# hermetic harnesses — the manufactured fallback keeps those deterministic.
+EXCLUDE_TRACKED="$(
+  _selftest_repo_root="$(git -C "$(cd "$(dirname "$0")" && pwd)" rev-parse --show-toplevel 2>/dev/null)" &&
+    git -C "$_selftest_repo_root" ls-files 2>/dev/null || true
+)"
+exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
+  # Real tracked matches first (non-circular evidence the glob is alive in
+  # this repository); manufactured '*'-filler paths only as fallback, and
+  # the concrete path is always re-proven against its source glob.
+  local pat="$1" ext candidate
+  shift
+  if [ -n "$EXCLUDE_TRACKED" ]; then
+    while IFS= read -r candidate; do
+      [ -z "$candidate" ] && continue
+      glob_matches "$candidate" "$pat" || continue
+      for ext in "$@"; do
+        case "$candidate" in *"$ext")
+          printf '%s\n' "$candidate"
+          return 0 ;;
+        esac
+      done
+    done <<EOF_TRACKED_PROBE
+$EXCLUDE_TRACKED
+EOF_TRACKED_PROBE
+  fi
+  case "$pat" in *'?'*|*'['*|*'\'*) return 1 ;; esac
+  for ext in "$@"; do
     case "$pat" in
       *"$ext") candidate="${pat//\*/probe}" ;;
       *'*')    candidate="${pat//\*/probe}$ext" ;;
@@ -1713,9 +1734,7 @@ exclude_match_path() { # ext -> a path the first usable committed glob matches
     glob_matches "$candidate" "$pat" || continue
     printf '%s\n' "$candidate"
     return 0
-  done <<EOF_MATCH_PROBE
-$(list_items "$ACTIVE_CARRY_EXCLUDE")
-EOF_MATCH_PROBE
+  done
   return 1
 }
 exclude_free_path() { # ext -> a path NO committed glob matches
@@ -1757,28 +1776,49 @@ if [ -n "$ACTIVE_CARRY" ]; then
   # over-broad).
   if [ -n "$ACTIVE_CARRY_EXCLUDE" ]; then
     if carry_class_has docs; then
-      probe_ext=".md"
+      # Both docs-class extensions: a `*.markdown`-targeted glob must not
+      # ride green on an `.md`-only probe (and vice versa).
+      probe_exts=".md .markdown"
       probe_patch='@@ -1 +1 @@
 -old prose
 +new prose'
     else
-      probe_ext=".sh"
+      probe_exts=".sh"
       probe_patch='@@ -1 +1 @@
 -# old comment
 +# new comment'
     fi
-    probe_match="$(exclude_match_path "$probe_ext")" || probe_match=""
-    probe_free="$(exclude_free_path "$probe_ext")" || probe_free=""
+    probe_free="$(exclude_free_path "${probe_exts%% *}")" || probe_free=""
 
-    if [ -n "$probe_match" ]; then
-      reset
-      CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
-      reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
-      compare_fix ahead "[$(delta_file "$probe_match" modified "$probe_patch")]"
-      run "configured: carry-exclude — a committed glob matches '$probe_match', refusing the carry" awaiting
-    else
-      echo "note  configured: carry-exclude — no committed glob can derive a carry-class path; match case skipped"
-    fi
+    # EVERY committed glob is exercised, not just the first usable one: a
+    # later typo'd or wrongly-anchored addition must not hide behind an
+    # earlier glob's green. Compare filenames are repository-relative, so a
+    # leading-'/' glob can never match any real delta — structurally dead,
+    # and a FAIL rather than a skip.
+    while IFS= read -r probe_pat; do
+      [ -z "$probe_pat" ] && continue
+      case "$probe_pat" in
+      /*)
+        cases=$((cases + 1))
+        echo "FAIL  configured: carry-exclude glob '$probe_pat' is anchored with a leading '/' — compare filenames are repository-relative, so this exclusion can never match and is dead" >&2
+        failures=$((failures + 1))
+        continue
+        ;;
+      esac
+      # shellcheck disable=SC2086 # probe_exts is a controlled word list
+      probe_match="$(exclude_glob_probe "$probe_pat" $probe_exts)" || probe_match=""
+      if [ -n "$probe_match" ]; then
+        reset
+        CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
+        reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
+        compare_fix ahead "[$(delta_file "$probe_match" modified "$probe_patch")]"
+        run "configured: carry-exclude — '$probe_pat' matches '$probe_match', refusing the carry" awaiting
+      else
+        echo "note  configured: carry-exclude — '$probe_pat' derives no carry-class ($probe_exts) probe: it guards paths the enabled carry class never carries, or uses ?/[/\\ metacharacters; not exercised here"
+      fi
+    done <<EOF_EXCLUDE_BATTERY
+$(list_items "$ACTIVE_CARRY_EXCLUDE")
+EOF_EXCLUDE_BATTERY
 
     if [ -n "$probe_free" ]; then
       reset
