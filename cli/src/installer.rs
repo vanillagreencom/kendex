@@ -72,6 +72,16 @@ pub fn install_skill(
     instructions: Option<&str>,
 ) -> Result<InstallResult> {
     validate_new_item_name(&skill.name)?;
+    if !global && method == InstallMethod::Symlink {
+        // The containment preflight must also cover the invoking checkout's
+        // own canonical writes (link_home == None): without it, an aliased
+        // in-repo `.agents` (e.g. `.agents -> cli/src`) makes install create
+        // — and refresh later recursively replace — repository sources.
+        // Copy-mode installs never write through `.agents`, so they skip it
+        // (a copy install must keep working beside an unrelated linked
+        // agents root). In-project validation is pure path comparison.
+        crate::path_safety::ensure_agents_dir_within_project(&crate::config::project_root())?;
+    }
     let dest = harness.install_skill(skill, global)?;
 
     let detail = match method {
@@ -374,7 +384,53 @@ pub fn remove_item(
     // unlinked, the anchor evidence needed to rediscover these canonicals is
     // gone, so a post-unlink failure would be unrepairable by retry. Failing
     // here aborts with every link intact: fix the marker, run remove again.
+    //
+    // EXCEPT when the OWNING checkout itself still references the canonical
+    // (its own harness artifact resolves there): that install survives this
+    // removal, and clearing its marker would drop it from the owner's next
+    // disk recovery. This worktree's own links live under this project root,
+    // never the owning root, so they cannot count as survivors.
+    // Artifact dirs THIS removal will unlink (by physical parent): a shared
+    // dir means the owning root's spelling and our dest name the same file,
+    // which must not read as a surviving owner reference.
+    let removing_parent_canons: Vec<PathBuf> = harnesses
+        .iter()
+        .filter_map(|harness| harness.skills_dir(false).canonicalize().ok())
+        .collect();
+    let project_rel_skills: Vec<PathBuf> = harnesses
+        .iter()
+        .filter_map(|harness| {
+            harness
+                .skills_dir(false)
+                .strip_prefix(crate::config::project_root())
+                .ok()
+                .map(Path::to_path_buf)
+        })
+        .collect();
     for anchored in &anchored_canonicals {
+        let (Some(name), Some(owning_root)) = (
+            anchored.file_name(),
+            anchored.parent().and_then(Path::parent).and_then(Path::parent),
+        ) else {
+            continue;
+        };
+        let anchored_resolved = canonicalize_allowing_missing(anchored)
+            .unwrap_or_else(|| normalize_absolute_path(anchored));
+        let owner_still_references = project_rel_skills.iter().any(|rel| {
+            let candidate = owning_root.join(rel).join(name);
+            let candidate_parent_canon = owning_root.join(rel).canonicalize().ok();
+            let survives_this_removal = candidate_parent_canon
+                .as_ref()
+                .is_some_and(|parent| !removing_parent_canons.contains(parent));
+            survives_this_removal
+                && std::fs::symlink_metadata(&candidate).is_ok()
+                && candidate
+                    .canonicalize()
+                    .is_ok_and(|resolved| resolved == anchored_resolved)
+        });
+        if owner_still_references {
+            continue;
+        }
         let marker = anchored.join(".vstack-refreshed");
         if let Err(err) = std::fs::remove_file(&marker)
             && err.kind() != std::io::ErrorKind::NotFound
@@ -2011,10 +2067,13 @@ mod tests {
         }
         assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
 
-        // Main spells its .agents through a symlink to a real store inside
-        // the checkout; the worktree chains through it.
-        std::fs::create_dir_all(main.join("agents-store").join("skills")).unwrap();
-        symlink(main.join("agents-store"), main.join(".agents")).unwrap();
+        // The worktree spells its .agents through the shared symlink into
+        // main's real .agents: the constructed canonical spelling
+        // (wt/.agents/skills/github) and the resolved dest differ as
+        // strings while naming the same directory. (An .agents aliased to
+        // an arbitrary in-repo store is NOT a supported layout — the
+        // canonical root identity gates in path_safety refuse it.)
+        std::fs::create_dir_all(main.join(".agents").join("skills")).unwrap();
         symlink(main.join(".agents"), wt.join(".agents")).unwrap();
 
         let skill = write_skill_source(&root, "github");
@@ -2022,7 +2081,7 @@ mod tests {
             install_skill(&skill, Harness::Codex, false, InstallMethod::Symlink, None).unwrap()
         });
 
-        let canonical = main.join("agents-store").join("skills").join("github");
+        let canonical = main.join(".agents").join("skills").join("github");
         let meta = std::fs::symlink_metadata(&canonical).unwrap();
         assert!(
             meta.file_type().is_dir(),
@@ -2295,6 +2354,78 @@ mod tests {
         assert!(
             outcome.anchored_left.is_empty(),
             "nothing is anchored elsewhere in an ordinary remove, got {:?}",
+            outcome.anchored_left
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A canonical still referenced by the OWNING checkout's own artifact
+    /// keeps its marker through a foreign worktree's removal — clearing it
+    /// would drop the surviving install from the owner's next disk recovery.
+    #[cfg(unix)]
+    #[test]
+    fn remove_item_keeps_marker_when_owner_still_references_canonical() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_marker_survivor_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        // Main owns the canonical AND references it via its own child link;
+        // the worktree shares per-child (partial sharing), so its dest is a
+        // distinct artifact.
+        std::fs::create_dir_all(main.join(".agents").join("skills")).unwrap();
+        let canonical = main.join(".agents").join("skills").join("github");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::fs::write(canonical.join("SKILL.md"), "# github\n").unwrap();
+        std::fs::write(canonical.join(".vstack-refreshed"), "0").unwrap();
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        symlink(
+            PathBuf::from("../../.agents/skills/github"),
+            main_skills.join("github"),
+        )
+        .unwrap();
+        let wt_skills = wt.join(".claude").join("skills");
+        std::fs::create_dir_all(&wt_skills).unwrap();
+        symlink(&canonical, wt_skills.join("github")).unwrap();
+
+        let outcome = crate::test_util::with_project_root(&wt, || {
+            remove_item(
+                "github",
+                Some(ItemKind::Skill),
+                &[Harness::ClaudeCode],
+                false,
+            )
+            .unwrap()
+        });
+
+        assert!(
+            std::fs::symlink_metadata(wt_skills.join("github")).is_err(),
+            "the worktree's own link is removed"
+        );
+        assert!(
+            std::fs::symlink_metadata(main_skills.join("github")).is_ok(),
+            "the owner's link is untouched"
+        );
+        assert!(
+            canonical.join(".vstack-refreshed").is_file(),
+            "the marker survives — the owner still references this canonical"
+        );
+        assert!(
+            outcome.anchored_left.iter().any(|p| p.ends_with("github")),
+            "the surviving canonical is reported, got {:?}",
             outcome.anchored_left
         );
 
