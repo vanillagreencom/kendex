@@ -1447,8 +1447,33 @@ fn prune_broken_skill_symlinks_in_dirs(dirs: &[PathBuf], managed_roots: &[PathBu
 }
 
 fn prune_broken_skill_symlinks(global: bool) -> bool {
-    let dirs = harness_skill_dirs(global);
-    let roots = managed_skill_roots(global);
+    let mut dirs = harness_skill_dirs(global);
+    let mut roots = managed_skill_roots(global);
+    if !global {
+        // Also sweep the harness dirs of same-repo checkouts that shared
+        // harness dirs anchor into: a link dangling in a main-side dir the
+        // worktree does NOT share is invisible to the local walk, and their
+        // canonical roots must count as managed targets.
+        let project_root = project_root();
+        for (anchored_root, _) in
+            crate::installer::anchored_canonical_skill_roots(crate::harness::Harness::ALL)
+        {
+            let Some(checkout_root) = anchored_root.parent().and_then(Path::parent) else {
+                continue;
+            };
+            for harness in crate::harness::Harness::ALL {
+                if let Ok(rel) = harness.skills_dir(false).strip_prefix(&project_root) {
+                    let dir = checkout_root.join(rel);
+                    if !dirs.contains(&dir) {
+                        dirs.push(dir);
+                    }
+                }
+            }
+            if !roots.contains(&anchored_root) {
+                roots.push(anchored_root);
+            }
+        }
+    }
     prune_broken_skill_symlinks_in_dirs(&dirs, &roots)
 }
 
@@ -1685,11 +1710,17 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
             project_root().join(".agents").join("skills")
         };
         for (name, entry_harnesses) in stale_skills {
+            // Entry ids may use supported aliases ("claude" for claude-code);
+            // normalize through the same resolution the rest of the CLI uses.
+            let entry_harnesses: Vec<crate::harness::Harness> = entry_harnesses
+                .iter()
+                .filter_map(|id| crate::harness::Harness::from_id(id))
+                .collect();
             let exists = own_root.join(&name).exists()
                 || anchored.iter().any(|(root, sharing)| {
                     sharing
                         .iter()
-                        .any(|harness| entry_harnesses.iter().any(|id| id == harness.id()))
+                        .any(|harness| entry_harnesses.contains(harness))
                         && root.join(&name).exists()
                 });
             if !exists {
