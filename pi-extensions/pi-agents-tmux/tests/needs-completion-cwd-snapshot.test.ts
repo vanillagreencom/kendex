@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { removeSettled } from "./remove-settled.js";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -167,7 +168,7 @@ describe("needs_completion cwd snapshots", () => {
 			expect(rendered).toContain("HEAD:");
 			expect(rendered).toContain("Last commit: initial commit");
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -189,7 +190,7 @@ describe("needs_completion cwd snapshots", () => {
 			expect(persisted.cwdSnapshot?.lastCommit.subject).toBe("fake signed commit");
 			expect(existsSync(gpgSentinel)).toBe(false);
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -210,7 +211,7 @@ describe("needs_completion cwd snapshots", () => {
 			expect(persisted.cwdSnapshot?.status).toContain(" M tracked.txt");
 			expect(existsSync(filterSentinel)).toBe(false);
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -241,7 +242,7 @@ describe("needs_completion cwd snapshots", () => {
 			expect(persisted.diagnostics).toContain("missing completion");
 		} finally {
 			setGitExecFileForTests();
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -277,7 +278,7 @@ describe("needs_completion cwd snapshots", () => {
 			expect(needsCompletion?.payload.reason).toBe("turn-ended-without-complete-subagent");
 			expect(needsCompletionSnapshot?.payload.cwdSnapshot?.cwd).toBe(cwd);
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -330,7 +331,7 @@ describe("needs_completion cwd snapshots", () => {
 		} finally {
 			setFileLockOptionsForTests();
 			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -390,7 +391,7 @@ describe("needs_completion cwd snapshots", () => {
 			setFileLockOptionsForTests();
 			if (lockDir) rmSync(lockDir, { force: true, recursive: true });
 			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -453,7 +454,7 @@ describe("needs_completion cwd snapshots", () => {
 			setBeforeCompletionRegistryUpdateForTests();
 			setFileLockOptionsForTests();
 			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -505,7 +506,7 @@ describe("needs_completion cwd snapshots", () => {
 			setBeforeCompletionRegistryUpdateForTests();
 			setFileLockOptionsForTests();
 			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -552,7 +553,7 @@ describe("needs_completion cwd snapshots", () => {
 			setBeforeCompletionRegistryUpdateForTests();
 			setFileLockOptionsForTests();
 			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -587,7 +588,7 @@ describe("needs_completion cwd snapshots", () => {
 			expect(persisted.diagnostics?.join("\n")).toContain("Malformed completion JSON");
 			expect(needsCompletion?.payload.summary).toContain("Malformed completion JSON");
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -651,7 +652,7 @@ describe("needs_completion cwd snapshots", () => {
 			expect(persisted.cwdSnapshot?.lastCommit.subject).toBe("initial commit");
 			expect(persisted.diagnostics).toContain("dispatch failed");
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -674,7 +675,7 @@ describe("needs_completion cwd snapshots", () => {
 			expect(refreshed.diagnostics.join("\n")).toContain("Expected outbox");
 			expect(persisted.cwdSnapshot).toEqual(refreshed.record.cwdSnapshot);
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -697,7 +698,7 @@ describe("needs_completion cwd snapshots", () => {
 			expect(refreshed.record.diagnostics?.join("\n")).toContain("Malformed completion JSON");
 			expect(persisted.cwdSnapshot).toEqual(refreshed.record.cwdSnapshot);
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});
@@ -723,7 +724,7 @@ describe("needs_completion cwd snapshots", () => {
 		} finally {
 			setFileLockOptionsForTests();
 			rmSync(`${taskRegistryPath(runtimeRoot)}.lock`, { force: true, recursive: true });
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 			rmSync(cwd, { force: true, recursive: true });
 		}
 	});

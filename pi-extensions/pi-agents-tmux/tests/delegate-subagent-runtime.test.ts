@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setSingleAgentSpawnForTests } from "../extensions/subagent/runner.js";
+import { removeSettled } from "./remove-settled.js";
 
 interface RegisteredTool {
 	name: string;
@@ -34,8 +35,8 @@ const tempDirs: string[] = [];
 // Post-dispatch task-registry persistence is fire-and-forget and can recreate
 // a harness cwd after the per-test teardown rmSync; sweep again once the file
 // is done so nothing is left in tmpdir.
-afterAll(() => {
-	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+afterAll(async () => {
+	for (const dir of tempDirs) await removeSettled(dir);
 });
 
 function createTempProject(): { cwd: string; piUserDir: string } {

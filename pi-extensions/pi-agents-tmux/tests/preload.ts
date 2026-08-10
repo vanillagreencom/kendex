@@ -14,17 +14,23 @@ const RUN_TMP_ROOT = mkdtempSync(join(tmpdir(), "pi-agents-tmux-run-"));
 process.env.TMPDIR = RUN_TMP_ROOT;
 
 afterAll(async () => {
-	let entries = readdirSync(RUN_TMP_ROOT);
-	for (let i = 0; i < 10; i += 1) {
-		await new Promise((resolve) => setTimeout(resolve, 30));
-		const next = readdirSync(RUN_TMP_ROOT);
-		if (next.length === entries.length && next.every((name, idx) => name === entries[idx])) break;
-		entries = next;
+	// Drain-then-judge: attempt removal of anything left, give in-flight
+	// fire-and-forget writers a beat, and re-check. A dir that stays gone
+	// was a dying tail (warn — the creating test should still drain it);
+	// one that persists or reappears is a live unawaited writer or a
+	// missing teardown (fail loudly).
+	let leaked = readdirSync(RUN_TMP_ROOT);
+	if (leaked.length > 0) {
+		for (let i = 0; i < 10 && leaked.length > 0; i += 1) {
+			for (const name of leaked) rmSync(join(RUN_TMP_ROOT, name), { force: true, recursive: true });
+			await new Promise((resolve) => setTimeout(resolve, 40));
+			leaked = readdirSync(RUN_TMP_ROOT);
+		}
 	}
 	try {
-		if (entries.length > 0) {
+		if (leaked.length > 0) {
 			throw new Error(
-				`pi-agents-tmux tests leaked ${entries.length} tmp dir(s); add teardown in the creating test file: ${entries.slice(0, 12).join(", ")}`,
+				`pi-agents-tmux tests leaked ${leaked.length} tmp dir(s) that keep being recreated; drain the writer in the creating test file (see tests/remove-settled.ts): ${leaked.slice(0, 12).join(", ")}`,
 			);
 		}
 	} finally {
