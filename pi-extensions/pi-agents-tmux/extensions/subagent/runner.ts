@@ -640,6 +640,26 @@ async function runSingleAgentAttempt(
 	try {
 		await fs.promises.mkdir(path.dirname(transcriptPath), { recursive: true, mode: 0o700 });
 		await fs.promises.writeFile(transcriptPath, "", { encoding: "utf-8", mode: 0o600 });
+		if (agent.systemPrompt.trim()) {
+			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
+			tmpPromptDir = tmp.dir;
+			tmpPromptPath = tmp.filePath;
+			args.push("--append-system-prompt", tmpPromptPath);
+		}
+
+		args.push(`Task: ${task}`);
+		let wasAborted = false;
+		let timedOut = false;
+
+		// Resolved after the last args push but BEFORE subagents:started, so a
+		// refused spawn (depth guard, vstack#192) never announces itself — a
+		// throw after `started` would leave the task permanently "running" in
+		// the dashboard/registry because nothing emits a terminal event for the
+		// taskId (PR #1178 round 4). Also outside the spawn promise so the
+		// throw rejects through the finally cleanup below instead of wedging
+		// inside the promise executor.
+		const invocation = getPiInvocation(args);
+
 		emitSubagentEvent(pi, "subagents:started", {
 			mode: "oneshot",
 			agent: agent.name,
@@ -656,22 +676,6 @@ async function runSingleAgentAttempt(
 			attempt,
 		});
 		appendTranscript({ type: "start", agent: agent.name, taskId: oneShotTaskId, task, cwd: cwd ?? defaultCwd, sessionMode: currentResult.sessionMode, sessionKey: session.explicit ? session.key : undefined, sessionPath: session.path, ephemeralSession: session.ephemeral, attempt });
-
-		if (agent.systemPrompt.trim()) {
-			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
-			tmpPromptDir = tmp.dir;
-			tmpPromptPath = tmp.filePath;
-			args.push("--append-system-prompt", tmpPromptPath);
-		}
-
-		args.push(`Task: ${task}`);
-		let wasAborted = false;
-		let timedOut = false;
-
-		// Resolved outside the spawn promise, after the last args push, so an
-		// entry-resolution or depth-guard throw (vstack#192) rejects through the
-		// finally cleanup below instead of wedging inside the promise executor.
-		const invocation = getPiInvocation(args);
 
 		const exitCode = await new Promise<number>((resolve) => {
 			// Child identity env mirrors the pane launcher's agent identity

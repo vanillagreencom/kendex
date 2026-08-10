@@ -126,6 +126,15 @@ describe("getPiInvocation entry resolution (vstack#192)", () => {
 		writeFileSync(innerManifest, JSON.stringify({ name: PI_PACKAGE_NAME }));
 		chmodSync(innerManifest, 0o000);
 		try {
+			// PR #1178 r4: probe that mode bits actually deny reads here — some
+			// CI filesystems ignore them — so the assertion only runs where the
+			// EACCES path is genuinely exercisable.
+			try {
+				readFileSync(innerManifest, "utf-8");
+				return; // filesystem does not enforce modes; skip
+			} catch {
+				/* unreadable as intended */
+			}
 			const entry = existingScript("cli.ts", inner);
 			expect(getPiInvocation(["-p"], runtime({ argv1: entry })).command).toBe("pi");
 		} finally {
@@ -166,6 +175,29 @@ describe("getPiInvocation entry resolution (vstack#192)", () => {
 		const invocation = getPiInvocation(["-p"], runtime({ env: { [PI_SUBAGENT_ENTRY_ENV]: "/opt/pi/bin/pi" } }));
 		expect(invocation.command).toBe("/opt/pi/bin/pi");
 		expect(invocation.args).toEqual(["-p"]);
+	});
+
+	test("relative separator-bearing executable override resolves to absolute and propagates resolved (PR #1178 r4)", () => {
+		// A command containing a path separator is never PATH-resolved, so a
+		// relative ./bin/pi would ENOENT from the delegated agent cwd — and pane
+		// descendants would inherit the broken relative value.
+		const binDir = join(tempDir(), "bin");
+		mkdirSync(binDir, { recursive: true });
+		const executable = join(binDir, "pi");
+		writeFileSync(executable, "#!/bin/sh\n");
+		const relativeExecutable = relative(process.cwd(), executable);
+		expect(isAbsolute(relativeExecutable)).toBe(false);
+		const invocation = getPiInvocation(["-p"], runtime({ env: { [PI_SUBAGENT_ENTRY_ENV]: relativeExecutable } }));
+		expect(invocation.command).toBe(executable);
+		expect(isAbsolute(invocation.command)).toBe(true);
+		expect(invocation.childEntryOverride).toBe(executable);
+		expect(invocation.args).toEqual(["-p"]);
+	});
+
+	test("separator-free bare-name override stays verbatim for PATH resolution", () => {
+		const invocation = getPiInvocation([], runtime({ env: { [PI_SUBAGENT_ENTRY_ENV]: "pi-custom" } }));
+		expect(invocation.command).toBe("pi-custom");
+		expect(invocation.childEntryOverride).toBe("pi-custom");
 	});
 
 	test("compiled pi binary (/$bunfs argv[1]) still re-invokes execPath directly", () => {
@@ -282,6 +314,7 @@ describe("bg one-shot runner depth guard wiring (vstack#192)", () => {
 
 	test("at the depth cap the runner refuses before spawning and reclaims the prompt tmp dir", async () => {
 		const envs = captureSpawnedEnv();
+		const emitted: string[] = [];
 		const previous = process.env[PI_SUBAGENT_DEPTH_ENV];
 		try {
 			process.env[PI_SUBAGENT_DEPTH_ENV] = String(MAX_SUBAGENT_DEPTH);
@@ -291,10 +324,14 @@ describe("bg one-shot runner depth guard wiring (vstack#192)", () => {
 			// before invocation resolution throws, exercising the failure-path
 			// cleanup in runSingleAgentAttempt's finally.
 			await expect(
-				runSingleAgent(root, root, [agent("scout", "You are scout.")], "scout", "recon", undefined, undefined, undefined, undefined, { getActiveTools: () => [], events: { emit: () => undefined } } as any, undefined, undefined, makeDetails),
+				runSingleAgent(root, root, [agent("scout", "You are scout.")], "scout", "recon", undefined, undefined, undefined, undefined, { getActiveTools: () => [], events: { emit: (name: string) => { emitted.push(name); } } } as any, undefined, undefined, makeDetails),
 			).rejects.toThrow(new RegExp(`${PI_SUBAGENT_DEPTH_ENV} recursion guard`));
 			expect(envs).toHaveLength(0);
 			expect(promptTempDirs()).toEqual(before);
+			// PR #1178 round 4: the refusal must not announce the task. A
+			// subagents:started with no terminal event would persist the task as
+			// permanently "running" in the dashboard/registry.
+			expect(emitted.filter((name) => name.startsWith("subagents:"))).toEqual([]);
 		} finally {
 			setSingleAgentSpawnForTests();
 			if (previous === undefined) delete process.env[PI_SUBAGENT_DEPTH_ENV];

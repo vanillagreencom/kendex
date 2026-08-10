@@ -628,7 +628,14 @@ export function getPiInvocation(args: string[], runtime: PiInvocationRuntime = d
 				return { command: runtime.execPath, args: [resolvedEntry, ...args], childDepth, childEntryOverride: resolvedEntry };
 			}
 		}
-		return { command: entryOverride, args, childDepth, childEntryOverride: entryOverride };
+		// PR #1178 round 4: a command containing a path separator is never
+		// PATH-resolved by the OS, so a relative form like ./bin/pi would ENOENT
+		// when the child spawns from the delegated agent cwd. Resolve it against
+		// the parent cwd now and propagate the resolved form; separator-free
+		// names stay verbatim for PATH resolution.
+		const hasSeparator = entryOverride.includes("/") || (path.sep === "\\" && entryOverride.includes("\\"));
+		const resolvedCommand = hasSeparator ? path.resolve(entryOverride) : entryOverride;
+		return { command: resolvedCommand, args, childDepth, childEntryOverride: resolvedCommand };
 	}
 
 	// Compiled pi binary: argv[1] is bun's virtual bundle path; execPath is the
