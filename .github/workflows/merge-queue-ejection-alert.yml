@@ -80,12 +80,21 @@ jobs:
             # failure-shaped run (sorted; API order is not a contract),
             # falling back to the newest run of the group.
             cutoff="$(date -u -d '4 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
-            run_json="$(jq -s --arg cutoff "$cutoff" 'add
+          run_json="$(jq -s --arg cutoff "$cutoff" 'add
               | group_by(.head_branch)
               | (max_by(map(.created_at) | max) // [])
-              | map(select(.created_at >= $cutoff))
+              # SOFT recency bound: prefer runs from the current window (a
+              # re-armed unchanged PR reuses the branch name), but never
+              # empty the group — an all-old group still identifies the run.
+              | (map(select(.created_at >= $cutoff)) // []) as $recent
+              | (if ($recent | length) > 0 then $recent else . end)
               | sort_by(.created_at)
+              # Selection: newest failure-shaped run; else the newest
+              # in_progress run (a dequeue often fires while the ejecting
+              # run is still finishing its sibling jobs — its failed jobs
+              # are already queryable); else the newest run.
               | (map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")) | last)
+                // (map(select(.status == "in_progress")) | last)
                 // last
                 // empty' "$runs_file")"
           fi
