@@ -61,8 +61,12 @@ keeping the two separate is what makes this small enough to trust.
 \* Unless the repo sets `REVIEW_GATE_MODE = "off"`: the predicate then
 evaluates no evidence at all, and the writer converges the status to green
 with a "gate disabled by settings" description. On such a repo a green
-`Review gate` attests only that the gate is off — it never proves a review
-happened. Caveats: [references/settings.md](references/settings.md)
+PR-head `Review gate` attests only that the gate is off — it never proves a
+review happened. That attestation is scoped to evaluated PR-head statuses:
+merge-group (queue) statuses bypass the predicate entirely and always post
+green as "merge-queue entry: post-approval by construction" without reading
+the mode, so a green queue status is not a disabled-gate attestation.
+Caveats: [references/settings.md](references/settings.md)
 § `REVIEW_GATE_MODE`.
 
 The two columns are independent on purpose. The gate never inspects your CI,

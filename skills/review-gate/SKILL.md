@@ -1,6 +1,6 @@
 ---
 name: review-gate
-description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override) — unless REVIEW_GATE_MODE is 'off', when it evaluates nothing and a green gate attests only that the repo disabled it — one writer posts the answer as a merge-blocking commit status, plus an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
+description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override) — unless REVIEW_GATE_MODE is 'off', when it evaluates nothing and a green PR-head gate attests only that the repo disabled it (merge-group statuses always post green by construction, mode unread) — one writer posts the answer as a merge-blocking commit status, plus an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
 license: MIT
 user-invocable: true
 metadata:
@@ -19,8 +19,11 @@ The gate answers ONE question: **has this exact PR head been reviewed?** It
 posts that answer as a commit status the repo's branch rules require. The
 one exception is `REVIEW_GATE_MODE = "off"`: the predicate then evaluates
 NO evidence and answers `approved` with a disabled-by-settings attestation,
-so a green gate on such a repo means only "gate disabled" — never that a
-review happened. Caveats: [references/settings.md](references/settings.md)
+so a green PR-head gate on such a repo means only "gate disabled" — never
+that a review happened. This contract covers evaluated PR-head statuses
+only: the writer's merge-group path never reads the mode and always posts
+green as "merge-queue entry: post-approval by construction". Caveats:
+[references/settings.md](references/settings.md)
 § `REVIEW_GATE_MODE`.
 
 It does not check CI, re-run anything, or reason about jobs. Whether untested

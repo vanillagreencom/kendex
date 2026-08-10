@@ -19,8 +19,11 @@
 #
 # The gate answers ONE question — is this head reviewed? — and never
 # re-runs CI. (REVIEW_GATE_MODE=off answers it with a gate-disabled
-# attestation instead of evaluating evidence: green then means "gate
-# disabled", never "reviewed".) Whether untested code can merge is branch
+# attestation instead of evaluating evidence: a green PR-head status then
+# means "gate disabled", never "reviewed". PR-head statuses only — the
+# merge_group leg below bypasses the predicate and always posts green as
+# "merge-queue entry: post-approval by construction", mode unread.)
+# Whether untested code can merge is branch
 # protection's job; see the adoption precondition in
 # .agents/skills/review-gate/scripts/review-writer.sh.
 name: Review gate writer
