@@ -136,8 +136,8 @@ EXCLUDES_FILE="$(normalize_rel_path "$EXCLUDES_FILE")" || config_error "excludes
 # A path beginning with '-' would read as an option to the line utilities
 # that touch it — refuse it as configuration rather than trusting every
 # call site's `--` guard forever.
-case "$BASELINE_FILE" in -*) config_error "baseline path must not begin with '-': $BASELINE_FILE" ;; esac
-case "$EXCLUDES_FILE" in -*) config_error "excludes path must not begin with '-': $EXCLUDES_FILE" ;; esac
+case "$BASELINE_FILE" in -*) config_error "baseline path must not begin with '-': $BASELINE_FILE" ;; /*) config_error "baseline path must be repo-root-relative, got absolute: $BASELINE_FILE" ;; esac
+case "$EXCLUDES_FILE" in -*) config_error "excludes path must not begin with '-': $EXCLUDES_FILE" ;; /*) config_error "excludes path must be repo-root-relative, got absolute: $EXCLUDES_FILE" ;; esac
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -210,16 +210,12 @@ while IFS= read -r -d '' f; do
     *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV (exclude it to skip the gate): '$f'" ;;
   esac
   [ -h "$f" ] && continue # a symlink's own content has no meaningful line count
-  if [ -d "$f" ]; then
-    # A directory at a tracked file path is a submodule gitlink — not a
-    # countable file. Its baseline row (if any) is stale by definition and
-    # the evaluate pass flags it through the absent list's stale side.
-    continue
-  fi
   if [ ! -f "$f" ]; then
-    # In the index but absent from the worktree (unstaged deletion, sparse
-    # checkout): count the INDEX blob so the "every tracked file" contract
-    # holds without the worktree copy — a sparse checkout cannot smuggle a
+    # Not a regular file in the worktree (unstaged deletion, sparse
+    # checkout, or a directory shadowing the tracked path): count the INDEX
+    # blob so the "every tracked file" contract holds without the worktree
+    # copy. A path whose index entry is not a blob (a submodule gitlink)
+    # cannot be shown and falls through to the absent list — a sparse checkout cannot smuggle a
     # new offender past the gate, and baselined rows evaluate against real
     # content instead of being skipped as unknown. A path git cannot show
     # (e.g. a gitlink) falls back to the absent list.
