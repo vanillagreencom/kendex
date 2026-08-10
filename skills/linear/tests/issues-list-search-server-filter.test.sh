@@ -205,6 +205,20 @@ if [ -s "$log7b" ]; then
   cat "$log7b"
   exit 1
 fi
+# The full whitespace class, not just space/tab: a CR- or LF-only pattern
+# passed the old check, the jq trim then emptied every term, and an
+# 'or: []' filter reached Linear.
+for ws_pat in "$(printf '\r')" "$(printf '\n|\n')"; do
+  if run_list "$log7b" --format=raw --search "$ws_pat" >/dev/null 2>&1; then
+    echo "FAIL --search CR/LF-only pattern must exit non-zero"
+    exit 1
+  fi
+  if [ -s "$log7b" ]; then
+    echo "FAIL --search CR/LF-only pattern must not reach the API"
+    cat "$log7b"
+    exit 1
+  fi
+done
 
 # --- Case 7c: padded terms are trimmed before matching ------------------------
 log7c="$TMP_ROOT/trimmed-terms.jsonl"

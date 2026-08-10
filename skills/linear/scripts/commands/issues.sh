@@ -340,7 +340,7 @@ list_issues() {
     # list: the dedupe preflight reads "rows came back" as "search ran".
     # Whitespace counts as empty — "a | b" searches trimmed terms, and
     # " | " has none, so it fails closed rather than matching broadly.
-    if [ "$search_given" = "true" ] && [ -z "$(printf '%s' "$search_pattern" | tr -d '| \t')" ]; then
+    if [ "$search_given" = "true" ] && [ -z "$(printf '%s' "$search_pattern" | tr -d '|[:space:]')" ]; then
         echo '{"error": "--search requires a non-empty value"}' >&2
         return 1
     fi
