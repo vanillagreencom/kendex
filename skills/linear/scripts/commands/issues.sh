@@ -117,7 +117,9 @@ List Options:
   --created-since <Nd>  Filter by created date
   --limit <n>           Max results per page (default: 75)
   --max                 Fetch ALL results (auto-paginates, up to 15000)
-  --search <pattern>    Filter by regex on title+description (client-side)
+  --search <terms>      Filter by title/description substring, server-side and
+                        case-insensitive; pipe-separated terms are OR'd.
+                        Not a regex (the cache's --search is; see cache --help)
   --include-archived    Include archived issues
   --with-relations      Include blocking info (use --format=raw for analyzed output)
 
@@ -276,7 +278,7 @@ Examples:
   issues.sh get PROJ-42 --with-bundle            # Issue + recursive children + pending_count
 
   # Search/filter
-  issues.sh list --state Todo --search "market_data|order_book"  # Regex on title+description
+  issues.sh list --state Todo --search "market_data|order_book"  # Title/description contains either term (server-side)
 EOF
 }
 
@@ -284,51 +286,69 @@ list_issues() {
     local with_relations="false"
     local paginate_all="false"
     local search_pattern=""
+    local search_given="false"
     local args=()
     FORMAT="${DEFAULT_FORMAT}"
 
-    for arg in "$@"; do
-        if [ "$arg" = "--with-relations" ]; then
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --with-relations)
             with_relations="true"
-        elif [ "$arg" = "--max" ]; then
+            ;;
+        --max)
             paginate_all="true"
-        elif [ "$arg" = "--format" ]; then
-            # Next arg is the format value - handled by shift below
-            :
-        elif [[ "$arg" == --format=* ]]; then
-            FORMAT="${arg#--format=}"
-        elif [[ "$arg" == --search=* ]]; then
-            search_pattern="${arg#--search=}"
-        elif [ "$arg" = "--search" ]; then
-            # Next iteration will capture the value
-            :
-        else
-            args+=("$arg")
-        fi
+            ;;
+        --format)
+            if [ $# -lt 2 ]; then
+                echo '{"error": "--format requires a value"}' >&2
+                return 1
+            fi
+            FORMAT="$2"
+            shift
+            ;;
+        --format=*)
+            FORMAT="${1#--format=}"
+            ;;
+        --search)
+            if [ $# -lt 2 ]; then
+                echo '{"error": "--search requires a value"}' >&2
+                return 1
+            fi
+            search_given="true"
+            search_pattern="$2"
+            shift
+            ;;
+        --search=*)
+            search_given="true"
+            search_pattern="${1#--search=}"
+            ;;
+        *)
+            args+=("$1")
+            ;;
+        esac
+        shift
     done
 
-    # Parse --format and --search with values from args
-    local new_args=()
-    local skip_next=""
-    for arg in ${args[@]+"${args[@]}"}; do
-        if [ -n "$skip_next" ]; then
-            if [ "$skip_next" = "format" ]; then
-                FORMAT="$arg"
-            elif [ "$skip_next" = "search" ]; then
-                search_pattern="$arg"
-            fi
-            skip_next=""
-        elif [ "$arg" = "--format" ]; then
-            skip_next="format"
-        elif [ "$arg" = "--search" ]; then
-            skip_next="search"
-        else
-            new_args+=("$arg")
-        fi
-    done
-    args=(${new_args[@]+"${new_args[@]}"})
+    # A given-but-empty pattern must refuse, not degrade to an unfiltered
+    # list: the dedupe preflight reads "rows came back" as "search ran".
+    if [ "$search_given" = "true" ] && [ -z "${search_pattern//|/}" ]; then
+        echo '{"error": "--search requires a non-empty value"}' >&2
+        return 1
+    fi
 
     parse_filter ${args[@]+"${args[@]}"}
+
+    # Server-side search: pipe-separated terms, each matched as a
+    # case-insensitive substring of title or description via Linear's
+    # IssueFilter. Top-level filter fields AND with the or-clause, so
+    # --state/--project/... still narrow the result.
+    if [ -n "$search_pattern" ]; then
+        FILTER_JSON=$(jq -cn --arg pattern "$search_pattern" --argjson base "$FILTER_JSON" '
+            ($pattern | split("|") | map(select(length > 0))) as $terms |
+            $base + {or: [$terms[] |
+                {title: {containsIgnoreCase: .}},
+                {description: {containsIgnoreCase: .}}]}')
+    fi
 
     local query
     # Both queries now include full fields for cache compatibility
@@ -406,15 +426,6 @@ list_issues() {
         if [ "$result_count" -ge "$FIRST_JSON" ]; then
             echo "⚠️  Returned $result_count issues (limit: $FIRST_JSON). Results may be truncated. Use --max for all results." >&2
         fi
-    fi
-
-    # Apply search filter if specified (client-side regex on title+description)
-    if [ -n "$search_pattern" ]; then
-        result=$(echo "$result" | jq --arg pattern "$search_pattern" '{
-            issues: {
-                nodes: [.issues.nodes[] | select((.title + " " + (.description // "")) | test($pattern; "i"))]
-            }
-        }')
     fi
 
     # Apply output format
