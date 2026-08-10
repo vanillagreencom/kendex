@@ -330,14 +330,19 @@ merge. Detach them first.
       [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE]
       ```
       `.parent_id` empty → continue to step 4.
-   b. Fetch the parent with its bundle (`cache issues get [PARENT_ID] --with-bundle`). The parent is a CONTAINER when it carries the `agent:multi` label, or when it has children and its title carries no `(one PR)` marker. Not a container → continue to step 4.
+   b. Fetch the parent with its bundle (`cache issues get [PARENT_ID] --with-bundle`). Check the title FIRST: a `(one PR)` marker always wins and keeps the bundle single-PR, even when it carries the `agent:multi` label. Without the marker, the parent is a CONTAINER when it has children or carries the `agent:multi` label. Not a container → continue to step 4.
    c. Confirm nothing is still open, then complete:
       ```bash
       [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues children [PARENT_ID] --recursive --pending
       ```
-      Pending children remain → report "container [PARENT_ID] stays open ([N] children pending)" in § 7 and continue to step 4. Empty → validate and complete with a bundle summary listing each child and its PR:
+      Pending children remain → report "container [PARENT_ID] stays open ([N] children pending)" in § 7 and continue to step 4. Empty → validate, and gate the completion on the result:
       ```bash
       [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues validate-completion [PARENT_ID] --include-children-of [PARENT_ID] --container
+      ```
+      Capture the JSON. The command exits 0 even when validation fails, so the gate is the payload: proceed ONLY when `.all_ok == true` (a nonzero exit is the fail-closed container guard — treat it the same as `all_ok=false`). Otherwise report the failing `.results[]` entries (id, state, what failed) in § 7 and stop — do not complete this container and do not climb to its parent.
+
+      On `all_ok == true`, complete with a bundle summary listing each child and its PR:
+      ```bash
       [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [PARENT_ID] --summary-file [SUMMARY_FILE]
       ```
       The summary starts with `## Bundle Complete`. Containers hold no implementation state — no worktree, no branch, no workflow-state beyond bookkeeping — so there is nothing else to clean up. Report the closed container in § 7. If `[PARENT_ID]` itself has a container parent whose children are now all Done, repeat a-c for it.

@@ -205,7 +205,7 @@ Build dependency graph from `depends_on_proposed`:
    - Would naturally be one PR/CI run
 
 2. **For each bundle**:
-   - Create parent title describing the deliverable
+   - Create parent title describing the deliverable. When the grouping criterion was "would naturally be one PR/CI run", append the `(one PR)` marker to the title — that marker is the explicit single-PR opt-in; an unmarked parent reads as a container whose children each ship as their own PR
    - Mark component issues as children
    - **Compute labels**: If all children have same agent → parent gets that agent label. If 2+ distinct agents → parent gets the project-configured multi-agent label (for example `agent:multi`, if present in taxonomy/inventory). Store as `agent_label` for backward compatibility and include the full parent `labels[]` set. Parent labels must also pass label policy; do not assign parent/group labels.
 

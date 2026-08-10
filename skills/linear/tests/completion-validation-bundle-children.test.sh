@@ -47,11 +47,12 @@ emit() { printf '%s___HTTP_CODE___200' "$1"; }
 # A single-issue (non-bundle) GetIssue node.
 # Args: identifier state_name state_type parent_identifier
 single_issue() {
-  local id="$1" sname="$2" stype="$3" parent="$4" parent_json="null"
+  local id="$1" sname="$2" stype="$3" parent="$4" parent_json="null" branch
+  branch="$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')"
   if [[ -n "$parent" ]]; then
     parent_json="{\"id\":\"uuid-$parent\",\"identifier\":\"$parent\",\"title\":\"parent\"}"
   fi
-  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"${id,,}\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":$parent_json,\"children\":{\"nodes\":[]},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}}}"
+  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":$parent_json,\"children\":{\"nodes\":[]},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}}}"
 }
 
 # A child node embedded in a bundle's children.nodes.
@@ -66,8 +67,9 @@ bundle_child() {
 # comma-joined children.nodes array body. State defaults to the single-PR
 # bundle's pre-merge In Review; container scenarios pass Todo/unstarted.
 bundle_parent() {
-  local id="$1" children="$2" sname="${3:-In Review}" stype="${4:-started}"
-  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"${id,,}\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":null,\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]},\"children\":{\"nodes\":[$children]}}}}"
+  local id="$1" children="$2" sname="${3:-In Review}" stype="${4:-started}" branch
+  branch="$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')"
+  emit "{\"data\":{\"issue\":{\"id\":\"uuid-$id\",\"identifier\":\"$id\",\"title\":\"$id\",\"description\":null,\"state\":{\"name\":\"$sname\",\"type\":\"$stype\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":3,\"estimate\":null,\"sortOrder\":1.0,\"url\":\"https://linear.app/test/issue/$id\",\"branchName\":\"$branch\",\"createdAt\":\"2026-07-14T00:00:00Z\",\"updatedAt\":\"2026-07-14T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"parent\":null,\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]},\"children\":{\"nodes\":[$children]}}}}"
 }
 
 comments_with_summary() {
@@ -85,6 +87,7 @@ if [[ "$query" == *"GetIssueWithBundle"* ]]; then
   CC-920) bundle_parent CC-920 "$(bundle_child CC-921 Done completed CC-920),$(bundle_child CC-922 Canceled canceled CC-920)" ;;
   CC-930) bundle_parent CC-930 "$(bundle_child CC-931 Done completed CC-930),$(bundle_child CC-932 Done completed CC-930)" Todo unstarted ;;
   CC-940) bundle_parent CC-940 "$(bundle_child CC-941 Done completed CC-940),$(bundle_child CC-942 'In Progress' started CC-940)" Todo unstarted ;;
+  CC-901) bundle_parent CC-901 "" Done completed ;;
   *) emit '{"errors":[{"message":"unknown bundle"}]}' ;;
   esac
 elif [[ "$query" == *"ListComments"* ]]; then
@@ -197,6 +200,32 @@ check "E: container root CC-940 itself passes state check" "$outE" \
 check "E: pending child CC-942 fails" "$outE" \
   '.results[] | select(.id == "CC-942") | .state_ok == false and .ok == false'
 check "E: all_ok false while a child is open" "$outE" '.all_ok == false'
+
+# --- Scenario F: --container fails closed on misuse ------------------------
+# The flag asserts "this bundle may complete now", so it must name exactly one
+# target, pair with --include-children-of for that same target, and expand to
+# at least one non-canceled child. A leaf or mismatched invocation is a caller
+# error (nonzero exit), never a passing validation.
+set +e
+run_validate CC-901 --include-children-of CC-901 --container >/dev/null 2>&1
+rcF1=$?
+run_validate CC-930 --container >/dev/null 2>&1
+rcF2=$?
+run_validate CC-930 --include-children-of CC-910 --container >/dev/null 2>&1
+rcF3=$?
+set -e
+if [[ "$rcF1" -eq 0 ]]; then
+  echo "FAIL: F: leaf --container (bundle with no children) must exit nonzero"
+  fail=1
+fi
+if [[ "$rcF2" -eq 0 ]]; then
+  echo "FAIL: F: --container without --include-children-of must exit nonzero"
+  fail=1
+fi
+if [[ "$rcF3" -eq 0 ]]; then
+  echo "FAIL: F: --container with mismatched --include-children-of must exit nonzero"
+  fail=1
+fi
 
 # --- Preserve single-issue behavior (no --include-children-of) -------------
 outS="$(run_validate CC-901 2>/dev/null)"

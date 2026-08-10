@@ -581,16 +581,24 @@ cache_validate_completion() {
         return 1
     fi
 
-    # --container may appear after the positional targets, so rewrite the
-    # roles once parsing is complete; children expand below with their own
-    # role either way. Container parents close LAST (each child is its own PR
-    # unit): any live state passes, canceled fails closed, no pre-posted
-    # summary is required. Mirrors the live issues.sh path.
+    # --container asserts "this bundle may complete now", so it fails CLOSED
+    # on any invocation that cannot prove it: exactly one positional target,
+    # a paired --include-children-of naming that same target, and (checked
+    # after expansion below) at least one non-canceled child. The flag may
+    # appear after the positionals, so the role is assigned post-parse.
+    # Container parents close LAST (each child is its own PR unit): any live
+    # state passes, canceled fails closed, no pre-posted summary is required.
+    # Mirrors the live issues.sh path.
     if [[ "$container_mode" == "true" ]]; then
-        local r
-        for r in "${!roles[@]}"; do
-            roles[$r]="container"
-        done
+        if [[ ${#issue_ids[@]} -ne 1 ]]; then
+            echo '{"error": "--container requires exactly one issue ID"}' >&2
+            return 1
+        fi
+        if [[ -z "$include_children_of" || "$include_children_of" != "${issue_ids[0]}" ]]; then
+            echo "{\"error\": \"--container requires --include-children-of naming the same issue (got target '${issue_ids[0]}', expansion '${include_children_of:-none}')\"}" >&2
+            return 1
+        fi
+        roles[0]="container"
     fi
 
     # If --include-children-of specified, fetch the bundle from cache and expand
@@ -616,6 +624,14 @@ cache_validate_completion() {
             issue_ids+=("$child_id")
             roles+=("bundle-child")
         done
+    fi
+
+    # Container fail-closed, part 2: a bundle that expanded to zero
+    # non-canceled children proves nothing about "children all Done" — a
+    # leaf mistakenly validated as a container must error, not pass.
+    if [[ "$container_mode" == "true" && ${#issue_ids[@]} -le 1 ]]; then
+        echo "{\"error\": \"--container fail-closed: no non-canceled children found under $include_children_of\"}" >&2
+        return 1
     fi
 
     local results="[]"

@@ -33,7 +33,7 @@ Before using roadmap, audit, research, or cycle-planning workflows, configure th
 - **Hierarchy**: Initiative → Project → Milestone → Issue → Sub-Issue
 - **Prioritization**: Weighted scoring formula (Critical Path x3, Dependencies x2, Risk x2, Value x1, Estimate x-0.5)
 - **Same-project rule**: Blocking relations and parent-child relations must be within the same project
-- **Blocking level rule**: Blocking relations go on bundle parents, not children
+- **Blocking level rule**: Cross-bundle blocking relations go on bundle parents; intra-bundle sequencing uses sibling child-blocks-child relations (containers dispatch only unblocked children)
 - **Label preflight**: Issue creates/label updates load live issue-label inventory + project taxonomy, validate full final `labels[]`, and preserve unrelated labels on updates
 - **Repository-aware verification**: Audits retain a separate PR/branch/path context per issue, discover tracked source roots across monorepos, halt on Git producer failures, and skip code-path checks for documentation-only scope
 - **Workflows return JSON only**: No direct modifications to the issue tracker — recommendations are executed by the caller

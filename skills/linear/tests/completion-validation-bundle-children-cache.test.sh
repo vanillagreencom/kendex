@@ -149,6 +149,32 @@ check "E: pending child CC-942 fails" "$outE" \
   '.results[] | select(.id == "CC-942") | .state_ok == false and .ok == false'
 check "E: all_ok false while a child is open" "$outE" '.all_ok == false'
 
+# --- Scenario F: --container fails closed on misuse ------------------------
+# The flag asserts "this bundle may complete now", so it must name exactly one
+# target, pair with --include-children-of for that same target, and expand to
+# at least one non-canceled child. A leaf or mismatched invocation is a caller
+# error (nonzero exit), never a passing validation.
+set +e
+run_validate CC-901 --include-children-of CC-901 --container >/dev/null 2>&1
+rcF1=$?
+run_validate CC-930 --container >/dev/null 2>&1
+rcF2=$?
+run_validate CC-930 --include-children-of CC-910 --container >/dev/null 2>&1
+rcF3=$?
+set -e
+if [[ "$rcF1" -eq 0 ]]; then
+  echo "FAIL: F: leaf --container (no children in cache) must exit nonzero"
+  fail=1
+fi
+if [[ "$rcF2" -eq 0 ]]; then
+  echo "FAIL: F: --container without --include-children-of must exit nonzero"
+  fail=1
+fi
+if [[ "$rcF3" -eq 0 ]]; then
+  echo "FAIL: F: --container with mismatched --include-children-of must exit nonzero"
+  fail=1
+fi
+
 # --- Preserve single-issue behavior (no --include-children-of) -------------
 outS="$(run_validate CC-901 2>/dev/null)"
 check "S: single-issue validate has exactly one result" "$outS" \

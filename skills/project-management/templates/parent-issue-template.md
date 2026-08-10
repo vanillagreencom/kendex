@@ -33,7 +33,7 @@ A parent with children is a **CONTAINER by default**: it is never orchestrated d
 1. **Use `## Sub-Issues`** (not `## Requirements`) — parent coordinates, children implement
 2. **Same-project**: All children must be in the parent's project. See [dependencies.md](../../project-management/references/dependencies.md)
 3. **Each child entry**: `- [ISSUE_ID]: [title] (agent:X) [blocks [ISSUE_ID]]` — include blocking relations
-4. **Label**: `agent:multi` marks the parent as a container (apply whenever children span 2+ distinct `agent:X` domains; a parent with children and no `(one PR)` title marker reads as a container even unlabeled)
+4. **Label**: `agent:multi` marks the parent as a container (apply whenever children span 2+ distinct `agent:X` domains; a parent with children reads as a container even unlabeled). A `(one PR)` title marker always takes precedence over the label — it opts the bundle into single-PR delegation regardless of `agent:multi`
 5. **Blocking relations**: sequence dependent children with sibling child-blocks-child relations (selection dispatches only unblocked children); cross-bundle dependencies go on the parents. Read [agent-sequencing.md](../../orch/workflows/agent-sequencing.md)
 6. **No implementation detail** — requirements live in children, parent holds only coordination context
    - Coordination-only parents carry no estimate — clear it with `issues update [ISSUE_ID] --clear-estimate` (or `--estimate 0`). See [issues.md](../references/issues.md) § Sub-Issues.

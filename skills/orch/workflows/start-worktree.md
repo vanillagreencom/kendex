@@ -19,17 +19,17 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 - `ISSUE_ID=issue-N`
 - `GITHUB_REPO=OWNER/REPO`
 
-1. **Invoke workflow**: `⤵ workflows/initialize.md § 1-2 → § 1 step 2` with context:
+1. **Refuse containers** — Linear only, and BEFORE initialization: the next step claims the session-guard lease and creates workflow state, and containers never hold state. Resolve `[ISSUE_ID]` from the argument (or the worktree branch name when none was given), then check the marker:
+   ```bash
+   .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
+   ```
+   Check the title FIRST: a `(one PR)` marker always wins and opts the bundle into single-PR delegation, even when it carries the `agent:multi` label. Without the marker, the issue is a CONTAINER when it has children or carries the `agent:multi` label. A container is never orchestrated directly and never gets a PR — each child is the PR unit and the container closes last. If the work item is a container: stop here — no lease, no workflow state — list its unblocked children (non-terminal `state_type`; every blocker from the child's own `blocked_by` plus the container's `blocked_by` resolved to a completed/canceled issue), and tell the operator to start a child instead (`/orch start [CHILD_ID]`); this worktree should not exist for the container.
+
+2. **Invoke workflow**: `⤵ workflows/initialize.md § 1-2 → § 1 step 3` with context:
    - `lifecycle`: `"managed"`
    - `issue_id`: normalized issue ID from argument or branch
    - `tracker`: `[TRACKER]` when parsed
    - `github_repo`: `[GITHUB_REPO]` when parsed
-
-2. **Refuse containers.** Linear only, mechanical: fetch the work item and check the container marker before any budget is spent on it:
-   ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
-   ```
-   The issue is a CONTAINER when it carries the `agent:multi` label, or when it has children and its title carries no `(one PR)` marker. A container is never orchestrated directly and never gets a PR — each child is the PR unit and the container closes last. If the work item is a container: stop, list its unblocked children (non-terminal `state_type`, no incomplete blocker), and tell the operator to start a child instead (`/orch start [CHILD_ID]`); this worktree should not exist for the container. An explicit single-PR bundle (`(one PR)` title marker) proceeds as one session covering all children.
 
 3. **Gate on base freshness.** This expedited path reuses a worktree created earlier, so prove the base is current before any agent spends budget on it:
    ```bash
