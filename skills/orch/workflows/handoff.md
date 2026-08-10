@@ -19,13 +19,22 @@ Launch one or more independent work item sessions. This is launch-only.
 
 ## 1. Confirm Launch
 
-**Container preflight** — before any worktree is created: for each Linear
-item, check the title FIRST — a `(one PR)` marker always makes it
+**Container preflight** — before any worktree is created. Fetch the data
+first (Linear items only):
+
+```bash
+.agents/skills/linear/scripts/linear.sh sync --reconcile
+.agents/skills/linear/scripts/linear.sh cache issues get [ITEM] --with-bundle
+```
+
+Per item, check the title FIRST — a `(one PR)` marker always makes it
 launchable, even with `agent:multi`. Otherwise, an item with the
-`agent:multi` label, or with children, is a CONTAINER: drop it from the
-launch list and surface its unblocked children as the launchable items
-instead (containers are never orchestrated and never own a worktree —
-open-terminal would create one before the launched session could refuse).
+`agent:multi` label, or with children in the bundle read, is a CONTAINER:
+drop it from the launch list and surface its unblocked children (each
+child's `blocked_by` plus the container's own, resolved by blocker state)
+as the launchable items instead — containers are never orchestrated and
+never own a worktree; open-terminal would create one before the launched
+session could refuse.
 
 Present:
 

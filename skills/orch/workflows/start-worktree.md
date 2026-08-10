@@ -19,8 +19,9 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 - `ISSUE_ID=issue-N`
 - `GITHUB_REPO=OWNER/REPO`
 
-1. **Refuse containers** — Linear only, and BEFORE initialization: the next step claims the session-guard lease and creates workflow state, and containers never hold state. Resolve `[ISSUE_ID]` from the argument (or the worktree branch name when none was given), then check the marker:
+1. **Refuse containers** — Linear only, and BEFORE initialization: the next step claims the session-guard lease and creates workflow state, and containers never hold state. Resolve `[ISSUE_ID]` from the argument (or the worktree branch name when none was given), reconcile the cache (children added since the last sync must not slip a container through a stale read), then check the marker:
    ```bash
+   .agents/skills/linear/scripts/linear.sh sync --reconcile
    .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
    ```
    Check the title FIRST: a `(one PR)` marker always wins and opts the bundle into single-PR delegation, even when it carries the `agent:multi` label. Without the marker, the issue is a CONTAINER when it has children or carries the `agent:multi` label. A container is never orchestrated directly and never gets a PR — each child is the PR unit and the container closes last. If the work item is a container: stop here — no lease, no workflow state — list its unblocked children (non-terminal `state_type`; every blocker from the child's own `blocked_by` plus the container's `blocked_by` resolved to a completed/canceled issue), and tell the operator to start a child instead (`/orch start [CHILD_ID]`); this worktree should not exist for the container.
