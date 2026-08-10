@@ -89,17 +89,37 @@ describe("partial assistant message reconstruction", () => {
 		});
 	});
 
-	test("ignores tool-call deltas, malformed payloads, and empty deltas without losing real content", () => {
+	test("ignores known-empty shapes without losing real content or raising a false alarm", () => {
 		const state = createPartialAssistantMessageState();
 		applyPartialAssistantMessage(state, deltaUpdate("text_delta", 0, { delta: "real" }));
 		applyPartialAssistantMessage(state, deltaUpdate("toolcall_delta", 0, { delta: "{\"path\":" }));
 		applyPartialAssistantMessage(state, deltaUpdate("text_delta", 0, { delta: "" }));
-		applyPartialAssistantMessage(state, { type: "message_update" });
 		applyPartialAssistantMessage(state, undefined);
 
 		expect(partialAssistantMessage(state)).toEqual({ role: "assistant", content: [{ type: "text", text: "real" }] });
 		// Known-ignored shapes must not be reported as an unrecognized wire format.
 		expect(partialAssistantMessageDiagnostic(state)).toBeUndefined();
+	});
+
+	// A mixed stream is the dangerous case: some content rebuilds, so the record looks
+	// plausible while the shapes we did not understand vanish without a trace.
+	test("reports a diagnostic when content rebuilt but other shapes were dropped", () => {
+		const state = createPartialAssistantMessageState();
+		applyPartialAssistantMessage(state, deltaUpdate("text_delta", 0, { delta: "understood part" }));
+		applyPartialAssistantMessage(state, deltaUpdate("prose_delta", 1, { delta: "future Pi shape" }));
+
+		expect(partialAssistantMessage(state)).toEqual({ role: "assistant", content: [{ type: "text", text: "understood part" }] });
+		const diagnostic = partialAssistantMessageDiagnostic(state);
+		expect(diagnostic).toContain("may be incomplete");
+		expect(diagnostic).toContain("prose_delta");
+	});
+
+	test("a message_update carrying no assistantMessageEvent is reported, not silently dropped", () => {
+		const state = createPartialAssistantMessageState();
+		applyPartialAssistantMessage(state, deltaUpdate("text_delta", 0, { delta: "real" }));
+		applyPartialAssistantMessage(state, { type: "message_update" });
+
+		expect(partialAssistantMessageDiagnostic(state)).toContain("<no assistantMessageEvent>");
 	});
 
 	test("reports a diagnostic when only unrecognized event types were seen", () => {

@@ -136,14 +136,19 @@ export function partialAssistantMessage(state: PartialAssistantMessageState): { 
 }
 
 /**
- * A diagnostic when reconstruction produced nothing despite events having been applied —
- * the signal that Pi's wire format moved again and this shim went stale.
+ * A diagnostic whenever any event shape was dropped — the signal that Pi's wire format
+ * moved and this shim went stale. Reported even when some blocks WERE rebuilt: a mixed
+ * stream would otherwise flush a plausible-looking partial answer with no indication that
+ * part of it was silently discarded, which is the failure this tracking exists to catch.
  */
 export function partialAssistantMessageDiagnostic(state: PartialAssistantMessageState): string | undefined {
-	if (state.hasSnapshot || state.updatesSeen === 0 || state.blocks.size > 0) return undefined;
+	if (state.hasSnapshot || state.updatesSeen === 0) return undefined;
 	if (state.unrecognizedTypes.size === 0) return undefined;
 	const types = [...state.unrecognizedTypes].sort().join(", ");
-	return `partial assistant message could not be rebuilt from ${state.updatesSeen} message_update event(s); unrecognized assistantMessageEvent type(s): ${types}`;
+	if (state.blocks.size === 0) {
+		return `partial assistant message could not be rebuilt from ${state.updatesSeen} message_update event(s); unrecognized assistantMessageEvent type(s): ${types}`;
+	}
+	return `partial assistant message may be incomplete: rebuilt from ${state.updatesSeen} message_update event(s) with unrecognized assistantMessageEvent type(s) dropped: ${types}`;
 }
 
 export function normalizeTranscriptRecordEvent(record: any): NormalizedTranscriptEvent {
