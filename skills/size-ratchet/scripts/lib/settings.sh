@@ -60,6 +60,11 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       case "$val" in
         \"*\") val="${val%\"}"; val="${val#\"}" ;;
         \'*\') val="${val%\'}"; val="${val#\'}" ;;
+        *)
+          # Unquoted shell assignment: the value ends at the first
+          # whitespace — `KEY=500 # ratchet` assigns 500, comment dropped.
+          val="${val%%[[:space:]]*}"
+          ;;
       esac
       printf '%s' "$val"
       return 0
@@ -114,6 +119,11 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       case "$val" in
         \"*\") val="${val%\"}"; val="${val#\"}" ;;
         \'*\') val="${val%\'}"; val="${val#\'}" ;;
+        *)
+          # Unquoted shell assignment: the value ends at the first
+          # whitespace — `KEY=500 # ratchet` assigns 500, comment dropped.
+          val="${val%%[[:space:]]*}"
+          ;;
       esac
       printf '%s' "$val"
       return 0

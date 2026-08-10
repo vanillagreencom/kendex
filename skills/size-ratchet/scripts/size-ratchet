@@ -196,13 +196,20 @@ else
 fi
 
 # --- count every tracked, non-excluded, regular file -------------------------
-git ls-files -z >"$TMP/files.z" || config_error "git ls-files failed"
+# -s carries the index MODE per entry: 120000 = tracked symlink (skip),
+# 160000 = submodule gitlink (never countable; a baseline row for one is
+# stale), 100xxx = regular file. The worktree state (shadowing symlink or
+# directory, sparse absence) never decides what a path IS — the index does.
+git ls-files -sz >"$TMP/files.z" || config_error "git ls-files failed"
 NL='
 '
 checked=0
 : >"$TMP/counts.raw"
 : >"$TMP/absent.raw"
-while IFS= read -r -d '' f; do
+while IFS= read -r -d '' rec; do
+  # Record shape: "<mode> <sha> <stage>\t<path>".
+  mode="${rec%% *}"
+  f="${rec#*"$TAB"}"
   is_excluded "$f" && continue
   # Every record downstream (counts, baseline, absent list) is line- and
   # tab-oriented; a path carrying either separator would silently split into
@@ -211,21 +218,19 @@ while IFS= read -r -d '' f; do
     *"$NL"*) config_error "tracked path contains a newline, unrepresentable in line-oriented records (exclude it to skip the gate): '$f'" ;;
     *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV (exclude it to skip the gate): '$f'" ;;
   esac
-  [ -h "$f" ] && continue # a symlink's own content has no meaningful line count
-  if [ ! -f "$f" ]; then
-    # Not a regular file in the worktree (unstaged deletion, sparse
-    # checkout, or a directory shadowing the tracked path): count the INDEX
-    # blob so the "every tracked file" contract holds without the worktree
-    # copy. A path whose index entry is not a blob (a submodule gitlink)
-    # cannot be shown and falls through to the absent list — a sparse checkout cannot smuggle a
-    # new offender past the gate, and baselined rows evaluate against real
-    # content instead of being skipped as unknown. A path git cannot show
-    # (e.g. a gitlink) falls back to the absent list.
-    # Blob TYPE required, not mere existence: a submodule gitlink's target
-    # commit can be present locally, and `git show`/`cat-file -e` would
-    # happily render it as countable "content".
-    if [ "$(git cat-file -t ":$f" 2>/dev/null)" = "blob" ] \
-      && n="$(git show ":$f" 2>/dev/null | wc -l)"; then
+  case "$mode" in
+    120000) continue ;; # tracked symlink — no meaningful line count
+    160000) continue ;; # submodule gitlink — never countable; a baseline
+                        # row for one reads as gone/stale, not absent
+  esac
+  if [ ! -f "$f" ] || [ -h "$f" ]; then
+    # The index says regular file but the worktree disagrees (unstaged
+    # deletion, sparse checkout, or a shadowing symlink/directory): count
+    # the INDEX blob so the "every tracked file" contract holds — a sparse
+    # tree cannot smuggle a new offender past the gate, and baselined rows
+    # evaluate against real content. Only an unshowable blob (index/object
+    # store trouble) falls to the absent list.
+    if n="$(git show ":$f" 2>/dev/null | wc -l)"; then
       case "$n" in *[!0-9\ ]*) n="" ;; esac
     else
       n=""
