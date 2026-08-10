@@ -10,8 +10,10 @@ tmp/
 trees/
 docs/work-in-progress/
 docs/plans/
-# Session handoff files — machine-local steward state, never committed
-docs/handoff/
+# Session handoffs (docs/handoff/README.md). Local operator state: exactly one
+# untracked HANDOFF.md; only the README documenting the pattern is tracked.
+/docs/handoff/*
+!/docs/handoff/README.md
 
 # Harness install/runtime mirrors; canonical source lives elsewhere.
 # Match files, directories, and symlinks so worktree links stay invisible.
