@@ -2,9 +2,11 @@
 
 ## Consumer-impacting changes
 
-### 3.1.6
+### 3.2.0
 
 - **Pi 0.84.0 parity: `AGENTS.override.md` is now honored when forwarding context to Claude Code.** Pi added per-directory `AGENTS.override.md` files that replace `AGENTS.md` in the same directory; the bridge mirrors the `AGENTS.*` half of that discovery and previously forwarded the superseded `AGENTS.md`. Per directory the bridge now tries `AGENTS.override.md`, `AGENTS.md`, then `AGENTS.MD`, and only accepts regular files. Pi's candidate list continues with `CLAUDE.md` and `CLAUDE.MD`, which the bridge deliberately omits — the Claude Code subprocess loads `CLAUDE.md` natively, so forwarding it would apply the same context twice. A candidate that exists but cannot be stat'd (dangling symlink, permissions) is now traced through `debug()` rather than skipped silently, since skipping an override silently forwards the file it was meant to supersede.
+
+### 3.1.6
 
 Found while reviewing drovr's 3.1.4 re-vendor (VST-53), same shape in the 3.1.5 source.
 
