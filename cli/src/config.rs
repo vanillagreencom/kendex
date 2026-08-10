@@ -1091,7 +1091,7 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
     // a copy there belongs to this project's view only when a harness that
     // shares into that checkout actually references it, so anchored roots
     // carry the sharing harnesses as a gate.
-    let canonical_skills: Vec<(PathBuf, Option<Vec<crate::harness::Harness>>)> = if global {
+    let canonical_skills: Vec<(PathBuf, Option<crate::installer::AnchorSharing>)> = if global {
         vec![
             (global_state_dir().join("skills"), None),
             (codex_home_dir().join("skills"), None),
@@ -1134,7 +1134,7 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
                 // let the next refresh replace the copy.
                 let canonical = path.canonicalize().ok();
                 let referenced = canonical.is_some_and(|canonical| {
-                    sharing.iter().any(|harness| {
+                    sharing.iter().any(|(harness, _)| {
                         harness
                             .skills_dir(false)
                             .join(name)
@@ -1729,10 +1729,12 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
                 .collect();
             let exists = own_root.join(&name).exists()
                 || anchored.iter().any(|(root, sharing)| {
-                    sharing
-                        .iter()
-                        .any(|harness| entry_harnesses.contains(harness))
-                        && root.join(&name).exists()
+                    // Child-link evidence is per-skill: an anchored root
+                    // keeps an entry alive only when it is evidenced for
+                    // THIS name, not by an unrelated skill's child link.
+                    sharing.iter().any(|(harness, evidence)| {
+                        entry_harnesses.contains(harness) && evidence.covers(&name)
+                    }) && root.join(&name).exists()
                 });
             if !exists {
                 eprintln!("  Removed stale lock entry (files missing): {name}");

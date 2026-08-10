@@ -109,11 +109,23 @@ pub fn install_skill(
             // Step 1: Copy to canonical location (refresh from source).
             // Use a marker file to avoid re-copying if another harness
             // already refreshed the canonical in this process.
+            //
+            // Foreign canonicals are write-shy: an existing canonical in
+            // another checkout is linked to AS-IS — its content and marker
+            // belong to that checkout's installs, and refreshing it is the
+            // owning checkout's job.
+            let foreign_existing = link_home.is_some() && canonical.exists();
+            if foreign_existing && !canonical.join("SKILL.md").is_file() {
+                eprintln!(
+                    "  Warning: existing canonical {} has no SKILL.md; leaving it for its own checkout's refresh (VST-195)",
+                    canonical.display()
+                );
+            }
             let marker = canonical.join(".vstack-refreshed");
             let current_pid = std::process::id().to_string();
             let already_refreshed = marker.exists()
                 && std::fs::read_to_string(&marker).is_ok_and(|s| s.trim() == current_pid);
-            if !already_refreshed {
+            if !foreign_existing && !already_refreshed {
                 remove_existing(&canonical)?;
                 copy_dir(&skill.source_dir, &canonical)?;
 
@@ -282,7 +294,18 @@ pub fn remove_item(
                     .join(".agents")
                     .join("skills")
                     .join(name);
-                if !canonicals.contains(&canonical) {
+                // Only an artifact OF THIS SKILL resolving to that canonical
+                // makes this removal an owner there. A parent-level share
+                // alone proves where a NEW link would land, not that one
+                // exists — a same-named install belonging to the other
+                // checkout must keep its marker (its disk-recovery
+                // evidence) untouched.
+                let owned = dest.canonicalize().is_ok_and(|resolved| {
+                    canonicalize_allowing_missing(&canonical)
+                        .unwrap_or_else(|| normalize_absolute_path(&canonical))
+                        == resolved
+                });
+                if owned && !canonicals.contains(&canonical) {
                     canonicals.push(canonical);
                 }
             }
@@ -515,18 +538,44 @@ fn normalize_absolute_path(path: &Path) -> PathBuf {
 /// removal and reconciliation must scope root derivation to the harness set
 /// actually in play — an unscoped derivation would let a worktree operation
 /// reach a main-checkout install that exists only for other harnesses.
+/// How a harness's project skill dir evidences an anchored root. Child-link
+/// evidence is per-skill: one linked child proves nothing about OTHER names
+/// in the foreign root.
+#[derive(Clone, Debug)]
+pub(crate) enum AnchorEvidence {
+    /// The whole harness dir is shared; every skill name is in scope.
+    SharedDir,
+    /// Only these individually linked children are shared.
+    Children(Vec<String>),
+}
+
+impl AnchorEvidence {
+    pub(crate) fn covers(&self, name: &str) -> bool {
+        match self {
+            AnchorEvidence::SharedDir => true,
+            AnchorEvidence::Children(names) => names.iter().any(|child| child == name),
+        }
+    }
+}
+
+/// Harnesses evidencing an anchored root, with how each one evidences it.
+pub(crate) type AnchorSharing = Vec<(Harness, AnchorEvidence)>;
+
 pub(crate) fn anchored_canonical_skill_roots(
     harnesses: &[Harness],
-) -> Vec<(PathBuf, Vec<Harness>)> {
-    let mut anchored: Vec<(PathBuf, Vec<Harness>)> = Vec::new();
-    let mut probed: Vec<(PathBuf, Vec<PathBuf>)> = Vec::new();
+) -> Vec<(PathBuf, AnchorSharing)> {
+    let mut anchored: Vec<(PathBuf, AnchorSharing)> = Vec::new();
+    let mut probed: Vec<(PathBuf, Vec<(PathBuf, AnchorEvidence)>)> = Vec::new();
     for harness in harnesses {
         let dir = harness.skills_dir(false);
         let roots = match probed.iter().find(|(probed_dir, _)| *probed_dir == dir) {
             Some((_, cached)) => cached.clone(),
             None => {
                 let roots = match same_repo_link_home(&dir) {
-                    Some(home) => vec![home.checkout_root.join(".agents").join("skills")],
+                    Some(home) => vec![(
+                        home.checkout_root.join(".agents").join("skills"),
+                        AnchorEvidence::SharedDir,
+                    )],
                     // Partial sharing keeps the dir real and links each
                     // skill CHILD into the shared checkout; the children
                     // are then the only evidence of the anchor.
@@ -536,17 +585,17 @@ pub(crate) fn anchored_canonical_skill_roots(
                 roots
             }
         };
-        for root in roots {
+        for (root, evidence) in roots {
             match anchored
                 .iter_mut()
                 .find(|(anchored_root, _)| *anchored_root == root)
             {
                 Some((_, sharing)) => {
-                    if !sharing.contains(harness) {
-                        sharing.push(*harness);
+                    if !sharing.iter().any(|(shared, _)| shared == harness) {
+                        sharing.push((*harness, evidence));
                     }
                 }
-                None => anchored.push((root, vec![*harness])),
+                None => anchored.push((root, vec![(*harness, evidence)])),
             }
         }
     }
@@ -557,11 +606,12 @@ pub(crate) fn anchored_canonical_skill_roots(
 /// including DANGLING children whose canonical is already gone — pruning
 /// must still classify those under a managed root. Non-symlink children are
 /// skipped without any git probing, so ordinary layouts pay one read_dir.
-fn child_level_anchored_roots(dir: &Path) -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = Vec::new();
+/// Each root carries the child NAMES that evidence it.
+fn child_level_anchored_roots(dir: &Path) -> Vec<(PathBuf, AnchorEvidence)> {
+    let mut roots: Vec<(PathBuf, Vec<String>)> = Vec::new();
     let mut probed_parents: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return roots;
+        return Vec::new();
     };
     for entry in entries.flatten() {
         let child = entry.path();
@@ -571,6 +621,9 @@ fn child_level_anchored_roots(dir: &Path) -> Vec<PathBuf> {
         if !meta.file_type().is_symlink() {
             continue;
         }
+        let Some(name) = child.file_name().and_then(|n| n.to_str()).map(String::from) else {
+            continue;
+        };
         let lexical = normalize_absolute_path(&child);
         let Some(physical) = canonicalize_allowing_missing(&child) else {
             continue;
@@ -590,13 +643,16 @@ fn child_level_anchored_roots(dir: &Path) -> Vec<PathBuf> {
                 root
             }
         };
-        if let Some(root) = root
-            && !roots.contains(&root)
-        {
-            roots.push(root);
+        let Some(root) = root else { continue };
+        match roots.iter_mut().find(|(known, _)| *known == root) {
+            Some((_, names)) => names.push(name),
+            None => roots.push((root, vec![name])),
         }
     }
     roots
+        .into_iter()
+        .map(|(root, names)| (root, AnchorEvidence::Children(names)))
+        .collect()
 }
 
 /// The physical home of a project-scope harness link whose parent directory
@@ -1389,6 +1445,180 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// Child-link evidence is per-skill: one legitimate child link must not
+    /// turn the whole foreign root into evidence for OTHER skills — a stale
+    /// lock entry whose skill has no artifact in this worktree must not be
+    /// kept alive by an unrelated skill's child link.
+    #[cfg(unix)]
+    #[test]
+    fn reconcile_drops_stale_entry_not_evidenced_by_child_links() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_unrelated_child_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        // Legitimate child link for skill X; skill Y exists only in main.
+        for name in ["x-linked", "y-mainonly"] {
+            let copy = main.join(".agents").join("skills").join(name);
+            std::fs::create_dir_all(&copy).unwrap();
+            std::fs::write(copy.join("SKILL.md"), format!("# {name}\n")).unwrap();
+            std::fs::write(copy.join(".vstack-refreshed"), "0").unwrap();
+        }
+        std::fs::create_dir_all(wt.join(".agents").join("skills")).unwrap();
+        symlink(
+            main.join(".agents").join("skills").join("x-linked"),
+            wt.join(".agents").join("skills").join("x-linked"),
+        )
+        .unwrap();
+
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "y-mainonly".into(),
+            kind: ItemKind::Skill,
+            source: "source".into(),
+            source_repo: None,
+            harnesses: vec![Harness::Codex.id().to_string()],
+            method: InstallMethod::Symlink,
+            installed_at: "2026-08-10T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        crate::test_util::with_project_root(&wt, || {
+            crate::config::reconcile_lock_with_disk(&mut lock, false, "source")
+        });
+
+        assert!(
+            !lock.entries.contains_key("y-mainonly"),
+            "an unrelated child link must not keep another skill's stale entry alive"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Marker operations only on canonicals the operation owned: a removal
+    /// whose harness never had a link for THIS skill must not clear the
+    /// managed marker of a same-named install belonging to the other
+    /// checkout — that marker is its disk-recovery evidence.
+    #[cfg(unix)]
+    #[test]
+    fn remove_item_leaves_unowned_same_named_marker_intact() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_unowned_marker_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        // Main-only install named "dupe"; Claude never had a link for it.
+        let dupe = main.join(".agents").join("skills").join("dupe");
+        std::fs::create_dir_all(&dupe).unwrap();
+        std::fs::write(dupe.join("SKILL.md"), "# dupe\n").unwrap();
+        std::fs::write(dupe.join(".vstack-refreshed"), "0").unwrap();
+
+        crate::test_util::with_project_root(&wt, || {
+            remove_item("dupe", Some(ItemKind::Skill), &[Harness::ClaudeCode], false).unwrap()
+        });
+
+        assert!(dupe.join("SKILL.md").is_file());
+        assert!(
+            dupe.join(".vstack-refreshed").is_file(),
+            "an unowned install's managed marker must survive a foreign removal"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Write-shy foreign canonicals: an install whose link lands in another
+    /// checkout must LINK to that checkout's existing canonical as-is —
+    /// rewriting its content would clobber the install it backs there;
+    /// refreshing it is the owning checkout's job.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_links_to_existing_foreign_canonical_without_rewriting() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_write_shy_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        // Main's canonical pre-exists with its own content and marker.
+        let canonical = main.join(".agents").join("skills").join("github");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::fs::write(canonical.join("SKILL.md"), "owned by main\n").unwrap();
+        std::fs::write(canonical.join(".vstack-refreshed"), "main\n").unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+
+        assert_eq!(
+            std::fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
+            "owned by main\n",
+            "the foreign canonical's content must not be rewritten"
+        );
+        assert_eq!(
+            std::fs::read_to_string(canonical.join(".vstack-refreshed")).unwrap(),
+            "main\n",
+            "the foreign canonical's marker must not be rewritten"
+        );
+        let link = main_skills.join("github");
+        assert!(
+            link.canonicalize().unwrap().join("SKILL.md").is_file(),
+            "the link must resolve to the existing canonical"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A canonical copy that existed SOLELY for this worktree's install must
     /// not resurrect after removal: the owning checkout's reconciliation
     /// adopts any marked dir in its own root (deliberately — see
@@ -1867,9 +2097,11 @@ mod tests {
 
     /// Partial sharing links each skill CHILD into main while `.agents/skills`
     /// stays real (worktree config.md). Install must resolve the child-level
-    /// symlink when selecting the canonical home: refresh main's copy through
-    /// the anchor and keep the child link — materializing a real directory
-    /// over the link would fork the skill from the shared copy.
+    /// symlink when selecting the canonical home and keep the child link —
+    /// materializing a real directory over the link would fork the skill
+    /// from the shared copy. The existing foreign canonical is linked to
+    /// AS-IS (write-shy): its content belongs to the owning checkout's
+    /// refresh, so the pre-existing content stays.
     #[cfg(unix)]
     #[test]
     fn install_skill_resolves_child_level_symlink_to_shared_canonical() {
@@ -1908,10 +2140,10 @@ mod tests {
                 .is_symlink(),
             "the child link into main must be preserved, not materialized"
         );
-        let refreshed = std::fs::read_to_string(main_copy.join("SKILL.md")).unwrap();
-        assert!(
-            refreshed.contains("Test skill"),
-            "main's shared copy must be refreshed through the child anchor, got: {refreshed}"
+        assert_eq!(
+            std::fs::read_to_string(main_copy.join("SKILL.md")).unwrap(),
+            "stale\n",
+            "main's copy is the owning checkout's to refresh — not rewritten from here"
         );
 
         let _ = std::fs::remove_dir_all(&root);
