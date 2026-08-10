@@ -345,7 +345,7 @@ merge. Detach them first.
       ```bash
       [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [PARENT_ID] --summary-file [SUMMARY_FILE]
       ```
-      The summary starts with `## Bundle Complete`. Containers hold no implementation state — no worktree, no branch, no workflow-state beyond bookkeeping — so there is nothing else to clean up. Report the closed container in § 7. If `[PARENT_ID]` itself has a container parent whose children are now all Done, repeat a-c for it.
+      The summary starts with `## Bundle Complete`. Containers hold no implementation state — no worktree, no branch, no workflow-state beyond bookkeeping — so there is nothing else to clean up. Report the closed container in § 7. If `[PARENT_ID]` itself has a container parent, re-run the step-3 cache sync FIRST — the completion above mutated Linear, not the cache, and a stale cache would read the just-completed container as pending — then repeat a-c for the grandparent.
 
 4. **Sync main repo** (ALWAYS runs after merge):
    ```bash

@@ -583,7 +583,7 @@ Items NOT listed in `child_indexes` (e.g. `origin: "discovered"` refactors) are 
 
 ### 7.2 Evaluate Coherence
 
-For each candidate, ask: **Would these naturally ship together in one PR?**
+For each candidate, ask: **Would these naturally ship together in one PR?** A YES here means the bundle is an explicit single-PR bundle — the created parent's title gets the `(one PR)` marker, since an unmarked parent with children now reads as a container (each child its own PR). Bundling for shared context with independently shippable children is the container case: no marker, sibling child-blocks-child relations for ordering.
 
 | Signal | Lean sub-issue | Lean independent |
 |--------|----------------|------------------|
@@ -625,7 +625,7 @@ For each parent issue with children:
 |--------|--------|---------|
 | `make_parent` | `issue`, `children[]` | Issue becomes parent of listed issues |
 | `make_child` | `issue`, `parent` | Issue becomes sub-issue of parent |
-| `bundle` | `issues[]`, `new_parent_title` | Create new parent, group issues under it |
+| `bundle` | `issues[]`, `new_parent_title` | Create new parent, group issues under it. Single-PR intent (the § 7.2 one-PR question answered YES) appends `(one PR)` to the title; otherwise the parent is a container |
 | `update_parent_desc` | `issue` | Parent's `## Sub-Issues` is stale — sync with actual children |
 
 **ISSUE mode**: Set `hierarchy` on each issue per [audit-output.md](../schemas/audit-output.md) Hierarchy Field.
