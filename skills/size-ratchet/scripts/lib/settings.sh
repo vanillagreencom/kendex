@@ -54,7 +54,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # committed settings, .env is the base) — first matching KEY= line wins,
   # optional surrounding quotes stripped. Parsed, never sourced.
   if [ -f ".env.local" ]; then
-    line="$(grep -E -- "^[[:space:]]*${name}=" .env.local | head -n 1 || true)"
+    line="$(grep -E -- "^[[:space:]]*(export[[:space:]]+)?${name}=" .env.local | head -n 1 || true)"
     if [ -n "$line" ]; then
       val="${line#*=}"
       case "$val" in
@@ -101,7 +101,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   fi
   done
   if [ -f ".env" ]; then
-    line="$(grep -E -- "^[[:space:]]*${name}=" .env | head -n 1 || true)"
+    line="$(grep -E -- "^[[:space:]]*(export[[:space:]]+)?${name}=" .env | head -n 1 || true)"
     if [ -n "$line" ]; then
       val="${line#*=}"
       case "$val" in

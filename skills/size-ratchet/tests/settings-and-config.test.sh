@@ -155,6 +155,9 @@ case "$OUT" in *"threshold 9"*) ok "vstack.settings.toml beats .env" ;; *) bad "
 printf 'SIZE_RATCHET_THRESHOLD="11"\n' > "$R/.env.local"
 run_raw || true
 case "$OUT" in *"threshold 11"*) ok ".env.local beats vstack.settings.toml (quotes stripped)" ;; *) bad ".env.local layering" "rc=$RC out=$OUT" ;; esac
+printf 'export SIZE_RATCHET_THRESHOLD=13\n' > "$R/.env.local"
+run_raw || true
+case "$OUT" in *"threshold 13"*) ok "export-form dotenv assignment is recognized" ;; *) bad "export-form dotenv" "rc=$RC out=$OUT" ;; esac
 
 echo "=== option-like configured paths ==="
 new_repo optpath

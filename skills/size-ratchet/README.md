@@ -85,9 +85,11 @@ src/gen/*.rs	generated bindings
 | `SIZE_RATCHET_BASELINE` | `tools/size-ratchet-baseline.tsv` | Baseline path. |
 | `SIZE_RATCHET_EXCLUDES` | `tools/size-ratchet-excludes` | Exclusion-list path. |
 
-Each key resolves environment > committed `vstack.settings.toml` (flat
-`KEY = "value"` assignment under `[env]`) > default. `--baseline` /
-`--excludes` flags override all three for the paths. All relative paths are
+Each key resolves environment > `.env.local` > committed `vstack.settings.toml`
+(flat `KEY = "value"` assignment under `[env]`) > `.vstack/settings.toml` >
+`.env` > default (env files use `KEY=value` or `export KEY=value`; parsed,
+never sourced). `--baseline` / `--excludes` flags override every source for
+the paths. All relative paths are
 repo-root-relative; the script `cd`s to `git rev-parse --show-toplevel`
 before resolving anything.
 
