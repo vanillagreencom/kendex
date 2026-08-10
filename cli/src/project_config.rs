@@ -112,6 +112,13 @@ fn default_hook_agents() -> CustomHookTarget {
 pub const SHARED_INSTRUCTIONS_KEY: &str = "all";
 const SHARED_INSTRUCTIONS_KEY_ALIAS: &str = "*";
 
+/// Invisible markers wrapped around the shared (`all`) portion when it is
+/// rendered into a generated agent file. Extraction drops the marked region
+/// unconditionally, so a later change or removal of the `all` value can never
+/// leave stale fleet-wide text behind as a per-agent entry.
+pub const SHARED_INSTRUCTIONS_START: &str = "<!-- vstack:shared-instructions:start -->";
+pub const SHARED_INSTRUCTIONS_END: &str = "<!-- vstack:shared-instructions:end -->";
+
 fn shared_instruction_entry(map: &HashMap<String, String>) -> Option<&str> {
     map.get(SHARED_INSTRUCTIONS_KEY)
         .or_else(|| map.get(SHARED_INSTRUCTIONS_KEY_ALIAS))
@@ -357,11 +364,59 @@ impl ProjectConfig {
         }
     }
 
+    /// Wrap a shared instruction value in the invisible markers used by
+    /// generated agent files. HTML comments do not render in markdown, so the
+    /// markers never read as instructions; they let extraction identify the
+    /// shared region structurally instead of by comparing against whatever
+    /// `all` value happens to be configured at extraction time.
+    pub fn mark_shared(shared: &str) -> String {
+        format!(
+            "{SHARED_INSTRUCTIONS_START}\n{}\n{SHARED_INSTRUCTIONS_END}",
+            shared.trim()
+        )
+    }
+
+    /// Merge for rendering into a generated agent file: like
+    /// [`Self::merge_shared_and_specific`], but the shared portion is wrapped
+    /// in markers so [`Self::strip_shared_block`] can drop it unconditionally
+    /// on re-extraction, even after the `all` value changes or is removed.
+    pub fn merge_marked_shared_and_specific(
+        shared: Option<&str>,
+        specific: Option<&str>,
+    ) -> Option<String> {
+        let marked = shared
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(Self::mark_shared);
+        Self::merge_shared_and_specific(marked.as_deref(), specific)
+    }
+
     /// Remove the shared (`all`) portion from text extracted out of a
-    /// generated agent file. Generated files render the merged value, so
-    /// re-extraction must not persist or re-merge the shared part as an
-    /// item-specific entry — that would paste the fleet-wide text into every
-    /// per-agent key on the next refresh.
+    /// generated agent file, so re-extraction never persists or re-merges the
+    /// fleet-wide text as an item-specific entry. Marked regions (rendered by
+    /// [`Self::merge_marked_shared_and_specific`]) are dropped unconditionally
+    /// — robust to the `all` value having changed or been removed since the
+    /// file was generated. Files generated before markers existed fall back to
+    /// [`Self::strip_shared_prefix`] against the currently configured value.
+    pub fn strip_shared_block(shared: Option<&str>, extracted: &str) -> Option<String> {
+        let mut text = extracted.to_string();
+        let mut stripped_marked_region = false;
+        while let Some(start) = text.find(SHARED_INSTRUCTIONS_START) {
+            let Some(rel_end) = text[start..].find(SHARED_INSTRUCTIONS_END) else {
+                break;
+            };
+            text.replace_range(start..start + rel_end + SHARED_INSTRUCTIONS_END.len(), "");
+            stripped_marked_region = true;
+        }
+        if stripped_marked_region {
+            let rest = text.trim();
+            return (!rest.is_empty()).then(|| rest.to_string());
+        }
+        Self::strip_shared_prefix(shared, extracted).map(String::from)
+    }
+
+    /// Value-comparison fallback for files generated before the shared region
+    /// was marked: strip the currently configured shared value as a prefix.
     pub fn strip_shared_prefix<'a>(shared: Option<&str>, extracted: &'a str) -> Option<&'a str> {
         let Some(shared) = shared.map(str::trim).filter(|s| !s.is_empty()) else {
             return Some(extracted);
@@ -412,13 +467,11 @@ impl ProjectConfig {
         let extracted_guidance = extracted
             .guidance
             .as_deref()
-            .and_then(|text| Self::strip_shared_prefix(self.shared_guidance(), text))
-            .map(String::from);
+            .and_then(|text| Self::strip_shared_block(self.shared_guidance(), text));
         let extracted_instructions = extracted
             .instructions
             .as_deref()
-            .and_then(|text| Self::strip_shared_prefix(self.shared_instructions(), text))
-            .map(String::from);
+            .and_then(|text| Self::strip_shared_block(self.shared_instructions(), text));
 
         let needs_guidance =
             extracted_guidance.is_some() && self.guidance_for(agent_name).is_none();
@@ -1948,9 +2001,7 @@ fn normalize_attached_section_headers(content: &str) -> String {
             let found = HEADERS
                 .iter()
                 .filter_map(|header| pending.find(header).map(|idx| (idx, *header)))
-                .filter(|(idx, _)| {
-                    *idx > 0 && !index_is_inside_inline_string(&pending, *idx)
-                })
+                .filter(|(idx, _)| *idx > 0 && !index_is_inside_inline_string(&pending, *idx))
                 .min_by_key(|(idx, _)| *idx);
             let Some((idx, header)) = found else {
                 out.push(pending);
@@ -2953,7 +3004,10 @@ mod tests {
         );
         let out = super::sync_project_config_header(&content);
         assert!(out.starts_with(super::project_config_header().trim_end()));
-        assert!(!out.contains("old banner line"), "stale banner must go:\n{out}");
+        assert!(
+            !out.contains("old banner line"),
+            "stale banner must go:\n{out}"
+        );
         assert!(
             out.contains("project-skills-dir = \"p\""),
             "user content after the banner must stay:\n{out}"
@@ -2984,10 +3038,8 @@ mod tests {
         // Integration-level check that the filename alone routes the
         // preserve/rewrite decision, matching project_config_path()'s
         // vstack.toml vs vstack-local.toml split (VST-40).
-        let dir = std::env::temp_dir().join(format!(
-            "vstack_test_repair_header_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("vstack_test_repair_header_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -3025,7 +3077,10 @@ mod tests {
         let content = format!("# some other file\n\nproject-skills-dir = \"p\"\n\n{LAUNCH_BODY}");
         assert_eq!(super::sync_project_config_header(&content), content);
         // Banner but no recognizable body: also untouched.
-        let no_body = format!("{}\n\n\nkey = 1\n", super::project_config_header().trim_end());
+        let no_body = format!(
+            "{}\n\n\nkey = 1\n",
+            super::project_config_header().trim_end()
+        );
         assert_eq!(super::sync_project_config_header(&no_body), no_body);
     }
 
@@ -3126,6 +3181,85 @@ trading-design = "Dark theme."
             ProjectConfig::strip_shared_prefix(None, "anything"),
             Some("anything")
         );
+    }
+
+    #[test]
+    fn strip_shared_block_drops_marked_region_regardless_of_configured_value() {
+        let marked_old = ProjectConfig::mark_shared("Old shared.");
+
+        // Value changed since render: marker wins, no comparison involved.
+        assert_eq!(
+            ProjectConfig::strip_shared_block(
+                Some("New shared."),
+                &format!("{marked_old}\n\nmine")
+            )
+            .as_deref(),
+            Some("mine")
+        );
+        // Value removed since render: marked region still dropped.
+        assert_eq!(
+            ProjectConfig::strip_shared_block(None, &format!("{marked_old}\n\nmine")).as_deref(),
+            Some("mine")
+        );
+        // Marked-only render leaves nothing to persist.
+        assert_eq!(ProjectConfig::strip_shared_block(None, &marked_old), None);
+        // Pre-marker legacy render: falls back to prefix-stripping the
+        // currently configured value.
+        assert_eq!(
+            ProjectConfig::strip_shared_block(Some("Old shared."), "Old shared.\n\nmine")
+                .as_deref(),
+            Some("mine")
+        );
+        // Legacy render whose shared value has changed is the known-lossy
+        // fallback case: the text passes through untouched.
+        assert_eq!(
+            ProjectConfig::strip_shared_block(Some("New shared."), "custom").as_deref(),
+            Some("custom")
+        );
+    }
+
+    #[test]
+    fn save_extracted_drops_marked_shared_after_value_change() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_marked_save_extracted_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("vstack.toml"),
+            "[agent-launch-instructions]\nall = \"New shared.\"\n",
+        )
+        .unwrap();
+        let mut config = ProjectConfig::load(&dir);
+
+        // The extracted render carries the OLD shared value inside markers;
+        // a marked shared-only render must not become a per-agent key.
+        let extracted = crate::agent::AgentExtras {
+            guidance: Some(ProjectConfig::mark_shared("Old shared.")),
+            ..Default::default()
+        };
+        config.save_extracted(&dir, "rust", &extracted);
+        assert_eq!(config.guidance_for("rust"), None);
+
+        // A marked merged render persists only the specific remainder.
+        let extracted = crate::agent::AgentExtras {
+            guidance: Some(format!(
+                "{}\n\nmine",
+                ProjectConfig::mark_shared("Old shared.")
+            )),
+            ..Default::default()
+        };
+        config.save_extracted(&dir, "rust", &extracted);
+        assert_eq!(config.guidance_for("rust"), Some("mine"));
+        let on_disk = std::fs::read_to_string(dir.join("vstack.toml")).unwrap();
+        assert!(on_disk.contains("rust = \"mine\""), "on disk: {on_disk}");
+        assert!(!on_disk.contains("Old shared."), "on disk: {on_disk}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -4147,10 +4281,8 @@ rust = "Always use thiserror for errors."
 
     #[test]
     fn migrate_section_names_preserves_bracketed_prose_in_inline_strings() {
-        let dir = std::env::temp_dir().join(format!(
-            "vstack_test_migrate_prose_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("vstack_test_migrate_prose_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("vstack.toml");
@@ -4172,10 +4304,8 @@ rust = "Always use thiserror for errors."
 
     #[test]
     fn migrate_section_names_preserves_crlf_line_endings() {
-        let dir = std::env::temp_dir().join(format!(
-            "vstack_test_migrate_crlf_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("vstack_test_migrate_crlf_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("vstack.toml");
@@ -4228,8 +4358,7 @@ rust = "Always use thiserror for errors."
 
     #[test]
     fn repair_still_splits_real_attached_section_headers() {
-        let input =
-            "[agent-launch-instructions]\nrust = \"\" [agent-additional-instructions]\niced = \"\"\n";
+        let input = "[agent-launch-instructions]\nrust = \"\" [agent-additional-instructions]\niced = \"\"\n";
         let out = normalize_attached_section_headers(input);
         assert!(out.contains("rust = \"\"\n[agent-additional-instructions]\niced = \"\"\n"));
 
@@ -4239,10 +4368,8 @@ rust = "Always use thiserror for errors."
 
     #[test]
     fn ensure_project_config_leaves_bracketed_prose_untouched_end_to_end() {
-        let dir = std::env::temp_dir().join(format!(
-            "vstack_test_prose_brackets_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("vstack_test_prose_brackets_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("vstack.toml");
@@ -4539,10 +4666,8 @@ command = \"./scripts/x.sh\"\n";
 
     #[test]
     fn refresh_skips_write_when_identical_with_trailing_newline() {
-        let dir = std::env::temp_dir().join(format!(
-            "vstack_test_identical_skip_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("vstack_test_identical_skip_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("vstack.toml");

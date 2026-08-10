@@ -163,16 +163,15 @@ pub fn build_agent_extras(
     file_extras: Option<&AgentExtras>,
 ) -> AgentExtras {
     // File-extracted sections come from a previously generated (merged)
-    // render; strip the shared portion so it is never merged in twice.
+    // render; drop the marked shared region (or, for pre-marker files, the
+    // configured shared prefix) so it is never merged in twice.
     let file_guidance = file_extras
         .and_then(|e| e.guidance.as_deref())
-        .and_then(|text| {
-            ProjectConfig::strip_shared_prefix(project_config.shared_guidance(), text)
-        });
+        .and_then(|text| ProjectConfig::strip_shared_block(project_config.shared_guidance(), text));
     let file_instructions = file_extras
         .and_then(|e| e.instructions.as_deref())
         .and_then(|text| {
-            ProjectConfig::strip_shared_prefix(project_config.shared_instructions(), text)
+            ProjectConfig::strip_shared_block(project_config.shared_instructions(), text)
         });
     let file_color = file_extras.and_then(|e| e.color.as_deref());
     AgentExtras {
@@ -180,15 +179,17 @@ pub fn build_agent_extras(
             .color_for(agent_name)
             .or(file_color)
             .map(String::from),
-        guidance: ProjectConfig::merge_shared_and_specific(
+        guidance: ProjectConfig::merge_marked_shared_and_specific(
             project_config.shared_guidance(),
-            project_config.guidance_for(agent_name).or(file_guidance),
+            project_config
+                .guidance_for(agent_name)
+                .or(file_guidance.as_deref()),
         ),
-        instructions: ProjectConfig::merge_shared_and_specific(
+        instructions: ProjectConfig::merge_marked_shared_and_specific(
             project_config.shared_instructions(),
             project_config
                 .instructions_for(agent_name)
-                .or(file_instructions),
+                .or(file_instructions.as_deref()),
         ),
         frontmatter: Default::default(),
         frontmatter_by_harness: project_config
@@ -351,19 +352,31 @@ all = "Shared extra."
         let config: ProjectConfig = toml::from_str(toml).unwrap();
         let role = AgentRole::Engineer;
 
-        // Both present: shared renders first, blank-line separated.
+        // Both present: marked shared renders first, blank-line separated.
         let extras = build_agent_extras(&config, "rust", &role, None);
         assert_eq!(
             extras.guidance.as_deref(),
-            Some("Shared launch.\n\nRust launch.")
+            Some(
+                format!(
+                    "{}\n\nRust launch.",
+                    ProjectConfig::mark_shared("Shared launch.")
+                )
+                .as_str()
+            )
         );
-        assert_eq!(extras.instructions.as_deref(), Some("Shared extra."));
+        assert_eq!(
+            extras.instructions.as_deref(),
+            Some(ProjectConfig::mark_shared("Shared extra.").as_str())
+        );
 
-        // Shared-only agent still gets the shared value.
+        // Shared-only agent still gets the (marked) shared value.
         let extras = build_agent_extras(&config, "iced", &role, None);
-        assert_eq!(extras.guidance.as_deref(), Some("Shared launch."));
+        assert_eq!(
+            extras.guidance.as_deref(),
+            Some(ProjectConfig::mark_shared("Shared launch.").as_str())
+        );
 
-        // Per-agent-only config renders unchanged.
+        // Per-agent-only config renders unchanged — no markers.
         let config: ProjectConfig =
             toml::from_str("[agent-launch-instructions]\nrust = \"Rust launch.\"\n").unwrap();
         let extras = build_agent_extras(&config, "rust", &role, None);
@@ -371,26 +384,85 @@ all = "Shared extra."
     }
 
     #[test]
-    fn build_agent_extras_strips_shared_text_from_file_extras() {
+    fn build_agent_extras_strips_shared_text_from_pre_marker_file_extras() {
         let config: ProjectConfig =
             toml::from_str("[agent-launch-instructions]\nall = \"Shared launch.\"\n").unwrap();
         let role = AgentRole::Engineer;
 
-        // File extras extracted from a previously generated (merged) render
-        // must not double the shared value.
+        // File extras extracted from a render generated before markers existed
+        // fall back to prefix-stripping the configured value, so the shared
+        // text is still not doubled.
         let file_extras = AgentExtras {
             guidance: Some("Shared launch.\n\nMine.".into()),
             ..Default::default()
         };
         let extras = build_agent_extras(&config, "rust", &role, Some(&file_extras));
-        assert_eq!(extras.guidance.as_deref(), Some("Shared launch.\n\nMine."));
+        assert_eq!(
+            extras.guidance.as_deref(),
+            Some(format!("{}\n\nMine.", ProjectConfig::mark_shared("Shared launch.")).as_str())
+        );
 
         let file_extras = AgentExtras {
             guidance: Some("Shared launch.".into()),
             ..Default::default()
         };
         let extras = build_agent_extras(&config, "rust", &role, Some(&file_extras));
-        assert_eq!(extras.guidance.as_deref(), Some("Shared launch."));
+        assert_eq!(
+            extras.guidance.as_deref(),
+            Some(ProjectConfig::mark_shared("Shared launch.").as_str())
+        );
+    }
+
+    #[test]
+    fn build_agent_extras_drops_marked_shared_after_value_change() {
+        // The file on disk was rendered when `all` was "Old shared."; the
+        // config now says "New shared.". The marked region must be dropped
+        // structurally — value comparison would fail to match and persist the
+        // stale fleet-wide text as this agent's own entry.
+        let config: ProjectConfig =
+            toml::from_str("[agent-launch-instructions]\nall = \"New shared.\"\n").unwrap();
+        let role = AgentRole::Engineer;
+        let file_extras = AgentExtras {
+            guidance: Some(format!(
+                "{}\n\nMine.",
+                ProjectConfig::mark_shared("Old shared.")
+            )),
+            ..Default::default()
+        };
+
+        let extras = build_agent_extras(&config, "rust", &role, Some(&file_extras));
+
+        assert_eq!(
+            extras.guidance.as_deref(),
+            Some(format!("{}\n\nMine.", ProjectConfig::mark_shared("New shared.")).as_str())
+        );
+        assert!(
+            !extras.guidance.as_deref().unwrap().contains("Old shared."),
+            "stale shared text must not survive: {:?}",
+            extras.guidance
+        );
+    }
+
+    #[test]
+    fn build_agent_extras_drops_marked_shared_after_value_removal() {
+        // `all` was removed from the config entirely; the old render's marked
+        // region must still be dropped, leaving only the agent's own text.
+        let config: ProjectConfig = toml::from_str("").unwrap();
+        let role = AgentRole::Engineer;
+        let file_extras = AgentExtras {
+            guidance: Some(format!(
+                "{}\n\nMine.",
+                ProjectConfig::mark_shared("Old shared.")
+            )),
+            instructions: Some(ProjectConfig::mark_shared("Old shared extra.")),
+            ..Default::default()
+        };
+
+        let extras = build_agent_extras(&config, "rust", &role, Some(&file_extras));
+
+        assert_eq!(extras.guidance.as_deref(), Some("Mine."));
+        // A shared-only section leaves nothing behind once the value is gone.
+        assert_eq!(extras.instructions, None);
     }
 
     #[test]

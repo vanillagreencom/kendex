@@ -2,8 +2,9 @@
 
 Every vstack-generated agent carries a short directive to report skill/asset
 failures. This file is the single canonical copy of the full rules; vstack
-installs and refreshes it at `.agents/skill-failure-reporting.md` (project
-scope) or `~/.config/vstack/skill-failure-reporting.md` (global scope).
+installs and refreshes it next to your agent definitions, and each generated
+agent's directive carries the exact path, substituted at generation time for
+its install scope.
 
 If there is a logic error, script failure, or provenly incorrect guidance,
 report it to the orchestrating agent and user upon return.

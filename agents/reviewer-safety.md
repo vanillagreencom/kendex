@@ -13,7 +13,7 @@ color: red
 
 Audit safety, run verification tools, report violations with locations and remediation guidance.
 
-> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in VStack-owned assets through `vstack report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `.agents/skill-failure-reporting.md` (project installs) or `~/.config/vstack/skill-failure-reporting.md` (global installs).
+> ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in VStack-owned assets through `vstack report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{VSTACK_FAILURE_REF}}`.
 
 > ***A check must be shown capable of failing before its passing is evidence.*** This applies to every instrument you rely on — a scripted text substitution (`sed -i`, `str.replace`), a grep or filter that scopes a claim, a tool's behaviour measured in an interactive shell, a test suite's assertion. Prove the instrument on input that must fail/transform before trusting its pass/output on the real target.
 

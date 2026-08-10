@@ -4,10 +4,10 @@ use crate::harness::Harness;
 use crate::hook::Hook;
 use crate::installer;
 use crate::pi_extension::PiExtension;
+use crate::resolve::{same_path, source_from_project_lock};
 use crate::skill;
 use crate::skill::Skill;
 use crate::tui;
-use crate::resolve::{same_path, source_from_project_lock};
 use anyhow::Context;
 use anyhow::Result;
 use std::collections::HashSet;
@@ -1490,7 +1490,10 @@ role: engineer
     fn noninteractive_harnesses_rejects_all_unknown_ids_naming_the_flag() {
         let err = noninteractive_harnesses(Some(&["nope".to_string()])).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("--harness"), "hint must name the real flag: {msg}");
+        assert!(
+            msg.contains("--harness"),
+            "hint must name the real flag: {msg}"
+        );
         let ids: Vec<&str> = Harness::ALL.iter().map(Harness::id).collect();
         assert!(
             msg.contains(&ids.join(",")),
@@ -1926,8 +1929,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             pi_extension_filter.as_deref(),
             &|name| {
                 all_pi_extensions.iter().any(|e| {
-                    e.name == name
-                        || crate::pi_extension::legacy_names_for(&e.name).contains(&name)
+                    e.name == name || crate::pi_extension::legacy_names_for(&e.name).contains(&name)
                 })
             },
         );
@@ -2064,7 +2066,6 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 false,
             );
         } else if let Some(harnesses) = noninteractive_harness_selection {
-
             // In non-interactive mode, only auto-install Pi packages when Pi
             // is one of the chosen harnesses. The agents/skills/hooks loops
             // run per-harness, but Pi packages are scope-only — they go to

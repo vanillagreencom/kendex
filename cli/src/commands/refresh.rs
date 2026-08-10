@@ -3,6 +3,7 @@ use crate::config::{self, ItemKind};
 use crate::harness::Harness;
 use crate::hook::Hook;
 use crate::installer;
+use crate::path_safety::is_same_repository_worktree;
 use crate::project_config::ProjectConfig;
 use crate::refresh_sources::{
     RefreshSource, ResolvedSource, all_source_hooks, all_source_pi_extensions,
@@ -686,7 +687,11 @@ fn link_relocated_project_skills(
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => {
-                stats.fail(name, None, format!("failed to inspect {}: {err}", dest.display()));
+                stats.fail(
+                    name,
+                    None,
+                    format!("failed to inspect {}: {err}", dest.display()),
+                );
                 continue;
             }
         }
@@ -694,7 +699,11 @@ fn link_relocated_project_skills(
         if let Some(parent) = dest.parent()
             && let Err(err) = std::fs::create_dir_all(parent)
         {
-            stats.fail(name, None, format!("failed to create .agents/skills: {err}"));
+            stats.fail(
+                name,
+                None,
+                format!("failed to create .agents/skills: {err}"),
+            );
             continue;
         }
         if let Err(err) = std::os::unix::fs::symlink(&target, &dest) {
@@ -722,64 +731,6 @@ This project has a .agents skills path that resolves outside the selected projec
 run from the checkout that owns that path, or replace it with a project-local .agents directory before project-scope skill installs or refresh.",
         skills_dir.display()
     )
-}
-
-/// `git rev-parse --git-common-dir` for `dir`, canonicalized. `None` when `dir`
-/// is not inside a Git repository, when git is unavailable, or when the answer
-/// cannot be resolved — every one of which must fail closed at the call site.
-fn git_common_dir(dir: &Path) -> Option<PathBuf> {
-    let output = std::process::Command::new("git")
-        .args(["-C", dir.to_str()?, "rev-parse", "--git-common-dir"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if raw.is_empty() {
-        return None;
-    }
-    // `--git-common-dir` is relative to the queried directory unless git is new
-    // enough to have been asked for an absolute path, so resolve it against
-    // `dir` rather than the process cwd.
-    let reported = Path::new(&raw);
-    let absolute = if reported.is_absolute() {
-        reported.to_path_buf()
-    } else {
-        dir.join(reported)
-    };
-    absolute.canonicalize().ok()
-}
-
-/// Positive proof that `target` lives in a working tree of the SAME repository
-/// as `project_root` — both resolve to one `--git-common-dir`.
-///
-/// This is not a relaxation of the containment boundary; it answers a different
-/// and stronger question. Lexical containment asks "is this path under the
-/// project directory", which cannot tell another checkout of the repository the
-/// operator is already working in from an arbitrary directory elsewhere on
-/// disk. vstack's own `worktree` skill provisions the first case: every issue
-/// worktree gets a `.agents` symlink into the main checkout so a ~100 MB harness
-/// library is shared rather than copied per branch (vstack#886). Refusing that
-/// made refresh unusable from any worktree.
-///
-/// Everything else still fails closed. A target that is not a repository has no
-/// common dir; a target in a DIFFERENT repository has a different one.
-fn is_same_repository_worktree(project_root: &Path, target: &Path) -> bool {
-    // `git -C` needs a directory. `target` is normally the canonical
-    // `.agents`/`.agents/skills` directory, but probe its parent if it is not.
-    let probe = if target.is_dir() {
-        target
-    } else {
-        match target.parent() {
-            Some(parent) => parent,
-            None => return false,
-        }
-    };
-    match (git_common_dir(project_root), git_common_dir(probe)) {
-        (Some(project_common), Some(target_common)) => project_common == target_common,
-        _ => false,
-    }
 }
 
 fn resolve_project_owned_skills_root(
@@ -913,8 +864,8 @@ fn refresh_project_owned_skill_instructions(
         // convention is not merely unsupported, it hard-fails the refresh.
         // Still fails closed for anything resolving anywhere else.
         let inside_skills_root = skill_dir_canon.starts_with(&skills_root.canonical);
-        let inside_relocated = relocated
-            .is_some_and(|reloc| skill_dir_canon.starts_with(&reloc.canonical));
+        let inside_relocated =
+            relocated.is_some_and(|reloc| skill_dir_canon.starts_with(&reloc.canonical));
         if !inside_skills_root && !inside_relocated {
             stats.fail(
                 name,

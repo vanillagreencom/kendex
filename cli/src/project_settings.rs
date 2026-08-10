@@ -243,11 +243,8 @@ fn assigned_keys(content: &str) -> BTreeSet<String> {
             }
             let (key, _) = trimmed.split_once('=')?;
             let key = key.trim();
-            (!key.is_empty()
-                && key
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_'))
-            .then(|| key.to_string())
+            (!key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+                .then(|| key.to_string())
         })
         .collect()
 }

@@ -496,7 +496,8 @@ pub fn custom_hooks_section(hooks: &[CustomHookEntry]) -> String {
 pub const FAILURE_REPORTING_DOC: &str = include_str!("../../docs/skill-failure-reporting.md");
 
 /// Where the failure-reporting reference lives for a scope: next to the
-/// skills install root (`.agents/` for projects, `~/.config/vstack/` global).
+/// skills install root (`.agents/` for projects, the platform config dir's
+/// `vstack/` for global installs).
 pub fn failure_reporting_reference_path(global: bool) -> std::path::PathBuf {
     if global {
         crate::config::global_state_dir().join("skill-failure-reporting.md")
@@ -507,9 +508,48 @@ pub fn failure_reporting_reference_path(global: bool) -> std::path::PathBuf {
     }
 }
 
+/// Placeholder carried by source agent bodies where the failure-reporting
+/// reference path belongs; [`resolve_failure_reference`] substitutes the real
+/// scope-resolved path at generation time so the sources stay platform- and
+/// scope-agnostic.
+pub const FAILURE_REF_TOKEN: &str = "{{VSTACK_FAILURE_REF}}";
+
+/// The path substituted for [`FAILURE_REF_TOKEN`]: project-relative for
+/// project scope, the resolved platform config-dir path for global scope.
+pub fn failure_reference_display(global: bool) -> String {
+    if global {
+        crate::config::display_path(&failure_reporting_reference_path(true))
+    } else {
+        ".agents/skill-failure-reporting.md".to_string()
+    }
+}
+
+/// Resolve [`FAILURE_REF_TOKEN`] in an agent body for the scope being
+/// generated.
+pub fn resolve_failure_reference(agent: &Agent, global: bool) -> Agent {
+    let mut resolved = agent.clone();
+    resolved.body = resolved
+        .body
+        .replace(FAILURE_REF_TOKEN, &failure_reference_display(global));
+    resolved
+}
+
 /// Install or refresh the canonical failure-reporting reference for a scope.
 /// Idempotent: only writes when the on-disk copy is missing or stale.
 pub fn install_failure_reporting_reference(global: bool) -> Result<()> {
+    // The project-scope reference lands under `.agents`; a symlinked `.agents`
+    // ancestor must not let the write (or the freshness read) escape the
+    // project, no matter which command path triggered generation. Skip rather
+    // than fail: installs that never write through `.agents` (e.g. claude-code
+    // copy-method) stay allowed with an escaped `.agents`, and only the
+    // `.agents`-routed write is withheld.
+    if !global
+        && let Err(err) =
+            crate::path_safety::ensure_agents_dir_within_project(&crate::config::project_root())
+    {
+        eprintln!("Warning: skipping skill-failure reference install: {err}");
+        return Ok(());
+    }
     let path = failure_reporting_reference_path(global);
     if std::fs::read_to_string(&path).is_ok_and(|existing| existing == FAILURE_REPORTING_DOC) {
         return Ok(());

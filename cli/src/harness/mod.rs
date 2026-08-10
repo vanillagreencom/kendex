@@ -271,8 +271,11 @@ impl Harness {
             );
         }
         // Every generated agent body points at the canonical failure-reporting
-        // reference; make sure the scope's copy exists and is current.
+        // reference; make sure the scope's copy exists and is current, then
+        // substitute the scope-resolved path for the source body's placeholder.
         crate::agent::install_failure_reporting_reference(global)?;
+        let agent = crate::agent::resolve_failure_reference(agent, global);
+        let agent = &agent;
         let dir = self.agents_dir(global);
         match self {
             Harness::ClaudeCode => claude::generate_agent(agent, &dir, skills, hooks, extras),
@@ -420,13 +423,133 @@ mod tests {
             std::fs::read_to_string(path).unwrap()
         });
 
+        let marked_launch = crate::project_config::ProjectConfig::mark_shared("Shared launch.");
         assert!(
-            content.contains("## Launch Instructions\n\nShared launch.\n\nRust launch."),
-            "merged launch instructions render shared-first: {content}"
+            content.contains(&format!(
+                "## Launch Instructions\n\n{marked_launch}\n\nRust launch."
+            )),
+            "merged launch instructions render marked shared first: {content}"
+        );
+        let marked_extra = crate::project_config::ProjectConfig::mark_shared("Shared extra.");
+        assert!(
+            content.contains(&format!("## Additional Instructions\n\n{marked_extra}")),
+            "shared-only additional instructions render marked: {content}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn generate_agent_substitutes_failure_reference_token_per_scope() {
+        let root = std::env::temp_dir().join(format!(
+            "vstack_failure_ref_token_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("project");
+        let home = root.join("home");
+        let config_dir = root.join("config");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let mut agent = agent_fixture("rust");
+        agent.body = format!(
+            "# rust\n\nIntro. Full rules: `{}`.\n\n## Capabilities\n\n- Testing\n",
+            crate::agent::FAILURE_REF_TOKEN
+        );
+
+        // Project scope: the token becomes the project-relative path.
+        let content = crate::test_util::with_project_root(&project, || {
+            let path = Harness::ClaudeCode
+                .generate_agent(
+                    &agent,
+                    false,
+                    &[],
+                    &[],
+                    &crate::agent::AgentExtras::default(),
+                )
+                .unwrap();
+            std::fs::read_to_string(path).unwrap()
+        });
+        assert!(
+            content.contains("`.agents/skill-failure-reporting.md`"),
+            "project scope substitutes the relative path: {content}"
         );
         assert!(
-            content.contains("## Additional Instructions\n\nShared extra."),
-            "shared-only additional instructions render: {content}"
+            !content.contains("{{"),
+            "no unsubstituted placeholder may leak: {content}"
+        );
+
+        // Global scope: the token becomes the resolved config-dir path.
+        let content = crate::test_util::with_home_and_config(&home, &config_dir, || {
+            let path = Harness::ClaudeCode
+                .generate_agent(
+                    &agent,
+                    true,
+                    &[],
+                    &[],
+                    &crate::agent::AgentExtras::default(),
+                )
+                .unwrap();
+            std::fs::read_to_string(path).unwrap()
+        });
+        let expected = crate::config::display_path(
+            &config_dir.join("vstack").join("skill-failure-reporting.md"),
+        );
+        assert!(
+            content.contains(&format!("`{expected}`")),
+            "global scope substitutes the config-dir path {expected}: {content}"
+        );
+        assert!(
+            !content.contains("{{"),
+            "no unsubstituted placeholder may leak: {content}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generate_agent_skips_reference_install_through_symlinked_agents_ancestor() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_failure_ref_symlink_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("project");
+        let outside_agents = root.join("outside-agents");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&outside_agents).unwrap();
+        symlink(&outside_agents, project.join(".agents")).unwrap();
+
+        // Generation itself is not `.agents`-routed for claude-code and must
+        // still succeed; only the reference write is withheld, so nothing
+        // lands outside the project.
+        let path = crate::test_util::with_project_root(&project, || {
+            Harness::ClaudeCode
+                .generate_agent(
+                    &agent_fixture("rust"),
+                    false,
+                    &[],
+                    &[],
+                    &crate::agent::AgentExtras::default(),
+                )
+                .unwrap()
+        });
+
+        assert!(path.exists(), "agent file generated at {path:?}");
+        assert!(
+            !outside_agents.join("skill-failure-reporting.md").exists(),
+            "reference must not be written outside the project"
         );
 
         let _ = std::fs::remove_dir_all(&root);

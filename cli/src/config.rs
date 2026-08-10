@@ -1964,7 +1964,10 @@ mod source_registry_tests {
         // guards already neutralize a stale self-pointer there, and dropping a
         // user's sticky per-project choice is riskier than cleaning the
         // picker-facing entries list.
-        assert_eq!(reg.current.as_deref(), Some(project.display().to_string()).as_deref());
+        assert_eq!(
+            reg.current.as_deref(),
+            Some(project.display().to_string()).as_deref()
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -2030,7 +2033,10 @@ mod source_registry_tests {
         let loaded = SourceRegistry::load(&path).unwrap();
         assert_eq!(
             loaded.entries,
-            vec!["vanillagreencom/vstack".to_string(), plain.display().to_string()],
+            vec![
+                "vanillagreencom/vstack".to_string(),
+                plain.display().to_string()
+            ],
             "load drops dead local paths (worktree hygiene), keeps live ones"
         );
         let _ = fs::remove_dir_all(&dir);

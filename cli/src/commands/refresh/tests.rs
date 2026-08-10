@@ -769,7 +769,17 @@ fn refresh_accepts_agents_symlink_into_a_sibling_worktree_of_the_same_repo() {
         return;
     }
     let worktree = trees.join("issue-1");
-    if !git_ok(&main, &["worktree", "add", "-q", "-b", "issue-1", worktree.to_str().unwrap()]) {
+    if !git_ok(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "issue-1",
+            worktree.to_str().unwrap(),
+        ],
+    ) {
         let _ = std::fs::remove_dir_all(root);
         return;
     }
@@ -1294,7 +1304,8 @@ fn refresh_refuses_to_replace_a_real_directory_with_a_project_skills_link() {
     let squatter = project.join(".agents/skills/benchmark");
     std::fs::create_dir_all(&squatter).unwrap();
     let squatter_md = squatter.join("SKILL.md");
-    let squatter_body = "---\nname: benchmark\ndescription: committed in place\n---\n\n# Committed\n";
+    let squatter_body =
+        "---\nname: benchmark\ndescription: committed in place\n---\n\n# Committed\n";
     std::fs::write(&squatter_md, squatter_body).unwrap();
 
     let lock = LockFile::default();
@@ -1306,15 +1317,17 @@ fn refresh_refuses_to_replace_a_real_directory_with_a_project_skills_link() {
 
     let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
     assert!(
-        stats
-            .failures
-            .iter()
-            .any(|f| f.error.contains("refusing to replace existing non-symlink path")),
+        stats.failures.iter().any(|f| f
+            .error
+            .contains("refusing to replace existing non-symlink path")),
         "expected a refusal, got: {:?}",
         stats.failures
     );
     assert!(!squatter.is_symlink(), "the real directory must survive");
-    assert_eq!(std::fs::read_to_string(&squatter_md).unwrap(), squatter_body);
+    assert_eq!(
+        std::fs::read_to_string(&squatter_md).unwrap(),
+        squatter_body
+    );
 
     let _ = std::fs::remove_dir_all(root);
 }

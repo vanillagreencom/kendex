@@ -6,17 +6,22 @@
   three-line pointer** (VST-177). The full routing/attribution decision tree
   now lives in one canonical file, `docs/skill-failure-reporting.md`, which
   the CLI installs and refreshes at `.agents/skill-failure-reporting.md`
-  (project scope) or `~/.config/vstack/skill-failure-reporting.md` (global
-  scope) whenever it generates agents. Regenerating agents shrinks every
-  generated agent file by ~1.5 KB.
+  (project scope) or `<platform config dir>/vstack/skill-failure-reporting.md`
+  (global scope) whenever it generates agents. Source agent bodies carry a
+  `{{VSTACK_FAILURE_REF}}` placeholder; generation substitutes the resolved
+  path for the target scope, so generated files never embed a wrong-platform
+  path. Regenerating agents shrinks every generated agent file by ~1.5 KB.
 
 - **CLI: shared `all` key for `[agent-launch-instructions]`,
   `[agent-additional-instructions]`, and `[skill-instructions]`** (VST-178
   mechanism). The value under `all` (alias `"*"`) applies to every agent or
   skill; when an item also has its own entry, both render — shared first,
-  then the item's own, separated by a blank line. **Breaking**: `all` is now
-  a reserved item name — installing an agent, skill, or hook named `all` is
-  rejected with an explanatory error.
+  then the item's own, separated by a blank line. In generated agent files
+  the shared portion is wrapped in invisible HTML-comment markers
+  (`<!-- vstack:shared-instructions:start/end -->`), so re-extraction drops
+  it structurally even after the `all` value changes or is removed.
+  **Breaking**: `all` is now a reserved item name — installing an agent,
+  skill, or hook named `all` is rejected with an explanatory error.
 
 - **second-opinion: `AGENTS.md` joined the default review-instruction globs**,
   and nested `AGENTS.md` files governing the changed paths are collected too
