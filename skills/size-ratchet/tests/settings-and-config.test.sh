@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# Pins for configuration resolution (env > vstack.settings.toml > default
+# 1000) and for the fail-loud config errors: malformed excludes (reason is
+# mandatory), malformed/unsorted/duplicated baseline, bad threshold. Config
+# problems are exit 2, never a silent pass or a silent default.
+set -euo pipefail
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+SR="$SKILL_DIR/scripts/size-ratchet"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+
+PASS=0
+FAIL=0
+ok() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
+
+new_repo() { # NAME
+  R="$TMP/$1"
+  mkdir -p "$R"
+  git -C "$R" -c init.defaultBranch=main init -q
+  git -C "$R" config user.email test@example.com
+  git -C "$R" config user.name test
+}
+
+mkfile() { # PATH LINES
+  mkdir -p "$R/$(dirname "$1")"
+  awk -v n="$2" 'BEGIN { for (i = 1; i <= n; i++) print "line " i }' >"$R/$1"
+}
+
+run_raw() { # [VAR=val ...] [-- script-args...] — run $SR in $R; sets OUT, RC
+  local envs=() args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --)
+        shift
+        args=("$@")
+        break
+        ;;
+      *) envs+=("$1") ;;
+    esac
+    shift
+  done
+  OUT=""
+  RC=0
+  OUT="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$SR" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
+}
+
+echo "=== threshold resolution: env > settings > default 1000 ==="
+new_repo thr
+mkfile f.txt 20
+git -C "$R" add -A
+
+run_raw
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 1000"*) true ;; *) false ;; esac \
+  && ok "no env, no settings: 20 lines passes under the built-in default 1000" \
+  || bad "built-in default is 1000" "rc=$RC out=$OUT"
+
+mkfile huge.txt 1005
+git -C "$R" add -A
+run_raw
+[ "$RC" -eq 1 ] && case "$OUT" in *"huge.txt — 1005 lines > threshold 1000"*) true ;; *) false ;; esac \
+  && ok "default 1000 can fail (1005-line file) — the default is real, not vacuous" \
+  || bad "default 1000 can fail" "rc=$RC out=$OUT"
+rm "$R/huge.txt"
+git -C "$R" add -A
+
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "15"\n' >"$R/vstack.settings.toml"
+run_raw
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 15"*) true ;; *) false ;; esac \
+  && ok "settings file overrides the default (20 > 15 fails; 1000 would have passed)" \
+  || bad "settings file overrides the default" "rc=$RC out=$OUT"
+
+run_raw SIZE_RATCHET_THRESHOLD=25
+[ "$RC" -eq 0 ] && ok "environment overrides the settings file (25 passes where settings' 15 failed)" \
+  || bad "environment overrides the settings file" "rc=$RC out=$OUT"
+
+echo "=== invalid thresholds are config errors ==="
+run_raw SIZE_RATCHET_THRESHOLD=abc
+[ "$RC" -eq 2 ] && ok "non-numeric threshold is exit 2" || bad "non-numeric threshold is exit 2" "rc=$RC out=$OUT"
+run_raw SIZE_RATCHET_THRESHOLD=0
+[ "$RC" -eq 2 ] && ok "zero threshold is exit 2" || bad "zero threshold is exit 2" "rc=$RC out=$OUT"
+rm "$R/vstack.settings.toml"
+
+echo "=== excludes: the reason column is mandatory ==="
+new_repo exc
+mkfile ok.txt 3
+mkdir -p "$R/tools"
+printf 'vendor/*\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+run_raw SIZE_RATCHET_THRESHOLD=10
+[ "$RC" -eq 2 ] && case "$OUT" in *"pattern<TAB>reason"*) true ;; *) false ;; esac \
+  && ok "a pattern without a tab-separated reason is exit 2" \
+  || bad "a pattern without a tab-separated reason is exit 2" "rc=$RC out=$OUT"
+
+printf '# lockfiles are generated\n\nvendor/*\tvendored third-party code\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+run_raw SIZE_RATCHET_THRESHOLD=10
+[ "$RC" -eq 0 ] && ok "comments and blank lines in the excludes file are ignored (control)" \
+  || bad "comments and blank lines are ignored" "rc=$RC out=$OUT"
+
+echo "=== baseline hygiene is enforced, not repaired silently ==="
+new_repo base
+mkfile a.txt 15
+mkfile b.txt 15
+mkdir -p "$R/tools"
+
+printf 'b.txt\t15\na.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_raw SIZE_RATCHET_THRESHOLD=10
+[ "$RC" -eq 2 ] && case "$OUT" in *"LC_ALL=C sorted"*) true ;; *) false ;; esac \
+  && ok "unsorted baseline is exit 2" || bad "unsorted baseline is exit 2" "rc=$RC out=$OUT"
+
+printf 'a.txt\t15\na.txt\t20\nb.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_raw SIZE_RATCHET_THRESHOLD=10
+[ "$RC" -eq 2 ] && case "$OUT" in *"duplicate"*) true ;; *) false ;; esac \
+  && ok "duplicate baseline path is exit 2" || bad "duplicate baseline path is exit 2" "rc=$RC out=$OUT"
+
+printf 'a.txt\tnot-a-number\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_raw SIZE_RATCHET_THRESHOLD=10
+[ "$RC" -eq 2 ] && case "$OUT" in *"malformed row"*) true ;; *) false ;; esac \
+  && ok "non-numeric baseline count is exit 2" || bad "non-numeric baseline count is exit 2" "rc=$RC out=$OUT"
+
+printf 'a.txt 15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_raw SIZE_RATCHET_THRESHOLD=10
+[ "$RC" -eq 2 ] && ok "space-separated (tab-less) baseline row is exit 2" \
+  || bad "space-separated baseline row is exit 2" "rc=$RC out=$OUT"
+
+printf 'a.txt\t15\nb.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_raw SIZE_RATCHET_THRESHOLD=10
+[ "$RC" -eq 0 ] && ok "well-formed sorted baseline passes (control for the hygiene gates)" \
+  || bad "well-formed sorted baseline passes" "rc=$RC out=$OUT"
+
+echo "=== usage errors ==="
+run_raw SIZE_RATCHET_THRESHOLD=10 -- --no-such-flag || true
+[ "$RC" -eq 2 ] && ok "unknown flag is exit 2" || bad "unknown flag is exit 2" "rc=$RC out=$OUT"
+
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

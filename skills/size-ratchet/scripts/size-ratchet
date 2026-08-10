@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# size-ratchet — tighten-only file-size gate over tracked files.
+#
+# check (default): every tracked file (git ls-files) minus the exclusion
+# list must be at or under the line threshold, unless a baseline row freezes
+# it at its current size. FAIL on:
+#   (a) a new offender — over the threshold with no baseline row;
+#   (b) growth of a baselined file — actual lines > its baseline row;
+#   (c) a baseline looser than reality — row > actual lines, the file shrank
+#       to/under the threshold, or the file left the tracked set. The
+#       ratchet only moves down, so a loose or stale row is itself a
+#       failure, never slack.
+#
+# --update: rewrite the baseline TIGHTENING ONLY — lower rows to current
+# reality, remove rows for files now at/under the threshold or no longer
+# counted; never add a row, never raise a number. Deliberate growth is a
+# human hand-edit of the row, visible in review. After the rewrite the
+# check re-runs against the new baseline, so remaining growth and new
+# offenders still fail.
+#
+# Lines are newline counts (`wc -l`). Baseline: `path<TAB>lines`, LC_ALL=C
+# sorted, unique paths, counts above the threshold. Excludes:
+# `pattern<TAB>reason` per line (shell glob matched against the full
+# repo-relative path; `*` crosses `/`), blank lines and `#` comments
+# ignored, a missing reason is a config error.
+#
+# Exit codes: 0 clean; 1 violations; 2 usage/config error.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+
+TAB="$(printf '\t')"
+
+usage() {
+  cat <<'EOF'
+usage: size-ratchet [--update] [--baseline FILE] [--excludes FILE]
+
+Tighten-only file-size gate: tracked files over the line threshold must be
+frozen in the baseline at their current size, and the baseline may only
+move down. --update lowers/removes rows to current reality (never adds,
+never raises) and then re-checks.
+
+Configuration (env > vstack.settings.toml [env] > default):
+  SIZE_RATCHET_THRESHOLD   line threshold           (default 1000)
+  SIZE_RATCHET_BASELINE    baseline path            (default tools/size-ratchet-baseline.tsv)
+  SIZE_RATCHET_EXCLUDES    exclusion-list path      (default tools/size-ratchet-excludes)
+Flags override both for the path settings.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config error.
+EOF
+}
+
+config_error() {
+  echo "::error::size-ratchet: $*" >&2
+  exit 2
+}
+
+MODE="check"
+BASELINE_OPT=""
+EXCLUDES_OPT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --update) MODE="update" ;;
+    --baseline)
+      [ $# -ge 2 ] || config_error "--baseline requires a path"
+      shift
+      BASELINE_OPT="$1"
+      ;;
+    --baseline=*) BASELINE_OPT="${1#--baseline=}" ;;
+    --excludes)
+      [ $# -ge 2 ] || config_error "--excludes requires a path"
+      shift
+      EXCLUDES_OPT="$1"
+      ;;
+    --excludes=*) EXCLUDES_OPT="${1#--excludes=}" ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) config_error "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+# All configured paths (settings file, baseline, excludes) are repo-relative.
+REPO_ROOT="$(git rev-parse --show-toplevel)" || config_error "not inside a git repository"
+cd "$REPO_ROOT"
+
+THRESHOLD="$(sr_setting SIZE_RATCHET_THRESHOLD 1000)" || exit 2
+case "$THRESHOLD" in
+  "" | *[!0-9]* | 0*[0-9] | 0) config_error "SIZE_RATCHET_THRESHOLD must be a positive integer, got '$THRESHOLD'" ;;
+esac
+
+if [ -n "$BASELINE_OPT" ]; then
+  BASELINE_FILE="$BASELINE_OPT"
+else
+  BASELINE_FILE="$(sr_setting SIZE_RATCHET_BASELINE "tools/size-ratchet-baseline.tsv")" || exit 2
+fi
+if [ -n "$EXCLUDES_OPT" ]; then
+  EXCLUDES_FILE="$EXCLUDES_OPT"
+else
+  EXCLUDES_FILE="$(sr_setting SIZE_RATCHET_EXCLUDES "tools/size-ratchet-excludes")" || exit 2
+fi
+[ -n "$BASELINE_FILE" ] || config_error "baseline path resolved empty"
+[ -n "$EXCLUDES_FILE" ] || config_error "excludes path resolved empty"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# --- exclusion list: pattern<TAB>reason, reason mandatory --------------------
+EXCLUDE_PATTERNS=()
+if [ -f "$EXCLUDES_FILE" ]; then
+  lineno=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    case "$line" in
+      "" | "#"*) continue ;;
+    esac
+    pat="${line%%"$TAB"*}"
+    reason="${line#*"$TAB"}"
+    if [ "$pat" = "$line" ] || [ -z "$pat" ] || [ -z "$reason" ]; then
+      config_error "$EXCLUDES_FILE:$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
+    fi
+    EXCLUDE_PATTERNS+=("$pat")
+  done <"$EXCLUDES_FILE"
+fi
+
+is_excluded() { # PATH — 0 when some exclusion glob matches the full path
+  local path="$1" pat
+  # Guarded expansion: an empty array is an unbound variable under Bash 3.2
+  # with set -u.
+  for pat in ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"}; do
+    # shellcheck disable=SC2254 -- $pat must expand unquoted to act as a glob
+    case "$path" in
+      $pat) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# --- baseline: path<TAB>lines, LC_ALL=C sorted, unique paths -----------------
+if [ -f "$BASELINE_FILE" ]; then
+  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" "$BASELINE_FILE" || true)"
+  if [ -n "$bad_rows" ]; then
+    printf '%s\n' "$bad_rows" >&2
+    config_error "$BASELINE_FILE: malformed row(s) above (expected 'path<TAB>lines' with a positive line count)"
+  fi
+  if ! LC_ALL=C sort -c "$BASELINE_FILE" 2>/dev/null; then
+    config_error "$BASELINE_FILE: rows must be LC_ALL=C sorted (LC_ALL=C sort -o $BASELINE_FILE $BASELINE_FILE)"
+  fi
+  dup_paths="$(cut -f1 "$BASELINE_FILE" | LC_ALL=C uniq -d)"
+  if [ -n "$dup_paths" ]; then
+    printf '%s\n' "$dup_paths" >&2
+    config_error "$BASELINE_FILE: duplicate path row(s) above"
+  fi
+  cp "$BASELINE_FILE" "$TMP/baseline.tsv"
+else
+  : >"$TMP/baseline.tsv"
+fi
+
+# --- count every tracked, non-excluded, regular file -------------------------
+git ls-files -z >"$TMP/files.z" || config_error "git ls-files failed"
+checked=0
+: >"$TMP/counts.raw"
+while IFS= read -r -d '' f; do
+  [ -h "$f" ] && continue # a symlink's own content has no meaningful line count
+  [ -f "$f" ] || continue # tracked but deleted in the working tree
+  is_excluded "$f" && continue
+  case "$f" in
+    *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV: $f" ;;
+  esac
+  n="$(wc -l <"$f")"
+  n=$((n)) # strip wc's leading whitespace (BSD wc pads)
+  printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
+  checked=$((checked + 1))
+done <"$TMP/files.z"
+LC_ALL=C sort "$TMP/counts.raw" >"$TMP/counts.tsv"
+
+# --- evaluate a baseline against the counts ----------------------------------
+evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separated
+  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$1" '
+    FILENAME == basefile { base[$1] = $2 + 0; border[++bn] = $1; next }
+    {
+      p = $1; n = $2 + 0; seen[p] = 1
+      if (n > thr) {
+        if (!(p in base))      print "NEW",   p, n, thr
+        else if (n > base[p])  print "GROW",  p, n, base[p]
+        else if (n < base[p])  print "LOOSE", p, n, base[p]
+      } else if (p in base) {
+        print "STALE", p, n, base[p]
+      }
+    }
+    END {
+      for (i = 1; i <= bn; i++) {
+        p = border[i]
+        if (!(p in seen)) print "GONE", p, "", base[p]
+      }
+    }
+  ' "$1" "$TMP/counts.tsv"
+}
+
+report() { # VIOLATIONS-FILE — human diagnostics on stdout
+  local kind path n b
+  while IFS="$TAB" read -r kind path n b; do
+    case "$kind" in
+      NEW)
+        echo "size-ratchet FAIL new offender: $path — $n lines > threshold $b, no baseline row"
+        echo "  remedies: split at a concept seam, or raise the baseline row in this diff with justification"
+        ;;
+      GROW)
+        echo "size-ratchet FAIL baselined file grew: $path — $n lines > baseline $b (threshold $THRESHOLD)"
+        echo "  remedies: split at a concept seam, or raise the baseline row in this diff with justification"
+        ;;
+      LOOSE)
+        echo "size-ratchet FAIL baseline looser than reality: $path — baseline $b > actual $n lines; the ratchet only moves down"
+        echo "  remedy: run size-ratchet --update to tighten the row"
+        ;;
+      STALE)
+        echo "size-ratchet FAIL stale baseline row: $path — $n lines is at/under threshold $THRESHOLD, the row ($b) must go"
+        echo "  remedy: run size-ratchet --update to drop the row"
+        ;;
+      GONE)
+        echo "size-ratchet FAIL stale baseline row: $path — no longer in the tracked, non-excluded set, the row ($b) must go"
+        echo "  remedy: run size-ratchet --update to drop the row"
+        ;;
+    esac
+  done <"$1"
+}
+
+# --- --update: tighten only ---------------------------------------------------
+if [ "$MODE" = "update" ]; then
+  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$TMP/baseline.tsv" '
+    FILENAME == basefile { base[$1] = $2 + 0; border[++bn] = $1; next }
+    { act[$1] = $2 + 0 }
+    END {
+      for (i = 1; i <= bn; i++) {
+        p = border[i]; b = base[p]
+        if (!(p in act) || act[p] <= thr) {
+          printf "removed: %s (row %d)\n", p, b > "/dev/stderr"
+          continue
+        }
+        if (act[p] < b) {
+          printf "tightened: %s %d -> %d\n", p, b, act[p] > "/dev/stderr"
+          print p, act[p]
+        } else {
+          if (act[p] > b) printf "kept (grew %d > %d — growth is a hand-edit, never --update): %s\n", act[p], b, p > "/dev/stderr"
+          print p, b
+        }
+      }
+    }
+  ' "$TMP/baseline.tsv" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
+  if [ -f "$BASELINE_FILE" ]; then
+    mv "$TMP/baseline.new" "$BASELINE_FILE"
+    cp "$BASELINE_FILE" "$TMP/baseline.tsv"
+    echo "size-ratchet --update: baseline tightened at $BASELINE_FILE ($(grep -c . "$BASELINE_FILE" || true) row(s))"
+  else
+    # No baseline exists and --update never adds rows, so there is nothing
+    # to write; fall through to the plain check.
+    echo "size-ratchet --update: no baseline at $BASELINE_FILE and --update never adds rows; nothing written"
+  fi
+fi
+
+# --- verdict -------------------------------------------------------------------
+evaluate "$TMP/baseline.tsv" >"$TMP/violations.tsv"
+violations="$(grep -c . "$TMP/violations.tsv" || true)"
+report "$TMP/violations.tsv"
+if [ "$violations" -gt 0 ]; then
+  echo "size-ratchet: $violations violation(s) — threshold $THRESHOLD, baseline $BASELINE_FILE"
+  exit 1
+fi
+echo "size-ratchet: OK — $checked tracked file(s) checked, threshold $THRESHOLD"
