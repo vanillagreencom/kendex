@@ -758,12 +758,16 @@ fn extract_shared_instruction_sections(path: &Path, tables: &[&str]) -> Vec<u8> 
         let Some(toml::Value::Table(table)) = root.get(*table_name) else {
             continue;
         };
+        // Same precedence as shared_instruction_entry: `all` shadows `"*"`,
+        // so only the effective entry feeds the hash — editing a shadowed
+        // alias changes no rendered output and must not stale installs.
         for key in [
             crate::project_config::SHARED_INSTRUCTIONS_KEY,
             crate::project_config::SHARED_INSTRUCTIONS_KEY_ALIAS,
         ] {
             if let Some(value) = table.get(key) {
                 result.extend_from_slice(format!("{table_name}.{key} = {value}\n").as_bytes());
+                break;
             }
         }
     }
