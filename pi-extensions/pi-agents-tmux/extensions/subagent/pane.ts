@@ -509,34 +509,50 @@ const PI_ENTRY_BASENAMES = new Set(["pi", "pi.js", "pi.mjs", "pi.ts", "cli.js", 
 
 export const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
-// PR #1178 finding 1: verify the entry belongs to the pi PACKAGE, not just
-// that its basename looks right. Walk up from the realpathed script to the
-// NEAREST package.json and accept only when that manifest identifies pi:
-// name === PI_PACKAGE_NAME, an object bin map exposing a `pi` key, or a
-// package literally named `pi` whose string-form bin exposes it under the
-// package name. Missing, unreadable, or unrecognized manifests fail closed —
+// PR #1178 finding 1 (tightened in round 3): verify the entry belongs to the
+// pi PACKAGE, not just that its basename looks right. Walk up from the
+// realpathed script to the NEAREST package.json and accept only when that
+// manifest identifies pi: name === PI_PACKAGE_NAME, or its `pi` bin entry
+// (object form, or string form on a package literally named `pi`) resolves to
+// this very script — merely declaring a `pi` bin is not identity. A missing
+// manifest continues the walk (monorepo src/ dirs); any other read failure
+// (EACCES, EIO, ...) fails closed immediately so an unreadable nearest
+// manifest cannot defer to an ancestor. Unrecognized manifests fail closed —
 // the caller falls through to resolving `pi` on PATH.
 function entryBelongsToPiPackage(scriptPath: string): boolean {
-	let dir: string;
+	let realScript: string;
 	try {
-		dir = path.dirname(fs.realpathSync(scriptPath));
+		realScript = fs.realpathSync(scriptPath);
 	} catch {
 		return false;
 	}
+	const binResolvesToScript = (manifestDir: string, binValue: unknown): boolean => {
+		if (typeof binValue !== "string" || !binValue.trim()) return false;
+		const resolved = path.resolve(manifestDir, binValue);
+		let real: string;
+		try {
+			real = fs.realpathSync(resolved);
+		} catch {
+			real = resolved;
+		}
+		return real === realScript;
+	};
+	let dir = path.dirname(realScript);
 	while (true) {
 		const manifestPath = path.join(dir, "package.json");
 		let manifestRaw: string | undefined;
 		try {
 			manifestRaw = fs.readFileSync(manifestPath, "utf-8");
-		} catch {
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") return false;
 			manifestRaw = undefined;
 		}
 		if (manifestRaw !== undefined) {
 			try {
 				const manifest = JSON.parse(manifestRaw) as { name?: unknown; bin?: unknown };
 				if (manifest.name === PI_PACKAGE_NAME) return true;
-				if (manifest.bin && typeof manifest.bin === "object" && Object.prototype.hasOwnProperty.call(manifest.bin, "pi")) return true;
-				if (manifest.name === "pi" && typeof manifest.bin === "string") return true;
+				if (manifest.bin && typeof manifest.bin === "object" && binResolvesToScript(dir, (manifest.bin as Record<string, unknown>).pi)) return true;
+				if (manifest.name === "pi" && binResolvesToScript(dir, manifest.bin)) return true;
 			} catch {
 				/* fall through to reject: nearest manifest decides */
 			}
@@ -553,6 +569,17 @@ export interface PiInvocation {
 	args: string[];
 	/** Generation the spawned child must export as PI_SUBAGENT_DEPTH. */
 	childDepth: number;
+	/**
+	 * Entry the spawned child must inherit as PI_SUBAGENT_ENTRY. For
+	 * script-form overrides this is the RESOLVED absolute path: a relative
+	 * override resolved for THIS spawn would otherwise reach the child
+	 * verbatim through process.env and re-resolve from the child's delegated
+	 * cwd (PR #1178 round 3). Bare commands propagate unchanged (PATH or an
+	 * absolute executable — cwd-independent, but tmux pane children do not
+	 * reliably inherit the parent's env, so the launcher must export it).
+	 * Unset when no override is active.
+	 */
+	childEntryOverride?: string;
 }
 
 export interface PiInvocationRuntime {
@@ -598,10 +625,10 @@ export function getPiInvocation(args: string[], runtime: PiInvocationRuntime = d
 			// override would ENOENT. Bare commands stay as-is (PATH resolves them).
 			const resolvedEntry = path.resolve(entryOverride);
 			if (fs.existsSync(resolvedEntry)) {
-				return { command: runtime.execPath, args: [resolvedEntry, ...args], childDepth };
+				return { command: runtime.execPath, args: [resolvedEntry, ...args], childDepth, childEntryOverride: resolvedEntry };
 			}
 		}
-		return { command: entryOverride, args, childDepth };
+		return { command: entryOverride, args, childDepth, childEntryOverride: entryOverride };
 	}
 
 	// Compiled pi binary: argv[1] is bun's virtual bundle path; execPath is the
@@ -706,6 +733,7 @@ export async function writeLauncher(
 set -euo pipefail
 cd ${shellQuote(cwd)}
 export ${PI_SUBAGENT_DEPTH_ENV}=${invocation.childDepth}
+${invocation.childEntryOverride ? `export ${PI_SUBAGENT_ENTRY_ENV}=${shellQuote(invocation.childEntryOverride)}` : `unset ${PI_SUBAGENT_ENTRY_ENV}`}
 export PI_SUBAGENT_CHILD_AGENT=${shellQuote(agent.name)}
 ${agent.color ? `export PI_SUBAGENT_CHILD_COLOR=${shellQuote(agent.color)}` : "unset PI_SUBAGENT_CHILD_COLOR"}
 export ${PI_SUBAGENT_CHILD_PANE_ENV}=1

@@ -19,6 +19,7 @@ import {
 	getPiInvocation,
 	PI_SUBAGENT_CHILD_PANE_ENV,
 	PI_SUBAGENT_DEPTH_ENV,
+	PI_SUBAGENT_ENTRY_ENV,
 	removePromptTempDir,
 	writePromptToTempFile,
 } from "./pane.js";
@@ -686,6 +687,10 @@ async function runSingleAgentAttempt(
 			// runtime root.
 			const childEnv: NodeJS.ProcessEnv = { ...process.env, PI_SUBAGENT_CHILD_AGENT: agent.name };
 			childEnv[PI_SUBAGENT_DEPTH_ENV] = String(invocation.childDepth);
+			// PR #1178 round 3: a relative script override was resolved for THIS
+			// spawn only; the child would inherit the relative form and
+			// re-resolve it from its delegated cwd. Hand down the resolved value.
+			if (invocation.childEntryOverride) childEnv[PI_SUBAGENT_ENTRY_ENV] = invocation.childEntryOverride;
 			if (agent.color) childEnv.PI_SUBAGENT_CHILD_COLOR = agent.color;
 			else delete childEnv.PI_SUBAGENT_CHILD_COLOR;
 			delete childEnv[PI_SUBAGENT_CHILD_PANE_ENV];

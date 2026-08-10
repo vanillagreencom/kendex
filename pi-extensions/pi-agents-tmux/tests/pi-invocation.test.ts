@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
@@ -77,14 +77,59 @@ describe("getPiInvocation entry resolution (vstack#192)", () => {
 	});
 
 	test("pi dev-mode entries under pi's own package keep self-re-invoking", () => {
-		for (const manifest of [
-			{ name: PI_PACKAGE_NAME, version: "0.0.0" },
-			{ name: "some-fork-of-pi", bin: { pi: "./cli.js" } },
+		// Three legitimate pi shapes: the canonical package name, a bin map whose
+		// `pi` entry resolves to this very script, and a package literally named
+		// `pi` whose string-form bin resolves to it.
+		for (const entry of [
+			scriptInPackage("cli.ts", { name: PI_PACKAGE_NAME, version: "0.0.0" }),
+			scriptInPackage("cli.js", { name: "pi-fork", bin: { pi: "./cli.js" } }),
+			scriptInPackage("cli.js", { name: "pi", bin: "./cli.js" }),
 		]) {
-			const entry = scriptInPackage("cli.ts", manifest);
 			const invocation = getPiInvocation(["-p"], runtime({ argv1: entry }));
 			expect(invocation.command).toBe("/usr/bin/bun");
 			expect(invocation.args).toEqual([entry, "-p"]);
+		}
+	});
+
+	test("a foreign package declaring bin.pi that points ELSEWHERE does not self-re-invoke (PR #1178 r3)", () => {
+		// Declaring a `pi` bin is not identity: the bin entry must resolve to the
+		// realpathed argv[1] script itself. Here bin.pi names cli.js but argv[1]
+		// is cli.ts, so a harness hiding inside such a package stays rejected.
+		const spoofedObjectBin = scriptInPackage("cli.ts", { name: "some-fork-of-pi", bin: { pi: "./cli.js" } });
+		expect(getPiInvocation(["-p"], runtime({ argv1: spoofedObjectBin })).command).toBe("pi");
+		const spoofedStringBin = scriptInPackage("cli.ts", { name: "pi", bin: "./cli.js" });
+		expect(getPiInvocation(["-p"], runtime({ argv1: spoofedStringBin })).command).toBe("pi");
+	});
+
+	test("a manifest-less entry dir walks up to pi's own manifest (ENOENT keeps walking)", () => {
+		const pkgDir = join(tempDir(), "pkg");
+		const srcDir = join(pkgDir, "src");
+		mkdirSync(srcDir, { recursive: true });
+		writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: PI_PACKAGE_NAME }));
+		const entry = existingScript("cli.ts", srcDir);
+		const invocation = getPiInvocation(["-p"], runtime({ argv1: entry }));
+		expect(invocation.command).toBe("/usr/bin/bun");
+		expect(invocation.args).toEqual([entry, "-p"]);
+	});
+
+	test("an unreadable nearest manifest fails closed even under a pi ancestor (PR #1178 r3)", () => {
+		// EACCES (or any non-ENOENT read failure) must reject immediately — the
+		// old behavior treated it like a missing manifest and let the pi-named
+		// ancestor accept. Root ignores file modes, so skip there: the EACCES
+		// path cannot be exercised.
+		if (typeof process.getuid === "function" && process.getuid() === 0) return;
+		const outer = join(tempDir(), "pkg");
+		const inner = join(outer, "vendor");
+		mkdirSync(inner, { recursive: true });
+		writeFileSync(join(outer, "package.json"), JSON.stringify({ name: PI_PACKAGE_NAME }));
+		const innerManifest = join(inner, "package.json");
+		writeFileSync(innerManifest, JSON.stringify({ name: PI_PACKAGE_NAME }));
+		chmodSync(innerManifest, 0o000);
+		try {
+			const entry = existingScript("cli.ts", inner);
+			expect(getPiInvocation(["-p"], runtime({ argv1: entry })).command).toBe("pi");
+		} finally {
+			chmodSync(innerManifest, 0o600);
 		}
 	});
 
@@ -106,6 +151,15 @@ describe("getPiInvocation entry resolution (vstack#192)", () => {
 		expect(invocation.command).toBe("/usr/bin/bun");
 		expect(invocation.args[0]).toBe(override);
 		expect(isAbsolute(invocation.args[0])).toBe(true);
+		// PR #1178 round 3: children must inherit the RESOLVED form, not the
+		// relative one, or a delegating child re-resolves from ITS cwd.
+		expect(invocation.childEntryOverride).toBe(override);
+	});
+
+	test("bare-command overrides propagate to children unchanged", () => {
+		const invocation = getPiInvocation([], runtime({ env: { [PI_SUBAGENT_ENTRY_ENV]: "/opt/pi/bin/pi" } }));
+		expect(invocation.childEntryOverride).toBe("/opt/pi/bin/pi");
+		expect(getPiInvocation([], runtime({})).childEntryOverride).toBeUndefined();
 	});
 
 	test("PI_SUBAGENT_ENTRY executable override is used as the command itself", () => {
@@ -203,6 +257,29 @@ describe("bg one-shot runner depth guard wiring (vstack#192)", () => {
 		}
 	});
 
+	test("child env carries the RESOLVED absolute entry when the parent had a relative override (PR #1178 r3)", async () => {
+		const envs = captureSpawnedEnv();
+		const previousEntry = process.env[PI_SUBAGENT_ENTRY_ENV];
+		const previousDepth = process.env[PI_SUBAGENT_DEPTH_ENV];
+		try {
+			delete process.env[PI_SUBAGENT_DEPTH_ENV];
+			const override = existingScript("custom-entry.mjs");
+			const relativeOverride = relative(process.cwd(), override);
+			expect(isAbsolute(relativeOverride)).toBe(false);
+			process.env[PI_SUBAGENT_ENTRY_ENV] = relativeOverride;
+			const root = tempDir("pi-agents-entry-env-");
+			await runSingleAgent(root, root, [agent("scout")], "scout", "recon", undefined, undefined, undefined, undefined, { getActiveTools: () => [], events: { emit: () => undefined } } as any, undefined, undefined, makeDetails);
+			expect(envs).toHaveLength(1);
+			expect(envs[0]?.[PI_SUBAGENT_ENTRY_ENV]).toBe(override);
+		} finally {
+			setSingleAgentSpawnForTests();
+			if (previousEntry === undefined) delete process.env[PI_SUBAGENT_ENTRY_ENV];
+			else process.env[PI_SUBAGENT_ENTRY_ENV] = previousEntry;
+			if (previousDepth === undefined) delete process.env[PI_SUBAGENT_DEPTH_ENV];
+			else process.env[PI_SUBAGENT_DEPTH_ENV] = previousDepth;
+		}
+	});
+
 	test("at the depth cap the runner refuses before spawning and reclaims the prompt tmp dir", async () => {
 		const envs = captureSpawnedEnv();
 		const previous = process.env[PI_SUBAGENT_DEPTH_ENV];
@@ -228,9 +305,11 @@ describe("bg one-shot runner depth guard wiring (vstack#192)", () => {
 
 describe("persistent pane launcher depth export (vstack#192 / PR #1178 f4)", () => {
 	test("generated launcher script exports the incremented PI_SUBAGENT_DEPTH before exec", async () => {
-		const previous = process.env[PI_SUBAGENT_DEPTH_ENV];
+		const previousDepth = process.env[PI_SUBAGENT_DEPTH_ENV];
+		const previousEntry = process.env[PI_SUBAGENT_ENTRY_ENV];
 		try {
 			process.env[PI_SUBAGENT_DEPTH_ENV] = "1";
+			delete process.env[PI_SUBAGENT_ENTRY_ENV];
 			const root = tempDir("pi-agents-launcher-depth-");
 			const cwd = tempDir("pi-agents-launcher-cwd-");
 			const paths = await writeLauncher(root, "parent-session-id", cwd, agent("iced", "You are iced.", true), undefined, undefined);
@@ -242,9 +321,33 @@ describe("persistent pane launcher depth export (vstack#192 / PR #1178 f4)", () 
 			const execIndex = script.indexOf("exec ");
 			expect(exportIndex).toBeGreaterThanOrEqual(0);
 			expect(execIndex).toBeGreaterThan(exportIndex);
+			// Without an active override the launcher must clear any stale
+			// tmux-server-level value rather than let it leak into the pane child.
+			expect(script).toMatch(new RegExp(`^unset ${PI_SUBAGENT_ENTRY_ENV}$`, "m"));
 		} finally {
-			if (previous === undefined) delete process.env[PI_SUBAGENT_DEPTH_ENV];
-			else process.env[PI_SUBAGENT_DEPTH_ENV] = previous;
+			if (previousDepth === undefined) delete process.env[PI_SUBAGENT_DEPTH_ENV];
+			else process.env[PI_SUBAGENT_DEPTH_ENV] = previousDepth;
+			if (previousEntry === undefined) delete process.env[PI_SUBAGENT_ENTRY_ENV];
+			else process.env[PI_SUBAGENT_ENTRY_ENV] = previousEntry;
+		}
+	});
+
+	test("launcher exports the RESOLVED absolute entry when the parent had a relative override (PR #1178 r3)", async () => {
+		const previousEntry = process.env[PI_SUBAGENT_ENTRY_ENV];
+		try {
+			const override = existingScript("custom-entry.mjs");
+			const relativeOverride = relative(process.cwd(), override);
+			expect(isAbsolute(relativeOverride)).toBe(false);
+			process.env[PI_SUBAGENT_ENTRY_ENV] = relativeOverride;
+			const root = tempDir("pi-agents-launcher-entry-");
+			const cwd = tempDir("pi-agents-launcher-entry-cwd-");
+			const paths = await writeLauncher(root, "parent-session-id", cwd, agent("iced", "You are iced.", true), undefined, undefined);
+			const script = readFileSync(paths.launcherFile, "utf-8");
+			expect(script).toContain(`export ${PI_SUBAGENT_ENTRY_ENV}='${override}'`);
+			expect(script).not.toContain(`='${relativeOverride}'`);
+		} finally {
+			if (previousEntry === undefined) delete process.env[PI_SUBAGENT_ENTRY_ENV];
+			else process.env[PI_SUBAGENT_ENTRY_ENV] = previousEntry;
 		}
 	});
 });
