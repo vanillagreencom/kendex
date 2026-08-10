@@ -129,6 +129,8 @@ normalize_rel_path() { # PATH -> normalized on stdout; nonzero if it escapes
   [ -n "$out" ] || return 1
   printf '%s' "$out"
 }
+case "$BASELINE_FILE" in /*) config_error "baseline path must be repo-root-relative, got absolute: $BASELINE_FILE" ;; esac
+case "$EXCLUDES_FILE" in /*) config_error "excludes path must be repo-root-relative, got absolute: $EXCLUDES_FILE" ;; esac
 BASELINE_FILE="$(normalize_rel_path "$BASELINE_FILE")" || config_error "baseline path escapes the repository or normalizes empty"
 EXCLUDES_FILE="$(normalize_rel_path "$EXCLUDES_FILE")" || config_error "excludes path escapes the repository or normalizes empty"
 [ -n "$BASELINE_FILE" ] || config_error "baseline path resolved empty"
@@ -219,12 +221,16 @@ while IFS= read -r -d '' f; do
     # new offender past the gate, and baselined rows evaluate against real
     # content instead of being skipped as unknown. A path git cannot show
     # (e.g. a gitlink) falls back to the absent list.
-    if n="$(git show ":$f" 2>/dev/null | wc -l)"; then
+    # Blob TYPE required, not mere existence: a submodule gitlink's target
+    # commit can be present locally, and `git show`/`cat-file -e` would
+    # happily render it as countable "content".
+    if [ "$(git cat-file -t ":$f" 2>/dev/null)" = "blob" ] \
+      && n="$(git show ":$f" 2>/dev/null | wc -l)"; then
       case "$n" in *[!0-9\ ]*) n="" ;; esac
     else
       n=""
     fi
-    if [ -n "$n" ] && git cat-file -e ":$f" 2>/dev/null; then
+    if [ -n "$n" ]; then
       n=$((n))
       printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
       checked=$((checked + 1))
