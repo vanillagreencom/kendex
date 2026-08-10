@@ -372,6 +372,20 @@ assert_contains "$(cat "$TMP_ROOT/c8.err")" "brief undelivered to 'CC-737'" \
 c8_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG" || true)"
 assert_eq "$c8_resends" "1" "composer-only screen still gets exactly one re-send"
 
+# Case 8b: a huge retained pane (larger than a pipe buffer) with the
+# delivered brief near the START of history — a short-circuiting `grep -q`
+# scan would SIGPIPE its upstream under pipefail (exit 141) and misread the
+# submitted prompt as missing, duplicating the brief into a running session.
+new_tmux_state c8b
+{ printf '%s\n' "$DELIVERED_SCREEN"; yes 'transcript filler line' | head -20000; } > "$OT_TMUX_CAPTURES/1"
+set +e
+c8b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c8b.err")
+c8b_code=$?
+set -e
+assert_eq "$c8b_code" "0" "huge scrollback with an early delivered brief exits 0"
+c8b_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG" || true)"
+assert_eq "$c8b_resends" "0" "no duplicate brief is sent into a running session"
+
 echo
 echo "=== open-terminal claude handoff: tmux failure detection ==="
 

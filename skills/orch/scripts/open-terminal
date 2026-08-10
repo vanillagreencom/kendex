@@ -217,8 +217,16 @@ tmux_brief_visible() {
   # first poll, and a viewport-only capture would misread that as
   # undelivered and queue a duplicate brief into a running session.
   screen="$(tmux capture-pane -pJ -S - -t "$pane" 2>/dev/null)" || return 1
-  printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│' | grep -qF -- "$brief" || return 1
-  printf '%s\n' "$screen" | grep -qE '●|⏺|✻|✳|esc to interrupt'
+  # No short-circuiting `grep -q` pipelines over the capture: with -S - a
+  # retained pane can exceed a pipe buffer, an early -q match SIGPIPEs the
+  # upstream printf, and pipefail turns a FOUND brief into exit 141 — a
+  # submitted prompt then reads as missing and gets duplicated. grep -v
+  # always reads its whole input; the containment checks are bash matches.
+  local filtered
+  filtered="$(printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│')" || true
+  [[ "$filtered" == *"$brief"* ]] || return 1
+  [[ "$screen" == *'●'* || "$screen" == *'⏺'* || "$screen" == *'✻'* ||
+     "$screen" == *'✳'* || "$screen" == *'esc to interrupt'* ]]
 }
 
 tmux_verify_brief() {
@@ -243,7 +251,7 @@ tmux_wait_composer() {
   local pane="$1" waited=0 screen
   while (( waited < TMUX_VERIFY_SECS )); do
     screen="$(tmux capture-pane -pJ -S - -t "$pane" 2>/dev/null)" || return 1
-    printf '%s\n' "$screen" | grep -qF '? for shortcuts' && return 0
+    [[ "$screen" == *'? for shortcuts'* ]] && return 0
     tmux send-keys -t "$pane" Enter || return 1
     sleep 1
     waited=$((waited + 1))
