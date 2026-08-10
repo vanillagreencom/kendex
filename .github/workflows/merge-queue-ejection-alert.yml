@@ -89,9 +89,16 @@ jobs:
               | (map(select(.created_at >= $cutoff)) // []) as $recent
               | (if ($recent | length) > 0 then $recent else . end)
               | sort_by(.created_at)
-              # Selection: newest failure-shaped run; else the newest
-              # in_progress run (a dequeue often fires while the ejecting
-              # run is still finishing its sibling jobs — its failed jobs
+              # ATTEMPT cluster: a re-armed unchanged PR reuses the branch
+              # name, so the window can span attempts. One attempt's runs
+              # start together — keep only runs within 30 minutes of the
+              # newest, excluding an earlier attempt's completed failure
+              # from ever shadowing the current one.
+              | (map(.created_at) | max) as $newest
+              | map(select(.created_at >= ($newest | sub("Z$"; "") | strptime("%Y-%m-%dT%H:%M:%S") | mktime | . - 1800 | strftime("%Y-%m-%dT%H:%M:%SZ"))))
+              # Selection within the attempt: newest failure-shaped run;
+              # else the newest in_progress run (a dequeue often fires while
+              # the ejecting run is finishing sibling jobs — its failed jobs
               # are already queryable); else the newest run.
               | (map(select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")) | last)
                 // (map(select(.status == "in_progress")) | last)
