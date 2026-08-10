@@ -465,6 +465,18 @@ assert_eq "$c13_code" "1" "zero verify secs exits nonzero"
 assert_contains "$(cat "$TMP_ROOT/c13.err")" "ORCH_TMUX_VERIFY_SECS" \
   "zero rejection names the setting"
 
+# Case 13b: leading-zero values are base-10, not octal — '08' errored the
+# arithmetic ("value too great for base") and failed a healthy lane.
+new_tmux_state c13b
+printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
+set +e
+c13b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=08 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c13b.err")
+c13b_code=$?
+set -e
+assert_eq "$c13b_code" "0" "leading-zero verify secs is base-10 and launches"
+assert_not_contains "$(cat "$TMP_ROOT/c13b.err")" "value too great" \
+  "no octal arithmetic error for '08'"
+
 # Case 14: a runaway value is clamped loudly (the lane still verifies)
 # instead of hanging the launch for hours.
 new_tmux_state c14

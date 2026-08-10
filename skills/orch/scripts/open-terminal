@@ -95,8 +95,15 @@ done
 # breaks the loop arithmetic, so anything but a positive integer is a config
 # error and oversized values are clamped to a bound that still fails fast.
 # Validated after argument parsing so --help never dies on project settings.
-if [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ || "$TMUX_VERIFY_SECS" -eq 0 ]]; then
+if [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ ]]; then
   echo "Error: ORCH_TMUX_VERIFY_SECS must be a positive integer (seconds), got '$TMUX_VERIFY_SECS'." >&2
+  exit 1
+fi
+# Base-10 normalization: leading zeros ('08', '015') otherwise read as octal
+# in bash arithmetic — an error or a silently shorter wait.
+TMUX_VERIFY_SECS=$((10#$TMUX_VERIFY_SECS))
+if ((TMUX_VERIFY_SECS == 0)); then
+  echo "Error: ORCH_TMUX_VERIFY_SECS must be a positive integer (seconds), got '0'." >&2
   exit 1
 fi
 if (( TMUX_VERIFY_SECS > 120 )); then
