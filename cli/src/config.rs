@@ -1125,8 +1125,13 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
             if !path.is_dir() {
                 continue;
             }
-            // Only count directories with a .vstack-refreshed marker
-            if !path.join(".vstack-refreshed").exists() {
+            // Local roots require the managed marker. Anchored roots admit
+            // an UNMARKED canonical too — a foreign worktree's removal
+            // deliberately clears the marker while the owning checkout's
+            // references survive, and those references (checked below) are
+            // the recovery evidence; requiring the marker there made
+            // `vstack check` report a still-installed skill as missing.
+            if gate.is_none() && !path.join(".vstack-refreshed").exists() {
                 continue;
             }
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {

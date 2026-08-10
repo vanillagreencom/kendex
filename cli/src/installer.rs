@@ -131,10 +131,15 @@ pub fn install_skill(
             // first install.
             let project_checkout = std::fs::canonicalize(crate::config::project_root())
                 .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
-            let mut foreign_existing = link_home
-                .as_ref()
-                .is_some_and(|home| home.checkout_root != project_checkout)
-                && canonical.exists();
+            // Foreignness is a property of where the canonical PHYSICALLY
+            // resolves, not of the harness link: with a shared `.agents` but
+            // a local harness dir, link_home is None while the canonical
+            // still lives in the main checkout — treating it as own would
+            // remove_existing another checkout's copy.
+            let canonical_physical = canonicalize_allowing_missing(&canonical)
+                .unwrap_or_else(|| normalize_absolute_path(&canonical));
+            let mut foreign_existing =
+                !canonical_physical.starts_with(&project_checkout) && canonical.exists();
             if foreign_existing
                 && std::fs::symlink_metadata(&canonical)
                     .is_ok_and(|meta| meta.file_type().is_symlink())
@@ -152,14 +157,26 @@ pub fn install_skill(
                 foreign_existing = false;
             }
             if foreign_existing && !canonical.join("SKILL.md").is_file() {
-                // Write-shy protects the owning checkout's valid installs; a
-                // canonical without SKILL.md was never one, and linking to it
-                // AS-IS ships a broken skill. Repair it from source instead.
-                eprintln!(
-                    "  Warning: existing canonical {} has no SKILL.md; repairing it from source (VST-195)",
-                    canonical.display()
-                );
-                foreign_existing = false;
+                if canonical.join(".vstack-refreshed").exists() {
+                    // Write-shy protects the owning checkout's valid
+                    // installs; a MARKED canonical without SKILL.md was a
+                    // vstack install that lost its payload — repair it from
+                    // source rather than linking to it AS-IS.
+                    eprintln!(
+                        "  Warning: existing canonical {} has no SKILL.md; repairing it from source (VST-195)",
+                        canonical.display()
+                    );
+                    foreign_existing = false;
+                } else {
+                    // No SKILL.md AND no managed marker: this directory in
+                    // another checkout is not provably a vstack install —
+                    // deleting it could destroy manually maintained data
+                    // that merely shares the skill's name. Refuse loudly.
+                    anyhow::bail!(
+                        "existing directory {} in another checkout has neither SKILL.md nor a vstack marker — refusing to replace what may not be a vstack install; remove or rename it there first",
+                        canonical.display()
+                    );
+                }
             }
             let marker = canonical.join(".vstack-refreshed");
             let current_pid = std::process::id().to_string();
@@ -397,7 +414,10 @@ pub fn remove_item(
         .iter()
         .filter_map(|harness| harness.skills_dir(false).canonicalize().ok())
         .collect();
-    let project_rel_skills: Vec<PathBuf> = harnesses
+    // EVERY harness's relative dir, not only the ones being removed: the
+    // owner may reference the canonical through a harness absent from this
+    // removal (or from this worktree's lock entirely).
+    let project_rel_skills: Vec<PathBuf> = Harness::ALL
         .iter()
         .filter_map(|harness| {
             harness
@@ -422,8 +442,13 @@ pub fn remove_item(
             let survives_this_removal = candidate_parent_canon
                 .as_ref()
                 .is_some_and(|parent| !removing_parent_canons.contains(parent));
+            // Only a SYMLINK is affirmative owner evidence: for harnesses
+            // whose project artifact IS the canonical directory (Codex/Pi
+            // under .agents/skills), the canonical would otherwise count as
+            // referencing itself and no marker could ever clear.
             survives_this_removal
-                && std::fs::symlink_metadata(&candidate).is_ok()
+                && std::fs::symlink_metadata(&candidate)
+                    .is_ok_and(|meta| meta.file_type().is_symlink())
                 && candidate
                     .canonicalize()
                     .is_ok_and(|resolved| resolved == anchored_resolved)
@@ -470,7 +495,11 @@ pub fn remove_item(
         // Skill directories
         if remove_skills {
             let skill_path = harness.skills_dir(global).join(name);
-            // An anchored path is the preservation pass's to report and keep.
+            // An anchored path is the preservation pass's to report and
+            // keep. A shared-dir LINK is deliberately removable from the
+            // worktree: the owner's lock entry and canonical both survive,
+            // and its next refresh recreates the link — preserving it here
+            // would turn worktree removal into a silent no-op.
             if !resolves_to_anchored(&skill_path) {
                 match remove_expected_path(&skill_path, ExpectedArtifact::Any) {
                     Ok(true) => removed.push(skill_path),
@@ -2432,6 +2461,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// An UNMARKED same-named directory in another checkout is not provably
+    /// a vstack install — install must refuse rather than recursively
+    /// replace what may be manually maintained data.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_refuses_unmarked_foreign_name_collision() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_unmarked_foreign_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        // Manually maintained data in main that merely shares the name:
+        // no SKILL.md, no marker.
+        let canonical = main.join(".agents").join("skills").join("github");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::fs::write(canonical.join("precious.txt"), "handmade\n").unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        let result = crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+        });
+        let err = match result {
+            Ok(_) => panic!("expected the unmarked-collision refusal, got success"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("refusing to replace"),
+            "expected the unmarked-collision refusal, got: {err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(canonical.join("precious.txt")).unwrap(),
+            "handmade\n",
+            "the foreign directory must be untouched"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A "foreign canonical" whose final component is a SYMLINK is malformed:
     /// `exists()`/`is_file()` follow it, so the write-shy fast path would
     /// link through it to wherever it points (potentially outside the
@@ -2660,10 +2750,13 @@ mod tests {
         symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
         std::fs::create_dir_all(wt.join(".agents")).unwrap();
 
-        // Main's canonical pre-exists but is not a valid skill install.
+        // Main's canonical pre-exists MARKED but lost its payload — a
+        // vstack install to repair (an unmarked stranger refuses instead;
+        // see install_skill_refuses_unmarked_foreign_name_collision).
         let canonical = main.join(".agents").join("skills").join("github");
         std::fs::create_dir_all(&canonical).unwrap();
         std::fs::write(canonical.join("notes.txt"), "junk\n").unwrap();
+        std::fs::write(canonical.join(".vstack-refreshed"), "0").unwrap();
 
         let skill = write_skill_source(&root, "github");
         crate::test_util::with_project_root(&wt, || {
