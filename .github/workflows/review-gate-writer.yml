@@ -23,8 +23,11 @@
 # trigger below cannot re-trigger this workflow.
 #
 # The gate answers ONE question — is this head reviewed? — and never
-# re-runs CI. Whether untested code can merge is branch protection's job;
-# see the adoption precondition in scripts/review-writer.sh.
+# re-runs CI. (REVIEW_GATE_MODE=off answers it with a gate-disabled
+# attestation instead of evaluating evidence: green then means "gate
+# disabled", never "reviewed".) Whether untested code can merge is branch
+# protection's job; see the adoption precondition in
+# skills/review-gate/scripts/review-writer.sh.
 name: Review gate writer
 
 "on":

@@ -1,6 +1,6 @@
 ---
 name: review-gate
-description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override), one writer posts it as a merge-blocking commit status, plus an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
+description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override) — unless REVIEW_GATE_MODE is 'off', when it evaluates nothing and a green gate attests only that the repo disabled it — one writer posts the answer as a merge-blocking commit status, plus an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
 license: MIT
 user-invocable: true
 metadata:
@@ -16,7 +16,12 @@ metadata:
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
 The gate answers ONE question: **has this exact PR head been reviewed?** It
-posts that answer as a commit status the repo's branch rules require.
+posts that answer as a commit status the repo's branch rules require. The
+one exception is `REVIEW_GATE_MODE = "off"`: the predicate then evaluates
+NO evidence and answers `approved` with a disabled-by-settings attestation,
+so a green gate on such a repo means only "gate disabled" — never that a
+review happened. Caveats: [references/settings.md](references/settings.md)
+§ `REVIEW_GATE_MODE`.
 
 It does not check CI, re-run anything, or reason about jobs. Whether untested
 code can reach the default branch is branch protection's job — see the
@@ -43,10 +48,11 @@ stop it:
 
 The hazard: held-back jobs report as `skipped`, and GitHub counts skipped as
 satisfied. Hold jobs back with no queue and a reviewed PR merges untested.
-Proven live in the sandbox (`tests/e2e-sandbox.sh` scenario 11); that
-scenario is the safety claim and must pass on every adopting repo.
+Proven live in the sandbox (`.agents/skills/review-gate/tests/e2e-sandbox.sh`
+scenario 11); that scenario is the safety claim and must pass on every
+adopting repo.
 
-## Evidence sources (`scripts/review-predicate.sh`)
+## Evidence sources (`.agents/skills/review-gate/scripts/review-predicate.sh`)
 
 Evidence for the CURRENT head is any of:
 
@@ -100,7 +106,7 @@ carries a creator login; while the reject list is configured, a status with
 no creator login is an anomaly and is not evidence (with the list empty, the
 default, the filter is off entirely).
 
-## The writer (`scripts/review-writer.sh`)
+## The writer (`.agents/skills/review-gate/scripts/review-writer.sh`)
 
 One workflow, defined on the default branch, is the only thing that writes
 the gate status. It evaluates the predicate and converges the status —
@@ -153,8 +159,9 @@ E2E_REPO=<owner>/<repo> .agents/skills/review-gate/tests/e2e-sandbox.sh
 **Watching one or many PRs without stalling.** Never key a hand-rolled
 monitor on gate-state transitions — a PR sitting steadily at "pending with
 open threads" transitions nothing and you sleep through it. Run
-`scripts/pr-watch.sh` (optionally `--heal`) on the harness's wake-up
-mechanism instead: silence + exit 0 means nothing needs you; attention
+`.agents/skills/review-gate/scripts/pr-watch.sh` (optionally `--heal`) on
+the harness's wake-up mechanism instead: silence + exit 0 means nothing
+needs you; attention
 lines name exactly what does. See adoption.md § Watching PRs as an agent.
 
 **Reviewers are down / nothing is reviewing.** Run the internal review loop:
@@ -178,8 +185,9 @@ default). Full table and the security reasoning:
 
 ## Selftest — the engine's portable proof
 
-`scripts/review-predicate-selftest.sh` pins the decision table offline: a
-`gh` shim answers from fixtures and applies `--jq` through real jq, so the
+`.agents/skills/review-gate/scripts/review-predicate-selftest.sh` pins the
+decision table offline: a `gh` shim answers from fixtures and applies
+`--jq` through real jq, so the
 real predicate runs unmodified. Every case ending `approved` is paired with a
 near-miss that must not. Two layers: a mechanism layer with forced
 configurations, and a configured layer that re-derives the battery from the
@@ -192,8 +200,9 @@ gate could never run when it matters.
 
 ## Adoption
 
-Copy `templates/review-gate-writer.yml` into `.github/workflows/` (repo-owned
-after copy; `vstack refresh` does not sync workflow YAML), set the repo's
+Copy `.agents/skills/review-gate/templates/review-gate-writer.yml` into
+`.github/workflows/` (repo-owned after copy; `vstack refresh` does not
+sync workflow YAML), set the repo's
 `REVIEW_GATE_*` values, add the ungated selftest job, and require the gate
 context in the ruleset alongside the test aggregate. Full wiring:
 [references/adoption.md](references/adoption.md). An adoption PR deletes the
