@@ -133,6 +133,36 @@ rc=$?
 set -e
 assert_eq "$rc" "1" "missing worktree exits 1"
 
+# Physical resolution: invoked through a WORKTREE's .agents symlink chain,
+# config and executable still come from the main (trusted) checkout — the
+# worktree's own settings cannot inject a classifier.
+WT2="$TMP_ROOT/wt2"
+mkdir -p "$WT2/only-here"
+ln -s "$ROOT/.agents" "$WT2/.agents"
+printf '[env]\nREVIEW_RISK_COMMAND = "tools/evil"\n' > "$WT2/vstack.settings.toml"
+mkdir -p "$WT2/tools"
+printf '#!/usr/bin/env bash\necho high\n' > "$WT2/tools/evil"
+chmod +x "$WT2/tools/evil"
+printf '[env]\nREVIEW_RISK_COMMAND = "tools/classify low"\n' > "$ROOT/vstack.settings.toml"
+out=$(cd "$WT2" && "$WT2/.agents/skills/orch/scripts/review-risk" "$WT2" 2>/dev/null)
+assert_eq "$out" "low" "worktree-invoked helper reads config+exe from the trusted checkout, not the worktree"
+rm -f "$ROOT/vstack.settings.toml"
+
+# Whitespace-only value is a controlled contract error, not a nounset crash.
+set +e
+REVIEW_RISK_COMMAND="   " "$REVIEW_RISK" "$WT" 2>"$TMP_ROOT/err3"
+rc=$?
+set -e
+assert_eq "$rc" "1" "whitespace-only command is a contract error"
+grep -q "whitespace-only" "$TMP_ROOT/err3" || { FAIL=$((FAIL + 1)); printf '  FAIL  whitespace-only error names the condition\n'; }
+
+# Bracket globs are refused with the other metacharacters.
+set +e
+REVIEW_RISK_COMMAND="tools/classify [ab]" "$REVIEW_RISK" "$WT" 2>/dev/null
+rc=$?
+set -e
+assert_eq "$rc" "1" "bracket-glob argument refuses"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

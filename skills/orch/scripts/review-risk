@@ -4,13 +4,21 @@
 # harness approval policies never see a subshell/&&/expansion command shape
 # and silently push every classification onto the full-fleet fallback.
 #
-# TRUST BOUNDARY: both the configuration (REVIEW_RISK_COMMAND, via orch-env
-# from THIS process's project root) and the classifier executable resolve
-# from the TRUSTED invoking checkout — never from the reviewed worktree. A
-# PR under review controls that worktree's files and settings, and reading
-# either from it would execute attacker-controlled code with the session's
-# credentials before any review happened. Only the classifier's working
-# directory is the worktree (that is the change set it classifies).
+# TRUST BOUNDARY: both the configuration (REVIEW_RISK_COMMAND) and the
+# classifier executable resolve from the TRUSTED checkout that physically
+# owns this script — never from the reviewed worktree and never from the
+# process cwd. A PR under review controls the worktree's files and settings,
+# and reading either from it would execute attacker-controlled code with the
+# session's credentials before any review happened. Only the classifier's
+# working directory is the worktree (that is the change set it classifies).
+#
+# Resolution is PHYSICAL (pwd -P): in orch's standard layout a worktree's
+# .agents symlinks into the main checkout, so this script's real home — and
+# therefore the config and executable — is the main checkout even when the
+# invocation cwd is the worktree. A standalone repo whose .agents is a real
+# directory has no distinct trust domain: there, tree and trust root
+# coincide, and reviewing genuinely untrusted PRs requires the shared-.agents
+# worktree layout.
 #
 # REVIEW_RISK_COMMAND is a repo-relative executable path plus optional
 # arguments — whitespace-split, no shell string, no metacharacters (a file,
@@ -29,7 +37,7 @@
 #                             review_risk state).
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKTREE="${1:?usage: review-risk WORKTREE_PATH}"
 
 [ -d "$WORKTREE" ] || {
@@ -37,20 +45,30 @@ WORKTREE="${1:?usage: review-risk WORKTREE_PATH}"
   exit 1
 }
 
-cmd="$("$SCRIPT_DIR/orch-env" REVIEW_RISK_COMMAND "")"
+# Trusted root = the checkout that physically owns this script:
+# .agents/skills/orch/scripts -> root. orch-env derives its project root
+# from cwd, so it runs FROM the trusted root — never the caller's cwd.
+trusted_root="$(cd "$SCRIPT_DIR/../../../.." && pwd -P)"
+cmd="$(cd "$trusted_root" && "$SCRIPT_DIR/orch-env" REVIEW_RISK_COMMAND "")"
 if [ -z "$cmd" ]; then
   exit 3
 fi
 
 # Executable + args, split on whitespace; anything shell-flavored refuses.
 case "$cmd" in
-*[';|&<>$`(){}!*?'\''"']*)
+*[';|&<>$`(){}!*?[]'\''"']*)
   echo "Error: review-risk: REVIEW_RISK_COMMAND must be a repo-relative executable path plus plain arguments — shell metacharacters refuse (a file, not a shell string)." >&2
   exit 1
   ;;
 esac
 # shellcheck disable=SC2206 # deliberate whitespace split of a vetted string
+set -f
 parts=($cmd)
+set +f
+if [ "${#parts[@]}" -eq 0 ]; then
+  echo "Error: review-risk: REVIEW_RISK_COMMAND is whitespace-only — set a repo-relative executable path or unset the key." >&2
+  exit 1
+fi
 exe_rel="${parts[0]}"
 case "$exe_rel" in
 /* | *..*)
@@ -59,9 +77,6 @@ case "$exe_rel" in
   ;;
 esac
 
-# Trusted root = the checkout this helper runs from (the steward's project),
-# resolved from the script's own location: .agents/skills/orch/scripts -> root.
-trusted_root="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 exe="$trusted_root/$exe_rel"
 if [ ! -x "$exe" ]; then
   echo "Error: review-risk: classifier '$exe_rel' is not an executable file in the trusted checkout ($trusted_root)." >&2

@@ -94,7 +94,11 @@ Use the output as `AGENTS`. If the command fails or prints no agents, skip revie
 
 `list-review-agents` scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agents` for `reviewer-*` files, dedupes, and exits non-zero if none found. Output: one agent name per line.
 
-**Risk-sized panel (opt-in)** — a repo may declare a risk classifier that
+**Risk-sized panel (opt-in)** — skip this ENTIRE block (no classification,
+no recording) when the caller provided explicit `agents` context: a
+targeted panel is the caller's decision, and recording a risk level for it
+would let the PR body claim a sizing that never happened. Otherwise, a repo
+may declare a risk classifier that
 sizes this fan-out from the change set instead of always running the full
 fleet. One checked helper invocation (simple executable + argument, safe
 under restrictive harness approval policies — a subshell/`&&` shape could be
@@ -136,7 +140,10 @@ Then size `[AGENTS]`:
 | `medium` | Full `[AGENTS]` (default — identical to unset) | Default cycle budget |
 | `low` | The intersection of `[AGENTS]` with {`reviewer-correctness`, `reviewer-doc`} plus ONE discovered domain reviewer chosen from the diff's domains (`.agents/skills/github/scripts/git-diff-summary -C [WORKTREE_PATH] [BASE_BRANCH]` — pick the `[AGENTS]` member matching the dominant domain). Names never leave the discovered `[AGENTS]` list; if the intersection is empty, run the full `[AGENTS]` | Accept convergence after the first clean round — do not run extra rounds hunting on a low-risk diff |
 
-A `low` sizing never overrides explicit caller `agents` context, and the
+On a RE-REVIEW whose sizing shrank the panel (a prior `medium`/`high`
+cycle left persistent reviewers alive outside the new panel), retire those
+out-of-panel sessions first — wave-mode retire semantics; state lives in
+artifacts, so nothing is lost — before delegating to the sized panel. The
 slot-budget/wave machinery below applies to the sized panel unchanged. The
 path→risk table itself is per-repo domain knowledge and stays in the
 consumer's classifier command; only this sizing contract is orch's.
