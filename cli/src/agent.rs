@@ -439,7 +439,7 @@ pub fn extract_frontmatter_color(content: &str) -> Option<String> {
 
 /// Extract a markdown section's body text between its heading and the next `## ` heading.
 fn extract_section(content: &str, header: &str) -> Option<String> {
-    let start = content.find(header)?;
+    let start = find_outside_marked(content, header)?;
     let after_header = &content[start + header.len()..];
     // Find the body text (skip leading whitespace)
     let trimmed = after_header.trim_start();
@@ -470,6 +470,22 @@ fn section_end(text: &str) -> usize {
         match enclosing_marked_region_end(text, candidate) {
             Some(region_end) => from = region_end,
             None => return candidate,
+        }
+    }
+}
+
+/// First occurrence of `needle` that does not fall inside a marked
+/// shared-instructions region. The section header lookup needs this too:
+/// shared text may contain a literal `## Additional Instructions` line, and
+/// selecting that nested occurrence would extract the tail of the shared
+/// block as item-specific text.
+fn find_outside_marked(text: &str, needle: &str) -> Option<usize> {
+    let mut from = 0;
+    loop {
+        let pos = from + text[from..].find(needle)?;
+        match enclosing_marked_region_end(text, pos) {
+            Some(region_end) => from = region_end,
+            None => return Some(pos),
         }
     }
 }
@@ -676,6 +692,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn reference_freshness_rejects_symlink_even_with_matching_target() {
         let dir = std::env::temp_dir().join(format!(
             "vstack_test_ref_symlink_{}_{}",
@@ -702,6 +719,30 @@ mod tests {
         std::fs::write(&regular, "tampered").unwrap();
         assert!(!reference_is_fresh(&regular));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_section_skips_header_occurrence_inside_marked_region() {
+        use crate::project_config::ProjectConfig;
+        // Shared launch text contains the literal header of a LATER section.
+        let shared = "Read this.\n\n## Additional Instructions\n\nShared tail.";
+        let launch = ProjectConfig::merge_marked_shared_and_specific(Some(shared), None).unwrap();
+        let content = format!(
+            "# Agent\n\n## Launch Instructions\n\n{launch}\n\n## Additional Instructions\n\nReal specific text.\n"
+        );
+        // The nested occurrence inside the marked region must not be selected
+        // as the section header — the real appended section is.
+        assert_eq!(
+            extract_section(&content, "## Additional Instructions").as_deref(),
+            Some("Real specific text.")
+        );
+        // And the launch section keeps its full marked region.
+        let launch_extracted = extract_section(&content, "## Launch Instructions").unwrap();
+        assert!(launch_extracted.contains("Shared tail."));
+        assert!(
+            ProjectConfig::strip_shared_block(Some(shared), &launch_extracted).is_none(),
+            "extracted launch section is shared-only; stripping must leave nothing"
+        );
     }
 
     #[test]

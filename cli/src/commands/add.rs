@@ -2789,6 +2789,14 @@ fn reconcile_agents(
     let mut regenerated_codex_agent_names = std::collections::HashSet::new();
 
     for (name, entry) in &agent_entries {
+        // Same reservation refresh enforces: never regenerate (or
+        // save_extracted under) a name that now collides with the shared
+        // instruction key — a legacy `all` agent would render as both shared
+        // and item-specific text.
+        if let Err(err) = crate::path_safety::validate_new_item_name(name) {
+            eprintln!("Warning: skipping agent reconciliation for {name:?}: {err:#}");
+            continue;
+        }
         let Some(agent) = source_agents.iter().find(|a| &a.name == *name) else {
             continue;
         };

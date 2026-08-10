@@ -762,7 +762,19 @@ fn extract_toml_section_for(path: &Path, name: &str) -> Vec<u8> {
     };
     let mut result = Vec::new();
     let mut capturing = false;
+    // Inside a triple-quoted value every line belongs to the key, including
+    // unindented ones — without this, a multiline body would be truncated at
+    // its first line and edits to it would never change the hash.
+    let mut multiline_delim: Option<&str> = None;
     for line in content.lines() {
+        if let Some(delim) = multiline_delim {
+            result.extend_from_slice(line.as_bytes());
+            result.push(b'\n');
+            if line.contains(delim) {
+                multiline_delim = None;
+            }
+            continue;
+        }
         let trimmed = line.trim();
         // Match: name = ... (start of this key's value)
         if trimmed.starts_with(&format!("{} =", name))
@@ -771,6 +783,7 @@ fn extract_toml_section_for(path: &Path, name: &str) -> Vec<u8> {
             capturing = true;
             result.extend_from_slice(line.as_bytes());
             result.push(b'\n');
+            multiline_delim = unclosed_multiline_delim(trimmed);
             continue;
         }
         if capturing {
@@ -789,10 +802,18 @@ fn extract_toml_section_for(path: &Path, name: &str) -> Vec<u8> {
             } else {
                 result.extend_from_slice(line.as_bytes());
                 result.push(b'\n');
+                multiline_delim = unclosed_multiline_delim(trimmed);
             }
         }
     }
     result
+}
+
+/// A `"""` or `'''` delimiter this line opens without closing, if any.
+fn unclosed_multiline_delim(line: &str) -> Option<&'static str> {
+    ["\"\"\"", "'''"]
+        .into_iter()
+        .find(|delim| line.matches(delim).count() % 2 == 1)
 }
 
 /// Refresh cached repos for all remote sources found in installed lock entries.
@@ -2241,6 +2262,42 @@ mod source_registry_tests {
         .unwrap();
         let h3 = compute_source_hash(&entry);
         assert_ne!(h2, h3);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_source_hash_tracks_multiline_shared_body() {
+        let dir = sandbox("shared_key_hash_multiline");
+        let agents_dir = dir.join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("demo.md"),
+            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+        )
+        .unwrap();
+        let toml_v1 = "[agent-additional-instructions]\nall = \"\"\"\nFleet rule body v1\nSecond line\n\"\"\"\n";
+        fs::write(dir.join("vstack.toml"), toml_v1).unwrap();
+
+        let entry = LockEntry {
+            name: "demo".to_string(),
+            kind: ItemKind::Agent,
+            source: dir.display().to_string(),
+            source_repo: None,
+            harnesses: vec!["claude-code".to_string()],
+            method: InstallMethod::Symlink,
+            installed_at: "2026-08-09T00:00:00Z".to_string(),
+            source_hash: String::new(),
+        };
+
+        let h1 = compute_source_hash(&entry);
+        // Edit ONLY an unindented body line inside the triple-quoted value.
+        let toml_v2 = "[agent-additional-instructions]\nall = \"\"\"\nFleet rule body v2\nSecond line\n\"\"\"\n";
+        fs::write(dir.join("vstack.toml"), toml_v2).unwrap();
+        let h2 = compute_source_hash(&entry);
+        assert_ne!(
+            h1, h2,
+            "editing a multiline shared body must stale the agent install"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
