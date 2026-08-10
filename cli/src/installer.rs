@@ -316,8 +316,9 @@ pub fn remove_item(
             // Symmetric with install_skill's anchoring: the canonical copy
             // lives in the checkout where each harness link physically lands,
             // so removal from a worktree must also clear a copy anchored in
-            // the main checkout — not just the project-rooted one.
-            project_canonical_skill_roots()
+            // the main checkout — scoped to the requested harnesses, so a
+            // main-checkout install for other harnesses stays untouched.
+            project_canonical_skill_roots(harnesses)
                 .into_iter()
                 .map(|root| root.join(name))
                 .collect()
@@ -440,25 +441,48 @@ fn normalize_absolute_path(path: &Path) -> PathBuf {
     normalized
 }
 
-/// Every `.agents/skills` root a project-scope canonical skill copy may live
-/// in: the project's own, plus the anchored root of any same-repository
-/// checkout a shared harness dir physically lands in (VST-195). Install
-/// anchors per harness link; removal and lock reconciliation consult this
-/// full set so all three agree on where a canonical copy may live.
-pub(crate) fn project_canonical_skill_roots() -> Vec<PathBuf> {
-    let mut roots = vec![crate::config::project_root().join(".agents").join("skills")];
-    let mut probed: Vec<PathBuf> = Vec::new();
-    for harness in Harness::ALL {
+/// Anchored `.agents/skills` roots for `harnesses`' project skill dirs: each
+/// same-repository checkout root one of those dirs physically lands in
+/// (VST-195), paired with the harnesses that land there. The project's own
+/// root is not included. A copy in another checkout is part of this
+/// project's view only through a harness that shares into that checkout, so
+/// removal and reconciliation must scope root derivation to the harness set
+/// actually in play — an unscoped derivation would let a worktree operation
+/// reach a main-checkout install that exists only for other harnesses.
+pub(crate) fn anchored_canonical_skill_roots(
+    harnesses: &[Harness],
+) -> Vec<(PathBuf, Vec<Harness>)> {
+    let mut anchored: Vec<(PathBuf, Vec<Harness>)> = Vec::new();
+    let mut probed: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+    for harness in harnesses {
         let dir = harness.skills_dir(false);
-        if probed.contains(&dir) {
-            continue;
-        }
-        probed.push(dir.clone());
-        if let Some(home) = same_repo_link_home(&dir) {
-            let root = home.checkout_root.join(".agents").join("skills");
-            if !roots.contains(&root) {
-                roots.push(root);
+        let root = match probed.iter().find(|(probed_dir, _)| *probed_dir == dir) {
+            Some((_, cached)) => cached.clone(),
+            None => {
+                let root = same_repo_link_home(&dir)
+                    .map(|home| home.checkout_root.join(".agents").join("skills"));
+                probed.push((dir, root.clone()));
+                root
             }
+        };
+        let Some(root) = root else { continue };
+        match anchored.iter_mut().find(|(anchored_root, _)| *anchored_root == root) {
+            Some((_, sharing)) => sharing.push(*harness),
+            None => anchored.push((root, vec![*harness])),
+        }
+    }
+    anchored
+}
+
+/// Every `.agents/skills` root a canonical copy for `harnesses` may live in:
+/// the project's own, plus the anchored roots those harnesses land in.
+/// Install anchors per harness link; removal and lock reconciliation consult
+/// this set so all three agree on where a canonical copy may live.
+pub(crate) fn project_canonical_skill_roots(harnesses: &[Harness]) -> Vec<PathBuf> {
+    let mut roots = vec![crate::config::project_root().join(".agents").join("skills")];
+    for (root, _) in anchored_canonical_skill_roots(harnesses) {
+        if !roots.contains(&root) {
+            roots.push(root);
         }
     }
     roots
@@ -1275,6 +1299,64 @@ mod tests {
             "canonical copy must stay a real directory, not a symlink"
         );
         assert!(canonical.join("SKILL.md").is_file());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Anchored roots must be scoped to the harnesses actually in play: with
+    /// only `.claude/skills` shared, a main-checkout skill that exists solely
+    /// for Codex (whose project dir is worktree-local) is main's own install.
+    /// Removing that name from the worktree scoped to Codex must not reach
+    /// into main, and a reconcile pass from the worktree must not claim it.
+    #[cfg(unix)]
+    #[test]
+    fn worktree_operations_leave_other_harness_installs_in_main_untouched() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_harness_scope_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        // Main's own Codex-only install: canonical copy with marker, no
+        // harness link visible through any shared dir, nothing in the wt.
+        let solo = main.join(".agents").join("skills").join("solo");
+        std::fs::create_dir_all(&solo).unwrap();
+        std::fs::write(solo.join("SKILL.md"), "# solo\n").unwrap();
+        std::fs::write(solo.join(".vstack-refreshed"), "0").unwrap();
+
+        crate::test_util::with_project_root(&wt, || {
+            remove_item("solo", Some(ItemKind::Skill), &[Harness::Codex], false).unwrap()
+        });
+        assert!(
+            solo.join("SKILL.md").is_file(),
+            "removal scoped to a non-sharing harness must not delete main's install"
+        );
+
+        let mut lock = LockFile::default();
+        crate::test_util::with_project_root(&wt, || {
+            crate::config::reconcile_lock_with_disk(&mut lock, false, "source")
+        });
+        assert!(
+            !lock.entries.contains_key("solo"),
+            "reconciliation from the worktree must not claim main's Codex-only install"
+        );
+        assert!(solo.join("SKILL.md").is_file());
 
         let _ = std::fs::remove_dir_all(&root);
     }

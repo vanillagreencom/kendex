@@ -1087,18 +1087,27 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
 
     // Canonical skill location: .agents/skills/<name>/. Project scope also
     // consults checkout-anchored roots so a copy anchored in the main
-    // checkout by a worktree-run install (VST-195) is still discovered.
-    let canonical_skills = if global {
+    // checkout by a worktree-run install (VST-195) is still discovered — but
+    // a copy there belongs to this project's view only when a harness that
+    // shares into that checkout actually references it, so anchored roots
+    // carry the sharing harnesses as a gate.
+    let canonical_skills: Vec<(PathBuf, Option<Vec<crate::harness::Harness>>)> = if global {
         vec![
-            global_state_dir().join("skills"),
-            codex_home_dir().join("skills"),
+            (global_state_dir().join("skills"), None),
+            (codex_home_dir().join("skills"), None),
         ]
     } else {
-        crate::installer::project_canonical_skill_roots()
+        let mut roots = vec![(project_root().join(".agents").join("skills"), None)];
+        for (root, sharing) in
+            crate::installer::anchored_canonical_skill_roots(crate::harness::Harness::ALL)
+        {
+            roots.push((root, Some(sharing)));
+        }
+        roots
     };
 
     let mut seen = std::collections::HashSet::new();
-    for skills_dir in canonical_skills {
+    for (skills_dir, gate) in canonical_skills {
         if !skills_dir.is_dir() {
             continue;
         }
@@ -1114,9 +1123,19 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
             if !path.join(".vstack-refreshed").exists() {
                 continue;
             }
-            if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && seen.insert(name.to_string())
-            {
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if let Some(sharing) = &gate {
+                let referenced = sharing.iter().any(|harness| {
+                    let link = harness.skills_dir(false).join(name);
+                    link.exists() || link.is_symlink()
+                });
+                if !referenced {
+                    continue;
+                }
+            }
+            if seen.insert(name.to_string()) {
                 items.push(DiskItem {
                     name: name.to_string(),
                     kind: ItemKind::Skill,
@@ -1645,22 +1664,35 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
     // Remove lock entries for skills whose files no longer exist on disk
     let disk_names: std::collections::HashSet<&str> =
         disk_skills.iter().map(|d| d.name.as_str()).collect();
-    let stale_skills: Vec<String> = lock
+    let stale_skills: Vec<(String, Vec<String>)> = lock
         .entries
         .iter()
         .filter(|(_, e)| e.kind == ItemKind::Skill && !disk_names.contains(e.name.as_str()))
-        .map(|(name, _)| name.clone())
+        .map(|(name, e)| (name.clone(), e.harnesses.clone()))
         .collect();
     if !stale_skills.is_empty() {
         // Verify the canonical dir is actually gone (not just missing the
-        // marker) in every root a copy may live in.
-        let canonical_roots = if global {
-            vec![global_state_dir().join("skills")]
+        // marker) in every root a copy may live in — anchored roots count
+        // for an entry only when one of ITS harnesses shares into them.
+        let anchored = if global {
+            Vec::new()
         } else {
-            crate::installer::project_canonical_skill_roots()
+            crate::installer::anchored_canonical_skill_roots(crate::harness::Harness::ALL)
         };
-        for name in stale_skills {
-            if !canonical_roots.iter().any(|root| root.join(&name).exists()) {
+        let own_root = if global {
+            global_state_dir().join("skills")
+        } else {
+            project_root().join(".agents").join("skills")
+        };
+        for (name, entry_harnesses) in stale_skills {
+            let exists = own_root.join(&name).exists()
+                || anchored.iter().any(|(root, sharing)| {
+                    sharing
+                        .iter()
+                        .any(|harness| entry_harnesses.iter().any(|id| id == harness.id()))
+                        && root.join(&name).exists()
+                });
+            if !exists {
                 eprintln!("  Removed stale lock entry (files missing): {name}");
                 lock.remove(&name);
                 modified = true;
