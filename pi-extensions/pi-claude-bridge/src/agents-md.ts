@@ -13,6 +13,14 @@
 // CLAUDE.MD, which we deliberately omit: the Claude Code subprocess already loads
 // CLAUDE.md natively, so forwarding it would apply the same context twice.
 //
+// We forward the NEAREST context file only, while Pi loads one per ancestor directory
+// and concatenates them. That single-layer model predates override support and is kept
+// deliberately: the bridge sanitizes and re-headers whatever it forwards into one
+// "# CLAUDE.md" block, and the subprocess separately loads the repo's own CLAUDE.md, so
+// concatenating every ancestor layer here risks duplicating context rather than
+// completing it. Changing it is a behavior change for every bridge user and belongs in
+// its own change, not in per-directory override parity.
+//
 // In isolated mode (CLAUDE_BRIDGE_ISOLATED=1), all AGENTS.md discovery is
 // disabled. Embedding hosts provide their instruction surface explicitly.
 

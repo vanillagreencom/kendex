@@ -149,20 +149,28 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox
           bun test ./tests ./extensions/subagent/__tests__
 
+      # undici is pinned to the package's own declared range: installing it
+      # unversioned resolves the registry's latest major, so the proxy transport
+      # test would validate a different major than consumers actually install.
       - name: pi-codex-minimal-tools suite
         working-directory: pi-extensions/pi-codex-minimal-tools
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox undici
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox 'undici@^7.25.0'
           npm test
 
       # The bridge ships ~256 unit tests that nothing in CI ran until now, so
       # "tests pass" on a bridge PR meant "passed on the author's machine".
       # Build first: one suite loads bundle/connector-inventory.js rather than
       # src, so a src change without a rebuild has to fail here.
+      # `npm ci` is deliberately NOT allowed to fall back to `npm install`: the
+      # bundle assertion below only proves the artifact came from the committed
+      # lockfile if the install itself was lockfile-strict. A fallback would let
+      # an inconsistent lockfile be reconciled and still pass the comparison,
+      # preserving the exact class this check exists to close.
       - name: pi-claude-bridge unit suite
         working-directory: pi-extensions/pi-claude-bridge
         run: |
-          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
           npm run test:unit
 

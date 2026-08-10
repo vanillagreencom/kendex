@@ -67,12 +67,26 @@ describe("partial assistant message reconstruction", () => {
 		expect(partialAssistantMessage(withPartial)).toBeUndefined();
 	});
 
-	test("a later delta-only event clears the snapshot flag set by an earlier event", () => {
+	// A snapshot supersedes earlier deltas. Reseeding from it (rather than only flagging)
+	// keeps a mixed stream from splicing stale pre-snapshot text onto post-snapshot deltas.
+	test("a snapshot reseeds the accumulator, and later deltas append to it", () => {
 		const state = createPartialAssistantMessageState();
-		applyPartialAssistantMessage(state, { type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "snapshot" }] } });
-		applyPartialAssistantMessage(state, deltaUpdate("text_delta", 0, { delta: "after" }));
+		applyPartialAssistantMessage(state, deltaUpdate("text_delta", 0, { delta: "stale pre-snapshot " }));
+		applyPartialAssistantMessage(state, { type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "snapshot so far" }] } });
+		applyPartialAssistantMessage(state, deltaUpdate("text_delta", 0, { delta: " and more" }));
 
-		expect(partialAssistantMessage(state)).toEqual({ role: "assistant", content: [{ type: "text", text: "after" }] });
+		expect(partialAssistantMessage(state)).toEqual({ role: "assistant", content: [{ type: "text", text: "snapshot so far and more" }] });
+	});
+
+	test("a snapshot's thinking blocks reseed in Pi's block shape", () => {
+		const state = createPartialAssistantMessageState();
+		applyPartialAssistantMessage(state, { type: "message_update", message: { role: "assistant", content: [{ type: "thinking", thinking: "reasoned" }, { type: "text", text: "said" }] } });
+		applyPartialAssistantMessage(state, deltaUpdate("text_delta", 1, { delta: " more" }));
+
+		expect(partialAssistantMessage(state)).toEqual({
+			role: "assistant",
+			content: [{ type: "thinking", thinking: "reasoned" }, { type: "text", text: "said more" }],
+		});
 	});
 
 	test("ignores tool-call deltas, malformed payloads, and empty deltas without losing real content", () => {

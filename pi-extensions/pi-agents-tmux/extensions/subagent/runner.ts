@@ -889,12 +889,22 @@ async function runSingleAgentAttempt(
 			};
 
 			const flushFilteredMessageUpdate = (reason: "nonzero_exit" | "process_error" | "timeout") => {
-				if (keepFullTranscript || !latestFilteredMessageUpdate) return;
 				// Pi's delta-only wire event leaves the newest update holding one delta, so restore the
 				// cumulative `message` Pi used to send. Every transcript reader (summary backfill,
 				// dashboard activity, transcript display) already looks there, so putting the
 				// reconstruction anywhere else leaves the record unreadable.
 				const partialMessage = partialAssistantMessage(partialMessageState);
+				// Full-stream mode keeps every raw update, so there is no buffered event to flush --
+				// but the reconstruction is still the only readable form of the partial answer.
+				if (keepFullTranscript && !latestFilteredMessageUpdate) {
+					if (partialMessage) {
+						const reconstructed = { type: "message_update", message: partialMessage };
+						appendTranscript({ stream: "stdout", raw: JSON.stringify(reconstructed), event: reconstructed, buffered: true, reason, partialMessage });
+						resetPartialAssistantMessage(partialMessageState);
+					}
+					return;
+				}
+				if (!latestFilteredMessageUpdate) return;
 				const flushedEvent = partialMessage
 					? { ...latestFilteredMessageUpdate, message: partialMessage }
 					: latestFilteredMessageUpdate;
@@ -1016,8 +1026,11 @@ async function runSingleAgentAttempt(
 					latestFilteredMessageUpdate = undefined;
 					resetPartialAssistantMessage(partialMessageState);
 				}
-				if (eventName === "message_update" && !keepFullTranscript) {
-					latestFilteredMessageUpdate = normalized.event;
+				if (eventName === "message_update") {
+					// Accumulate in both modes. In full-stream mode the raw deltas are already in the
+					// transcript, but no reader folds deltas, so without the reconstruction a failed
+					// agent's partial answer is just as unrecoverable there as in filtered mode.
+					if (!keepFullTranscript) latestFilteredMessageUpdate = normalized.event;
 					applyPartialAssistantMessage(partialMessageState, normalized.payload);
 				}
 				if (shouldAppendTranscriptEvent(eventName, keepFullTranscript)) {

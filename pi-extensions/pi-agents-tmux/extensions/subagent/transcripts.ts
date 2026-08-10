@@ -28,6 +28,18 @@ export function normalizePiStreamEvent(event: any): NormalizedTranscriptEvent {
 //
 // Tool calls are deliberately not reconstructed here: their lifecycle is already recorded
 // through the separate tool_execution_* transcript events.
+/** Replace accumulated blocks with the content of a cumulative snapshot message. */
+function seedBlocksFromSnapshot(state: PartialAssistantMessageState, snapshot: any): void {
+	state.blocks.clear();
+	const content = Array.isArray(snapshot?.content) ? snapshot.content : undefined;
+	if (!content) return;
+	content.forEach((part: any, index: number) => {
+		if (!part || typeof part !== "object") return;
+		if (part.type === "text" && typeof part.text === "string") state.blocks.set(index, { kind: "text", text: part.text });
+		else if (part.type === "thinking" && typeof part.thinking === "string") state.blocks.set(index, { kind: "thinking", text: part.thinking });
+	});
+}
+
 /** Stream event types that legitimately contribute no reconstructable content. */
 const PARTIAL_MESSAGE_IGNORED_TYPES = new Set(["start", "text_start", "thinking_start", "toolcall_start", "toolcall_delta", "toolcall_end", "done", "error"]);
 
@@ -67,8 +79,16 @@ export function applyPartialAssistantMessage(state: PartialAssistantMessageState
 	state.updatesSeen += 1;
 	const streamEvent = payload.assistantMessageEvent;
 	const nestedEvent = streamEvent && typeof streamEvent === "object" ? streamEvent : undefined;
-	state.hasSnapshot = Boolean(payload.message || nestedEvent?.partial);
-	if (state.hasSnapshot) return;
+	const snapshot = payload.message ?? nestedEvent?.partial;
+	state.hasSnapshot = Boolean(snapshot);
+	if (snapshot) {
+		// The snapshot is the authoritative message-so-far, so it supersedes everything
+		// accumulated before it. Reseeding from it (rather than just flagging) keeps a mixed
+		// stream correct: if a later delta-only event arrives, it appends to the snapshot's
+		// content instead of to stale pre-snapshot fragments.
+		seedBlocksFromSnapshot(state, snapshot);
+		return;
+	}
 	if (!nestedEvent) {
 		state.unrecognizedTypes.add("<no assistantMessageEvent>");
 		return;

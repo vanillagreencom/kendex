@@ -373,6 +373,44 @@ test("failed oneshot transcript flushes latest filtered message_update after the
 	else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
 });
 
+test("full-stream transcript still records a reconstructed partial message on failure", async () => {
+	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = "1";
+	// Full-stream mode keeps the raw deltas, but no reader folds deltas, so without the
+	// reconstruction the partial answer is just as unrecoverable here as in filtered mode.
+	installMockSpawn([{ code: 1, stdout: bridgeStdout([
+		shapedStreamEvent("top-level", "message_start"),
+		shapedStreamEvent("top-level", "message_update", { assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "full mode " } }),
+		shapedStreamEvent("top-level", "message_update", { assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "partial answer" } }),
+	]) }]);
+	try {
+		const result = await runSingleAgent(
+			tempRuntime(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review task full stream",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents([]),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		const content = readTranscript(result);
+		// Raw updates are still present in full mode...
+		assert.match(content, /text_delta/);
+		// ...and the summary path can now recover the answer.
+		assert.equal(extractLastAssistantTextFromTranscriptContent(content), "full mode partial answer");
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+	if (previousFull === undefined) delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
+});
+
 test("failed oneshot transcript keeps only the newest message's deltas across a message boundary", async () => {
 	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
 	delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
