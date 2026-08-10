@@ -125,6 +125,22 @@ pub fn install_skill(
                 .as_ref()
                 .is_some_and(|home| home.checkout_root != project_checkout)
                 && canonical.exists();
+            if foreign_existing
+                && std::fs::symlink_metadata(&canonical)
+                    .is_ok_and(|meta| meta.file_type().is_symlink())
+            {
+                // exists()/is_file() follow symlinks: a malformed "canonical"
+                // whose final component is a symlink could smuggle the link
+                // target (possibly outside the repository) past the write-shy
+                // fast path and containment. A real canonical is a directory;
+                // a symlink there is repaired from source (remove_existing
+                // unlinks the symlink itself, never its target).
+                eprintln!(
+                    "  Warning: existing canonical {} is a symlink, not a directory; repairing it from source (VST-195)",
+                    canonical.display()
+                );
+                foreign_existing = false;
+            }
             if foreign_existing && !canonical.join("SKILL.md").is_file() {
                 // Write-shy protects the owning checkout's valid installs; a
                 // canonical without SKILL.md was never one, and linking to it
@@ -344,6 +360,25 @@ pub fn remove_item(
                 .is_some_and(|resolved| anchored_resolved.contains(&resolved))
     };
 
+    // Clear the anchored canonicals' managed markers BEFORE any unlinking.
+    // A marker that survives past this removal lets the owning checkout's
+    // disk recovery adopt (resurrect) a copy that may have existed solely
+    // for this worktree's install — and once the child links below are
+    // unlinked, the anchor evidence needed to rediscover these canonicals is
+    // gone, so a post-unlink failure would be unrepairable by retry. Failing
+    // here aborts with every link intact: fix the marker, run remove again.
+    for anchored in &anchored_canonicals {
+        let marker = anchored.join(".vstack-refreshed");
+        if let Err(err) = std::fs::remove_file(&marker)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            anyhow::bail!(
+                "could not clear managed marker {} — aborting removal before any unlinking so it stays retryable: {err}",
+                marker.display()
+            );
+        }
+    }
+
     for harness in harnesses {
         // Agent files
         if remove_agents {
@@ -440,21 +475,10 @@ pub fn remove_item(
         // own remove collects it.
         for anchored in &anchored_canonicals {
             if anchored.exists() {
-                // Clear the managed marker so the owning checkout's
-                // reconciliation does not adopt (resurrect) a copy that may
-                // have existed solely for this worktree's install. A
-                // checkout that still references the skill re-marks it on
-                // its next refresh; its lock entries survive regardless,
-                // since the stale gate checks existence, not the marker.
-                let marker = anchored.join(".vstack-refreshed");
-                if let Err(err) = std::fs::remove_file(&marker)
-                    && err.kind() != std::io::ErrorKind::NotFound
-                {
-                    eprintln!(
-                        "  Warning: could not clear managed marker {}: {err}",
-                        marker.display()
-                    );
-                }
+                // Marker already cleared before the unlink phase (a checkout
+                // that still references the skill re-marks it on its next
+                // refresh; lock entries survive regardless, since the stale
+                // gate checks existence, not the marker).
                 eprintln!(
                     "  Note: leaving canonical copy {} in place — it may back that checkout's own installs; remove it from that checkout to delete it (VST-195)",
                     anchored.display()
@@ -2211,6 +2235,143 @@ mod tests {
             "the surviving canonical must be reported, got {:?}",
             outcome.anchored_left
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A "foreign canonical" whose final component is a SYMLINK is malformed:
+    /// `exists()`/`is_file()` follow it, so the write-shy fast path would
+    /// link through it to wherever it points (potentially outside the
+    /// repository), bypassing containment. It must be repaired into a real
+    /// directory instead, without touching the symlink's target.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_repairs_symlinked_foreign_canonical() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_symlinked_canonical_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        // Main's "canonical" is a symlink smuggling an external directory
+        // that even carries a plausible SKILL.md.
+        let external = root.join("external-target");
+        std::fs::create_dir_all(&external).unwrap();
+        std::fs::write(external.join("SKILL.md"), "# smuggled\n").unwrap();
+        std::fs::create_dir_all(main.join(".agents").join("skills")).unwrap();
+        let canonical = main.join(".agents").join("skills").join("github");
+        symlink(&external, &canonical).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+
+        let meta = std::fs::symlink_metadata(&canonical).unwrap();
+        assert!(
+            meta.file_type().is_dir(),
+            "the symlinked canonical must be replaced with a real directory"
+        );
+        assert!(canonical.join("SKILL.md").is_file());
+        assert_eq!(
+            std::fs::read_to_string(external.join("SKILL.md")).unwrap(),
+            "# smuggled\n",
+            "repair must unlink the symlink itself, never write through to its target"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A managed-marker clear that fails must abort the removal BEFORE any
+    /// unlinking: past that point the anchor evidence is gone, the caller
+    /// drops the lock entry, and the still-marked canonical would be adopted
+    /// back (resurrected) by the owning checkout's recovery.
+    #[cfg(unix)]
+    #[test]
+    fn remove_item_aborts_before_unlink_when_marker_clear_fails() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_marker_clear_abort_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+        let canonical = main.join(".agents").join("skills").join("github");
+        assert!(canonical.join("SKILL.md").is_file());
+
+        // Make the marker un-removable via remove_file: a non-empty
+        // directory in its place fails with EISDIR.
+        let marker = canonical.join(".vstack-refreshed");
+        std::fs::remove_file(&marker).unwrap();
+        std::fs::create_dir_all(marker.join("block")).unwrap();
+
+        let err = crate::test_util::with_project_root(&wt, || {
+            remove_item(
+                "github",
+                Some(ItemKind::Skill),
+                &[Harness::ClaudeCode],
+                false,
+            )
+            .unwrap_err()
+        });
+        assert!(
+            err.to_string().contains("managed marker"),
+            "expected the marker-clear abort, got: {err}"
+        );
+        assert!(
+            std::fs::symlink_metadata(main_skills.join("github")).is_ok(),
+            "the child link must survive an aborted removal (retryable)"
+        );
+        assert!(canonical.join("SKILL.md").is_file());
 
         let _ = std::fs::remove_dir_all(&root);
     }

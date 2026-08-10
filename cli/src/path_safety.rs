@@ -223,6 +223,21 @@ pub(crate) fn ensure_agents_dir_within_project(project_root: &Path) -> Result<()
             skills_dir.display()
         );
     }
+    // Same-repository containment is necessary but not sufficient: a
+    // `.agents/skills` symlinked to an arbitrary in-repo directory (e.g.
+    // `../cli/src`) would make install treat `<target>/<name>` as canonical
+    // and recursively DELETE it on refresh. The resolved target must itself
+    // be an `.agents/skills` root — either this `.agents`'s own subdir or an
+    // approved checkout's.
+    if skills_dir_canon != agents_dir_canon.join("skills")
+        && !skills_dir_canon.ends_with(Path::new(".agents/skills"))
+    {
+        bail!(
+            "refusing .agents/skills that resolves to a non-skills-root directory: {} -> {}",
+            skills_dir.display(),
+            skills_dir_canon.display()
+        );
+    }
     if !skills_dir_canon.is_dir() {
         bail!(
             "project .agents/skills path is not a directory: {}",
@@ -324,6 +339,44 @@ mod tests {
                 .contains("refusing to write through symlink")
         );
         assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Same-repository containment alone must not admit a `.agents/skills`
+    /// symlinked to an arbitrary in-repo directory: install would treat
+    /// `<target>/<name>` as canonical and recursively delete it on refresh
+    /// (e.g. `.agents/skills -> ../cli/src` destroying `cli/src/<name>`).
+    #[cfg(unix)]
+    #[test]
+    fn agents_skills_resolving_to_non_skills_root_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_skills_nonroot_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let agents = root.join(".agents");
+        let decoy = root.join("src");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::create_dir_all(&decoy).unwrap();
+        symlink(&decoy, agents.join("skills")).unwrap();
+
+        let err = ensure_agents_dir_within_project(&root).unwrap_err();
+        assert!(
+            err.to_string().contains("non-skills-root"),
+            "expected the non-skills-root refusal, got: {err}"
+        );
+
+        // The ordinary real layout stays accepted.
+        std::fs::remove_file(agents.join("skills")).unwrap();
+        std::fs::create_dir_all(agents.join("skills")).unwrap();
+        ensure_agents_dir_within_project(&root).unwrap();
 
         let _ = std::fs::remove_dir_all(&root);
     }
