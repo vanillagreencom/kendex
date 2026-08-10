@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -10,6 +10,18 @@ import { readTaskRegistry, writeTaskRegistry } from "../extensions/subagent/task
 
 function tempRuntime(): string {
 	return mkdtempSync(join(tmpdir(), "subagent-lifecycle-event-"));
+}
+
+// The extension persists some lifecycle writes fire-and-forget; a plain
+// rmSync can lose the race and the delayed write recreates the runtime dir
+// after cleanup. Delete until the directory STAYS gone.
+async function removeSettled(dir: string) {
+	for (let i = 0; i < 10; i += 1) {
+		rmSync(dir, { force: true, recursive: true });
+		await new Promise((resolve) => setTimeout(resolve, 25));
+		if (!existsSync(dir)) return;
+	}
+	rmSync(dir, { force: true, recursive: true });
 }
 
 async function waitForTask(runtimeRoot: string, taskId: string) {
@@ -80,7 +92,7 @@ describe("subagent lifecycle event persistence", () => {
 			expect(record?.diagnostics?.join("\n")).not.toContain("\u001b");
 			expect(record?.diagnostics?.join("\n")).not.toContain("```");
 		} finally {
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 		}
 	});
 
@@ -151,7 +163,7 @@ describe("subagent lifecycle event persistence", () => {
 			expect(record?.usage?.output).toBe(3);
 		} finally {
 			await releaseLock?.();
-			rmSync(runtimeRoot, { force: true, recursive: true });
+			await removeSettled(runtimeRoot);
 		}
 	});
 });

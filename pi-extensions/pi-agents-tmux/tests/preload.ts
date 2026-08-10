@@ -1,33 +1,34 @@
 import { afterAll, mock } from "bun:test";
-import { readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-// VST-199 leak guard: tempdirs this suite creates must be torn down by the
-// test file that created them. Prefixes owned by this suite fail the run
-// outright when left behind; unrelated system churn gets a generous tolerance.
-const OWNED_TMP_PREFIXES = [
-	"delegate-subagent-runtime-",
-	"needs-completion-",
-	"pi-agents-",
-	"pi-subagent-",
-	"rate-limit-scope-",
-	"subagent-",
-];
-const UNRELATED_NEW_ENTRY_TOLERANCE = 64;
-const tmpEntriesBeforeRun = new Set(readdirSync(tmpdir()));
+// Leak guard: every tempdir this suite creates must be torn down by the test
+// file that created it. The whole run gets its OWN tmp root (os.tmpdir()
+// re-reads TMPDIR per call, and this preload runs before any test module),
+// so concurrent pi-agents-tmux runs can never flag each other's live dirs,
+// unrelated system churn is invisible, and the final sweep removes the root
+// wholesale after reporting. A short settle pass absorbs writes that land
+// during shutdown so a just-recreated dir is measured at rest.
+const RUN_TMP_ROOT = mkdtempSync(join(tmpdir(), "pi-agents-tmux-run-"));
+process.env.TMPDIR = RUN_TMP_ROOT;
 
-afterAll(() => {
-	const newEntries = readdirSync(tmpdir()).filter((name) => !tmpEntriesBeforeRun.has(name));
-	const leaked = newEntries.filter((name) => OWNED_TMP_PREFIXES.some((prefix) => name.startsWith(prefix)));
-	if (leaked.length > 0) {
-		throw new Error(
-			`pi-agents-tmux tests leaked ${leaked.length} tmp dir(s) (VST-199); add teardown in the creating test file: ${leaked.slice(0, 12).join(", ")}`,
-		);
+afterAll(async () => {
+	let entries = readdirSync(RUN_TMP_ROOT);
+	for (let i = 0; i < 10; i += 1) {
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		const next = readdirSync(RUN_TMP_ROOT);
+		if (next.length === entries.length && next.every((name, idx) => name === entries[idx])) break;
+		entries = next;
 	}
-	if (newEntries.length > UNRELATED_NEW_ENTRY_TOLERANCE) {
-		throw new Error(
-			`pi-agents-tmux test run left ${newEntries.length} new entries in ${tmpdir()} (tolerance ${UNRELATED_NEW_ENTRY_TOLERANCE}); check for an untracked tempdir prefix (VST-199)`,
-		);
+	try {
+		if (entries.length > 0) {
+			throw new Error(
+				`pi-agents-tmux tests leaked ${entries.length} tmp dir(s); add teardown in the creating test file: ${entries.slice(0, 12).join(", ")}`,
+			);
+		}
+	} finally {
+		rmSync(RUN_TMP_ROOT, { force: true, recursive: true });
 	}
 });
 
