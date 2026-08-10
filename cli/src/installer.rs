@@ -128,7 +128,8 @@ pub fn install_skill(
                 }
                 remove_existing(&dest)?;
 
-                let rel = relative_path(dest.parent().unwrap(), &canonical)?;
+                let repo_anchor = (!global).then(crate::config::project_root);
+                let rel = relative_path(dest.parent().unwrap(), &canonical, repo_anchor.as_deref())?;
                 #[cfg(unix)]
                 std::os::unix::fs::symlink(&rel, &dest).with_context(|| {
                     format!("symlinking {} → {}", dest.display(), rel.display())
@@ -349,7 +350,6 @@ pub fn record_install(
     }
 }
 
-/// Compute relative path from `from` to `to`
 fn remove_existing(path: &Path) -> Result<()> {
     if path.is_symlink() {
         std::fs::remove_file(path)?;
@@ -383,19 +383,49 @@ fn normalize_absolute_path(path: &Path) -> PathBuf {
     normalized
 }
 
-fn relative_path(from: &Path, to: &Path) -> Result<PathBuf> {
+/// Symlink target spelling for a link created in `from` pointing at `to`.
+///
+/// `repo_anchor` is the root whose repository the link must stay inside —
+/// the project root for project-scope installs, `None` for global scope.
+/// Worktree setups symlink shared harness dirs into the main checkout
+/// (vstack#886), so `from` may physically live in a different checkout than
+/// its apparent path. The repo layout is identical in every worktree, so as
+/// long as an endpoint's physical home is a worktree of the anchor's own
+/// repository, the lexical relative spelling resolves correctly from
+/// whichever checkout the link physically lands in. A canonicalized target
+/// here would anchor shared main-checkout state to the worktree that ran the
+/// refresh and dangle when that worktree is removed (VST-195).
+///
+/// An endpoint that escapes to an unrelated tree (for example a `.claude`
+/// dir symlinked into a dotfiles checkout) keeps the previous behavior: an
+/// absolute physical target rather than a relative path computed across
+/// unrelated roots.
+fn relative_path(from: &Path, to: &Path, repo_anchor: Option<&Path>) -> Result<PathBuf> {
     let from_lexical = normalize_absolute_path(from);
     let from_canonical = std::fs::canonicalize(from).unwrap_or_else(|_| from_lexical.clone());
-    let to = std::fs::canonicalize(to).unwrap_or_else(|_| normalize_absolute_path(to));
+    let to_lexical = normalize_absolute_path(to);
+    let to_canonical = std::fs::canonicalize(to).unwrap_or_else(|_| to_lexical.clone());
 
-    // If the apparent parent path differs from the real containing directory
-    // (for example because an ancestor is a symlink), prefer an absolute
-    // target over a confusing relative path that is computed from the real path.
-    if from_canonical != from_lexical {
-        return Ok(to);
+    let stays_in_repo = |lexical: &Path, canonical: &Path| {
+        lexical == canonical
+            || repo_anchor.is_some_and(|anchor| {
+                crate::path_safety::is_same_repository_worktree(anchor, canonical)
+            })
+    };
+
+    if !stays_in_repo(&from_lexical, &from_canonical) {
+        return Ok(to_canonical);
     }
+    let to = if stays_in_repo(&to_lexical, &to_canonical) {
+        to_lexical
+    } else {
+        to_canonical
+    };
+    Ok(lexical_relative(&from_lexical, &to))
+}
 
-    let from_parts: Vec<_> = from_lexical.components().collect();
+fn lexical_relative(from: &Path, to: &Path) -> PathBuf {
+    let from_parts: Vec<_> = from.components().collect();
     let to_parts: Vec<_> = to.components().collect();
 
     let common = from_parts
@@ -412,7 +442,7 @@ fn relative_path(from: &Path, to: &Path) -> Result<PathBuf> {
         rel.push(part);
     }
 
-    Ok(rel)
+    rel
 }
 
 /// Recursively copy a directory.
@@ -679,7 +709,7 @@ mod tests {
         std::fs::create_dir_all(&from).unwrap();
         std::fs::create_dir_all(&to).unwrap();
 
-        let rel = relative_path(&from, &to).unwrap();
+        let rel = relative_path(&from, &to, None).unwrap();
         assert_eq!(rel, PathBuf::from("../../config/skills/rust-runtime"));
 
         let _ = std::fs::remove_dir_all(&root);
@@ -704,12 +734,205 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         symlink(&real_parent, &apparent_parent).unwrap();
 
-        let rel = relative_path(&apparent_parent, &target).unwrap();
+        let rel = relative_path(&apparent_parent, &target, None).unwrap();
         assert!(
             rel.is_absolute(),
             "expected absolute symlink target, got {rel:?}"
         );
         assert_eq!(rel, std::fs::canonicalize(&target).unwrap());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Run a git command in `dir`, reporting only whether it succeeded. Tests
+    /// that need a real repository skip themselves when git is unavailable
+    /// rather than failing a host that simply has no git.
+    fn git_ok(dir: &Path, args: &[&str]) -> bool {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    fn init_repo_with_commit(dir: &Path) -> bool {
+        git_ok(dir, &["init", "-q", "-b", "main"])
+            && git_ok(dir, &["config", "user.email", "test@example.com"])
+            && git_ok(dir, &["config", "user.name", "Test"])
+            && git_ok(dir, &["config", "commit.gpgsign", "false"])
+            && std::fs::write(dir.join(".vstack-test-base"), "base\n").is_ok()
+            && git_ok(dir, &["add", "-A"])
+            && git_ok(dir, &["commit", "-q", "-m", "base"])
+    }
+
+    fn write_skill_source(root: &Path, name: &str) -> Skill {
+        let source = root.join("source").join(name);
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Test skill\n---\n\n# {name}\n\nBody.\n"),
+        )
+        .unwrap();
+        Skill {
+            name: name.into(),
+            description: "Test skill".into(),
+            license: None,
+            user_invocable: None,
+            dependencies: None,
+            body: String::new(),
+            source_dir: source,
+            resolved_deps: Vec::new(),
+        }
+    }
+
+    /// A parent symlinked into another worktree of the anchor's repository
+    /// must keep the lexical relative spelling instead of bailing to an
+    /// absolute target — the repo-relative layout is identical in every
+    /// checkout, so the relative link resolves wherever it physically lands.
+    #[cfg(unix)]
+    #[test]
+    fn relative_path_stays_lexical_when_parent_symlinks_into_same_repo_worktree() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_relative_path_worktree_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        let target = wt.join(".agents").join("skills").join("github");
+        std::fs::create_dir_all(&target).unwrap();
+
+        let rel = relative_path(&wt.join(".claude").join("skills"), &target, Some(&wt)).unwrap();
+        assert_eq!(rel, PathBuf::from("../../.agents/skills/github"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// VST-195: a refresh run from a git worktree whose `.claude/skills` is
+    /// symlinked into the main checkout must not anchor the main checkout's
+    /// skill links in the worktree — those links dangle the moment the
+    /// worktree is removed. The link physically lands in main, so its target
+    /// must be the repo-relative spelling that resolves inside main.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_from_worktree_keeps_main_checkout_links_repo_local() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_skill_link_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        // Provision the worktree the way the `worktree` skill does: the
+        // harness skills dir is shared into the main checkout. `.agents`
+        // stays a real directory here — the failure mode observed downstream.
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+
+        let link = main_skills.join("github");
+        assert!(link.is_symlink(), "expected symlink at {link:?}");
+        let target = std::fs::read_link(&link).unwrap();
+        assert!(
+            !target.starts_with(&wt),
+            "main-checkout link must not point into the worktree: {target:?}"
+        );
+        assert_eq!(
+            target,
+            PathBuf::from("../../.agents/skills/github"),
+            "main-checkout link must use the repo-relative spelling"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The fully shared layout: both `.claude/skills` and `.agents` are
+    /// symlinked into the main checkout. The generated link must resolve to a
+    /// real directory inside the main checkout, independent of the worktree.
+    #[cfg(unix)]
+    #[test]
+    fn install_skill_from_worktree_resolves_inside_main_checkout() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_skill_resolve_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(main.join(".agents")).unwrap();
+        symlink(main.join(".agents"), wt.join(".agents")).unwrap();
+
+        let skill = write_skill_source(&root, "github");
+        crate::test_util::with_project_root(&wt, || {
+            install_skill(
+                &skill,
+                Harness::ClaudeCode,
+                false,
+                InstallMethod::Symlink,
+                None,
+            )
+            .unwrap()
+        });
+
+        let link = main_skills.join("github");
+        assert!(link.is_symlink(), "expected symlink at {link:?}");
+        let resolved = link.canonicalize().unwrap();
+        assert!(
+            resolved.starts_with(main.canonicalize().unwrap()),
+            "link must resolve inside the main checkout, got {resolved:?}"
+        );
+        assert!(resolved.join("SKILL.md").is_file());
 
         let _ = std::fs::remove_dir_all(&root);
     }
