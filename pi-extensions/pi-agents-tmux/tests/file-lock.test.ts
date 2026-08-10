@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { acquireFileLock } from "../extensions/subagent/file-lock.js";
 
+const tempDirs: string[] = [];
+
+after(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
+
 function tempRuntime(): string {
-	return mkdtempSync(join(tmpdir(), "pi-agents-file-lock-"));
+	const dir = mkdtempSync(join(tmpdir(), "pi-agents-file-lock-"));
+	tempDirs.push(dir);
+	return dir;
 }
 
 test("acquireFileLock waits long enough to reap stale locks before timing out", async () => {

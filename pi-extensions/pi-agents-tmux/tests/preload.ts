@@ -1,4 +1,55 @@
-import { mock } from "bun:test";
+import { afterAll, mock } from "bun:test";
+import { readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+
+// VST-199 leak guard: tempdirs this suite creates must be torn down by the
+// test file that created them. Prefixes owned by this suite fail the run
+// outright when left behind; unrelated system churn gets a generous tolerance.
+const OWNED_TMP_PREFIXES = [
+	"delegate-subagent-runtime-",
+	"needs-completion-",
+	"pi-agents-",
+	"pi-subagent-",
+	"rate-limit-scope-",
+	"subagent-",
+];
+const UNRELATED_NEW_ENTRY_TOLERANCE = 64;
+const tmpEntriesBeforeRun = new Set(readdirSync(tmpdir()));
+
+afterAll(() => {
+	const newEntries = readdirSync(tmpdir()).filter((name) => !tmpEntriesBeforeRun.has(name));
+	const leaked = newEntries.filter((name) => OWNED_TMP_PREFIXES.some((prefix) => name.startsWith(prefix)));
+	if (leaked.length > 0) {
+		throw new Error(
+			`pi-agents-tmux tests leaked ${leaked.length} tmp dir(s) (VST-199); add teardown in the creating test file: ${leaked.slice(0, 12).join(", ")}`,
+		);
+	}
+	if (newEntries.length > UNRELATED_NEW_ENTRY_TOLERANCE) {
+		throw new Error(
+			`pi-agents-tmux test run left ${newEntries.length} new entries in ${tmpdir()} (tolerance ${UNRELATED_NEW_ENTRY_TOLERANCE}); check for an untracked tempdir prefix (VST-199)`,
+		);
+	}
+});
+
+// Minimal typebox surface used by extensions/subagent/tools.ts; typebox is an
+// uninstalled peer dependency in this checkout, mocked like the pi peers below.
+mock.module("typebox", () => {
+	const withOptions = (schema: Record<string, unknown>, options?: Record<string, unknown>) => ({
+		...(options ?? {}),
+		...schema,
+	});
+	return {
+		Type: {
+			Array: (items: unknown, options?: Record<string, unknown>) => withOptions({ items, type: "array" }, options),
+			Boolean: (options?: Record<string, unknown>) => withOptions({ type: "boolean" }, options),
+			Number: (options?: Record<string, unknown>) => withOptions({ type: "number" }, options),
+			Object: (properties: Record<string, unknown>, options?: Record<string, unknown>) =>
+				withOptions({ properties, type: "object" }, options),
+			Optional: (schema: Record<string, unknown>) => ({ ...schema }),
+			String: (options?: Record<string, unknown>) => withOptions({ type: "string" }, options),
+		},
+	};
+});
 
 mock.module("@earendil-works/pi-coding-agent", () => {
 	const truncate = (text: string, limits: { maxBytes: number; maxLines: number }, fromTail = false) => {

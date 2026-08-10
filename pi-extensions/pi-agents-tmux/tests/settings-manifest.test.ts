@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { bgTaskTimeoutMs, DEFAULT_BG_TASK_TIMEOUT_MS, recordProjectTrust, settingNumber } from "../extensions/subagent/settings.js";
 import { DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS } from "../extensions/subagent/sessions.js";
 import { DEFAULT_RESULT_MAX_BYTES, DEFAULT_RESULT_MAX_LINES, MAX_CONCURRENCY } from "../extensions/subagent/types.js";
+
+const tempDirs: string[] = [];
+
+after(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
 
 type ManifestSetting = {
 	apply?: string;
@@ -54,6 +60,7 @@ test("settings metadata keeps bgTaskTimeoutMs visible and disableable", () => {
 	assert.match(bgTimeout.description ?? "", /0 to disable/i);
 
 	const cwd = mkdtempSync(join(tmpdir(), "pi-agents-bg-timeout-"));
+	tempDirs.push(cwd);
 	writeProjectSettings(cwd, { bgTaskTimeoutMs: 0 });
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
@@ -98,6 +105,7 @@ test("settings metadata keeps artifact-first result caps aligned with runtime de
 
 test("legacy maxParallelTasks setting does not affect maxConcurrency", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-agents-settings-"));
+	tempDirs.push(cwd);
 	writeProjectSettings(cwd, { maxParallelTasks: 1 });
 	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");

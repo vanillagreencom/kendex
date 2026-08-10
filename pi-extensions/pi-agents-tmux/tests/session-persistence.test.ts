@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
 	readLastSessionEntryId,
 	sessionFileTailMatchesLeaf,
 	stableSessionSnapshotFingerprint,
 } from "../extensions/subagent/session-persistence.js";
 
+const tempDirs: string[] = [];
+
+after(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
+
 function tempSession(lines: unknown[]): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-agents-session-"));
+	tempDirs.push(dir);
 	const file = join(dir, "session.jsonl");
 	writeFileSync(file, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
 	return file;

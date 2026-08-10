@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
@@ -10,8 +10,16 @@ import {
 } from "../extensions/subagent/runner.js";
 import type { SingleResult, SubagentDetails } from "../extensions/subagent/types.js";
 
+const tempDirs: string[] = [];
+
+afterAll(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
+
 function tempRuntime(): string {
-	return mkdtempSync(join(tmpdir(), "pi-agents-runner-env-"));
+	const dir = mkdtempSync(join(tmpdir(), "pi-agents-runner-env-"));
+	tempDirs.push(dir);
+	return dir;
 }
 
 function makeDetails(results: SingleResult[]): SubagentDetails {

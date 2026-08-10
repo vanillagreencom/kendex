@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
 	buildSyntheticOutbox,
 	createAgentEndWatchdog,
@@ -76,8 +76,16 @@ interface TestHarness {
 	taskId: string;
 }
 
+const tempDirs: string[] = [];
+
+after(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
+
 function tempRuntime(): string {
-	return mkdtempSync(join(tmpdir(), "pi-agents-watchdog-"));
+	const dir = mkdtempSync(join(tmpdir(), "pi-agents-watchdog-"));
+	tempDirs.push(dir);
+	return dir;
 }
 
 function buildHarness(opts: BuildOpts = {}): TestHarness {

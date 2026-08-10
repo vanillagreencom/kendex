@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import type { AgentConfig } from "../extensions/subagent/agents.js";
 import {
 	appendBgChatMessages,
@@ -57,8 +57,16 @@ const ansiTheme = {
 	inverse: (text: string) => text,
 };
 
+const tempDirs: string[] = [];
+
+after(() => {
+	for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+});
+
 function tempRuntime(): string {
-	return mkdtempSync(join(tmpdir(), "pi-agents-dashboard-ux-"));
+	const dir = mkdtempSync(join(tmpdir(), "pi-agents-dashboard-ux-"));
+	tempDirs.push(dir);
+	return dir;
 }
 
 function writeManagerConfig(cwd: string, config: Record<string, unknown>): void {
