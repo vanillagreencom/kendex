@@ -17,7 +17,7 @@ reviewed diff, with the justification on the record.
   loudly (exit 2; exclude it to skip the gate) — it cannot be represented
   in the line-oriented records. Lines are newline counts (`wc -l`).
 - **Threshold**: default `1000` lines, override via
-  `SIZE_RATCHET_THRESHOLD` (environment > `.env.local` > `vstack.settings.toml` `[env]` > `.vstack/settings.toml` > `.env` >
+  `SIZE_RATCHET_THRESHOLD` (environment > `.env.local` > `.vstack/settings.toml` > `vstack.settings.toml` `[env]` > `.env` >
   default).
 - **FAIL** (exit 1) on any of:
   1. **New offender** — a file over the threshold with no baseline row.
@@ -85,8 +85,8 @@ src/gen/*.rs	generated bindings
 | `SIZE_RATCHET_BASELINE` | `tools/size-ratchet-baseline.tsv` | Baseline path. |
 | `SIZE_RATCHET_EXCLUDES` | `tools/size-ratchet-excludes` | Exclusion-list path. |
 
-Each key resolves environment > `.env.local` > committed `vstack.settings.toml`
-(flat `KEY = "value"` assignment under `[env]`) > `.vstack/settings.toml` >
+Each key resolves environment > `.env.local` > `.vstack/settings.toml` > committed `vstack.settings.toml`
+(flat `KEY = "value"` assignment under `[env]`) >
 `.env` > default (env files use `KEY=value` or `export KEY=value`; parsed,
 never sourced). `--baseline` / `--excludes` flags override every source for
 the paths. All relative paths are

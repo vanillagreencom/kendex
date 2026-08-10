@@ -63,8 +63,7 @@ offenders remain.
 ## Configuration
 
 Resolution order for every key: explicit environment > the repo's committed
-`.env.local` > `vstack.settings.toml` (flat `KEY = "value"` under `[env]`) >
-`.vstack/settings.toml` > `.env` > built-in
+`.env.local` > `.vstack/settings.toml` > `vstack.settings.toml` (flat `KEY = "value"` under `[env]`) > `.env` > built-in
 default.
 
 | Key | Default | Meaning |

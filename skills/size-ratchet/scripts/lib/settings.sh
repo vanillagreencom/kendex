@@ -12,9 +12,9 @@
 #   1. explicit environment — a SET variable wins even when set to the empty
 #      string, so a caller can force "explicitly empty";
 #   2. .env.local (KEY=value, quotes optional — parsed, never sourced);
-#   3. the repo's committed vstack.settings.toml (sole uncommented
-#      `KEY = "value"` assignment; path overridable with
-#      SIZE_RATCHET_SETTINGS_FILE, e.g. /dev/null), then .vstack/settings.toml;
+#   3. .vstack/settings.toml, then the repo's committed vstack.settings.toml
+#      (sole uncommented `KEY = "value"` assignment; an explicit
+#      SIZE_RATCHET_SETTINGS_FILE consults only itself, e.g. /dev/null);
 #   4. .env (same shape);
 #   5. the built-in default passed by the caller.
 #
@@ -54,7 +54,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # committed settings, .env is the base) — first matching KEY= line wins,
   # optional surrounding quotes stripped. Parsed, never sourced.
   if [ -f ".env.local" ]; then
-    line="$(grep -E -- "^[[:space:]]*(export[[:space:]]+)?${name}=" .env.local | head -n 1 || true)"
+    line="$(grep -E -- "^[[:space:]]*(export[[:space:]]+)?${name}=" .env.local | tail -n 1 || true)"
     if [ -n "$line" ]; then
       val="${line#*=}"
       case "$val" in
@@ -65,7 +65,14 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       return 0
     fi
   fi
-  for file in "${SIZE_RATCHET_SETTINGS_FILE:-vstack.settings.toml}" ".vstack/settings.toml"; do
+  # Nested project settings override the root file (the standard loader
+  # order); an explicit SIZE_RATCHET_SETTINGS_FILE consults only itself.
+  if [ -n "${SIZE_RATCHET_SETTINGS_FILE+x}" ]; then
+    set -- "$SIZE_RATCHET_SETTINGS_FILE"
+  else
+    set -- ".vstack/settings.toml" "vstack.settings.toml"
+  fi
+  for file in "$@"; do
   if [ -f "$file" ]; then
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment and must override the built-in default, exactly like a
@@ -101,7 +108,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   fi
   done
   if [ -f ".env" ]; then
-    line="$(grep -E -- "^[[:space:]]*(export[[:space:]]+)?${name}=" .env | head -n 1 || true)"
+    line="$(grep -E -- "^[[:space:]]*(export[[:space:]]+)?${name}=" .env | tail -n 1 || true)"
     if [ -n "$line" ]; then
       val="${line#*=}"
       case "$val" in
