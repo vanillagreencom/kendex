@@ -42,7 +42,8 @@ frozen in the baseline at their current size, and the baseline may only
 move down. --update lowers/removes rows to current reality (never adds,
 never raises) and then re-checks.
 
-Configuration (env > vstack.settings.toml [env] > default):
+Configuration (env > .env.local > vstack.settings.toml [env] >
+.vstack/settings.toml > .env > default):
   SIZE_RATCHET_THRESHOLD   line threshold           (default 1000)
   SIZE_RATCHET_BASELINE    baseline path            (default tools/size-ratchet-baseline.tsv)
   SIZE_RATCHET_EXCLUDES    exclusion-list path      (default tools/size-ratchet-excludes)
@@ -292,7 +293,9 @@ if [ "$MODE" = "update" ]; then
     # The baseline file is itself a tracked file whose length just changed;
     # refresh its counts row so the post-update verdict sees reality, not
     # the pre-rewrite length.
-    if grep -q "^${BASELINE_FILE}${TAB}" -- "$TMP/counts.tsv"; then
+    # Literal path match (awk string equality, never a grep regex): a
+    # baseline path with regex-significant characters must still recount.
+    if awk -F'\t' -v p="$BASELINE_FILE" '$1 == p { found = 1 } END { exit found ? 0 : 1 }' "$TMP/counts.tsv"; then
       new_n="$(wc -l <"$BASELINE_FILE" | tr -d ' ')"
       awk -F'\t' -v OFS='\t' -v p="$BASELINE_FILE" -v n="$new_n" '$1 == p { print p, n; next } { print }' "$TMP/counts.tsv" >"$TMP/counts.rewrite"
       mv "$TMP/counts.rewrite" "$TMP/counts.tsv"
