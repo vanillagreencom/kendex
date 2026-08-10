@@ -11,9 +11,18 @@ issue_id=""
 state_path=""
 initialized=false
 
-# Match case-insensitively, then normalize to canonical uppercase: workflow-state
-# keys are case-sensitive, and this must agree with session-init's derivation.
-issue_id="$(printf '%s\n' "$branch" | grep -oiP "$pattern" | head -1 | tr '[:lower:]' '[:upper:]' || true)"
+# Match case-insensitively (ERE — macOS grep has no -P), then normalize to the
+# canonical key case: workflow-state keys are case-sensitive, and this must
+# agree with session-init and git-context issue-from-branch — GitHub-style
+# `issue-N` keys are canonically lowercase, Linear-style `ABC-N` uppercase.
+issue_id="$(printf '%s\n' "$branch" | grep -oiE "$pattern" | head -1 || true)"
+if [[ -n "$issue_id" ]]; then
+    if [[ "${issue_id,,}" == issue-* ]]; then
+        issue_id="${issue_id,,}"
+    else
+        issue_id="${issue_id^^}"
+    fi
+fi
 
 if [[ -n "$issue_id" ]]; then
     exists_json="$("$SCRIPT_DIR/workflow-state" exists --json "$issue_id")"

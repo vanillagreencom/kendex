@@ -54,7 +54,7 @@ Set non-sensitive values in `vstack.settings.toml` under `[env]`. Existing `.env
 | `ORCH_CACHE_DIR` | Parallel-group safety cache | `.cache/orch` |
 | `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved GitHub token from the parent process | current `gh` auth |
 | `GH_BOT_TOKEN` | Bot GitHub token for worktree auth | `GH_TOKEN` / `GITHUB_TOKEN`, then current `gh` auth |
-| `GH_ISSUE_PATTERN` | Issue ID regex for branch names | `[A-Z]+-[0-9]+` |
+| `GH_ISSUE_PATTERN` | Issue ID regex for branch names. Matched case-insensitively; the match is then canonicalized (`issue-N` lowercase, Linear-style `ABC-N` uppercase) so review-init, session-init, and git-context derive one workflow-state key per branch | `[A-Z]+-[0-9]+` |
 | `CI_WAIT_NO_CHECKS_GRACE` | Seconds `ci-wait` keeps polling before failing when no CI checks have registered yet (covers approval-gated CI dispatch latency) | `180` |
 | `QUEUE_WAIT_ARM_GRACE` | Seconds `queue-wait` keeps polling before reporting `not_queued` when no poll has yet seen the PR queued or armed (covers enqueue registration lag) | `120` |
 | `QUEUE_WAIT_CONFIRM_POLLS` | Consecutive polls that must agree before `queue-wait` reports an ejection or disarm, so one eventually-consistent blip cannot trigger a recovery cycle | `2` |

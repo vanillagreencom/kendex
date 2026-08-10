@@ -91,6 +91,23 @@ assert_eq "$(jq -r '.initialized' <<<"$ri2_out")" "false" "pre-existing canonica
 assert_eq "$(basename "$(jq -r '.state_path' <<<"$ri2_out")")" "workflow-state-VST-177.json" "pre-existing canonical state path is reused"
 assert_eq "$(state_file_count)" "1" "no duplicate case-variant state file"
 
+# Case 4: GitHub-style keys stay canonically LOWERCASE — uppercasing issue-42
+# to ISSUE-42 would orphan an existing workflow-state-issue-42.json and mint a
+# case-variant twin (the exact defect this normalization exists to prevent).
+GH_WT="$TMP_ROOT/wt-issue-42"
+git -C "$REPO" worktree add -q -b Issue-42 "$GH_WT" >/dev/null
+GH_STATE_DIR="$TMP_ROOT/state-gh"
+(cd "$GH_WT" && ORCH_STATE_DIR="$GH_STATE_DIR" "$WORKFLOW_STATE" init issue-42 >/dev/null)
+gh_out="$(cd "$GH_WT" && PATH="$BIN:$PATH" GH_ISSUE_PATTERN='(VST-[0-9]+|issue-[0-9]+)' ORCH_STATE_DIR="$GH_STATE_DIR" "$REVIEW_INIT")"
+assert_eq "$(jq -r '.issue_id' <<<"$gh_out")" "issue-42" "github-style key normalizes to lowercase"
+assert_eq "$(jq -r '.initialized' <<<"$gh_out")" "false" "existing lowercase github state is reused"
+assert_eq "$(find "$GH_STATE_DIR" -maxdepth 1 -name 'workflow-state-*.json' | wc -l | tr -d ' ')" "1" "no uppercase twin for github-style key"
+
+# Case 5: session-init agrees on the lowercase github-style key too.
+si_gh="$(cd "$GH_WT" && PATH="$BIN:$PATH" GH_ISSUE_PATTERN='(VST-[0-9]+|issue-[0-9]+)' "$SESSION_INIT" --json)"
+assert_eq "$(jq -r '.issue_id' <<<"$si_gh")" "issue-42" "session-init derives lowercase github-style key"
+assert_eq "$(jq -r '.tracker' <<<"$si_gh")" "github" "session-init tracker probe recognizes github-style key"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
