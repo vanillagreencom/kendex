@@ -162,26 +162,42 @@ fi
 
 # --- count every tracked, non-excluded, regular file -------------------------
 git ls-files -z >"$TMP/files.z" || config_error "git ls-files failed"
+NL='
+'
 checked=0
 : >"$TMP/counts.raw"
+: >"$TMP/absent.raw"
 while IFS= read -r -d '' f; do
-  [ -h "$f" ] && continue # a symlink's own content has no meaningful line count
-  [ -f "$f" ] || continue # tracked but deleted in the working tree
   is_excluded "$f" && continue
+  # Every record downstream (counts, baseline, absent list) is line- and
+  # tab-oriented; a path carrying either separator would silently split into
+  # garbage rows. Refuse loudly — excluding the path is the escape hatch.
   case "$f" in
-    *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV: $f" ;;
+    *"$NL"*) config_error "tracked path contains a newline, unrepresentable in line-oriented records (exclude it to skip the gate): '$f'" ;;
+    *"$TAB"*) config_error "tracked path contains a tab, unrepresentable in the baseline TSV (exclude it to skip the gate): '$f'" ;;
   esac
+  [ -h "$f" ] && continue # a symlink's own content has no meaningful line count
+  if [ ! -f "$f" ]; then
+    # In the index but absent from the worktree (unstaged deletion, sparse
+    # checkout): the size is unknowable. Never classify as gone — that would
+    # fail the check as stale and let --update drop the row, silently
+    # loosening the ratchet on a tree that merely hasn't materialized it.
+    printf '%s\n' "$f" >>"$TMP/absent.raw"
+    continue
+  fi
   n="$(wc -l <"$f")"
   n=$((n)) # strip wc's leading whitespace (BSD wc pads)
   printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
   checked=$((checked + 1))
 done <"$TMP/files.z"
 LC_ALL=C sort "$TMP/counts.raw" >"$TMP/counts.tsv"
+LC_ALL=C sort "$TMP/absent.raw" >"$TMP/absent.lst"
 
 # --- evaluate a baseline against the counts ----------------------------------
 evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separated
-  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$1" '
+  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$1" -v absentfile="$TMP/absent.lst" '
     FILENAME == basefile { base[$1] = $2 + 0; border[++bn] = $1; next }
+    FILENAME == absentfile { absent[$1] = 1; next }
     {
       p = $1; n = $2 + 0; seen[p] = 1
       if (n > thr) {
@@ -195,10 +211,15 @@ evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separate
     END {
       for (i = 1; i <= bn; i++) {
         p = border[i]
-        if (!(p in seen)) print "GONE", p, "", base[p]
+        if (p in seen) continue
+        if (p in absent) continue # size unknown: neither gone nor grown
+        # "-" placeholder, never an empty field: report() reads these rows
+        # with tab-IFS, and whitespace IFS collapses consecutive tabs, which
+        # would shift the baseline count into the wrong column.
+        print "GONE", p, "-", base[p]
       }
     }
-  ' "$1" "$TMP/counts.tsv"
+  ' "$1" "$TMP/absent.lst" "$TMP/counts.tsv"
 }
 
 report() { # VIOLATIONS-FILE — human diagnostics on stdout
@@ -231,12 +252,20 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
 
 # --- --update: tighten only ---------------------------------------------------
 if [ "$MODE" = "update" ]; then
-  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$TMP/baseline.tsv" '
+  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$TMP/baseline.tsv" -v absentfile="$TMP/absent.lst" '
     FILENAME == basefile { base[$1] = $2 + 0; border[++bn] = $1; next }
+    FILENAME == absentfile { absent[$1] = 1; next }
     { act[$1] = $2 + 0 }
     END {
       for (i = 1; i <= bn; i++) {
         p = border[i]; b = base[p]
+        if (p in absent) {
+          # Tracked but not in the worktree: size unknown, row preserved
+          # verbatim — dropping it here would loosen the ratchet.
+          printf "preserved (tracked but absent from worktree): %s\n", p > "/dev/stderr"
+          print p, b
+          continue
+        }
         if (!(p in act) || act[p] <= thr) {
           printf "removed: %s (row %d)\n", p, b > "/dev/stderr"
           continue
@@ -250,7 +279,7 @@ if [ "$MODE" = "update" ]; then
         }
       }
     }
-  ' "$TMP/baseline.tsv" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
+  ' "$TMP/baseline.tsv" "$TMP/absent.lst" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
   if [ -f "$BASELINE_FILE" ]; then
     mv "$TMP/baseline.new" "$BASELINE_FILE"
     cp "$BASELINE_FILE" "$TMP/baseline.tsv"

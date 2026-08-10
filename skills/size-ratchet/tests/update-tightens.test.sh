@@ -79,6 +79,25 @@ run_sr
 [ "$RC" -eq 0 ] && ok "hand-edited acceptance rows pass (control: growth is a reviewed human edit)" \
   || bad "hand-edited acceptance rows pass" "rc=$RC out=$OUT"
 
+# A tracked-but-absent file (unstaged deletion / sparse checkout) has an
+# unknowable size: --update must preserve its row verbatim, never drop it —
+# dropping would loosen the ratchet with a green exit.
+R="$TMP/upd-absent"
+mkdir -p "$R"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile keep.txt 15
+mkdir -p "$R/tools"
+printf 'keep.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+rm "$R/keep.txt" # unstaged: keep.txt stays in git ls-files
+run_sr --update
+row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+[ "$RC" -eq 0 ] && [ "$row" = "$(printf 'keep.txt\t15')" ] && case "$OUT" in *"preserved"*) true ;; *) false ;; esac \
+  && ok "--update preserves the row of a tracked-but-absent file verbatim and says so" \
+  || bad "--update preserves the row of a tracked-but-absent file" "rc=$RC row=$row out=$OUT"
+
 # --update with no baseline file: never creates one (it cannot add rows).
 R="$TMP/upd2"
 mkdir -p "$R"

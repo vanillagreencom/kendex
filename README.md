@@ -237,6 +237,7 @@ Rust and performance reference material now lives directly in the `rust`, `revie
 | [`review-gate`](skills/review-gate/)* | Org-wide PR merge gate driven by a single review-evidence predicate (approvals, trusted checks, comment-form passes, outage attestation), with convergence scripts and an offline decision-table selftest. |
 | [`reviewer`](skills/reviewer/)* | Strict code-review, whole-codebase review, and QA-review ethos, scope boundaries, workflows, and canonical finding/verdict JSON schema. Loaded by any `reviewer-*` agent. |
 | [`second-opinion`](skills/second-opinion/) | Cross-model review via the opposite AI CLI (Claude ↔ Codex). |
+| [`size-ratchet`](skills/size-ratchet/)* | Tighten-only file-size gate over tracked files: new offenders, growth past a baseline row, and baselines looser than reality all fail; `--update` only lowers or removes rows, never adds or raises. |
 | [`worktree`](skills/worktree/)* | Git worktree create/list/remove with env/config symlinks and per-worktree bot identity. |
 
 ### Hooks

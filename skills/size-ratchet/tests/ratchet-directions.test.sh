@@ -96,6 +96,48 @@ run_sr
   && ok "a row for a file now under the threshold fails as stale" \
   || bad "a row for a file now under the threshold fails as stale" "rc=$RC out=$OUT"
 case "$OUT" in *"stale baseline row: gone.txt"*) ok "a row for a deleted file fails as stale" ;; *) bad "a row for a deleted file fails as stale" "$OUT" ;; esac
+case "$OUT" in *"the row (42) must go"*) ok "the gone-file diagnostic keeps its fields aligned (names the row's own count)" ;; *) bad "the gone-file diagnostic keeps its fields aligned" "$OUT" ;; esac
+
+echo "=== tracked-but-absent files are unknown, never stale ==="
+# In `git ls-files` but missing from the worktree (unstaged deletion, sparse
+# checkout): the size is unknowable, so the row must be preserved — treating
+# it as gone would let --update silently loosen the ratchet.
+new_repo absent
+mkfile big.txt 15
+mkdir -p "$R/tools"
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+rm "$R/big.txt" # unstaged: the index still lists big.txt
+run_sr
+[ "$RC" -eq 0 ] && ok "an unstaged-deleted baselined file is preserved, not stale" \
+  || bad "an unstaged-deleted baselined file is preserved, not stale" "rc=$RC out=$OUT"
+git -C "$R" add -A # stage the deletion: now it truly left the tracked set
+run_sr
+[ "$RC" -eq 1 ] && case "$OUT" in *"stale baseline row: big.txt"*) true ;; *) false ;; esac \
+  && ok "control: the STAGED deletion is stale — only index-listed-but-absent is preserved" \
+  || bad "control: the STAGED deletion is stale" "rc=$RC out=$OUT"
+
+echo "=== newline-containing tracked paths are refused loudly ==="
+new_repo nl
+mkfile ok.txt 3
+printf 'x\n' >"$R/"$'bad\nname.txt'
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 2 ] && case "$OUT" in *newline*) true ;; *) false ;; esac \
+  && ok "a tracked path containing a newline is a loud refusal, not a silently split record" \
+  || bad "a tracked path containing a newline is a loud refusal" "rc=$RC out=$OUT"
+
+echo "=== exclusion patterns reach matching intact (no word-split, no glob expansion) ==="
+new_repo intact
+mkfile "foo bqq.txt" 20   # excluded only if 'foo b*' survives as ONE pattern
+mkfile sub/ax-big.txt 20  # excluded only if '*ax-big.txt' is NOT glob-expanded
+mkfile zax-big.txt 3      # glob bait in the repo root: an expanding build rewrites the pattern to this
+mkdir -p "$R/tools"
+printf 'foo b*\tspace-containing pattern\n*ax-big.txt\tglob-bait pattern\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 0 ] && ok "space-containing and glob-bait patterns both exclude their targets verbatim" \
+  || bad "space-containing and glob-bait patterns both exclude their targets verbatim" "rc=$RC out=$OUT"
 
 echo "=== exclusions remove files from the counted set ==="
 new_repo excl

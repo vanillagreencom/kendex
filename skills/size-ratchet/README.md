@@ -9,8 +9,13 @@ reviewed diff, with the justification on the record.
 ## Semantics
 
 - **Scope**: every tracked file (`git ls-files`), tests included, minus the
-  exclusion list. Symlinks and paths deleted from the working tree are
-  skipped. Lines are newline counts (`wc -l`).
+  exclusion list. Symlinks are skipped. A tracked file absent from the
+  worktree (unstaged deletion, sparse checkout) has an unknowable size: it
+  is never counted, never flagged, and its baseline row is preserved
+  verbatim — including through `--update` — so a partial tree can never
+  loosen the ratchet. A tracked path containing a tab or newline is refused
+  loudly (exit 2; exclude it to skip the gate) — it cannot be represented
+  in the line-oriented records. Lines are newline counts (`wc -l`).
 - **Threshold**: default `1000` lines, override via
   `SIZE_RATCHET_THRESHOLD` (environment > `vstack.settings.toml` `[env]` >
   default).

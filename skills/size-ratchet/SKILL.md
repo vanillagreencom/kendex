@@ -43,8 +43,11 @@ row it violated, plus the remedies: *split at a concept seam, or raise the
 baseline row in this diff with justification*.
 
 Exit codes: `0` clean, `1` violations, `2` usage/config error (malformed
-baseline or excludes, bad threshold). Line counts are newline counts
-(`wc -l`).
+baseline or excludes, bad threshold, a tracked path containing a tab or
+newline). Line counts are newline counts (`wc -l`). A tracked file absent
+from the worktree (unstaged deletion, sparse checkout) is unknown, not
+gone: it is never flagged and its baseline row survives `--update`
+untouched.
 
 ## `--update` — tighten only
 
