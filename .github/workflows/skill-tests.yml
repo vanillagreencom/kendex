@@ -143,6 +143,10 @@ jobs:
       # Pi 0.84.x is the release the extensions are audited against, so the
       # suites that assert 0.84 wire-format parity install that line rather
       # than the 0.80.5 floor above.
+      # The two pane-preflight cases in pane-cwd-stale.test.ts call ensureTmux(), which
+      # throws when $TMUX is unset; they skip themselves on a bare runner the same way
+      # they already skip off Linux. The whole directory is still globbed, so new test
+      # files run here without editing this step.
       - name: pi-agents-tmux suite
         working-directory: pi-extensions/pi-agents-tmux
         run: |

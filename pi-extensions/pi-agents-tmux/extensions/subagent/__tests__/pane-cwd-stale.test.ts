@@ -106,6 +106,9 @@ afterEach(() => {
 describe("persistent pane cwd preflight", () => {
 	test("refuses to queue into a live pane whose process cwd was deleted", async () => {
 		if (process.platform !== "linux") return;
+		// The preflight calls ensureTmux(), which throws when $TMUX is unset. A bare CI
+		// runner has no tmux session, so skip rather than fail on a missing environment.
+		if (!process.env.TMUX) return;
 		const runtimeRoot = tempDir("pi-agents-pane-cwd-runtime-");
 		const staleCwd = tempDir("pi-agents-pane-cwd-stale-");
 		const requestedCwd = tempDir("pi-agents-pane-cwd-requested-");
@@ -193,6 +196,7 @@ describe("persistent pane cwd preflight", () => {
 
 	test("refuses to queue when live pane cwd differs from requested cwd", async () => {
 		if (process.platform !== "linux") return;
+		if (!process.env.TMUX) return;
 		const runtimeRoot = tempDir("pi-agents-pane-cwd-runtime-");
 		const paneCwd = tempDir("pi-agents-pane-cwd-a-");
 		const requestedCwd = tempDir("pi-agents-pane-cwd-b-");
