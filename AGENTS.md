@@ -6,7 +6,7 @@ Reviewing a PR as a review bot? Follow `review-bots.md` (repo root) — reviewer
 
 ## Session handoffs
 
-Session handoff files live ONLY in `docs/handoff/` (git-ignored) — exactly one file, pruned each update to the minimum context a fresh session needs (no history/prose). Read it only when the user asks or starts a session from a handoff.
+Session handoff files live ONLY in `docs/handoff/` — exactly one untracked file named `HANDOFF.md`, pruned each update to the minimum context a fresh session needs (no history/prose). The only tracked file there is `docs/handoff/README.md`, which documents the pattern; everything else is git-ignored. Read the handoff only when the user asks or starts a session from a handoff.
 
 ## Repo Layout
 
