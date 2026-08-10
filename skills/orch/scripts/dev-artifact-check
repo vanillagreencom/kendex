@@ -287,7 +287,7 @@ validate_artifact() {
           '((.items? | type) == "array") and (([ .items[].n ] | sort) == [range(1; $n + 1)])' \
           "$file" >/dev/null 2>&1; then
         emit false "$file" "incomplete" "" \
-          "--expect-items takes the delegated item NUMBERS (a set, e.g. 1,2,3), not a count: the artifact carries items 1..$expect_items while the expected set was {$expect_items}"
+          "if this delegation covered $expect_items items, then '$expect_items' was a COUNT — --expect-items takes the delegated item NUMBERS (e.g. 1,2,...,$expect_items); if it genuinely delegated only item #$expect_items, the artifact carries extra items 1..$expect_items"
         return 1
       fi
       emit false "$file" "incomplete"
