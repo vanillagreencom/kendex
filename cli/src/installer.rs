@@ -254,6 +254,38 @@ pub fn remove_item(
     let remove_skills = kind.is_none_or(|kind| kind == ItemKind::Skill);
     let remove_hooks = kind.is_none_or(|kind| kind == ItemKind::Hook);
 
+    // Snapshot canonical deletion targets BEFORE harness links are removed:
+    // an anchored root's copy is deletable only while a requested harness's
+    // link still proves this entry uses that root for this skill — a
+    // same-named install belonging to another harness in the other checkout
+    // must not be reached just because the requested harness shares there.
+    let canonical_skill_paths: Vec<PathBuf> = if !remove_skills {
+        Vec::new()
+    } else if global {
+        vec![
+            crate::config::global_state_dir().join("skills").join(name),
+            crate::config::codex_home_dir().join("skills").join(name),
+        ]
+    } else {
+        let mut paths = vec![
+            crate::config::project_root()
+                .join(".agents")
+                .join("skills")
+                .join(name),
+        ];
+        for (root, sharing) in anchored_canonical_skill_roots(harnesses) {
+            let referenced = sharing.iter().any(|harness| {
+                let link = harness.skills_dir(false).join(name);
+                link.exists() || link.is_symlink()
+            });
+            let path = root.join(name);
+            if referenced && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+        paths
+    };
+
     for harness in harnesses {
         // Agent files
         if remove_agents {
@@ -307,23 +339,6 @@ pub fn remove_item(
     }
 
     if remove_skills {
-        let canonical_skill_paths = if global {
-            vec![
-                crate::config::global_state_dir().join("skills").join(name),
-                crate::config::codex_home_dir().join("skills").join(name),
-            ]
-        } else {
-            // Symmetric with install_skill's anchoring: the canonical copy
-            // lives in the checkout where each harness link physically lands,
-            // so removal from a worktree must also clear a copy anchored in
-            // the main checkout — scoped to the requested harnesses, so a
-            // main-checkout install for other harnesses stays untouched.
-            project_canonical_skill_roots(harnesses)
-                .into_iter()
-                .map(|root| root.join(name))
-                .collect()
-        };
-
         for path in canonical_skill_paths {
             match remove_expected_path(&path, ExpectedArtifact::Any) {
                 Ok(true) => removed.push(path),
@@ -1365,6 +1380,76 @@ mod tests {
             "reconciliation from the worktree must not claim main's Codex-only install"
         );
         assert!(solo.join("SKILL.md").is_file());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Same-name collision across harnesses: scoping by harness set alone is
+    /// not enough when the REQUESTED harness shares into main but never
+    /// installed this skill — main's same-named copy belongs to another
+    /// harness's install. An anchored root's copy is deletable only while
+    /// the requesting harness's link proves this entry uses that root for
+    /// this skill.
+    #[cfg(unix)]
+    #[test]
+    fn remove_item_leaves_same_named_install_of_other_harness_in_main() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_worktree_name_collision_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let main = root.join("main");
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&main).unwrap();
+        if !init_repo_with_commit(&main) {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // git unavailable on this host
+        }
+        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+
+        let main_skills = main.join(".claude").join("skills");
+        std::fs::create_dir_all(&main_skills).unwrap();
+        std::fs::create_dir_all(wt.join(".claude")).unwrap();
+        symlink(&main_skills, wt.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(wt.join(".agents")).unwrap();
+
+        // Main-only Cursor install named "dupe": canonical copy + marker;
+        // Claude never installed it, so no link exists in the shared dir.
+        let dupe = main.join(".agents").join("skills").join("dupe");
+        std::fs::create_dir_all(&dupe).unwrap();
+        std::fs::write(dupe.join("SKILL.md"), "# dupe\n").unwrap();
+        std::fs::write(dupe.join(".vstack-refreshed"), "0").unwrap();
+
+        crate::test_util::with_project_root(&wt, || {
+            remove_item("dupe", Some(ItemKind::Skill), &[Harness::ClaudeCode], false).unwrap()
+        });
+        assert!(
+            dupe.join("SKILL.md").is_file(),
+            "a sharing harness that never installed this skill must not delete main's same-named copy"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A cyclic dangling symlink chain must exhaust the resolution bound and
+    /// report failure rather than spinning or silently mis-resolving.
+    #[cfg(unix)]
+    #[test]
+    fn canonicalize_allowing_missing_fails_closed_on_cyclic_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "vstack_cyclic_symlinks_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        symlink(root.join("b"), root.join("a")).unwrap();
+        symlink(root.join("a"), root.join("b")).unwrap();
+
+        assert!(canonicalize_allowing_missing(&root.join("a").join("child")).is_none());
 
         let _ = std::fs::remove_dir_all(&root);
     }
