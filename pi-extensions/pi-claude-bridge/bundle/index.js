@@ -45780,10 +45780,18 @@ function contextFileInDir(dir) {
     try {
       if (statSync5(candidate).isFile()) return candidate;
     } catch (error51) {
+      let lstatCode;
+      let entryExists = false;
       try {
         lstatSync2(candidate);
-        debug(`agents-md: skipping unusable ${candidate}: ${error51.code ?? String(error51)}`);
-      } catch {
+        entryExists = true;
+      } catch (lstatError) {
+        lstatCode = lstatError.code;
+      }
+      if (entryExists || lstatCode !== "ENOENT") {
+        const detail = error51.code ?? String(error51);
+        const suffix = entryExists ? "" : ` (lstat: ${lstatCode ?? "unknown"})`;
+        debug(`agents-md: skipping unusable ${candidate}: ${detail}${suffix}`);
       }
     }
   }

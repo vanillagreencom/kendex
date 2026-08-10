@@ -38,14 +38,23 @@ function contextFileInDir(dir: string): string | undefined {
 			if (statSync(candidate).isFile()) return candidate;
 		} catch (error) {
 			// A genuinely absent candidate is the normal case and stays silent. Anything else --
-			// a dangling symlink (which reports ENOENT through stat), a permissions error, an I/O
-			// fault -- means a context file the user intended is being skipped, and skipping an
-			// override silently forwards the AGENTS.md it was meant to supersede.
+			// a dangling symlink (which reports ENOENT through stat but resolves through lstat),
+			// a permissions error, an I/O fault -- means a context file the user intended is being
+			// skipped, and skipping an override silently forwards the AGENTS.md it was meant to
+			// supersede. Only ENOENT from lstat proves genuine absence; a traversal or permission
+			// fault throws from both calls and must not be mistaken for "no such file".
+			let lstatCode: string | undefined;
+			let entryExists = false;
 			try {
 				lstatSync(candidate);
-				debug(`agents-md: skipping unusable ${candidate}: ${(error as NodeJS.ErrnoException).code ?? String(error)}`);
-			} catch {
-				// Not present at all; try the next filename.
+				entryExists = true;
+			} catch (lstatError) {
+				lstatCode = (lstatError as NodeJS.ErrnoException).code;
+			}
+			if (entryExists || lstatCode !== "ENOENT") {
+				const detail = (error as NodeJS.ErrnoException).code ?? String(error);
+				const suffix = entryExists ? "" : ` (lstat: ${lstatCode ?? "unknown"})`;
+				debug(`agents-md: skipping unusable ${candidate}: ${detail}${suffix}`);
 			}
 		}
 	}

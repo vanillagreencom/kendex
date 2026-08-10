@@ -894,21 +894,33 @@ async function runSingleAgentAttempt(
 				// dashboard activity, transcript display) already looks there, so putting the
 				// reconstruction anywhere else leaves the record unreadable.
 				const partialMessage = partialAssistantMessage(partialMessageState);
+				// Computed before any early return. A stream whose shapes we no longer recognize
+				// produces NO partialMessage, so the diagnostic is the only signal that the wire
+				// format moved -- skipping it on any path restores the silent failure this
+				// accumulator exists to prevent.
+				const diagnostic = partialAssistantMessageDiagnostic(partialMessageState);
+				// Route through result diagnostics, not the transcript alone: appendTranscript drops
+				// write failures, so a transcript-only signal has no second chance to surface.
+				const emitDiagnostic = () => {
+					if (!diagnostic) return;
+					appendResultDiagnostic(currentResult, diagnostic);
+					appendTranscript({ type: "diagnostic", diagnostic, attempt });
+				};
 				// Full-stream mode keeps every raw update, so there is no buffered event to flush --
 				// but the reconstruction is still the only readable form of the partial answer.
 				if (keepFullTranscript && !latestFilteredMessageUpdate) {
 					if (partialMessage) {
 						const reconstructed = { type: "message_update", message: partialMessage };
 						appendTranscript({ stream: "stdout", raw: JSON.stringify(reconstructed), event: reconstructed, buffered: true, reason, partialMessage });
-						resetPartialAssistantMessage(partialMessageState);
 					}
+					emitDiagnostic();
+					if (partialMessage || diagnostic) resetPartialAssistantMessage(partialMessageState);
 					return;
 				}
 				if (!latestFilteredMessageUpdate) return;
 				const flushedEvent = partialMessage
 					? { ...latestFilteredMessageUpdate, message: partialMessage }
 					: latestFilteredMessageUpdate;
-				const diagnostic = partialAssistantMessageDiagnostic(partialMessageState);
 				appendTranscript({
 					stream: "stdout",
 					raw: JSON.stringify(flushedEvent),
@@ -917,12 +929,7 @@ async function runSingleAgentAttempt(
 					reason,
 					...(partialMessage ? { partialMessage } : {}),
 				});
-				// Route through result diagnostics, not the transcript alone: appendTranscript drops
-				// write failures, so a transcript-only signal has no second chance to surface.
-				if (diagnostic) {
-					appendResultDiagnostic(currentResult, diagnostic);
-					appendTranscript({ type: "diagnostic", diagnostic, attempt });
-				}
+				emitDiagnostic();
 				latestFilteredMessageUpdate = undefined;
 				resetPartialAssistantMessage(partialMessageState);
 			};

@@ -411,6 +411,48 @@ test("full-stream transcript still records a reconstructed partial message on fa
 	else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
 });
 
+test("unrecognized wire shapes surface a diagnostic in both transcript modes", async () => {
+	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	// The diagnostic is the ONLY signal when Pi's shapes move: reconstruction yields nothing,
+	// so a mode that skips it writes an empty forensic record with no warning.
+	for (const fullStream of [false, true]) {
+		if (fullStream) process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = "1";
+		else delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+		const label = fullStream ? "full-stream" : "filtered";
+		installMockSpawn([{ code: 1, stdout: bridgeStdout([
+			shapedStreamEvent("top-level", "message_start"),
+			shapedStreamEvent("top-level", "message_update", { assistantMessageEvent: { type: "prose_delta", contentIndex: 0, delta: "future Pi shape" } }),
+			shapedStreamEvent("top-level", "message_update", { assistantMessageEvent: { type: "audio_delta", contentIndex: 1 } }),
+		]) }]);
+		try {
+			const result = await runSingleAgent(
+				tempRuntime(),
+				tempRuntime(),
+				[testAgent()],
+				"reviewer-test",
+				`review task unknown shapes ${label}`,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				mockPiEvents([]),
+				undefined,
+				undefined,
+				makeDetails,
+			);
+			const diagnostics = (result.diagnostics ?? []).join(" ");
+			assert.match(diagnostics, /could not be rebuilt/, label);
+			assert.match(diagnostics, /prose_delta/, label);
+			assert.match(diagnostics, /audio_delta/, label);
+			assert.match(readTranscript(result), /could not be rebuilt/, label);
+		} finally {
+			setSingleAgentSpawnForTests();
+		}
+	}
+	if (previousFull === undefined) delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
+	else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
+});
+
 test("failed oneshot transcript keeps only the newest message's deltas across a message boundary", async () => {
 	const previousFull = process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
 	delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
