@@ -74,7 +74,7 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
             } else {
                 installer::remove_item(name, kind, &harnesses, global).map(|outcome| {
                     for anchored in &outcome.anchored_left {
-                        println!(
+                        eprintln!(
                             "  Anchored canonical left in place (another checkout's): {}",
                             anchored.display()
                         );

@@ -151,15 +151,21 @@ pub fn install_skill(
             // refresh. Children — a local parent whose final component
             // links out — stays write-shy: that linked copy is the owning
             // checkout's.
-            let dest_references_canonical = std::fs::symlink_metadata(&dest)
-                .is_ok_and(|meta| meta.file_type().is_symlink())
+            let dest_parent_shared = dest
+                .parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                .is_some_and(|parent| !parent.starts_with(&project_checkout));
+            let dest_references_canonical = dest_parent_shared
                 && dest
                     .canonicalize()
                     .is_ok_and(|resolved| resolved == canonical_physical)
-                && dest
-                    .parent()
-                    .and_then(|parent| parent.canonicalize().ok())
-                    .is_some_and(|parent| !parent.starts_with(&project_checkout));
+                && std::fs::symlink_metadata(&dest).is_ok_and(|meta| {
+                    // A symlink artifact in the shared surface, OR the
+                    // direct-canonical shape (Codex/Pi: dest IS the real
+                    // canonical dir reached through the shared `.agents`) —
+                    // both are this project's install to refresh.
+                    meta.file_type().is_symlink() || meta.file_type().is_dir()
+                });
             // Global installs live under user homes by definition — the
             // anchoring/write-shy machinery is project-scope only, and a
             // global Codex canonical (canonical == dest, outside any
@@ -180,11 +186,16 @@ pub fn install_skill(
                 // containment): that one is repaired from source
                 // (remove_existing unlinks the symlink itself, never its
                 // target).
+                // The owning root comes from the PARENT's physical home —
+                // the spelled path may run through this worktree's shared
+                // `.agents`, and spelled-parent canonicalization would name
+                // the worktree, misreading main's project-skills-dir
+                // symlink as escaping.
                 let owning_checkout = canonical
                     .parent()
-                    .and_then(Path::parent)
-                    .and_then(Path::parent)
-                    .and_then(|root| root.canonicalize().ok());
+                    .and_then(|parent| parent.canonicalize().ok())
+                    .and_then(|skills| skills.parent().map(Path::to_path_buf))
+                    .and_then(|agents| agents.parent().map(Path::to_path_buf));
                 let escapes_checkout = match owning_checkout {
                     Some(root) => !canonical_physical.starts_with(&root),
                     None => true,
