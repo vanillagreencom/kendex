@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -198,6 +199,55 @@ describe("getPiInvocation entry resolution (vstack#192)", () => {
 		const invocation = getPiInvocation([], runtime({ env: { [PI_SUBAGENT_ENTRY_ENV]: "pi-custom" } }));
 		expect(invocation.command).toBe("pi-custom");
 		expect(invocation.childEntryOverride).toBe("pi-custom");
+	});
+
+	test("resolved relative executable actually runs from a different delegated cwd (PR #1178 r5, real spawn)", () => {
+		// The mocked-spawn coverage never exercises OS command resolution. This
+		// spawns the resolved invocation for real: a relative ./…/bin/pi
+		// override, resolved against the parent cwd, must execute when the
+		// child's cwd is a DIFFERENT delegated directory. Shell-script fixture
+		// needs a shebang, so skip on Windows.
+		if (process.platform === "win32") return;
+		const fixtureRoot = tempDir("pi-agents-real-spawn-");
+		const binDir = join(fixtureRoot, "bin");
+		mkdirSync(binDir, { recursive: true });
+		const marker = join(fixtureRoot, "marker.txt");
+		const executable = join(binDir, "pi");
+		writeFileSync(executable, `#!/bin/sh\nprintf ran > ${JSON.stringify(marker)}\n`);
+		chmodSync(executable, 0o755);
+		const relativeExecutable = relative(process.cwd(), executable);
+		expect(isAbsolute(relativeExecutable)).toBe(false);
+		// The delegated cwd must sit DEEPER than the relative path's ".." climb;
+		// from a shallow cwd the excess ".." segments clamp at / and the
+		// relative form would accidentally still resolve.
+		const upLevels = relativeExecutable.split("/").filter((segment) => segment === "..").length;
+		let delegatedCwd = tempDir("pi-agents-real-spawn-cwd-");
+		for (let i = 0; i < upLevels; i++) delegatedCwd = join(delegatedCwd, `depth-${i}`);
+		mkdirSync(delegatedCwd, { recursive: true });
+
+		const invocation = getPiInvocation([], runtime({ env: { [PI_SUBAGENT_ENTRY_ENV]: relativeExecutable } }));
+		const result = spawnSync(invocation.command, invocation.args, { cwd: delegatedCwd });
+		expect(result.error).toBeUndefined();
+		expect(result.status).toBe(0);
+		expect(readFileSync(marker, "utf-8")).toBe("ran");
+
+		// Same command through the pane launcher's exact shape (bash cd + exec),
+		// which resolves the command from the delegated cwd. Bun's own spawnSync
+		// resolves relative commands against the parent cwd, so only this form
+		// can distinguish a resolved absolute entry from the pre-fix relative
+		// one.
+		rmSync(marker, { force: true });
+		const viaLauncher = spawnSync("bash", ["-c", `exec ${JSON.stringify(invocation.command)}`], { cwd: delegatedCwd });
+		expect(viaLauncher.status).toBe(0);
+		expect(readFileSync(marker, "utf-8")).toBe("ran");
+
+		// Negative control: the pre-fix behavior. Bun's spawnSync resolves a
+		// relative executable against the PARENT cwd before chdir, so exercise
+		// the boundary the way the pane launcher does — bash `cd`s into the
+		// delegated cwd and execs the command — where the relative form fails
+		// command lookup (exit 127).
+		const broken = spawnSync("bash", ["-c", `exec ${JSON.stringify(relativeExecutable)}`], { cwd: delegatedCwd });
+		expect(broken.status).toBe(127);
 	});
 
 	test("compiled pi binary (/$bunfs argv[1]) still re-invokes execPath directly", () => {
