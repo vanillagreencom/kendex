@@ -11,11 +11,9 @@ issue_id=""
 state_path=""
 initialized=false
 
-if issue_id="$(printf '%s\n' "$branch" | grep -oiP "$pattern" | head -1)"; then
-    :
-else
-    issue_id=""
-fi
+# Match case-insensitively, then normalize to canonical uppercase: workflow-state
+# keys are case-sensitive, and this must agree with session-init's derivation.
+issue_id="$(printf '%s\n' "$branch" | grep -oiP "$pattern" | head -1 | tr '[:lower:]' '[:upper:]' || true)"
 
 if [[ -n "$issue_id" ]]; then
     exists_json="$("$SCRIPT_DIR/workflow-state" exists --json "$issue_id")"
