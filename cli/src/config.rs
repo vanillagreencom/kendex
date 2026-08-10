@@ -1178,15 +1178,21 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
                     // let the next refresh replace the copy. Only the
                     // resolving harnesses are recorded, so recovery cannot
                     // attach that independent install to the anchored entry.
+                    // Only SYMLINK artifacts are references: a direct
+                    // Codex/Pi artifact in a shared layout IS the canonical
+                    // dir itself, and counting that self-identity would let
+                    // a lockless worktree recover every main-checkout
+                    // canonical as its own install.
                     let referencing: Vec<String> = match path.canonicalize() {
                         Ok(canonical) => sharing
                             .iter()
                             .filter(|(harness, _)| {
-                                harness
-                                    .skills_dir(false)
-                                    .join(name)
-                                    .canonicalize()
-                                    .is_ok_and(|resolved| resolved == canonical)
+                                let artifact = harness.skills_dir(false).join(name);
+                                std::fs::symlink_metadata(&artifact)
+                                    .is_ok_and(|meta| meta.file_type().is_symlink())
+                                    && artifact
+                                        .canonicalize()
+                                        .is_ok_and(|resolved| resolved == canonical)
                             })
                             .map(|(harness, _)| harness.id().to_string())
                             .collect(),

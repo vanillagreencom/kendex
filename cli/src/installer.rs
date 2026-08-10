@@ -107,10 +107,29 @@ pub fn install_skill(
                     .join("skills")
                     .join(&skill.name)
             } else {
-                link_home
+                // No link evidence for THIS skill (fresh install). In a
+                // per-child sharing layout — a real skills dir whose
+                // EXISTING children symlink into another checkout — a new
+                // skill follows its siblings' anchor so one layout does not
+                // split canonicals across two checkouts.
+                let home_root = link_home
                     .as_ref()
                     .map(|home| home.checkout_root.clone())
-                    .unwrap_or_else(crate::config::project_root)
+                    .unwrap_or_else(|| {
+                        let own_skills =
+                            crate::config::project_root().join(".agents").join("skills");
+                        child_level_anchored_roots(&own_skills)
+                            .into_iter()
+                            .next()
+                            .and_then(|(root, _)| {
+                                // root is <checkout>/.agents/skills
+                                root.parent()
+                                    .and_then(Path::parent)
+                                    .map(Path::to_path_buf)
+                            })
+                            .unwrap_or_else(crate::config::project_root)
+                    });
+                home_root
                     .join(".agents")
                     .join("skills")
                     .join(&skill.name)
