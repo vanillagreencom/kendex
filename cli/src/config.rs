@@ -742,16 +742,38 @@ fn extract_toml_table_section(path: &Path, table: &str) -> Vec<u8> {
     result
 }
 
-/// The config keys whose sections feed an item's source hash: the item's own
-/// name plus the shared instruction keys (`all` and its `"*"` alias), which
-/// merge into every rendered agent/skill.
-fn instruction_keys_for(name: &str) -> [&str; 3] {
-    [
-        name,
-        crate::project_config::SHARED_INSTRUCTIONS_KEY,
-        crate::project_config::SHARED_INSTRUCTIONS_KEY_ALIAS,
-    ]
+/// Extract the shared `all`/`"*"` values from the instruction tables that
+/// apply to one item kind, canonically serialized. Scoped to the named tables
+/// on purpose: a shared agent-instruction edit must not stale skill installs
+/// (and vice versa) — table-agnostic key lookup would cross-invalidate.
+fn extract_shared_instruction_sections(path: &Path, tables: &[&str]) -> Vec<u8> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(toml::Value::Table(root)) = content.parse::<toml::Value>() else {
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    for table_name in tables {
+        let Some(toml::Value::Table(table)) = root.get(*table_name) else {
+            continue;
+        };
+        for key in [
+            crate::project_config::SHARED_INSTRUCTIONS_KEY,
+            crate::project_config::SHARED_INSTRUCTIONS_KEY_ALIAS,
+        ] {
+            if let Some(value) = table.get(key) {
+                result.extend_from_slice(format!("{table_name}.{key} = {value}\n").as_bytes());
+            }
+        }
+    }
+    result
 }
+
+/// The instruction tables whose shared `all`/`"*"` entries render into items
+/// of each kind.
+const AGENT_SHARED_TABLES: &[&str] = &["agent-launch-instructions", "agent-additional-instructions"];
+const SKILL_SHARED_TABLES: &[&str] = &["skill-instructions"];
 
 /// Extract the values for a given key from a TOML file, wherever the key
 /// appears: top level or inside any (nested) table. Values are canonically
@@ -936,16 +958,19 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
             {
                 state = fnv1a_chain(state, &hash_dir_bytes(dir).to_le_bytes());
             }
-            // Hash this skill's section plus the shared `all`/`*` entries from
-            // the project config — a shared-key edit changes every rendered
-            // skill, so it must stale every skill install. project_config_path
-            // honors the vstack-local.toml redirect for source-catalog projects.
+            // Hash this skill's section plus the shared `all`/`*` entries of
+            // the skill instruction table — a shared-key edit changes every
+            // rendered skill, so it must stale every skill install.
+            // project_config_path honors the vstack-local.toml redirect for
+            // source-catalog projects.
             let project_config = crate::project_config::project_config_path(&proj_root);
-            for key in instruction_keys_for(&entry.name) {
-                let section = extract_toml_section_for(&project_config, key);
-                if !section.is_empty() {
-                    state = fnv1a_chain(state, &section);
-                }
+            let section = extract_toml_section_for(&project_config, &entry.name);
+            if !section.is_empty() {
+                state = fnv1a_chain(state, &section);
+            }
+            let shared = extract_shared_instruction_sections(&project_config, SKILL_SHARED_TABLES);
+            if !shared.is_empty() {
+                state = fnv1a_chain(state, &shared);
             }
         }
         ItemKind::Agent => {
@@ -955,20 +980,23 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
             {
                 state = fnv1a_chain(state, &hash_file_bytes(file).to_le_bytes());
             }
-            // Hash this agent's sections plus the shared `all`/`*` entries
-            // from both configs — a shared-key edit changes every rendered
-            // agent, so it must stale every agent install. project_config_path
-            // honors the vstack-local.toml redirect for source-catalog projects.
+            // Hash this agent's sections plus the shared `all`/`*` entries of
+            // the agent instruction tables from both configs — a shared-key
+            // edit changes every rendered agent, so it must stale every agent
+            // install. project_config_path honors the vstack-local.toml
+            // redirect for source-catalog projects.
             let source_config = source_root.join("vstack.toml");
             for config_path in [
                 &source_config,
                 &crate::project_config::project_config_path(&proj_root),
             ] {
-                for key in instruction_keys_for(&entry.name) {
-                    let section = extract_toml_section_for(config_path, key);
-                    if !section.is_empty() {
-                        state = fnv1a_chain(state, &section);
-                    }
+                let section = extract_toml_section_for(config_path, &entry.name);
+                if !section.is_empty() {
+                    state = fnv1a_chain(state, &section);
+                }
+                let shared = extract_shared_instruction_sections(config_path, AGENT_SHARED_TABLES);
+                if !shared.is_empty() {
+                    state = fnv1a_chain(state, &shared);
                 }
             }
         }
@@ -2233,6 +2261,25 @@ mod source_registry_tests {
         .unwrap();
         let h3 = compute_source_hash(&entry);
         assert_ne!(h2, h3);
+
+        // A shared key in the SKILL instruction table must not stale agents:
+        // cross-kind invalidation would report unrelated items outdated.
+        fs::write(
+            dir.join("vstack.toml"),
+            "[agent-additional-instructions]\n\"*\" = \"Fleet rule v3\"\n\n[skill-instructions]\nall = \"Skill rule v1\"\n",
+        )
+        .unwrap();
+        let h4 = compute_source_hash(&entry);
+        fs::write(
+            dir.join("vstack.toml"),
+            "[agent-additional-instructions]\n\"*\" = \"Fleet rule v3\"\n\n[skill-instructions]\nall = \"Skill rule v2\"\n",
+        )
+        .unwrap();
+        let h5 = compute_source_hash(&entry);
+        assert_eq!(
+            h4, h5,
+            "editing [skill-instructions].all must not stale agent installs"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
