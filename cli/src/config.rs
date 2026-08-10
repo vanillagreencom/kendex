@@ -753,67 +753,33 @@ fn instruction_keys_for(name: &str) -> [&str; 3] {
     ]
 }
 
-/// Extract the relevant section for a given name from a TOML file.
-/// Returns the raw text of lines belonging to that key, or empty if not found.
-/// This avoids hashing the entire config when only one agent/skill's section matters.
+/// Extract the values for a given key from a TOML file, wherever the key
+/// appears: top level or inside any (nested) table. Values are canonically
+/// re-serialized so the hash tracks content rather than source formatting —
+/// the real TOML parser handles multiline bodies and escaped quotes that a
+/// line scanner cannot. Returns empty bytes if the file is missing,
+/// unparsable, or the key absent.
 fn extract_toml_section_for(path: &Path, name: &str) -> Vec<u8> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
+    let Ok(toml::Value::Table(table)) = content.parse::<toml::Value>() else {
+        return Vec::new();
+    };
     let mut result = Vec::new();
-    let mut capturing = false;
-    // Inside a triple-quoted value every line belongs to the key, including
-    // unindented ones — without this, a multiline body would be truncated at
-    // its first line and edits to it would never change the hash.
-    let mut multiline_delim: Option<&str> = None;
-    for line in content.lines() {
-        if let Some(delim) = multiline_delim {
-            result.extend_from_slice(line.as_bytes());
-            result.push(b'\n');
-            if line.contains(delim) {
-                multiline_delim = None;
-            }
-            continue;
-        }
-        let trimmed = line.trim();
-        // Match: name = ... (start of this key's value)
-        if trimmed.starts_with(&format!("{} =", name))
-            || trimmed.starts_with(&format!("\"{}\" =", name))
-        {
-            capturing = true;
-            result.extend_from_slice(line.as_bytes());
-            result.push(b'\n');
-            multiline_delim = unclosed_multiline_delim(trimmed);
-            continue;
-        }
-        if capturing {
-            // Stop at next top-level key or section header
-            if trimmed.starts_with('[')
-                || (!trimmed.is_empty()
-                    && !trimmed.starts_with('#')
-                    && !trimmed.starts_with('"')
-                    && !trimmed.starts_with('{')
-                    && !trimmed.starts_with(']')
-                    && !trimmed.starts_with(',')
-                    && !line.starts_with(' ')
-                    && !line.starts_with('\t'))
-            {
-                capturing = false;
-            } else {
-                result.extend_from_slice(line.as_bytes());
-                result.push(b'\n');
-                multiline_delim = unclosed_multiline_delim(trimmed);
-            }
-        }
-    }
+    collect_key_values("", &table, name, &mut result);
     result
 }
 
-/// A `"""` or `'''` delimiter this line opens without closing, if any.
-fn unclosed_multiline_delim(line: &str) -> Option<&'static str> {
-    ["\"\"\"", "'''"]
-        .into_iter()
-        .find(|delim| line.matches(delim).count() % 2 == 1)
+fn collect_key_values(prefix: &str, table: &toml::value::Table, name: &str, out: &mut Vec<u8>) {
+    for (key, value) in table {
+        if key == name {
+            out.extend_from_slice(format!("{prefix}{key} = {value}\n").as_bytes());
+        }
+        if let toml::Value::Table(nested) = value {
+            collect_key_values(&format!("{prefix}{key}."), nested, name, out);
+        }
+    }
 }
 
 /// Refresh cached repos for all remote sources found in installed lock entries.
@@ -971,9 +937,10 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
                 state = fnv1a_chain(state, &hash_dir_bytes(dir).to_le_bytes());
             }
             // Hash this skill's section plus the shared `all`/`*` entries from
-            // project vstack.toml — a shared-key edit changes every rendered
-            // skill, so it must stale every skill install.
-            let project_config = proj_root.join("vstack.toml");
+            // the project config — a shared-key edit changes every rendered
+            // skill, so it must stale every skill install. project_config_path
+            // honors the vstack-local.toml redirect for source-catalog projects.
+            let project_config = crate::project_config::project_config_path(&proj_root);
             for key in instruction_keys_for(&entry.name) {
                 let section = extract_toml_section_for(&project_config, key);
                 if !section.is_empty() {
@@ -990,9 +957,13 @@ pub fn compute_source_hash(entry: &LockEntry) -> String {
             }
             // Hash this agent's sections plus the shared `all`/`*` entries
             // from both configs — a shared-key edit changes every rendered
-            // agent, so it must stale every agent install.
+            // agent, so it must stale every agent install. project_config_path
+            // honors the vstack-local.toml redirect for source-catalog projects.
             let source_config = source_root.join("vstack.toml");
-            for config_path in [&source_config, &proj_root.join("vstack.toml")] {
+            for config_path in [
+                &source_config,
+                &crate::project_config::project_config_path(&proj_root),
+            ] {
                 for key in instruction_keys_for(&entry.name) {
                     let section = extract_toml_section_for(config_path, key);
                     if !section.is_empty() {
@@ -2275,7 +2246,9 @@ mod source_registry_tests {
             "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
         )
         .unwrap();
-        let toml_v1 = "[agent-additional-instructions]\nall = \"\"\"\nFleet rule body v1\nSecond line\n\"\"\"\n";
+        // The body contains an escaped quote run (`""\"`) — a naive scanner
+        // would treat it as the closing delimiter and stop hashing there.
+        let toml_v1 = "[agent-additional-instructions]\nall = \"\"\"\nFleet rule body v1\nquote run: \"\"\\\" done\nSecond line\n\"\"\"\n";
         fs::write(dir.join("vstack.toml"), toml_v1).unwrap();
 
         let entry = LockEntry {
@@ -2290,13 +2263,13 @@ mod source_registry_tests {
         };
 
         let h1 = compute_source_hash(&entry);
-        // Edit ONLY an unindented body line inside the triple-quoted value.
-        let toml_v2 = "[agent-additional-instructions]\nall = \"\"\"\nFleet rule body v2\nSecond line\n\"\"\"\n";
+        // Edit ONLY an unindented body line AFTER the escaped quote run.
+        let toml_v2 = "[agent-additional-instructions]\nall = \"\"\"\nFleet rule body v1\nquote run: \"\"\\\" done\nSecond line EDITED\n\"\"\"\n";
         fs::write(dir.join("vstack.toml"), toml_v2).unwrap();
         let h2 = compute_source_hash(&entry);
         assert_ne!(
             h1, h2,
-            "editing a multiline shared body must stale the agent install"
+            "editing a multiline shared body (past escaped quotes) must stale the agent install"
         );
         let _ = fs::remove_dir_all(&dir);
     }
