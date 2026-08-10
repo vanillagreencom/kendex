@@ -595,8 +595,28 @@ pub fn remove_item(
             // The project-spelled canonical resolves to a FOREIGN anchored
             // canonical when `.agents` itself is symlinked into the shared
             // checkout; deleting through that ancestor would destroy the copy
-            // the preservation pass below promises to leave in place.
+            // the preservation pass below promises to leave in place. The
+            // same shield covers a final-component SYMLINK whose parent
+            // physically lives in the other checkout: that entry is the
+            // owner's project-skills-dir canonical wiring, not ours to
+            // unlink (unlike harness links, no owner refresh recreates a
+            // hand-authored canonical spelling).
             if resolves_to_anchored(&path) {
+                continue;
+            }
+            let parent_foreign = path
+                .parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                .is_some_and(|parent| {
+                    let project_checkout = std::fs::canonicalize(crate::config::project_root())
+                        .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
+                    !parent.starts_with(&project_checkout)
+                });
+            if parent_foreign && std::fs::symlink_metadata(&path).is_ok() {
+                eprintln!(
+                    "  Note: leaving {} in place — it lives in another checkout's .agents; remove it from that checkout to delete it (VST-195)",
+                    path.display()
+                );
                 continue;
             }
             match remove_expected_path(&path, ExpectedArtifact::Any) {
@@ -771,6 +791,12 @@ pub(crate) type AnchorSharing = Vec<(Harness, AnchorEvidence)>;
 pub(crate) fn anchored_canonical_skill_roots(
     harnesses: &[Harness],
 ) -> Vec<(PathBuf, AnchorSharing)> {
+    // Contract: OTHER checkouts' roots only. An ordinary child link
+    // (`.claude/skills/foo -> ../../.agents/skills/foo`) resolves to the
+    // CURRENT checkout and must not report the project's own canonical
+    // root as anchored.
+    let own_root = std::fs::canonicalize(crate::config::project_root())
+        .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
     let mut anchored: Vec<(PathBuf, AnchorSharing)> = Vec::new();
     let mut probed: Vec<(PathBuf, Vec<(PathBuf, AnchorEvidence)>)> = Vec::new();
     for harness in harnesses {
@@ -793,6 +819,11 @@ pub(crate) fn anchored_canonical_skill_roots(
             }
         };
         for (root, evidence) in roots {
+            let root_physical = canonicalize_allowing_missing(&root)
+                .unwrap_or_else(|| normalize_absolute_path(&root));
+            if root_physical.starts_with(&own_root) {
+                continue;
+            }
             match anchored
                 .iter_mut()
                 .find(|(anchored_root, _)| *anchored_root == root)

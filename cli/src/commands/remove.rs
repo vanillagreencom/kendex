@@ -72,8 +72,15 @@ pub fn run(names: &[String], scope: ScopeFilter) -> Result<()> {
             let remove_result = if remove_as_pi_extension {
                 crate::pi_extension::remove_pi_extension(name, global)
             } else {
-                installer::remove_item(name, kind, &harnesses, global)
-                    .map(|outcome| outcome.removed)
+                installer::remove_item(name, kind, &harnesses, global).map(|outcome| {
+                    for anchored in &outcome.anchored_left {
+                        println!(
+                            "  Anchored canonical left in place (another checkout's): {}",
+                            anchored.display()
+                        );
+                    }
+                    outcome.removed
+                })
             };
             match remove_result {
                 Ok(paths) => removed.extend(paths),
