@@ -161,13 +161,15 @@ neither a parent nor sub-issues — otherwise skip this task entirely (an
 In Progress or In Review trigger from a re-triage pass is never bundled).
 Search open, unstarted issues (Triage, Backlog, Todo) of the SAME team and
 SAME project that likewise have no parent, no sub-issues, and carry an
-agent:* label. Evaluation order for the boundary rule: select precondition-passing
-candidates first, then repeatedly drop any member (including the trigger)
-that blocks or is blocked by an issue outside the current tentative bundle,
-until a pass drops nobody (each drop can expose new cross-boundary
-relations, so one pass is not enough); if the trigger itself drops, skip
-this task — cross-boundary sequencing must stay where it is visible, so
-such issues are left unbundled. If the triggering issue plus one to
+agent:* label. Evaluation order for the boundary rule: FIRST pick the tentative bundle —
+the trigger plus the one to four same-PR companions you would actually
+parent — then repeatedly drop any member (including the trigger) that
+blocks or is blocked by any issue outside that tentative bundle, until a
+pass drops nobody (each drop can expose new cross-boundary relations, so
+one pass is not enough; a relation to a candidate you did NOT select counts
+as outside). If the trigger itself drops, skip this task — cross-boundary
+sequencing must stay where it is visible, so such issues are left
+unbundled. If the triggering issue plus one to
 four of them would plausibly ship as a single pull request — same component
 or surface, complementary small changes, no conflicting approaches — create
 ONE new parent issue IN THAT SAME TEAM AND PROJECT from the template below and set each child's parent to
@@ -340,10 +342,13 @@ has an obvious same-team, same-project companion that would ship in the
 same pull request — even if its own metadata is complete — so the janitor's
 bundling task can create the parent. Apply it to the group's LEADER only:
 the oldest member that would survive the janitor's Task 6 preconditions and
-boundary pruning (leaf, projected, agent-labeled, unstarted, no blocking
-relations outside the group) — the same definition Task 6 uses. The leader may sit outside this run's audited
-ten — that one label application is explicitly permitted — but if the true
-leader is started or otherwise ineligible, skip the group entirely. The re-triage pass performs the actual cleanup
+boundary pruning — Task 6's exact tests: unstarted (Triage, Backlog, Todo),
+HAS a project, carries an agent:* label, has neither a parent nor
+sub-issues, and no blocking relations outside the group. Members failing
+those tests are simply not leader candidates (the oldest SURVIVOR leads);
+if no member survives them, there is no bundle — skip the group. The
+leader may sit outside this run's audited ten — that one label application
+is explicitly permitted. The re-triage pass performs the actual cleanup
 (including project/agent assignment and Task 6 bundling). Do not fix the
 metadata inline.
 
