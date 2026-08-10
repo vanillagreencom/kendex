@@ -155,7 +155,12 @@ pub fn install_skill(
                 .parent()
                 .and_then(|parent| parent.canonicalize().ok())
                 .is_some_and(|parent| !parent.starts_with(&project_checkout));
+            // A symlink AT the canonical location is project-skills-dir
+            // wiring wherever it is referenced from — never refresh-owned.
+            let canonical_is_symlink = std::fs::symlink_metadata(&canonical)
+                .is_ok_and(|meta| meta.file_type().is_symlink());
             let dest_references_canonical = dest_parent_shared
+                && !canonical_is_symlink
                 && dest
                     .canonicalize()
                     .is_ok_and(|resolved| resolved == canonical_physical)

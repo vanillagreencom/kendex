@@ -1103,7 +1103,27 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
             (codex_home_dir().join("skills"), None),
         ]
     } else {
-        let mut roots = vec![(project_root().join(".agents").join("skills"), None)];
+        // The project-spelled canonical root can PHYSICALLY live in another
+        // checkout (fully shared .agents): scanning it ungated would treat
+        // the owner's canonicals as local. Gate it by reference like any
+        // anchored root in that case.
+        let own_skills = project_root().join(".agents").join("skills");
+        let own_skills_shared = own_skills
+            .canonicalize()
+            .ok()
+            .zip(project_root().canonicalize().ok())
+            .is_some_and(|(skills, root)| !skills.starts_with(&root));
+        let local_gate: Option<crate::installer::AnchorSharing> = if own_skills_shared {
+            Some(
+                crate::harness::Harness::ALL
+                    .iter()
+                    .map(|harness| (*harness, crate::installer::AnchorEvidence::SharedDir))
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        let mut roots = vec![(own_skills, local_gate)];
         for (root, sharing) in
             crate::installer::anchored_canonical_skill_roots(crate::harness::Harness::ALL)
         {
@@ -1134,14 +1154,17 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
                 continue;
             }
             // An UNMARKED anchored canonical is admitted only when it also
-            // LOOKS like a skill: reference evidence alone would let a
-            // manually maintained same-named directory (no SKILL.md) be
-            // recovered into the lock as a vstack install.
-            if gate.is_some()
-                && !path.join(".vstack-refreshed").exists()
-                && !path.join("SKILL.md").exists()
-            {
-                continue;
+            // LOOKS like a vstack-managed install: a REAL directory with
+            // SKILL.md. Reference evidence alone would adopt a manually
+            // maintained same-named directory, and a SYMLINK canonical is
+            // the owner's project-skills-dir wiring (every project-owned
+            // skill has SKILL.md too) — neither is vstack's to claim.
+            if gate.is_some() && !path.join(".vstack-refreshed").exists() {
+                let is_symlink = std::fs::symlink_metadata(&path)
+                    .is_ok_and(|meta| meta.file_type().is_symlink());
+                if is_symlink || !path.join("SKILL.md").exists() {
+                    continue;
+                }
             }
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
