@@ -502,6 +502,17 @@ assert_eq "$c13d_code" "0" "invalid verify secs does not abort a GUI launch"
 assert_not_contains "$(cat "$TMP_ROOT/c13d.err")" "ORCH_TMUX_VERIFY_SECS" \
   "GUI launches never validate the tmux-only setting"
 
+# Case 13e: a broken tmux-only setting must not abort a tmux CODEX lane —
+# only Claude verification lanes read the timeout.
+new_tmux_state c13e
+set +e
+c13e_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness codex cc-737 2>"$TMP_ROOT/c13e.err")
+c13e_code=$?
+set -e
+assert_eq "$c13e_code" "0" "invalid verify secs does not abort a tmux codex launch"
+assert_not_contains "$(cat "$TMP_ROOT/c13e.err")" "ORCH_TMUX_VERIFY_SECS" \
+  "non-claude tmux launches never validate the claude-verification timeout"
+
 # Case 14: a runaway value is clamped loudly (the lane still verifies)
 # instead of hanging the launch for hours.
 new_tmux_state c14
