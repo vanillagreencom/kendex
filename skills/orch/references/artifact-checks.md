@@ -41,11 +41,3 @@ re-delegate (`review-pr.md` § 3.1). Dev's B signal only distinguishes "code
 landed, recover the tail" (`ok==false` + pass → one report-only nudge) from
 "not done" (`ok==false` + fail → escalate); neither branch re-runs the work,
 and neither accepts without the round-scoped artifact.
-
-## Invalid stall signals
-
-Never sufficient alone or combined: return-message timeout, clean git
-status/diff/log, no modified files — a worktree also looks clean during an
-agent's research/planning phase. The sole positive signal that overrides a
-missing return is a valid `dev-artifact-check` for the current
-`dev_round_id`.

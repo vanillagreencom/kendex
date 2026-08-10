@@ -246,7 +246,7 @@ After delegation, wait for the agent's return — but never let the round's clos
 
 The acceptance decision table lives in the delegating workflow — `dev-start.md` § 3 (implement), `dev-fix.md` § 2 and `review-pr-comments.md` § 6.1 (fixes); read-only analysis rounds close by the analysis rule alongside those tables (`kind: analysis` artifact, no commit/validate gate) — and is a pure function of A and B; the return message is display-only, never an acceptance input. The round token binds A to exactly this delegation's receipt, and a path whose agent writes no dev-return artifact (`ci-fix.md` § 3.2) is accepted by its own return message plus the escalation ladder, never by a stale artifact — details: [references/artifact-checks.md](references/artifact-checks.md).
 
-**Dev-vs-reviewer asymmetry (intentional — do not "align")** and the **invalid stall signals** list (return-message timeout, clean git state, no modified files — never sufficient; the sole positive override is a valid `dev-artifact-check` for the current `dev_round_id`): [references/artifact-checks.md](references/artifact-checks.md).
+**Dev-vs-reviewer asymmetry (intentional — do not "align")** and the **invalid stall signals** (never sufficient without the round-scoped artifact): [references/artifact-checks.md](references/artifact-checks.md).
 
 **Escalation** — **quiet ≠ stalled**: only after the 10-minute quiet window from delegation AND a confirmed stall (task status unchanged across multiple idle cycles; no new session-log entries for 10+ minutes; or agent process exited / zero CPU). Then: (1) re-message once specifying the missing step; (2) wait 5 min, re-check — new activity → go idle; (3) still inactive → shut down → re-create tasks → respawn → re-delegate.
 
