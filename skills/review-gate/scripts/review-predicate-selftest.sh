@@ -1883,8 +1883,16 @@ load_exclude_tracked() {
   # relative default both anchor at the invoking directory.
   _elt_anchor="."
   case "${REVIEW_GATE_SETTINGS_FILE:-}" in
-    '' | /dev/null) _elt_anchor="." ;;
-    *) _elt_anchor="$(dirname -- "$REVIEW_GATE_SETTINGS_FILE")" ;;
+    '' | /dev/null) : ;;
+    *)
+      # Only an EXISTING override moves the anchor: when the named file is
+      # absent, rg_setting falls back to built-in defaults, and anchoring
+      # evidence at a nonexistent path's directory would judge defaults
+      # against the wrong tree (or silently force hermetic mode).
+      if [ -f "$REVIEW_GATE_SETTINGS_FILE" ]; then
+        _elt_anchor="$(dirname -- "$REVIEW_GATE_SETTINGS_FILE")"
+      fi
+      ;;
   esac
   if git -C "$_elt_anchor" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     # ROOT-relative, never cwd-relative: `git ls-files` is subtree-scoped,
