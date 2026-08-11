@@ -1889,6 +1889,13 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
         } else {
             project_root().join(".agents").join("skills")
         };
+        // Invariant across the loop — resolve once, not per stale entry.
+        let own_root_is_local = global
+            || own_root
+                .canonicalize()
+                .ok()
+                .zip(std::fs::canonicalize(project_root()).ok())
+                .is_none_or(|(root, project)| root.starts_with(&project));
         for (name, entry_harnesses) in stale_skills {
             // Entry ids may use supported aliases ("claude" for claude-code);
             // normalize through the same resolution the rest of the CLI uses.
@@ -1901,12 +1908,6 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
             // per-harness/per-name below), not unconditional local proof:
             // counting them here would keep any stale entry alive merely
             // because the main checkout has a same-named canonical.
-            let own_root_is_local = global
-                || own_root
-                    .canonicalize()
-                    .ok()
-                    .zip(std::fs::canonicalize(project_root()).ok())
-                    .is_none_or(|(root, project)| root.starts_with(&project));
             let exists = (own_root_is_local && own_root.join(&name).exists())
                 || anchored.iter().any(|(root, sharing)| {
                     // Child-link evidence is per-skill: an anchored root

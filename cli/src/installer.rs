@@ -793,10 +793,9 @@ pub fn remove_item(
                     !parent.starts_with(&project_checkout)
                 });
             if parent_foreign && std::fs::symlink_metadata(&path).is_ok() {
-                eprintln!(
-                    "  Note: leaving {} in place — it lives in another checkout's .agents; remove it from that checkout to delete it (VST-195)",
-                    path.display()
-                );
+                // Recorded, never printed: remove_item runs on the TUI's
+                // worker thread in raw mode — callers render anchored_left.
+                anchored_left.push(path.clone());
                 continue;
             }
             match remove_expected_path(&path, ExpectedArtifact::Any) {
