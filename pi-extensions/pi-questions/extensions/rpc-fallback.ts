@@ -144,6 +144,15 @@ function multiSelectTitle(request: QuestionRequest, tab: QuestionTab, index: num
 	return [tabTitle(request, tab, index, note), ...formatOptionRows(tab)].join("\n");
 }
 
+// Mirrors the TUI's empty-selection contract: the custom TUI can submit an
+// empty single-select answer only through its synthetic confirm tab, which
+// exists exactly when the request has multiple questions or any multi-select
+// tab (hasConfirmTab in questions.ts). Single-question single-select requests
+// cannot submit empty there, so the walker offers no skip row for them either.
+function allowsEmptySelection(request: QuestionRequest): boolean {
+	return request.questions.length > 1 || request.questions.some((question) => question.multiple);
+}
+
 async function askCustomText(ui: RpcDialogUI, tab: QuestionTab, isSettled: () => boolean): Promise<CustomTextResult> {
 	if (isSettled()) return { kind: "abandoned" };
 	const text = await ui.input(truncateChars(`${tab.header}: ${tab.customLabel}`, TITLE_MAX_CHARS), tab.customPlaceholder);
@@ -155,12 +164,15 @@ async function askCustomText(ui: RpcDialogUI, tab: QuestionTab, isSettled: () =>
 
 async function askSingleSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number, isSettled: () => boolean): Promise<StepResult> {
 	const rows = formatOptionRows(tab);
+	const skipRow = allowsEmptySelection(request) ? `${customRowNumber(tab) + 1}. Skip (no selection)` : undefined;
+	if (skipRow) rows.push(skipRow);
 	let note = "";
 	for (let attempt = 0; attempt < MAX_PROMPT_ATTEMPTS; attempt += 1) {
 		if (isSettled()) return { kind: "abandoned" };
 		const choice = await ui.select(tabTitle(request, tab, index, note), rows);
 		if (isSettled()) return { kind: "abandoned" };
 		if (choice === undefined) return { kind: "cancelled" };
+		if (skipRow && choice === skipRow) return { kind: "answers", values: [] };
 		const rowIndex = rows.indexOf(choice);
 		if (rowIndex === -1) {
 			// Host returned something other than a listed row: treat non-empty
@@ -208,7 +220,7 @@ export function parseMultiSelection(raw: string, tab: QuestionTab): { labels: st
 }
 
 async function askMultiSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number, isSettled: () => boolean): Promise<StepResult> {
-	const placeholder = `Comma-separated numbers (e.g. 1,3); ${customRowNumber(tab)} or free text for a custom answer`;
+	const placeholder = `Comma-separated numbers (e.g. 1,3); ${customRowNumber(tab)} or free text for a custom answer; empty for no selection`;
 	let note = "";
 	for (let attempt = 0; attempt < MAX_PROMPT_ATTEMPTS; attempt += 1) {
 		if (isSettled()) return { kind: "abandoned" };

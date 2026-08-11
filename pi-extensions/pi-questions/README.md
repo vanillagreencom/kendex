@@ -84,6 +84,7 @@ Interactive Pi sessions render the questionnaire with the custom TUI described a
 - **Single-select** questions open a native select dialog listing the numbered options plus the free-text fallback row; picking the fallback row opens a text input for the custom answer.
 - **Multi-select** questions open a text input with the numbered option list folded into the prompt. Answer with comma-separated option numbers (e.g. `1,3`). Including the fallback row's number opens a follow-up input for the custom text; any non-numeric answer is taken whole as a custom answer. Out-of-range numbers re-prompt with an error note, and the option list (including the fallback row) is always shown in full.
 - Blank custom answers re-show the question rather than submitting an empty answer; repeated invalid input cancels after a few attempts.
+- Requests with several questions (or any multi-select) add a `Skip (no selection)` row to single-select dialogs and accept empty multi-select input — the same tabs the TUI lets you leave unanswered via its confirm tab. A lone single-select question cannot be skipped, matching the TUI.
 - Dismissing any dialog cancels the whole questionnaire, matching Escape in the TUI. Answers keep the same `QuestionResult` shape in both modes.
 
 If the host supports neither custom TUI components nor native select/input dialogs, the `question` tool returns a clear error instead of hanging. Headless non-RPC contexts (e.g. bridge-driven sessions) still leave requests pending for `pi-bridge` replies.

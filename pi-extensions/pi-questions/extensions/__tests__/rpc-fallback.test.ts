@@ -232,6 +232,27 @@ describe("rpc questionnaire walker", () => {
 		expect(multi).toEqual({ answers: [["A"], ["Docs", "cancelled"], ["Slow"]], kind: "answered" });
 	});
 
+	test("multi-question requests offer a skip row; skipping yields an empty answer like the TUI confirm tab", async () => {
+		const request = multiTabRequest();
+		const dialogs = fakeDialogs(["4. Skip (no selection)", "", "1. Fast"]);
+		const outcome = await runRpcQuestionnaire(dialogs, request);
+
+		expect(outcome).toEqual({ answers: [[], [], ["Fast"]], kind: "answered" });
+		expect(dialogs.calls[0].options).toEqual([
+			"1. A",
+			"2. B",
+			"3. Something else (type your own answer)",
+			"4. Skip (no selection)",
+		]);
+	});
+
+	test("single-question single-select offers no skip row, matching the TUI which cannot submit empty there", async () => {
+		const dialogs = fakeDialogs(["2. B"]);
+		await runRpcQuestionnaire(dialogs, singleRequest());
+
+		expect(dialogs.calls[0].options).toEqual(["1. A — keep going", "2. B", "3. Something else (type your own answer)"]);
+	});
+
 	test("repeated invocations are independent", async () => {
 		const request = singleRequest();
 		const first = await runRpcQuestionnaire(fakeDialogs([undefined]), request);
