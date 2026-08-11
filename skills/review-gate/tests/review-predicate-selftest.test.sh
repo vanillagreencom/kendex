@@ -171,6 +171,51 @@ else
     || note "broken-ls-files failure does not carry the refusing-to-degrade diagnostic"
 fi
 
+# --- layer 2d: a failed mktemp is unverifiable, same refuse-to-degrade -----
+# A PATH shim fails only the NO-ARGUMENT mktemp (the staging-file call in
+# load_exclude_tracked) while delegating `mktemp -d` and every other form
+# (the selftest's own work dir needs -d at startup). No staging file means
+# the tracked read cannot be verified, and unverifiable must take the same
+# loud branch as failed — never a silent slide into hermetic probing.
+mkdir -p "$work/brokenmktemp/bin" "$work/brokenmktemp/repo"
+real_mktemp="$(command -v mktemp)"
+cat >"$work/brokenmktemp/bin/mktemp" <<BROKENMKTEMP
+#!/usr/bin/env bash
+if [ \$# -eq 0 ]; then
+  echo "mktemp: planted tmpdir failure" >&2
+  exit 1
+fi
+exec "$real_mktemp" "\$@"
+BROKENMKTEMP
+chmod +x "$work/brokenmktemp/bin/mktemp"
+(cd "$work/brokenmktemp/repo" && git init -q .)
+cp "$work/excludes/vstack.settings.toml" "$work/brokenmktemp/repo/vstack.settings.toml"
+if (cd "$work/brokenmktemp/repo" && PATH="$work/brokenmktemp/bin:$PATH" "$SELFTEST") \
+  >"$work/brokenmktemp.out" 2>&1; then
+  note "selftest passed with an unverifiable tracked read (mktemp failed) — the refuse-to-degrade branch no longer covers it"
+else
+  grep -q "refusing to degrade to synthetic probes" "$work/brokenmktemp.out" \
+    || note "broken-mktemp failure does not carry the refusing-to-degrade diagnostic"
+fi
+
+# --- layer 2e: the harness namespace is not the over-broad namespace --------
+# Hermetic fixture with `carry-probe*` as the ONLY exclusion: it matches one
+# synthetic candidate family but not the other, so the run must PASS with the
+# exclude-free carry case exercised. Reproduces the candidate-prefix
+# collision this suite hardened against — with both candidates under
+# `carry-probe*`, this fixture false-FAILed as "can never apply".
+mkdir -p "$work/probeglob"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/probeglob/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "carry-probe*"\n' \
+  >>"$work/probeglob/vstack.settings.toml"
+if ! (cd "$work/probeglob" && "$SELFTEST") >"$work/probeglob.out" 2>&1; then
+  cat "$work/probeglob.out"
+  note "selftest failed under a harness-namespace exclusion glob (carry-probe*) — the candidate-prefix collision is back"
+fi
+grep -q "outside every committed glob and still carries" "$work/probeglob.out" \
+  || note "harness-namespace fixture did not exercise the exclude-free carry case"
+
 # One combined FAILING run pins BOTH guards (each fixture run replays the
 # full decision table, so failure cases share a run): a leading-'/' glob can
 # never match a repository-relative compare filename (dead anchoring), and a
