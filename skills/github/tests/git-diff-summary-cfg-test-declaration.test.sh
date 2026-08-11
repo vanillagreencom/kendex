@@ -482,5 +482,114 @@ assert_eq "commented-out include! still classifies as test_panic_path_added" \
 assert_eq "commented-out include! is not production scope" \
     "support" "$(jq -r '.scope' <<<"$commented_include_json")"
 
+# A formatted include! whose string literal sits on a later line is still an
+# ungated production route — it must not be lost to line-based scanning.
+multiline_include_repo="$SANDBOX/multiline-include"
+init_repo "$multiline_include_repo"
+mkdir -p "$multiline_include_repo/src"
+cat > "$multiline_include_repo/src/lib.rs" <<'RUST'
+include!(
+    "shared_impl.rs"
+);
+
+#[cfg(test)]
+#[path = "shared_impl.rs"]
+mod shared_fixtures;
+RUST
+git -C "$multiline_include_repo" add src
+git -C "$multiline_include_repo" commit -q -m lib
+cat > "$multiline_include_repo/src/shared_impl.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$multiline_include_repo" add src/shared_impl.rs
+multiline_include_json="$($SUMMARY -C "$multiline_include_repo" --staged)"
+assert_eq "multiline include! route keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$multiline_include_json")"
+assert_eq "multiline include! route stays production scope" \
+    "production" "$(jq -r '.scope' <<<"$multiline_include_json")"
+
+# include! matches on its RESOLVED target, not a basename substring: an
+# include of a different file whose name merely contains the candidate's
+# basename is not a route to the candidate.
+substr_include_repo="$SANDBOX/substr-include"
+init_repo "$substr_include_repo"
+mkdir -p "$substr_include_repo/src"
+cat > "$substr_include_repo/src/lib.rs" <<'RUST'
+include!("gen_shared_impl.rs");
+
+#[cfg(test)]
+#[path = "shared_impl.rs"]
+mod shared_fixtures;
+RUST
+cat > "$substr_include_repo/src/gen_shared_impl.rs" <<'RUST'
+pub const GENERATED: u32 = 1;
+RUST
+git -C "$substr_include_repo" add src
+git -C "$substr_include_repo" commit -q -m lib
+cat > "$substr_include_repo/src/shared_impl.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$substr_include_repo" add src/shared_impl.rs
+substr_include_json="$($SUMMARY -C "$substr_include_repo" --staged)"
+assert_eq "basename-substring include! still classifies as test_panic_path_added" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$substr_include_json")"
+assert_eq "basename-substring include! is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$substr_include_json")"
+
+# An ungated out-of-directory #[path] declaration from an ancestor (here the
+# crate root) outweighs a gated same-directory one.
+crossdir_repo="$SANDBOX/cross-directory"
+init_repo "$crossdir_repo"
+mkdir -p "$crossdir_repo/src/m"
+cat > "$crossdir_repo/src/lib.rs" <<'RUST'
+#[path = "m/cand.rs"]
+pub mod cand;
+RUST
+cat > "$crossdir_repo/src/m/mod.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$crossdir_repo" add src
+git -C "$crossdir_repo" commit -q -m modules
+cat > "$crossdir_repo/src/m/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$crossdir_repo" add src/m/cand.rs
+crossdir_json="$($SUMMARY -C "$crossdir_repo" --staged)"
+assert_eq "ancestor ungated #[path] outweighs local gated declaration" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$crossdir_json")"
+assert_eq "ancestor ungated #[path] keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$crossdir_json")"
+
+# Candidate paths containing whitespace survive the scan iteration (word
+# splitting must not shred them). The gated declaration lives in the crate
+# root; the candidate sits in a directory with a space.
+space_repo="$SANDBOX/space-path"
+init_repo "$space_repo"
+mkdir -p "$space_repo/src/sub dir"
+cat > "$space_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+#[path = "sub dir/cand.rs"]
+mod fixtures;
+RUST
+git -C "$space_repo" add src
+git -C "$space_repo" commit -q -m lib
+cat > "$space_repo/src/sub dir/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$space_repo" add "src/sub dir/cand.rs"
+space_json="$($SUMMARY -C "$space_repo" --staged)"
+assert_eq "whitespace path with gated declaration is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$space_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

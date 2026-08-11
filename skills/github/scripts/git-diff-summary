@@ -65,9 +65,11 @@ resolve_default_base() {
 # let a gated declaration win. Crate roots are only recognized by the bin/
 # directory convention (candidates under a bin/ segment are skipped), not
 # via Cargo.toml `path =` wiring; include! calls with computed paths
-# (concat!/env!) are not matched; and a /* opener inside a string literal
-# reads as a comment and can hide a later ungated declaration. A file that
-# is production-reachable only through one of those shapes while also
+# (concat!/env!) are not matched; #[path]/include! declarations living in
+# a directory that is neither the candidate's own nor one of its ancestors
+# are not consulted; and a /* opener inside a string literal reads as a
+# comment and can hide a later ungated declaration. A file that is
+# production-reachable only through one of those shapes while also
 # carrying a #[cfg(test)]-gated declaration still classifies as test.
 
 # Emits the new-side content of a file: HEAD for a base...HEAD diff, the
@@ -102,16 +104,20 @@ new_side_rs_siblings() {
     case "$diff_ref" in
         --staged|HEAD) git ls-files -- "$1" 2>/dev/null ;;
         *)             git ls-tree --name-only HEAD -- "$1/" 2>/dev/null ;;
-    esac | awk -v d="$1/" 'index($0, d) == 1 && substr($0, length(d) + 1) !~ /\// && /\.rs$/'
+    esac | awk -v d="$1" '
+        !/\.rs$/ { next }
+        d == "." { if ($0 !~ /\//) print; next }
+        { p = d "/" }
+        index($0, p) == 1 && substr($0, length(p) + 1) !~ /\// { print }
+    '
 }
 
 # Emit one candidate-agnostic record per finding in the declaring module on
 # stdin, so a file is parsed once no matter how many candidates consult it:
 #   G<TAB><target>   mod declaration with #[cfg(test)] among its attributes
 #   U<TAB><target>   mod declaration without the gate
-#   I<TAB><line>     line calling include! (matched per candidate later; an
-#                    include compiles in the includer's cfg context, so it
-#                    is an ungated production route)
+#   I<TAB><target>   include! of the target file (an include compiles in the
+#                    includer's cfg context — an ungated production route)
 # <target> is the repo-relative file the declaration resolves to. moddir is
 # where this file's declarations land: for mod-rs files (mod.rs, lib.rs,
 # main.rs) their own directory; for any other file its directory plus its
@@ -144,7 +150,24 @@ scan_decl_records() {
             # Blank and comment-only lines keep pending attributes (attrs
             # may precede their item across lines).
             if (line == "") next
-            if (index(line, "include!") > 0) printf "I\t%s\n", line
+            # include! routes resolve their string-literal argument like
+            # module declarations do. A literal on a later line (formatted
+            # call) is tracked across lines until the closing paren; a call
+            # with no literal at all (computed path) stays unmatched —
+            # stated limitation.
+            if (pending_include) {
+                if (match(line, /"[^"]*"/)) {
+                    printf "I\t%s\n", join(moddir, substr(line, RSTART + 1, RLENGTH - 2))
+                    pending_include = 0
+                } else if (index(line, ")") > 0) pending_include = 0
+            }
+            pos = index(line, "include!")
+            if (pos > 0) {
+                rest = substr(line, pos)
+                if (match(rest, /"[^"]*"/))
+                    printf "I\t%s\n", join(moddir, substr(rest, RSTART + 1, RLENGTH - 2))
+                else pending_include = 1
+            }
             # Consume leading attributes; several may share the decl line.
             while (match(line, /^#\[[^]]*\][[:space:]]*/)) {
                 attr = substr(line, 1, RLENGTH)
@@ -174,17 +197,21 @@ scan_decl_records() {
 
 # Scan caches (Bash 3.2-safe string accumulators, no associative arrays):
 # DECL_CACHE holds one `<file><TAB><filedir><TAB><record...>` line per
-# scanned finding (kind ERR marks an unreadable file); SCANNED_FILES and
-# LISTED_DIRS are newline-delimited membership sets.
+# scanned finding (kind ERR marks an unreadable file); SCANNED_DIRS is a
+# newline-delimited membership set checked by exact line match, so paths
+# never meet glob interpretation. Scan state is tracked per DIRECTORY —
+# each directory's files are read once, and membership is consulted a
+# handful of times per candidate instead of once per file.
 DECL_CACHE=""
-SCANNED_FILES=$'\n'
-DIR_LIST_CACHE=""
-LISTED_DIRS=$'\n'
+SCANNED_DIRS=""
 
-# Scan a declaring module once, appending its records to DECL_CACHE.
+set_contains() {
+    printf '%s' "$2" | grep -Fxq -- "$1"
+}
+
+# Scan one declaring module, appending its records to DECL_CACHE. Called
+# only from scan_dir_declaring_files, which guarantees once-per-file.
 scan_declaring_file() {
-    case "$SCANNED_FILES" in *$'\n'"$1"$'\n'*) return 0 ;; esac
-    SCANNED_FILES="$SCANNED_FILES$1"$'\n'
     local fdir fbase fstem moddir rc content records
     fdir=${1%/*}
     [ "$1" = "${1#*/}" ] && fdir="."
@@ -209,23 +236,22 @@ scan_declaring_file() {
     return 0
 }
 
-# Tracked .rs files directly inside a directory, listed once per directory.
-rs_siblings_cached() {
-    case "$LISTED_DIRS" in
-        *$'\n'"$1"$'\n'*) ;;
-        *)
-            LISTED_DIRS="$LISTED_DIRS$1"$'\n'
-            local listing
-            listing=$(new_side_rs_siblings "$1" | awk -v d="$1" '{print d "\t" $0}')
-            [ -n "$listing" ] && DIR_LIST_CACHE="$DIR_LIST_CACHE$listing"$'\n'
-            ;;
-    esac
-    printf '%s\n' "$DIR_LIST_CACHE" | awk -F'\t' -v d="$1" '$1 == d {print $2}'
+# Scan every tracked .rs file directly inside a directory, once per
+# directory; the per-candidate evaluator filters the records afterwards
+# (including dropping the candidate's own).
+scan_dir_declaring_files() {
+    set_contains "$1" "$SCANNED_DIRS" && return 0
+    SCANNED_DIRS="$SCANNED_DIRS$1"$'\n'
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        scan_declaring_file "$f"
+    done < <(new_side_rs_siblings "$1")
 }
 
 is_cfg_test_declared() {
     local candidate="$1"
-    local basefile dir parent pdirname parent_file f routes
+    local basefile dir d relevant_dirs routes
     case "$candidate" in */*) ;; *) return 1 ;; esac
     # A bin/ segment marks crate roots: reachable by the build without any
     # mod declaration, so a gated declaration does not make them test-only.
@@ -233,25 +259,34 @@ is_cfg_test_declared() {
     basefile=${candidate##*/}
     case "$basefile" in mod.rs|lib.rs|main.rs) return 1 ;; esac
     dir=${candidate%/*}
-    parent=$(dirname "$dir")
-    pdirname=${dir##*/}
-    parent_file="$parent/$pdirname.rs"
-    [ "$parent" = "." ] && parent_file="$pdirname.rs"
-    for f in $(rs_siblings_cached "$dir") "$parent_file"; do
-        [ "$f" = "$candidate" ] && continue
-        scan_declaring_file "$f"
+    # Declaring modules are consulted from the candidate's own directory and
+    # every ancestor directory up to the repo root: same-dir siblings, the
+    # 2018-style parent file, and crate roots declaring nested files through
+    # an out-of-directory #[path]. Non-ancestor declarers are the stated
+    # header limitation.
+    relevant_dirs="$dir"
+    d="$dir"
+    while [ "$d" != "${d%/*}" ]; do
+        d="${d%/*}"
+        relevant_dirs="$relevant_dirs"$'\n'"$d"
     done
-    # Evaluate the cached records this candidate's declaring set produced:
-    # same-directory siblings plus the 2018-style parent file.
+    [ "$d" != "." ] && relevant_dirs="$relevant_dirs"$'\n'"."
+    while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        scan_dir_declaring_files "$d"
+    done < <(printf '%s\n' "$relevant_dirs")
+    # Evaluate the cached records. Declarations and includes match on their
+    # RESOLVED target, so a route discovered by any scan is genuine no
+    # matter which candidate prompted it; ERR (unreadable module) fails this
+    # candidate closed only when the file sits in its consulted set.
     routes=$(printf '%s\n' "$DECL_CACHE" | awk -F'\t' \
-        -v cand="$candidate" -v basefile="$basefile" -v dir="$dir" -v pfile="$parent_file" '
+        -v cand="$candidate" -v dirs="$relevant_dirs" '
+        BEGIN { n = split(dirs, a, "\n"); for (i = 1; i <= n; i++) rd[a[i]] = 1 }
         $1 == cand { next }
-        $2 != dir && $1 != pfile { next }
-        $3 == "ERR" { print "err"; next }
-        $3 == "I" { if (index($4, basefile) > 0) print "ungated"; next }
+        $3 == "ERR" { if ($2 in rd) print "err"; next }
         $4 != cand { next }
-        $3 == "G" { print "gated" }
-        $3 == "U" { print "ungated" }
+        $3 == "G" { print "gated"; next }
+        $3 == "U" || $3 == "I" { print "ungated" }
     ')
     case "$routes" in *err*) return 1 ;; esac
     case "$routes" in *ungated*) return 1 ;; esac
@@ -324,13 +359,14 @@ main() {
     # Changed .rs files that carry no file-local test markers but are reached
     # only through #[cfg(test)]-gated declarations are test scope (vstack#1217).
     local cfg_test_declared="" rs_candidate
-    for rs_candidate in $(echo "$files" | awk -F'\t' '{print $NF}' \
-            | grep -E '\.rs$' \
-            | grep -vE '(/tests?/|/benches/|/fixtures/|_tests?\.rs$)' || true); do
+    while IFS= read -r rs_candidate; do
+        [ -n "$rs_candidate" ] || continue
         if is_cfg_test_declared "$rs_candidate"; then
             cfg_test_declared="$cfg_test_declared$rs_candidate"$'\n'
         fi
-    done
+    done < <(echo "$files" | awk -F'\t' '{print $NF}' \
+        | grep -E '\.rs$' \
+        | grep -vE '(/tests?/|/benches/|/fixtures/|_tests?\.rs$)' || true)
 
     local prod_paths
     prod_paths=$(echo "$files" | awk -F'\t' '{print $NF}' \
