@@ -377,5 +377,110 @@ else
     printf '  SKIP: unreadable-module cases (running as root)\n'
 fi
 
+# --head content reads are tracked-only, like the sibling listing: an
+# UNTRACKED 2018-style parent file carrying a gated declaration must not
+# reclassify a tracked candidate.
+untracked_parent_repo="$SANDBOX/untracked-parent"
+init_repo "$untracked_parent_repo"
+mkdir -p "$untracked_parent_repo/src/scan"
+cat > "$untracked_parent_repo/src/scan/fixtures.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+cat > "$untracked_parent_repo/src/scan.rs" <<'RUST'
+#[cfg(test)]
+mod fixtures;
+RUST
+git -C "$untracked_parent_repo" add src/scan/fixtures.rs
+untracked_parent_json="$($SUMMARY -C "$untracked_parent_repo" --head)"
+assert_eq "untracked parent-file gated declaration does not downgrade in --head" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$untracked_parent_json")"
+assert_eq "untracked parent-file gated declaration keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$untracked_parent_json")"
+
+# Line comments take precedence over block-comment openers: `// ... /*` must
+# not open block state and swallow a following real ungated declaration.
+line_comment_repo="$SANDBOX/line-comment-precedence"
+init_repo "$line_comment_repo"
+mkdir -p "$line_comment_repo/src/m"
+cat > "$line_comment_repo/src/m/mod.rs" <<'RUST'
+// docs: /* example opener inside a line comment
+pub mod cand;
+/* a real block comment */
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$line_comment_repo" add src
+git -C "$line_comment_repo" commit -q -m modules
+cat > "$line_comment_repo/src/m/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$line_comment_repo" add src/m/cand.rs
+line_comment_json="$($SUMMARY -C "$line_comment_repo" --staged)"
+assert_eq "ungated decl after a line-commented /* keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$line_comment_json")"
+assert_eq "ungated decl after a line-commented /* stays production scope" \
+    "production" "$(jq -r '.scope' <<<"$line_comment_json")"
+
+# Rust block comments nest: an inner */ must not close the outer comment and
+# expose a commented-out gated declaration as real.
+nested_comment_repo="$SANDBOX/nested-comment"
+init_repo "$nested_comment_repo"
+mkdir -p "$nested_comment_repo/src"
+cat > "$nested_comment_repo/src/lib.rs" <<'RUST'
+/*
+/* nested */
+#[cfg(test)]
+#[path = "shadow.rs"]
+mod shadow;
+*/
+pub fn real() -> u32 {
+    1
+}
+RUST
+git -C "$nested_comment_repo" add src
+git -C "$nested_comment_repo" commit -q -m lib
+cat > "$nested_comment_repo/src/shadow.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$nested_comment_repo" add src/shadow.rs
+nested_comment_json="$($SUMMARY -C "$nested_comment_repo" --staged)"
+assert_eq "nested-comment gated declaration keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$nested_comment_json")"
+assert_eq "nested-comment gated declaration stays production scope" \
+    "production" "$(jq -r '.scope' <<<"$nested_comment_json")"
+
+# A commented-out include! is not a production route: the real gated
+# declaration must still classify the candidate as test.
+commented_include_repo="$SANDBOX/commented-include"
+init_repo "$commented_include_repo"
+mkdir -p "$commented_include_repo/src"
+cat > "$commented_include_repo/src/lib.rs" <<'RUST'
+// include!("shared_impl.rs");
+
+#[cfg(test)]
+#[path = "shared_impl.rs"]
+mod shared_fixtures;
+RUST
+git -C "$commented_include_repo" add src
+git -C "$commented_include_repo" commit -q -m lib
+cat > "$commented_include_repo/src/shared_impl.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$commented_include_repo" add src/shared_impl.rs
+commented_include_json="$($SUMMARY -C "$commented_include_repo" --staged)"
+assert_eq "commented-out include! still classifies as test_panic_path_added" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$commented_include_json")"
+assert_eq "commented-out include! is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$commented_include_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
