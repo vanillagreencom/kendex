@@ -6,26 +6,31 @@ set -euo pipefail
 worktree="${1:-.}"
 remote_head=""
 
-# Fail closed on an unusable worktree BEFORE any resolution: with the old
+# Fail closed on an unusable path BEFORE any resolution: with the old
 # `|| true` swallow, a nonexistent path fell through to the main fallback
-# with exit 0, handing callers an unverified base (vstack#1225). The
-# WORKTREE_DEFAULT_BRANCH override answers for a worktree too, so the path
-# is validated on that arm as well.
+# with exit 0, handing callers an unverified base (vstack#1225). Both arms
+# require an existing directory.
 if [[ ! -d "$worktree" ]]; then
     echo "resolve-base-branch: worktree path does not exist or is not a directory: $worktree" >&2
     exit 1
 fi
-# The PRINTED boolean is the verdict, not the exit status: inside a bare
-# repository or a repo's .git directory, rev-parse prints "false" and exits
-# 0, so a status-only check would accept a path no worktree flow can use.
-if [[ "$(git -C "$worktree" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]]; then
-    echo "resolve-base-branch: not inside a git work tree: $worktree" >&2
-    exit 1
-fi
 
 if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
+    # The override answers from configuration alone — git is never
+    # consulted, and installed-suite callers legitimately resolve from a
+    # non-repository directory (the CLI integration check runs the
+    # installed orch suite from a throwaway temp project), so no work-tree
+    # requirement applies on this arm.
     base_branch="$WORKTREE_DEFAULT_BRANCH"
 else
+    # The PRINTED boolean is the verdict, not the exit status: inside a
+    # bare repository or a repo's .git directory, rev-parse prints "false"
+    # and exits 0, so a status-only check would accept a path no git
+    # resolution can answer for.
+    if [[ "$(git -C "$worktree" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]]; then
+        echo "resolve-base-branch: not inside a git work tree: $worktree" >&2
+        exit 1
+    fi
     remote_head="$(git -C "$worktree" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || true)"
     base_branch="${remote_head#refs/remotes/origin/}"
 fi

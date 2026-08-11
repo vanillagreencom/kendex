@@ -96,7 +96,7 @@ Optional secondary remotes are not fetched during merge sync.
 
 ## Helper Scripts
 
-Use `skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` to print the base branch for a worktree. It honors `WORKTREE_DEFAULT_BRANCH`, then `origin/HEAD`, and falls back to `main` — but only for a usable worktree: a missing path, a non-directory, a bare repository, or any path outside a git work tree exits 1 with an error instead of printing a branch, and `WORKTREE_DEFAULT_BRANCH` does not bypass that validation. Callers must treat a nonzero exit as "no base resolved", never default it away.
+Use `skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` to print the base branch for a worktree. It honors `WORKTREE_DEFAULT_BRANCH`, then `origin/HEAD`, and falls back to `main` — but only for a usable worktree: a missing path or non-directory exits 1 with an error on both arms, and without the override a bare repository or any path outside a git work tree exits 1 too (git resolution has nothing to answer for it). `WORKTREE_DEFAULT_BRANCH` answers from configuration alone, so it accepts any existing directory — installed-suite callers resolve from a plain install dir — but never a missing path. Callers must treat a nonzero exit as "no base resolved", never default it away.
 
 Use `skills/orch/scripts/git-context branch|head|issue-from-branch|repo-root|common-root|timestamp [WORKTREE_PATH]` when workflow guidance needs git-derived values without inline command substitution, pipelines, or `cd && ...` chains.
 

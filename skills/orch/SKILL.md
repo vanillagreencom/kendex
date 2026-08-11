@@ -83,7 +83,7 @@ Reference workflows (no command): `workflows/agent-sequencing.md` — cross-doma
 | `workflow-state` | Persistent state read/write/append, survives compaction — see below |
 | `git-context` | Git-derived workflow values (branch, head SHA, issue id, repo root, timestamps) without inline shell plumbing |
 | `pr-view-json` | PR view JSON; expected `status=no_pr` exits 0 so workflows route to PR creation without shell fallbacks |
-| `resolve-base-branch` | Print the worktree base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, or `main`); fails closed (exit 1) on a missing/non-worktree path — the override does not bypass validation |
+| `resolve-base-branch` | Print the worktree base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, or `main`); fails closed (exit 1) on a missing path (both arms) and, without the override, on any path git resolution cannot answer for (bare repo, non-work-tree) |
 | `base-freshness` | Gate the review cycle on a current base — exit 0 fresh, 4 stale (rebase via `worktree create <ID> --reuse` first), 1 unverifiable (treat as stale); the `start-worktree.md` § 1 gate. Contract: `--help` |
 | `review-init` | Initialize standalone review context; prints branch/worktree/issue/state JSON |
 | `review-artifact-check` | Validate a reviewer's on-disk JSON artifact; prints `{ok, path, reason}` — the sole review-pr completion condition. Contract: `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
