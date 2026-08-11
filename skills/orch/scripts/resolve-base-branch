@@ -17,10 +17,9 @@ fi
 
 if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
     # The override answers from configuration alone — git is never
-    # consulted, and installed-suite callers legitimately resolve from a
-    # non-repository directory (the CLI integration check runs the
-    # installed orch suite from a throwaway temp project), so no work-tree
-    # requirement applies on this arm.
+    # consulted, and callers legitimately resolve with this arm from an
+    # installed skill directory that is not a repository, so no work-tree
+    # requirement applies here. A missing path still fails above.
     base_branch="$WORKTREE_DEFAULT_BRANCH"
 else
     # The PRINTED boolean is the verdict, not the exit status: inside a

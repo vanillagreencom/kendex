@@ -101,9 +101,9 @@ assert_eq "$code" "1" "non-repository directory exits 1"
 assert_contains "$(cat "$TMP_ROOT/err")" "not inside a git work tree" "non-repository names the failure"
 
 # Case 4b: the override arm serves NON-REPOSITORY directories — git is never
-# consulted there, and installed-suite callers resolve from a plain .agents
-# install dir (the CLI integration check's throwaway temp project). Only the
-# existence check applies on that arm.
+# consulted there, and callers legitimately resolve with the override from an
+# installed skill directory that is not a repository. Only the existence
+# check applies on that arm.
 mkdir -p "$TMP_ROOT/install-dir"
 set +e
 out="$(WORKTREE_DEFAULT_BRANCH=trunk GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$RBB" "$TMP_ROOT/install-dir" 2>"$TMP_ROOT/err")"
