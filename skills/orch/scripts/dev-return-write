@@ -146,6 +146,7 @@ commit=""
 validate=""
 validate_note=""
 summary_file=""
+summary_file_given=false
 summary_text=""
 summary_given=false
 bundled=false
@@ -171,7 +172,7 @@ while (( $# > 0 )); do
     --validate)     need "$1" $#; validate="$2"; validate_given=true; shift 2 ;;
     --validate-note) need "$1" $#; validate_note="$2"; validate_note_given=true; shift 2 ;;
     --summary)      need "$1" $#; summary_text="$2"; summary_given=true; shift 2 ;;
-    --summary-file) need "$1" $#; summary_file="$2"; shift 2 ;;
+    --summary-file) need "$1" $#; summary_file="$2"; summary_file_given=true; shift 2 ;;
     --qa-label)     need "$1" $#; qa_labels+=("$2"); shift 2 ;;
     --bundled)      bundled=true; shift ;;
     --no-summary)   summary_posted=false; shift ;;
@@ -230,7 +231,7 @@ if [[ "$kind" == "analysis" ]]; then
   # artifact proves only that the round ended, not what it concluded. Inline
   # --summary is a first-class source: a harness may refuse the file write
   # --summary-file depends on (vstack#1236).
-  [[ "$summary_given" == "true" || -n "$summary_file" ]] \
+  [[ "$summary_given" == "true" || "$summary_file_given" == "true" ]] \
     || die "--kind analysis requires --summary TEXT or --summary-file PATH: the artifact must carry the recommendation/evidence"
 else
   [[ -n "$commit" ]]   || die "--commit is required (non-empty)"
@@ -246,8 +247,10 @@ else
 fi
 # One summary source only — accepting both would need a precedence rule, and a
 # silently ignored flag is exactly the class of quiet misrecording this writer
-# exists to prevent.
-if [[ "$summary_given" == "true" && -n "$summary_file" ]]; then
+# exists to prevent. Exclusion is by flag PRESENCE, not value: "--summary-file
+# ''" (e.g. an empty path variable) is still a supplied second source, and
+# treating it as absent would silently drop the caller's intent.
+if [[ "$summary_given" == "true" && "$summary_file_given" == "true" ]]; then
   die "--summary and --summary-file are mutually exclusive: provide one summary source"
 fi
 if [[ "$summary_given" == "true" ]]; then
@@ -256,7 +259,10 @@ if [[ "$summary_given" == "true" ]]; then
   [[ -n "${summary_text//[[:space:]]/}" ]] \
     || die "--summary must contain non-whitespace text"
 fi
-if [[ -n "$summary_file" ]]; then
+if [[ "$summary_file_given" == "true" ]]; then
+  # An explicitly supplied empty path is a caller config error (typically an
+  # unset path variable) — never a no-op.
+  [[ -n "$summary_file" ]] || die "--summary-file requires a non-empty path"
   [[ -f "$summary_file" ]] || die "--summary-file path '$summary_file' does not exist"
   # Same rule as inline: a file of pure whitespace is an empty deliverable,
   # and for analysis the summary IS the artifact's payload.
@@ -308,7 +314,7 @@ trap 'rm -f "$tmp"' EXIT
 # along for GitHub/ad-hoc recovery, where the completion summary is returned to
 # the orchestrator rather than posted to a tracker; summary_posted stays honest
 # (true only for the Linear-posted case).
-if [[ -n "$summary_file" ]]; then
+if [[ "$summary_file_given" == "true" ]]; then
   summary_arg=(--rawfile summary "$summary_file")
 elif [[ "$summary_given" == "true" ]]; then
   summary_arg=(--arg summary "$summary_text")

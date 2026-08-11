@@ -210,8 +210,22 @@ assert_exit2 "analysis with both --summary and --summary-file exits 2" \
 assert_exit2 "implement with both --summary and --summary-file exits 2" \
   --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
   --summary "inline" --summary-file "$worktree/summary.md"
+# Exclusion and validation key on flag PRESENCE, not value: an explicitly
+# empty --summary-file (an unset path variable) is a supplied second source /
+# a config error, never a silent no-op.
+assert_exit2 "--summary plus empty --summary-file value still exits 2 (presence, not content)" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b \
+  --summary "inline" --summary-file ""
+assert_exit2 "explicitly empty --summary-file alone exits 2 for analysis" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file ""
+assert_exit2 "explicitly empty --summary-file alone exits 2 for implement" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
+  --summary-file ""
 assert_exit2 "whitespace-only --summary exits 2 (an empty deliverable is not a record)" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary "   "
+printf '  \n\t\n' > "$worktree/blank.md"
+assert_exit2 "whitespace-only --summary-file content exits 2 for analysis" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/blank.md"
 assert_exit2 "--summary with no value exits 2" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary
 assert_exit2 "analysis with empty --commit value still exits 2 (presence, not content)" \

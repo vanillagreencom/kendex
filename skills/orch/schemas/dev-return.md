@@ -49,7 +49,7 @@ implementation — see § Analysis rounds below):
 ```bash
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind analysis \
   --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --branch [BRANCH] \
-  --summary "[RECOMMENDATION_TEXT]" [--qa-label LABEL]... [--no-summary]
+  --summary '[RECOMMENDATION_TEXT]' [--qa-label LABEL]... [--no-summary]
 ```
 
 or, when the recommendation already lives in a file:
