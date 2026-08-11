@@ -22,8 +22,18 @@ Delegate development work to specialist agent(s). Handles single issues and bund
 ```
 Use the output as `ISSUE_ID`.
 
-**Container preflight** (Linear only, before any workflow-state
-initialization): fetch the issue and its children — the default single-issue
+Resolve the tracker FIRST — before any Linear command can run:
+
+```bash
+.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
+```
+Use the output as `TRACKER`. `TRACKER` = `github` → skip the container
+preflight below entirely (it is Linear-only; running its commands on a
+GitHub-only project without Linear credentials would abort the workflow
+before this skip could apply).
+
+**Container preflight** (`TRACKER` = `linear` only, before any
+workflow-state initialization): fetch the issue and its children — the default single-issue
 output omits children entirely, so the bundle read is mandatory:
 
 ```bash
@@ -49,11 +59,6 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 - Inside a worktree → use current directory as `WT_PATH`
 - Main repo, worktree exists → run `.agents/skills/worktree/scripts/worktree path [ISSUE_ID]` and use the output as `WT_PATH`
 - Main repo, worktree missing → ask the user before creating
-
-```bash
-.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
-```
-Use the output as `TRACKER`.
 
 If workflow state already exists, skip initialization:
 
