@@ -195,20 +195,27 @@ run_sr_shimmed "$GREP_NEV_SHIM"
   && ok "a grep failure validating the index baseline copy is a collection error, exit 2" \
   || bad "a grep failure validating the index baseline copy is a collection error" "rc=$RC out=$OUT"
 
-echo "=== fail-closed: a broken --update row count terminates, baseline intact ==="
+echo "=== fail-closed: a broken --update row count aborts BEFORE the baseline is replaced ==="
+# The fixture's rewrite is NOT a content no-op: the row (20) is loose for
+# the 15-line file, so --update would tighten it to 15. An abort that
+# happened after the mv would therefore show as mutated content here.
 new_repo updcount
 mkfile big.txt 15
 mkdir -p "$R/tools"
-printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
 git -C "$R" add -A
 run_sr_shimmed "$GREP_SHIM" --update
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not count lines"*) true ;; *) false ;; esac \
-  && ok "a grep failure counting the rewritten baseline's rows is a collection error, exit 2" \
-  || bad "a grep failure counting the rewritten baseline's rows is a collection error" "rc=$RC out=$OUT"
+  && ok "a grep failure counting the candidate baseline's rows is a collection error, exit 2" \
+  || bad "a grep failure counting the candidate baseline's rows is a collection error" "rc=$RC out=$OUT"
 case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany a broken --update count" "$OUT" ;; *) ok "no OK verdict accompanies the broken --update count" ;; esac
 row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
-[ "$row" = "$(printf 'big.txt\t15')" ] && ok "the baseline content survives the aborted --update verbatim" \
-  || bad "the baseline content survives the aborted --update" "row=$row"
+[ "$row" = "$(printf 'big.txt\t20')" ] && ok "the aborted --update leaves the original loose row byte-identical" \
+  || bad "the aborted --update leaves the original loose row byte-identical" "row=$row"
+run_sr --update
+[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
+  && ok "shim-free control: the same fixture really tightens 20 -> 15, proving the abort case would detect a mutation" \
+  || bad "shim-free control: the same fixture really tightens 20 -> 15" "rc=$RC row=$(cat "$R/tools/size-ratchet-baseline.tsv") out=$OUT"
 
 echo "=== fail-closed: an unreadable worktree file terminates with its own diagnostic ==="
 # Fully materialized repo: every count goes through the worktree `wc -l`
