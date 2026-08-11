@@ -336,6 +336,26 @@ fi
 grep -q "DECLARED prophylactic" "$work/rooteddecl.out" \
   || note "declared prophylactic glob did not report the declared note"
 
+# A glob matching tracked paths only OUTSIDE the enabled carry classes is
+# INERT, not dead: it provably names real paths (no typo to catch), and the
+# prophylactic declaration would be false for it (its contract is "no
+# tracked match today"). The run must PASS with the inert note — neither
+# the dead-glob FAIL nor a demand for a false declaration.
+(cd "$work/rooted/repo" && printf '[package]\n' > Cargo.toml \
+  && git add Cargo.toml \
+  && git -c user.email=t@t -c user.name=t commit -qm cargo)
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*Cargo.toml"\n' \
+  >"$work/rooted/repo/inert.settings.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >>"$work/rooted/repo/inert.settings.toml"
+if ! (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/inert.settings.toml" "$SELFTEST") \
+  >"$work/rootedinert.out" 2>&1; then
+  cat "$work/rootedinert.out"
+  note "selftest failed on a glob matching tracked paths outside the enabled carry classes — inert config is being treated as dead"
+fi
+grep -q "matches tracked paths but none in the enabled carry classes" "$work/rootedinert.out" \
+  || note "inert non-carry-class glob did not report the inert note"
+
 # A SYMLINKED override anchors evidence at its TARGET's repository. The
 # symlink lives in a non-repository directory (the common install shape:
 # settings symlinked from elsewhere); anchoring at the symlink's own
@@ -353,6 +373,19 @@ grep -q "evidence mode: tracked" "$work/symlinked.out" \
   || note "symlinked override did not anchor tracked evidence at the target's repository (hermetic demotion is back)"
 grep -q "carry-exclude — 'guides/\*' matches 'guides/intro.md', refusing the carry" "$work/symlinked.out" \
   || note "symlinked override did not probe the target repository's tracked tree"
+
+# An OPTION-LOOKING override (cwd-relative, dash-leading, no slash) names a
+# symlink: an unnormalized `readlink -settings` parses the path as an option
+# and fails, silently stranding the anchor at the invoking directory —
+# hermetic demotion again, by spelling rather than by location.
+ln -s "$work/rooted/repo/vstack.settings.toml" "$work/symlinked/outside/-settings"
+if ! (cd "$work/symlinked/outside" && REVIEW_GATE_SETTINGS_FILE="-settings" "$SELFTEST") \
+  >"$work/symlinkdash.out" 2>&1; then
+  cat "$work/symlinkdash.out"
+  note "selftest failed under a dash-leading relative symlinked override"
+fi
+grep -q "evidence mode: tracked" "$work/symlinkdash.out" \
+  || note "dash-leading symlinked override did not anchor tracked evidence at the target's repository (readlink option-parse regression)"
 
 # A repository with ZERO tracked files is still tracked mode — payload
 # emptiness must not demote the run to hermetic synthetic probing, where a

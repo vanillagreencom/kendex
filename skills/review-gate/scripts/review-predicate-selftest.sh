@@ -1900,6 +1900,11 @@ load_exclude_tracked() {
         _elt_settings="$REVIEW_GATE_SETTINGS_FILE"
         _elt_hops=0
         while [ -L "$_elt_settings" ] && [ "$_elt_hops" -lt 40 ]; do
+          # An option-looking path (dash-leading, no slash — a cwd-relative
+          # `-settings`, or a bare dash-leading link target) would parse as
+          # a readlink OPTION and fail the walk, stranding the anchor at
+          # the wrong checkout: normalize with ./ first.
+          case "$_elt_settings" in -*) _elt_settings="./$_elt_settings" ;; esac
           _elt_link="$(readlink "$_elt_settings")" || break
           case "$_elt_link" in
             /*) _elt_settings="$_elt_link" ;;
@@ -1978,12 +1983,13 @@ exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
   # match returns 2 so the caller can say so out loud. Hermetic mode (no
   # repository): the '*'-filler fallback keeps harness runs deterministic,
   # and the concrete path is still re-proven against its source glob.
-  local pat="$1" ext candidate
+  local pat="$1" ext candidate any_tracked_match=""
   shift
   if [ "$EXCLUDE_TRACKED_MODE" = "tracked" ]; then
     while IFS= read -r candidate; do
       [ -z "$candidate" ] && continue
       glob_matches "$candidate" "$pat" || continue
+      any_tracked_match=1
       for ext in "$@"; do
         case "$candidate" in *"$ext")
           printf '%s\n' "$candidate"
@@ -1993,6 +1999,12 @@ exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
     done <<EOF_TRACKED_PROBE
 $EXCLUDE_TRACKED
 EOF_TRACKED_PROBE
+    # 2 and 3 are DIFFERENT verdicts: matching nothing tracked at all is
+    # the typo/dead-config shape, while matching tracked paths that just
+    # sit outside the enabled carry classes proves the glob names real
+    # paths — inert today, not dead, and never a candidate for the
+    # prophylactic declaration (whose contract is "no tracked match").
+    [ -n "$any_tracked_match" ] && return 3
     return 2
   fi
   case "$pat" in *'?'*|*'['*|*'\'*) return 1 ;; esac
@@ -2170,6 +2182,13 @@ EOF_PROPHYLACTIC
           echo "FAIL  configured: carry-exclude — '$probe_pat' matches NO tracked carry-class ($probe_exts) path in this repository: a typo or wrong anchor is dead config (declare it in REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC if it deliberately guards paths that do not exist yet)" >&2
           failures=$((failures + 1))
         fi
+      elif [ "$probe_rc" -eq 3 ]; then
+        # Matching tracked paths OUTSIDE the enabled carry classes is not
+        # a typo — the glob provably names real paths — and steering it
+        # into the prophylactic declaration would make that declaration
+        # false (its contract: no tracked match today). Inert for today's
+        # classes, legitimately kept for other or future ones: loud note.
+        echo "note  configured: carry-exclude — '$probe_pat' matches tracked paths but none in the enabled carry classes ($probe_exts): inert for today's carry classes (kept for other or future classes); not exercised here"
       else
         echo "note  configured: carry-exclude — '$probe_pat' derives no carry-class ($probe_exts) probe: it guards paths the enabled carry class never carries, or uses ?/[/\\ metacharacters; not exercised here"
       fi
