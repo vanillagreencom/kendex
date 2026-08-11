@@ -16,7 +16,10 @@
 #                      REVIEW_GATE_THREADS=off gets approved verdicts with
 #                      threads open, and thread transitions have no webhook
 #                      anywhere — seeing them is this tool's reason to
-#                      exist). Over 100 threads fails CLOSED as attention.
+#                      exist). Counted across pages (bound: 20 pages / 2000
+#                      threads); past the bound, or on pagination metadata
+#                      that cannot advance, the count fails CLOSED as
+#                      attention.
 #                      QUEUED PRs are annotated — a queued PR needs a
 #                      DEQUEUE before any fix push, GitHub rejects pushes
 #                      to queued branches

@@ -93,7 +93,9 @@ Changes-requested and unresolved threads always fail closed. Every evidence
 read fails LOUD (exit 2, no verdict) — a transient API error must never flip
 a healthy PR's state; reads retry in-process up to `REVIEW_GATE_API_ATTEMPTS`
 (default 1), and a zero-byte producer is a failed read, not an empty page
-set. Over 100 review threads reports overflow and fails closed to
+set. Review threads are counted across pages (100 per page, bound 20
+pages / 2000 threads); past the bound — or when pagination metadata
+cannot advance — the count reports overflow and fails closed to
 `threads-open`.
 
 **Trust model.** Trust keys on names only GitHub controls: the author login

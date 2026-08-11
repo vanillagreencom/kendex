@@ -103,12 +103,17 @@ mkdir -p "$fixtures" "$shim"
 cat >"$shim/gh" <<'SHIM'
 #!/usr/bin/env bash
 set -u
-url=""; filter=""; paginate=0
+url=""; filter=""; paginate=0; graphql_page2=0
 while [ $# -gt 0 ]; do
   case "$1" in
     api|--slurp) ;;
     --paginate) paginate=1 ;;
-    -f|-F) shift ;;
+    -f|-F)
+      shift
+      # A cursor variable marks a follow-up thread page: serve the page-2
+      # fixture (when present) so pagination is exercised for real.
+      case "$1" in after=*) graphql_page2=1 ;; esac
+      ;;
     --jq) shift; filter="$1" ;;
     graphql) url="graphql" ;;
     *) [ -z "$url" ] && url="$1" ;;
@@ -146,6 +151,9 @@ if [ -n "${GH_SHIM_EMPTY:-}" ] && [ "$GH_SHIM_EMPTY" = "$name" ]; then
   exit 0
 fi
 file="$GH_SHIM_FIXTURES/$name.json"
+if [ "$name" = "graphql" ] && [ "$graphql_page2" = "1" ] && [ -f "$GH_SHIM_FIXTURES/graphql.page2.json" ]; then
+  file="$GH_SHIM_FIXTURES/graphql.page2.json"
+fi
 [ -f "$file" ] || { echo "shim: no fixture $file" >&2; exit 91; }
 if [ -n "$filter" ]; then jq -r "$filter" <"$file"; else cat "$file"; fi
 if [ "$paginate" = "1" ] && [ -f "$GH_SHIM_FIXTURES/$name.page2.json" ] && [ -z "$filter" ]; then
@@ -654,14 +662,39 @@ CFG_CONTEXTS="mech-ctx"; CFG_PUBLISHER_REJECT=""
 status_ctx "mech-ctx" success "analysis complete" "github-actions[bot]"
 run "publisher filter unset: github-actions-minted status counts (default unchanged)" approved
 
-# >100 threads is a SUCCESSFUL read we cannot fully verify: fail closed to
-# threads-open, never open the gate.
+# A truthy hasNextPage whose cursor cannot advance is a read we cannot fully
+# verify: fail closed to threads-open, never open the gate. (The old
+# first-page ">100 threads" overflow is gone — pages are walked and summed
+# up to a 20-page/2000-thread bound, where the same posture applies.)
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
 status_ctx "mech-ctx" success "analysis complete"
 jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true},nodes:[]}}}}}' \
   >"$fixtures/graphql.json"
-run "thread overflow (>100) fails closed" threads-open
+run "thread pagination without an advancing cursor fails closed" threads-open
+
+# Resolved history spanning pages must APPROVE: page one advances by cursor
+# to page two, whose resolved remainder ends the walk — pagination sums,
+# never truncates at the first page.
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
+status_ctx "mech-ctx" success "analysis complete"
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:"P2"},nodes:[{isResolved:true},{isResolved:true}]}}}}}' \
+  >"$fixtures/graphql.json"
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[{isResolved:true}]}}}}}' \
+  >"$fixtures/graphql.page2.json"
+run "resolved threads across pages approve" approved
+
+# An unresolved thread on a LATER page must still fail closed — proves the
+# walk actually counts follow-up pages instead of trusting page one.
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
+status_ctx "mech-ctx" success "analysis complete"
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:"P2"},nodes:[{isResolved:true},{isResolved:true}]}}}}}' \
+  >"$fixtures/graphql.json"
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[{isResolved:false}]}}}}}' \
+  >"$fixtures/graphql.page2.json"
+run "unresolved thread on a later page fails closed" threads-open
 
 # A thread node whose isResolved is not a boolean (null/missing) must never
 # count as resolved — that direction is a false approval on a merge gate.

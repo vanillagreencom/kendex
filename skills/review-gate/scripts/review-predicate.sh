@@ -1000,8 +1000,9 @@ EOF_CARRY
 fi
 
 # A genuine GraphQL failure must NOT fall through as unresolved threads — fail
-# loudly instead. `pageInfo.hasNextPage` (>100 threads) is a SUCCESSFUL read
-# we cannot fully verify, so it reports "overflow" and fails closed to
+# loudly instead. Thread pages are WALKED and summed (100 per page, 20-page/
+# 2000-thread bound); past the bound, or on a truthy hasNextPage whose cursor
+# cannot advance, the count reports "overflow" and fails closed to
 # threads-open. Same posture for a thread node whose isResolved is not a
 # boolean ("malformed"): null/missing nodes must never count as resolved —
 # that direction is a false approval on a merge gate.
