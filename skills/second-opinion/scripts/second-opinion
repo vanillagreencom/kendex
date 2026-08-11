@@ -679,6 +679,10 @@ if $MULTI_LANE; then
   # On any exit — including INT/TERM — kill still-running lane children before
   # cleanup: an interrupted parent must not leave external model CLIs running
   # (and billing) in the background, writing orphaned sidecars.
+  # LANE_TMP_DIR holds only per-lane stderr captures. Nothing the union merge
+  # needs lives there past each lane's reap (VST-221), so this removal — which
+  # runs at exit, after the union artifact is written — can never cost a
+  # verdict, and neither can an outsider removing the directory early.
   cleanup_lanes() {
     local pid
     for pid in ${LANE_PIDS[@]+"${LANE_PIDS[@]}"}; do
@@ -720,27 +724,45 @@ if $MULTI_LANE; then
   done
 
   LANES_FAILED_JSON="[]"
-  OK_WRAP_FILES=()
+  LANE_WRAPS=()
   ANY_LANE_EXIT4=false
   for i in "${!LANE_PIDS[@]}"; do
     lane="${REVIEW_LANES[$i]}"
     lane_rc=0
     wait "${LANE_PIDS[$i]}" || lane_rc=$?
     # Replay the lane's stderr with a lane prefix so parallel logs stay
-    # attributable in sequential order.
-    sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" >&2 || true
+    # attributable in sequential order. The stderr capture is scratch: when it
+    # is gone (VST-221 — the reviewed repo's own agent CLI, a sandbox, or a tmp
+    # reaper can clear scratch while lanes run) the log is lost and nothing
+    # else is, so say that plainly rather than emitting a bare read error and
+    # never let it colour the lane's own verdict.
+    if [[ -r "${LANE_ERRS[$i]}" ]]; then
+      sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" >&2 || true
+    else
+      echo "→ lane stderr unavailable (scratch capture removed mid-run): $lane" >&2
+    fi
     lane_ok=false
     if [[ $lane_rc -eq 0 && -s "${LANE_OUTS[$i]}" ]]; then
-      wrap="$LANE_TMP_DIR/wrap-${lane}.json"
       # A zero exit with a non-empty file is not proof of a valid artifact —
-      # jq must parse it, or the merge would abort on one corrupt lane.
-      if jq --arg target "$lane" '{target: $target, review: .}' "${LANE_OUTS[$i]}" > "$wrap" 2>/dev/null; then
-        OK_WRAP_FILES+=("$wrap")
+      # jq must parse it, or the merge would abort on one corrupt lane. The
+      # wrapped review is held IN MEMORY from here on (VST-221): the union
+      # merge must not depend on a scratch file surviving between this reap and
+      # the final write, or losing scratch would report healthy lanes as
+      # unparseable and drop a verdict both models actually delivered.
+      if lane_wrap=$(jq -c --arg target "$lane" '{target: $target, review: .}' "${LANE_OUTS[$i]}" 2>/dev/null); then
+        LANE_WRAPS+=("$lane_wrap")
         lane_ok=true
       else
         echo "→ lane produced an unparseable artifact: $lane" >&2
         lane_rc="$EXIT_NO_REVIEW"
       fi
+    elif [[ $lane_rc -eq 0 ]]; then
+      # Clean exit, nothing usable on disk: the lane never delivered an answer.
+      # That is the lane-level class (5), not the response-level one (4) — and
+      # it must never be reported as the child's bare "exit 0", which reads as
+      # a lane that both succeeded and failed.
+      echo "→ lane exited 0 without a usable artifact: $lane" >&2
+      lane_rc="$EXIT_CLI_FAILED"
     fi
     if ! $lane_ok; then
       # Exit-code contract: 4 = the lane ANSWERED but unusably. A lane's own
@@ -755,7 +777,7 @@ if $MULTI_LANE; then
     fi
   done
 
-  if [[ ${#OK_WRAP_FILES[@]} -eq 0 ]]; then
+  if [[ ${#LANE_WRAPS[@]} -eq 0 ]]; then
     jq -n --argjson lanes "$LANES_FAILED_JSON" \
       '{error: "every review lane failed — no external verdict", lanes: $lanes}' >&2
     if $ANY_LANE_EXIT4; then exit "$EXIT_NO_REVIEW"; else exit "$EXIT_CLI_FAILED"; fi
@@ -773,7 +795,7 @@ if $MULTI_LANE; then
   # reviewed_head is the scope-derivation pin, for per-push budget accounting.
   STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   REVIEWED_HEAD="$REVIEW_HEAD_SHA"
-  MERGED=$(jq -s --argjson failed "$LANES_FAILED_JSON" --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" '
+  MERGED=$(printf '%s\n' "${LANE_WRAPS[@]}" | jq -s --argjson failed "$LANES_FAILED_JSON" --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" '
     def norm: ((.location // "") | ascii_downcase | gsub("`"; "") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" "));
     def with_occ: reduce .[] as $f ({seen: {}, out: []};
       ($f | norm) as $n
@@ -816,11 +838,11 @@ if $MULTI_LANE; then
                    suggestions_in: ($ask | length), suggestions_out: ($suggestions | length)}
         } + (if $head == "" then {} else {reviewed_head: $head} end))
       }
-  ' "${OK_WRAP_FILES[@]}")
+  ')
 
   if [[ -n "$OUTPUT_PATH" ]]; then
     printf '%s\n' "$MERGED" > "$OUTPUT_PATH"
-    echo "→ Written: $OUTPUT_PATH (union of ${#OK_WRAP_FILES[@]} lanes)" >&2
+    echo "→ Written: $OUTPUT_PATH (union of ${#LANE_WRAPS[@]} lanes)" >&2
     echo "$OUTPUT_PATH"
   else
     printf '%s\n' "$MERGED"

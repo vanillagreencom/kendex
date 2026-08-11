@@ -56,6 +56,19 @@
   self-gates on the skill being installed. CI use of preflight, like
   review-gate, requires the installed skill committed to the repo.
 
+- **second-opinion: a multi-lane review no longer loses its verdict when
+  scratch space disappears mid-run** (VST-221 / #1229). The union merge used
+  to re-wrap each lane's review into a `wrap-<lane>.json` file inside the
+  run's `mktemp -d` directory and read those files back at the end. Anything
+  clearing that directory while lanes ran — the reviewed repo's own agent CLI,
+  a sandbox, a tmp reaper — made the parent report both healthy lanes as
+  "unparseable" and exit 4 with no external verdict, even though valid lane
+  artifacts sat intact beside the union path. Each lane's review is now held
+  in memory from the moment it is reaped, so the temp directory holds only the
+  per-lane stderr capture: losing it costs the log replay (reported as such)
+  and never a verdict. A lane that exits 0 with no usable artifact is also
+  recorded with the never-answered code 5 instead of a bare `exit 0`.
+
 - **orch: claude handoff lanes launch autonomous and verify brief delivery**
   (VST-191 / #1173). `open-terminal` now renders a permission argument into
   claude lane launch commands, sourced from the new
