@@ -62,6 +62,10 @@ issue_record() {
   issue_record CC-940 Todo unstarted ""
   issue_record CC-941 Done completed CC-940
   issue_record CC-942 'In Progress' started CC-940
+  # (one PR) single-PR bundle — must REFUSE --container (scenario G).
+  printf '{"id":"uuid-CC-950","identifier":"CC-950","title":"Ship the thing (one PR)","description":null,"state":{"name":"In Review","type":"started"},"assignee":null,"labels":{"nodes":[]},"project":null,"projectMilestone":null,"cycle":null,"priority":3,"estimate":null,"parent":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]},"archivedAt":null,"trashed":false}\n'
+  issue_record CC-951 Done completed CC-950
+  issue_record CC-952 Done completed CC-950
 } | jq -s '.' >"$TMP_ROOT/.cache/linear/issues.json"
 
 # Every issue except the canceled one carries a Completion Summary comment, so
@@ -148,6 +152,23 @@ check "E: container root CC-940 itself passes state check" "$outE" \
 check "E: pending child CC-942 fails" "$outE" \
   '.results[] | select(.id == "CC-942") | .state_ok == false and .ok == false'
 check "E: all_ok false while a child is open" "$outE" '.all_ok == false'
+
+# --- Scenario G: --container refuses an explicit (one PR) bundle -----------
+# The marker always wins: a single-PR bundle validates with plain
+# validate-completion (session-root pre-merge state + summary checks), and
+# --container would silently swap in the permissive container role.
+set +e
+outG="$(run_validate CC-950 --include-children-of CC-950 --container 2>&1 >/dev/null)"
+rcG=$?
+set -e
+if [ "$rcG" -eq 0 ]; then
+  echo "FAIL: G: (one PR) bundle accepted under --container (rc=0)"
+  fail=1
+fi
+case "$outG" in
+  *"(one PR)"*) ;;
+  *) echo "FAIL: G: refusal does not name the marker: $outG"; fail=1 ;;
+esac
 
 # --- Scenario F: --container fails closed on misuse ------------------------
 # The flag asserts "this bundle may complete now", so it must name exactly one

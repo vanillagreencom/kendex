@@ -3002,6 +3002,19 @@ validate_completion() {
             echo "{\"error\": \"Failed to fetch bundle for: $include_children_of\"}" >&2
             return 1
         fi
+        # Container fail-closed, part 1b: an explicit single-PR bundle is
+        # the OPPOSITE contract — its (one PR) marker always wins, and
+        # validating it under the permissive container role would skip the
+        # session root's pre-merge state and summary checks. Reject the
+        # marker instead of silently reclassifying.
+        if [ "$container_mode" = "true" ]; then
+            local bundle_title
+            bundle_title=$(echo "$bundle" | jq -r '.title // ""')
+            if printf '%s' "$bundle_title" | grep -qi '(one PR)'; then
+                echo "{\"error\": \"--container fail-closed: $include_children_of carries the (one PR) marker — an explicit single-PR bundle validates with plain validate-completion, never as a container\"}" >&2
+                return 1
+            fi
+        fi
         local child_ids
         child_ids=$(echo "$bundle" | jq -r '[.children[] | select(.state_type != "canceled") | .id] | .[]' 2>/dev/null)
         for child_id in $child_ids; do
