@@ -120,10 +120,10 @@ pub fn install_skill(
                     // or absent) says nothing about it.
                     let corresponding = corresponding_project_root_in(&checkout_toplevel);
                     match corresponding {
-                        Some(root) if root == project_canon => {}
                         Some(root) => {
-                            if crate::path_safety::ensure_agents_dir_within_project(&root)
-                                .is_err()
+                            if root != project_canon
+                                && crate::path_safety::ensure_agents_dir_within_project(&root)
+                                    .is_err()
                             {
                                 anyhow::bail!(
                                     "refusing to install {} through {}: that same-repository checkout's .agents fails validation, and falling back to an ordinary link would write a worktree-absolute target into it",
@@ -131,11 +131,14 @@ pub fn install_skill(
                                     root.display()
                                 );
                             }
-                            // Same-repository indirection whose landing
-                            // parent is NOT a recognized skills surface is an
-                            // alias (e.g. `.claude/skills -> <main>/cli/src`):
-                            // installing would remove_existing/replace
-                            // children of an arbitrary repository directory.
+                            // Symlink indirection whose landing parent is NOT
+                            // a recognized skills surface is an alias (e.g.
+                            // `.claude/skills -> cli/src`, same checkout or
+                            // another): installing would remove_existing/
+                            // replace children of an arbitrary repository
+                            // directory. Current-checkout indirection gets
+                            // the same gate — the fallback path would delete
+                            // through the alias just as readily.
                             if let Some(parent) = physical.parent()
                                 && !is_recognized_skills_surface(&root, parent)
                             {
@@ -799,11 +802,11 @@ pub fn remove_item(
                 // Marker already cleared before the unlink phase (a checkout
                 // that still references the skill re-marks it on its next
                 // refresh; lock entries survive regardless, since the stale
-                // gate checks existence, not the marker).
-                eprintln!(
-                    "  Note: leaving canonical copy {} in place — it may back that checkout's own installs; remove it from that checkout to delete it (VST-195)",
-                    anchored.display()
-                );
+                // gate checks existence, not the marker). No printing here:
+                // callers (CLI remove, TUI report) render anchored_left
+                // themselves — a direct eprintln would duplicate the notice
+                // and, from the TUI's worker thread, write into a raw-mode
+                // terminal.
                 anchored_left.push(anchored.clone());
             }
         }
@@ -1237,8 +1240,11 @@ fn relative_path(from: &Path, to: &Path) -> Result<PathBuf> {
     // If the apparent parent path differs from the real containing directory
     // (for example because an ancestor is a symlink), prefer an absolute
     // target over a confusing relative path that is computed from the real
-    // path. Same-repository worktree indirection never reaches this branch:
-    // install_skill resolves those links against their physical home first.
+    // path. Same-repository worktree indirection never reaches this branch —
+    // install_skill resolves those links against their physical home first —
+    // but the no-link_home case still does: unrelated-tree indirection (e.g.
+    // `.claude` symlinked into a dotfiles checkout) is exactly what this
+    // absolute fallback serves.
     if from_canonical != from_lexical {
         return Ok(to);
     }

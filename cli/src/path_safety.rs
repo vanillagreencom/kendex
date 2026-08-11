@@ -74,8 +74,13 @@ pub(crate) fn write_file_no_follow(path: &Path, contents: impl AsRef<[u8]>) -> R
 /// is not inside a Git repository or the answer cannot be resolved — callers
 /// fail closed.
 pub(crate) fn git_toplevel(dir: &Path) -> Option<PathBuf> {
+    // `.arg(dir)` passes the path as raw OS bytes — a non-UTF-8 path must
+    // not silently skip repository detection (to_str() would return None
+    // and defeat anchoring on a perfectly valid Unix path).
     let output = std::process::Command::new("git")
-        .args(["-C", dir.to_str()?, "rev-parse", "--show-toplevel"])
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--show-toplevel"])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -93,7 +98,9 @@ pub(crate) fn git_toplevel(dir: &Path) -> Option<PathBuf> {
 /// cannot be resolved — every one of which must fail closed at the call site.
 pub(crate) fn git_common_dir(dir: &Path) -> Option<PathBuf> {
     let output = std::process::Command::new("git")
-        .args(["-C", dir.to_str()?, "rev-parse", "--git-common-dir"])
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--git-common-dir"])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -122,13 +129,9 @@ pub(crate) fn git_common_dir(dir: &Path) -> Option<PathBuf> {
 /// must fail closed.
 pub(crate) fn git_repo_identity(dir: &Path) -> Option<(PathBuf, PathBuf)> {
     let output = std::process::Command::new("git")
-        .args([
-            "-C",
-            dir.to_str()?,
-            "rev-parse",
-            "--git-common-dir",
-            "--show-toplevel",
-        ])
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--git-common-dir", "--show-toplevel"])
         .output()
         .ok()?;
     if !output.status.success() {
