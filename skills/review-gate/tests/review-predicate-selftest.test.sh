@@ -152,14 +152,24 @@ mkdir -p "$work/brokengit/bin" "$work/brokengit/repo"
 real_git="$(command -v git)"
 cat >"$work/brokengit/bin/git" <<BROKENGIT
 #!/usr/bin/env bash
-# The subcommand may ride behind global options (git -C <root> ls-files),
-# so scan every argument rather than pinning position 1.
+# The SUBCOMMAND may ride behind global options (git -C <root> ls-files):
+# skip option flags and their operands, and fail only when the first
+# non-option argument — the actual subcommand — is ls-files, so a path
+# operand literally named "ls-files" cannot false-trigger.
+_sub=""
+_skip=""
 for _a in "\$@"; do
-  if [ "\$_a" = "ls-files" ]; then
-    echo "fatal: planted index failure" >&2
-    exit 128
-  fi
+  if [ -n "\$_skip" ]; then _skip=""; continue; fi
+  case "\$_a" in
+    -C|--git-dir|--work-tree|-c) _skip=1 ;;
+    -*) ;;
+    *) _sub="\$_a"; break ;;
+  esac
 done
+if [ "\$_sub" = "ls-files" ]; then
+  echo "fatal: planted index failure" >&2
+  exit 128
+fi
 exec "$real_git" "\$@"
 BROKENGIT
 chmod +x "$work/brokengit/bin/git"
@@ -285,6 +295,26 @@ if ! (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/declared
 fi
 grep -q "DECLARED prophylactic" "$work/rooteddecl.out" \
   || note "declared prophylactic glob did not report the declared note"
+
+# A repository with ZERO tracked files is still tracked mode — payload
+# emptiness must not demote the run to hermetic synthetic probing, where a
+# manufactured path would let a dead glob pass. The banner must say tracked
+# and the undeclared glob must FAIL with the no-match diagnostic.
+mkdir -p "$work/emptyrepo/repo"
+(cd "$work/emptyrepo/repo" && git init -q . \
+  && git -c user.email=t@t -c user.name=t commit -qm empty --allow-empty)
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/emptyrepo/repo/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\n' \
+  >>"$work/emptyrepo/repo/vstack.settings.toml"
+if (cd "$work/emptyrepo/repo" && "$SELFTEST") >"$work/emptyrepo.out" 2>&1; then
+  note "selftest passed in a zero-tracked-file repository with an undeclared glob — payload emptiness demoted tracked mode to hermetic"
+else
+  grep -q "evidence mode: tracked" "$work/emptyrepo.out" \
+    || note "zero-tracked-file repository did not report tracked evidence mode"
+  grep -q "matches NO tracked carry-class" "$work/emptyrepo.out" \
+    || note "zero-tracked-file repository did not fail the undeclared glob with the no-match diagnostic"
+fi
 
 # A structurally universal exclusion must FAIL in TRACKED mode too — with
 # one committed, no path today or ever can carry, so the tracked-mode

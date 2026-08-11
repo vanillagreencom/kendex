@@ -319,6 +319,15 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 # identical trees (no delta) are unaffected; inert while
 # REVIEW_GATE_CARRY_FORWARD is empty.
 
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
+# Used by: review-gate (`review-predicate-selftest.sh` only; the live
+# predicate is unchanged). Exclusion globs (';'-separated, exact glob text)
+# DECLARED to match no tracked path today. The selftest fails an exclusion
+# glob that matches nothing — a typo'd anchor is dead config like a
+# leading-'/' one — unless declared here as deliberately guarding paths
+# that do not exist yet. Inert while REVIEW_GATE_CARRY_FORWARD_EXCLUDE is
+# empty.
+
 REVIEW_GATE_MODE = "enforce"
 # Used by: review-gate (`review-predicate.sh`) and orch (submit flow). The
 # one-switch per-repo gate disable: "enforce" (default) is the full gate;

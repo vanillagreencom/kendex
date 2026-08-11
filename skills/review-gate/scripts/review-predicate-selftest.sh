@@ -1867,6 +1867,7 @@ glob_matches() { # path, glob — the predicate's exact `case` matcher
 EXCLUDE_TRACKED=""
 EXCLUDE_TRACKED_ERROR=""
 EXCLUDE_TRACKED_ROOT=""
+EXCLUDE_TRACKED_MODE=""
 exclude_tracked_loaded=""
 load_exclude_tracked() {
   [ -n "$exclude_tracked_loaded" ] && return 0
@@ -1899,6 +1900,10 @@ load_exclude_tracked() {
     elif _elt_tmp="$(mktemp)"; then
       if git -C "$EXCLUDE_TRACKED_ROOT" ls-files -z >"$_elt_tmp" 2>/dev/null; then
         EXCLUDE_TRACKED="$(tr '\0' '\n' <"$_elt_tmp")"
+        # Mode is a SEPARATE flag: a successful read in a zero-tracked-file
+        # repository leaves the payload empty, and payload-emptiness must
+        # not demote a tracked run to hermetic synthetic probing.
+        EXCLUDE_TRACKED_MODE="tracked"
       else
         EXCLUDE_TRACKED_ERROR="'git ls-files' failed (fix git, or run the harness outside a repository)"
       fi
@@ -1917,7 +1922,7 @@ exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
   # and the concrete path is still re-proven against its source glob.
   local pat="$1" ext candidate
   shift
-  if [ -n "$EXCLUDE_TRACKED" ]; then
+  if [ "$EXCLUDE_TRACKED_MODE" = "tracked" ]; then
     while IFS= read -r candidate; do
       [ -z "$candidate" ] && continue
       glob_matches "$candidate" "$pat" || continue
@@ -1951,7 +1956,7 @@ exclude_free_path() { # ext... -> a path NO committed glob matches
   # "nothing can carry" while README.md still carries). Hermetic mode:
   # synthetic candidates per extension.
   local ext candidate pat hit
-  if [ -n "$EXCLUDE_TRACKED" ]; then
+  if [ "$EXCLUDE_TRACKED_MODE" = "tracked" ]; then
     while IFS= read -r candidate; do
       [ -z "$candidate" ] && continue
       hit=""
@@ -2025,7 +2030,7 @@ if [ -n "$ACTIVE_CARRY" ]; then
     # The evidence MODE is printed, not inferred: a degraded run and a full
     # one used to be distinguishable only by the case total, which moves on
     # every re-vendor for unrelated reasons. One line makes it readable.
-    if [ -n "$EXCLUDE_TRACKED" ]; then
+    if [ "$EXCLUDE_TRACKED_MODE" = "tracked" ]; then
       echo "info  carry-exclude evidence mode: tracked (root: $EXCLUDE_TRACKED_ROOT, $(printf '%s\n' "$EXCLUDE_TRACKED" | grep -c .) tracked paths)"
     elif [ -z "$EXCLUDE_TRACKED_ERROR" ]; then
       echo "info  carry-exclude evidence mode: hermetic-synthetic (not inside a repository)"
@@ -2157,7 +2162,7 @@ EOF_UNIVERSAL
         cases=$((cases + 1))
         echo "FAIL  configured: carry-exclude — '$probe_universal' matches every path; the enabled carry class can never apply to any DELTA (identical-tree/rebase-residue carries alone would remain, which exclusions never touch). Overwhelmingly a misconfiguration: narrow the exclusions to the real policy surfaces, or disable REVIEW_GATE_CARRY_FORWARD instead of excluding everything" >&2
         failures=$((failures + 1))
-      elif [ -z "$EXCLUDE_TRACKED" ]; then
+      elif [ "$EXCLUDE_TRACKED_MODE" != "tracked" ]; then
         # Hermetic mode: finite synthetic probes cannot PROVE universality
         # — a glob set that merely spans both harness namespaces exhausts
         # the candidates while ordinary paths still carry.
