@@ -59,10 +59,18 @@ sr_dotenv_value() { # RAW — value on stdout; nonzero on an unsupported shape
       return 0
       ;;
   esac
-  # Only whitespace and/or a #comment may follow the closing quote.
-  rest="${rest#"${rest%%[![:space:]]*}"}"
+  # Only whitespace, or whitespace followed by a #comment, may follow the
+  # closing quote. An ADJACENT # (KEY="abc"#def) is not a comment in shell
+  # semantics — it is an adjacent segment, and truncating it would load an
+  # unintended value, so it fails like any other unsupported shape.
   case "$rest" in
-    "" | "#"*) printf '%s' "$val"; return 0 ;;
+    "") printf '%s' "$val"; return 0 ;;
+    [[:space:]]*)
+      rest="${rest#"${rest%%[![:space:]]*}"}"
+      case "$rest" in
+        "" | "#"*) printf '%s' "$val"; return 0 ;;
+      esac
+      ;;
   esac
   return 1
 }

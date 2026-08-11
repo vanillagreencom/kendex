@@ -175,6 +175,10 @@ printf 'SIZE_RATCHET_THRESHOLD="17".5\n' > "$R/.env"
 run_raw || true
 if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent segment after a quoted value fails loud, never truncates"; else bad "adjacent-segment dotenv (.env)" "rc=$RC out=$OUT"; fi
 rm -f "$R/.env"
+printf 'SIZE_RATCHET_THRESHOLD="17"#note\n' > "$R/.env"
+run_raw || true
+if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent # after a quoted value is a segment, not a comment — fails loud"; else bad "adjacent-hash dotenv (.env)" "rc=$RC out=$OUT"; fi
+rm -f "$R/.env"
 
 echo "=== option-like configured paths ==="
 new_repo optpath
