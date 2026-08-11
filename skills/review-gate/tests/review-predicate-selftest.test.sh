@@ -429,6 +429,25 @@ else
     || note "dangling-override failure does not carry the unresolvable-override diagnostic"
 fi
 
+# An EXISTING but UNREADABLE override must refuse up front too: rg_setting's
+# grep presence probe fails on it and every key silently resolves to its
+# built-in default. Skipped when the runner can read mode-000 files anyway
+# (privileged CI) — the guard is [ -r ]-based and cannot fire there.
+cp "$work/rooted/repo/vstack.settings.toml" "$work/cyclic/unreadable.settings.toml"
+chmod 000 "$work/cyclic/unreadable.settings.toml"
+if [ -r "$work/cyclic/unreadable.settings.toml" ]; then
+  echo "skip: unreadable-override fixture (runner reads mode-000 files)"
+else
+  if (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/cyclic/unreadable.settings.toml" "$SELFTEST") \
+    >"$work/unreadable.out" 2>&1; then
+    note "selftest passed with an UNREADABLE settings override — the silent-defaults guard no longer refuses"
+  else
+    grep -q "exists but is not readable" "$work/unreadable.out" \
+      || note "unreadable-override failure does not carry the not-readable diagnostic"
+  fi
+fi
+chmod 644 "$work/cyclic/unreadable.settings.toml"
+
 # A BROKEN WORKTREE (a .git file naming a missing gitdir) earns git's
 # standard 'not a git repository' text while repository metadata is
 # plainly present — that is an unusable evidence base, not a hermetic

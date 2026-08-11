@@ -50,6 +50,13 @@ case "${REVIEW_GATE_SETTINGS_FILE:-}" in
       echo "FATAL: REVIEW_GATE_SETTINGS_FILE ('$REVIEW_GATE_SETTINGS_FILE') names a symlink that does not resolve to a readable file (cycle, dangling target, or over-long chain) — refusing to test built-in defaults in its place" >&2
       exit 1
     fi
+    # An EXISTING but unreadable override is the same silent-defaults trap
+    # one notch later: rg_setting's grep would fail its presence probe and
+    # every key would quietly resolve to its built-in default.
+    if [ -f "$REVIEW_GATE_SETTINGS_FILE" ] && [ ! -r "$REVIEW_GATE_SETTINGS_FILE" ]; then
+      echo "FATAL: REVIEW_GATE_SETTINGS_FILE ('$REVIEW_GATE_SETTINGS_FILE') exists but is not readable — refusing to test built-in defaults in its place" >&2
+      exit 1
+    fi
     ;;
 esac
 
@@ -2011,7 +2018,16 @@ load_exclude_tracked() {
           [ -n "$_elt_walk" ] || _elt_walk="/"
         done
         ;;
-      *) EXCLUDE_TRACKED_ERROR="repository probe failed (git rev-parse --is-inside-work-tree exit $_elt_probe_rc: ${_elt_probe_err:-no output}) — cannot tell a non-repository from a broken git" ;;
+      *)
+        # A clean "false" is its own condition — a git DIRECTORY with no
+        # work tree (bare repo, .git itself) — and deserves its own words:
+        # "exit 0: no output" sends the operator hunting a broken git.
+        if [ "$_elt_probe_rc" -eq 0 ] && [ "$_elt_probe_out" = "false" ]; then
+          EXCLUDE_TRACKED_ERROR="the anchor is inside a git directory but not a work tree (rev-parse said false) — no tracked evidence base here"
+        else
+          EXCLUDE_TRACKED_ERROR="repository probe failed (git rev-parse --is-inside-work-tree exit $_elt_probe_rc: ${_elt_probe_err:-no output}) — cannot tell a non-repository from a broken git"
+        fi
+        ;;
     esac
     return 0
   fi
