@@ -22,16 +22,6 @@ Delegate development work to specialist agent(s). Handles single issues and bund
 ```
 Use the output as `ISSUE_ID`.
 
-Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_ID` ≠ the current branch's issue, ask the user before proceeding. Resolve `WT_PATH`:
-- Inside a worktree → use current directory as `WT_PATH`
-- Main repo, worktree exists → run `.agents/skills/worktree/scripts/worktree path [ISSUE_ID]` and use the output as `WT_PATH`
-- Main repo, worktree missing → ask the user before creating
-
-```bash
-.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
-```
-Use the output as `TRACKER`.
-
 **Container preflight** (Linear only, before any workflow-state
 initialization): fetch the issue and its children — the default single-issue
 output omits children entirely, so the bundle read is mandatory:
@@ -54,6 +44,16 @@ Otherwise, an issue with the `agent:multi` label or with children is a
 CONTAINER — refuse before initializing anything (containers never hold
 workflow state) and surface its unblocked children as the startable work
 items. Managed callers already ran this check in start/start-worktree.
+
+Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_ID` ≠ the current branch's issue, ask the user before proceeding. Resolve `WT_PATH`:
+- Inside a worktree → use current directory as `WT_PATH`
+- Main repo, worktree exists → run `.agents/skills/worktree/scripts/worktree path [ISSUE_ID]` and use the output as `WT_PATH`
+- Main repo, worktree missing → ask the user before creating
+
+```bash
+.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
+```
+Use the output as `TRACKER`.
 
 If workflow state already exists, skip initialization:
 
