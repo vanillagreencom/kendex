@@ -30,6 +30,7 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 REAL_GIT="$(command -v git)"
 REAL_GREP="$(command -v grep)"
+REAL_WC="$(command -v wc)"
 
 new_repo() { # NAME — fresh fixture repo in $R
   R="$TMP/$1"
@@ -115,6 +116,26 @@ echo "wc: simulated read failure" >&2
 exit 1
 EOF
 chmod +x "$WC_SHIM/wc"
+
+# wc shim: pass the first two calls through (the collection loop's counts
+# for the fixture's two tracked files), fail from the third on — which in
+# --update is the recount of the candidate baseline. Exit 7 on purpose: a
+# raw tool status escaping instead of the contract's exit 2 must be
+# visible. Reset $TMP/wc-calls before each run.
+WC_RECOUNT_SHIM="$TMP/wc-recount-shim"
+mkdir -p "$WC_RECOUNT_SHIM"
+cat >"$WC_RECOUNT_SHIM/wc" <<EOF
+#!/usr/bin/env bash
+n="\$(cat "$TMP/wc-calls" 2>/dev/null)" || n=0
+n=\$((n + 1))
+printf '%s\n' "\$n" >"$TMP/wc-calls"
+if [ "\$n" -ge 3 ]; then
+  echo "wc: simulated recount failure" >&2
+  exit 7
+fi
+exec "$REAL_WC" "\$@"
+EOF
+chmod +x "$WC_RECOUNT_SHIM/wc"
 
 echo "=== control: tracked-but-absent over-threshold files are counted from the index ==="
 new_repo blobfail
@@ -216,6 +237,30 @@ run_sr --update
 [ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
   && ok "shim-free control: the same fixture really tightens 20 -> 15, proving the abort case would detect a mutation" \
   || bad "shim-free control: the same fixture really tightens 20 -> 15" "rc=$RC row=$(cat "$R/tools/size-ratchet-baseline.tsv") out=$OUT"
+
+echo "=== fail-closed: a broken post-update recount aborts BEFORE the replace, exit 2 not raw status ==="
+# Same genuinely-tightening fixture (loose row 20 for a 15-line file). The
+# recount of the baseline's own counts row now reads the candidate before
+# the replace: a wc failure there must exit 2 per the collection-error
+# contract — never wc's raw status 7 — with the original row intact.
+new_repo updrecount
+mkfile big.txt 15
+mkdir -p "$R/tools"
+printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+rm -f "$TMP/wc-calls"
+run_sr_shimmed "$WC_RECOUNT_SHIM" --update
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not recount the updated baseline tools/size-ratchet-baseline.tsv"*) true ;; *) false ;; esac \
+  && ok "a wc failure on the recount is a collection error: exit 2 with the update-aborted diagnostic" \
+  || bad "a wc failure on the recount is a collection error, exit 2 (never raw status 7)" "rc=$RC out=$OUT"
+case "$OUT" in *"wc: simulated recount failure"*) ok "the shim fired on the recount call (3rd wc), pinning the cause" ;; *) bad "the shim fired on the recount call" "$OUT" ;; esac
+row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+[ "$row" = "$(printf 'big.txt\t20')" ] && ok "the aborted recount leaves the original loose row byte-identical" \
+  || bad "the aborted recount leaves the original loose row byte-identical" "row=$row"
+run_sr --update
+[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
+  && ok "shim-free control: the recount fixture really tightens 20 -> 15" \
+  || bad "shim-free control: the recount fixture really tightens 20 -> 15" "rc=$RC out=$OUT"
 
 echo "=== fail-closed: an unreadable worktree file terminates with its own diagnostic ==="
 # Fully materialized repo: every count goes through the worktree `wc -l`

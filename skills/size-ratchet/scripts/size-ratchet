@@ -382,23 +382,29 @@ if [ "$MODE" = "update" ]; then
     config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun (a later git sparse-checkout reapply re-hides it; checkout-index without -f refuses to overwrite anything unexpectedly occupying the path)"
   fi
   if [ -f "$BASELINE_FILE" ]; then
-    # Count the candidate BEFORE it replaces the real baseline: every check
-    # that can abort the update must run against $TMP/baseline.new, so a
-    # collection failure leaves the reviewed baseline byte-identical.
+    # Every check and recount that can fail runs against the candidate
+    # BEFORE it replaces the real baseline, so any collection failure
+    # aborts the update with the reviewed baseline byte-identical — and
+    # exits 2 per the contract, never a tool's raw status. The atomic
+    # replace is the very last step.
     rows="$(count_nonempty_lines "$TMP/baseline.new")"
-    mv -- "$TMP/baseline.new" "$BASELINE_FILE"
-    cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
-    echo "size-ratchet --update: baseline tightened at $BASELINE_FILE ($rows row(s))"
-    # The baseline file is itself a tracked file whose length just changed;
-    # refresh its counts row so the post-update verdict sees reality, not
+    # The baseline file is itself a tracked file whose length is about to
+    # change; refresh its counts row from the candidate (identical to the
+    # post-replace content) so the post-update verdict sees reality, not
     # the pre-rewrite length.
     # Literal path match (awk string equality, never a grep regex): a
     # baseline path with regex-significant characters must still recount.
-    if BASELINE_PATH="$BASELINE_FILE" awk -F'\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"] } $1 == p { found = 1 } END { exit found ? 0 : 1 }' "$TMP/counts.tsv"; then
-      new_n="$(wc -l <"$BASELINE_FILE" | tr -d ' ')"
-      BASELINE_PATH="$BASELINE_FILE" NEW_N="$new_n" awk -F'\t' -v OFS='\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"] } $1 == p { print p, n; next } { print }' "$TMP/counts.tsv" >"$TMP/counts.rewrite"
+    awk_status=0
+    BASELINE_PATH="$BASELINE_FILE" awk -F'\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"] } $1 == p { found = 1 } END { exit found ? 0 : 1 }' "$TMP/counts.tsv" || awk_status=$?
+    [ "$awk_status" -le 1 ] || collection_error "could not scan the counts for $BASELINE_FILE (awk exit $awk_status) — update aborted, baseline unchanged"
+    if [ "$awk_status" -eq 0 ]; then
+      new_n="$(wc -l <"$TMP/baseline.new" | tr -d ' ')" || collection_error "could not recount the updated baseline $BASELINE_FILE — update aborted, baseline unchanged"
+      BASELINE_PATH="$BASELINE_FILE" NEW_N="$new_n" awk -F'\t' -v OFS='\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"] } $1 == p { print p, n; next } { print }' "$TMP/counts.tsv" >"$TMP/counts.rewrite" || collection_error "could not rewrite the counts row for $BASELINE_FILE — update aborted, baseline unchanged"
       mv "$TMP/counts.rewrite" "$TMP/counts.tsv"
     fi
+    mv -- "$TMP/baseline.new" "$BASELINE_FILE"
+    cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
+    echo "size-ratchet --update: baseline tightened at $BASELINE_FILE ($rows row(s))"
   else
     # No baseline exists and --update never adds rows, so there is nothing
     # to write; fall through to the plain check.
