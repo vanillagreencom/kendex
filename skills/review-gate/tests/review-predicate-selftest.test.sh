@@ -141,6 +141,36 @@ grep -q "carry-exclude — 'guides/\*' matches '.*', refusing the carry" "$work/
 grep -q "outside every committed glob and still carries" "$work/excludes.out" \
   || note "committed exclude-free carry case not exercised"
 
+# --- layer 2c: a broken ls-files fails loud, never a hermetic fallback ------
+# A git shim delegates everything except `ls-files` (which fails): inside a
+# repository whose tracked read is broken, the selftest must FAIL with the
+# refusing-to-degrade diagnostic instead of quietly falling back to synthetic
+# probes. Red-first proof of the staged-status fix in load_exclude_tracked —
+# the original `git ls-files -z | tr` assignment took tr's status, so a
+# failed ls-files vanished and coverage shrank exactly when git was broken.
+mkdir -p "$work/brokengit/bin" "$work/brokengit/repo"
+real_git="$(command -v git)"
+cat >"$work/brokengit/bin/git" <<BROKENGIT
+#!/usr/bin/env bash
+if [ "\${1:-}" = "ls-files" ]; then
+  echo "fatal: planted index failure" >&2
+  exit 128
+fi
+exec "$real_git" "\$@"
+BROKENGIT
+chmod +x "$work/brokengit/bin/git"
+(cd "$work/brokengit/repo" && "$real_git" init -q .)
+# The tracked-probe battery only runs under an ACTIVE carry-exclude list —
+# reuse the committed-glob fixture settings.
+cp "$work/excludes/vstack.settings.toml" "$work/brokengit/repo/vstack.settings.toml"
+if (cd "$work/brokengit/repo" && PATH="$work/brokengit/bin:$PATH" "$SELFTEST") \
+  >"$work/brokengit.out" 2>&1; then
+  note "selftest passed inside a repository whose ls-files is broken — the refusing-to-degrade guard no longer fires"
+else
+  grep -q "refusing to degrade to synthetic probes" "$work/brokengit.out" \
+    || note "broken-ls-files failure does not carry the refusing-to-degrade diagnostic"
+fi
+
 # One combined FAILING run pins BOTH guards (each fixture run replays the
 # full decision table, so failure cases share a run): a leading-'/' glob can
 # never match a repository-relative compare filename (dead anchoring), and a
