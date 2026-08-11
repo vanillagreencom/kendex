@@ -60,14 +60,17 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       case "$val" in
         \"*\"*)
           # Quoted value, possibly followed by an inline comment:
-          # KEY="500" # ratchet. Content runs to the LAST closing quote so
-          # embedded quotes survive.
+          # KEY="500" # ratchet. The value ends at the FIRST closing
+          # quote (dotenv/shell semantics — an embedded delimiter would
+          # need escaping, which this parser does not support), so a
+          # quote inside the trailing comment can never leak into the
+          # value: KEY="500" # say "ratchet" assigns 500.
           val="${val#\"}"
-          val="${val%\"*}"
+          val="${val%%\"*}"
           ;;
         \'*\'*)
           val="${val#\'}"
-          val="${val%\'*}"
+          val="${val%%\'*}"
           ;;
         *)
           # Unquoted shell assignment: the value ends at the first
@@ -128,14 +131,17 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       case "$val" in
         \"*\"*)
           # Quoted value, possibly followed by an inline comment:
-          # KEY="500" # ratchet. Content runs to the LAST closing quote so
-          # embedded quotes survive.
+          # KEY="500" # ratchet. The value ends at the FIRST closing
+          # quote (dotenv/shell semantics — an embedded delimiter would
+          # need escaping, which this parser does not support), so a
+          # quote inside the trailing comment can never leak into the
+          # value: KEY="500" # say "ratchet" assigns 500.
           val="${val#\"}"
-          val="${val%\"*}"
+          val="${val%%\"*}"
           ;;
         \'*\'*)
           val="${val#\'}"
-          val="${val%\'*}"
+          val="${val%%\'*}"
           ;;
         *)
           # Unquoted shell assignment: the value ends at the first
