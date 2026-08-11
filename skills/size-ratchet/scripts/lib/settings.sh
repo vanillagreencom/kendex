@@ -58,8 +58,16 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     if [ -n "$line" ]; then
       val="${line#*=}"
       case "$val" in
-        \"*\") val="${val%\"}"; val="${val#\"}" ;;
-        \'*\') val="${val%\'}"; val="${val#\'}" ;;
+        \"*\"*)
+          # Quoted value, possibly followed by an inline comment:
+          # KEY="500" # ratchet. Content is everything inside the quotes.
+          val="${val#\"}"
+          val="${val%%\"*}"
+          ;;
+        \'*\'*)
+          val="${val#\'}"
+          val="${val%%\'*}"
+          ;;
         *)
           # Unquoted shell assignment: the value ends at the first
           # whitespace — `KEY=500 # ratchet` assigns 500, comment dropped.
@@ -117,8 +125,16 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     if [ -n "$line" ]; then
       val="${line#*=}"
       case "$val" in
-        \"*\") val="${val%\"}"; val="${val#\"}" ;;
-        \'*\') val="${val%\'}"; val="${val#\'}" ;;
+        \"*\"*)
+          # Quoted value, possibly followed by an inline comment:
+          # KEY="500" # ratchet. Content is everything inside the quotes.
+          val="${val#\"}"
+          val="${val%%\"*}"
+          ;;
+        \'*\'*)
+          val="${val#\'}"
+          val="${val%%\'*}"
+          ;;
         *)
           # Unquoted shell assignment: the value ends at the first
           # whitespace — `KEY=500 # ratchet` assigns 500, comment dropped.

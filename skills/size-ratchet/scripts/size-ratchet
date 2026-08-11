@@ -191,6 +191,16 @@ if [ -f "$BASELINE_FILE" ]; then
     config_error "$BASELINE_FILE: duplicate path row(s) above"
   fi
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
+elif [ "$(git cat-file -t ":$BASELINE_FILE" 2>/dev/null)" = "blob" ]; then
+  # Sparse checkout: the accepted baseline is tracked but not materialized —
+  # read it from the index rather than degrading to an empty baseline (which
+  # would report every frozen offender as new).
+  git show ":$BASELINE_FILE" >"$TMP/baseline.tsv" || config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
+  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$TMP/baseline.tsv" || true)"
+  if [ -n "$bad_rows" ]; then
+    printf '%s\n' "$bad_rows" >&2
+    config_error "$BASELINE_FILE (index copy): malformed row(s) above"
+  fi
 else
   : >"$TMP/baseline.tsv"
 fi
