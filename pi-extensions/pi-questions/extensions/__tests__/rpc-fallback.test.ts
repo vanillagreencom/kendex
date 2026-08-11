@@ -219,6 +219,19 @@ describe("rpc questionnaire walker", () => {
 		expect(lines[13]).toBe("13. Something else (type your own answer)");
 	});
 
+	test("control-state words typed as custom answers arrive as answers, not control states", async () => {
+		const customRow = "3. Something else (type your own answer)";
+		for (const word of ["cancelled", "abandoned", "blank", "external", "answers", "text"]) {
+			const single = await runRpcQuestionnaire(fakeDialogs([customRow, word]), singleRequest());
+			expect(single).toEqual({ answers: [[word]], kind: "answered" });
+		}
+		const multi = await runRpcQuestionnaire(
+			fakeDialogs(["1. A", "1,3", "cancelled", "2. Slow"]),
+			multiTabRequest(),
+		);
+		expect(multi).toEqual({ answers: [["A"], ["Docs", "cancelled"], ["Slow"]], kind: "answered" });
+	});
+
 	test("repeated invocations are independent", async () => {
 		const request = singleRequest();
 		const first = await runRpcQuestionnaire(fakeDialogs([undefined]), request);

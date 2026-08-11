@@ -26,10 +26,23 @@ export type PresentOutcome =
 
 export type WalkOutcome = Extract<PresentOutcome, { kind: "answered" | "cancelled" | "external" }>;
 
-// Per-question step results: an answers array, or a marker. "cancelled" is a
-// user dismissal; "abandoned" means the request settled elsewhere (bridge
-// reply, rejection, shutdown) and the walker must stop silently.
-type StepResult = string[] | "cancelled" | "abandoned";
+// Per-question step results. Discriminated objects, never bare strings: a
+// custom answer whose text happens to be "cancelled" or "abandoned" must stay
+// a valid answer, not a control state. "cancelled" is a user dismissal;
+// "abandoned" means the request settled elsewhere (bridge reply, rejection,
+// shutdown) and the walker must stop silently.
+type StepResult =
+	| { kind: "answers"; values: string[] }
+	| { kind: "cancelled" }
+	| { kind: "abandoned" };
+
+// Custom-text dialog results; "blank" sends the caller back to re-show the
+// question rather than submitting an empty answer.
+type CustomTextResult =
+	| { kind: "text"; value: string }
+	| { kind: "blank" }
+	| { kind: "cancelled" }
+	| { kind: "abandoned" };
 
 export interface QuestionHost {
 	rpcMode: boolean;
@@ -91,12 +104,12 @@ export async function runRpcQuestionnaire(
 ): Promise<WalkOutcome> {
 	const answers: string[][] = [];
 	for (const [index, tab] of request.questions.entries()) {
-		const tabAnswers = tab.multiple
+		const step = tab.multiple
 			? await askMultiSelect(ui, request, tab, index, isSettled)
 			: await askSingleSelect(ui, request, tab, index, isSettled);
-		if (tabAnswers === "abandoned") return { kind: "external" };
-		if (tabAnswers === "cancelled") return { kind: "cancelled" };
-		answers.push(tabAnswers);
+		if (step.kind === "abandoned") return { kind: "external" };
+		if (step.kind === "cancelled") return { kind: "cancelled" };
+		answers.push(step.values);
 	}
 	return isSettled() ? { kind: "external" } : { answers, kind: "answered" };
 }
@@ -131,42 +144,42 @@ function multiSelectTitle(request: QuestionRequest, tab: QuestionTab, index: num
 	return [tabTitle(request, tab, index, note), ...formatOptionRows(tab)].join("\n");
 }
 
-async function askCustomText(ui: RpcDialogUI, tab: QuestionTab, isSettled: () => boolean): Promise<string | "blank" | "cancelled" | "abandoned"> {
-	if (isSettled()) return "abandoned";
+async function askCustomText(ui: RpcDialogUI, tab: QuestionTab, isSettled: () => boolean): Promise<CustomTextResult> {
+	if (isSettled()) return { kind: "abandoned" };
 	const text = await ui.input(truncateChars(`${tab.header}: ${tab.customLabel}`, TITLE_MAX_CHARS), tab.customPlaceholder);
-	if (isSettled()) return "abandoned";
-	if (text === undefined) return "cancelled";
+	if (isSettled()) return { kind: "abandoned" };
+	if (text === undefined) return { kind: "cancelled" };
 	const trimmed = text.trim();
-	return trimmed || "blank";
+	return trimmed ? { kind: "text", value: trimmed } : { kind: "blank" };
 }
 
 async function askSingleSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number, isSettled: () => boolean): Promise<StepResult> {
 	const rows = formatOptionRows(tab);
 	let note = "";
 	for (let attempt = 0; attempt < MAX_PROMPT_ATTEMPTS; attempt += 1) {
-		if (isSettled()) return "abandoned";
+		if (isSettled()) return { kind: "abandoned" };
 		const choice = await ui.select(tabTitle(request, tab, index, note), rows);
-		if (isSettled()) return "abandoned";
-		if (choice === undefined) return "cancelled";
+		if (isSettled()) return { kind: "abandoned" };
+		if (choice === undefined) return { kind: "cancelled" };
 		const rowIndex = rows.indexOf(choice);
 		if (rowIndex === -1) {
 			// Host returned something other than a listed row: treat non-empty
 			// text as a custom answer, matching the free-text fallback row.
 			const trimmed = choice.trim();
-			if (trimmed) return [trimmed];
+			if (trimmed) return { kind: "answers", values: [trimmed] };
 			note = "Answer cannot be empty";
 			continue;
 		}
-		if (rowIndex < tab.options.length) return [tab.options[rowIndex].label];
+		if (rowIndex < tab.options.length) return { kind: "answers", values: [tab.options[rowIndex].label] };
 		const custom = await askCustomText(ui, tab, isSettled);
-		if (custom === "abandoned" || custom === "cancelled") return custom;
-		if (custom === "blank") {
+		if (custom.kind === "abandoned" || custom.kind === "cancelled") return { kind: custom.kind };
+		if (custom.kind === "blank") {
 			note = "Custom answer cannot be empty";
 			continue;
 		}
-		return [custom];
+		return { kind: "answers", values: [custom.value] };
 	}
-	return "cancelled";
+	return { kind: "cancelled" };
 }
 
 export function parseMultiSelection(raw: string, tab: QuestionTab): { labels: string[]; wantsCustom: boolean } | { error: string } {
@@ -198,23 +211,23 @@ async function askMultiSelect(ui: RpcDialogUI, request: QuestionRequest, tab: Qu
 	const placeholder = `Comma-separated numbers (e.g. 1,3); ${customRowNumber(tab)} or free text for a custom answer`;
 	let note = "";
 	for (let attempt = 0; attempt < MAX_PROMPT_ATTEMPTS; attempt += 1) {
-		if (isSettled()) return "abandoned";
+		if (isSettled()) return { kind: "abandoned" };
 		const raw = await ui.input(multiSelectTitle(request, tab, index, note), placeholder);
-		if (isSettled()) return "abandoned";
-		if (raw === undefined) return "cancelled";
+		if (isSettled()) return { kind: "abandoned" };
+		if (raw === undefined) return { kind: "cancelled" };
 		const parsed = parseMultiSelection(raw, tab);
 		if ("error" in parsed) {
 			note = parsed.error;
 			continue;
 		}
-		if (!parsed.wantsCustom) return parsed.labels;
+		if (!parsed.wantsCustom) return { kind: "answers", values: parsed.labels };
 		const custom = await askCustomText(ui, tab, isSettled);
-		if (custom === "abandoned" || custom === "cancelled") return custom;
-		if (custom === "blank") {
+		if (custom.kind === "abandoned" || custom.kind === "cancelled") return { kind: custom.kind };
+		if (custom.kind === "blank") {
 			note = "Custom answer cannot be empty";
 			continue;
 		}
-		return parsed.labels.includes(custom) ? parsed.labels : [...parsed.labels, custom];
+		return { kind: "answers", values: parsed.labels.includes(custom.value) ? parsed.labels : [...parsed.labels, custom.value] };
 	}
-	return "cancelled";
+	return { kind: "cancelled" };
 }
