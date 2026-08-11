@@ -6,6 +6,9 @@
 #       over-threshold unbaselined file passed as "OK — 0 checked";
 #   (2) `grep -c … || true` on the violations count turned a grep
 #       execution failure into an empty count and a passing verdict.
+# Every other guarded collection site is pinned the same way: the two
+# baseline-hygiene validations (worktree + index copy), the --update row
+# count, and the worktree read guard (wc failure).
 # Each shim scenario carries a shim-free control first, so a green run is
 # evidence, not a check that cannot fail; the shim's own stderr text is
 # asserted in the failing case to pin the cause to the shim.
@@ -86,6 +89,33 @@ exec "$REAL_GREP" "\$@"
 EOF
 chmod +x "$GREP_SHIM/grep"
 
+# grep shim: fail the `-nEv` invocations (baseline-hygiene validation),
+# pass the rest through to the real grep.
+GREP_NEV_SHIM="$TMP/grep-nev-shim"
+mkdir -p "$GREP_NEV_SHIM"
+cat >"$GREP_NEV_SHIM/grep" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = "-nEv" ]; then
+    echo "grep: simulated -nEv execution failure" >&2
+    exit 2
+  fi
+done
+exec "$REAL_GREP" "\$@"
+EOF
+chmod +x "$GREP_NEV_SHIM/grep"
+
+# wc shim: unconditional failure — every line count breaks. PATH shimming
+# beats mode-000 permissions, which are unreliable on privileged runners.
+WC_SHIM="$TMP/wc-shim"
+mkdir -p "$WC_SHIM"
+cat >"$WC_SHIM/wc" <<'EOF'
+#!/usr/bin/env bash
+echo "wc: simulated read failure" >&2
+exit 1
+EOF
+chmod +x "$WC_SHIM/wc"
+
 echo "=== control: tracked-but-absent over-threshold files are counted from the index ==="
 new_repo blobfail
 mkfile big.txt 11
@@ -139,6 +169,62 @@ run_sr_shimmed "$GREP_SHIM"
   && ok "a grep execution failure on the count is a collection error, exit 2" \
   || bad "a grep execution failure on the count is a collection error" "rc=$RC out=$OUT"
 case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany a broken count" "$OUT" ;; *) ok "no OK verdict accompanies the broken count" ;; esac
+
+echo "=== fail-closed: broken worktree-baseline validation terminates ==="
+new_repo nevwt
+mkfile big.txt 15
+mkdir -p "$R/tools"
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 0 ] && ok "shim-free control: the baselined repo passes" \
+  || bad "shim-free control: the baselined repo passes" "rc=$RC out=$OUT"
+run_sr_shimmed "$GREP_NEV_SHIM"
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not validate tools/size-ratchet-baseline.tsv (grep exit 2)"*) true ;; *) false ;; esac \
+  && ok "a grep failure validating the worktree baseline is a collection error, exit 2" \
+  || bad "a grep failure validating the worktree baseline is a collection error" "rc=$RC out=$OUT"
+case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany broken baseline validation" "$OUT" ;; *) ok "no OK verdict accompanies broken worktree-baseline validation" ;; esac
+
+echo "=== fail-closed: broken index-baseline validation terminates ==="
+rm "$R/tools/size-ratchet-baseline.tsv" # unstaged: baseline now index-only
+run_sr
+[ "$RC" -eq 0 ] && ok "shim-free control: the index-only baseline passes" \
+  || bad "shim-free control: the index-only baseline passes" "rc=$RC out=$OUT"
+run_sr_shimmed "$GREP_NEV_SHIM"
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not validate tools/size-ratchet-baseline.tsv (index copy) (grep exit 2)"*) true ;; *) false ;; esac \
+  && ok "a grep failure validating the index baseline copy is a collection error, exit 2" \
+  || bad "a grep failure validating the index baseline copy is a collection error" "rc=$RC out=$OUT"
+
+echo "=== fail-closed: a broken --update row count terminates, baseline intact ==="
+new_repo updcount
+mkfile big.txt 15
+mkdir -p "$R/tools"
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_sr_shimmed "$GREP_SHIM" --update
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not count lines"*) true ;; *) false ;; esac \
+  && ok "a grep failure counting the rewritten baseline's rows is a collection error, exit 2" \
+  || bad "a grep failure counting the rewritten baseline's rows is a collection error" "rc=$RC out=$OUT"
+case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany a broken --update count" "$OUT" ;; *) ok "no OK verdict accompanies the broken --update count" ;; esac
+row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+[ "$row" = "$(printf 'big.txt\t15')" ] && ok "the baseline content survives the aborted --update verbatim" \
+  || bad "the baseline content survives the aborted --update" "row=$row"
+
+echo "=== fail-closed: an unreadable worktree file terminates with its own diagnostic ==="
+# Fully materialized repo: every count goes through the worktree `wc -l`
+# path, so the failing wc exercises exactly the worktree read guard (the
+# index-blob path also pipes through wc, but only for absent files).
+new_repo wcfail
+mkfile small.txt 5
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 0 ] && ok "shim-free control: the materialized repo passes" \
+  || bad "shim-free control: the materialized repo passes" "rc=$RC out=$OUT"
+run_sr_shimmed "$WC_SHIM"
+[ "$RC" -eq 2 ] && case "$OUT" in *"cannot read tracked file 'small.txt'"*) true ;; *) false ;; esac \
+  && ok "an unreadable worktree file is a collection error: exit 2, diagnostic names small.txt" \
+  || bad "an unreadable worktree file is a collection error naming the file" "rc=$RC out=$OUT"
+case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany a worktree read failure" "$OUT" ;; *) ok "no OK verdict accompanies the worktree read failure" ;; esac
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

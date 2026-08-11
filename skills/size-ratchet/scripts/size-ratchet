@@ -276,12 +276,12 @@ while IFS= read -r -d '' rec; do
     # evaluate against real content. An unshowable blob (corrupt object,
     # promisor blob unavailable offline) is a collection failure: its size
     # is unknown, so skipping it would let an over-threshold file pass —
-    # refuse loudly instead.
-    if ! git show ":$f" >"$TMP/blob" 2>"$TMP/gitshow.err"; then
-      cat "$TMP/gitshow.err" >&2
+    # refuse loudly instead. pipefail (set at the top) is load-bearing
+    # here: it surfaces git's failure through the pipeline's status, and
+    # git's own stderr flows straight through as the diagnostic.
+    if ! n="$(git show ":$f" | wc -l)"; then
       collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
     fi
-    n="$(wc -l <"$TMP/blob")"
   else
     # Same contract as the index path: a worktree file that exists but
     # cannot be read (permissions, I/O error) is a collection failure with
