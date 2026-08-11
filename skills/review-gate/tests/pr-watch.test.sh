@@ -449,6 +449,18 @@ set -e
 assert_eq "$rc" "1" "pw17: thread overflow exits 1"
 assert_contains "$out" "overflow" "pw17: named as overflow (fail closed)"
 
+# pw17b: a pageable response that never advances (same page, same cursor,
+# hasNextPage=true every time) must terminate at the pagination bound as
+# overflow — proves the paging loop is bounded and cannot hang the watcher.
+set +e
+out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
+  STUB_THREADS_RAW='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":false}]}}}}}' \
+  STUB_VERDICT_LINE="verdict=approved detail=unused")
+rc=$?
+set -e
+assert_eq "$rc" "1" "pw17b: bounded pagination exits 1"
+assert_contains "$out" "overflow" "pw17b: bound reached reads as overflow (fail closed)"
+
 # pw18: a failed queue-membership read is a loud error, never "not queued".
 set +e
 out=$(run_watch STUB_OPEN_PRS="$(jq -cn --argjson r "$(pr_row 7)" '[$r]')" \
