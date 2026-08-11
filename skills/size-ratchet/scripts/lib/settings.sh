@@ -60,13 +60,14 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       case "$val" in
         \"*\"*)
           # Quoted value, possibly followed by an inline comment:
-          # KEY="500" # ratchet. Content is everything inside the quotes.
+          # KEY="500" # ratchet. Content runs to the LAST closing quote so
+          # embedded quotes survive.
           val="${val#\"}"
-          val="${val%%\"*}"
+          val="${val%\"*}"
           ;;
         \'*\'*)
           val="${val#\'}"
-          val="${val%%\'*}"
+          val="${val%\'*}"
           ;;
         *)
           # Unquoted shell assignment: the value ends at the first
@@ -127,13 +128,14 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
       case "$val" in
         \"*\"*)
           # Quoted value, possibly followed by an inline comment:
-          # KEY="500" # ratchet. Content is everything inside the quotes.
+          # KEY="500" # ratchet. Content runs to the LAST closing quote so
+          # embedded quotes survive.
           val="${val#\"}"
-          val="${val%%\"*}"
+          val="${val%\"*}"
           ;;
         \'*\'*)
           val="${val#\'}"
-          val="${val%%\'*}"
+          val="${val%\'*}"
           ;;
         *)
           # Unquoted shell assignment: the value ends at the first

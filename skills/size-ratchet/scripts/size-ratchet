@@ -176,6 +176,7 @@ is_excluded() { # PATH — 0 when some exclusion glob matches the full path
 }
 
 # --- baseline: path<TAB>lines, LC_ALL=C sorted, unique paths -----------------
+BASELINE_FROM_INDEX=0
 if [ -f "$BASELINE_FILE" ]; then
   bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$BASELINE_FILE" || true)"
   if [ -n "$bad_rows" ]; then
@@ -194,12 +195,22 @@ if [ -f "$BASELINE_FILE" ]; then
 elif [ "$(git cat-file -t ":$BASELINE_FILE" 2>/dev/null)" = "blob" ]; then
   # Sparse checkout: the accepted baseline is tracked but not materialized —
   # read it from the index rather than degrading to an empty baseline (which
-  # would report every frozen offender as new).
+  # would report every frozen offender as new). Full hygiene applies: an
+  # index baseline must satisfy exactly what a materialized one must.
+  BASELINE_FROM_INDEX=1
   git show ":$BASELINE_FILE" >"$TMP/baseline.tsv" || config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
   bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$TMP/baseline.tsv" || true)"
   if [ -n "$bad_rows" ]; then
     printf '%s\n' "$bad_rows" >&2
     config_error "$BASELINE_FILE (index copy): malformed row(s) above"
+  fi
+  if ! LC_ALL=C sort -c -- "$TMP/baseline.tsv" 2>/dev/null; then
+    config_error "$BASELINE_FILE (index copy): rows must be LC_ALL=C sorted"
+  fi
+  dup_paths="$(cut -f1 -- "$TMP/baseline.tsv" | LC_ALL=C uniq -d)"
+  if [ -n "$dup_paths" ]; then
+    printf '%s\n' "$dup_paths" >&2
+    config_error "$BASELINE_FILE (index copy): duplicate path row(s) above"
   fi
 else
   : >"$TMP/baseline.tsv"
@@ -349,6 +360,9 @@ if [ "$MODE" = "update" ]; then
       }
     }
   ' "$TMP/baseline.tsv" "$TMP/absent.lst" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
+  if [ "$BASELINE_FROM_INDEX" = "1" ]; then
+    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize the file (git sparse-checkout add / checkout) and rerun"
+  fi
   if [ -f "$BASELINE_FILE" ]; then
     mv -- "$TMP/baseline.new" "$BASELINE_FILE"
     cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
