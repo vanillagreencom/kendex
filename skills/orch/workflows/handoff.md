@@ -35,7 +35,13 @@ drop it from the launch list and surface its unblocked DIRECT children
 items instead — then rerun this preflight on each replacement, since a
 direct child can itself be a container. Containers are never orchestrated
 and never own a worktree; open-terminal would create one before the
-launched session could refuse.
+launched session could refuse. The guard covers directly supplied
+children too: a LEAF item whose `parent_id` is set gets its parent
+fetched (`.agents/skills/linear/scripts/linear.sh cache issues get
+[PARENT_ID]`) and classified — parent a container → the child stays
+launchable only if it passes the same unblocked test below (own plus
+parent-carried blockers); blocked → drop it from the launch list and
+name its live blockers.
 
 Resolve "unblocked" mechanically: collect each child's `blocked_by` ids
 plus the container's own `blocked_by` (parent-carried cross-bundle
