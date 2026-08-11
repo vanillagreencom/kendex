@@ -86,6 +86,45 @@ pub fn install_skill(
         crate::path_safety::ensure_agents_dir_within_project(&crate::config::project_root())?;
     }
     let dest = harness.install_skill(skill, global)?;
+    if !global && method == InstallMethod::Symlink {
+        // A dest that physically lives in a same-repository checkout whose
+        // .agents FAILS validation must refuse outright: falling back to
+        // ordinary relative linking writes a worktree-absolute target into
+        // the other checkout — the dangling-link hazard once this worktree
+        // is removed.
+        let lexical = normalize_absolute_path(&dest);
+        if let Some(physical) = canonicalize_allowing_missing(&dest) {
+            if physical != lexical {
+                let mut probe = physical.parent();
+                while let Some(dir) = probe {
+                    if dir.is_dir() {
+                        break;
+                    }
+                    probe = dir.parent();
+                }
+                if let Some(probe_dir) = probe {
+                    if let (Some(project_common), Some((probe_common, checkout_root))) = (
+                        crate::path_safety::git_common_dir(&crate::config::project_root()),
+                        crate::path_safety::git_repo_identity(probe_dir),
+                    ) && probe_common == project_common
+                        && checkout_root
+                            != std::fs::canonicalize(crate::config::project_root())
+                                .unwrap_or_else(|_| {
+                                    normalize_absolute_path(&crate::config::project_root())
+                                })
+                        && crate::path_safety::ensure_agents_dir_within_project(&checkout_root)
+                            .is_err()
+                    {
+                        anyhow::bail!(
+                            "refusing to install {} through {}: that same-repository checkout's .agents fails validation, and falling back to an ordinary link would write a worktree-absolute target into it",
+                            skill.name,
+                            checkout_root.display()
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     let detail = match method {
         InstallMethod::Symlink => {
@@ -1512,7 +1551,7 @@ mod tests {
         symlink(&outside, main.join(".agents")).unwrap();
 
         let skill = write_skill_source(&root, "github");
-        crate::test_util::with_project_root(&wt, || {
+        let result = crate::test_util::with_project_root(&wt, || {
             install_skill(
                 &skill,
                 Harness::ClaudeCode,
@@ -1520,21 +1559,26 @@ mod tests {
                 InstallMethod::Symlink,
                 None,
             )
-            .unwrap()
         });
-
+        // Fail CLOSED: the softer fallback (absolute link into the
+        // worktree, warning on stderr) left a link in the other checkout
+        // that dangles the moment this disposable worktree is removed.
+        let err = match result {
+            Ok(_) => panic!("expected refusal for an escaping link-checkout .agents"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("refusing to install"),
+            "expected the fail-closed refusal, got: {err}"
+        );
         assert_eq!(
             std::fs::read_dir(&outside).unwrap().count(),
             0,
             "no write may land outside the repository"
         );
-        // Fallback taken: unanchored canonical in the worktree, absolute link
-        // target (the pre-anchoring behavior, with a warning on stderr).
-        assert!(wt.join(".agents/skills/github/SKILL.md").is_file());
-        let target = std::fs::read_link(main_skills.join("github")).unwrap();
         assert!(
-            target.is_absolute() && target.starts_with(&wt),
-            "expected absolute fallback target into the worktree, got {target:?}"
+            std::fs::symlink_metadata(main_skills.join("github")).is_err(),
+            "no link may be written into the other checkout"
         );
 
         let _ = std::fs::remove_dir_all(&root);
@@ -2050,7 +2094,7 @@ mod tests {
         symlink(&outside, main.join(".agents").join("skills")).unwrap();
 
         let skill = write_skill_source(&root, "github");
-        crate::test_util::with_project_root(&wt, || {
+        let result = crate::test_util::with_project_root(&wt, || {
             install_skill(
                 &skill,
                 Harness::ClaudeCode,
@@ -2058,17 +2102,20 @@ mod tests {
                 InstallMethod::Symlink,
                 None,
             )
-            .unwrap()
         });
-
+        // Fail CLOSED, matching the link-checkout variant above.
+        let err = match result {
+            Ok(_) => panic!("expected refusal for an escaping .agents/skills in the link checkout"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("refusing to install"),
+            "expected the fail-closed refusal, got: {err}"
+        );
         assert_eq!(
             std::fs::read_dir(&outside).unwrap().count(),
             0,
             "no write may follow the escaping .agents/skills"
-        );
-        assert!(
-            wt.join(".agents/skills/github/SKILL.md").is_file(),
-            "install must fall back to the unanchored worktree canonical"
         );
 
         let _ = std::fs::remove_dir_all(&root);
