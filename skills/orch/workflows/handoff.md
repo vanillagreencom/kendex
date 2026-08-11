@@ -54,12 +54,18 @@ create exits 75 after the first session already started, or Codex
 Desktop opens two threads for one item), keeping ONE entry per id whose
 classification is EXPLICIT whenever any duplicate was user-supplied
 (explicit wins — the explicit-choice exception must survive the merge;
-expanded-only duplicates stay expanded).
+expanded-only duplicates stay expanded). Then collapse ANCESTRY: when
+one final item is an ancestor bundle of another (an explicit `(one PR)`
+parent beside its own explicitly supplied child — the same PR unit
+twice), keep ONE launch unit — the bundle — and note the collapse;
+two worktrees must never launch for work sharing one session/PR.
 
 Resolve "unblocked" mechanically: collect each child's `blocked_by` ids
 plus the container's own `blocked_by` (parent-carried cross-bundle
-relations apply to every child), fetch those blockers' live states in one
-call —
+relations apply to every child), fetch those blockers' live states — in
+chunks of at most 50 ids (the command caps at 50 rows; verify every
+requested id came back, and a MISSING lookup keeps its item blocked,
+never launchable on a truncated read) —
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues bulk-get [BLOCKER_IDS]
