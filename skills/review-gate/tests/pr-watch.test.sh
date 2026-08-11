@@ -142,8 +142,10 @@ case "$args" in
     fi
     if [[ "${STUB_THREADS_RAW:-}" == "emptybytes" ]]; then exit 0; fi
     if [[ "$args" == *"after="* && -n "${STUB_THREADS_PAGE2:-}" ]]; then
-      # Cursor-dependent page: a query carrying after:"..." gets page two,
-      # so tests prove the walk advances instead of refetching page one.
+      # Cursor-dependent page: a call passing the after= CLI variable
+      # (`-f after=CURSOR` — the watcher sends the cursor as a GraphQL
+      # variable, never interpolated) gets page two, so tests prove the
+      # walk advances instead of refetching page one.
       printf '%s\n' "$STUB_THREADS_PAGE2"
       exit 0
     fi
