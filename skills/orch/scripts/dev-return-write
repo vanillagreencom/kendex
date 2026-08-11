@@ -124,8 +124,14 @@ EOF
 }
 
 need() {
-  # $1 = flag name, $2 = current argc ($#). A value option needs at least 2 args.
+  # $1 = flag name, $2 = current argc ($#), $3 = the would-be value. A value
+  # option needs at least 2 args, and the value must not itself be an option
+  # token: with an argc-only check, "--summary --no-summary" silently records
+  # the literal string "--no-summary" as the summary — a well-formed artifact
+  # carrying a flag instead of the deliverable. Every value-taking flag shares
+  # this guard; none of their domains legitimately begins with '--'.
   (( $2 >= 2 )) || die "$1 requires a value"
+  [[ "$3" != --* ]] || die "$1 requires a value, got option token '$3'"
 }
 
 # Validate a path-forming token (--issue / --round-id): non-empty, matches the
@@ -163,17 +169,17 @@ validate_note_given=false
 
 while (( $# > 0 )); do
   case "$1" in
-    --worktree)     need "$1" $#; worktree="$2"; shift 2 ;;
-    --kind)         need "$1" $#; kind="$2"; shift 2 ;;
-    --issue)        need "$1" $#; issue="$2"; shift 2 ;;
-    --round-id)     need "$1" $#; round_id="$2"; shift 2 ;;
-    --branch)       need "$1" $#; branch="$2"; shift 2 ;;
-    --commit)       need "$1" $#; commit="$2"; commit_given=true; shift 2 ;;
-    --validate)     need "$1" $#; validate="$2"; validate_given=true; shift 2 ;;
-    --validate-note) need "$1" $#; validate_note="$2"; validate_note_given=true; shift 2 ;;
-    --summary)      need "$1" $#; summary_text="$2"; summary_given=true; shift 2 ;;
-    --summary-file) need "$1" $#; summary_file="$2"; summary_file_given=true; shift 2 ;;
-    --qa-label)     need "$1" $#; qa_labels+=("$2"); shift 2 ;;
+    --worktree)     need "$1" $# "${2:-}"; worktree="$2"; shift 2 ;;
+    --kind)         need "$1" $# "${2:-}"; kind="$2"; shift 2 ;;
+    --issue)        need "$1" $# "${2:-}"; issue="$2"; shift 2 ;;
+    --round-id)     need "$1" $# "${2:-}"; round_id="$2"; shift 2 ;;
+    --branch)       need "$1" $# "${2:-}"; branch="$2"; shift 2 ;;
+    --commit)       need "$1" $# "${2:-}"; commit="$2"; commit_given=true; shift 2 ;;
+    --validate)     need "$1" $# "${2:-}"; validate="$2"; validate_given=true; shift 2 ;;
+    --validate-note) need "$1" $# "${2:-}"; validate_note="$2"; validate_note_given=true; shift 2 ;;
+    --summary)      need "$1" $# "${2:-}"; summary_text="$2"; summary_given=true; shift 2 ;;
+    --summary-file) need "$1" $# "${2:-}"; summary_file="$2"; summary_file_given=true; shift 2 ;;
+    --qa-label)     need "$1" $# "${2:-}"; qa_labels+=("$2"); shift 2 ;;
     --bundled)      bundled=true; shift ;;
     --no-summary)   summary_posted=false; shift ;;
     --item)
@@ -191,6 +197,12 @@ while (( $# > 0 )); do
       esac
       if [[ -z "$reasoning" ]]; then
         die "--item REASONING must be non-empty (item $n)"
+      fi
+      # Same option-token guard as need(): N and DECISION are already
+      # domain-checked above, but a missing REASONING would otherwise swallow
+      # the next flag as the recorded rationale.
+      if [[ "$reasoning" == --* ]]; then
+        die "--item REASONING must be text, got option token '$reasoning' (item $n)"
       fi
       item_n+=("$n")
       item_decision+=("$decision")

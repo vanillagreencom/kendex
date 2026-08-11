@@ -228,6 +228,29 @@ assert_exit2 "whitespace-only --summary-file content exits 2 for analysis" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/blank.md"
 assert_exit2 "--summary with no value exits 2" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary
+
+# Option-token swallow: with an argc-only check, a value flag whose value was
+# omitted mid-line consumes the NEXT FLAG as its value — "--summary
+# --no-summary" would record the literal string "--no-summary" as the round's
+# deliverable in a well-formed, accepted artifact. Every value-taking flag
+# shares the guard.
+assert_exit2 "--summary followed by another flag exits 2 (option token is not a value)" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary --no-summary
+assert_exit2 "--summary-file followed by another flag exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file --no-summary
+assert_exit2 "--branch followed by another flag exits 2" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch --commit c --validate pass
+assert_exit2 "--validate-note followed by another flag exits 2" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
+  --validate-note --qa-label needs-review
+assert_exit2 "--item REASONING as option token exits 2" \
+  --worktree "$worktree" --kind fix --issue i --round-id "$RID" --branch b --commit c --validate pass \
+  --item 1 Applied --bundled
+# Control: ordinary leading-dash prose (a Markdown bullet) is still a value.
+out="$("$WRITE" --worktree "$worktree" --kind analysis --issue issue-dash --round-id 13-13 \
+  --branch b --summary "- close as duplicate of the merged fix" --no-summary)"
+assert_eq "$(jq -r '.summary' "$out")" "- close as duplicate of the merged fix" \
+  "a leading single-dash summary value is accepted (only '--' tokens are rejected)"
 assert_exit2 "analysis with empty --commit value still exits 2 (presence, not content)" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --commit ""
 
