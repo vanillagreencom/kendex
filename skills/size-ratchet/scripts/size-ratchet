@@ -364,7 +364,7 @@ if [ "$MODE" = "update" ]; then
     # printf %q shell-escapes the configured path so the suggested command
     # survives copy-paste even for paths with spaces/glob metacharacters.
     BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
-    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git sparse-checkout add --skip-checks $BASELINE_QUOTED (cone mode needs --skip-checks for a file path; or add its parent directory), then rerun"
+    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git sparse-checkout add --skip-checks -- $BASELINE_QUOTED (cone mode needs --skip-checks for a file path, and -- keeps a dash-leading path an operand; in a non-cone checkout the operand is a PATTERN — if the path contains pattern metacharacters, add its parent directory instead), then rerun"
   fi
   if [ -f "$BASELINE_FILE" ]; then
     mv -- "$TMP/baseline.new" "$BASELINE_FILE"
