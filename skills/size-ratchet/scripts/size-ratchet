@@ -394,16 +394,28 @@ if [ "$MODE" = "update" ]; then
     # the pre-rewrite length.
     # Literal path match (awk string equality, never a grep regex): a
     # baseline path with regex-significant characters must still recount.
-    awk_status=0
-    BASELINE_PATH="$BASELINE_FILE" awk -F'\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"] } $1 == p { found = 1 } END { exit found ? 0 : 1 }' "$TMP/counts.tsv" || awk_status=$?
-    [ "$awk_status" -le 1 ] || collection_error "could not scan the counts for $BASELINE_FILE (awk exit $awk_status) — update aborted, baseline unchanged"
-    if [ "$awk_status" -eq 0 ]; then
+    # awk reserves no exit code for "row not found" the way grep reserves
+    # 1 for "no match", so a manufactured status would collide with a real
+    # awk execution failure returning the same number. The verdict travels
+    # on stdout instead: every nonzero awk status — and any output other
+    # than the two expected words — is a collection error.
+    found="$(BASELINE_PATH="$BASELINE_FILE" awk -F'\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"] } $1 == p { f = 1 } END { print f ? "yes" : "no" }' "$TMP/counts.tsv")" || collection_error "could not scan the counts for $BASELINE_FILE (awk failed) — update aborted, baseline unchanged"
+    case "$found" in
+      yes | no) ;;
+      *) collection_error "counts scan for $BASELINE_FILE produced unexpected output '$found' — update aborted, baseline unchanged" ;;
+    esac
+    if [ "$found" = "yes" ]; then
       new_n="$(wc -l <"$TMP/baseline.new" | tr -d ' ')" || collection_error "could not recount the updated baseline $BASELINE_FILE — update aborted, baseline unchanged"
       BASELINE_PATH="$BASELINE_FILE" NEW_N="$new_n" awk -F'\t' -v OFS='\t' 'BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"] } $1 == p { print p, n; next } { print }' "$TMP/counts.tsv" >"$TMP/counts.rewrite" || collection_error "could not rewrite the counts row for $BASELINE_FILE — update aborted, baseline unchanged"
-      mv "$TMP/counts.rewrite" "$TMP/counts.tsv"
+      mv "$TMP/counts.rewrite" "$TMP/counts.tsv" || collection_error "could not stage the refreshed counts — update aborted, baseline unchanged"
     fi
-    mv -- "$TMP/baseline.new" "$BASELINE_FILE"
-    cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
+    # The replace and the re-read carry the contract too, with honest
+    # sidedness: mv failing means the original may not have been replaced
+    # cleanly — inspect it; cp failing AFTER a successful mv means the
+    # baseline on disk WAS replaced and only the re-read for the
+    # post-update check is missing.
+    mv -- "$TMP/baseline.new" "$BASELINE_FILE" || collection_error "could not replace the baseline at $BASELINE_FILE (mv failed) — inspect the file before trusting it"
+    cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the replaced baseline at $BASELINE_FILE (cp failed) — the baseline WAS replaced; rerun size-ratchet to verify it"
     echo "size-ratchet --update: baseline tightened at $BASELINE_FILE ($rows row(s))"
   else
     # No baseline exists and --update never adds rows, so there is nothing

@@ -31,6 +31,9 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 REAL_GIT="$(command -v git)"
 REAL_GREP="$(command -v grep)"
 REAL_WC="$(command -v wc)"
+REAL_AWK="$(command -v awk)"
+REAL_MV="$(command -v mv)"
+REAL_CP="$(command -v cp)"
 
 new_repo() { # NAME — fresh fixture repo in $R
   R="$TMP/$1"
@@ -136,6 +139,67 @@ fi
 exec "$REAL_WC" "\$@"
 EOF
 chmod +x "$WC_RECOUNT_SHIM/wc"
+
+# awk shim: die silently with status 1 on the --update counts scan (its
+# program uniquely contains the yes/no verdict print), delegating every
+# other awk. Exit 1 on purpose: awk reserves no status for "not found",
+# so a status-1 execution failure is exactly the value a manufactured
+# not-found convention would collide with.
+AWK_SHIM="$TMP/awk-shim"
+mkdir -p "$AWK_SHIM"
+cat >"$AWK_SHIM/awk" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    # Both spellings of the counts scan: the current stdout-verdict
+    # program and the old manufactured-status one, so this shim also
+    # reproduces the historic misread when pointed at a pre-fix engine.
+    *'print f ? "yes" : "no"'* | *'exit found ? 0 : 1'*) exit 1 ;;
+  esac
+done
+exec "$REAL_AWK" "\$@"
+EOF
+chmod +x "$AWK_SHIM/awk"
+
+# mv shim: fail only the replace onto the repo baseline (relative path is
+# an argument verbatim); the engine's internal \$TMP moves pass through.
+MV_SHIM="$TMP/mv-shim"
+mkdir -p "$MV_SHIM"
+cat >"$MV_SHIM/mv" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = "tools/size-ratchet-baseline.tsv" ]; then
+    echo "mv: simulated replace failure" >&2
+    exit 1
+  fi
+done
+exec "$REAL_MV" "\$@"
+EOF
+chmod +x "$MV_SHIM/mv"
+
+# cp shim: the engine cp's the baseline twice per --update run (initial
+# load, then the post-replace re-read); fail the second — the re-read
+# after a successful mv. Reset $TMP/cp-calls before each run.
+CP_SHIM="$TMP/cp-shim"
+mkdir -p "$CP_SHIM"
+cat >"$CP_SHIM/cp" <<EOF
+#!/usr/bin/env bash
+hit=0
+for a in "\$@"; do
+  [ "\$a" = "tools/size-ratchet-baseline.tsv" ] && hit=1
+done
+if [ "\$hit" = 1 ]; then
+  n="\$(cat "$TMP/cp-calls" 2>/dev/null)" || n=0
+  n=\$((n + 1))
+  printf '%s\n' "\$n" >"$TMP/cp-calls"
+  if [ "\$n" -ge 2 ]; then
+    echo "cp: simulated re-read failure" >&2
+    exit 1
+  fi
+fi
+exec "$REAL_CP" "\$@"
+EOF
+chmod +x "$CP_SHIM/cp"
 
 echo "=== control: tracked-but-absent over-threshold files are counted from the index ==="
 new_repo blobfail
@@ -261,6 +325,61 @@ run_sr --update
 [ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
   && ok "shim-free control: the recount fixture really tightens 20 -> 15" \
   || bad "shim-free control: the recount fixture really tightens 20 -> 15" "rc=$RC out=$OUT"
+
+echo "=== fail-closed: a status-1 awk death on the counts scan is never 'row not found' ==="
+# Pre-fix, the scan manufactured exit 1 for a missing row and accepted
+# every status <= 1, so an awk execution failure returning 1 read as
+# "baseline not present" and --update proceeded to replace the baseline.
+new_repo updawk
+mkfile big.txt 15
+mkdir -p "$R/tools"
+printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_sr_shimmed "$AWK_SHIM" --update
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not scan the counts for tools/size-ratchet-baseline.tsv"*) true ;; *) false ;; esac \
+  && ok "an awk failure (exit 1, no output) on the counts scan is a collection error, exit 2" \
+  || bad "an awk failure (exit 1, no output) on the counts scan is a collection error" "rc=$RC out=$OUT"
+row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+[ "$row" = "$(printf 'big.txt\t20')" ] && ok "the aborted scan leaves the original loose row byte-identical" \
+  || bad "the aborted scan leaves the original loose row byte-identical" "row=$row"
+run_sr --update
+[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
+  && ok "shim-free control: the awk fixture really tightens 20 -> 15" \
+  || bad "shim-free control: the awk fixture really tightens 20 -> 15" "rc=$RC out=$OUT"
+
+echo "=== fail-closed: a failed baseline replace exits 2 with the mv-side diagnostic ==="
+new_repo updmv
+mkfile big.txt 15
+mkdir -p "$R/tools"
+printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+run_sr_shimmed "$MV_SHIM" --update
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not replace the baseline at tools/size-ratchet-baseline.tsv"*) true ;; *) false ;; esac \
+  && ok "a failed replace is a collection error: exit 2, never mv's raw status" \
+  || bad "a failed replace is a collection error, exit 2" "rc=$RC out=$OUT"
+case "$OUT" in *"mv: simulated replace failure"*) ok "mv's own stderr is surfaced, pinning the cause" ;; *) bad "mv's own stderr is surfaced" "$OUT" ;; esac
+row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+[ "$row" = "$(printf 'big.txt\t20')" ] && ok "the failed replace leaves the original loose row byte-identical" \
+  || bad "the failed replace leaves the original loose row byte-identical" "row=$row"
+run_sr --update
+[ "$RC" -eq 0 ] && [ "$(cat "$R/tools/size-ratchet-baseline.tsv")" = "$(printf 'big.txt\t15')" ] \
+  && ok "shim-free control: the mv fixture really tightens 20 -> 15" \
+  || bad "shim-free control: the mv fixture really tightens 20 -> 15" "rc=$RC out=$OUT"
+
+echo "=== fail-closed: a failed post-replace re-read exits 2 and says the baseline WAS replaced ==="
+new_repo updcp
+mkfile big.txt 15
+mkdir -p "$R/tools"
+printf 'big.txt\t20\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+rm -f "$TMP/cp-calls"
+run_sr_shimmed "$CP_SHIM" --update
+[ "$RC" -eq 2 ] && case "$OUT" in *"could not re-read the replaced baseline at tools/size-ratchet-baseline.tsv"*"WAS replaced"*) true ;; *) false ;; esac \
+  && ok "a failed re-read after a successful replace is a collection error whose diagnostic owns the mutation" \
+  || bad "a failed re-read after a successful replace is a collection error owning the mutation" "rc=$RC out=$OUT"
+row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+[ "$row" = "$(printf 'big.txt\t15')" ] && ok "the diagnostic is honest: the on-disk baseline really was tightened to 15" \
+  || bad "the diagnostic is honest: the on-disk baseline really was tightened to 15" "row=$row"
 
 echo "=== fail-closed: an unreadable worktree file terminates with its own diagnostic ==="
 # Fully materialized repo: every count goes through the worktree `wc -l`
