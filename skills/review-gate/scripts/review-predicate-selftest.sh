@@ -202,14 +202,19 @@ chmod +x "$shim/gh"
 # must fire before any case relies on them — deleting a refusal arm fails
 # the whole run HERE, instead of leaving a case green against a fixture it
 # never drove. Each exit code is pinned exactly.
+# The scratch dir is removed BEFORE the assertions so a failed exit-code
+# check cannot leak it — the recorded rcs carry the evidence.
 _shimcheck_dir="$(mktemp -d)"
 GH_SHIM_FIXTURES="$_shimcheck_dir" "$shim/gh" api graphql -f query=q -f after=bad/value >/dev/null 2>&1
-[ $? -eq 92 ] || { echo "FATAL: shim did not refuse an out-of-namespace cursor (want exit 92)" >&2; exit 1; }
+_shimcheck_ns=$?
 GH_SHIM_FIXTURES="$_shimcheck_dir" "$shim/gh" api graphql -f query=q -f after= >/dev/null 2>&1
-[ $? -eq 92 ] || { echo "FATAL: shim did not refuse an EMPTY cursor (want exit 92)" >&2; exit 1; }
+_shimcheck_empty=$?
 GH_SHIM_FIXTURES="$_shimcheck_dir" "$shim/gh" api graphql -f query=q -f after=C9 >/dev/null 2>&1
-[ $? -eq 93 ] || { echo "FATAL: shim did not refuse a fixture-less follow-up page (want exit 93)" >&2; exit 1; }
+_shimcheck_gap=$?
 rm -rf "$_shimcheck_dir"
+[ "$_shimcheck_ns" -eq 92 ] || { echo "FATAL: shim did not refuse an out-of-namespace cursor (want exit 92, got $_shimcheck_ns)" >&2; exit 1; }
+[ "$_shimcheck_empty" -eq 92 ] || { echo "FATAL: shim did not refuse an EMPTY cursor (want exit 92, got $_shimcheck_empty)" >&2; exit 1; }
+[ "$_shimcheck_gap" -eq 93 ] || { echo "FATAL: shim did not refuse a fixture-less follow-up page (want exit 93, got $_shimcheck_gap)" >&2; exit 1; }
 
 # ------------------------------------------------------------------ helpers ---
 list_items() { # ';'-separated string -> one trimmed non-empty item per line
@@ -2081,16 +2086,22 @@ EOF_EXCLUDE_BATTERY
       # still carry — so only a STRUCTURALLY universal entry is a FAIL
       # here; anything else is reported unproven, out loud, never silently
       # green. Structurally universal under the predicate's bash-case
-      # matcher: an entry built ONLY of '*'/'?' wildcards that contains at
-      # least one '*' — '*', '**', '***', '?*', '*?' all match every
-      # non-empty path by construction ('?'-only entries pin a length and
-      # are NOT universal).
+      # matcher: an entry built ONLY of '*'/'?' wildcards, with at least
+      # one '*' and AT MOST one '?' — '*', '***', '?*', '*?' match every
+      # non-empty path by construction, while two or more '?'s impose a
+      # minimum length that one-character paths escape, and '?'-only
+      # entries pin an exact length; neither is universal.
       probe_universal=""
       while IFS= read -r probe_pat_u; do
         [ -z "$probe_pat_u" ] && continue
         case "$probe_pat_u" in
           *[!*?]*) : ;;
-          *'*'*) probe_universal="$probe_pat_u" ;;
+          *'*'*)
+            probe_pat_u_qs="${probe_pat_u//\*/}"
+            case "$probe_pat_u_qs" in
+              '' | '?') probe_universal="$probe_pat_u" ;;
+            esac
+            ;;
         esac
       done <<EOF_UNIVERSAL
 $(list_items "$ACTIVE_CARRY_EXCLUDE")
