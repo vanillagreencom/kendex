@@ -406,11 +406,21 @@ pub fn install_skill(
 
                 #[cfg(unix)]
                 {
-                    let rel = match &link_home {
+                    // Where the new link ACTUALLY lands. Parent-level sharing:
+                    // dest's parent resolves into the other checkout, so the
+                    // link is physically created at home.physical_parent.
+                    // Child-level sharing: the parent is LOCAL (the old child
+                    // symlink was just removed above), so the link lands in
+                    // this checkout — a spelling computed at the foreign
+                    // parent (`github`) would be self-referential here.
+                    let creation_parent = dest
+                        .parent()
+                        .and_then(|parent| parent.canonicalize().ok());
+                    let rel = match (&link_home, creation_parent) {
                         // The repo layout is identical in every checkout, so
                         // the relative spelling computed at the link's
                         // physical home resolves there — worktree-independent.
-                        Some(home) => {
+                        (Some(home), Some(created_in)) if created_in == home.physical_parent => {
                             let rel = lexical_relative(&home.physical_parent, &canonical);
                             if home.physical_parent.join(&rel).is_dir() {
                                 rel
@@ -428,7 +438,15 @@ pub fn install_skill(
                                 abs
                             }
                         }
-                        None => relative_path(dest.parent().unwrap(), &canonical)?,
+                        // Child-level sharing: recreate the layout's shape —
+                        // a local child link pointing at the other checkout's
+                        // canonical. The target is absolute: it lives in the
+                        // OWNING checkout (stable), while this link dies with
+                        // the worktree; a cross-checkout ../ chain would
+                        // depend on where the worktree happens to sit.
+                        (Some(_), _) => std::fs::canonicalize(&canonical)
+                            .unwrap_or_else(|_| canonical.clone()),
+                        (None, _) => relative_path(dest.parent().unwrap(), &canonical)?,
                     };
                     std::os::unix::fs::symlink(&rel, &dest).with_context(|| {
                         format!("symlinking {} → {}", dest.display(), rel.display())
@@ -3288,6 +3306,15 @@ mod tests {
                 .file_type()
                 .is_symlink(),
             "the child link into main must be preserved, not materialized"
+        );
+        // The link must actually RESOLVE to main's copy — a spelling
+        // computed at the foreign parent (`github`) would be a
+        // self-referential loop in the local dir and a symlink-only
+        // assertion would miss it.
+        assert_eq!(
+            std::fs::canonicalize(&child).unwrap(),
+            std::fs::canonicalize(&main_copy).unwrap(),
+            "the recreated child link must canonicalize to the shared canonical in main"
         );
         assert_eq!(
             std::fs::read_to_string(main_copy.join("SKILL.md")).unwrap(),

@@ -70,6 +70,25 @@ pub(crate) fn write_file_no_follow(path: &Path, contents: impl AsRef<[u8]>) -> R
     write_result
 }
 
+/// Interpret one line of `git rev-parse` output as a path, preserving raw
+/// bytes on Unix: a non-UTF-8 checkout path must not be lossy-mangled into
+/// U+FFFD (canonicalize would then fail and same-repository detection would
+/// silently collapse to None). Trims ASCII whitespace at both ends.
+fn git_output_path(bytes: &[u8]) -> Option<PathBuf> {
+    let start = bytes.iter().position(|b| !b.is_ascii_whitespace())?;
+    let end = bytes.iter().rposition(|b| !b.is_ascii_whitespace())? + 1;
+    let trimmed = &bytes[start..end];
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Some(PathBuf::from(std::ffi::OsStr::from_bytes(trimmed)))
+    }
+    #[cfg(not(unix))]
+    {
+        Some(PathBuf::from(String::from_utf8_lossy(trimmed).into_owned()))
+    }
+}
+
 /// `git rev-parse --show-toplevel` for `dir`, canonicalized. `None` when `dir`
 /// is not inside a Git repository or the answer cannot be resolved — callers
 /// fail closed.
@@ -86,11 +105,7 @@ pub(crate) fn git_toplevel(dir: &Path) -> Option<PathBuf> {
     if !output.status.success() {
         return None;
     }
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if raw.is_empty() {
-        return None;
-    }
-    Path::new(&raw).canonicalize().ok()
+    git_output_path(&output.stdout)?.canonicalize().ok()
 }
 
 /// `git rev-parse --git-common-dir` for `dir`, canonicalized. `None` when `dir`
@@ -106,16 +121,12 @@ pub(crate) fn git_common_dir(dir: &Path) -> Option<PathBuf> {
     if !output.status.success() {
         return None;
     }
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if raw.is_empty() {
-        return None;
-    }
+    let reported = git_output_path(&output.stdout)?;
     // `--git-common-dir` is relative to the queried directory unless git is new
     // enough to have been asked for an absolute path, so resolve it against
     // `dir` rather than the process cwd.
-    let reported = Path::new(&raw);
     let absolute = if reported.is_absolute() {
-        reported.to_path_buf()
+        reported
     } else {
         dir.join(reported)
     };
@@ -137,23 +148,18 @@ pub(crate) fn git_repo_identity(dir: &Path) -> Option<(PathBuf, PathBuf)> {
     if !output.status.success() {
         return None;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut lines = stdout.lines();
-    let common_raw = lines.next()?.trim();
-    let toplevel_raw = lines.next()?.trim();
-    if common_raw.is_empty() || toplevel_raw.is_empty() {
-        return None;
-    }
+    let mut lines = output.stdout.splitn(2, |b| *b == b'\n');
+    let common_reported = git_output_path(lines.next()?)?;
+    let toplevel_reported = git_output_path(lines.next()?)?;
     // `--git-common-dir` may be reported relative to the queried directory;
     // resolve it against `dir` rather than the process cwd.
-    let common_reported = Path::new(common_raw);
     let common_absolute = if common_reported.is_absolute() {
-        common_reported.to_path_buf()
+        common_reported
     } else {
         dir.join(common_reported)
     };
     let common = common_absolute.canonicalize().ok()?;
-    let toplevel = Path::new(toplevel_raw).canonicalize().ok()?;
+    let toplevel = toplevel_reported.canonicalize().ok()?;
     Some((common, toplevel))
 }
 
