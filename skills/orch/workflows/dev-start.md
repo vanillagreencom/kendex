@@ -39,8 +39,11 @@ output omits children entirely, so the bundle read is mandatory:
 ```bash
 .agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 .agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache issues children [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
 ```
+
+(The bundle read carries each child's `blocked_by` and `depth` — the plain
+children listing lacks the blocker fields the unblocked test needs.)
 
 (The sync precedes the children read: the cache can predate children added
 since the last reconcile, and a stale empty read would wave a container

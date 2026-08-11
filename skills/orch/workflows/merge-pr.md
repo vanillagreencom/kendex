@@ -339,7 +339,7 @@ merge. Detach them first.
       ```bash
       [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues children [PARENT_ID] --recursive
       ```
-      Collect every entry whose `state_type` is `canceled` as `[CANCELED_IDS]`. Then validate, and gate the completion on the result:
+      Collect every entry whose `state_type` is `canceled` as `[CANCELED_IDS]`, and PERSIST the set before anything mutates — write it with the harness file tool to `[MAIN_REPO_ROOT]/tmp/container-canceled-[PARENT_ID].lst` (one id per line; skip when empty). An interrupted run's next retry cannot re-derive the set (the cascade has already overwritten those children), so on entry to this step ALWAYS check for a leftover `.lst` from a prior run and fold its ids into `[CANCELED_IDS]`; delete the file only after the cascade repair below completes. Then validate, and gate the completion on the result:
       ```bash
       [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues validate-completion [PARENT_ID] --include-children-of [PARENT_ID] --container
       ```
