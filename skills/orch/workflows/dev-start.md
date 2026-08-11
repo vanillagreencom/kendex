@@ -14,6 +14,7 @@ Delegate development work to specialist agent(s). Handles single issues and bund
 - `worktree`: worktree path
 - `lifecycle` (optional): `"managed"` (return to caller at § 4) | `"self"` (default, standalone).
 - `issue_id` (optional): workflow-state key — the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number. If absent, extracted from branch.
+- `audit_bundle` (optional): `true` only from review-pr's post-audit path — the mechanical single-PR opt-in for children the calling session's audit just created (see the container preflight; carried into the delegation as `Audit Bundle: yes`).
 
 **Standalone init** (`lifecycle: "self"` only):
 ```bash

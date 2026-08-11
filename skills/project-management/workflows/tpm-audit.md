@@ -623,7 +623,7 @@ For each parent issue with children:
 
 | Action | Fields | Meaning |
 |--------|--------|---------|
-| `make_parent` | `issue`, `children[]` | Issue becomes parent of listed issues |
+| `make_parent` | `issue`, `children[]`, `retitle` (optional) | Issue becomes parent of listed issues. Single-PR intent (the § 7.2 one-PR question answered YES) sets `retitle: "[current title] (one PR)"`, and the executor applies it with `issues update [ISSUE] --title ...` alongside the reparenting — an unmarked promoted parent reads as a container and splits work the audit decided to keep whole |
 | `make_child` | `issue`, `parent` | Issue becomes sub-issue of parent |
 | `bundle` | `issues[]`, `new_parent_title` | Create new parent, group issues under it. Single-PR intent (the § 7.2 one-PR question answered YES) appends `(one PR)` to the title; otherwise the parent is a container |
 | `update_parent_desc` | `issue` | Parent's `## Sub-Issues` is stale — sync with actual children |
