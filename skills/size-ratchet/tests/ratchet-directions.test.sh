@@ -98,10 +98,10 @@ run_sr
 case "$OUT" in *"stale baseline row: gone.txt"*) ok "a row for a deleted file fails as stale" ;; *) bad "a row for a deleted file fails as stale" "$OUT" ;; esac
 case "$OUT" in *"the row (42) must go"*) ok "the gone-file diagnostic keeps its fields aligned (names the row's own count)" ;; *) bad "the gone-file diagnostic keeps its fields aligned" "$OUT" ;; esac
 
-echo "=== tracked-but-absent files are unknown, never stale ==="
+echo "=== tracked-but-absent files count from the index, never stale ==="
 # In `git ls-files` but missing from the worktree (unstaged deletion, sparse
-# checkout): the size is unknowable, so the row must be preserved — treating
-# it as gone would let --update silently loosen the ratchet.
+# checkout): the size comes from the index blob, so the row still matches —
+# treating the file as gone would let --update silently loosen the ratchet.
 new_repo absent
 mkfile big.txt 15
 mkdir -p "$R/tools"

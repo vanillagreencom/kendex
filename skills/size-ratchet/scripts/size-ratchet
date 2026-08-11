@@ -24,7 +24,10 @@
 # repo-relative path; `*` crosses `/`), blank lines and `#` comments
 # ignored, a missing reason is a config error.
 #
-# Exit codes: 0 clean; 1 violations; 2 usage/config error.
+# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error. The
+# gate distinguishes "measured and fine" from "could not measure": any
+# failure to collect a count (unreadable index blob, grep execution
+# failure) terminates with exit 2 — it never degrades into a passing check.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,13 +52,29 @@ vstack.settings.toml [env] > .env > default):
   SIZE_RATCHET_EXCLUDES    exclusion-list path      (default tools/size-ratchet-excludes)
 Flags override both for the path settings.
 
-Exit codes: 0 clean; 1 violations; 2 usage/config error.
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
 EOF
 }
 
 config_error() {
   echo "::error::size-ratchet: $*" >&2
   exit 2
+}
+
+# A count that could not be collected is never a pass: same loud exit as a
+# config error, distinct name so call sites read as what they are.
+collection_error() {
+  echo "::error::size-ratchet: $*" >&2
+  exit 2
+}
+
+count_nonempty_lines() { # FILE — count on stdout; loud exit if grep cannot read it
+  # grep -c exits 1 on zero matches but still prints 0 — only exit >= 2
+  # (execution/read failure) means the count is unknown.
+  local n status=0
+  n="$(grep -c . -- "$1")" || status=$?
+  [ "$status" -le 1 ] || collection_error "could not count lines in $1 (grep exit $status)"
+  printf '%s\n' "$n"
 }
 
 MODE="check"
@@ -178,7 +197,11 @@ is_excluded() { # PATH — 0 when some exclusion glob matches the full path
 # --- baseline: path<TAB>lines, LC_ALL=C sorted, unique paths -----------------
 BASELINE_FROM_INDEX=0
 if [ -f "$BASELINE_FILE" ]; then
-  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$BASELINE_FILE" || true)"
+  # grep exit 1 = every row well-formed; exit >= 2 = the validation itself
+  # broke, which must never read as a clean baseline.
+  grep_status=0
+  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$BASELINE_FILE")" || grep_status=$?
+  [ "$grep_status" -le 1 ] || collection_error "could not validate $BASELINE_FILE (grep exit $grep_status)"
   if [ -n "$bad_rows" ]; then
     printf '%s\n' "$bad_rows" >&2
     config_error "$BASELINE_FILE: malformed row(s) above (expected 'path<TAB>lines' with a positive line count)"
@@ -199,7 +222,9 @@ elif [ "$(git cat-file -t ":$BASELINE_FILE" 2>/dev/null)" = "blob" ]; then
   # index baseline must satisfy exactly what a materialized one must.
   BASELINE_FROM_INDEX=1
   git show ":$BASELINE_FILE" >"$TMP/baseline.tsv" || config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
-  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$TMP/baseline.tsv" || true)"
+  grep_status=0
+  bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$TMP/baseline.tsv")" || grep_status=$?
+  [ "$grep_status" -le 1 ] || collection_error "could not validate $BASELINE_FILE (index copy) (grep exit $grep_status)"
   if [ -n "$bad_rows" ]; then
     printf '%s\n' "$bad_rows" >&2
     config_error "$BASELINE_FILE (index copy): malformed row(s) above"
@@ -226,7 +251,6 @@ NL='
 '
 checked=0
 : >"$TMP/counts.raw"
-: >"$TMP/absent.raw"
 while IFS= read -r -d '' rec; do
   # Record shape: "<mode> <sha> <stage>\t<path>".
   mode="${rec%% *}"
@@ -249,35 +273,28 @@ while IFS= read -r -d '' rec; do
     # deletion, sparse checkout, or a shadowing symlink/directory): count
     # the INDEX blob so the "every tracked file" contract holds — a sparse
     # tree cannot smuggle a new offender past the gate, and baselined rows
-    # evaluate against real content. Only an unshowable blob (index/object
-    # store trouble) falls to the absent list.
-    if n="$(git show ":$f" 2>/dev/null | wc -l)"; then
-      case "$n" in *[!0-9\ ]*) n="" ;; esac
-    else
-      n=""
+    # evaluate against real content. An unshowable blob (corrupt object,
+    # promisor blob unavailable offline) is a collection failure: its size
+    # is unknown, so skipping it would let an over-threshold file pass —
+    # refuse loudly instead.
+    if ! git show ":$f" >"$TMP/blob" 2>"$TMP/gitshow.err"; then
+      cat "$TMP/gitshow.err" >&2
+      collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
     fi
-    if [ -n "$n" ]; then
-      n=$((n))
-      printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
-      checked=$((checked + 1))
-      continue
-    fi
-    printf '%s\n' "$f" >>"$TMP/absent.raw"
-    continue
+    n="$(wc -l <"$TMP/blob")"
+  else
+    n="$(wc -l <"$f")"
   fi
-  n="$(wc -l <"$f")"
   n=$((n)) # strip wc's leading whitespace (BSD wc pads)
   printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
   checked=$((checked + 1))
 done <"$TMP/files.z"
 LC_ALL=C sort "$TMP/counts.raw" >"$TMP/counts.tsv"
-LC_ALL=C sort "$TMP/absent.raw" >"$TMP/absent.lst"
 
 # --- evaluate a baseline against the counts ----------------------------------
 evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separated
-  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$1" -v absentfile="$TMP/absent.lst" '
+  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$1" '
     FILENAME == basefile { base[$1] = $2 + 0; border[++bn] = $1; next }
-    FILENAME == absentfile { absent[$1] = 1; next }
     {
       p = $1; n = $2 + 0; seen[p] = 1
       if (n > thr) {
@@ -292,14 +309,13 @@ evaluate() { # BASELINE-TSV — violations on stdout, one per line, tab-separate
       for (i = 1; i <= bn; i++) {
         p = border[i]
         if (p in seen) continue
-        if (p in absent) continue # size unknown: neither gone nor grown
         # "-" placeholder, never an empty field: report() reads these rows
         # with tab-IFS, and whitespace IFS collapses consecutive tabs, which
         # would shift the baseline count into the wrong column.
         print "GONE", p, "-", base[p]
       }
     }
-  ' "$1" "$TMP/absent.lst" "$TMP/counts.tsv"
+  ' "$1" "$TMP/counts.tsv"
 }
 
 report() { # VIOLATIONS-FILE — human diagnostics on stdout
@@ -332,20 +348,12 @@ report() { # VIOLATIONS-FILE — human diagnostics on stdout
 
 # --- --update: tighten only ---------------------------------------------------
 if [ "$MODE" = "update" ]; then
-  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$TMP/baseline.tsv" -v absentfile="$TMP/absent.lst" '
+  awk -F'\t' -v OFS='\t' -v thr="$THRESHOLD" -v basefile="$TMP/baseline.tsv" '
     FILENAME == basefile { base[$1] = $2 + 0; border[++bn] = $1; next }
-    FILENAME == absentfile { absent[$1] = 1; next }
     { act[$1] = $2 + 0 }
     END {
       for (i = 1; i <= bn; i++) {
         p = border[i]; b = base[p]
-        if (p in absent) {
-          # Tracked but not in the worktree: size unknown, row preserved
-          # verbatim — dropping it here would loosen the ratchet.
-          printf "preserved (tracked but absent from worktree): %s\n", p > "/dev/stderr"
-          print p, b
-          continue
-        }
         if (!(p in act) || act[p] <= thr) {
           printf "removed: %s (row %d)\n", p, b > "/dev/stderr"
           continue
@@ -359,7 +367,7 @@ if [ "$MODE" = "update" ]; then
         }
       }
     }
-  ' "$TMP/baseline.tsv" "$TMP/absent.lst" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
+  ' "$TMP/baseline.tsv" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
   if [ "$BASELINE_FROM_INDEX" = "1" ]; then
     # printf %q shell-escapes the configured path so the suggested command
     # survives copy-paste. update-index/checkout-index take literal file
@@ -373,7 +381,8 @@ if [ "$MODE" = "update" ]; then
   if [ -f "$BASELINE_FILE" ]; then
     mv -- "$TMP/baseline.new" "$BASELINE_FILE"
     cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
-    echo "size-ratchet --update: baseline tightened at $BASELINE_FILE ($(grep -c . -- "$BASELINE_FILE" || true) row(s))"
+    rows="$(count_nonempty_lines "$BASELINE_FILE")"
+    echo "size-ratchet --update: baseline tightened at $BASELINE_FILE ($rows row(s))"
     # The baseline file is itself a tracked file whose length just changed;
     # refresh its counts row so the post-update verdict sees reality, not
     # the pre-rewrite length.
@@ -393,7 +402,7 @@ fi
 
 # --- verdict -------------------------------------------------------------------
 evaluate "$TMP/baseline.tsv" >"$TMP/violations.tsv"
-violations="$(grep -c . "$TMP/violations.tsv" || true)"
+violations="$(count_nonempty_lines "$TMP/violations.tsv")"
 report "$TMP/violations.tsv"
 if [ "$violations" -gt 0 ]; then
   echo "size-ratchet: $violations violation(s) — threshold $THRESHOLD, baseline $BASELINE_FILE"
