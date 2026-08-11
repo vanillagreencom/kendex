@@ -102,24 +102,57 @@ pub fn install_skill(
                     }
                     probe = dir.parent();
                 }
-                if let Some(probe_dir) = probe {
-                    if let (Some(project_common), Some((probe_common, checkout_root))) = (
+                if let Some(probe_dir) = probe
+                    && let (Some(project_common), Some((probe_common, checkout_toplevel))) = (
                         crate::path_safety::git_common_dir(&crate::config::project_root()),
                         crate::path_safety::git_repo_identity(probe_dir),
-                    ) && probe_common == project_common
-                        && checkout_root
-                            != std::fs::canonicalize(crate::config::project_root())
-                                .unwrap_or_else(|_| {
-                                    normalize_absolute_path(&crate::config::project_root())
-                                })
-                        && crate::path_safety::ensure_agents_dir_within_project(&checkout_root)
-                            .is_err()
-                    {
-                        anyhow::bail!(
-                            "refusing to install {} through {}: that same-repository checkout's .agents fails validation, and falling back to an ordinary link would write a worktree-absolute target into it",
+                    )
+                    && probe_common == project_common
+                {
+                    let project_canon = std::fs::canonicalize(crate::config::project_root())
+                        .unwrap_or_else(|_| {
+                            normalize_absolute_path(&crate::config::project_root())
+                        });
+                    // Validate the CORRESPONDING nested project root, not the
+                    // toplevel: for a project below the git toplevel, the
+                    // shared surface lives at the other checkout's copy of
+                    // that directory, and its toplevel `.agents` (unrelated
+                    // or absent) says nothing about it.
+                    let corresponding = corresponding_project_root_in(&checkout_toplevel);
+                    match corresponding {
+                        Some(root) if root == project_canon => {}
+                        Some(root) => {
+                            if crate::path_safety::ensure_agents_dir_within_project(&root)
+                                .is_err()
+                            {
+                                anyhow::bail!(
+                                    "refusing to install {} through {}: that same-repository checkout's .agents fails validation, and falling back to an ordinary link would write a worktree-absolute target into it",
+                                    skill.name,
+                                    root.display()
+                                );
+                            }
+                            // Same-repository indirection whose landing
+                            // parent is NOT a recognized skills surface is an
+                            // alias (e.g. `.claude/skills -> <main>/cli/src`):
+                            // installing would remove_existing/replace
+                            // children of an arbitrary repository directory.
+                            if let Some(parent) = physical.parent()
+                                && !is_recognized_skills_surface(&root, parent)
+                            {
+                                anyhow::bail!(
+                                    "refusing to install {} through {}: it resolves into {}, which is not a recognized skills directory of {}",
+                                    skill.name,
+                                    dest.display(),
+                                    parent.display(),
+                                    root.display()
+                                );
+                            }
+                        }
+                        None => anyhow::bail!(
+                            "refusing to install {} through {}: cannot derive the corresponding project root in that same-repository checkout",
                             skill.name,
-                            checkout_root.display()
-                        );
+                            checkout_toplevel.display()
+                        ),
                     }
                 }
             }
@@ -1019,6 +1052,39 @@ fn child_level_anchored_roots(dir: &Path) -> Vec<(PathBuf, AnchorEvidence)> {
         .collect()
 }
 
+/// The other checkout's copy of this project's root: the repo layout is
+/// identical in every checkout, so the project's repo-relative suffix (empty
+/// for a toplevel project) transfers verbatim onto `checkout_toplevel`.
+/// `None` when the suffix cannot be derived — callers fail closed rather
+/// than guessing a root.
+fn corresponding_project_root_in(checkout_toplevel: &Path) -> Option<PathBuf> {
+    let own_toplevel = crate::path_safety::git_toplevel(&crate::config::project_root())?;
+    let project_physical = std::fs::canonicalize(crate::config::project_root())
+        .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
+    let suffix = project_physical.strip_prefix(&own_toplevel).ok()?;
+    Some(checkout_toplevel.join(suffix))
+}
+
+/// Is `physical_parent` a recognized skills surface of the checkout rooted
+/// at `checkout_root` — its `.agents/skills` or one of its project-scope
+/// harness skills dirs? Link homes and anchor evidence must come only from
+/// these: any other same-repository directory reached through a symlink is
+/// an alias, and treating it as a link home would delete/replace its
+/// children as if they were skill artifacts.
+fn is_recognized_skills_surface(checkout_root: &Path, physical_parent: &Path) -> bool {
+    let project_root = crate::config::project_root();
+    let mut candidates = vec![checkout_root.join(".agents").join("skills")];
+    for harness in Harness::ALL {
+        if let Ok(rel) = harness.skills_dir(false).strip_prefix(&project_root) {
+            candidates.push(checkout_root.join(rel));
+        }
+    }
+    candidates.into_iter().any(|candidate| {
+        canonicalize_allowing_missing(&candidate)
+            .is_some_and(|resolved| resolved == *physical_parent)
+    })
+}
+
 /// The physical home of a project-scope harness link whose parent directory
 /// is symlinked into another checkout of the same repository.
 struct LinkHome {
@@ -1080,16 +1146,19 @@ fn anchored_link_home(physical_parent: PathBuf) -> Option<LinkHome> {
     // subdirectory). The anchor must land at the other checkout's copy of
     // THAT directory, not its toplevel — anchoring at the toplevel would
     // collide the nested project's canonicals with sibling projects' .agents.
-    // The repo layout is identical in every checkout, so the repo-relative
-    // suffix transfers verbatim; a suffix that cannot be derived fails closed
-    // (no anchoring) rather than guessing a root.
-    let own_toplevel = crate::path_safety::git_toplevel(&crate::config::project_root())?;
-    let project_physical = std::fs::canonicalize(crate::config::project_root())
-        .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
-    match project_physical.strip_prefix(&own_toplevel) {
-        Ok(suffix) if suffix.as_os_str().is_empty() => {}
-        Ok(suffix) => checkout_root = checkout_root.join(suffix),
-        Err(_) => return None,
+    checkout_root = corresponding_project_root_in(&checkout_root)?;
+    // Anchor evidence must come from a recognized skills surface of that
+    // checkout. Git identity alone would admit an ALIAS — e.g.
+    // `.claude/skills -> <main>/cli/src` — and installing through it would
+    // remove_existing/replace children of an arbitrary repository directory
+    // as if they were skill artifacts.
+    if !is_recognized_skills_surface(&checkout_root, &physical_parent) {
+        eprintln!(
+            "  Warning: not anchoring through {}: not a recognized skills directory of {} (VST-195)",
+            physical_parent.display(),
+            checkout_root.display()
+        );
+        return None;
     }
     // Anchoring writes beneath the other checkout's .agents, so it gets the
     // same containment boundary the project's own .agents writes get. An
