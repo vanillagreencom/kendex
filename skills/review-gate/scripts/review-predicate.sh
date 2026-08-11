@@ -1072,8 +1072,10 @@ while :; do
   esac
   unresolved=$((unresolved + t_count))
   [ "$t_next" = "true" ] || break
-  if [ "$t_cursor_next" = "END" ] || [ -z "$t_cursor_next" ]; then
-    # hasNextPage with no advancing cursor: cannot verify the remainder.
+  if [ "$t_cursor_next" = "END" ] || [ -z "$t_cursor_next" ] || [ "$t_cursor_next" = "$t_cursor" ]; then
+    # hasNextPage with no ADVANCING cursor (missing, or identical to the
+    # page just read): cannot verify the remainder — fail closed now
+    # instead of burning the page budget on re-reads of the same page.
     unresolved="overflow"
     break
   fi

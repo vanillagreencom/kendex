@@ -353,14 +353,25 @@ for number in $pr_numbers; do
       overflow=true
       break
     fi
-    t_after=""
+    # The cursor rides a proper GraphQL VARIABLE, never string
+    # interpolation — an opaque cursor must not be able to break query
+    # syntax. $after:String is nullable: on the first page it is simply
+    # not passed and resolves to null (page one).
     if [ -n "$t_cursor" ]; then
-      t_after=",after:\"$t_cursor\""
+      threads_resp="$(gh api graphql \
+        -f query='query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved}}}}}' \
+        -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" -F number="$number" -f after="$t_cursor" 2>/dev/null)" || {
+        t_error="thread read failed"
+        break
+      }
+    else
+      threads_resp="$(gh api graphql \
+        -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved}}}}}' \
+        -f owner="${GH_REPO%%/*}" -f name="${GH_REPO#*/}" -F number="$number" 2>/dev/null)" || {
+        t_error="thread read failed"
+        break
+      }
     fi
-    threads_resp="$(gh api graphql -f query="query{repository(owner:\"${GH_REPO%%/*}\",name:\"${GH_REPO#*/}\"){pullRequest(number:$number){reviewThreads(first:100${t_after}){pageInfo{hasNextPage endCursor} nodes{isResolved}}}}}" 2>/dev/null)" || {
-      t_error="thread read failed"
-      break
-    }
     if [ -z "$threads_resp" ]; then
       t_error="thread read produced zero bytes (broken read)"
       break
@@ -386,13 +397,16 @@ for number in $pr_numbers; do
     }
     unresolved=$((unresolved + page_unresolved))
     [ "$page_next" = "true" ] || break
-    t_cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$threads_resp" 2>/dev/null)"
-    if [ -z "$t_cursor" ]; then
-      # hasNextPage with no advancing cursor: cannot verify the remainder —
-      # the fail-closed overflow posture, not silent trust of a partial count.
+    t_cursor_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"$threads_resp" 2>/dev/null)"
+    if [ -z "$t_cursor_next" ] || [ "$t_cursor_next" = "$t_cursor" ]; then
+      # hasNextPage with no ADVANCING cursor (missing, or identical to the
+      # page just read): cannot verify the remainder — fail closed as
+      # overflow immediately instead of burning the page budget on
+      # re-reads of the same page.
       overflow=true
       break
     fi
+    t_cursor="$t_cursor_next"
   done
   if [ -n "$t_error" ]; then
     emit "$number" "$head" error "$t_error"

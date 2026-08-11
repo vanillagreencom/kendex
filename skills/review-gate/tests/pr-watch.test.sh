@@ -141,7 +141,7 @@ case "$args" in
       exit 1
     fi
     if [[ "${STUB_THREADS_RAW:-}" == "emptybytes" ]]; then exit 0; fi
-    if [[ "$args" == *after:* && -n "${STUB_THREADS_PAGE2:-}" ]]; then
+    if [[ "$args" == *"after="* && -n "${STUB_THREADS_PAGE2:-}" ]]; then
       # Cursor-dependent page: a query carrying after:"..." gets page two,
       # so tests prove the walk advances instead of refetching page one.
       printf '%s\n' "$STUB_THREADS_PAGE2"
