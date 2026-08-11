@@ -273,10 +273,10 @@ grep -q "carry-exclude — 'guides/\*' matches 'guides/intro.md', refusing the c
   || note "subdirectory run did not probe the full tracked tree (root-relative evidence base regressed)"
 
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\n' \
-  >"$work/rooted/typo.toml"
+  >"$work/rooted/repo/typo.settings.toml"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
-  >>"$work/rooted/typo.toml"
-if (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/typo.toml" "$SELFTEST") \
+  >>"$work/rooted/repo/typo.settings.toml"
+if (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/typo.settings.toml" "$SELFTEST") \
   >"$work/rootedtypo.out" 2>&1; then
   note "selftest passed with a typo'd exclusion glob matching nothing — the dead-glob gate no longer fires"
 else
@@ -285,10 +285,10 @@ else
 fi
 
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
-  >"$work/rooted/declared.toml"
+  >"$work/rooted/repo/declared.settings.toml"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
-  >>"$work/rooted/declared.toml"
-if ! (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/declared.toml" "$SELFTEST") \
+  >>"$work/rooted/repo/declared.settings.toml"
+if ! (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/declared.settings.toml" "$SELFTEST") \
   >"$work/rooteddecl.out" 2>&1; then
   cat "$work/rooteddecl.out"
   note "selftest failed with a DECLARED prophylactic glob — the declaration is not honored"

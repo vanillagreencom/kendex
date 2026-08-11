@@ -1875,7 +1875,18 @@ load_exclude_tracked() {
   # A real repository whose ls-files FAILS must not silently degrade into
   # hermetic synthetic probing — that would shrink coverage exactly when
   # git is broken. Only a genuinely-not-a-repo cwd is hermetic.
-  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # The evidence ANCHOR is the repository containing the RESOLVED settings
+  # file: the committed exclude list under test belongs to that repo, and
+  # REVIEW_GATE_SETTINGS_FILE legitimately points a run at another
+  # checkout — deriving the root from the invoking cwd would judge B's
+  # globs against A's tree. /dev/null (force-defaults) and the plain
+  # relative default both anchor at the invoking directory.
+  _elt_anchor="."
+  case "${REVIEW_GATE_SETTINGS_FILE:-}" in
+    '' | /dev/null) _elt_anchor="." ;;
+    *) _elt_anchor="$(dirname -- "$REVIEW_GATE_SETTINGS_FILE")" ;;
+  esac
+  if git -C "$_elt_anchor" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     # ROOT-relative, never cwd-relative: `git ls-files` is subtree-scoped,
     # so a run from a subdirectory compared every committed glob against a
     # partial file list — each glob quietly downgraded to its no-match
@@ -1894,11 +1905,17 @@ load_exclude_tracked() {
     # The flag carries the CAUSE: its one consumer prints it, and telling
     # an operator to fix git when mktemp failed sends them at the wrong
     # subsystem.
-    EXCLUDE_TRACKED_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+    EXCLUDE_TRACKED_ROOT="$(git -C "$_elt_anchor" rev-parse --show-toplevel 2>/dev/null)"
     if [ -z "$EXCLUDE_TRACKED_ROOT" ]; then
       EXCLUDE_TRACKED_ERROR="could not resolve the repository root (git rev-parse --show-toplevel failed inside a work tree)"
     elif _elt_tmp="$(mktemp)"; then
       if git -C "$EXCLUDE_TRACKED_ROOT" ls-files -z >"$_elt_tmp" 2>/dev/null; then
+        # STATED LIMITATION: the NUL-delimited read is converted to a
+        # newline-delimited list for the probe loops, so a tracked
+        # filename CONTAINING a newline splits into fragments — a glob
+        # matching such a file can false-FAIL as no-match. The failure
+        # direction is loud (never a silent pass), and newline filenames
+        # in a reviewed repository are their own defect.
         EXCLUDE_TRACKED="$(tr '\0' '\n' <"$_elt_tmp")"
         # Mode is a SEPARATE flag: a successful read in a zero-tracked-file
         # repository leaves the payload empty, and payload-emptiness must
