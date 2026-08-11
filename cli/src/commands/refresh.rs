@@ -721,6 +721,11 @@ fn link_relocated_project_skills(
 /// refresh that is not applying local `[skill-instructions]` must reject an
 /// existing `.agents` ancestor that resolves outside the selected project.
 pub fn preflight_project_refresh(project_root: &Path) -> Result<()> {
+    // The strict canonical-root identity check runs HERE, before any
+    // reconciliation writes: an aliased in-repo `.agents` must refuse the
+    // whole refresh, not slip past the broad containment check only to be
+    // caught (after lock mutation) at an individual install.
+    crate::path_safety::ensure_agents_dir_within_project(project_root)?;
     resolve_project_owned_skills_root(project_root).map(|_| ())
 }
 

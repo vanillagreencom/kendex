@@ -909,7 +909,7 @@ role: engineer
 
         assert!(
             err.to_string()
-                .contains("refusing project-owned skills path outside project root")
+                .contains("refusing")
         );
         assert!(
             !outside_agents.join("skills/demo/SKILL.md").exists(),
@@ -1013,7 +1013,7 @@ role: engineer
 
         assert!(
             err.to_string()
-                .contains("refusing project-owned skills path outside project root")
+                .contains("refusing")
         );
         assert!(!outside_agents.join("skills/demo/SKILL.md").exists());
         assert!(!project.join(".claude/skills/demo/SKILL.md").exists());
@@ -1065,7 +1065,7 @@ role: engineer
 
         assert!(
             err.to_string()
-                .contains("refusing project-owned skills path outside project root")
+                .contains("refusing")
         );
         assert!(!project.join(".vstack-lock.json").exists());
         assert!(!project.join("vstack.toml").exists());
