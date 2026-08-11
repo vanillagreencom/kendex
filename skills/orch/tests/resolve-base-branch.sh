@@ -100,6 +100,25 @@ set -e
 assert_eq "$code" "1" "non-repository directory exits 1"
 assert_contains "$(cat "$TMP_ROOT/err")" "not inside a git work tree" "non-repository names the failure"
 
+# Case 5b: a BARE repository is not a work tree — rev-parse prints "false"
+# with exit 0 there, so only a check of the printed boolean rejects it.
+set +e
+out="$("$RBB" "$UPSTREAM" 2>"$TMP_ROOT/err")"
+code=$?
+set -e
+assert_eq "$code" "1" "bare repository exits 1 (printed boolean checked, not status)"
+assert_contains "$(cat "$TMP_ROOT/err")" "not inside a git work tree" "bare repository names the failure"
+
+# Case 5c: an existing path that is a FILE takes the same arm as missing,
+# with wording that covers it.
+touch "$TMP_ROOT/a-file"
+set +e
+out="$("$RBB" "$TMP_ROOT/a-file" 2>"$TMP_ROOT/err")"
+code=$?
+set -e
+assert_eq "$code" "1" "non-directory path exits 1"
+assert_contains "$(cat "$TMP_ROOT/err")" "is not a directory" "non-directory wording covers the file case"
+
 # Case 6: a valid repo with NO resolvable origin/HEAD still falls back to
 # main with exit 0 — the fallback is for unresolvable HEADS, not bad paths.
 NOHEAD="$TMP_ROOT/nohead"

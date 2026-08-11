@@ -12,10 +12,13 @@ remote_head=""
 # WORKTREE_DEFAULT_BRANCH override answers for a worktree too, so the path
 # is validated on that arm as well.
 if [[ ! -d "$worktree" ]]; then
-    echo "resolve-base-branch: worktree path does not exist: $worktree" >&2
+    echo "resolve-base-branch: worktree path does not exist or is not a directory: $worktree" >&2
     exit 1
 fi
-if ! git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+# The PRINTED boolean is the verdict, not the exit status: inside a bare
+# repository or a repo's .git directory, rev-parse prints "false" and exits
+# 0, so a status-only check would accept a path no worktree flow can use.
+if [[ "$(git -C "$worktree" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]]; then
     echo "resolve-base-branch: not inside a git work tree: $worktree" >&2
     exit 1
 fi
