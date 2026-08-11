@@ -67,10 +67,12 @@ resolve_default_base() {
 # via Cargo.toml `path =` wiring; include! calls with computed paths
 # (concat!/env!) are not matched; #[path]/include! declarations living in
 # a directory that is neither the candidate's own nor one of its ancestors
-# are not consulted; and a /* opener inside a string literal reads as a
-# comment and can hide a later ungated declaration. A file that is
-# production-reachable only through one of those shapes while also
-# carrying a #[cfg(test)]-gated declaration still classifies as test.
+# are not consulted; declarations inside inline module blocks are skipped
+# outright (no records — never a mis-resolved one); and a /* opener inside
+# a string literal reads as a comment and can hide a later ungated
+# declaration. A file that is production-reachable only through one of
+# those shapes while also carrying a #[cfg(test)]-gated declaration still
+# classifies as test.
 
 # Emits the new-side content of a file: HEAD for a base...HEAD diff, the
 # index for --staged, the worktree for --head. Reads main()'s diff_ref.
@@ -125,9 +127,11 @@ new_side_rs_siblings() {
 # mod-rs files (mod.rs, lib.rs, main.rs) their own directory; for any other
 # file its directory plus its stem as a subdirectory. fdir is the file's
 # own directory: per the Rust reference, #[path] values on modules NOT
-# inside inline module blocks resolve there (the mod-rs distinction only
-# changes #[path] inside inline blocks, which this scanner does not parse —
-# stated limitation), and the std docs anchor include! literals there too.
+# inside inline module blocks resolve there, and the std docs anchor
+# include! literals there too. Inline module blocks (mod name { ... })
+# resolve into the inline chain instead, which this scanner does not
+# model — everything inside them is skipped by brace depth, emitting no
+# records at all.
 scan_decl_records() {
     awk -v moddir="$1" -v fdir="$2" '
         function join(d, b) { return d == "." ? b : d "/" b }
@@ -169,12 +173,37 @@ scan_decl_records() {
             # Blank and comment-only lines keep pending attributes (attrs
             # may precede their item across lines).
             if (line == "") next
+            # Declarations inside inline module blocks (mod name { ... })
+            # resolve into the inline module chain, which this scanner does
+            # not model. A shape it cannot faithfully parse must produce NO
+            # record — never a mis-resolved one — so the whole block is
+            # skipped by brace depth, and pending state cannot leak across
+            # the boundary.
+            if (inline_depth > 0) {
+                tmp = line
+                inline_depth += gsub(/\{/, "{", tmp) - gsub(/\}/, "}", tmp)
+                if (inline_depth < 0) inline_depth = 0
+                gated = 0; pathattr = ""; pending_attr = ""; pending_include = 0
+                next
+            }
             # An attribute opened but not closed on the previous line
             # (rustc accepts `#[path =` split from its value) continues
             # here; rejoin before parsing.
             if (pending_attr != "") {
                 line = pending_attr " " line
                 pending_attr = ""
+            }
+            # An inline-module opener left open at end of line starts a
+            # skip region (a single-line `mod m { ... }` nets zero and
+            # stays inert — its inner declarations never anchor at ^).
+            if (line ~ /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\{/) {
+                tmp = line
+                delta = gsub(/\{/, "{", tmp) - gsub(/\}/, "}", tmp)
+                if (delta > 0) {
+                    inline_depth = delta
+                    gated = 0; pathattr = ""; pending_include = 0
+                    next
+                }
             }
             # include! routes resolve their string-literal argument. A
             # literal on a later line (formatted call left open) is tracked
@@ -205,11 +234,12 @@ scan_decl_records() {
             while (match(line, /^#\[[^]]*\][[:space:]]*/)) {
                 attr = substr(line, 1, RLENGTH)
                 if (attr ~ /^#\[cfg\(test\)\]/) gated = 1
-                # Plain and raw (r"...") string values; r#"..."# stays a
-                # stated limitation.
-                if (attr ~ /^#\[path[[:space:]]*=[[:space:]]*r?"/) {
+                # Plain and raw string values, including hash-raw
+                # (r"...", r#"..."#); a literal quote INSIDE a hash-raw
+                # value would cut early — pathological for a file path.
+                if (attr ~ /^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/) {
                     p = attr
-                    sub(/^#\[path[[:space:]]*=[[:space:]]*r?"/, "", p)
+                    sub(/^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/, "", p)
                     sub(/".*/, "", p)
                     pathattr = p
                 }

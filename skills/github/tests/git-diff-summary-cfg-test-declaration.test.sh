@@ -839,5 +839,88 @@ assert_eq "raw-string #[path] ungated declaration keeps panic_path_added" \
 assert_eq "raw-string #[path] ungated declaration stays production scope" \
     "production" "$(jq -r '.scope' <<<"$rawstring_json")"
 
+# Declarations inside inline module blocks resolve into the inline chain
+# (mod outer { mod cand; } reaches outer/cand.rs) — the scanner skips them
+# rather than mis-resolving. Direction one: a gated inline declaration must
+# not fabricate a gated route for an unrelated same-name file.
+inline_gated_repo="$SANDBOX/inline-gated"
+init_repo "$inline_gated_repo"
+mkdir -p "$inline_gated_repo/src"
+cat > "$inline_gated_repo/src/lib.rs" <<'RUST'
+mod outer {
+    #[cfg(test)]
+    mod cand;
+}
+RUST
+git -C "$inline_gated_repo" add src
+git -C "$inline_gated_repo" commit -q -m lib
+cat > "$inline_gated_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$inline_gated_repo" add src/cand.rs
+inline_gated_json="$($SUMMARY -C "$inline_gated_repo" --staged)"
+assert_eq "inline gated declaration does not downgrade an unrelated file" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$inline_gated_json")"
+assert_eq "inline gated declaration keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$inline_gated_json")"
+
+# Direction two: an ungated inline declaration must not fabricate an
+# ungated route that destroys a real gated one.
+inline_ungated_repo="$SANDBOX/inline-ungated"
+init_repo "$inline_ungated_repo"
+mkdir -p "$inline_ungated_repo/src"
+cat > "$inline_ungated_repo/src/lib.rs" <<'RUST'
+mod outer {
+    pub mod cand;
+}
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$inline_ungated_repo" add src
+git -C "$inline_ungated_repo" commit -q -m lib
+cat > "$inline_ungated_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$inline_ungated_repo" add src/cand.rs
+inline_ungated_json="$($SUMMARY -C "$inline_ungated_repo" --staged)"
+assert_eq "inline ungated declaration does not destroy the real gated route" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$inline_ungated_json")"
+assert_eq "inline ungated declaration is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$inline_ungated_json")"
+
+# Hash-raw #[path = r#"target.rs"#] is valid Rust: the attribute must be
+# parsed, not dropped into bare-mod alias resolution that loses the
+# ungated route.
+hashraw_repo="$SANDBOX/hash-raw"
+init_repo "$hashraw_repo"
+mkdir -p "$hashraw_repo/src"
+cat > "$hashraw_repo/src/lib.rs" <<'RUST'
+#[path = r#"target.rs"#]
+pub mod t;
+
+#[cfg(test)]
+#[path = "target.rs"]
+mod target_fixtures;
+RUST
+git -C "$hashraw_repo" add src
+git -C "$hashraw_repo" commit -q -m lib
+cat > "$hashraw_repo/src/target.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$hashraw_repo" add src/target.rs
+hashraw_json="$($SUMMARY -C "$hashraw_repo" --staged)"
+assert_eq "hash-raw #[path] ungated declaration keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$hashraw_json")"
+assert_eq "hash-raw #[path] ungated declaration stays production scope" \
+    "production" "$(jq -r '.scope' <<<"$hashraw_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

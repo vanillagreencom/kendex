@@ -131,10 +131,10 @@ precedence, nested block comments), and each `mod` declaration — bare
 call is resolved to a lexically normalized repo-relative target; bare
 `mod name;` declarations resolve in the declaring file's module directory —
 its own directory for `mod.rs`/`lib.rs`/`main.rs`, its directory plus its
-file stem otherwise — while `#[path]` values (plain or `r"..."` raw
-strings) and `include!` literals resolve in the containing file's
-directory, per the Rust reference. A candidate whose every matching route
-is
+file stem otherwise — while `#[path]` values (plain or raw strings) and
+`include!` literals resolve in the containing file's directory, per the
+Rust reference; declarations inside inline module blocks are skipped
+entirely. A candidate whose every matching route is
 `#[cfg(test)]`-gated classifies as test; anything else keeps production
 classification — an ungated declaration or `include!` of the file, no route
 found, a `bin/` or `lib.rs`/`main.rs` crate root, or an unreadable
