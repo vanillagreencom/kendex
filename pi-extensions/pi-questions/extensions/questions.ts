@@ -28,6 +28,7 @@ import {
 	type QuestionRequest,
 	type QuestionTab,
 } from "./question-model.js";
+import { isRpcMode, presentQuestion, rpcDialogUI } from "./rpc-fallback.js";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-questions.installed");
 const CONFIG_ID = "@vanillagreen/pi-questions";
@@ -588,11 +589,22 @@ class QuestionServiceImpl implements QuestionService {
 		notifyQuestionOpened(ctx, openedEvent);
 		this.publish(openedEvent);
 
-		if (ctx.hasUI) {
-			void openQuestionUi(ctx, pending).catch((error) => {
-				pending.complete({ cancelled: true, error: stringifyError(error), requestId: request.id }, "ui_error");
-			});
-		}
+		void presentQuestion(request, {
+			dialogs: rpcDialogUI(ctx.ui),
+			hasUI: ctx.hasUI,
+			isSettled: () => !this.pending.has(request.id),
+			openCustom: ctx.hasUI ? () => openQuestionUi(ctx, pending) : undefined,
+			rpcMode: isRpcMode(ctx),
+		}).then((outcome) => {
+			// undefined: no UI route; leave the request pending for bridge/API
+			// replies. "external": the custom TUI or a bridge reply completed it.
+			if (!outcome || outcome.kind === "external") return;
+			if (outcome.kind === "answered") pending.complete({ answers: outcome.answers, requestId: request.id }, "ui");
+			else if (outcome.kind === "cancelled") pending.complete({ cancelled: true, requestId: request.id }, "ui");
+			else pending.complete({ cancelled: true, error: outcome.error, requestId: request.id }, "ui_error");
+		}).catch((error) => {
+			pending.complete({ cancelled: true, error: stringifyError(error), requestId: request.id }, "ui_error");
+		});
 
 		return promise;
 	}
@@ -661,12 +673,12 @@ function attachContext(ctx: ExtensionContext | undefined, service: QuestionServi
 	});
 }
 
-async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): Promise<void> {
+async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): Promise<QuestionResult | undefined> {
 	if (isVstackModalActive()) {
 		ctx.ui.notify("Question queued until the current popup closes.", "info");
 		while (isVstackModalActive()) {
 			const completed = await Promise.race([pending.promise.then(() => true), sleep(100).then(() => false)]);
-			if (completed) return;
+			if (completed) return pending.promise;
 		}
 	}
 	const releaseModalLock = acquireVstackModalLock();
@@ -748,7 +760,7 @@ async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): 
 		pending.requestRender?.();
 	};
 
-	await ctx.ui.custom<QuestionResult>(
+	return await ctx.ui.custom<QuestionResult>(
 		(tui, theme, _keybindings, done) => {
 			pending.uiDone = done;
 			pending.requestRender = () => tui.requestRender();
@@ -1058,8 +1070,11 @@ export default function questions(pi: ExtensionAPI): void {
 				const result: QuestionCancelResult = { cancelled: true, error: "No active Pi context", requestId: "que_unavailable" };
 				return makeQuestionToolResult(toolCallId, result);
 			}
-			if (!runCtx.hasUI) {
-				const result: QuestionCancelResult = { cancelled: true, error: "No interactive UI available for question prompt", requestId: typeof params.id === "string" ? params.id : "que_unavailable" };
+			if (!runCtx.hasUI && !(isRpcMode(runCtx) && rpcDialogUI(runCtx.ui))) {
+				const error = isRpcMode(runCtx)
+					? "No question UI available: this RPC host renders neither custom TUI components nor native select/input dialogs"
+					: "No interactive UI available for question prompt";
+				const result: QuestionCancelResult = { cancelled: true, error, requestId: typeof params.id === "string" ? params.id : "que_unavailable" };
 				return makeQuestionToolResult(toolCallId, result);
 			}
 			activeCtx = runCtx;
