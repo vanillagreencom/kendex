@@ -8,6 +8,17 @@ The bundle default inverted: a parent with children is now a CONTAINER — never
 
 **Migration is per-bundle, no flag-day.** Live bundles created under either reading cut over via the marker alone: an unmarked parent with children now reads as a container; a bundle that must keep the old single-session/single-PR flow (e.g. one already mid-flight with a shared branch) opts out by adding `(one PR)` to its title. The `(one PR)` marker takes precedence over the `agent:multi` label in every container check — that precedence is what lets a legacy multi-domain (`agent:multi`) bundle opt into single-PR by title. No state, script, or cache migration is required — the markers are evaluated at selection/validation time.
 
+## Container Close: Prose Transaction, Deliberately
+
+merge-pr's container-close sequence (per-parent lock, snapshots, recovery,
+validation, completion, repair) is agent-interpreted prose, not a helper
+script — reviewed and kept that way on purpose while the container
+convention is young: every step is lock-guarded and fail-closed, each exit
+path names its cleanup, and the prose is the format the orchestration layer
+executes natively. Mechanizing it into a tested helper is the intended
+evolution once the convention stabilizes; grow that helper from this
+sequence rather than re-deriving it.
+
 ## GitHub Auth Fallback
 
 `approval-wait` and `ci-wait` use `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's shared `scripts/lib/gh-auth.sh` helpers. Each candidate source is probed at most once during startup:

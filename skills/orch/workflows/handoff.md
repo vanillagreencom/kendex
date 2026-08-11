@@ -40,7 +40,10 @@ children too, via the Ancestor gate (SKILL.md → Coordination): EVERY
 final launch item with a `parent_id` walks its full ancestor chain
 (`.agents/skills/linear/scripts/linear.sh cache issues get
 [ANCESTOR_ID]` per hop), classifying each — an enclosing `(one PR)`
-ancestor makes that bundle the launch item; all-container ancestry →
+ancestor makes that bundle the launch item ONLY for container-expanded
+entries: an item the USER supplied explicitly stays the launch item (the
+Ancestor gate's explicit-choice exception, as in `start.md`), still
+gated on the unioned blockers below; all-container ancestry →
 the item stays launchable only if it passes the unblocked test below
 with the UNION of its own and every container ancestor's blockers;
 blocked → drop it from the launch list and name its live blockers.
