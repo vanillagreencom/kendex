@@ -67,6 +67,15 @@ scripts/linear.sh comments create [CHILD_ID] --body "Made sub-issue of [PARENT_I
 scripts/linear.sh issues update [CHILD_ID] --remove-parent
 ```
 
+A `make_parent` action carrying `retitle` (the audit's single-PR
+decision — see the audit-output schema) applies it alongside the
+reparenting; skipping it would leave the promoted parent reading as a
+container and split the bundle the audit decided to keep whole:
+
+```bash
+scripts/linear.sh issues update [PARENT_ID] --title "[RETITLE]"
+```
+
 ## Sync Parent Description
 
 After adding/removing/reordering children:
