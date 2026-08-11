@@ -55,6 +55,30 @@
   updated pre-commit hook arrives with refresh and its preflight lane
   self-gates on the skill being installed. CI use of preflight, like
   review-gate, requires the installed skill committed to the repo.
+- **review-gate: the writer relays PR-attached legs instead of running the
+  evictable job in a PR's check rollup** (VST-210 / #1210). The single-writer
+  concurrency group is global, so a burst evicts pending runs — harmless to
+  convergence (every run converges every open PR), but an evicted run is
+  still a *check run*, and one attached to a PR head left a `CANCELLED` entry
+  that pinned the PR at `mergeStateStatus UNSTABLE` until someone reran it by
+  hand. `templates/review-gate-writer.yml` now splits the two roles: PR-attached
+  legs (`pull_request_target`, `pull_request_review`, `status`, an opted-in
+  `check_run`) run a new group-less `request-converge` relay that dispatches a
+  converge pass and exits in seconds, and only `workflow_dispatch` /
+  `schedule` — whose runs attach to the default-branch head — hold the writer
+  group. Single-writer serialization, converge-all, and the write-ordering
+  guard are unchanged; eviction marks simply land where nothing gates on them.
+  The relay derives its own workflow file from `github.workflow_ref`, so a
+  renamed consumer copy needs no new ADAPT, and it holds `actions: write` as
+  its complete job scope — the writer itself still holds no `actions` scope
+  and never re-runs CI. On a fork `pull_request_review` the relay cannot
+  dispatch (read-only token) and stays a green no-op, so fork review evidence
+  converges on the cron floor exactly as before.
+  **Consumer action required**: workflow YAML is repo-owned after adoption, so
+  `vstack refresh` does not deliver this — each repo takes it as its own PR
+  (migration steps, permissions delta, and the ruleset caveat:
+  `skills/review-gate/references/adoption.md` § Updating an already-adopted
+  copy).
 
 - **second-opinion: a multi-lane review no longer loses its verdict when
   scratch space disappears mid-run** (VST-221 / #1229). The union merge used

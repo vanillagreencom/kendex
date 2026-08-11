@@ -120,6 +120,16 @@ nothing else.
 - **Converge-all on every leg.** Every invocation converges EVERY open PR,
   so a run evicted from the concurrency group strands nothing (8 evictions
   observed in one sandbox replay, zero stranded).
+- **Relay / converge split.** PR-attached legs (`pull_request_target`,
+  `pull_request_review`, `status`, an opted-in `check_run`) do NOT run the
+  engine: they run a group-less relay job that dispatches a converge pass
+  and exits in seconds. Only `workflow_dispatch` and `schedule` hold the
+  single-writer group. Convergence is unchanged — what changes is WHERE an
+  eviction's `CANCELLED` check lands. Attached to a PR head it pinned that
+  PR at `mergeStateStatus UNSTABLE` until a manual rerun (VST-210); on the
+  default-branch runs the relay dispatches into, nothing gates on it. Cost
+  of the split: one extra short run per PR event, and seconds of added
+  event-fast latency.
 - **Write ordering.** Before any `success` post it re-reads the status and
   defers when any gate entry was created at/after this run's evaluation
   instant — a newer run's state AND description (which carries the audit
@@ -129,8 +139,8 @@ nothing else.
   it no-ops, so idle cron ticks append nothing.
 - **Forks need no special case** — every leg holds a write-capable
   default-branch token. The one exception is `pull_request_review` on a fork
-  PR, whose token GitHub downgrades to read-only: that run exits green as a
-  no-op and the cron floor converges it.
+  PR, whose token GitHub downgrades to read-only: it cannot dispatch, so
+  that run exits green as a no-op and the cron floor converges it.
 - **`pull_request_target` safety**: the job never executes PR-controlled
   code. Every checkout pins the default branch with credentials dropped.
 

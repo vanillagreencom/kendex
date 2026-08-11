@@ -54,8 +54,10 @@ WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .
 # skills/review-gate is the canonical source here, so the writer workflow
 # references tracked script paths). One writer
 # (.github/workflows/review-gate-writer.yml) evaluates the predicate and
-# posts the gate status on every leg; it always runs the DEFAULT-branch
-# engine, so a PR cannot influence its own gate evaluation. A PR that
+# posts the gate status; PR-attached legs relay into it via
+# workflow_dispatch (VST-210) rather than running the engine in the PR's
+# own check rollup. It always runs the DEFAULT-branch engine, so a PR
+# cannot influence its own gate evaluation. A PR that
 # repairs the engine itself merges via the ruleset's bypass actor.
 # Review-object trust is pinned to the reviewer bots + the owner
 # (closes the any-collaborator-COMMENTED gap). qodo posts review objects

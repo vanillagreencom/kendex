@@ -478,6 +478,9 @@ s5() { # true fork PR: no special-casing; the pull_request_review-triggered
   sha="$(head_sha "$pr")"
   assert_gate "$sha" pending 300 "" "fork head converges to pending with no special-casing"
   # Fire the fork pull_request_review leg: the run must be a GREEN no-op.
+  # Since VST-210 this leg lands on the RELAY job, whose read-only branch
+  # dispatches nothing and exits 0 — the assertion is unchanged (never red),
+  # only the job that satisfies it moved.
   local before
   before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   review "$pr" COMMENT "fork review event (evidence void: driver is the author)"
@@ -486,7 +489,7 @@ s5() { # true fork PR: no special-casing; the pull_request_review-triggered
   conc="$(gh run list -R "$REPO" --workflow "Review gate writer" --json event,conclusion,createdAt \
     --jq '[.[] | select(.event == "pull_request_review" and .createdAt >= "'"$before"'")] | last | .conclusion // "none"')"
   if [ "$conc" = "success" ]; then
-    ok "fork pull_request_review writer run is a GREEN no-op (read-only token)"
+    ok "fork pull_request_review run is a GREEN no-op (read-only token cannot dispatch)"
   elif [ "$conc" = "none" ]; then
     bad "no pull_request_review writer run observed for the fork review"
   else
@@ -718,6 +721,32 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
     bad "$unknown cancelled writer run(s) could not be classified (jobs list unreadable)"
   fi
   note "concurrency evictions during the replay: $evicted (harmless: converge-all means the surviving run covers those heads)"
+  # VST-210, the live tooth: harmless-to-CONVERGENCE was never the whole
+  # story — an evicted run is still a CHECK RUN, and one attached to a PR
+  # head pins that PR at mergeStateStatus UNSTABLE until someone reruns it
+  # by hand. Since the relay/converge split, only the two default-branch
+  # legs can hold the evictable group, so a cancelled run on ANY PR-attached
+  # leg
+  # (pull_request_target, pull_request_review, status, an opted-in
+  # check_run) means the split regressed. Runs are counted by leg rather
+  # than by rollup membership because the leg is what decides which sha the
+  # run attaches to.
+  local pr_attached_cancels
+  pr_attached_cancels="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit 200 \
+    --json event,conclusion,createdAt \
+    --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and .conclusion == "cancelled"
+             and .event != "workflow_dispatch" and .event != "schedule")] | length')"
+  case "$pr_attached_cancels" in
+    ''|*[!0-9]*)
+      bad "could not count PR-attached cancelled runs (unreadable run list) — the VST-210 split is unproven, not proven"
+      ;;
+    0)
+      ok "no cancelled run on any PR-attached leg — evictions land on default-branch runs only, so none can pin a PR at UNSTABLE (VST-210)"
+      ;;
+    *)
+      bad "$pr_attached_cancels cancelled run(s) on PR-attached legs — the relay/converge split regressed and these pin their PRs at UNSTABLE (VST-210)"
+      ;;
+  esac
   if [ "$killed" = "0" ]; then
     ok "no writer run was killed mid-work (evictions only)"
   else

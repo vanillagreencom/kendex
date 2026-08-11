@@ -7,6 +7,38 @@
 # review-gate-queue): exactly one writer, default-branch-defined, evaluates
 # review-predicate.sh and posts the gate commit status on every leg.
 #
+# SHAPE — relay / converge (VST-210). Three jobs, and which one runs is
+# decided purely by event leg:
+#
+#   PR-attached legs        request-converge  no concurrency group, no
+#   (pull_request_target,   (the RELAY)       checkout, seconds long; asks
+#    pull_request_review,                     the converge leg to run and
+#    status, opt-in                           exits. Cannot be evicted, so
+#    check_run)                               it cannot leave a CANCELLED
+#                                             check in a PR's rollup.
+#   workflow_dispatch,      write             holds the ONE global writer
+#   schedule                (the CONVERGE     group; runs the engine.
+#                            leg)
+#   merge_group             merge-group       unconditional queue success.
+#
+# WHY the split: the writer group is global (single writer, below), so a
+# burst evicts PENDING runs. Eviction is harmless to CONVERGENCE — every
+# executing run converges every open PR — but an evicted run is still a
+# CHECK RUN, and a cancelled check pins its PR at mergeStateStatus
+# UNSTABLE indefinitely, clearing only on a manual rerun. Relaying moves
+# every evictable run onto workflow_dispatch/schedule, whose runs attach to
+# the DEFAULT BRANCH head, never to a PR head: the eviction marks land on a
+# merged main commit where nothing gates on them, instead of falsely
+# reporting an open PR as not-ready. Costs, accepted deliberately: one
+# extra (seconds-long, billed-minimum) run per PR event, and a few seconds
+# of added convergence latency on the event-fast path.
+#
+# NO dispatch loop: the relay's if: excludes the two legs it dispatches
+# into, so a converge run can never re-enter the relay. (workflow_dispatch
+# is one of the two documented events GITHUB_TOKEN CAN trigger — the
+# recursion suppression that stops the status leg does not apply here,
+# which is exactly why this relay works at all.)
+#
 # SECURITY (the pull_request_target posture): a write-capable token is only
 # safe while the job NEVER executes PR-controlled code. Every checkout below
 # pins the DEFAULT branch with credentials dropped, and PR data is read only
@@ -34,9 +66,9 @@ name: Review gate writer
   pull_request_target:
     types: [opened, synchronize, reopened]
   # Review-object evidence. Fork caveat (plan finding F2): on fork PRs this
-  # event's token is READ-ONLY; the write job flags that case and the script
-  # exits GREEN as a no-op — fork review evidence converges on the cron
-  # floor. Same-repo PRs stay event-fast.
+  # event's token is READ-ONLY; the relay job flags that case and exits
+  # GREEN as a no-op (it cannot dispatch) — fork review evidence converges
+  # on the cron floor. Same-repo PRs stay event-fast.
   pull_request_review:
     types: [submitted, dismissed]
   # Status-context evidence (e.g. CodeRabbit; memsira's "Devin Review" is
@@ -55,13 +87,16 @@ name: Review gate writer
   # success for the gate context. Replaces review-gate-queue.yml.
   merge_group: {}
   # The floor for transitions GitHub emits no event for (thread resolution
-  # has NO webhook; fork review evidence rides here too). Best-effort
+  # has NO webhook; fork review evidence rides here too). A CONVERGE leg —
+  # it runs the write job directly, not the relay. Best-effort
   # delivery — can slip 10-20+ min under load; scheduled workflows also
   # auto-disable after ~60 days of repo inactivity, which is why the
   # sustained-failure escalation step below exists.
   schedule:
     - cron: "*/15 * * * *"
-  # Manual kick stays possible but should never be required.
+  # The CONVERGE leg the relay dispatches into — and the same entry point
+  # `pr-watch.sh --heal` and a manual kick already use. Removing this
+  # trigger silently strips every event-fast path down to the cron floor.
   workflow_dispatch: {}
   # NO check_run trigger here, deliberately — per-repo OPT-IN only (plan
   # round-2 finding R3): every ordinary CI job completion fires
@@ -70,9 +105,12 @@ name: Review gate writer
   # repos. A repo whose reviewer publishes check-runs AND NOTHING ELSE adds:
   #   check_run:
   #     types: [created, completed]
-  # plus a job-level guard on the write job's if: matching the reviewer's
+  # plus a job-level guard on the RELAY job's if: matching the reviewer's
   # check name literally (the file is repo-owned after copy, so the
-  # hardcoded name is config); a job-level skip bills nothing. `created`
+  # hardcoded name is config); a job-level skip bills nothing. The guard
+  # goes on the RELAY, not the write job: check_run is a PR-attached leg,
+  # and the relay's if: is a negative list precisely so a newly added
+  # trigger relays by default instead of silently doing nothing. `created`
   # matters under newest-run semantics (vstack#1110): a reviewer STARTING a
   # fresh round withdraws its own older clean success, and without the
   # created leg that downward transition waits for the run's completion or
@@ -134,6 +172,89 @@ jobs:
           fi
           exec .agents/skills/review-gate/scripts/review-writer.sh
 
+  # The RELAY (VST-210). Every PR-ATTACHED leg lands here, and this job
+  # deliberately holds NO concurrency group: it can never be evicted, so it
+  # can never leave a CANCELLED check run pinning its PR at
+  # mergeStateStatus UNSTABLE. It requests a converge pass and exits —
+  # seconds, no checkout, no engine, no PR code, no status write.
+  #
+  # Which PR the event came from is never resolved and never passed on:
+  # convergence is converge-all (binding finding F2), so a requested pass
+  # covers every open PR including this event's head. That is also why a
+  # dispatch this relay loses to eviction downstream costs nothing.
+  request-converge:
+    name: Request a gate convergence pass
+    # NEGATIVE list on purpose: the two converge legs (which the write job
+    # below claims) and merge_group are excluded; anything else — today's
+    # PR-attached legs and any trigger a consumer adds later — relays.
+    # Excluding the dispatch target is also what makes a loop impossible.
+    if: github.event_name != 'merge_group' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # Job-level permissions REPLACE the workflow default, so this is the
+      # relay's COMPLETE scope: no contents (it never checks anything out),
+      # no statuses (it never writes the gate), none of the writer's
+      # evidence reads. actions:write exists only to dispatch this same
+      # workflow's converge leg — the writer still never re-runs CI, and
+      # the write job below still holds no actions scope at all.
+      actions: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      # workflow_dispatch requires a BRANCH ref, and the engine is
+      # default-branch-defined — never github.ref, which on the
+      # pull_request_target leg is the PR's BASE branch (not necessarily
+      # the default one). Same `|| 'main'` fallback and same repo-owned
+      # ADAPT as the checkouts in the other jobs.
+      DISPATCH_REF: ${{ github.event.repository.default_branch || 'main' }}
+      # owner/repo/.github/workflows/<file>@refs/heads/<branch> — this
+      # workflow dispatching ITSELF, derived from its own ref so a repo
+      # that renames its copy needs no ADAPT and no name-match.
+      WORKFLOW_REF: ${{ github.workflow_ref }}
+      # Plan finding 2: pull_request_review on a FORK PR carries a
+      # read-only token, which cannot dispatch. Flagged here (this is the
+      # job that leg now reaches) and handled as a green no-op, never a red
+      # run; the cron floor converges fork review evidence.
+      WRITER_READ_ONLY: ${{ (github.event_name == 'pull_request_review' && github.event.pull_request.head.repo.full_name != github.repository) && '1' || '0' }}
+    steps:
+      - name: Request a converge pass
+        run: |
+          set -u
+          if [ "$WRITER_READ_ONLY" = "1" ]; then
+            echo "read-only token (fork pull_request_review); cannot dispatch — the scheduled writer pass converges this head"
+            exit 0
+          fi
+          workflow_file="${WORKFLOW_REF%%@*}"
+          workflow_file="${workflow_file##*/}"
+          # An empty derivation must not fall through to a dispatch against
+          # a garbage path: that would 404 and read as a dispatch outage.
+          if [ -z "$workflow_file" ]; then
+            echo "::error::could not derive this workflow's file name from github.workflow_ref ('$WORKFLOW_REF'); no converge pass requested"
+            exit 1
+          fi
+          # ONE bounded retry: an unrequested pass waits for the cron floor
+          # and a red relay job is itself a check on the PR, so a single
+          # transient API blip should not spend either. A second failure
+          # fails LOUDLY — the gate must never look converged when nothing
+          # was asked to converge it.
+          if gh api -X POST "repos/$GH_REPO/actions/workflows/$workflow_file/dispatches" -f ref="$DISPATCH_REF"; then
+            echo "requested a converge pass ($workflow_file on $DISPATCH_REF)"
+            exit 0
+          fi
+          echo "::warning::could not request a converge pass; retrying once"
+          sleep 5
+          if gh api -X POST "repos/$GH_REPO/actions/workflows/$workflow_file/dispatches" -f ref="$DISPATCH_REF"; then
+            echo "requested a converge pass on retry ($workflow_file on $DISPATCH_REF)"
+            exit 0
+          fi
+          # Explicit, not inherited: the exit status is branched here rather
+          # than left to the runner's default `bash -e`, so a trailing
+          # success (an echo, a future added line) can never launder a
+          # failed dispatch into a green relay.
+          echo "::error::could not request a converge pass after two attempts; this event converges on the cron floor instead"
+          exit 1
+
   write:
     # ONE job-level writer group, cancel-in-progress: false. This is a
     # WASTE reducer, not the correctness mechanism: single-writer runs can
@@ -147,6 +268,11 @@ jobs:
     # whichever run survives a burst converges the evicted events' heads
     # too. Job level, not workflow level, so a run the if: below skips
     # never claims the slot.
+    #
+    # VST-210: the group is reachable ONLY from the two legs whose runs
+    # attach to the default-branch head, so an eviction mark can no longer
+    # land in an open PR's check rollup. Widening this if: back toward the
+    # PR-attached legs re-introduces that defect — those legs relay.
     concurrency:
       group: review-gate-writer
       cancel-in-progress: false
@@ -154,9 +280,10 @@ jobs:
     # EVERY status state converges, not only success: under newest-row
     # evidence semantics a trusted status moving success→pending/failure is
     # a WITHDRAWAL, and it must close the gate event-fast rather than wait
-    # for the cron floor. No context-name term — see the status trigger
-    # comment (#1039).
-    if: github.event_name != 'merge_group'
+    # for the cron floor — event-fast now means the relay above dispatches
+    # this leg within seconds. No context-name term, and no state term at
+    # all — see the status trigger comment (#1039).
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -175,15 +302,18 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       # EVENT_NAME's only scripted role is merge_group-or-not; it rides
-      # along here for the run log. EVERY leg converges EVERY open PR
-      # (converge-all, binding finding F2) — no single-head identifiers, no
-      # sha→PR resolution: the payload sha is deliberately unused, so an
-      # evicted pending run can never strand its event's head.
+      # along here for the run log (workflow_dispatch or schedule, per the
+      # if: above). EVERY leg converges EVERY open PR (converge-all,
+      # binding finding F2) — no single-head identifiers, no sha→PR
+      # resolution, and this leg carries no PR payload at all: a dispatch
+      # names nothing, so an evicted pending run can never strand the
+      # event that requested it.
       EVENT_NAME: ${{ github.event_name }}
-      # Plan finding 2: pull_request_review on a FORK PR carries a
-      # read-only token; the script exits green as a no-op (never a red
-      # run) and the cron floor converges fork review evidence.
-      WRITER_READ_ONLY: ${{ (github.event_name == 'pull_request_review' && github.event.pull_request.head.repo.full_name != github.repository) && '1' || '0' }}
+      # No WRITER_READ_ONLY here: both converge legs hold a write-capable
+      # default-branch token by construction. The fork read-only case
+      # (plan finding 2) is now flagged on the relay job, which is where
+      # pull_request_review lands; review-writer.sh still honors the flag
+      # (defaulting to 0) so a consumer wiring another leg keeps it.
     steps:
       # DEFAULT branch, credentials dropped — on every leg, including
       # pull_request_target: the writer runs the merged engine exclusively

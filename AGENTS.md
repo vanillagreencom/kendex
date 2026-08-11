@@ -283,9 +283,12 @@ cli/scripts/integration-check.sh         # integration check in a throwaway temp
 - This repo runs its own review-gate engine through ONE writer:
   `.github/workflows/review-gate-writer.yml` evaluates
   `skills/review-gate/scripts/review-predicate.sh` and posts the "Review
-  gate" commit status on its event legs (PR events, review events, status
-  events, a 15-minute cron floor). The separate merge-group leg posts an
-  unconditional success on queue shas — queue entries are post-approval by
+  gate" commit status. PR-attached legs (PR events, review events, status
+  events) run a group-less relay job that dispatches a converge pass and
+  exits; the engine itself runs on `workflow_dispatch` and the 15-minute
+  cron floor, so an eviction from the single-writer group can never leave a
+  cancelled check pinning a PR at `UNSTABLE` (VST-210). The merge-group leg
+  posts an unconditional success on queue shas — queue entries are post-approval by
   construction, so no predicate runs there. The writer always runs the
   DEFAULT-branch engine, so a PR cannot influence its own gate — a PR that
   repairs the engine itself merges via the ruleset's bypass actor, stated

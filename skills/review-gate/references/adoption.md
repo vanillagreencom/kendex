@@ -34,6 +34,12 @@ trusting an adoption.
    The one workflow is the ONLY writer of the gate status: it runs the
    default-branch engine on every leg, so no PR can influence its own gate
    evaluation and no trust-posture decision exists.
+   The ADAPT markers in the file are the three `|| 'main'` default-branch
+   fallbacks (both checkouts and the relay's dispatch ref) — set them to the
+   repo's default branch. Nothing else needs editing: the vendored script
+   paths are already the consumer's, and the relay derives its own workflow
+   file name from `github.workflow_ref`, so renaming the copy needs no
+   further change.
 3. **Add the ungated selftest job** to the repo's CI (below).
 4. **Set the repo's `REVIEW_GATE_*` keys** in `vstack.settings.toml`
    (decision axes below; full key table in [settings.md](settings.md)).
@@ -100,6 +106,44 @@ cases from the repo's actual trust values.
   queue shas unconditionally (queue entries are post-approval by
   construction). Verify the queue's required checks include both the gate
   context and the test aggregate.
+- **Required checks must NOT include the writer's own job names.** The
+  gate's enforcement point is the commit STATUS context, never the workflow
+  that posts it. The writer's jobs skip by design on the legs they do not
+  own (a queue entry runs only `merge-group`; a PR push runs only the
+  relay), and a repo that required a writer job name would block on a
+  context that leg never creates.
+
+## Updating an already-adopted copy (relay/converge split, VST-210)
+
+Consumer copies are repo-owned, so `vstack refresh` will NOT deliver this —
+each repo takes it as its own PR. What changed in the template:
+
+- A new `request-converge` job (the relay) now runs every PR-attached leg;
+  the `write` job's `if:` narrowed to `workflow_dispatch`/`schedule`.
+- **Permissions delta**: the relay holds `actions: write` — and, because
+  job-level `permissions` replace the workflow default rather than extend
+  it, that is its complete scope (no `contents`, no `statuses`). It exists
+  solely to dispatch this same workflow's converge leg; the `write` job
+  still holds no `actions` scope, so the writer still never re-runs CI.
+- **`workflow_dispatch` must stay in `on:`** — it is the dispatch target,
+  not just the manual kick. Dropping it strips every event-fast path down
+  to the cron floor. (`workflow_dispatch` is one of the two events
+  `GITHUB_TOKEN` is documented to trigger, which is what makes the relay
+  work where the recursion suppression stops other self-triggering.)
+- A repo with the opt-in `check_run` trigger moves its check-name guard
+  from the `write` job's `if:` to the relay's.
+- **Check the ruleset first** if it ever named a writer JOB (rather than the
+  gate status context): the job appearing on PR heads is now the relay, so a
+  required `Evaluate and write the review gate` would block every PR. Per
+  the wiring rule above, require the status context only.
+
+Why bother, per repo: without it, a burst of PR events leaves an evicted
+writer run as a `CANCELLED` check on the PR, and `mergeStateStatus` reads
+`UNSTABLE` until someone manually reruns it — a false not-ready signal for
+every human and tool that reads it. Verify after adopting: push twice in
+quick succession to an open PR, then check that `gh pr checks` shows no
+cancelled writer entry and `gh pr view --json mergeStateStatus` is not
+`UNSTABLE` on that account.
 
 ## Per-repo settings — decision axes
 
