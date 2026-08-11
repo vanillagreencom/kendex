@@ -405,6 +405,35 @@ else
     || note "broken-readlink failure does not carry the unresolved-override diagnostic"
 fi
 
+# A CYCLIC symlink override fails -f (which dereferences the whole chain)
+# while very much existing — it must enter resolution via the -L arm and
+# refuse on the hop budget, never quietly fall back to the invoking-cwd
+# anchor as "file absent".
+mkdir -p "$work/cyclic"
+ln -s cycle-b.settings.toml "$work/cyclic/cycle-a.settings.toml"
+ln -s cycle-a.settings.toml "$work/cyclic/cycle-b.settings.toml"
+if (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/cyclic/cycle-a.settings.toml" "$SELFTEST") \
+  >"$work/cyclic.out" 2>&1; then
+  note "selftest passed with a CYCLIC symlinked override — the unfinishable walk no longer refuses"
+else
+  grep -q "could not resolve the symlinked settings override" "$work/cyclic.out" \
+    || note "cyclic-override failure does not carry the unresolvable-chain diagnostic"
+fi
+
+# A BROKEN WORKTREE (a .git file naming a missing gitdir) earns git's
+# standard 'not a git repository' text while repository metadata is
+# plainly present — that is an unusable evidence base, not a hermetic
+# ticket.
+mkdir -p "$work/brokengitfile"
+printf 'gitdir: /nonexistent/pruned-away/.git/worktrees/gone\n' >"$work/brokengitfile/.git"
+cp "$work/excludes/vstack.settings.toml" "$work/brokengitfile/vstack.settings.toml"
+if (cd "$work/brokengitfile" && "$SELFTEST") >"$work/brokengitfile.out" 2>&1; then
+  note "selftest passed inside a broken worktree (gitfile to a missing gitdir) — the .git-marker guard no longer fires"
+else
+  grep -q "a .git marker exists" "$work/brokengitfile.out" \
+    || note "broken-gitfile failure does not carry the marker diagnostic"
+fi
+
 # A repository-probe failure inside a REAL repository must refuse, never
 # read as "not a repository": a git shim failing --is-inside-work-tree
 # used to silently demote the run to hermetic synthetic probing.

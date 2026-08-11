@@ -1888,8 +1888,12 @@ load_exclude_tracked() {
       # Only an EXISTING override moves the anchor: when the named file is
       # absent, rg_setting falls back to built-in defaults, and anchoring
       # evidence at a nonexistent path's directory would judge defaults
-      # against the wrong tree (or silently force hermetic mode).
-      if [ -f "$REVIEW_GATE_SETTINGS_FILE" ]; then
+      # against the wrong tree (or silently force hermetic mode). The -L
+      # arm is load-bearing: -f dereferences the WHOLE chain, so a cyclic
+      # or over-long symlink fails -f while very much existing — skipping
+      # resolution there would silently fall back to the invoking-cwd
+      # anchor, and the hop guard below could never fire.
+      if [ -f "$REVIEW_GATE_SETTINGS_FILE" ] || [ -L "$REVIEW_GATE_SETTINGS_FILE" ]; then
         # Resolve a SYMLINK override to its target first: installs routinely
         # symlink settings files, and the evidence repository is the one
         # CONTAINING the real file — anchoring at the symlink's directory
@@ -1925,6 +1929,13 @@ load_exclude_tracked() {
         if [ -z "$EXCLUDE_TRACKED_ERROR" ] && [ -L "$_elt_settings" ]; then
           EXCLUDE_TRACKED_ERROR="could not resolve the symlinked settings override (chain longer than 40 hops or cyclic) — the evidence anchor is unusable"
         fi
+        # The walk finished but the final target must EXIST: an -L-entry
+        # override (cycle survivor, dangling tail) that resolves to a
+        # missing file is equally unusable — never a quiet fall-through to
+        # the invoking-cwd anchor.
+        if [ -z "$EXCLUDE_TRACKED_ERROR" ] && [ ! -f "$_elt_settings" ]; then
+          EXCLUDE_TRACKED_ERROR="the symlinked settings override resolves to a missing target ('$_elt_settings') — the evidence anchor is unusable"
+        fi
         [ -n "$EXCLUDE_TRACKED_ERROR" ] && return 0
         # Containing directory via parameter expansion, not dirname: BSD
         # dirname can reject `--`, and without `--` an option-looking path
@@ -1941,15 +1952,32 @@ load_exclude_tracked() {
   # verdict is read from its output, not its bare exit status: a broken
   # git failing this probe inside a real checkout used to read as "not a
   # repository" and silently demoted the run to hermetic synthetic
-  # probing — the same fail-open every other branch here refuses. Only
-  # git's own "not a git repository" diagnosis selects hermetic mode;
-  # every other failure (or a "false" verdict — a git dir with no work
-  # tree) leaves the evidence base unusable.
-  _elt_probe_out="$(git -C "$_elt_anchor" rev-parse --is-inside-work-tree 2>&1)"
+  # probing — the same fail-open every other branch here refuses. LC_ALL=C
+  # pins the diagnostic to git's untranslated text (a localized git would
+  # otherwise fail the match and refuse legitimate hermetic runs). Only
+  # git's own "not a git repository" diagnosis selects hermetic mode —
+  # and only when NO .git marker sits on the anchor's ancestry: a broken
+  # worktree (a .git file naming a missing gitdir) earns the same
+  # standard text while repository metadata is plainly present, and that
+  # is an unusable evidence base, not a non-repository. Every other
+  # failure (or a "false" verdict — a git dir with no work tree) is
+  # equally unusable.
+  _elt_probe_out="$(LC_ALL=C git -C "$_elt_anchor" rev-parse --is-inside-work-tree 2>&1)"
   _elt_probe_rc=$?
   if [ "$_elt_probe_rc" -ne 0 ] || [ "$_elt_probe_out" != "true" ]; then
     case "$_elt_probe_out" in
-      *"not a git repository"*) : ;;
+      *"not a git repository"*)
+        _elt_walk="$(cd "$_elt_anchor" 2>/dev/null && pwd)" || _elt_walk=""
+        while [ -n "$_elt_walk" ]; do
+          if [ -e "$_elt_walk/.git" ]; then
+            EXCLUDE_TRACKED_ERROR="repository probe says 'not a git repository' but a .git marker exists at '$_elt_walk' — a broken checkout is not a non-repository"
+            break
+          fi
+          [ "$_elt_walk" = "/" ] && break
+          _elt_walk="${_elt_walk%/*}"
+          [ -n "$_elt_walk" ] || _elt_walk="/"
+        done
+        ;;
       *) EXCLUDE_TRACKED_ERROR="repository probe failed (git rev-parse --is-inside-work-tree exit $_elt_probe_rc: ${_elt_probe_out:-no output}) — cannot tell a non-repository from a broken git" ;;
     esac
     return 0
@@ -2165,11 +2193,13 @@ if [ -n "$ACTIVE_CARRY" ]; then
     # NEGATIVE CONTROL (tracked mode): the no-match verdict the dead-glob
     # FAIL below rides on must be demonstrably reachable in THIS run — a
     # probe that lost the ability to say "no match" would silently green
-    # every dead glob. A planted glob that cannot correspond to a tracked
-    # path must probe as rc=2.
+    # every dead glob. A leading-'/' glob is impossible BY CONSTRUCTION,
+    # not merely unlikely: git ls-files paths are repository-relative and
+    # never start with '/', so no tracked tree anywhere can collide with
+    # the control.
     if [ "$EXCLUDE_TRACKED_MODE" = "tracked" ]; then
       # shellcheck disable=SC2086 # probe_exts is a controlled word list
-      negctl_out="$(exclude_glob_probe 'zz-selftest-planted-negative-control/*' $probe_exts)"
+      negctl_out="$(exclude_glob_probe '/selftest-planted-negative-control/*' $probe_exts)"
       negctl_rc=$?
       if [ "$negctl_rc" -ne 2 ] || [ -n "$negctl_out" ]; then
         cases=$((cases + 1))
