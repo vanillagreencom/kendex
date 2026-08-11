@@ -48,6 +48,105 @@ resolve_default_base() {
     echo "main"
 }
 
+# --- declaration-site test scoping (vstack#1217) ----------------------------
+# A .rs file with no file-local test markers is still test-only when its gate
+# lives at the declaration site in the declaring module:
+#     #[cfg(test)]
+#     #[path = "scan_fixtures.rs"]
+#     mod scan_fixtures;
+# File-local heuristics cannot see that, so classification also reads the
+# modules that could declare the file on the diff's new side: a file whose
+# every found declaration is #[cfg(test)]-gated is test scope; any ungated
+# declaration, or none found, keeps the file-local classification.
+
+# New-side content of a file: HEAD for a base...HEAD diff, the index for
+# --staged, the worktree for --head. Reads main()'s diff_ref.
+new_side_content() {
+    case "$diff_ref" in
+        --staged) git show ":$1" 2>/dev/null || true ;;
+        HEAD)     cat "$1" 2>/dev/null || true ;;
+        *)        git show "HEAD:$1" 2>/dev/null || true ;;
+    esac
+}
+
+# New-side .rs files directly inside a directory (no recursion).
+new_side_rs_siblings() {
+    case "$diff_ref" in
+        --staged) git ls-files -- "$1" 2>/dev/null ;;
+        HEAD)     find "$1" -maxdepth 1 -name '*.rs' 2>/dev/null ;;
+        *)        git ls-tree --name-only HEAD -- "$1/" 2>/dev/null ;;
+    esac | awk -v d="$1/" 'index($0, d) == 1 && substr($0, length(d) + 1) !~ /\// && /\.rs$/'
+}
+
+# Print one line per `mod name;` declaration on stdin that resolves to the
+# candidate file: "gated" when #[cfg(test)] is among its attributes, else
+# "ungated". stem/rel: candidate module name and path relative to the
+# declaring file's directory. allow_name: whether a bare `mod stem;` resolves
+# to the candidate (true for mod.rs/lib.rs/main.rs siblings and the 2018-style
+# parent file; other siblings resolve `mod x;` into their own subdirectory).
+scan_mod_decls() {
+    awk -v stem="$1" -v rel="$2" -v allow_name="$3" '
+        {
+            line = $0
+            sub(/^[[:space:]]*/, "", line)
+            # Consume leading attributes; several may share the decl line.
+            while (match(line, /^#\[[^]]*\][[:space:]]*/)) {
+                attr = substr(line, 1, RLENGTH)
+                if (attr ~ /^#\[cfg\(test\)\]/) gated = 1
+                if (attr ~ /^#\[path[[:space:]]*=[[:space:]]*"/) {
+                    p = attr
+                    sub(/^#\[path[[:space:]]*=[[:space:]]*"/, "", p)
+                    sub(/".*/, "", p)
+                    pathattr = p
+                }
+                line = substr(line, RLENGTH + 1)
+            }
+            # Blank/comment lines keep pending attributes (attrs may precede
+            # the item across lines).
+            if (line == "" || line ~ /^\/\//) next
+            if (line ~ /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;/) {
+                name = line
+                sub(/^pub([(][^)]*[)])?[[:space:]]+/, "", name)
+                sub(/^mod[[:space:]]+/, "", name)
+                sub(/[[:space:]]*;.*$/, "", name)
+                if (pathattr != "" ? pathattr == rel : (allow_name != 0 && name == stem))
+                    print (gated ? "gated" : "ungated")
+            }
+            gated = 0
+            pathattr = ""
+        }
+    '
+}
+
+is_cfg_test_declared() {
+    local candidate="$1"
+    local base stem dir parent pdirname parent_file f fdir rel allow out decls=""
+    case "$candidate" in */*) ;; *) return 1 ;; esac
+    base=${candidate##*/}
+    case "$base" in mod.rs|lib.rs|main.rs) return 1 ;; esac
+    stem=${base%.rs}
+    dir=${candidate%/*}
+    parent=$(dirname "$dir")
+    pdirname=${dir##*/}
+    parent_file="$parent/$pdirname.rs"
+    [ "$parent" = "." ] && parent_file="$pdirname.rs"
+    for f in $(new_side_rs_siblings "$dir") "$parent_file"; do
+        [ "$f" = "$candidate" ] && continue
+        case "$f" in
+            "$dir/mod.rs"|"$dir/lib.rs"|"$dir/main.rs"|"$parent_file") allow=1 ;;
+            *) allow=0 ;;
+        esac
+        fdir=${f%/*}
+        [ "$f" = "${f#*/}" ] && fdir="."
+        if [ "$fdir" = "$dir" ]; then rel="$base"; else rel="$pdirname/$base"; fi
+        out=$(new_side_content "$f" | scan_mod_decls "$stem" "$rel" "$allow")
+        decls="$decls$out"$'\n'
+    done
+    case "$decls" in *ungated*) return 1 ;; esac
+    case "$decls" in *gated*) return 0 ;; esac
+    return 1
+}
+
 main() {
     local base=""
     local diff_args=""
@@ -110,10 +209,24 @@ main() {
     # dirs, *_tests.rs files, or #[cfg(test)] modules inside production files —
     # are the distinct informational `test_panic_path_added` flag instead: a
     # test assertion is not a production panic path (vstack#944).
+    # Changed .rs files that carry no file-local test markers but are reached
+    # only through #[cfg(test)]-gated declarations are test scope (vstack#1217).
+    local cfg_test_declared="" rs_candidate
+    for rs_candidate in $(echo "$files" | awk -F'\t' '{print $NF}' \
+            | grep -E '\.rs$' \
+            | grep -vE '(/tests?/|/benches/|/fixtures/|_tests?\.rs$)' || true); do
+        if is_cfg_test_declared "$rs_candidate"; then
+            cfg_test_declared="$cfg_test_declared$rs_candidate"$'\n'
+        fi
+    done
+
     local prod_paths
     prod_paths=$(echo "$files" | awk -F'\t' '{print $NF}' \
         | grep -E '(^|/)src/|(^|/)lib/' \
         | grep -vE '(/tests/|/benches/|/test/|/fixtures/|_tests?\.rs$|\.test\.[jt]sx?$|\.spec\.[jt]sx?$)' || true)
+    if [ -n "$cfg_test_declared" ] && [ -n "$prod_paths" ]; then
+        prod_paths=$(grep -Fxv -f <(printf '%s' "$cfg_test_declared") <<<"$prod_paths" || true)
+    fi
     local prod_panic=0 test_panic=0
     if [ -n "$prod_paths" ]; then
         # path<TAB>new-side line number of each added panic-pattern line
@@ -187,6 +300,7 @@ main() {
     local test_paths
     test_paths=$(echo "$files" | awk -F'\t' '{print $NF}' \
         | grep -E '(^|/)tests?/|_tests?\.rs$' || true)
+    test_paths=$(printf '%s\n%s' "$test_paths" "$cfg_test_declared" | grep -v '^$' | sort -u || true)
     if [ -n "$test_paths" ]; then
         local test_diff
         # shellcheck disable=SC2086
@@ -201,7 +315,10 @@ main() {
 
     # Classify files into domains and build output.
     # Domain = top-level directory name. Standard infrastructure dirs are grouped.
-    echo "$files" | jq -Rs --arg stats "$stats" --argjson risk_flags "$risk_flags" '
+    local cfg_test_json
+    cfg_test_json=$(printf '%s' "$cfg_test_declared" | jq -Rs 'split("\n") | map(select(length > 0))')
+    echo "$files" | jq -Rs --arg stats "$stats" --argjson risk_flags "$risk_flags" \
+        --argjson cfg_test_declared "$cfg_test_json" '
         # Parse file list
         split("\n") | map(select(length > 0)) | map(
             capture("^(?<status>[AMDRC])[0-9]*\t(?<path>.+)$") // null
@@ -219,7 +336,9 @@ main() {
                 end
             ),
             file_scope: (
-                if .path | test("(/tests?/|/benches?/|/fixtures/|_tests?\\.rs$|\\.test\\.[jt]sx?$|\\.spec\\.[jt]sx?$)")
+                if (.path as $p | $cfg_test_declared | index($p)) != null
+                    then "test"
+                elif .path | test("(/tests?/|/benches?/|/fixtures/|_tests?\\.rs$|\\.test\\.[jt]sx?$|\\.spec\\.[jt]sx?$)")
                     then "test"
                 elif .path | test("^docs/")
                     then "docs"
