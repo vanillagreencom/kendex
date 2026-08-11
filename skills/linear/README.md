@@ -58,6 +58,19 @@ Keep `LINEAR_API_KEY` in `.env.local`. Shared non-secret defaults can live in `v
 
 Route normal tracked-issue creation through the TPM pipeline (`project-management` skill), which owns labels, project, priority, and relations — the guard exists to catch creates that bypass it.
 
+## Container Bundle Validation
+
+`issues validate-completion PARENT --include-children-of PARENT --container`
+answers "may this container complete now?": every non-canceled child gates on
+Done, the container itself passes in any live state (its summary is posted at
+completion time by `issues complete --summary`), and canceled children are
+excluded. It fails closed — exactly one target, a paired
+`--include-children-of` naming that same issue, and at least one non-canceled
+child are required. A child of a container validates alone
+(`validate-completion CHILD`). Without `--container`, validate-completion
+keeps the explicit single-PR bundle contract: children Done before the
+session root.
+
 ## Dependencies
 
 - Bash 4.0 or newer
