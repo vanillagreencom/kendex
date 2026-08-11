@@ -11,6 +11,9 @@ SCRIPTS_DIR="$(cd "$TEST_DIR/../scripts" && pwd)"
 PATTERN='mapfile|readarray|declare -A|declare -gA|local -A'
 PATTERN="$PATTERN"'|(^|[^$])\{[A-Za-z_][A-Za-z0-9_]*\}[<>]'
 PATTERN="$PATTERN"'|\$\{[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,|\^\^)'
+# BSD dirname/basename can reject the `--` end-of-options marker; use
+# parameter expansion (or a path that cannot start with '-') instead.
+PATTERN="$PATTERN"'|(dirname|basename) +--( |$)'
 
 violations="$(grep -rnE "$PATTERN" "$SCRIPTS_DIR" || true)"
 if [[ -n "$violations" ]]; then

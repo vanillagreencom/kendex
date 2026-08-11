@@ -1890,7 +1890,36 @@ load_exclude_tracked() {
       # evidence at a nonexistent path's directory would judge defaults
       # against the wrong tree (or silently force hermetic mode).
       if [ -f "$REVIEW_GATE_SETTINGS_FILE" ]; then
-        _elt_anchor="$(dirname -- "$REVIEW_GATE_SETTINGS_FILE")"
+        # Resolve a SYMLINK override to its target first: installs routinely
+        # symlink settings files, and the evidence repository is the one
+        # CONTAINING the real file — anchoring at the symlink's directory
+        # judges the wrong tree, or (outside any repo) silently demotes a
+        # tracked run to hermetic probing where a dead glob can manufacture
+        # its own match. Bounded walk; an unreadable link stops at the last
+        # resolvable path, and the -f gate above proved the chain terminates.
+        _elt_settings="$REVIEW_GATE_SETTINGS_FILE"
+        _elt_hops=0
+        while [ -L "$_elt_settings" ] && [ "$_elt_hops" -lt 40 ]; do
+          _elt_link="$(readlink "$_elt_settings")" || break
+          case "$_elt_link" in
+            /*) _elt_settings="$_elt_link" ;;
+            *)
+              case "$_elt_settings" in
+                */*) _elt_settings="${_elt_settings%/*}/$_elt_link" ;;
+                *) _elt_settings="$_elt_link" ;;
+              esac
+              ;;
+          esac
+          _elt_hops=$((_elt_hops + 1))
+        done
+        # Containing directory via parameter expansion, not dirname: BSD
+        # dirname can reject `--`, and without `--` an option-looking path
+        # would be misparsed — the expansion has no dialect to disagree with.
+        case "$_elt_settings" in
+          */*) _elt_anchor="${_elt_settings%/*}" ;;
+          *) _elt_anchor="." ;;
+        esac
+        [ -n "$_elt_anchor" ] || _elt_anchor="/"
       fi
       ;;
   esac
@@ -1913,8 +1942,12 @@ load_exclude_tracked() {
     # The flag carries the CAUSE: its one consumer prints it, and telling
     # an operator to fix git when mktemp failed sends them at the wrong
     # subsystem.
-    EXCLUDE_TRACKED_ROOT="$(git -C "$_elt_anchor" rev-parse --show-toplevel 2>/dev/null)"
-    if [ -z "$EXCLUDE_TRACKED_ROOT" ]; then
+    # Both checks are load-bearing: the exit status is git's own verdict
+    # (a failing rev-parse that still printed something must not smuggle a
+    # root past the guard), and the empty-output guard catches a success
+    # that produced nothing usable.
+    if ! EXCLUDE_TRACKED_ROOT="$(git -C "$_elt_anchor" rev-parse --show-toplevel 2>/dev/null)" \
+      || [ -z "$EXCLUDE_TRACKED_ROOT" ]; then
       EXCLUDE_TRACKED_ERROR="could not resolve the repository root (git rev-parse --show-toplevel failed inside a work tree)"
     elif _elt_tmp="$(mktemp)"; then
       if git -C "$EXCLUDE_TRACKED_ROOT" ls-files -z >"$_elt_tmp" 2>/dev/null; then

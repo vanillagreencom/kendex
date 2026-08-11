@@ -185,6 +185,46 @@ else
     || note "broken-ls-files failure does not carry the refusing-to-degrade diagnostic"
 fi
 
+# --- layer 2c2: rev-parse's STATUS decides the root, never its stdout ------
+# A git shim fails `rev-parse --show-toplevel` (exit 128) while PLANTING a
+# path on stdout, delegating everything else (--is-inside-work-tree must
+# still pass to reach the root resolution). An output-only guard accepts
+# the planted root and marches on to ls-files against a directory git never
+# vouched for; the producer's own exit status must refuse it.
+mkdir -p "$work/brokenroot/bin" "$work/brokenroot/repo"
+cat >"$work/brokenroot/bin/git" <<BROKENROOT
+#!/usr/bin/env bash
+_sub=""
+_skip=""
+for _a in "\$@"; do
+  if [ -n "\$_skip" ]; then _skip=""; continue; fi
+  case "\$_a" in
+    -C|--git-dir|--work-tree|-c) _skip=1 ;;
+    -*) ;;
+    *) _sub="\$_a"; break ;;
+  esac
+done
+if [ "\$_sub" = "rev-parse" ]; then
+  for _a in "\$@"; do
+    if [ "\$_a" = "--show-toplevel" ]; then
+      echo "/planted/never-vouched-root"
+      exit 128
+    fi
+  done
+fi
+exec "$real_git" "\$@"
+BROKENROOT
+chmod +x "$work/brokenroot/bin/git"
+(cd "$work/brokenroot/repo" && "$real_git" init -q .)
+cp "$work/excludes/vstack.settings.toml" "$work/brokenroot/repo/vstack.settings.toml"
+if (cd "$work/brokenroot/repo" && PATH="$work/brokenroot/bin:$PATH" "$SELFTEST") \
+  >"$work/brokenroot.out" 2>&1; then
+  note "selftest passed with a failing rev-parse that planted a root on stdout — git's status no longer decides the root"
+else
+  grep -q "could not resolve the repository root" "$work/brokenroot.out" \
+    || note "planted-root failure does not carry the root-resolution diagnostic"
+fi
+
 # --- layer 2d: a failed mktemp is unverifiable, same refuse-to-degrade -----
 # A PATH shim fails only the NO-ARGUMENT mktemp (the staging-file call in
 # load_exclude_tracked) while delegating `mktemp -d` and every other form
@@ -295,6 +335,24 @@ if ! (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/dec
 fi
 grep -q "DECLARED prophylactic" "$work/rooteddecl.out" \
   || note "declared prophylactic glob did not report the declared note"
+
+# A SYMLINKED override anchors evidence at its TARGET's repository. The
+# symlink lives in a non-repository directory (the common install shape:
+# settings symlinked from elsewhere); anchoring at the symlink's own
+# directory finds no work tree and silently demotes the run to hermetic
+# synthetic probing, where a dead glob manufactures its own match. The
+# relative link target also exercises the link-joining branch.
+mkdir -p "$work/symlinked/outside"
+ln -s ../../rooted/repo/vstack.settings.toml "$work/symlinked/outside/settings.toml"
+if ! (cd "$work/symlinked/outside" && REVIEW_GATE_SETTINGS_FILE="$work/symlinked/outside/settings.toml" "$SELFTEST") \
+  >"$work/symlinked.out" 2>&1; then
+  cat "$work/symlinked.out"
+  note "selftest failed under a symlinked settings override"
+fi
+grep -q "evidence mode: tracked" "$work/symlinked.out" \
+  || note "symlinked override did not anchor tracked evidence at the target's repository (hermetic demotion is back)"
+grep -q "carry-exclude — 'guides/\*' matches 'guides/intro.md', refusing the carry" "$work/symlinked.out" \
+  || note "symlinked override did not probe the target repository's tracked tree"
 
 # A repository with ZERO tracked files is still tracked mode — payload
 # emptiness must not demote the run to hermetic synthetic probing, where a
