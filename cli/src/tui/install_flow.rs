@@ -2207,8 +2207,18 @@ fn spawn_disk_work<F>(
 }
 
 fn format_disk_mutation_flash(report: &DiskMutationReport, action: &str, suffix: &str) -> String {
+    // Worker threads never print (raw-mode terminal is the TUI's); anything
+    // they collected as a notice surfaces here on the main thread instead.
+    let notice_suffix = if report.notices.is_empty() {
+        String::new()
+    } else {
+        format!(" \u{2014} {}", report.notices.join(" / "))
+    };
     if report.failed.is_empty() {
-        return format!("{action} {} item(s){suffix}", report.completed);
+        return format!(
+            "{action} {} item(s){suffix}{notice_suffix}",
+            report.completed
+        );
     }
 
     let first_failure = report
@@ -2222,13 +2232,13 @@ fn format_disk_mutation_flash(report: &DiskMutationReport, action: &str, suffix:
             report.completed,
             report.attempted,
             report.failed.len()
-        )
+        ) + &notice_suffix
     } else {
         format!(
             "Failed: {action} 0/{} item(s){suffix}; {} failed: {first_failure}",
             report.attempted,
             report.failed.len()
-        )
+        ) + &notice_suffix
     }
 }
 

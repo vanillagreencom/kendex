@@ -158,9 +158,31 @@ pub fn install_skill(
                     .as_ref()
                     .map(|home| home.checkout_root.clone())
                     .unwrap_or_else(|| {
+                        // Probe the SELECTED harness's skills dir first: a
+                        // partially shared layout (real `.claude/skills`,
+                        // each child linked out) with a LOCAL `.agents`
+                        // leaves no evidence under `.agents/skills`, and a
+                        // new skill must still follow its harness siblings
+                        // into the owning checkout.
                         let own_skills =
                             crate::config::project_root().join(".agents").join("skills");
-                        child_level_anchored_roots(&own_skills)
+                        let mut anchored: Vec<(PathBuf, AnchorEvidence)> = dest
+                            .parent()
+                            .map(child_level_anchored_roots)
+                            .unwrap_or_default();
+                        anchored.extend(child_level_anchored_roots(&own_skills));
+                        // Deterministic selection when children point at
+                        // multiple checkouts: strongest evidence (most
+                        // children) wins, path order breaks ties —
+                        // read_dir order must never pick the anchor.
+                        anchored.sort_by(|(a_root, a_ev), (b_root, b_ev)| {
+                            let count = |ev: &AnchorEvidence| match ev {
+                                AnchorEvidence::Children(names) => names.len(),
+                                AnchorEvidence::SharedDir => usize::MAX,
+                            };
+                            count(b_ev).cmp(&count(a_ev)).then(a_root.cmp(b_root))
+                        });
+                        anchored
                             .into_iter()
                             .next()
                             .and_then(|(root, _)| {
@@ -320,13 +342,17 @@ pub fn install_skill(
             // at the canonical copy — we're done. Linking a physically
             // canonical dest would replace the copy with a self-referential
             // symlink.
-            let physically_canonical = link_home.as_ref().is_some_and(|home| {
-                // Compare physical locations, not spellings: the constructed
-                // canonical path may run through a symlinked `.agents` while
-                // physical_parent is already resolved.
-                let canonical_physical = canonicalize_allowing_missing(&canonical)
-                    .unwrap_or_else(|| normalize_absolute_path(&canonical));
-                home.physical_parent.join(&skill.name) == canonical_physical
+            let physically_canonical = link_home.as_ref().is_some_and(|_| {
+                // Compare where DEST itself physically resolves, not a
+                // reconstructed `<physical parent>/<name>`: a stale child
+                // link `foo -> .../bar` shares the canonical's parent, and
+                // the reconstruction would call it canonical while it points
+                // at the wrong skill. A symlink at dest is never physically
+                // canonical — it is an artifact to (re)point in Step 3.
+                !std::fs::symlink_metadata(&dest)
+                    .is_ok_and(|meta| meta.file_type().is_symlink())
+                    && canonicalize_allowing_missing(&dest)
+                        .is_some_and(|resolved| resolved == canonical_physical)
             });
             if dest == canonical || physically_canonical {
                 format!(
@@ -581,7 +607,26 @@ pub fn remove_item(
                 .is_some_and(|lock| {
                     lock.entries
                         .get(name.to_str().unwrap_or_default())
-                        .is_some_and(|entry| entry.kind == crate::config::ItemKind::Skill)
+                        .is_some_and(|entry| {
+                            // Only a symlink-mode install for a
+                            // direct-canonical harness (Codex/Pi: the
+                            // project artifact IS the canonical dir) makes
+                            // the lock entry ownership evidence for THIS
+                            // path. A copy-mode entry (or one for
+                            // link-artifact harnesses only, whose evidence
+                            // is the symlink checked above) never
+                            // references the canonical, and preserving the
+                            // marker on its word would let reconciliation
+                            // later adopt a stale foreign copy.
+                            entry.kind == crate::config::ItemKind::Skill
+                                && entry.method == crate::config::InstallMethod::Symlink
+                                && entry.harnesses.iter().any(|id| {
+                                    matches!(
+                                        Harness::from_id(id),
+                                        Some(Harness::Codex | Harness::Pi)
+                                    )
+                                })
+                        })
                 })
         };
         if owner_still_references {
@@ -1027,9 +1072,24 @@ fn anchored_link_home(physical_parent: PathBuf) -> Option<LinkHome> {
         probe = probe.parent()?;
     }
     let project_common = crate::path_safety::git_common_dir(&crate::config::project_root())?;
-    let (probe_common, checkout_root) = crate::path_safety::git_repo_identity(probe)?;
+    let (probe_common, mut checkout_root) = crate::path_safety::git_repo_identity(probe)?;
     if probe_common != project_common {
         return None;
+    }
+    // The project root may sit BELOW the git toplevel (a project marker in a
+    // subdirectory). The anchor must land at the other checkout's copy of
+    // THAT directory, not its toplevel — anchoring at the toplevel would
+    // collide the nested project's canonicals with sibling projects' .agents.
+    // The repo layout is identical in every checkout, so the repo-relative
+    // suffix transfers verbatim; a suffix that cannot be derived fails closed
+    // (no anchoring) rather than guessing a root.
+    let own_toplevel = crate::path_safety::git_toplevel(&crate::config::project_root())?;
+    let project_physical = std::fs::canonicalize(crate::config::project_root())
+        .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
+    match project_physical.strip_prefix(&own_toplevel) {
+        Ok(suffix) if suffix.as_os_str().is_empty() => {}
+        Ok(suffix) => checkout_root = checkout_root.join(suffix),
+        Err(_) => return None,
     }
     // Anchoring writes beneath the other checkout's .agents, so it gets the
     // same containment boundary the project's own .agents writes get. An
@@ -1090,6 +1150,9 @@ fn canonicalize_allowing_missing(path: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Compute the path to spell a symlink target from `from` to `to`:
+/// relative for ordinary directories, absolute when `from` sits behind
+/// symlink indirection (see body).
 #[cfg(unix)]
 fn relative_path(from: &Path, to: &Path) -> Result<PathBuf> {
     let from_lexical = normalize_absolute_path(from);

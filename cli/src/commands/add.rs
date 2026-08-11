@@ -909,7 +909,8 @@ role: engineer
 
         assert!(
             err.to_string()
-                .contains("refusing")
+                .contains("refusing .agents path outside project root"),
+            "expected linked-.agents containment refusal, got: {err:#}"
         );
         assert!(
             !outside_agents.join("skills/demo/SKILL.md").exists(),
@@ -1013,7 +1014,8 @@ role: engineer
 
         assert!(
             err.to_string()
-                .contains("refusing")
+                .contains("refusing .agents path outside project root"),
+            "expected linked-.agents containment refusal, got: {err:#}"
         );
         assert!(!outside_agents.join("skills/demo/SKILL.md").exists());
         assert!(!project.join(".claude/skills/demo/SKILL.md").exists());
@@ -1065,7 +1067,8 @@ role: engineer
 
         assert!(
             err.to_string()
-                .contains("refusing")
+                .contains("refusing .agents path outside project root"),
+            "expected linked-.agents containment refusal, got: {err:#}"
         );
         assert!(!project.join(".vstack-lock.json").exists());
         assert!(!project.join("vstack.toml").exists());

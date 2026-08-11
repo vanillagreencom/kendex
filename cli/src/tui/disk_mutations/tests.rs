@@ -927,7 +927,7 @@ fn tui_remove_hook_refreshes_claude_agent_frontmatter() {
             )
             .unwrap();
 
-        assert!(remove_one("guard", false).unwrap());
+        assert!(remove_one("guard", false, &mut Vec::new()).unwrap());
     });
 
     let agent_body = std::fs::read_to_string(project.join(".claude/agents/rust.md")).unwrap();
