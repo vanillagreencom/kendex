@@ -292,16 +292,19 @@ else
   grep -q "can never apply" "$work/oneq.out" \
     || note "the '?*' failure does not carry the can-never-apply diagnostic"
 fi
+# '??*' excludes every >=2-char filename, so it legitimately breaks the
+# run's own carry-positive battery — the run's EXIT is not the assertion
+# here. The classification is: '??*' must take the UNPROVEN note, never the
+# can-never-apply FAIL (one-character paths escape its minimum length).
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
   >"$work/twoq/vstack.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "??*"\n' \
   >>"$work/twoq/vstack.settings.toml"
-if ! (cd "$work/twoq" && "$SELFTEST") >"$work/twoq.out" 2>&1; then
-  cat "$work/twoq.out"
-  note "selftest failed under a '??*' exclusion — a minimum-length pattern is being over-classified as universal"
-fi
+(cd "$work/twoq" && "$SELFTEST") >"$work/twoq.out" 2>&1 || true
 grep -q "universality is UNPROVEN" "$work/twoq.out" \
   || note "the '??*' fixture did not report the unproven-universality note"
+grep -q "can never apply" "$work/twoq.out" \
+  && note "'??*' was over-classified as structurally universal (minimum-length patterns are not)"
 
 # One combined FAILING run pins BOTH guards (each fixture run replays the
 # full decision table, so failure cases share a run): a leading-'/' glob can
