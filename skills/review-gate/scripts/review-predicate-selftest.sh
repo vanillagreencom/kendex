@@ -103,7 +103,7 @@ mkdir -p "$fixtures" "$shim"
 cat >"$shim/gh" <<'SHIM'
 #!/usr/bin/env bash
 set -u
-url=""; filter=""; paginate=0; graphql_page2=0
+url=""; filter=""; paginate=0; graphql_page2=0; graphql_after=""
 while [ $# -gt 0 ]; do
   case "$1" in
     api|--slurp) ;;
@@ -111,8 +111,11 @@ while [ $# -gt 0 ]; do
     -f|-F)
       shift
       # A cursor variable marks a follow-up thread page: serve the page-2
-      # fixture (when present) so pagination is exercised for real.
-      case "$1" in after=*) graphql_page2=1 ;; esac
+      # fixture (when present) so pagination is exercised for real. The
+      # cursor VALUE is kept so cursor-keyed fixtures
+      # (graphql.cursor-<value>.json) can drive an arbitrarily deep walk —
+      # the page-budget bound cannot be proven with a single follow-up page.
+      case "$1" in after=*) graphql_page2=1; graphql_after="${1#after=}" ;; esac
       ;;
     --jq) shift; filter="$1" ;;
     graphql) url="graphql" ;;
@@ -151,7 +154,12 @@ if [ -n "${GH_SHIM_EMPTY:-}" ] && [ "$GH_SHIM_EMPTY" = "$name" ]; then
   exit 0
 fi
 file="$GH_SHIM_FIXTURES/$name.json"
-if [ "$name" = "graphql" ] && [ "$graphql_page2" = "1" ] && [ -f "$GH_SHIM_FIXTURES/graphql.page2.json" ]; then
+if [ "$name" = "graphql" ] && [ -n "$graphql_after" ] && [ -f "$GH_SHIM_FIXTURES/graphql.cursor-$graphql_after.json" ]; then
+  # Cursor-keyed page: the fixture named by the requested cursor wins, so a
+  # case can lay out a distinct advancing page per cursor and walk the full
+  # page budget. Falls through to the single page-2 fixture when absent.
+  file="$GH_SHIM_FIXTURES/graphql.cursor-$graphql_after.json"
+elif [ "$name" = "graphql" ] && [ "$graphql_page2" = "1" ] && [ -f "$GH_SHIM_FIXTURES/graphql.page2.json" ]; then
   file="$GH_SHIM_FIXTURES/graphql.page2.json"
 fi
 [ -f "$file" ] || { echo "shim: no fixture $file" >&2; exit 91; }
@@ -262,7 +270,7 @@ reset() {
   printf '[]\n' >"$fixtures/statuses.json"
   threads >"$fixtures/graphql.json"
   jq -n --arg a "$AUTHOR" '{user:{login:$a}}' >"$fixtures/pull.json"
-  rm -f "$fixtures"/*.page2.json "$fixtures"/.failcount.* "$fixtures"/.urls.log
+  rm -f "$fixtures"/*.page2.json "$fixtures"/graphql.cursor-*.json "$fixtures"/.failcount.* "$fixtures"/.urls.log
   unset GH_SHIM_FAIL GH_SHIM_FAIL_TIMES GH_SHIM_EMPTY || true
   CFG_THREADS="$ACTIVE_THREADS"
   CFG_API_ATTEMPTS="$ACTIVE_API_ATTEMPTS"
@@ -695,6 +703,56 @@ jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true
 jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[{isResolved:false}]}}}}}' \
   >"$fixtures/graphql.page2.json"
 run "unresolved thread on a later page fails closed" threads-open
+
+# The 20-page budget itself, red-first: 21 distinct ADVANCING pages (every
+# node resolved) must fail closed as overflow — page 21 is never read. The
+# terminal fixture past the budget is deliberately resolved+final: were the
+# `t_pages > 20` guard removed or loosened, the walk would complete cleanly
+# and answer approved, so this case can actually fail. Cursor-keyed fixtures
+# (graphql.cursor-<value>.json) drive the walk; the single-page-2 shim shape
+# cannot reach the bound (its second read never advances).
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
+status_ctx "mech-ctx" success "analysis complete"
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:"C2"},nodes:[{isResolved:true}]}}}}}' \
+  >"$fixtures/graphql.json"
+i=2
+while [ "$i" -le 20 ]; do
+  jq -n --arg c "C$((i + 1))" '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:$c},nodes:[{isResolved:true}]}}}}}' \
+    >"$fixtures/graphql.cursor-C$i.json"
+  i=$((i + 1))
+done
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[{isResolved:true}]}}}}}' \
+  >"$fixtures/graphql.cursor-C21.json"
+run "advancing walk past the 20-page budget fails closed (overflow)" threads-open
+
+# The budget's inclusive edge: EXACTLY 20 advancing pages, all resolved,
+# terminal on page 20 — must approve. Pins the bound as >20, so an off-by-one
+# tightening (rejecting a legal 20-page history) fails here while the case
+# above catches the loosening direction.
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
+status_ctx "mech-ctx" success "analysis complete"
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:"C2"},nodes:[{isResolved:true}]}}}}}' \
+  >"$fixtures/graphql.json"
+i=2
+while [ "$i" -le 19 ]; do
+  jq -n --arg c "C$((i + 1))" '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:$c},nodes:[{isResolved:true}]}}}}}' \
+    >"$fixtures/graphql.cursor-C$i.json"
+  i=$((i + 1))
+done
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[{isResolved:true}]}}}}}' \
+  >"$fixtures/graphql.cursor-C20.json"
+run "exactly 20 advancing resolved pages approve (bound is >20)" approved
+
+# Zero bytes from the thread read is a BROKEN READ (VST-46 family), never an
+# authoritative verdict in either direction — pr-watch parity.
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
+status_ctx "mech-ctx" success "analysis complete"
+export GH_SHIM_EMPTY=graphql
+run "zero-byte thread-page producer is a failed read (exit 2)" "" 2
+unset GH_SHIM_EMPTY
 
 # A thread node whose isResolved is not a boolean (null/missing) must never
 # count as resolved — that direction is a false approval on a merge gate.
@@ -1749,9 +1807,19 @@ load_exclude_tracked() {
   # hermetic synthetic probing — that would shrink coverage exactly when
   # git is broken. Only a genuinely-not-a-repo cwd is hermetic.
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    if ! EXCLUDE_TRACKED="$(git ls-files -z 2>/dev/null | tr '\0' '\n')"; then
+    # git's OWN status must decide the error, not the pipeline tail's: a
+    # `git | tr` assignment reports tr's status, so a failed ls-files with
+    # a happy tr would silently degrade into hermetic synthetic probing —
+    # the exact fail-open this error flag exists to prevent. Stage the -z
+    # output in a file (NUL bytes cannot ride a shell variable) and check
+    # the producer's exit alone.
+    _elt_tmp="$(mktemp)"
+    if git ls-files -z >"$_elt_tmp" 2>/dev/null; then
+      EXCLUDE_TRACKED="$(tr '\0' '\n' <"$_elt_tmp")"
+    else
       EXCLUDE_TRACKED_ERROR=1
     fi
+    rm -f "$_elt_tmp"
   fi
 }
 exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches

@@ -1056,6 +1056,13 @@ while :; do
       exit 2
     }
   fi
+  if [ -z "$t_page" ]; then
+    # A successful call that produced zero bytes is a broken read, not a
+    # verdict input — same read-failure contract as a failed gh call
+    # (pr-watch parity), never an authoritative threads-open.
+    echo "::error::review thread read produced zero bytes (broken read)" >&2
+    exit 2
+  fi
   if [ "$t_page" = "malformed" ]; then
     unresolved="malformed"
     break

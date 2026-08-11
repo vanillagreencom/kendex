@@ -130,10 +130,14 @@ if ! (cd "$work/excludes" && "$SELFTEST") >"$work/excludes.out" 2>&1; then
   cat "$work/excludes.out"
   note "selftest failed under a committed carry-exclude list"
 fi
-grep -q "carry-exclude — '\*AGENTS.md' matches" "$work/excludes.out" \
-  || note "committed glob '*AGENTS.md' not exercised"
-grep -q "carry-exclude — 'guides/\*' matches" "$work/excludes.out" \
-  || note "committed glob 'guides/*' not exercised (every glob must probe, not just the first)"
+# Require the SUCCESSFUL probe phrasing ("matches '<path>', refusing the
+# carry"), not the bare "matches" stem — the selftest's own skip note
+# ("matches NO tracked … not exercised here") shares that stem, so the loose
+# grep stayed green when a glob produced no probe at all.
+grep -q "carry-exclude — '\*AGENTS.md' matches '.*', refusing the carry" "$work/excludes.out" \
+  || note "committed glob '*AGENTS.md' not exercised with a refusing probe"
+grep -q "carry-exclude — 'guides/\*' matches '.*', refusing the carry" "$work/excludes.out" \
+  || note "committed glob 'guides/*' not exercised with a refusing probe (every glob must probe, not just the first)"
 grep -q "outside every committed glob and still carries" "$work/excludes.out" \
   || note "committed exclude-free carry case not exercised"
 
