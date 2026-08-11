@@ -38,7 +38,7 @@ reviewed diff, with the justification on the record.
   It never adds a row and never raises a number, then re-checks — so it
   still exits 1 while growth or new offenders remain. Deliberate growth is
   a hand-edit of the row.
-- Exit codes: `0` clean, `1` violations, `2` usage/config error.
+- Exit codes: `0` clean, `1` violations, `2` usage/config/collection error.
 
 ## Baseline format
 

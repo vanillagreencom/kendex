@@ -256,7 +256,7 @@ while IFS= read -r -d '' rec; do
   mode="${rec%% *}"
   f="${rec#*"$TAB"}"
   is_excluded "$f" && continue
-  # Every record downstream (counts, baseline, absent list) is line- and
+  # Every record downstream (counts, baseline) is line- and
   # tab-oriented; a path carrying either separator would silently split into
   # garbage rows. Refuse loudly — excluding the path is the escape hatch.
   case "$f" in
@@ -283,7 +283,10 @@ while IFS= read -r -d '' rec; do
     fi
     n="$(wc -l <"$TMP/blob")"
   else
-    n="$(wc -l <"$f")"
+    # Same contract as the index path: a worktree file that exists but
+    # cannot be read (permissions, I/O error) is a collection failure with
+    # its own diagnostic — not a bare set -e death mid-loop.
+    n="$(wc -l <"$f")" || collection_error "cannot read tracked file '$f' — its size is unmeasurable, refusing to skip it"
   fi
   n=$((n)) # strip wc's leading whitespace (BSD wc pads)
   printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
