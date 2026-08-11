@@ -24,6 +24,17 @@ Invoke via your AI coding harness (e.g., `/orch <command>` or `/skill:orch <comm
 | `merge-pr PR_NUMBER \| all` | Verify and merge PR(s) |
 | `parallel-check [ISSUE_IDS]` | Verify parallel work safety |
 
+## Bundle Containers (breaking change)
+
+A parent issue with children is a **container**: it is never orchestrated or
+merged as one PR — each child is its own PR unit, and the container closes
+automatically when its last child merges. To keep a bundle as a single
+session/PR (the old default), add the `(one PR)` marker to the parent's
+title; the marker always wins, including over the `agent:multi` label.
+Migration is per-bundle via that title marker alone — no state or cache
+changes; existing mid-flight bundles that share one branch should add
+`(one PR)` before their next orchestration command.
+
 ## Skill Dependencies
 
 | Skill | Purpose |

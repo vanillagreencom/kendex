@@ -19,9 +19,11 @@ Check whether multiple issues are safe to hand off simultaneously. Stores cached
 
 ## 2. Fetch Scope
 
-Reconcile the cache FIRST — the bundle reads below are collected once, so
-children or sibling relations added since the last sync must be on disk
-before fetching, not after:
+If (and only if) the item list contains Linear issues, reconcile the cache
+FIRST — the bundle reads below are collected once, so children or sibling
+relations added since the last sync must be on disk before fetching, not
+after. A GitHub-only check skips this step entirely (it must not require
+Linear access):
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
@@ -41,7 +43,7 @@ gh issue view [N] --repo [OWNER/REPO] --json number,title,body,labels
 
 Collect title, body/description, labels, dependencies, files/modules mentioned, and bundle children.
 
-**Expand containers to children.** A parent that is a CONTAINER (no `(one PR)` title marker, and children present or `agent:multi` label — the `(one PR)` marker always wins, even over `agent:multi`) is not a dispatch unit — replace it in the item list with its unblocked children and analyze those. A child is unblocked when its `state_type` is non-terminal and every blocker is resolved: blockers come from the child's own `blocked_by` PLUS the container's `blocked_by` (cross-bundle relations live on the parent and apply to every child), the arrays carry IDs only, so fetch each blocker's state (`cache issues get [BLOCKER_ID]`) — only a blocker with non-terminal `state_type` blocks. Independent children of one container may dispatch concurrently; blocking relations between siblings sequence the dependent ones. Only an explicit single-PR bundle (`(one PR)` marker) stays in the list as one item.
+**Expand containers to children.** A parent that is a CONTAINER (no `(one PR)` title marker, and children present or `agent:multi` label — the `(one PR)` marker always wins, even over `agent:multi`) is not a dispatch unit — replace it in the item list with its unblocked children and analyze those. A child is unblocked when its `state_type` is non-terminal and every blocker is resolved: blockers come from the child's own `blocked_by` PLUS the container's `blocked_by` (cross-bundle relations live on the parent and apply to every child), the arrays carry IDs only, so fetch each blocker's state (`cache issues get [BLOCKER_ID]`) — only a blocker with non-terminal `state_type` blocks. Independent children of one container may dispatch concurrently; blocking relations between siblings sequence the dependent ones. Only an explicit single-PR bundle (`(one PR)` marker) stays in the list as one item. Apply the classification recursively to every replacement — a child that is itself a container (fetch its bundle and re-run this test) expands again — until the list holds only leaves and explicit `(one PR)` bundles; an intermediate container left in the list would be analyzed as a dispatch unit that handoff later refuses.
 
 ## 3. Analyze Coupling
 
