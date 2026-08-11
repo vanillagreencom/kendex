@@ -122,15 +122,19 @@ round falls through to blockers/size/small handling.
 A file with no file-local test marker is still test-only when the gate lives
 at its declaration site — `#[cfg(test)] #[path = "..."] mod x;` in the
 declaring module, the shared-test-fixture shape. `git-diff-summary` resolves
-that by reading the modules that could declare the file on the diff's new
-side (HEAD for a `base...HEAD` diff, the index for `--staged`, the worktree
-for `--head`, tracked files only): same-directory siblings for `#[path]`
-declarations, plus `mod.rs`/`lib.rs`/`main.rs` and the 2018-style parent
-file for bare `mod name;` declarations, with block comments skipped. A file
-whose every found declaration is `#[cfg(test)]`-gated classifies as test;
-anything else keeps production classification — an ungated declaration or
-`include!` of the file, no declaration found, a `bin/` crate-root path, or
-an unreadable declaring module (read failures fail closed).
+that by reading declaring modules on the diff's new side (HEAD for a
+`base...HEAD` diff, the index for `--staged`, the worktree for `--head`,
+tracked files only): every `.rs` file in the candidate's directory and its
+ancestor directories is scanned once, comments stripped (line-comment
+precedence, nested block comments), and each `mod` declaration — bare
+(`name.rs` and `name/mod.rs` forms) or `#[path]` — plus each `include!`
+call is resolved to a lexically normalized repo-relative target; `mod`
+declarations resolve in the declaring module's directory, `include!` in the
+containing file's. A candidate whose every matching route is
+`#[cfg(test)]`-gated classifies as test; anything else keeps production
+classification — an ungated declaration or `include!` of the file, no route
+found, a `bin/` or `lib.rs`/`main.rs` crate root, or an unreadable
+declaring module (read failures fail closed).
 
 ## Verification (pr-cross-check --verify)
 

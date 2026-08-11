@@ -118,14 +118,32 @@ new_side_rs_siblings() {
 #   U<TAB><target>   mod declaration without the gate
 #   I<TAB><target>   include! of the target file (an include compiles in the
 #                    includer's cfg context — an ungated production route)
-# <target> is the repo-relative file the declaration resolves to. moddir is
-# where this file's declarations land: for mod-rs files (mod.rs, lib.rs,
-# main.rs) their own directory; for any other file its directory plus its
-# stem as a subdirectory — both bare `mod name;` and #[path] values resolve
-# there, per the Rust reference's module path rules.
+# <target> is the repo-relative file the declaration resolves to, lexically
+# normalized (`.`/`..` segments folded) so equivalent spellings compare
+# equal. A bare `mod name;` emits both of its legal forms, name.rs and
+# name/mod.rs. moddir is where mod declarations land: for mod-rs files
+# (mod.rs, lib.rs, main.rs) their own directory; for any other file its
+# directory plus its stem as a subdirectory — both bare `mod name;` and
+# #[path] values resolve there, per the Rust reference's module path rules.
+# fdir is the file's own directory: include! literals resolve there (the
+# std docs anchor them to the containing FILE), not in moddir.
 scan_decl_records() {
-    awk -v moddir="$1" '
+    awk -v moddir="$1" -v fdir="$2" '
         function join(d, b) { return d == "." ? b : d "/" b }
+        # Lexical cleanup only — no symlink resolution. A path that escapes
+        # the repo root normalizes to "" and can never match a candidate.
+        function normpath(p,   parts, n, i, top, stack, out) {
+            n = split(p, parts, "/")
+            top = 0
+            for (i = 1; i <= n; i++) {
+                if (parts[i] == "" || parts[i] == ".") continue
+                if (parts[i] == "..") { if (top > 0) top--; else return "" }
+                else stack[++top] = parts[i]
+            }
+            out = ""
+            for (i = 1; i <= top; i++) out = out (i > 1 ? "/" : "") stack[i]
+            return out
+        }
         # Comment stripping with Rust semantics the coarse version missed:
         # // takes precedence over /* on the same line, and block comments
         # nest (depth counter, carried across lines). A /* inside a string
@@ -157,7 +175,7 @@ scan_decl_records() {
             # stated limitation.
             if (pending_include) {
                 if (match(line, /"[^"]*"/)) {
-                    printf "I\t%s\n", join(moddir, substr(line, RSTART + 1, RLENGTH - 2))
+                    printf "I\t%s\n", normpath(join(fdir, substr(line, RSTART + 1, RLENGTH - 2)))
                     pending_include = 0
                 } else if (index(line, ")") > 0) pending_include = 0
             }
@@ -165,7 +183,7 @@ scan_decl_records() {
             if (pos > 0) {
                 rest = substr(line, pos)
                 if (match(rest, /"[^"]*"/))
-                    printf "I\t%s\n", join(moddir, substr(rest, RSTART + 1, RLENGTH - 2))
+                    printf "I\t%s\n", normpath(join(fdir, substr(rest, RSTART + 1, RLENGTH - 2)))
                 else pending_include = 1
             }
             # Consume leading attributes; several may share the decl line.
@@ -186,8 +204,15 @@ scan_decl_records() {
                 sub(/^pub([(][^)]*[)])?[[:space:]]+/, "", name)
                 sub(/^mod[[:space:]]+/, "", name)
                 sub(/[[:space:]]*;.*$/, "", name)
-                target = (pathattr != "") ? join(moddir, pathattr) : join(moddir, name ".rs")
-                printf "%s\t%s\n", (gated ? "G" : "U"), target
+                kind = (gated ? "G" : "U")
+                if (pathattr != "")
+                    printf "%s\t%s\n", kind, normpath(join(moddir, pathattr))
+                else {
+                    # Both legal forms of a bare declaration: name.rs and
+                    # the directory form name/mod.rs.
+                    printf "%s\t%s\n", kind, normpath(join(moddir, name ".rs"))
+                    printf "%s\t%s\n", kind, normpath(join(moddir, name "/mod.rs"))
+                }
             }
             gated = 0
             pathattr = ""
@@ -230,7 +255,7 @@ scan_declaring_file() {
         DECL_CACHE="$DECL_CACHE$1"$'\t'"$fdir"$'\t'ERR$'\n'
         return 0
     fi
-    records=$(printf '%s\n' "$content" | scan_decl_records "$moddir" \
+    records=$(printf '%s\n' "$content" | scan_decl_records "$moddir" "$fdir" \
         | awk -v f="$1" -v d="$fdir" '{print f "\t" d "\t" $0}')
     [ -n "$records" ] && DECL_CACHE="$DECL_CACHE$records"$'\n'
     return 0
@@ -257,7 +282,10 @@ is_cfg_test_declared() {
     # mod declaration, so a gated declaration does not make them test-only.
     case "$candidate" in bin/*|*/bin/*) return 1 ;; esac
     basefile=${candidate##*/}
-    case "$basefile" in mod.rs|lib.rs|main.rs) return 1 ;; esac
+    # lib.rs/main.rs are crate roots — reachable without a declaration. A
+    # mod.rs is NOT skipped: the directory form of `mod name;` legitimately
+    # resolves to name/mod.rs, and its declaration site can carry the gate.
+    case "$basefile" in lib.rs|main.rs) return 1 ;; esac
     dir=${candidate%/*}
     # Declaring modules are consulted from the candidate's own directory and
     # every ancestor directory up to the repo root: same-dir siblings, the

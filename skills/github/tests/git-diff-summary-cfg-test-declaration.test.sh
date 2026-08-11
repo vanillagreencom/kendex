@@ -591,5 +591,110 @@ space_json="$($SUMMARY -C "$space_repo" --staged)"
 assert_eq "whitespace path with gated declaration is not production scope" \
     "support" "$(jq -r '.scope' <<<"$space_json")"
 
+# Lexically equivalent #[path] spellings resolve to the same target: an
+# ungated "./shared.rs" must cancel a gated "shared.rs".
+dotpath_repo="$SANDBOX/dot-path"
+init_repo "$dotpath_repo"
+mkdir -p "$dotpath_repo/src"
+cat > "$dotpath_repo/src/lib.rs" <<'RUST'
+#[path = "./shared.rs"]
+pub mod shared;
+
+#[cfg(test)]
+#[path = "shared.rs"]
+mod shared_fixtures;
+RUST
+git -C "$dotpath_repo" add src
+git -C "$dotpath_repo" commit -q -m lib
+cat > "$dotpath_repo/src/shared.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$dotpath_repo" add src/shared.rs
+dotpath_json="$($SUMMARY -C "$dotpath_repo" --staged)"
+assert_eq "dot-prefixed ungated #[path] cancels gated declaration" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$dotpath_json")"
+assert_eq "dot-prefixed ungated #[path] keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$dotpath_json")"
+
+# The directory form of a bare declaration: #[cfg(test)] mod helpers;
+# resolving through helpers/mod.rs classifies the mod.rs as test.
+dirform_repo="$SANDBOX/dir-form"
+init_repo "$dirform_repo"
+mkdir -p "$dirform_repo/src/helpers"
+cat > "$dirform_repo/src/lib.rs" <<'RUST'
+pub fn add(a: u32, b: u32) -> u32 {
+    a + b
+}
+
+#[cfg(test)]
+mod helpers;
+RUST
+git -C "$dirform_repo" add src
+git -C "$dirform_repo" commit -q -m lib
+cat > "$dirform_repo/src/helpers/mod.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$dirform_repo" add src/helpers/mod.rs
+dirform_json="$($SUMMARY -C "$dirform_repo" --staged)"
+assert_eq "gated directory-form mod.rs classifies as test_panic_path_added" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$dirform_json")"
+assert_eq "gated directory-form mod.rs is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$dirform_json")"
+
+# Control: an ungated directory-form module stays production.
+dirform_prod_repo="$SANDBOX/dir-form-prod"
+init_repo "$dirform_prod_repo"
+mkdir -p "$dirform_prod_repo/src/util"
+cat > "$dirform_prod_repo/src/lib.rs" <<'RUST'
+pub mod util;
+RUST
+git -C "$dirform_prod_repo" add src
+git -C "$dirform_prod_repo" commit -q -m lib
+cat > "$dirform_prod_repo/src/util/mod.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$dirform_prod_repo" add src/util/mod.rs
+dirform_prod_json="$($SUMMARY -C "$dirform_prod_repo" --staged)"
+assert_eq "ungated directory-form mod.rs keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$dirform_prod_json")"
+assert_eq "ungated directory-form mod.rs stays production scope" \
+    "production" "$(jq -r '.scope' <<<"$dirform_prod_json")"
+
+# include! resolves in the containing FILE's directory, not the module
+# directory: include!("shared_impl.rs") in src/outer.rs reaches
+# src/shared_impl.rs and must cancel a gated declaration of that file.
+filedir_include_repo="$SANDBOX/filedir-include"
+init_repo "$filedir_include_repo"
+mkdir -p "$filedir_include_repo/src"
+cat > "$filedir_include_repo/src/outer.rs" <<'RUST'
+include!("shared_impl.rs");
+RUST
+cat > "$filedir_include_repo/src/lib.rs" <<'RUST'
+pub mod outer;
+
+#[cfg(test)]
+#[path = "shared_impl.rs"]
+mod shared_fixtures;
+RUST
+git -C "$filedir_include_repo" add src
+git -C "$filedir_include_repo" commit -q -m lib
+cat > "$filedir_include_repo/src/shared_impl.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$filedir_include_repo" add src/shared_impl.rs
+filedir_include_json="$($SUMMARY -C "$filedir_include_repo" --staged)"
+assert_eq "include! from a non-mod-rs file resolves in the file's directory" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$filedir_include_json")"
+assert_eq "include! from a non-mod-rs file keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$filedir_include_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
