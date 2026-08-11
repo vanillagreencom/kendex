@@ -38,9 +38,11 @@ Set up team, auth, cache, and workflow state for a worktree session.
 
    `writes_enabled: false` means no `LINEAR_TEAM` is configured for this project, so every Linear write in this workflow will refuse — stop here and set it (`vstack.settings.toml` `[env]`, or `.env.local`) rather than syncing and failing at the first state change. Report `linear_auth.warnings` verbatim; they name the resolved target and its source.
 
-3. **Set `WORKTREE_PATH`** to current working directory.
+3. **Container guard** — Linear work items (explicit `[ISSUE_ID]` or branch-derived), standalone lifecycle only (managed callers run their own preflight before delegating here): sync the cache (`linear.sh sync --reconcile`; § 1.5 then just re-verifies) and fetch `cache issues get [ISSUE_ID] --with-bundle`. Apply the container classification (SKILL.md → Coordination): a `(one PR)` title marker always wins; without it, children present or `agent:multi` label → CONTAINER. Container → STOP HERE, before any state exists — no lease claim, no workflow state: containers are never initialized (they hold no implementation state; each child is the session/PR unit). Report the container verdict and its unblocked children instead.
 
-4. **Claim the worktree for this session.** `create` never claims — a lease means "a live session is working here", and a session initializing state in the worktree is that session. This shared step covers every route into a worktree session, including worktree-launched ones that never pass through `start.md`. **Skip if** `WORKTREE_PATH` is the main checkout, not a linked worktree (the guard refuses the main checkout).
+4. **Set `WORKTREE_PATH`** to current working directory.
+
+5. **Claim the worktree for this session.** `create` never claims — a lease means "a live session is working here", and a session initializing state in the worktree is that session. This shared step covers every route into a worktree session, including worktree-launched ones that never pass through `start.md`. **Skip if** `WORKTREE_PATH` is the main checkout, not a linked worktree (the guard refuses the main checkout).
 
    ```bash
    .agents/skills/worktree/scripts/worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]
@@ -52,12 +54,12 @@ Set up team, auth, cache, and workflow state for a worktree session.
 
    Exit 75 means another session already holds the lease — coordinate with that owner instead of proceeding ([Worktree Scope](../SKILL.md#worktree-scope)). Exit 1 with a `flock` message means the host has no `flock`, so the session runs unguarded; continue, but do not assume the tree is protected.
 
-5. **Sync cache** — **Linear only**:
+6. **Sync cache** (skip if already synced by the container guard) — **Linear only**:
    ```bash
    .agents/skills/linear/scripts/linear.sh sync --reconcile
    ```
 
-6. **Init workflow state**:
+7. **Init workflow state**:
    ```bash
    .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --team "[ISSUE_ID_LOWERCASE]" \
      --agent "[AGENT]" --worktree "[WORKTREE_PATH]" --branch "[BRANCH]"
