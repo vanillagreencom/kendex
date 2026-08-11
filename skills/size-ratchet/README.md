@@ -55,8 +55,9 @@ pass — the file is reviewed input, so it fails loud.
 In a sparse checkout that omits the baseline file, checks still run against
 the index copy, but `--update` refuses (it will not rewrite a file the
 worktree cannot show): materialize it first with
-`git sparse-checkout add --skip-checks <baseline-path>` (cone mode needs
-`--skip-checks` for a file path; adding the parent directory also works),
+`git update-index --no-skip-worktree -- <baseline-path> && git checkout-index -f -- <baseline-path>`
+(literal file paths in both commands — works in cone and non-cone mode for
+any path shape; a later `git sparse-checkout reapply` re-hides the file),
 then rerun.
 
 `--update` never adds rows, so the first baseline is created explicitly:

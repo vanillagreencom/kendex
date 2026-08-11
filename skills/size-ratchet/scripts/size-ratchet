@@ -362,9 +362,13 @@ if [ "$MODE" = "update" ]; then
   ' "$TMP/baseline.tsv" "$TMP/absent.lst" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
   if [ "$BASELINE_FROM_INDEX" = "1" ]; then
     # printf %q shell-escapes the configured path so the suggested command
-    # survives copy-paste even for paths with spaces/glob metacharacters.
+    # survives copy-paste. update-index/checkout-index take literal file
+    # paths — no sparse-pattern or pathspec-glob semantics in either cone
+    # or non-cone mode, unlike `sparse-checkout add` (whose operands are
+    # patterns) — so the command works for any valid path: dash-leading,
+    # spaces, glob metacharacters, root-level.
     BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
-    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git sparse-checkout add --skip-checks -- $BASELINE_QUOTED (cone mode needs --skip-checks for a file path, and -- keeps a dash-leading path an operand; in a non-cone checkout the operand is a PATTERN — if the path contains pattern metacharacters, add its parent directory instead), then rerun"
+    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -f -- $BASELINE_QUOTED, then rerun (a later git sparse-checkout reapply re-hides it)"
   fi
   if [ -f "$BASELINE_FILE" ]; then
     mv -- "$TMP/baseline.new" "$BASELINE_FILE"
