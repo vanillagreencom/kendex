@@ -28,7 +28,7 @@ import {
 	type QuestionRequest,
 	type QuestionTab,
 } from "./question-model.js";
-import { isRpcMode, presentQuestion, rpcDialogUI } from "./rpc-fallback.js";
+import { isRpcMode, noDialogRouteError, presentQuestion, rpcDialogUI } from "./rpc-fallback.js";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-questions.installed");
 const CONFIG_ID = "@vanillagreen/pi-questions";
@@ -563,7 +563,10 @@ class QuestionServiceImpl implements QuestionService {
 
 		const pending: PendingQuestion = {
 			complete: (result, completeSource) => {
-				if (!this.pending.has(request.id)) return;
+				// Identity check, not just membership: a stale completer (e.g. an
+				// abandoned RPC dialog) must not delete a newer request that
+				// reused the same request id after this one settled.
+				if (this.pending.get(request.id) !== pending) return;
 				this.pending.delete(request.id);
 				const finalResult = "answers" in result ? { requestId: request.id, answers: result.answers } : { ...result, requestId: request.id };
 				resolvePromise(finalResult);
@@ -592,7 +595,7 @@ class QuestionServiceImpl implements QuestionService {
 		void presentQuestion(request, {
 			dialogs: rpcDialogUI(ctx.ui),
 			hasUI: ctx.hasUI,
-			isSettled: () => !this.pending.has(request.id),
+			isSettled: () => this.pending.get(request.id) !== pending,
 			openCustom: ctx.hasUI ? () => openQuestionUi(ctx, pending) : undefined,
 			rpcMode: isRpcMode(ctx),
 		}).then((outcome) => {
@@ -1071,9 +1074,7 @@ export default function questions(pi: ExtensionAPI): void {
 				return makeQuestionToolResult(toolCallId, result);
 			}
 			if (!runCtx.hasUI && !(isRpcMode(runCtx) && rpcDialogUI(runCtx.ui))) {
-				const error = isRpcMode(runCtx)
-					? "No question UI available: this RPC host renders neither custom TUI components nor native select/input dialogs"
-					: "No interactive UI available for question prompt";
+				const error = isRpcMode(runCtx) ? noDialogRouteError(true) : "No interactive UI available for question prompt";
 				const result: QuestionCancelResult = { cancelled: true, error, requestId: typeof params.id === "string" ? params.id : "que_unavailable" };
 				return makeQuestionToolResult(toolCallId, result);
 			}

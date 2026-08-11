@@ -145,6 +145,80 @@ describe("rpc questionnaire walker", () => {
 		expect(outcome).toEqual({ kind: "cancelled" });
 	});
 
+	test("abandons silently when the request settles externally mid-walk", async () => {
+		const request = multiTabRequest();
+		let settled = false;
+		const base = fakeDialogs(["1. A"]);
+		const dialogs: FakeDialogs = {
+			calls: base.calls,
+			input: base.input,
+			select: async (title, options) => {
+				const choice = await base.select(title, options);
+				settled = true;
+				return choice;
+			},
+		};
+		const outcome = await runRpcQuestionnaire(dialogs, request, () => settled);
+
+		expect(outcome).toEqual({ kind: "external" });
+		expect(dialogs.calls).toHaveLength(1);
+	});
+
+	test("never opens a dialog when the request is already settled", async () => {
+		const dialogs = fakeDialogs([]);
+		const outcome = await runRpcQuestionnaire(dialogs, singleRequest(), () => true);
+
+		expect(outcome).toEqual({ kind: "external" });
+		expect(dialogs.calls).toHaveLength(0);
+	});
+
+	test("blank custom text re-shows the question instead of answering blank", async () => {
+		const request = singleRequest();
+		const customRow = "3. Something else (type your own answer)";
+		const dialogs = fakeDialogs([customRow, "   ", customRow, "Real answer"]);
+		const outcome = await runRpcQuestionnaire(dialogs, request);
+
+		expect(outcome).toEqual({ answers: [["Real answer"]], kind: "answered" });
+		expect(dialogs.calls[2].title).toBe("Custom answer cannot be empty — Path: Which path?");
+	});
+
+	test("persistent blank input cancels after bounded re-prompts, never a false answer", async () => {
+		const customRow = "3. Something else (type your own answer)";
+		const dialogs = fakeDialogs([customRow, "", customRow, "", customRow, "", customRow, "", customRow, ""]);
+		const outcome = await runRpcQuestionnaire(dialogs, singleRequest());
+
+		expect(outcome).toEqual({ kind: "cancelled" });
+		expect(dialogs.calls).toHaveLength(10);
+	});
+
+	test("out-of-range multi-select numbers re-prompt with an error note", async () => {
+		const request = multiTabRequest();
+		const dialogs = fakeDialogs(["1. A", "9", "1,2", "2. Slow"]);
+		const outcome = await runRpcQuestionnaire(dialogs, request);
+
+		expect(outcome).toEqual({ answers: [["A"], ["Docs", "Tests"], ["Slow"]], kind: "answered" });
+		expect(dialogs.calls[2].title.startsWith("Option numbers must be between 1 and 3 — Targets")).toBe(true);
+	});
+
+	test("multi-select option list is never truncated away, custom row included", async () => {
+		const request = normalizeRequest({
+			id: "que_rpc_long",
+			questions: [{
+				header: "Pick",
+				multiple: true,
+				options: Array.from({ length: 12 }, (_, i) => ({ description: "x".repeat(300), label: `Option ${i + 1}` })),
+				question: `Long question ${"y".repeat(700)}`,
+			}],
+		});
+		const dialogs = fakeDialogs(["1,12"]);
+		const outcome = await runRpcQuestionnaire(dialogs, request);
+
+		expect(outcome).toEqual({ answers: [["Option 1", "Option 12"]], kind: "answered" });
+		const lines = dialogs.calls[0].title.split("\n");
+		expect(lines).toHaveLength(14);
+		expect(lines[13]).toBe("13. Something else (type your own answer)");
+	});
+
 	test("repeated invocations are independent", async () => {
 		const request = singleRequest();
 		const first = await runRpcQuestionnaire(fakeDialogs([undefined]), request);
@@ -165,9 +239,14 @@ describe("multi-select parsing", () => {
 		expect(parseMultiSelection(" 2 1 ", tab())).toEqual({ labels: ["Tests", "Docs"], wantsCustom: false });
 	});
 
-	test("custom row number requests the follow-up input; out-of-range numbers are ignored", () => {
+	test("custom row number requests the follow-up input", () => {
 		expect(parseMultiSelection("1,3", tab())).toEqual({ labels: ["Docs"], wantsCustom: true });
-		expect(parseMultiSelection("9", tab())).toEqual({ labels: [], wantsCustom: false });
+	});
+
+	test("out-of-range or ambiguous numbers are an error, never a silent empty answer", () => {
+		expect(parseMultiSelection("9", tab())).toEqual({ error: "Option numbers must be between 1 and 3" });
+		expect(parseMultiSelection("0", tab())).toEqual({ error: "Option numbers must be between 1 and 3" });
+		expect(parseMultiSelection("12", tab())).toEqual({ error: "Option numbers must be between 1 and 3" });
 	});
 
 	test("non-numeric input becomes a whole free-text custom answer", () => {

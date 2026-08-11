@@ -9,6 +9,9 @@ import type { QuestionRequest, QuestionTab } from "./question-model.js";
 
 const TITLE_MAX_CHARS = 600;
 const ROW_MAX_CHARS = 200;
+// Bounds re-prompt loops (blank custom text, out-of-range numbers) so a host
+// that mechanically replays the same bad answer cancels instead of spinning.
+const MAX_PROMPT_ATTEMPTS = 5;
 
 export interface RpcDialogUI {
 	select(title: string, options: string[]): Promise<string | undefined>;
@@ -20,6 +23,13 @@ export type PresentOutcome =
 	| { kind: "cancelled" }
 	| { kind: "unavailable"; error: string }
 	| { kind: "external" };
+
+export type WalkOutcome = Extract<PresentOutcome, { kind: "answered" | "cancelled" | "external" }>;
+
+// Per-question step results: an answers array, or a marker. "cancelled" is a
+// user dismissal; "abandoned" means the request settled elsewhere (bridge
+// reply, rejection, shutdown) and the walker must stop silently.
+type StepResult = string[] | "cancelled" | "abandoned";
 
 export interface QuestionHost {
 	rpcMode: boolean;
@@ -54,12 +64,13 @@ export function noDialogRouteError(rpcMode: boolean): string {
  * Returns undefined when no UI route applies and the request should stay
  * pending for bridge/API replies (the pre-fallback behavior for headless
  * contexts). All other outcomes are terminal and the caller must complete
- * the pending request with them.
+ * the pending request with them — except "external", which means the request
+ * was already completed elsewhere and must not be completed again.
  */
 export async function presentQuestion(request: QuestionRequest, host: QuestionHost): Promise<PresentOutcome | undefined> {
 	if (host.rpcMode) {
 		if (!host.dialogs) return { error: noDialogRouteError(true), kind: "unavailable" };
-		return runRpcQuestionnaire(host.dialogs, request);
+		return runRpcQuestionnaire(host.dialogs, request, host.isSettled);
 	}
 	if (host.hasUI && host.openCustom) {
 		const uiResult = await host.openCustom();
@@ -68,7 +79,7 @@ export async function presentQuestion(request: QuestionRequest, host: QuestionHo
 		// custom() resolved undefined without completing the request: the host
 		// accepted the call but cannot render the component. Fall back.
 		if (!host.dialogs) return { error: noDialogRouteError(false), kind: "unavailable" };
-		return runRpcQuestionnaire(host.dialogs, request);
+		return runRpcQuestionnaire(host.dialogs, request, host.isSettled);
 	}
 	return undefined;
 }
@@ -76,25 +87,28 @@ export async function presentQuestion(request: QuestionRequest, host: QuestionHo
 export async function runRpcQuestionnaire(
 	ui: RpcDialogUI,
 	request: QuestionRequest,
-): Promise<{ kind: "answered"; answers: string[][] } | { kind: "cancelled" }> {
+	isSettled: () => boolean = () => false,
+): Promise<WalkOutcome> {
 	const answers: string[][] = [];
 	for (const [index, tab] of request.questions.entries()) {
 		const tabAnswers = tab.multiple
-			? await askMultiSelect(ui, request, tab, index)
-			: await askSingleSelect(ui, request, tab, index);
-		if (tabAnswers === undefined) return { kind: "cancelled" };
+			? await askMultiSelect(ui, request, tab, index, isSettled)
+			: await askSingleSelect(ui, request, tab, index, isSettled);
+		if (tabAnswers === "abandoned") return { kind: "external" };
+		if (tabAnswers === "cancelled") return { kind: "cancelled" };
 		answers.push(tabAnswers);
 	}
-	return { answers, kind: "answered" };
+	return isSettled() ? { kind: "external" } : { answers, kind: "answered" };
 }
 
 function truncateChars(text: string, max: number): string {
 	return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
 }
 
-function tabTitle(request: QuestionRequest, tab: QuestionTab, index: number): string {
+function tabTitle(request: QuestionRequest, tab: QuestionTab, index: number, note = ""): string {
 	const position = request.questions.length > 1 ? ` (${index + 1}/${request.questions.length})` : "";
-	return truncateChars(`${tab.header}${position}: ${tab.question}`, TITLE_MAX_CHARS);
+	const prefix = note ? `${note} — ` : "";
+	return truncateChars(`${prefix}${tab.header}${position}: ${tab.question}`, TITLE_MAX_CHARS);
 }
 
 function customRowNumber(tab: QuestionTab): number {
@@ -110,29 +124,52 @@ export function formatOptionRows(tab: QuestionTab): string[] {
 	return rows;
 }
 
-async function askCustomText(ui: RpcDialogUI, tab: QuestionTab): Promise<string[] | undefined> {
+// The option list is never truncated as a block: every row (including the
+// custom row, whose number must stay actionable) is individually capped and
+// always present. Only the question text itself is length-limited.
+function multiSelectTitle(request: QuestionRequest, tab: QuestionTab, index: number, note: string): string {
+	return [tabTitle(request, tab, index, note), ...formatOptionRows(tab)].join("\n");
+}
+
+async function askCustomText(ui: RpcDialogUI, tab: QuestionTab, isSettled: () => boolean): Promise<string | "blank" | "cancelled" | "abandoned"> {
+	if (isSettled()) return "abandoned";
 	const text = await ui.input(truncateChars(`${tab.header}: ${tab.customLabel}`, TITLE_MAX_CHARS), tab.customPlaceholder);
-	if (text === undefined) return undefined;
+	if (isSettled()) return "abandoned";
+	if (text === undefined) return "cancelled";
 	const trimmed = text.trim();
-	return trimmed ? [trimmed] : [];
+	return trimmed || "blank";
 }
 
-async function askSingleSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number): Promise<string[] | undefined> {
+async function askSingleSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number, isSettled: () => boolean): Promise<StepResult> {
 	const rows = formatOptionRows(tab);
-	const choice = await ui.select(tabTitle(request, tab, index), rows);
-	if (choice === undefined) return undefined;
-	const rowIndex = rows.indexOf(choice);
-	if (rowIndex === -1) {
-		// Host returned something other than a listed row: treat non-empty text
-		// as a custom answer, matching the always-available free-text fallback.
-		const trimmed = choice.trim();
-		return trimmed ? [trimmed] : [];
+	let note = "";
+	for (let attempt = 0; attempt < MAX_PROMPT_ATTEMPTS; attempt += 1) {
+		if (isSettled()) return "abandoned";
+		const choice = await ui.select(tabTitle(request, tab, index, note), rows);
+		if (isSettled()) return "abandoned";
+		if (choice === undefined) return "cancelled";
+		const rowIndex = rows.indexOf(choice);
+		if (rowIndex === -1) {
+			// Host returned something other than a listed row: treat non-empty
+			// text as a custom answer, matching the free-text fallback row.
+			const trimmed = choice.trim();
+			if (trimmed) return [trimmed];
+			note = "Answer cannot be empty";
+			continue;
+		}
+		if (rowIndex < tab.options.length) return [tab.options[rowIndex].label];
+		const custom = await askCustomText(ui, tab, isSettled);
+		if (custom === "abandoned" || custom === "cancelled") return custom;
+		if (custom === "blank") {
+			note = "Custom answer cannot be empty";
+			continue;
+		}
+		return [custom];
 	}
-	if (rowIndex >= tab.options.length) return askCustomText(ui, tab);
-	return [tab.options[rowIndex].label];
+	return "cancelled";
 }
 
-export function parseMultiSelection(raw: string, tab: QuestionTab): { labels: string[]; wantsCustom: boolean } {
+export function parseMultiSelection(raw: string, tab: QuestionTab): { labels: string[]; wantsCustom: boolean } | { error: string } {
 	const trimmed = raw.trim();
 	if (!trimmed) return { labels: [], wantsCustom: false };
 	const tokens = trimmed.split(/[\s,]+/).filter(Boolean);
@@ -144,24 +181,40 @@ export function parseMultiSelection(raw: string, tab: QuestionTab): { labels: st
 	let wantsCustom = false;
 	for (const token of tokens) {
 		const row = Number(token);
-		if (row >= 1 && row <= tab.options.length) {
+		if (row < 1 || row > customRowNumber(tab)) {
+			return { error: `Option numbers must be between 1 and ${customRowNumber(tab)}` };
+		}
+		if (row <= tab.options.length) {
 			const label = tab.options[row - 1].label;
 			if (!labels.includes(label)) labels.push(label);
-		} else if (row === customRowNumber(tab)) {
+		} else {
 			wantsCustom = true;
 		}
 	}
 	return { labels, wantsCustom };
 }
 
-async function askMultiSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number): Promise<string[] | undefined> {
-	const title = truncateChars(`${tabTitle(request, tab, index)}\n${formatOptionRows(tab).join("\n")}`, TITLE_MAX_CHARS);
+async function askMultiSelect(ui: RpcDialogUI, request: QuestionRequest, tab: QuestionTab, index: number, isSettled: () => boolean): Promise<StepResult> {
 	const placeholder = `Comma-separated numbers (e.g. 1,3); ${customRowNumber(tab)} or free text for a custom answer`;
-	const raw = await ui.input(title, placeholder);
-	if (raw === undefined) return undefined;
-	const { labels, wantsCustom } = parseMultiSelection(raw, tab);
-	if (!wantsCustom) return labels;
-	const custom = await askCustomText(ui, tab);
-	if (custom === undefined) return undefined;
-	return [...labels, ...custom.filter((answer) => !labels.includes(answer))];
+	let note = "";
+	for (let attempt = 0; attempt < MAX_PROMPT_ATTEMPTS; attempt += 1) {
+		if (isSettled()) return "abandoned";
+		const raw = await ui.input(multiSelectTitle(request, tab, index, note), placeholder);
+		if (isSettled()) return "abandoned";
+		if (raw === undefined) return "cancelled";
+		const parsed = parseMultiSelection(raw, tab);
+		if ("error" in parsed) {
+			note = parsed.error;
+			continue;
+		}
+		if (!parsed.wantsCustom) return parsed.labels;
+		const custom = await askCustomText(ui, tab, isSettled);
+		if (custom === "abandoned" || custom === "cancelled") return custom;
+		if (custom === "blank") {
+			note = "Custom answer cannot be empty";
+			continue;
+		}
+		return parsed.labels.includes(custom) ? parsed.labels : [...parsed.labels, custom];
+	}
+	return "cancelled";
 }

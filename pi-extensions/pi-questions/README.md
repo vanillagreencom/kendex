@@ -15,6 +15,7 @@ Structured inline questions for Pi. Multi-tab categories, built-in free-text fal
 - When the bridge is loaded, question opened/answered/rejected lifecycle points publish structured `question.*` activity broker events without adding chat messages.
 - Optional **Answers as user message** setting (off by default) mirrors each answered question into the conversation as a steer-delivered user message for observer extensions such as [pi-automode](https://github.com/czottmann/pi-automode).
 - `pi-qol` notification hook fires before prompts open.
+- RPC hosts without custom TUI support (Paseo, pi-web, VS Code bridges) get a sequential native-dialog fallback. See [RPC hosts](#rpc-hosts).
 
 ## Install
 
@@ -75,6 +76,17 @@ When the user types fallback text, the result uses the same answer shape as fixe
 ```
 
 Do not include a final `Confirm`, `Submit`, `Review`, or `Done` question tab in the payload; the UI adds its own submit tab when needed.
+
+## RPC hosts
+
+Interactive Pi sessions render the questionnaire with the custom TUI described above. RPC hosts (Paseo, pi-web, VS Code-based bridges) cannot render custom TUI components, so when `ctx.mode === "rpc"` — or when `ctx.ui.custom()` resolves without producing a result — the extension walks the questions one at a time through the host's native dialogs instead:
+
+- **Single-select** questions open a native select dialog listing the numbered options plus the free-text fallback row; picking the fallback row opens a text input for the custom answer.
+- **Multi-select** questions open a text input with the numbered option list folded into the prompt. Answer with comma-separated option numbers (e.g. `1,3`). Including the fallback row's number opens a follow-up input for the custom text; any non-numeric answer is taken whole as a custom answer. Out-of-range numbers re-prompt with an error note, and the option list (including the fallback row) is always shown in full.
+- Blank custom answers re-show the question rather than submitting an empty answer; repeated invalid input cancels after a few attempts.
+- Dismissing any dialog cancels the whole questionnaire, matching Escape in the TUI. Answers keep the same `QuestionResult` shape in both modes.
+
+If the host supports neither custom TUI components nor native select/input dialogs, the `question` tool returns a clear error instead of hanging. Headless non-RPC contexts (e.g. bridge-driven sessions) still leave requests pending for `pi-bridge` replies.
 
 ## Settings
 

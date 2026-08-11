@@ -162,6 +162,13 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox 'undici@^7.25.0'
           npm test
 
+      # pi-questions unit tests are dependency-free by design (question-model
+      # and rpc-fallback import nothing outside the package), so unlike the
+      # suites above no npm install is needed.
+      - name: pi-questions suite
+        working-directory: pi-extensions/pi-questions
+        run: bun test ./extensions/__tests__
+
       # The bridge ships ~256 unit tests that nothing in CI ran until now, so
       # "tests pass" on a bridge PR meant "passed on the author's machine".
       # Build first: one suite loads bundle/connector-inventory.js rather than
