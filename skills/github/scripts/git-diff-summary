@@ -168,23 +168,37 @@ scan_decl_records() {
             # Blank and comment-only lines keep pending attributes (attrs
             # may precede their item across lines).
             if (line == "") next
-            # include! routes resolve their string-literal argument like
-            # module declarations do. A literal on a later line (formatted
-            # call) is tracked across lines until the closing paren; a call
-            # with no literal at all (computed path) stays unmatched —
-            # stated limitation.
+            # An attribute opened but not closed on the previous line
+            # (rustc accepts `#[path =` split from its value) continues
+            # here; rejoin before parsing.
+            if (pending_attr != "") {
+                line = pending_attr " " line
+                pending_attr = ""
+            }
+            # include! routes resolve their string-literal argument. A
+            # literal on a later line (formatted call left open) is tracked
+            # across lines until the closing paren; a call that CLOSES
+            # without a literal (computed path) sets no pending state and
+            # stays unmatched — stated limitation.
             if (pending_include) {
                 if (match(line, /"[^"]*"/)) {
                     printf "I\t%s\n", normpath(join(fdir, substr(line, RSTART + 1, RLENGTH - 2)))
                     pending_include = 0
                 } else if (index(line, ")") > 0) pending_include = 0
             }
-            pos = index(line, "include!")
-            if (pos > 0) {
-                rest = substr(line, pos)
+            # A real include! token only: a preceding identifier character
+            # means a different macro (my_include!).
+            ipos = 0; off = 0
+            while ((q = index(substr(line, off + 1), "include!")) > 0) {
+                ap = off + q
+                if (ap == 1 || substr(line, ap - 1, 1) !~ /[A-Za-z0-9_]/) { ipos = ap; break }
+                off = ap + 7
+            }
+            if (ipos > 0) {
+                rest = substr(line, ipos)
                 if (match(rest, /"[^"]*"/))
                     printf "I\t%s\n", normpath(join(fdir, substr(rest, RSTART + 1, RLENGTH - 2)))
-                else pending_include = 1
+                else if (index(rest, ")") == 0) pending_include = 1
             }
             # Consume leading attributes; several may share the decl line.
             while (match(line, /^#\[[^]]*\][[:space:]]*/)) {
@@ -199,6 +213,12 @@ scan_decl_records() {
                 line = substr(line, RLENGTH + 1)
             }
             if (line == "") next
+            # Attribute opened but not closed on this line: carry it (and
+            # any attrs already consumed stay pending in gated/pathattr).
+            if (line ~ /^#\[/ && index(line, "]") == 0) {
+                pending_attr = line
+                next
+            }
             if (line ~ /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;/) {
                 name = line
                 sub(/^pub([(][^)]*[)])?[[:space:]]+/, "", name)
@@ -404,11 +424,18 @@ main() {
         prod_paths=$(grep -Fxv -f <(printf '%s' "$cfg_test_declared") <<<"$prod_paths" || true)
     fi
     local prod_panic=0 test_panic=0
-    if [ -n "$prod_paths" ]; then
+    # Pathspecs are passed as a quoted array — word splitting must not shred
+    # paths containing whitespace into bogus pathspecs.
+    local p
+    local prod_path_args=()
+    while IFS= read -r p; do
+        [ -n "$p" ] && prod_path_args+=("$p")
+    done <<<"$prod_paths"
+    if [ ${#prod_path_args[@]} -gt 0 ]; then
         # path<TAB>new-side line number of each added panic-pattern line
         local panic_lines
         # shellcheck disable=SC2086
-        panic_lines=$(git diff $diff_ref -- $prod_paths 2>/dev/null | awk '
+        panic_lines=$(git diff $diff_ref -- "${prod_path_args[@]}" 2>/dev/null | awk '
             /^diff --git / { path = ""; inhunk = 0 }
             /^\+\+\+ b\//  { path = substr($0, 7); next }
             /^@@/ {
@@ -424,7 +451,8 @@ main() {
             { lineno++ }
         ')
         local panic_file file_lines file_content counts pcount tcount
-        for panic_file in $(echo "$panic_lines" | cut -f1 | sort -u); do
+        while IFS= read -r panic_file; do
+            [ -n "$panic_file" ] || continue
             file_lines=$(echo "$panic_lines" | awk -F'\t' -v f="$panic_file" '$1 == f {print $2}' | paste -sd, -)
             # New-side content of the file: HEAD for a base...HEAD diff, the
             # index for --staged, the worktree for --head.
@@ -467,7 +495,7 @@ main() {
             read -r pcount tcount <<< "$counts"
             if [ "$pcount" -gt 0 ]; then prod_panic=1; fi
             if [ "$tcount" -gt 0 ]; then test_panic=1; fi
-        done
+        done < <(echo "$panic_lines" | cut -f1 | sort -u)
     fi
     if [ "$prod_panic" -eq 1 ]; then flags+=("panic_path_added"); fi
 
@@ -477,10 +505,14 @@ main() {
     test_paths=$(echo "$files" | awk -F'\t' '{print $NF}' \
         | grep -E '(^|/)tests?/|_tests?\.rs$' || true)
     test_paths=$(printf '%s\n%s' "$test_paths" "$cfg_test_declared" | grep -v '^$' | sort -u || true)
-    if [ -n "$test_paths" ]; then
+    local test_path_args=()
+    while IFS= read -r p; do
+        [ -n "$p" ] && test_path_args+=("$p")
+    done <<<"$test_paths"
+    if [ ${#test_path_args[@]} -gt 0 ]; then
         local test_diff
         # shellcheck disable=SC2086
-        test_diff=$(git diff $diff_ref -- $test_paths 2>/dev/null | grep -E '^\+' || true)
+        test_diff=$(git diff $diff_ref -- "${test_path_args[@]}" 2>/dev/null | grep -E '^\+' || true)
         if echo "$test_diff" | grep -qE '^\+.*(panic!|unwrap\(\))'; then test_panic=1; fi
     fi
     if [ "$test_panic" -eq 1 ]; then flags+=("test_panic_path_added"); fi

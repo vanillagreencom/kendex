@@ -590,6 +590,8 @@ git -C "$space_repo" add "src/sub dir/cand.rs"
 space_json="$($SUMMARY -C "$space_repo" --staged)"
 assert_eq "whitespace path with gated declaration is not production scope" \
     "support" "$(jq -r '.scope' <<<"$space_json")"
+assert_eq "whitespace path still carries test_panic_path_added" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$space_json")"
 
 # Lexically equivalent #[path] spellings resolve to the same target: an
 # ungated "./shared.rs" must cancel a gated "shared.rs".
@@ -695,6 +697,87 @@ assert_eq "include! from a non-mod-rs file resolves in the file's directory" \
     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$filedir_include_json")"
 assert_eq "include! from a non-mod-rs file keeps production scope" \
     "production" "$(jq -r '.scope' <<<"$filedir_include_json")"
+
+# An include! that CLOSES without a string literal (computed path) must not
+# leave pending state that swallows a later unrelated literal as its target.
+stale_include_repo="$SANDBOX/stale-include"
+init_repo "$stale_include_repo"
+mkdir -p "$stale_include_repo/src"
+cat > "$stale_include_repo/src/lib.rs" <<'RUST'
+include!(GENERATED_PATH);
+const NOTE: &str = "shared_impl.rs";
+
+#[cfg(test)]
+#[path = "shared_impl.rs"]
+mod shared_fixtures;
+RUST
+git -C "$stale_include_repo" add src
+git -C "$stale_include_repo" commit -q -m lib
+cat > "$stale_include_repo/src/shared_impl.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$stale_include_repo" add src/shared_impl.rs
+stale_include_json="$($SUMMARY -C "$stale_include_repo" --staged)"
+assert_eq "closed computed include! leaves no stale route; gated decl wins" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$stale_include_json")"
+assert_eq "closed computed include! is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$stale_include_json")"
+
+# A #[path] attribute split across lines (rustc accepts the split) is still
+# an ungated production route — it must not be discarded and lose to a
+# conventional gated declaration of the same file.
+multiline_attr_repo="$SANDBOX/multiline-attr"
+init_repo "$multiline_attr_repo"
+mkdir -p "$multiline_attr_repo/src"
+cat > "$multiline_attr_repo/src/lib.rs" <<'RUST'
+#[path =
+"shared.rs"] pub mod production_alias;
+
+#[cfg(test)]
+#[path = "shared.rs"]
+mod shared_fixtures;
+RUST
+git -C "$multiline_attr_repo" add src
+git -C "$multiline_attr_repo" commit -q -m lib
+cat > "$multiline_attr_repo/src/shared.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$multiline_attr_repo" add src/shared.rs
+multiline_attr_json="$($SUMMARY -C "$multiline_attr_repo" --staged)"
+assert_eq "multiline #[path] ungated declaration keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$multiline_attr_json")"
+assert_eq "multiline #[path] ungated declaration stays production scope" \
+    "production" "$(jq -r '.scope' <<<"$multiline_attr_json")"
+
+# include! needs a token boundary: my_include!("...") is a different macro
+# and must not fabricate an ungated route.
+tokenboundary_repo="$SANDBOX/token-boundary"
+init_repo "$tokenboundary_repo"
+mkdir -p "$tokenboundary_repo/src"
+cat > "$tokenboundary_repo/src/lib.rs" <<'RUST'
+my_include!("shared_impl.rs");
+
+#[cfg(test)]
+#[path = "shared_impl.rs"]
+mod shared_fixtures;
+RUST
+git -C "$tokenboundary_repo" add src
+git -C "$tokenboundary_repo" commit -q -m lib
+cat > "$tokenboundary_repo/src/shared_impl.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$tokenboundary_repo" add src/shared_impl.rs
+tokenboundary_json="$($SUMMARY -C "$tokenboundary_repo" --staged)"
+assert_eq "my_include! is not an include! route; gated decl wins" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$tokenboundary_json")"
+assert_eq "my_include! candidate is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$tokenboundary_json")"
 
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
