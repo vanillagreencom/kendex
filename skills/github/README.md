@@ -119,6 +119,19 @@ informational `test_panic_path_added` flag instead: a test assertion is not a
 production panic path, so `refix-route` treats that flag as non-risk and the
 round falls through to blockers/size/small handling (vstack#944).
 
+A file with no file-local test marker is still test-only when the gate lives
+at its declaration site — `#[cfg(test)] #[path = "..."] mod x;` in the
+declaring module, the shared-test-fixture shape. `git-diff-summary` resolves
+that by reading the modules that could declare the file on the diff's new
+side (HEAD for a `base...HEAD` diff, the index for `--staged`, the worktree
+for `--head`, tracked files only): same-directory siblings for `#[path]`
+declarations, plus `mod.rs`/`lib.rs`/`main.rs` and the 2018-style parent
+file for bare `mod name;` declarations, with block comments skipped. A file
+whose every found declaration is `#[cfg(test)]`-gated classifies as test;
+anything else keeps production classification — an ungated declaration or
+`include!` of the file, no declaration found, a `bin/` crate-root path, or
+an unreadable declaring module (read failures fail closed) (vstack#1217).
+
 ## Verification (pr-cross-check --verify)
 
 `verify-lib.sh` auto-detects the build system. Override order:

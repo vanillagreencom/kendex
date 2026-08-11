@@ -57,38 +57,85 @@ resolve_default_base() {
 # File-local heuristics cannot see that, so classification also reads the
 # modules that could declare the file on the diff's new side: a file whose
 # every found declaration is #[cfg(test)]-gated is test scope; any ungated
-# declaration, or none found, keeps the file-local classification.
+# declaration or `include!` of the file, or none found, keeps the file-local
+# classification. Any read failure during scanning also keeps it (fail
+# closed: an unreadable declaring module could have held an ungated route).
+#
+# Residual limitations: production routes the scanner cannot see can still
+# let a gated declaration win. Crate roots are only recognized by the bin/
+# directory convention (candidates under a bin/ segment are skipped), not
+# via Cargo.toml `path =` wiring; include! calls with computed paths
+# (concat!/env!) are not matched; and a /* opener inside a string literal
+# reads as a comment and can hide a later ungated declaration. A file that
+# is production-reachable only through one of those shapes while also
+# carrying a #[cfg(test)]-gated declaration still classifies as test.
 
-# New-side content of a file: HEAD for a base...HEAD diff, the index for
-# --staged, the worktree for --head. Reads main()'s diff_ref.
+# Emits the new-side content of a file: HEAD for a base...HEAD diff, the
+# index for --staged, the worktree for --head. Reads main()'s diff_ref.
+# Exit 0 with content when readable, 2 when the file does not exist on the
+# new side, 1 on a read failure — callers must fail closed on 1.
 new_side_content() {
     case "$diff_ref" in
-        --staged) git show ":$1" 2>/dev/null || true ;;
-        HEAD)     cat "$1" 2>/dev/null || true ;;
-        *)        git show "HEAD:$1" 2>/dev/null || true ;;
+        --staged)
+            git ls-files --error-unmatch -- "$1" >/dev/null 2>&1 || return 2
+            git show ":$1" 2>/dev/null || return 1
+            ;;
+        HEAD)
+            [ -e "$1" ] || return 2
+            cat "$1" 2>/dev/null || return 1
+            ;;
+        *)
+            git cat-file -e "HEAD:$1" 2>/dev/null || return 2
+            git show "HEAD:$1" 2>/dev/null || return 1
+            ;;
     esac
 }
 
-# New-side .rs files directly inside a directory (no recursion).
+# New-side tracked .rs files directly inside a directory (no recursion).
+# --head reads the index too: git diff HEAD never surfaces untracked files,
+# and an untracked declaration must not reclassify a tracked change.
 new_side_rs_siblings() {
     case "$diff_ref" in
-        --staged) git ls-files -- "$1" 2>/dev/null ;;
-        HEAD)     find "$1" -maxdepth 1 -name '*.rs' 2>/dev/null ;;
-        *)        git ls-tree --name-only HEAD -- "$1/" 2>/dev/null ;;
+        --staged|HEAD) git ls-files -- "$1" 2>/dev/null ;;
+        *)             git ls-tree --name-only HEAD -- "$1/" 2>/dev/null ;;
     esac | awk -v d="$1/" 'index($0, d) == 1 && substr($0, length(d) + 1) !~ /\// && /\.rs$/'
 }
 
 # Print one line per `mod name;` declaration on stdin that resolves to the
 # candidate file: "gated" when #[cfg(test)] is among its attributes, else
-# "ungated". stem/rel: candidate module name and path relative to the
-# declaring file's directory. allow_name: whether a bare `mod stem;` resolves
-# to the candidate (true for mod.rs/lib.rs/main.rs siblings and the 2018-style
-# parent file; other siblings resolve `mod x;` into their own subdirectory).
+# "ungated". An include! naming the candidate's file also prints "ungated":
+# included content compiles in the includer's cfg context, so it is a
+# production route. stem/rel/basefile: candidate module name, path relative
+# to the declaring file's directory, and bare file name. allow_name: whether
+# a bare `mod stem;` resolves to the candidate (true for mod.rs/lib.rs/
+# main.rs siblings and the 2018-style parent file; other siblings resolve
+# `mod x;` into their own subdirectory).
 scan_mod_decls() {
-    awk -v stem="$1" -v rel="$2" -v allow_name="$3" '
+    awk -v stem="$1" -v rel="$2" -v allow_name="$3" -v basefile="$4" '
         {
             line = $0
+            # Coarse /* */ tracker: declaration text inside a block comment
+            # must not read as a real declaration (a commented-out
+            # #[cfg(test)] mod could otherwise downgrade production code).
+            if (incomment) {
+                i = index(line, "*/")
+                if (i == 0) next
+                line = substr(line, i + 2)
+                incomment = 0
+            }
+            while ((i = index(line, "/*")) > 0) {
+                rest = substr(line, i + 2)
+                j = index(rest, "*/")
+                if (j == 0) {
+                    line = substr(line, 1, i - 1)
+                    incomment = 1
+                    break
+                }
+                line = substr(line, 1, i - 1) substr(rest, j + 2)
+            }
             sub(/^[[:space:]]*/, "", line)
+            if (index(line, "include!") > 0 && index(line, basefile) > 0)
+                print "ungated"
             # Consume leading attributes; several may share the decl line.
             while (match(line, /^#\[[^]]*\][[:space:]]*/)) {
                 attr = substr(line, 1, RLENGTH)
@@ -120,11 +167,15 @@ scan_mod_decls() {
 
 is_cfg_test_declared() {
     local candidate="$1"
-    local base stem dir parent pdirname parent_file f fdir rel allow out decls=""
+    local basefile stem dir parent pdirname parent_file f fdir rel allow
+    local content rc out decls=""
     case "$candidate" in */*) ;; *) return 1 ;; esac
-    base=${candidate##*/}
-    case "$base" in mod.rs|lib.rs|main.rs) return 1 ;; esac
-    stem=${base%.rs}
+    # A bin/ segment marks crate roots: reachable by the build without any
+    # mod declaration, so a gated declaration does not make them test-only.
+    case "$candidate" in bin/*|*/bin/*) return 1 ;; esac
+    basefile=${candidate##*/}
+    case "$basefile" in mod.rs|lib.rs|main.rs) return 1 ;; esac
+    stem=${basefile%.rs}
     dir=${candidate%/*}
     parent=$(dirname "$dir")
     pdirname=${dir##*/}
@@ -138,8 +189,14 @@ is_cfg_test_declared() {
         esac
         fdir=${f%/*}
         [ "$f" = "${f#*/}" ] && fdir="."
-        if [ "$fdir" = "$dir" ]; then rel="$base"; else rel="$pdirname/$base"; fi
-        out=$(new_side_content "$f" | scan_mod_decls "$stem" "$rel" "$allow")
+        if [ "$fdir" = "$dir" ]; then rel="$basefile"; else rel="$pdirname/$basefile"; fi
+        rc=0
+        content=$(new_side_content "$f") || rc=$?
+        # Absent on the new side: nothing to scan. Unreadable: fail closed —
+        # the file could have held an ungated route.
+        if [ "$rc" -eq 2 ]; then continue; fi
+        if [ "$rc" -ne 0 ]; then return 1; fi
+        out=$(printf '%s\n' "$content" | scan_mod_decls "$stem" "$rel" "$allow" "$basefile")
         decls="$decls$out"$'\n'
     done
     case "$decls" in *ungated*) return 1 ;; esac

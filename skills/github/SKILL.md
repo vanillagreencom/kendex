@@ -110,9 +110,11 @@ insert/delete stats, and `risk_flags`. Rust-specific flags
 docs, and other non-Rust files can discuss those tokens without triggering a
 Rust risk route. Panic patterns (`panic!`/`unwrap()`) added in production
 source emit `panic_path_added`; the same patterns whose enclosing context is
-a test surface (`#[cfg(test)]` modules, `tests/` dirs, `*_tests.rs`) emit
-the distinct informational `test_panic_path_added` flag instead, which
-`refix-route` treats as non-risk.
+a test surface (`#[cfg(test)]` modules, `tests/` dirs, `*_tests.rs`, or
+files reachable only through a `#[cfg(test)]`-gated `mod` declaration in
+their declaring module, including `#[path]` siblings) emit the distinct
+informational `test_panic_path_added` flag instead, which `refix-route`
+treats as non-risk.
 
 ### PR Merge Outcomes
 
