@@ -198,6 +198,19 @@ fi
 SHIM
 chmod +x "$shim/gh"
 
+# Shim refusal self-check, red-first: the three fixture-integrity refusals
+# must fire before any case relies on them — deleting a refusal arm fails
+# the whole run HERE, instead of leaving a case green against a fixture it
+# never drove. Each exit code is pinned exactly.
+_shimcheck_dir="$(mktemp -d)"
+GH_SHIM_FIXTURES="$_shimcheck_dir" "$shim/gh" api graphql -f query=q -f after=bad/value >/dev/null 2>&1
+[ $? -eq 92 ] || { echo "FATAL: shim did not refuse an out-of-namespace cursor (want exit 92)" >&2; exit 1; }
+GH_SHIM_FIXTURES="$_shimcheck_dir" "$shim/gh" api graphql -f query=q -f after= >/dev/null 2>&1
+[ $? -eq 92 ] || { echo "FATAL: shim did not refuse an EMPTY cursor (want exit 92)" >&2; exit 1; }
+GH_SHIM_FIXTURES="$_shimcheck_dir" "$shim/gh" api graphql -f query=q -f after=C9 >/dev/null 2>&1
+[ $? -eq 93 ] || { echo "FATAL: shim did not refuse a fixture-less follow-up page (want exit 93)" >&2; exit 1; }
+rm -rf "$_shimcheck_dir"
+
 # ------------------------------------------------------------------ helpers ---
 list_items() { # ';'-separated string -> one trimmed non-empty item per line
   printf '%s' "$1" | tr ';' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' || true
@@ -2065,14 +2078,19 @@ EOF_EXCLUDE_BATTERY
       # Hermetic mode with every synthetic candidate matched. Finite probes
       # cannot PROVE universality — a glob set that merely spans both
       # harness namespaces exhausts the candidates while ordinary paths
-      # still carry — so only a STRUCTURALLY universal entry (a literal '*'
-      # or '**', which matches every path by construction) is a FAIL here;
-      # anything else is reported unproven, out loud, never silently green.
+      # still carry — so only a STRUCTURALLY universal entry is a FAIL
+      # here; anything else is reported unproven, out loud, never silently
+      # green. Structurally universal under the predicate's bash-case
+      # matcher: an entry built ONLY of '*'/'?' wildcards that contains at
+      # least one '*' — '*', '**', '***', '?*', '*?' all match every
+      # non-empty path by construction ('?'-only entries pin a length and
+      # are NOT universal).
       probe_universal=""
       while IFS= read -r probe_pat_u; do
         [ -z "$probe_pat_u" ] && continue
         case "$probe_pat_u" in
-          '*' | '**') probe_universal="$probe_pat_u" ;;
+          *[!*?]*) : ;;
+          *'*'*) probe_universal="$probe_pat_u" ;;
         esac
       done <<EOF_UNIVERSAL
 $(list_items "$ACTIVE_CARRY_EXCLUDE")
