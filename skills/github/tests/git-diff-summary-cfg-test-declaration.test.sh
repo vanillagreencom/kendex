@@ -779,5 +779,65 @@ assert_eq "my_include! is not an include! route; gated decl wins" \
 assert_eq "my_include! candidate is not production scope" \
     "support" "$(jq -r '.scope' <<<"$tokenboundary_json")"
 
+# Per the Rust reference, #[path] on a module NOT inside an inline block
+# resolves relative to the SOURCE FILE's directory — also for non-mod-rs
+# files. An ungated #[path = "target.rs"] in src/outer.rs reaches
+# src/target.rs and must cancel a gated declaration of that file.
+filedir_path_repo="$SANDBOX/filedir-path"
+init_repo "$filedir_path_repo"
+mkdir -p "$filedir_path_repo/src"
+cat > "$filedir_path_repo/src/outer.rs" <<'RUST'
+#[path = "target.rs"]
+pub mod t;
+RUST
+cat > "$filedir_path_repo/src/lib.rs" <<'RUST'
+pub mod outer;
+
+#[cfg(test)]
+#[path = "target.rs"]
+mod target_fixtures;
+RUST
+git -C "$filedir_path_repo" add src
+git -C "$filedir_path_repo" commit -q -m lib
+cat > "$filedir_path_repo/src/target.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$filedir_path_repo" add src/target.rs
+filedir_path_json="$($SUMMARY -C "$filedir_path_repo" --staged)"
+assert_eq "non-mod-rs #[path] resolves in the file's directory" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$filedir_path_json")"
+assert_eq "non-mod-rs #[path] keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$filedir_path_json")"
+
+# Raw-string #[path = r"target.rs"] is valid Rust; the attribute must not be
+# dropped (which would resolve the module by alias and lose the ungated
+# route to a gated declaration).
+rawstring_repo="$SANDBOX/raw-string"
+init_repo "$rawstring_repo"
+mkdir -p "$rawstring_repo/src"
+cat > "$rawstring_repo/src/lib.rs" <<'RUST'
+#[path = r"target.rs"]
+pub mod t;
+
+#[cfg(test)]
+#[path = "target.rs"]
+mod target_fixtures;
+RUST
+git -C "$rawstring_repo" add src
+git -C "$rawstring_repo" commit -q -m lib
+cat > "$rawstring_repo/src/target.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$rawstring_repo" add src/target.rs
+rawstring_json="$($SUMMARY -C "$rawstring_repo" --staged)"
+assert_eq "raw-string #[path] ungated declaration keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$rawstring_json")"
+assert_eq "raw-string #[path] ungated declaration stays production scope" \
+    "production" "$(jq -r '.scope' <<<"$rawstring_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

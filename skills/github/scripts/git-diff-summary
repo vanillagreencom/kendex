@@ -121,12 +121,13 @@ new_side_rs_siblings() {
 # <target> is the repo-relative file the declaration resolves to, lexically
 # normalized (`.`/`..` segments folded) so equivalent spellings compare
 # equal. A bare `mod name;` emits both of its legal forms, name.rs and
-# name/mod.rs. moddir is where mod declarations land: for mod-rs files
-# (mod.rs, lib.rs, main.rs) their own directory; for any other file its
-# directory plus its stem as a subdirectory — both bare `mod name;` and
-# #[path] values resolve there, per the Rust reference's module path rules.
-# fdir is the file's own directory: include! literals resolve there (the
-# std docs anchor them to the containing FILE), not in moddir.
+# name/mod.rs. moddir is where bare `mod name;` declarations land: for
+# mod-rs files (mod.rs, lib.rs, main.rs) their own directory; for any other
+# file its directory plus its stem as a subdirectory. fdir is the file's
+# own directory: per the Rust reference, #[path] values on modules NOT
+# inside inline module blocks resolve there (the mod-rs distinction only
+# changes #[path] inside inline blocks, which this scanner does not parse —
+# stated limitation), and the std docs anchor include! literals there too.
 scan_decl_records() {
     awk -v moddir="$1" -v fdir="$2" '
         function join(d, b) { return d == "." ? b : d "/" b }
@@ -204,9 +205,11 @@ scan_decl_records() {
             while (match(line, /^#\[[^]]*\][[:space:]]*/)) {
                 attr = substr(line, 1, RLENGTH)
                 if (attr ~ /^#\[cfg\(test\)\]/) gated = 1
-                if (attr ~ /^#\[path[[:space:]]*=[[:space:]]*"/) {
+                # Plain and raw (r"...") string values; r#"..."# stays a
+                # stated limitation.
+                if (attr ~ /^#\[path[[:space:]]*=[[:space:]]*r?"/) {
                     p = attr
-                    sub(/^#\[path[[:space:]]*=[[:space:]]*"/, "", p)
+                    sub(/^#\[path[[:space:]]*=[[:space:]]*r?"/, "", p)
                     sub(/".*/, "", p)
                     pathattr = p
                 }
@@ -226,7 +229,7 @@ scan_decl_records() {
                 sub(/[[:space:]]*;.*$/, "", name)
                 kind = (gated ? "G" : "U")
                 if (pathattr != "")
-                    printf "%s\t%s\n", kind, normpath(join(moddir, pathattr))
+                    printf "%s\t%s\n", kind, normpath(join(fdir, pathattr))
                 else {
                     # Both legal forms of a bare declaration: name.rs and
                     # the directory form name/mod.rs.
