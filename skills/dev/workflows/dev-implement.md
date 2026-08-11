@@ -475,7 +475,14 @@ Do NOT post handoff to the completed issue — that conflates audiences. Handoff
 **Read-only analysis round.** If your delegation was explicitly investigate-and-recommend — no implementation — you have no commit and ran no validation, and the checklist rows about commit/validate/QA labels do not apply. Do NOT force `--kind implement` (that would assert a validation outcome that did not occur) and do NOT skip the artifact (a missing artifact reads as an unfinished round). Use the analysis kind — it rejects `--commit`/`--validate` and omits those keys from the artifact, so it is truthful by construction. Pass the recommendation inline for a short one, or write it to a file (e.g. `tmp/analysis-[ARTIFACT_KEY].md`) and pass `--summary-file` for longer evidence — exactly one of the two; the inline form is the sanctioned route when the harness refuses the file write (vstack#1236):
 
 ```bash
-.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind analysis --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --summary "[RECOMMENDATION_TEXT]" [--no-summary]
+# A recommendation is free-form prose: pass it LITERALLY via a quoted-heredoc
+# substitution so its quotes/dollars/backticks cannot expand, split into
+# stray flags, or execute — a bare double-quoted interpolation can do all
+# three exactly when this escape hatch is needed most.
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind analysis --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --summary "$(cat <<'EOF'
+[RECOMMENDATION_TEXT]
+EOF
+)" [--no-summary]
 # or, for longer evidence already in a file:
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind analysis --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --summary-file tmp/analysis-[ARTIFACT_KEY].md [--no-summary]
 ```

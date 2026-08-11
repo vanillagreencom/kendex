@@ -258,6 +258,11 @@ if [[ "$summary_given" == "true" ]]; then
 fi
 if [[ -n "$summary_file" ]]; then
   [[ -f "$summary_file" ]] || die "--summary-file path '$summary_file' does not exist"
+  # Same rule as inline: a file of pure whitespace is an empty deliverable,
+  # and for analysis the summary IS the artifact's payload.
+  if [[ "$kind" == "analysis" ]] && ! grep -q '[^[:space:]]' -- "$summary_file"; then
+    die "--summary-file '$summary_file' contains no non-whitespace text"
+  fi
 fi
 
 # A fix or bundled artifact without items is incomplete — reject before writing.
