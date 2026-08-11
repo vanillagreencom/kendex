@@ -2091,6 +2091,14 @@ EOF_EXCLUDE_BATTERY
       # non-empty path by construction, while two or more '?'s impose a
       # minimum length that one-character paths escape, and '?'-only
       # entries pin an exact length; neither is universal.
+      #
+      # PER-ENTRY only, deliberately: a SET of globs can be jointly
+      # universal ('?;??*' by length split, 'a*;[!a]*' by first-character
+      # partition), and detecting that in general is glob-coverage
+      # analysis with no bounded implementation. Such sets take the
+      # UNPROVEN note below — loud and fail-safe, never a silent green —
+      # and tracked mode (every run inside a real repository) judges the
+      # same set against real paths with no heuristic at all.
       probe_universal=""
       while IFS= read -r probe_pat_u; do
         [ -z "$probe_pat_u" ] && continue
