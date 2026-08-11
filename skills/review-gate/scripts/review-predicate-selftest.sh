@@ -2117,7 +2117,7 @@ $(list_items "$ACTIVE_CARRY_EXCLUDE")
 EOF_UNIVERSAL
       if [ -n "$probe_universal" ]; then
         cases=$((cases + 1))
-        echo "FAIL  configured: carry-exclude — '$probe_universal' matches every path; the enabled carry class can never apply (over-broad exclusion set, or disable REVIEW_GATE_CARRY_FORWARD instead)" >&2
+        echo "FAIL  configured: carry-exclude — '$probe_universal' matches every path; the enabled carry class can never apply to any DELTA (identical-tree/rebase-residue carries alone would remain, which exclusions never touch). Overwhelmingly a misconfiguration: narrow the exclusions to the real policy surfaces, or disable REVIEW_GATE_CARRY_FORWARD instead of excluding everything" >&2
         failures=$((failures + 1))
       elif [ -z "$EXCLUDE_TRACKED" ]; then
         # Hermetic mode: finite synthetic probes cannot PROVE universality

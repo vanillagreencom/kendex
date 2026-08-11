@@ -201,8 +201,17 @@ else
   # require the mktemp wording and reject the git-failure diagnosis.
   grep -q "staging file creation failed (mktemp)" "$work/brokenmktemp.out" \
     || note "broken-mktemp failure does not name the mktemp/staging cause"
-  grep -q "'git ls-files' failed" "$work/brokenmktemp.out" \
-    && note "broken-mktemp failure misattributes the cause to git ls-files"
+  # Absence assertion via explicit status: 0 = misattribution present,
+  # >=2 = grep itself failed to read — both are failures, distinctly named.
+  set +e
+  grep -q "'git ls-files' failed" "$work/brokenmktemp.out"
+  _g=$?
+  set -e
+  if [ "$_g" -eq 0 ]; then
+    note "broken-mktemp failure misattributes the cause to git ls-files"
+  elif [ "$_g" -ge 2 ]; then
+    note "could not read brokenmktemp.out for the misattribution check (grep exit $_g)"
+  fi
 fi
 
 # --- layer 2e: the harness namespace is not the over-broad namespace --------
@@ -303,8 +312,16 @@ printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = 
 (cd "$work/twoq" && "$SELFTEST") >"$work/twoq.out" 2>&1 || true
 grep -q "universality is UNPROVEN" "$work/twoq.out" \
   || note "the '??*' fixture did not report the unproven-universality note"
-grep -q "can never apply" "$work/twoq.out" \
-  && note "'??*' was over-classified as structurally universal (minimum-length patterns are not)"
+# Same explicit-status shape as the misattribution check above.
+set +e
+grep -q "can never apply" "$work/twoq.out"
+_g=$?
+set -e
+if [ "$_g" -eq 0 ]; then
+  note "'??*' was over-classified as structurally universal (minimum-length patterns are not)"
+elif [ "$_g" -ge 2 ]; then
+  note "could not read twoq.out for the over-classification check (grep exit $_g)"
+fi
 
 # One combined FAILING run pins BOTH guards (each fixture run replays the
 # full decision table, so failure cases share a run): a leading-'/' glob can
