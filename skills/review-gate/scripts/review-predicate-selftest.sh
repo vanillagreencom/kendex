@@ -177,10 +177,18 @@ file="$GH_SHIM_FIXTURES/$name.json"
 if [ "$name" = "graphql" ] && [ -n "$graphql_after" ] && [ -f "$GH_SHIM_FIXTURES/graphql.cursor-$graphql_after.json" ]; then
   # Cursor-keyed page: the fixture named by the requested cursor wins, so a
   # case can lay out a distinct advancing page per cursor and walk the full
-  # page budget. Falls through to the single page-2 fixture when absent.
+  # page budget. Falls through to the single page-2 fixture when absent —
+  # the two-page pattern's shape.
   file="$GH_SHIM_FIXTURES/graphql.cursor-$graphql_after.json"
 elif [ "$name" = "graphql" ] && [ "$graphql_page2" = "1" ] && [ -f "$GH_SHIM_FIXTURES/graphql.page2.json" ]; then
   file="$GH_SHIM_FIXTURES/graphql.page2.json"
+elif [ "$name" = "graphql" ] && [ -n "$graphql_after" ]; then
+  # A follow-up request with NEITHER a cursor-keyed fixture NOR a page-2
+  # fixture would silently re-serve page one — a deep-walk case missing one
+  # of its files (a valid-looking cursor with a fixture gap) must refuse,
+  # not fabricate coverage.
+  echo "shim: follow-up page requested (after=$graphql_after) but no graphql.cursor-$graphql_after.json or graphql.page2.json fixture exists" >&2
+  exit 93
 fi
 [ -f "$file" ] || { echo "shim: no fixture $file" >&2; exit 91; }
 if [ -n "$filter" ]; then jq -r "$filter" <"$file"; else cat "$file"; fi
@@ -773,6 +781,10 @@ run "exactly 20 advancing resolved pages approve (bound is >20)" approved
 # distinguishes the guard's presence, not just "something failed".
 reset
 CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
+# Single attempt, no delay: the refusal is deterministic, and under a
+# configured retry budget every re-attempt would just re-refuse after a
+# sleep — pure suite-runtime inflation.
+CFG_API_ATTEMPTS="1"; CFG_API_DELAY="0"
 status_ctx "mech-ctx" success "analysis complete"
 jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:"bad/value"},nodes:[{isResolved:true}]}}}}}' \
   >"$fixtures/graphql.json"
