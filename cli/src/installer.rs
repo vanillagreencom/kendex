@@ -1072,17 +1072,23 @@ fn corresponding_project_root_in(checkout_toplevel: &Path) -> Option<PathBuf> {
 /// an alias, and treating it as a link home would delete/replace its
 /// children as if they were skill artifacts.
 fn is_recognized_skills_surface(checkout_root: &Path, physical_parent: &Path) -> bool {
+    // Compare against the LITERAL expected paths under the physically
+    // resolved checkout root — never canonicalize the candidates. Following
+    // a candidate symlink would make the alias validate itself: with
+    // `.claude/skills -> cli/src`, resolving `checkout/.claude/skills`
+    // yields exactly the aliased physical_parent being questioned.
+    let root_physical = std::fs::canonicalize(checkout_root)
+        .unwrap_or_else(|_| normalize_absolute_path(checkout_root));
     let project_root = crate::config::project_root();
-    let mut candidates = vec![checkout_root.join(".agents").join("skills")];
+    let mut expected = vec![root_physical.join(".agents").join("skills")];
     for harness in Harness::ALL {
         if let Ok(rel) = harness.skills_dir(false).strip_prefix(&project_root) {
-            candidates.push(checkout_root.join(rel));
+            expected.push(root_physical.join(rel));
         }
     }
-    candidates.into_iter().any(|candidate| {
-        canonicalize_allowing_missing(&candidate)
-            .is_some_and(|resolved| resolved == *physical_parent)
-    })
+    expected
+        .into_iter()
+        .any(|candidate| candidate == *physical_parent)
 }
 
 /// The physical home of a project-scope harness link whose parent directory
