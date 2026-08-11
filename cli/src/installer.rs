@@ -539,7 +539,11 @@ pub fn remove_item(
             std::fs::read_to_string(&owner_lock)
                 .ok()
                 .and_then(|raw| serde_json::from_str::<crate::config::LockFile>(&raw).ok())
-                .is_some_and(|lock| lock.entries.contains_key(name.to_str().unwrap_or_default()))
+                .is_some_and(|lock| {
+                    lock.entries
+                        .get(name.to_str().unwrap_or_default())
+                        .is_some_and(|entry| entry.kind == crate::config::ItemKind::Skill)
+                })
         };
         if owner_still_references {
             continue;

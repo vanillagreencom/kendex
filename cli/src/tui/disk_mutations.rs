@@ -60,7 +60,16 @@ fn rollback_destination_install(
         return String::new();
     }
     match crate::installer::remove_item(name, Some(kind), harnesses, scope_global) {
-        Ok(_) => String::new(),
+        Ok(outcome) if outcome.anchored_left.is_empty() => String::new(),
+        Ok(outcome) => format!(
+            "; rollback left anchored canonical(s) in place (another checkout's): {}",
+            outcome
+                .anchored_left
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Err(err) => format!("; rollback failed: {err:#}"),
     }
 }
@@ -122,7 +131,14 @@ fn remove_one(name: &str, scope_global: bool) -> anyhow::Result<bool> {
             .iter()
             .filter_map(|h| Harness::from_id(h))
             .collect();
-        crate::installer::remove_item(name, Some(entry.kind), &harnesses, scope_global)?;
+        let outcome =
+            crate::installer::remove_item(name, Some(entry.kind), &harnesses, scope_global)?;
+        for anchored in &outcome.anchored_left {
+            eprintln!(
+                "  Anchored canonical left in place (another checkout's): {}",
+                anchored.display()
+            );
+        }
     }
     lock.remove(name);
     lock.save(&lock_path)?;
