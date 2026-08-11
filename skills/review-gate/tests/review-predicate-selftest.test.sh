@@ -216,6 +216,23 @@ fi
 grep -q "outside every committed glob and still carries" "$work/probeglob.out" \
   || note "harness-namespace fixture did not exercise the exclude-free carry case"
 
+# --- layer 2f: probe exhaustion without a structurally universal glob ------
+# A glob set spanning BOTH harness namespaces exhausts every synthetic
+# candidate while ordinary paths still carry — that is UNPROVEN universality,
+# not an over-broad failure. The run must PASS and say so out loud; only a
+# literal '*'/'**' entry may fail as "can never apply" (layer below).
+mkdir -p "$work/bothns"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/bothns/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "carry-probe*;unexcluded-sample*"\n' \
+  >>"$work/bothns/vstack.settings.toml"
+if ! (cd "$work/bothns" && "$SELFTEST") >"$work/bothns.out" 2>&1; then
+  cat "$work/bothns.out"
+  note "selftest failed under a both-namespaces exclusion set — probe exhaustion is being read as proof of universality again"
+fi
+grep -q "universality is UNPROVEN" "$work/bothns.out" \
+  || note "both-namespaces fixture did not report the unproven-universality note"
+
 # One combined FAILING run pins BOTH guards (each fixture run replays the
 # full decision table, so failure cases share a run): a leading-'/' glob can
 # never match a repository-relative compare filename (dead anchoring), and a
