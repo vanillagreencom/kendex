@@ -115,7 +115,23 @@ while [ $# -gt 0 ]; do
       # cursor VALUE is kept so cursor-keyed fixtures
       # (graphql.cursor-<value>.json) can drive an arbitrarily deep walk —
       # the page-budget bound cannot be proven with a single follow-up page.
-      case "$1" in after=*) graphql_page2=1; graphql_after="${1#after=}" ;; esac
+      case "$1" in
+        after=*)
+          graphql_page2=1
+          graphql_after="${1#after=}"
+          # Cursor-keyed fixtures embed the cursor in a pathname, so the
+          # namespace is enforced, not assumed: every cursor this suite
+          # authors is [A-Za-z0-9_-]. Anything else would silently fall
+          # back to the page-2/default fixture and a case could claim a
+          # deep walk it never drove — refuse loudly instead.
+          case "$graphql_after" in
+            *[!A-Za-z0-9_-]*)
+              echo "shim: cursor value unusable as a fixture key (allowed: A-Za-z0-9_-): $graphql_after" >&2
+              exit 92
+              ;;
+          esac
+          ;;
+      esac
       ;;
     --jq) shift; filter="$1" ;;
     graphql) url="graphql" ;;
