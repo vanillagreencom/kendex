@@ -220,9 +220,10 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [parent labels]
-Parent Title: [PARENT_TITLE — verbatim, so the dev agent can apply the
-container guard itself: the `(one PR)` marker in this title is the
-decisive single-PR override]
+Parent Title: [PARENT_TITLE — the `.title` field from the preflight's
+`cache issues get [ISSUE_ID] --with-bundle` read of this parent,
+verbatim, so the dev agent can apply the container guard itself: the
+`(one PR)` marker in this title is the decisive single-PR override]
 Blocks: [blocked-issue-ids or "none"]
 
 **Work pending issues only** (completed listed for context). Respect blocking order: complete blockers before blocked issues.
