@@ -278,6 +278,31 @@ else
     || note "the '***' failure does not carry the can-never-apply diagnostic"
 fi
 
+# The '?' boundary, both directions: exactly one '?' beside a star is still
+# universal (every path has one character) and must FAIL; two '?'s impose a
+# minimum length one-character paths escape and must downgrade to UNPROVEN.
+mkdir -p "$work/oneq" "$work/twoq"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/oneq/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "?*"\n' \
+  >>"$work/oneq/vstack.settings.toml"
+if (cd "$work/oneq" && "$SELFTEST") >"$work/oneq.out" 2>&1; then
+  note "selftest passed with a '?*' exclusion — the one-? universal shape is being read as unproven"
+else
+  grep -q "can never apply" "$work/oneq.out" \
+    || note "the '?*' failure does not carry the can-never-apply diagnostic"
+fi
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/twoq/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "??*"\n' \
+  >>"$work/twoq/vstack.settings.toml"
+if ! (cd "$work/twoq" && "$SELFTEST") >"$work/twoq.out" 2>&1; then
+  cat "$work/twoq.out"
+  note "selftest failed under a '??*' exclusion — a minimum-length pattern is being over-classified as universal"
+fi
+grep -q "universality is UNPROVEN" "$work/twoq.out" \
+  || note "the '??*' fixture did not report the unproven-universality note"
+
 # One combined FAILING run pins BOTH guards (each fixture run replays the
 # full decision table, so failure cases share a run): a leading-'/' glob can
 # never match a repository-relative compare filename (dead anchoring), and a

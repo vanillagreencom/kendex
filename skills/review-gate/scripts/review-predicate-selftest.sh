@@ -203,8 +203,11 @@ chmod +x "$shim/gh"
 # the whole run HERE, instead of leaving a case green against a fixture it
 # never drove. Each exit code is pinned exactly.
 # The scratch dir is removed BEFORE the assertions so a failed exit-code
-# check cannot leak it — the recorded rcs carry the evidence.
-_shimcheck_dir="$(mktemp -d)"
+# check cannot leak it — the recorded rcs carry the evidence. mktemp is
+# checked: an empty dir var would aim GH_SHIM_FIXTURES at '/' and turn
+# every probe into a misattributed failure.
+_shimcheck_dir="$(mktemp -d)" || { echo "FATAL: cannot create shim self-check scratch dir (mktemp -d failed)" >&2; exit 1; }
+[ -n "$_shimcheck_dir" ] || { echo "FATAL: mktemp -d returned an empty path for the shim self-check" >&2; exit 1; }
 GH_SHIM_FIXTURES="$_shimcheck_dir" "$shim/gh" api graphql -f query=q -f after=bad/value >/dev/null 2>&1
 _shimcheck_ns=$?
 GH_SHIM_FIXTURES="$_shimcheck_dir" "$shim/gh" api graphql -f query=q -f after= >/dev/null 2>&1
