@@ -112,6 +112,8 @@ REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
 that passed only on re-run, a flake worth recording); it never relaxes --validate.
 --summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
 content. They are mutually exclusive (one summary source, no silent precedence).
+Every single-valued flag may be supplied at most once (no silent last-wins);
+only --qa-label and --item repeat.
 --kind analysis is a read-only round (investigate + recommend, no implementation):
 it requires exactly one of --summary / --summary-file (the recommendation/
 evidence — inline exists so a harness-refused file write is not a dead end,
@@ -123,15 +125,36 @@ skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 EOF
 }
 
+# This script's own flag vocabulary. Used to distinguish a forgotten value
+# (the next token is one of OUR flags — "--summary --no-summary" would record
+# the literal string "--no-summary" as the deliverable) from legitimate prose
+# that merely begins with '--' ("--foo", an em-dash-style aside), which stays
+# a legal value for free-form fields like --summary.
+is_own_flag() {
+  case "$1" in
+    --worktree|--kind|--issue|--round-id|--branch|--commit|--validate|\
+    --validate-note|--summary|--summary-file|--qa-label|--bundled|\
+    --no-summary|--item|-h|--help) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 need() {
   # $1 = flag name, $2 = current argc ($#), $3 = the would-be value. A value
-  # option needs at least 2 args, and the value must not itself be an option
-  # token: with an argc-only check, "--summary --no-summary" silently records
-  # the literal string "--no-summary" as the summary — a well-formed artifact
-  # carrying a flag instead of the deliverable. Every value-taking flag shares
-  # this guard; none of their domains legitimately begins with '--'.
+  # option needs at least 2 args, and the value must not be one of this
+  # script's own flag tokens — that shape is a forgotten value, not a value.
   (( $2 >= 2 )) || die "$1 requires a value"
-  [[ "$3" != --* ]] || die "$1 requires a value, got option token '$3'"
+  if is_own_flag "$3"; then
+    die "$1 requires a value, got flag '$3' (value missing?)"
+  fi
+}
+
+no_dup() {
+  # $1 = flag name, $2 = its presence boolean. A single-valued flag supplied
+  # twice would silently last-win — the same quiet-misrecording class as the
+  # summary-source precedence this writer refuses. Repeatable flags
+  # (--qa-label, --item) never route through here.
+  [[ "$2" == "false" ]] || die "$1 supplied more than once"
 }
 
 # Validate a path-forming token (--issue / --round-id): non-empty, matches the
@@ -161,24 +184,30 @@ qa_labels=()
 item_n=()
 item_decision=()
 item_reasoning=()
-# Presence tracking so --kind analysis can reject a supplied flag even when its
-# value is empty ("--commit ''" is still a commit claim).
+# Presence tracking: --kind analysis rejects a supplied flag even when its
+# value is empty ("--commit ''" is still a commit claim), and every
+# single-valued flag uses its boolean to refuse a duplicate (silent last-wins).
+worktree_given=false
+kind_given=false
+issue_given=false
+round_id_given=false
+branch_given=false
 commit_given=false
 validate_given=false
 validate_note_given=false
 
 while (( $# > 0 )); do
   case "$1" in
-    --worktree)     need "$1" $# "${2:-}"; worktree="$2"; shift 2 ;;
-    --kind)         need "$1" $# "${2:-}"; kind="$2"; shift 2 ;;
-    --issue)        need "$1" $# "${2:-}"; issue="$2"; shift 2 ;;
-    --round-id)     need "$1" $# "${2:-}"; round_id="$2"; shift 2 ;;
-    --branch)       need "$1" $# "${2:-}"; branch="$2"; shift 2 ;;
-    --commit)       need "$1" $# "${2:-}"; commit="$2"; commit_given=true; shift 2 ;;
-    --validate)     need "$1" $# "${2:-}"; validate="$2"; validate_given=true; shift 2 ;;
-    --validate-note) need "$1" $# "${2:-}"; validate_note="$2"; validate_note_given=true; shift 2 ;;
-    --summary)      need "$1" $# "${2:-}"; summary_text="$2"; summary_given=true; shift 2 ;;
-    --summary-file) need "$1" $# "${2:-}"; summary_file="$2"; summary_file_given=true; shift 2 ;;
+    --worktree)     need "$1" $# "${2:-}"; no_dup "$1" "$worktree_given";     worktree_given=true;     worktree="$2"; shift 2 ;;
+    --kind)         need "$1" $# "${2:-}"; no_dup "$1" "$kind_given";         kind_given=true;         kind="$2"; shift 2 ;;
+    --issue)        need "$1" $# "${2:-}"; no_dup "$1" "$issue_given";        issue_given=true;        issue="$2"; shift 2 ;;
+    --round-id)     need "$1" $# "${2:-}"; no_dup "$1" "$round_id_given";     round_id_given=true;     round_id="$2"; shift 2 ;;
+    --branch)       need "$1" $# "${2:-}"; no_dup "$1" "$branch_given";       branch_given=true;       branch="$2"; shift 2 ;;
+    --commit)       need "$1" $# "${2:-}"; no_dup "$1" "$commit_given";       commit_given=true;       commit="$2"; shift 2 ;;
+    --validate)     need "$1" $# "${2:-}"; no_dup "$1" "$validate_given";     validate_given=true;     validate="$2"; shift 2 ;;
+    --validate-note) need "$1" $# "${2:-}"; no_dup "$1" "$validate_note_given"; validate_note_given=true; validate_note="$2"; shift 2 ;;
+    --summary)      need "$1" $# "${2:-}"; no_dup "$1" "$summary_given";      summary_given=true;      summary_text="$2"; shift 2 ;;
+    --summary-file) need "$1" $# "${2:-}"; no_dup "$1" "$summary_file_given"; summary_file_given=true; summary_file="$2"; shift 2 ;;
     --qa-label)     need "$1" $# "${2:-}"; qa_labels+=("$2"); shift 2 ;;
     --bundled)      bundled=true; shift ;;
     --no-summary)   summary_posted=false; shift ;;
@@ -198,11 +227,12 @@ while (( $# > 0 )); do
       if [[ -z "$reasoning" ]]; then
         die "--item REASONING must be non-empty (item $n)"
       fi
-      # Same option-token guard as need(): N and DECISION are already
+      # Same forgotten-value guard as need(): N and DECISION are already
       # domain-checked above, but a missing REASONING would otherwise swallow
-      # the next flag as the recorded rationale.
-      if [[ "$reasoning" == --* ]]; then
-        die "--item REASONING must be text, got option token '$reasoning' (item $n)"
+      # the next flag as the recorded rationale. Prose merely beginning with
+      # '--' stays legal — only this script's own flag tokens are rejected.
+      if is_own_flag "$reasoning"; then
+        die "--item REASONING must be text, got flag '$reasoning' (item $n; value missing?)"
       fi
       item_n+=("$n")
       item_decision+=("$decision")

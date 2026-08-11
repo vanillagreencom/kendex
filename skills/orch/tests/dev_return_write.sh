@@ -250,7 +250,32 @@ assert_exit2 "--item REASONING as option token exits 2" \
 out="$("$WRITE" --worktree "$worktree" --kind analysis --issue issue-dash --round-id 13-13 \
   --branch b --summary "- close as duplicate of the merged fix" --no-summary)"
 assert_eq "$(jq -r '.summary' "$out")" "- close as duplicate of the merged fix" \
-  "a leading single-dash summary value is accepted (only '--' tokens are rejected)"
+  "a leading single-dash summary value is accepted"
+# The guard matches this script's OWN flag vocabulary exactly: free-form prose
+# that merely begins with '--' is a legal value, not a forgotten-value error.
+out="$("$WRITE" --worktree "$worktree" --kind analysis --issue issue-ddash --round-id 14-14 \
+  --branch b --summary "--foo is a flag of the consuming tool, not of this script" --no-summary)"
+assert_eq "$(jq -r '.summary' "$out" | head -1)" "--foo is a flag of the consuming tool, not of this script" \
+  "double-dash-leading prose that is not an own-flag token is accepted as a summary"
+out="$("$WRITE" --worktree "$worktree" --kind fix --issue issue-ddash2 --round-id 14-15 \
+  --branch b --commit c --validate pass --item 1 Skipped "--force would be needed; declined per policy")"
+assert_eq "$(jq -r '.items[0].reasoning' "$out")" "--force would be needed; declined per policy" \
+  "double-dash-leading prose is accepted as --item REASONING"
+
+# Single-valued flags refuse duplicates: a repeated flag would silently
+# last-win — the same quiet-misrecording class as summary-source precedence.
+assert_exit2 "duplicate --summary exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b \
+  --summary "first" --summary "second"
+assert_exit2 "duplicate --summary-file exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b \
+  --summary-file "$worktree/analysis.md" --summary-file "$worktree/analysis.md"
+assert_exit2 "duplicate --branch exits 2" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --branch b2 \
+  --commit c --validate pass
+assert_exit2 "duplicate --validate exits 2" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b \
+  --commit c --validate pass --validate pass
 assert_exit2 "analysis with empty --commit value still exits 2 (presence, not content)" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --commit ""
 
