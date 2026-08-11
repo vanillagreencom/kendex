@@ -36,12 +36,14 @@ items instead — then rerun this preflight on each replacement, since a
 direct child can itself be a container. Containers are never orchestrated
 and never own a worktree; open-terminal would create one before the
 launched session could refuse. The guard covers directly supplied
-children too: a LEAF item whose `parent_id` is set gets its parent
-fetched (`.agents/skills/linear/scripts/linear.sh cache issues get
-[PARENT_ID]`) and classified — parent a container → the child stays
-launchable only if it passes the same unblocked test below (own plus
-parent-carried blockers); blocked → drop it from the launch list and
-name its live blockers.
+children too, via the Ancestor gate (SKILL.md → Coordination): EVERY
+final launch item with a `parent_id` walks its full ancestor chain
+(`.agents/skills/linear/scripts/linear.sh cache issues get
+[ANCESTOR_ID]` per hop), classifying each — an enclosing `(one PR)`
+ancestor makes that bundle the launch item; all-container ancestry →
+the item stays launchable only if it passes the unblocked test below
+with the UNION of its own and every container ancestor's blockers;
+blocked → drop it from the launch list and name its live blockers.
 
 Resolve "unblocked" mechanically: collect each child's `blocked_by` ids
 plus the container's own `blocked_by` (parent-carried cross-bundle

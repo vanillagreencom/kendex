@@ -59,11 +59,18 @@ items. Unblocked is a mechanical test, not a guess: the bundle emits
 child's own `blocked_by` plus the container's, which applies to every
 child) and treat only a NON-terminal `state_type` as blocking — a Done or
 canceled blocker never hides a startable child. The guard covers BOTH
-directions: when the target is a LEAF whose `parent_id` is set, fetch the
-parent (`.agents/skills/linear/scripts/linear.sh cache issues get
-[PARENT_ID]`), classify it, and — parent a container — gate the child on
-that same unblocked test (own plus parent-carried blockers) before any
-workflow state exists; blocked → stop and name the live blockers. Managed
+directions via the Ancestor gate (SKILL.md → Coordination): when the
+target is a LEAF whose `parent_id` is set (explicit argument or
+branch-derived), walk the FULL chain
+(`.agents/skills/linear/scripts/linear.sh cache issues get
+[ANCESTOR_ID]` per hop) and classify each ancestor. Any ancestor WITH
+the `(one PR)` marker → that bundle is the work item — a branch-derived
+child under a single-PR parent is worked as part of the PARENT's
+session/PR, exactly as in `start.md`, never delegated alone (unless the
+user explicitly chose the child). All ancestors containers → gate the
+child on the union of its own and every container ancestor's blockers
+before any workflow state exists; blocked → stop and name the live
+blockers. Managed
 callers already ran this check in start/start-worktree.
 
 Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_ID` ≠ the current branch's issue, ask the user before proceeding. Resolve `WT_PATH`:
