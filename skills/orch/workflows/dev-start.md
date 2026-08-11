@@ -53,7 +53,13 @@ Check the title FIRST — `(one PR)` always wins, even over `agent:multi`.
 Otherwise, an issue with the `agent:multi` label or with children is a
 CONTAINER — refuse before initializing anything (containers never hold
 workflow state) and surface its unblocked children as the startable work
-items. Managed callers already ran this check in start/start-worktree.
+items. Unblocked is a mechanical test, not a guess: the bundle emits
+`blocked_by` as bare IDs, so fetch those blockers' states
+(`issues bulk-get [BLOCKER_IDS]`, or `cache issues get` per id — the
+child's own `blocked_by` plus the container's, which applies to every
+child) and treat only a NON-terminal `state_type` as blocking — a Done or
+canceled blocker never hides a startable child. Managed callers already
+ran this check in start/start-worktree.
 
 Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_ID` ≠ the current branch's issue, ask the user before proceeding. Resolve `WT_PATH`:
 - Inside a worktree → use current directory as `WT_PATH`
@@ -202,6 +208,9 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [parent labels]
+Parent Title: [PARENT_TITLE — verbatim, so the dev agent can apply the
+container guard itself: the `(one PR)` marker in this title is the
+decisive single-PR override]
 Blocks: [blocked-issue-ids or "none"]
 
 **Work pending issues only** (completed listed for context). Respect blocking order: complete blockers before blocked issues.
