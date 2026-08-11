@@ -42,6 +42,11 @@ trusting an adoption.
    scripts, local predicate copies, duplicated gate steps. A redesign
    removes what it replaces, never leaves it dormant.
 6. **Repo-side wiring** (below): rulesets, merge queue, bypass actor.
+7. **Reviewer instruction for the vendored tree** — the repo now merges
+   re-vendor PRs whose whole delta is bytes already reviewed upstream, and
+   every reviewer will re-review them into merge-blocking threads. Wire the
+   remedy-locus rule from [vendored-paths.md](vendored-paths.md) rather than a
+   reviewer path exclusion, which starves the gate on exactly this PR class.
 
 ## Recommended CI shape — the fast/full split
 
@@ -172,6 +177,9 @@ reducer they and harness monitors share.
 - The offline selftest passes from the repo root (configured layer =
   this repo's trust values).
 - The consumer's vendored-copy drift check passes.
+- The first PURE re-vendor PR after adoption carries a trusted non-author
+  review object at head with no unresolved thread on a vendored path
+  ([vendored-paths.md](vendored-paths.md) § Verifying on a real re-vendor PR).
 - For engine changes (not adoptions): the live sandbox replay
   (`.agents/skills/review-gate/tests/e2e-sandbox.sh`) against the org
   sandbox, which mirrors the fleet ruleset shape.

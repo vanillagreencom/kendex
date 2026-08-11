@@ -213,3 +213,10 @@ context in the ruleset alongside the test aggregate. Full wiring:
 [references/adoption.md](references/adoption.md). An adoption PR deletes the
 local machinery it supersedes in the same PR — a redesign removes what it
 replaces, never leaves it dormant.
+
+A consumer also merges re-vendor PRs whose entire delta is bytes already
+reviewed upstream. Suppress the duplicate findings with the remedy-locus
+reviewer instruction, never a reviewer path exclusion — excluding the vendored
+tree leaves a pure re-vendor PR with nothing to review, no review object, and a
+gate that starves:
+[references/vendored-paths.md](references/vendored-paths.md).

@@ -134,9 +134,11 @@ Paths are as installed in a consuming repo, under
 | `.agents/skills/review-gate/scripts/pr-watch.sh` | The agent-side reducer: "does any open PR need attention right now?" — unresolved threads (queued PRs annotated), standing objections, a gate the writer hasn't converged (`--heal` dispatches it once), a mergeable PR nothing will merge, reviewer silence past the quiet period. Silence on stdout + exit 0 means nothing needs you, which makes it a one-line loop/cron predicate. |
 | `.agents/skills/review-gate/scripts/review-predicate-selftest.sh` | Offline proof of the decision table; runs ungated in CI so a broken predicate reds its own job instead of approving everything. |
 | `.agents/skills/review-gate/templates/review-gate-writer.yml` | The one workflow to copy in. Repo-owned after copying. |
+| `.agents/skills/review-gate/templates/vendored-paths.instructions.md` | Reviewer instruction for a byte-pinned vendored tree, so re-vendor PRs stop collecting duplicate blocking threads. Copy and fill; repo-owned after copying. |
 | `.agents/skills/review-gate/tests/e2e-sandbox.sh` | Live replay against a throwaway repo — re-run it before changing the engine. |
 | `.agents/skills/review-gate/references/adoption.md` | Wiring, branch rules, per-repo settings. |
 | `.agents/skills/review-gate/references/settings.md` | Every `REVIEW_GATE_*` key and the security reasoning behind the trust ones. |
+| `.agents/skills/review-gate/references/vendored-paths.md` | Why reviewer path exclusions starve the gate, and the remedy-locus rule that suppresses duplicate findings without doing so. |
 
 Nothing repo-specific is hard-coded: consumers vendor the skill at
 `.agents/skills/review-gate/` via `vstack refresh` and configure trust in

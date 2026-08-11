@@ -58,6 +58,30 @@ Agreed shape for drovr, memsira, and hyprtrade, settled by live testing on real 
 - **Unresolved threads can become unreachable in the UI while still blocking the merge.** After a rebase or force-push the commented commits are gone, the conversation link 404s, and the PR shows zero visible conversations yet refuses to merge. GraphQL still sees them: list with `github.sh pr-threads <N>`, resolve by id with `github.sh resolve-thread <PRRT_...>`.
 - **Date-stamp measured state, and re-measure before relying on it.** With several sessions reading and mutating the same repos concurrently, an unreproducible measurement is worthless — capture the command output with a timestamp or treat the value as unknown.
 
+## A Vendored Tree Is Reviewed Once, Upstream
+
+Consuming repos merge re-vendor PRs whose entire delta is bytes already reviewed
+upstream. Every reviewer re-reviews them in every consumer, and each inline
+comment opens a thread that blocks that repo's merge until someone answers it —
+one upstream finding becomes one blocking thread per reviewer per repo, and the
+sessions answering them carry the argument back upstream as though it were new.
+
+- **Route a finding by where its fix would land, not by which file it sits on.**
+  A remedy in a repo-owned file (the vendor pin, settings, CI wiring) is local
+  and belongs inline — a re-vendor that moves pinned bytes without updating the
+  pin is a real defect. A remedy in the vendored bytes belongs in the review
+  summary body, which creates no thread.
+- **Do not silence the reviewer by excluding the path.** A pure re-vendor PR is
+  nothing but vendored files, so a reviewer that skips them produces no review
+  object and the review gate's evidence term starves with no reviewer that can
+  ever clear it. Constrain what a reviewer SAYS, never whether it reviews.
+- **File upstream once, from one consumer.** Reviewers have no cross-repo memory
+  and restate the same finding in every repo; the first session to see it files
+  it, the rest cite that issue.
+
+Mechanism, wiring, and the per-repo verification protocol:
+`skills/review-gate/references/vendored-paths.md`.
+
 ## Do Not Restate Another Repo's Status From A Stale Check
 
 - **Re-verify a cross-repo status claim at send time, or attribute it.** "As of my check at 11:40" is honest; a bare "still pending" asserts current state you have not observed.
