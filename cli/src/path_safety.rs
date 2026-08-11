@@ -73,11 +73,20 @@ pub(crate) fn write_file_no_follow(path: &Path, contents: impl AsRef<[u8]>) -> R
 /// Interpret one line of `git rev-parse` output as a path, preserving raw
 /// bytes on Unix: a non-UTF-8 checkout path must not be lossy-mangled into
 /// U+FFFD (canonicalize would then fail and same-repository detection would
-/// silently collapse to None). Trims ASCII whitespace at both ends.
+/// silently collapse to None). Strips ONLY the record terminator (`\n` /
+/// `\r\n`) — a path legitimately ending in a space or tab must survive.
 fn git_output_path(bytes: &[u8]) -> Option<PathBuf> {
-    let start = bytes.iter().position(|b| !b.is_ascii_whitespace())?;
-    let end = bytes.iter().rposition(|b| !b.is_ascii_whitespace())? + 1;
-    let trimmed = &bytes[start..end];
+    let mut end = bytes.len();
+    if end > 0 && bytes[end - 1] == b'\n' {
+        end -= 1;
+    }
+    if end > 0 && bytes[end - 1] == b'\r' {
+        end -= 1;
+    }
+    let trimmed = &bytes[..end];
+    if trimmed.is_empty() {
+        return None;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;

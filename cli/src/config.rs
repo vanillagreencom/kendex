@@ -1896,7 +1896,18 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
                 .iter()
                 .filter_map(|id| crate::harness::Harness::from_id(id))
                 .collect();
-            let exists = own_root.join(&name).exists()
+            // A fully shared `.agents` makes own_root resolve into the
+            // OTHER checkout — its contents are anchored evidence (gated
+            // per-harness/per-name below), not unconditional local proof:
+            // counting them here would keep any stale entry alive merely
+            // because the main checkout has a same-named canonical.
+            let own_root_is_local = global
+                || own_root
+                    .canonicalize()
+                    .ok()
+                    .zip(std::fs::canonicalize(project_root()).ok())
+                    .is_none_or(|(root, project)| root.starts_with(&project));
+            let exists = (own_root_is_local && own_root.join(&name).exists())
                 || anchored.iter().any(|(root, sharing)| {
                     // Child-link evidence is per-skill: an anchored root
                     // keeps an entry alive only when it is evidenced for
