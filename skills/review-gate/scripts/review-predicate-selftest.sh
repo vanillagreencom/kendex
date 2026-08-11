@@ -1813,13 +1813,19 @@ load_exclude_tracked() {
     # the exact fail-open this error flag exists to prevent. Stage the -z
     # output in a file (NUL bytes cannot ride a shell variable) and check
     # the producer's exit alone.
-    _elt_tmp="$(mktemp)"
-    if git ls-files -z >"$_elt_tmp" 2>/dev/null; then
-      EXCLUDE_TRACKED="$(tr '\0' '\n' <"$_elt_tmp")"
+    # mktemp checked too: with no staging file the tracked read cannot be
+    # VERIFIED, and unverifiable takes the same refuse-to-degrade branch as
+    # failed — never a silent slide into hermetic probing.
+    if _elt_tmp="$(mktemp)"; then
+      if git ls-files -z >"$_elt_tmp" 2>/dev/null; then
+        EXCLUDE_TRACKED="$(tr '\0' '\n' <"$_elt_tmp")"
+      else
+        EXCLUDE_TRACKED_ERROR=1
+      fi
+      rm -f "$_elt_tmp"
     else
       EXCLUDE_TRACKED_ERROR=1
     fi
-    rm -f "$_elt_tmp"
   fi
 }
 exclude_glob_probe() { # glob, ext... -> a carry-class path this glob matches
@@ -1886,8 +1892,14 @@ $EXCLUDE_TRACKED
 EOF_TRACKED_FREE
     return 1
   fi
+  # The two synthetic candidates deliberately share NO filename prefix: when
+  # both lived under `carry-probe*`, a committed glob matching that harness
+  # namespace (non-universal in any real tree — README.md still carries)
+  # matched every candidate and false-FAILed the over-broad guard. Distinct
+  # shapes mean only a genuinely class-universal exclusion set can exhaust
+  # them; finite probes still cannot PROVE universality — stated limitation.
   for ext in "$@"; do
-    for candidate in "carry-probe/unrelated$ext" "carry-probe-unrelated$ext"; do
+    for candidate in "carry-probe/unrelated$ext" "unexcluded-sample$ext"; do
       hit=""
       while IFS= read -r pat; do
         [ -z "$pat" ] && continue
