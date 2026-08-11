@@ -361,7 +361,10 @@ if [ "$MODE" = "update" ]; then
     }
   ' "$TMP/baseline.tsv" "$TMP/absent.lst" "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new"
   if [ "$BASELINE_FROM_INDEX" = "1" ]; then
-    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git sparse-checkout add --skip-checks $BASELINE_FILE (cone mode needs --skip-checks for a file path; or add its parent directory), then rerun"
+    # printf %q shell-escapes the configured path so the suggested command
+    # survives copy-paste even for paths with spaces/glob metacharacters.
+    BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
+    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git sparse-checkout add --skip-checks $BASELINE_QUOTED (cone mode needs --skip-checks for a file path; or add its parent directory), then rerun"
   fi
   if [ -f "$BASELINE_FILE" ]; then
     mv -- "$TMP/baseline.new" "$BASELINE_FILE"
