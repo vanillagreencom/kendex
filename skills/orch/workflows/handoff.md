@@ -47,6 +47,12 @@ gated on the unioned blockers below; all-container ancestry →
 the item stays launchable only if it passes the unblocked test below
 with the UNION of its own and every container ancestor's blockers;
 blocked → drop it from the launch list and name its live blockers.
+After all expansion and gating, DEDUPLICATE the final launch list by
+issue id (expanding `PARENT` beside an explicitly supplied `CHILD`
+re-adds the child — launching both would race one worktree: the second
+create exits 75 after the first session already started, or Codex
+Desktop opens two threads for one item), keeping each survivor's
+explicit-vs-expanded classification.
 
 Resolve "unblocked" mechanically: collect each child's `blocked_by` ids
 plus the container's own `blocked_by` (parent-carried cross-bundle

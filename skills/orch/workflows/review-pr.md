@@ -723,6 +723,7 @@ Issue suggestions: [N] items → § 9 audit
    - `worktree`: [WORKTREE_PATH]
    - `lifecycle`: inherit current
    - `issue_id`: [ISSUE_ID]
+   - `audit_bundle`: `true` — the children were created BY this session's audit to be worked HERE, inside the PR's own session and branch; this context is the mechanical single-PR opt-in for dev-start's container guard and rides the delegation so dev-implement's guard accepts it too.
 
 5. **Assess re-review scope**:
    ```bash

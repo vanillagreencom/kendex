@@ -49,9 +49,15 @@ children listing lacks the blocker fields the unblocked test needs.)
 since the last reconcile, and a stale empty read would wave a container
 through.)
 
-Check the title FIRST — `(one PR)` always wins, even over `agent:multi`.
-Otherwise, an issue with the `agent:multi` label or with children is a
-CONTAINER — refuse before initializing anything (containers never hold
+Caller context `audit_bundle: true` (review-pr's post-audit path) is a
+mechanical single-PR opt-in equivalent to the `(one PR)` marker: the
+children were created by the calling session's audit to be worked inside
+the PR's own session — skip the container refusal for that parent and
+carry `Audit Bundle: yes` in the bundled delegation prompt (dev-implement
+accepts it as the same sanctioned exception). Otherwise: check the title
+FIRST — `(one PR)` always wins, even over `agent:multi`. Otherwise, an
+issue with the `agent:multi` label or with children is a CONTAINER —
+refuse before initializing anything (containers never hold
 workflow state) and surface its unblocked children as the startable work
 items. Unblocked is a mechanical test, not a guess: the bundle emits
 `blocked_by` as bare IDs, so fetch those blockers' states
@@ -220,6 +226,7 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [parent labels]
+Audit Bundle: [yes — only when caller context `audit_bundle: true`; omit otherwise]
 Parent Title: [PARENT_TITLE — the `.title` field from the preflight's
 `cache issues get [ISSUE_ID] --with-bundle` read of this parent,
 verbatim, so the dev agent can apply the container guard itself: the
