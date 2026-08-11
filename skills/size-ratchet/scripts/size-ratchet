@@ -368,7 +368,7 @@ if [ "$MODE" = "update" ]; then
     # patterns) — so the command works for any valid path: dash-leading,
     # spaces, glob metacharacters, root-level.
     BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
-    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -f -- $BASELINE_QUOTED, then rerun (a later git sparse-checkout reapply re-hides it)"
+    config_error "--update cannot rewrite an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun (a later git sparse-checkout reapply re-hides it; checkout-index without -f refuses to overwrite anything unexpectedly occupying the path)"
   fi
   if [ -f "$BASELINE_FILE" ]; then
     mv -- "$TMP/baseline.new" "$BASELINE_FILE"
