@@ -196,6 +196,13 @@ if (cd "$work/brokenmktemp/repo" && PATH="$work/brokenmktemp/bin:$PATH" "$SELFTE
 else
   grep -q "refusing to degrade to synthetic probes" "$work/brokenmktemp.out" \
     || note "broken-mktemp failure does not carry the refusing-to-degrade diagnostic"
+  # The CAUSE must be the right one: reverting the cause-carrying flag to
+  # the old hard-coded git advice would still print the generic suffix, so
+  # require the mktemp wording and reject the git-failure diagnosis.
+  grep -q "staging file creation failed (mktemp)" "$work/brokenmktemp.out" \
+    || note "broken-mktemp failure does not name the mktemp/staging cause"
+  grep -q "'git ls-files' failed" "$work/brokenmktemp.out" \
+    && note "broken-mktemp failure misattributes the cause to git ls-files"
 fi
 
 # --- layer 2e: the harness namespace is not the over-broad namespace --------
@@ -216,11 +223,33 @@ fi
 grep -q "outside every committed glob and still carries" "$work/probeglob.out" \
   || note "harness-namespace fixture did not exercise the exclude-free carry case"
 
+# A structurally universal exclusion must FAIL in TRACKED mode too — with
+# one committed, no path today or ever can carry, so the tracked-mode
+# "future files still carry" note would understate a dead config. Run inside
+# a real repository with a tracked carry-class file and a '*' exclusion.
+mkdir -p "$work/trackeduniv/repo"
+(cd "$work/trackeduniv/repo" && git init -q . \
+  && printf '# probe\n' > README.md \
+  && git add README.md \
+  && git -c user.email=t@t -c user.name=t commit -qm probe)
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/trackeduniv/repo/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"\n' \
+  >>"$work/trackeduniv/repo/vstack.settings.toml"
+if (cd "$work/trackeduniv/repo" && "$SELFTEST") >"$work/trackeduniv.out" 2>&1; then
+  note "selftest passed with a '*' exclusion in TRACKED mode — structural universality is only enforced hermetically"
+else
+  grep -q "can never apply" "$work/trackeduniv.out" \
+    || note "the tracked-mode '*' failure does not carry the can-never-apply diagnostic"
+fi
+
 # --- layer 2f: probe exhaustion without a structurally universal glob ------
 # A glob set spanning BOTH harness namespaces exhausts every synthetic
 # candidate while ordinary paths still carry — that is UNPROVEN universality,
 # not an over-broad failure. The run must PASS and say so out loud; only a
-# literal '*'/'**' entry may fail as "can never apply" (layer below).
+# structurally universal all-wildcard entry (only '*'/'?' characters, at
+# least one '*', at most one '?' — '*', '***', '?*', '*?') may fail as
+# "can never apply" (layer below).
 mkdir -p "$work/bothns"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
   >"$work/bothns/vstack.settings.toml"

@@ -2079,26 +2079,24 @@ EOF_EXCLUDE_BATTERY
       reviews_set "$(review "$(trusted_reviewer)" APPROVED "2026-01-01T00:00:00Z" "$OTHER")"
       compare_fix ahead "[$(delta_file "$probe_free" modified "$(probe_patch_for "$probe_free")")]"
       run "configured: carry-exclude — '$probe_free' is outside every committed glob and still carries" approved
-    elif [ -z "$EXCLUDE_TRACKED" ]; then
-      # Hermetic mode with every synthetic candidate matched. Finite probes
-      # cannot PROVE universality — a glob set that merely spans both
-      # harness namespaces exhausts the candidates while ordinary paths
-      # still carry — so only a STRUCTURALLY universal entry is a FAIL
-      # here; anything else is reported unproven, out loud, never silently
-      # green. Structurally universal under the predicate's bash-case
-      # matcher: an entry built ONLY of '*'/'?' wildcards, with at least
-      # one '*' and AT MOST one '?' — '*', '***', '?*', '*?' match every
-      # non-empty path by construction, while two or more '?'s impose a
-      # minimum length that one-character paths escape, and '?'-only
-      # entries pin an exact length; neither is universal.
+    else
+      # No carry-free probe in EITHER mode. A STRUCTURALLY universal entry
+      # is a FAIL regardless of mode — with one committed, no path today
+      # or ever can carry, so "future files still carry" is false and the
+      # tracked-mode note below would understate a dead config.
+      # Structurally universal under the predicate's bash-case matcher: an
+      # entry built ONLY of '*'/'?' wildcards, with at least one '*' and
+      # AT MOST one '?' — '*', '***', '?*', '*?' match every non-empty
+      # path by construction, while two or more '?'s impose a minimum
+      # length that one-character paths escape, and '?'-only entries pin
+      # an exact length; neither is universal.
       #
       # PER-ENTRY only, deliberately: a SET of globs can be jointly
       # universal ('?;??*' by length split, 'a*;[!a]*' by first-character
       # partition), and detecting that in general is glob-coverage
-      # analysis with no bounded implementation. Such sets take the
-      # UNPROVEN note below — loud and fail-safe, never a silent green —
-      # and tracked mode (every run inside a real repository) judges the
-      # same set against real paths with no heuristic at all.
+      # analysis with no bounded implementation. Such sets take the notes
+      # below — loud and fail-safe, never a silent green — and tracked
+      # mode judges them against real paths with no heuristic at all.
       probe_universal=""
       while IFS= read -r probe_pat_u; do
         [ -z "$probe_pat_u" ] && continue
@@ -2118,15 +2116,19 @@ EOF_UNIVERSAL
         cases=$((cases + 1))
         echo "FAIL  configured: carry-exclude — '$probe_universal' matches every path; the enabled carry class can never apply (over-broad exclusion set, or disable REVIEW_GATE_CARRY_FORWARD instead)" >&2
         failures=$((failures + 1))
-      else
+      elif [ -z "$EXCLUDE_TRACKED" ]; then
+        # Hermetic mode: finite synthetic probes cannot PROVE universality
+        # — a glob set that merely spans both harness namespaces exhausts
+        # the candidates while ordinary paths still carry.
         echo "note  configured: carry-exclude — every synthetic carry-class ($probe_exts) probe is excluded but no committed glob is structurally universal: universality is UNPROVEN by synthetic probes (run inside the repository for tracked-path evidence); positive carry case not exercised here"
+      else
+        # Tracked mode: the CURRENT tree has no carry-free carry-class
+        # file, but future files outside the globs can still carry (a repo
+        # whose only Markdown is an intentionally excluded README is
+        # legitimate). Loud note, not a FAIL — the current tree cannot
+        # prove universality.
+        echo "note  configured: carry-exclude — no TRACKED carry-class ($probe_exts) file escapes the committed exclusions today; the positive carry case is unproven against this tree (future non-excluded files still carry)"
       fi
-    else
-      # Tracked mode: the CURRENT tree has no carry-free carry-class file,
-      # but future files outside the globs can still carry (a repo whose
-      # only Markdown is an intentionally excluded README is legitimate).
-      # Loud note, not a FAIL — the current tree cannot prove universality.
-      echo "note  configured: carry-exclude — no TRACKED carry-class ($probe_exts) file escapes the committed exclusions today; the positive carry case is unproven against this tree (future non-excluded files still carry)"
     fi
   fi
 fi
