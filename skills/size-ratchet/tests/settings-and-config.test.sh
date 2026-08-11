@@ -171,6 +171,10 @@ case "$OUT" in *"threshold 19"*) ok "single-quoted .env value with inline commen
 printf "SIZE_RATCHET_THRESHOLD='29' # don't raise\n" > "$R/.env"
 run_raw || true
 case "$OUT" in *"threshold 29"*) ok "apostrophe in the trailing comment never leaks into a single-quoted value" ;; *) bad "comment-apostrophe dotenv (.env)" "rc=$RC out=$OUT" ;; esac
+printf 'SIZE_RATCHET_THRESHOLD="17".5\n' > "$R/.env"
+run_raw || true
+if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent segment after a quoted value fails loud, never truncates"; else bad "adjacent-segment dotenv (.env)" "rc=$RC out=$OUT"; fi
+rm -f "$R/.env"
 
 echo "=== option-like configured paths ==="
 new_repo optpath

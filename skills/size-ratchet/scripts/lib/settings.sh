@@ -32,6 +32,41 @@
 # The caller cds to the repo root before resolving, so the default settings
 # path is relative.
 
+# Extract the value of one parsed dotenv assignment (text after `KEY=`).
+# Quoted values end at the FIRST closing delimiter — dotenv/shell
+# semantics; an embedded delimiter would need escaping, which this parser
+# does not support — so a quote inside a trailing comment can never leak
+# into the value: KEY="500" # say "ratchet" assigns 500. Anything else
+# after the closing quote (an adjacent segment like KEY="tools/base".tsv)
+# is a shape this parser cannot read and fails NONZERO — truncating it
+# would silently load the wrong value. Unquoted values end at the first
+# whitespace: KEY=500 # ratchet assigns 500.
+sr_dotenv_value() { # RAW — value on stdout; nonzero on an unsupported shape
+  local val="$1" rest
+  case "$val" in
+    \"*\"*)
+      val="${val#\"}"
+      rest="${val#*\"}"
+      val="${val%%\"*}"
+      ;;
+    \'*\'*)
+      val="${val#\'}"
+      rest="${val#*\'}"
+      val="${val%%\'*}"
+      ;;
+    *)
+      printf '%s' "${val%%[[:space:]]*}"
+      return 0
+      ;;
+  esac
+  # Only whitespace and/or a #comment may follow the closing quote.
+  rest="${rest#"${rest%%[![:space:]]*}"}"
+  case "$rest" in
+    "" | "#"*) printf '%s' "$val"; return 0 ;;
+  esac
+  return 1
+}
+
 sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
                # a present-but-unparseable assignment (callers must propagate)
   local name="$1" default="$2" line val file
@@ -56,28 +91,10 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   if [ -f ".env.local" ]; then
     line="$(grep -E -- "^[[:space:]]*(export[[:space:]]+)?${name}=" .env.local | tail -n 1 || true)"
     if [ -n "$line" ]; then
-      val="${line#*=}"
-      case "$val" in
-        \"*\"*)
-          # Quoted value, possibly followed by an inline comment:
-          # KEY="500" # ratchet. The value ends at the FIRST closing
-          # quote (dotenv/shell semantics — an embedded delimiter would
-          # need escaping, which this parser does not support), so a
-          # quote inside the trailing comment can never leak into the
-          # value: KEY="500" # say "ratchet" assigns 500.
-          val="${val#\"}"
-          val="${val%%\"*}"
-          ;;
-        \'*\'*)
-          val="${val#\'}"
-          val="${val%%\'*}"
-          ;;
-        *)
-          # Unquoted shell assignment: the value ends at the first
-          # whitespace — `KEY=500 # ratchet` assigns 500, comment dropped.
-          val="${val%%[[:space:]]*}"
-          ;;
-      esac
+      if ! val="$(sr_dotenv_value "${line#*=}")"; then
+        echo "::error::.env.local: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
+        return 1
+      fi
       printf '%s' "$val"
       return 0
     fi
@@ -127,28 +144,10 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   if [ -f ".env" ]; then
     line="$(grep -E -- "^[[:space:]]*(export[[:space:]]+)?${name}=" .env | tail -n 1 || true)"
     if [ -n "$line" ]; then
-      val="${line#*=}"
-      case "$val" in
-        \"*\"*)
-          # Quoted value, possibly followed by an inline comment:
-          # KEY="500" # ratchet. The value ends at the FIRST closing
-          # quote (dotenv/shell semantics — an embedded delimiter would
-          # need escaping, which this parser does not support), so a
-          # quote inside the trailing comment can never leak into the
-          # value: KEY="500" # say "ratchet" assigns 500.
-          val="${val#\"}"
-          val="${val%%\"*}"
-          ;;
-        \'*\'*)
-          val="${val#\'}"
-          val="${val%%\'*}"
-          ;;
-        *)
-          # Unquoted shell assignment: the value ends at the first
-          # whitespace — `KEY=500 # ratchet` assigns 500, comment dropped.
-          val="${val%%[[:space:]]*}"
-          ;;
-      esac
+      if ! val="$(sr_dotenv_value "${line#*=}")"; then
+        echo "::error::.env: unsupported syntax for $name (a quoted value must end at its closing quote, optionally followed by a comment)" >&2
+        return 1
+      fi
       printf '%s' "$val"
       return 0
     fi
