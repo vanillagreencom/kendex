@@ -40,11 +40,19 @@ artifact):
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement|fix \
   --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] \
   --validate [pass|"FAILING: c1,c2"] [--validate-note TEXT] [--qa-label LABEL]... \
-  [--bundled] [--no-summary] [--summary-file PATH] [--item N DECISION REASONING]...
+  [--bundled] [--no-summary] [--summary TEXT | --summary-file PATH] [--item N DECISION REASONING]...
 ```
 
 For a **read-only analysis round** (investigate + recommend, explicitly no
 implementation — see § Analysis rounds below):
+
+```bash
+.agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind analysis \
+  --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --branch [BRANCH] \
+  --summary [RECOMMENDATION_TEXT] [--qa-label LABEL]... [--no-summary]
+```
+
+or, when the recommendation already lives in a file:
 
 ```bash
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind analysis \
@@ -93,7 +101,7 @@ backticks) so the command stays classifier-safe under Codex `approval=never`.
 | `validate_note` | Optional (implement/fix) | `--validate-note TEXT` | Free-text qualifier the enumeration cannot express, or `null`. **Forbidden for `analysis`** — the key must be absent. See below |
 | `qa_labels` | Optional | `--qa-label` (repeatable) | Applied QA labels; `[]` when none (implement only) |
 | `summary_posted` | Optional | `--no-summary` sets `false` | `true` only when the § 9.1 summary was posted to a tracker (Linear); GitHub/ad-hoc rounds set `false` |
-| `summary` | Optional (required for `analysis`) | `--summary-file PATH` | The completion-summary CONTENT, or `null`. Carries the summary for GitHub/ad-hoc rounds (returned to the orchestrator, not posted) so a lost return is recoverable. For `analysis` it carries the recommendation/evidence — the round's deliverable — and must be non-empty |
+| `summary` | Optional (required for `analysis`) | `--summary TEXT` or `--summary-file PATH` (mutually exclusive) | The completion-summary CONTENT, or `null`. Carries the summary for GitHub/ad-hoc rounds (returned to the orchestrator, not posted) so a lost return is recoverable. For `analysis` it carries the recommendation/evidence — the round's deliverable — and must be non-empty |
 | `bundled` | Optional | `--bundled` sets `true` | `true` for a bundled implement, else `false` |
 | `items` | Conditional | `--item N DECISION REASONING` (repeatable) | See kind rules |
 
@@ -146,9 +154,13 @@ implement. Such a round legitimately produces no commit and runs no
   The written artifact **omits those keys entirely**, and `dev-artifact-check`
   treats their presence on an analysis artifact as `invalid`.
 - `--item` and `--bundled` are rejected — nothing was applied.
-- `--summary-file` is **required**: the recommendation and its evidence are the
-  round's deliverable, and the artifact must carry them durably (across a lost
-  return message or compaction), not just conversationally.
+- Exactly one of `--summary TEXT` (inline) or `--summary-file PATH` is
+  **required**: the recommendation and its evidence are the round's deliverable,
+  and the artifact must carry them durably (across a lost return message or
+  compaction), not just conversationally. The inline form exists because a
+  harness can refuse the file write `--summary-file` depends on (vstack#1236) —
+  a short recommendation does not need a file, and a blocked write must not
+  leave a false `fix` receipt as the only exit.
 - Round-id identity is identical to the other kinds — same filename token, same
   internal `round_id` binding.
 

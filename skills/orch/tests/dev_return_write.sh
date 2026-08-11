@@ -127,6 +127,22 @@ assert_eq "$(jq -r '.bundled' "$out")" "false" "analysis .bundled false"
 assert_eq "$("$CHECK" --worktree "$worktree" --issue issue-952 --round-id 10-10 | jq -r '.reason')" "valid" \
   "analysis round-trips through dev-artifact-check round mode as valid"
 
+# --- vstack#1236: inline --summary — an analysis round must not depend on a
+# file write the harness can refuse. Exactly one of --summary/--summary-file.
+out="$("$WRITE" --worktree "$worktree" --kind analysis --issue issue-1236 --round-id 11-11 \
+  --branch issue-1236 --summary "Recommend: close with reasoning — premise invalidated by merge X." --no-summary)"
+assert_eq "$(jq -r '.summary' "$out")" "Recommend: close with reasoning — premise invalidated by merge X." \
+  "analysis inline --summary embeds the recommendation text"
+assert_eq "$(jq -r 'has("commit")' "$out")" "false" "inline-summary analysis still carries NO commit key"
+assert_eq "$("$CHECK" --worktree "$worktree" --issue issue-1236 --round-id 11-11 | jq -r '.reason')" "valid" \
+  "inline-summary analysis round-trips through dev-artifact-check round mode as valid"
+
+# Inline --summary is a general alternative summary source, not analysis-only.
+out="$("$WRITE" --worktree "$worktree" --kind implement --issue issue-1236i --round-id 12-12 \
+  --branch b --commit c --validate pass --no-summary --summary "inline completion summary")"
+assert_eq "$(jq -r '.summary' "$out")" "inline completion summary" "implement inline --summary embeds the summary text"
+assert_eq "$("$CHECK" --file "$out" | jq -r '.reason')" "valid" "implement inline-summary round-trips as valid"
+
 # --- atomic write: no leftover temp files in tmp/ after a successful write ---
 tmp_leftovers="$(find "$worktree/tmp" -maxdepth 1 -name '.dev-return-*' | wc -l | tr -d ' ')"
 assert_eq "$tmp_leftovers" "0" "atomic write leaves no temp files behind"
@@ -183,8 +199,21 @@ assert_exit2 "analysis with --item exits 2" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --item 1 Applied "x"
 assert_exit2 "analysis with --bundled exits 2" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --bundled
-assert_exit2 "analysis without --summary-file exits 2 (the recommendation is the deliverable)" \
+assert_exit2 "analysis without --summary or --summary-file exits 2 (the recommendation is the deliverable)" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b
+
+# vstack#1236: one summary source only — both flags at once must be a loud
+# error (a silent precedence rule would quietly misrecord the deliverable).
+assert_exit2 "analysis with both --summary and --summary-file exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b \
+  --summary "inline" --summary-file "$worktree/analysis.md"
+assert_exit2 "implement with both --summary and --summary-file exits 2" \
+  --worktree "$worktree" --kind implement --issue i --round-id "$RID" --branch b --commit c --validate pass \
+  --summary "inline" --summary-file "$worktree/summary.md"
+assert_exit2 "whitespace-only --summary exits 2 (an empty deliverable is not a record)" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary "   "
+assert_exit2 "--summary with no value exits 2" \
+  --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary
 assert_exit2 "analysis with empty --commit value still exits 2 (presence, not content)" \
   --worktree "$worktree" --kind analysis --issue i --round-id "$RID" --branch b --summary-file "$worktree/analysis.md" --commit ""
 

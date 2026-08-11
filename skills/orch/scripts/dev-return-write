@@ -20,10 +20,11 @@
 # Usage:
 #   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
 #     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-#     [--qa-label LABEL]... [--bundled] [--no-summary] [--summary-file PATH] \
-#     [--item N DECISION REASONING]...
+#     [--qa-label LABEL]... [--bundled] [--no-summary] \
+#     [--summary TEXT | --summary-file PATH] [--item N DECISION REASONING]...
 #   dev-return-write --worktree PATH --kind analysis --issue ID --round-id RID \
-#     --branch BRANCH --summary-file PATH [--qa-label LABEL]... [--no-summary]
+#     --branch BRANCH (--summary TEXT | --summary-file PATH) \
+#     [--qa-label LABEL]... [--no-summary]
 #
 # --validate stays strictly enumerated ("pass" or "FAILING:…") so it remains
 # machine-checkable. --validate-note is the additive channel for a QUALIFIED
@@ -37,8 +38,12 @@
 # --validate, and --validate-note (an analysis round produces no commit and runs
 # no validation, so supplying one would assert an outcome that did not occur),
 # and it rejects --item/--bundled (nothing was applied). The recommendation and
-# evidence travel in the existing free-form summary field: --summary-file is
-# REQUIRED, so the round's outcome is durably recorded, not just conversational.
+# evidence travel in the existing free-form summary field: exactly one of
+# --summary TEXT (inline) or --summary-file PATH is REQUIRED, so the round's
+# outcome is durably recorded, not just conversational. The inline form exists
+# because a harness can refuse the file write --summary-file depends on
+# (vstack#1236) — without it, a blocked write leaves no honest route to close
+# an analysis round, and the tempting workaround is a false fix receipt.
 # The artifact OMITS the commit/validate/validate_note keys entirely;
 # dev-artifact-check treats their presence on an analysis artifact as invalid.
 #
@@ -56,7 +61,7 @@
 #     "validate_note": "…" | null,            // --validate-note; OMITTED for analysis
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given
 #     "summary_posted": true,                 // false with --no-summary
-#     "summary": "…" | null,                  // --summary-file content (required content for analysis)
+#     "summary": "…" | null,                  // --summary text or --summary-file content (required content for analysis)
 #     "bundled": false,                       // true with --bundled
 #     "items": [{"n": 1, "decision": "Applied", "reasoning": "…"}]
 #   }
@@ -65,8 +70,11 @@
 #   --kind fix OR --bundled  → REQUIRES >=1 --item (a fix/bundled artifact with no
 #                              items is incomplete).
 #   --kind implement (single, no --bundled) → zero items allowed → writes "items": [].
-#   --kind analysis → REQUIRES --summary-file; REJECTS --commit/--validate/
-#                     --validate-note/--item/--bundled; writes "items": [].
+#   --kind analysis → REQUIRES exactly one of --summary / --summary-file;
+#                     REJECTS --commit/--validate/--validate-note/--item/
+#                     --bundled; writes "items": [].
+#   --summary and --summary-file are mutually exclusive for every kind (one
+#   summary source, no silent precedence).
 #   DECISION ∈ {Applied, Skipped, Blocked}; N is a non-negative integer; REASONING
 #   must be non-empty.
 #
@@ -91,20 +99,25 @@ usage() {
 Usage:
   dev-return-write --worktree PATH --kind implement|fix --issue ID --round-id RID \
     --branch BRANCH --commit SHA --validate STR [--validate-note TEXT] \
-    [--qa-label LABEL]... [--bundled] [--no-summary] [--summary-file PATH] \
-    [--item N DECISION REASONING]...
+    [--qa-label LABEL]... [--bundled] [--no-summary] \
+    [--summary TEXT | --summary-file PATH] [--item N DECISION REASONING]...
   dev-return-write --worktree PATH --kind analysis --issue ID --round-id RID \
-    --branch BRANCH --summary-file PATH [--qa-label LABEL]... [--no-summary]
+    --branch BRANCH (--summary TEXT | --summary-file PATH) \
+    [--qa-label LABEL]... [--no-summary]
 
 Writes PATH/tmp/dev-return-ID-RID.json (atomically) and prints its absolute path.
 --kind fix OR --bundled requires >=1 --item; DECISION is Applied|Skipped|Blocked;
 REASONING must be non-empty. --validate is "pass" or begins with "FAILING:".
 --validate-note carries a qualified result the enumeration cannot express (a lane
 that passed only on re-run, a flake worth recording); it never relaxes --validate.
+--summary TEXT embeds the summary inline; --summary-file PATH embeds a file's
+content. They are mutually exclusive (one summary source, no silent precedence).
 --kind analysis is a read-only round (investigate + recommend, no implementation):
-it requires --summary-file (the recommendation/evidence) and rejects --commit,
---validate, --validate-note, --item, and --bundled — an analysis round has no
-commit and runs no validation, so those keys are omitted from the artifact.
+it requires exactly one of --summary / --summary-file (the recommendation/
+evidence — inline exists so a harness-refused file write is not a dead end,
+vstack#1236) and rejects --commit, --validate, --validate-note, --item, and
+--bundled — an analysis round has no commit and runs no validation, so those
+keys are omitted from the artifact.
 --issue / --round-id must match ^[A-Za-z0-9._-]+$. Canonical schema:
 skills/orch/schemas/dev-return.md. Validated by dev-artifact-check.
 EOF
@@ -133,6 +146,8 @@ commit=""
 validate=""
 validate_note=""
 summary_file=""
+summary_text=""
+summary_given=false
 bundled=false
 summary_posted=true
 qa_labels=()
@@ -155,6 +170,7 @@ while (( $# > 0 )); do
     --commit)       need "$1" $#; commit="$2"; commit_given=true; shift 2 ;;
     --validate)     need "$1" $#; validate="$2"; validate_given=true; shift 2 ;;
     --validate-note) need "$1" $#; validate_note="$2"; validate_note_given=true; shift 2 ;;
+    --summary)      need "$1" $#; summary_text="$2"; summary_given=true; shift 2 ;;
     --summary-file) need "$1" $#; summary_file="$2"; shift 2 ;;
     --qa-label)     need "$1" $#; qa_labels+=("$2"); shift 2 ;;
     --bundled)      bundled=true; shift ;;
@@ -211,9 +227,11 @@ if [[ "$kind" == "analysis" ]]; then
   (( ${#item_n[@]} == 0 )) \
     || die "--item is not allowed with --kind analysis: an analysis round applies no review items"
   # The recommendation/evidence IS the round's deliverable — without it the
-  # artifact proves only that the round ended, not what it concluded.
-  [[ -n "$summary_file" ]] \
-    || die "--summary-file is required with --kind analysis: the artifact must carry the recommendation/evidence"
+  # artifact proves only that the round ended, not what it concluded. Inline
+  # --summary is a first-class source: a harness may refuse the file write
+  # --summary-file depends on (vstack#1236).
+  [[ "$summary_given" == "true" || -n "$summary_file" ]] \
+    || die "--kind analysis requires --summary TEXT or --summary-file PATH: the artifact must carry the recommendation/evidence"
 else
   [[ -n "$commit" ]]   || die "--commit is required (non-empty)"
   [[ -n "$validate" ]] || die "--validate is required (non-empty)"
@@ -225,6 +243,18 @@ else
     [[ -n "${validate_note//[[:space:]]/}" ]] \
       || die "--validate-note must contain non-whitespace text"
   fi
+fi
+# One summary source only — accepting both would need a precedence rule, and a
+# silently ignored flag is exactly the class of quiet misrecording this writer
+# exists to prevent.
+if [[ "$summary_given" == "true" && -n "$summary_file" ]]; then
+  die "--summary and --summary-file are mutually exclusive: provide one summary source"
+fi
+if [[ "$summary_given" == "true" ]]; then
+  # An empty or whitespace-only summary looks like a recorded deliverable while
+  # carrying nothing — refuse it, matching the --validate-note rule.
+  [[ -n "${summary_text//[[:space:]]/}" ]] \
+    || die "--summary must contain non-whitespace text"
 fi
 if [[ -n "$summary_file" ]]; then
   [[ -f "$summary_file" ]] || die "--summary-file path '$summary_file' does not exist"
@@ -269,11 +299,14 @@ out="$out_dir/dev-return-$issue-$round_id.json"
 tmp="$(mktemp "$out_dir/.dev-return-$issue.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 
-# --summary-file content (or null) rides along for GitHub/ad-hoc recovery, where
-# the completion summary is returned to the orchestrator rather than posted to a
-# tracker; summary_posted stays honest (true only for the Linear-posted case).
+# Summary content (inline --summary, --summary-file content, or null) rides
+# along for GitHub/ad-hoc recovery, where the completion summary is returned to
+# the orchestrator rather than posted to a tracker; summary_posted stays honest
+# (true only for the Linear-posted case).
 if [[ -n "$summary_file" ]]; then
   summary_arg=(--rawfile summary "$summary_file")
+elif [[ "$summary_given" == "true" ]]; then
+  summary_arg=(--arg summary "$summary_text")
 else
   summary_arg=(--argjson summary null)
 fi
