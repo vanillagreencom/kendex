@@ -36,6 +36,23 @@ predicate="$here/review-predicate.sh"
 [ -x "$predicate" ] || { echo "not executable: $predicate" >&2; exit 1; }
 . "$here/lib/settings.sh"
 
+# A SET settings override that exists only as an unresolvable symlink
+# (cycle, dangling target, over-long chain) must refuse UP FRONT: -f is
+# false for it, so rg_setting would silently resolve every key to its
+# built-in default and this run would green-light the wrong settings —
+# the configured layer below would never even load the exclusions it was
+# pointed at. A plain absent file (not a link) keeps the documented
+# fall-back-to-defaults behavior.
+case "${REVIEW_GATE_SETTINGS_FILE:-}" in
+  '' | /dev/null) : ;;
+  *)
+    if [ ! -f "$REVIEW_GATE_SETTINGS_FILE" ] && [ -L "$REVIEW_GATE_SETTINGS_FILE" ]; then
+      echo "FATAL: REVIEW_GATE_SETTINGS_FILE ('$REVIEW_GATE_SETTINGS_FILE') names a symlink that does not resolve to a readable file (cycle, dangling target, or over-long chain) — refusing to test built-in defaults in its place" >&2
+      exit 1
+    fi
+    ;;
+esac
+
 # ------------------------------------------------------------ active config ---
 # Resolved exactly as the predicate resolves it, from the invoking repo's
 # environment/settings. The configured layer generates its cases from these.
@@ -1934,7 +1951,7 @@ load_exclude_tracked() {
         # missing file is equally unusable — never a quiet fall-through to
         # the invoking-cwd anchor.
         if [ -z "$EXCLUDE_TRACKED_ERROR" ] && [ ! -f "$_elt_settings" ]; then
-          EXCLUDE_TRACKED_ERROR="the symlinked settings override resolves to a missing target ('$_elt_settings') — the evidence anchor is unusable"
+          EXCLUDE_TRACKED_ERROR="the symlinked settings override does not resolve to a regular file ('$_elt_settings') — the evidence anchor is unusable"
         fi
         [ -n "$EXCLUDE_TRACKED_ERROR" ] && return 0
         # Containing directory via parameter expansion, not dirname: BSD
@@ -1962,14 +1979,26 @@ load_exclude_tracked() {
   # is an unusable evidence base, not a non-repository. Every other
   # failure (or a "false" verdict — a git dir with no work tree) is
   # equally unusable.
-  _elt_probe_out="$(LC_ALL=C git -C "$_elt_anchor" rev-parse --is-inside-work-tree 2>&1)"
+  # The VERDICT is stdout-only: a healthy repo whose git also prints a
+  # warning on stderr (dubious-ownership, safe.directory) must not read
+  # as failed. Diagnostics are re-sampled on the failure path only.
+  _elt_probe_out="$(LC_ALL=C git -C "$_elt_anchor" rev-parse --is-inside-work-tree 2>/dev/null)"
   _elt_probe_rc=$?
   if [ "$_elt_probe_rc" -ne 0 ] || [ "$_elt_probe_out" != "true" ]; then
-    case "$_elt_probe_out" in
+    _elt_probe_err="$(LC_ALL=C git -C "$_elt_anchor" rev-parse --is-inside-work-tree 2>&1 >/dev/null)"
+    case "$_elt_probe_err" in
       *"not a git repository"*)
-        _elt_walk="$(cd "$_elt_anchor" 2>/dev/null && pwd)" || _elt_walk=""
+        # CDPATH= and -- : a diverted or dash-leading anchor must not walk
+        # somebody else's ancestry. A dangling .git SYMLINK is still a
+        # marker (-e follows and misses it; -L does not). An anchor that
+        # cannot even be entered is unverifiable, and unverifiable never
+        # earns hermetic mode.
+        _elt_walk="$(CDPATH= cd -- "$_elt_anchor" 2>/dev/null && pwd)" || _elt_walk=""
+        if [ -z "$_elt_walk" ]; then
+          EXCLUDE_TRACKED_ERROR="repository probe says 'not a git repository' and the anchor ('$_elt_anchor') cannot be entered to verify — refusing hermetic mode on an unverifiable anchor"
+        fi
         while [ -n "$_elt_walk" ]; do
-          if [ -e "$_elt_walk/.git" ]; then
+          if [ -e "$_elt_walk/.git" ] || [ -L "$_elt_walk/.git" ]; then
             EXCLUDE_TRACKED_ERROR="repository probe says 'not a git repository' but a .git marker exists at '$_elt_walk' — a broken checkout is not a non-repository"
             break
           fi
@@ -1978,7 +2007,7 @@ load_exclude_tracked() {
           [ -n "$_elt_walk" ] || _elt_walk="/"
         done
         ;;
-      *) EXCLUDE_TRACKED_ERROR="repository probe failed (git rev-parse --is-inside-work-tree exit $_elt_probe_rc: ${_elt_probe_out:-no output}) — cannot tell a non-repository from a broken git" ;;
+      *) EXCLUDE_TRACKED_ERROR="repository probe failed (git rev-parse --is-inside-work-tree exit $_elt_probe_rc: ${_elt_probe_err:-no output}) — cannot tell a non-repository from a broken git" ;;
     esac
     return 0
   fi
@@ -2275,9 +2304,11 @@ EOF_EXCLUDE_BATTERY
     # since been committed, would sit silently false — a waiver that
     # outlives its subject masks nothing and trains operators to trust a
     # lying ledger.
-    if [ "$EXCLUDE_TRACKED_MODE" = "tracked" ] && [ -n "$ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC" ]; then
+    if [ -n "$ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC" ]; then
       while IFS= read -r proph_pat; do
         [ -z "$proph_pat" ] && continue
+        # Membership needs no tracked evidence — an orphaned waiver is
+        # stale config in hermetic runs too.
         proph_member=""
         while IFS= read -r proph_x; do
           [ "$proph_x" = "$proph_pat" ] && proph_member=1
@@ -2290,6 +2321,9 @@ EOF_PROPH_MEMBER
           failures=$((failures + 1))
           continue
         fi
+        # Falsification (the glob gained a tracked match) needs the
+        # tracked tree; hermetic runs cannot judge it.
+        [ "$EXCLUDE_TRACKED_MODE" = "tracked" ] || continue
         # shellcheck disable=SC2086 # probe_exts is a controlled word list
         proph_match="$(exclude_glob_probe "$proph_pat" $probe_exts)"
         proph_rc=$?

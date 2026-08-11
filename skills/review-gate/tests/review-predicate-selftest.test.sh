@@ -406,18 +406,27 @@ else
 fi
 
 # A CYCLIC symlink override fails -f (which dereferences the whole chain)
-# while very much existing — it must enter resolution via the -L arm and
-# refuse on the hop budget, never quietly fall back to the invoking-cwd
-# anchor as "file absent".
+# while very much existing — and because rg_setting also gates on -f, an
+# unguarded run would silently resolve EVERY key to built-in defaults and
+# test the wrong settings. The startup guard must refuse before any layer
+# runs; same contract for a dangling link.
 mkdir -p "$work/cyclic"
 ln -s cycle-b.settings.toml "$work/cyclic/cycle-a.settings.toml"
 ln -s cycle-a.settings.toml "$work/cyclic/cycle-b.settings.toml"
+ln -s does-not-exist.toml "$work/cyclic/dangling.settings.toml"
 if (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/cyclic/cycle-a.settings.toml" "$SELFTEST") \
   >"$work/cyclic.out" 2>&1; then
-  note "selftest passed with a CYCLIC symlinked override — the unfinishable walk no longer refuses"
+  note "selftest passed with a CYCLIC symlinked override — the unresolvable-override guard no longer refuses"
 else
-  grep -q "could not resolve the symlinked settings override" "$work/cyclic.out" \
-    || note "cyclic-override failure does not carry the unresolvable-chain diagnostic"
+  grep -q "names a symlink that does not resolve to a readable file" "$work/cyclic.out" \
+    || note "cyclic-override failure does not carry the unresolvable-override diagnostic"
+fi
+if (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/cyclic/dangling.settings.toml" "$SELFTEST") \
+  >"$work/dangling.out" 2>&1; then
+  note "selftest passed with a DANGLING symlinked override — the unresolvable-override guard no longer refuses"
+else
+  grep -q "names a symlink that does not resolve to a readable file" "$work/dangling.out" \
+    || note "dangling-override failure does not carry the unresolvable-override diagnostic"
 fi
 
 # A BROKEN WORKTREE (a .git file naming a missing gitdir) earns git's
