@@ -761,6 +761,19 @@ jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:fals
   >"$fixtures/graphql.cursor-C20.json"
 run "exactly 20 advancing resolved pages approve (bound is >20)" approved
 
+# The shim's cursor-namespace refusal, red-first: a page-1 endCursor outside
+# [A-Za-z0-9_-] must abort the walk as a loud read failure (the shim exits
+# 92, the gh read fails, the predicate exits 2). With the refusal deleted,
+# the slash cursor keys no fixture, the shim silently falls back to page 1,
+# and the non-advancing guard answers threads-open instead — so this case
+# distinguishes the guard's presence, not just "something failed".
+reset
+CFG_CONTEXTS="mech-ctx"; CFG_THREADS="enforce"
+status_ctx "mech-ctx" success "analysis complete"
+jq -n '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:true,endCursor:"bad/value"},nodes:[{isResolved:true}]}}}}}' \
+  >"$fixtures/graphql.json"
+run "cursor outside the fixture-key namespace is a loud read failure" "" 2
+
 # Zero bytes from the thread read is a BROKEN READ (VST-46 family), never an
 # authoritative verdict in either direction — pr-watch parity.
 reset
