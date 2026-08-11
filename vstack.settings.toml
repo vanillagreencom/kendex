@@ -100,3 +100,7 @@ REVIEW_GATE_CARRY_FORWARD = "docs"
 # prose (README, CHANGELOG, docs/) and nothing mechanically consumed ever
 # rides an ancestor's evidence.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;agents/*;skills/*;pi-extensions/*;.pi/*;skill-templates/*"
+# No tracked CLAUDE.md exists in this repo — the glob guards generated
+# consumer-side copies and any future one here. Declared so the selftest's
+# dead-glob gate (undeclared no-match globs FAIL) knows it is deliberate.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "*CLAUDE.md"

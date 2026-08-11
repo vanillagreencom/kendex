@@ -152,10 +152,14 @@ mkdir -p "$work/brokengit/bin" "$work/brokengit/repo"
 real_git="$(command -v git)"
 cat >"$work/brokengit/bin/git" <<BROKENGIT
 #!/usr/bin/env bash
-if [ "\${1:-}" = "ls-files" ]; then
-  echo "fatal: planted index failure" >&2
-  exit 128
-fi
+# The subcommand may ride behind global options (git -C <root> ls-files),
+# so scan every argument rather than pinning position 1.
+for _a in "\$@"; do
+  if [ "\$_a" = "ls-files" ]; then
+    echo "fatal: planted index failure" >&2
+    exit 128
+  fi
+done
 exec "$real_git" "\$@"
 BROKENGIT
 chmod +x "$work/brokengit/bin/git"
@@ -231,6 +235,56 @@ if ! (cd "$work/probeglob" && "$SELFTEST") >"$work/probeglob.out" 2>&1; then
 fi
 grep -q "outside every committed glob and still carries" "$work/probeglob.out" \
   || note "harness-namespace fixture did not exercise the exclude-free carry case"
+
+# --- layer 2g: tracked evidence is ROOT-relative and dead globs fail -------
+# One fixture repo, three runs. (a) From a SUBDIRECTORY the battery must
+# still probe the full tracked tree — the pre-fix subtree-scoped ls-files
+# quietly downgraded every glob to its no-match note. (b) An exclusion glob
+# matching no tracked path is dead config and must FAIL undeclared. (c) The
+# same glob declared prophylactic notes and passes.
+mkdir -p "$work/rooted/repo/guides" "$work/rooted/repo/sub"
+(cd "$work/rooted/repo" && git init -q . \
+  && printf '# intro\n' > guides/intro.md \
+  && printf '# readme\n' > README.md \
+  && git add guides/intro.md README.md \
+  && git -c user.email=t@t -c user.name=t commit -qm probe)
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >"$work/rooted/repo/vstack.settings.toml"
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\n' \
+  >>"$work/rooted/repo/vstack.settings.toml"
+if ! (cd "$work/rooted/repo/sub" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/vstack.settings.toml" "$SELFTEST") \
+  >"$work/rooted.out" 2>&1; then
+  cat "$work/rooted.out"
+  note "selftest failed when run from a repository SUBDIRECTORY"
+fi
+grep -q "evidence mode: tracked" "$work/rooted.out" \
+  || note "subdirectory run did not report tracked evidence mode"
+grep -q "carry-exclude — 'guides/\*' matches 'guides/intro.md', refusing the carry" "$work/rooted.out" \
+  || note "subdirectory run did not probe the full tracked tree (root-relative evidence base regressed)"
+
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\n' \
+  >"$work/rooted/typo.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >>"$work/rooted/typo.toml"
+if (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/typo.toml" "$SELFTEST") \
+  >"$work/rootedtypo.out" 2>&1; then
+  note "selftest passed with a typo'd exclusion glob matching nothing — the dead-glob gate no longer fires"
+else
+  grep -q "matches NO tracked carry-class" "$work/rootedtypo.out" \
+    || note "the typo'd-glob failure does not carry the no-match diagnostic"
+fi
+
+printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "gudies/*"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "gudies/*"\n' \
+  >"$work/rooted/declared.toml"
+grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
+  >>"$work/rooted/declared.toml"
+if ! (cd "$work/rooted/repo" && REVIEW_GATE_SETTINGS_FILE="$work/rooted/declared.toml" "$SELFTEST") \
+  >"$work/rooteddecl.out" 2>&1; then
+  cat "$work/rooteddecl.out"
+  note "selftest failed with a DECLARED prophylactic glob — the declaration is not honored"
+fi
+grep -q "DECLARED prophylactic" "$work/rooteddecl.out" \
+  || note "declared prophylactic glob did not report the declared note"
 
 # A structurally universal exclusion must FAIL in TRACKED mode too — with
 # one committed, no path today or ever can carry, so the tracked-mode
