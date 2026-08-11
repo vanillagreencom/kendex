@@ -19,7 +19,7 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
 - `ISSUE_ID=issue-N`
 - `GITHUB_REPO=OWNER/REPO`
 
-1. **Refuse containers** — Linear only, and BEFORE initialization: the next step claims the session-guard lease and creates workflow state, and containers never hold state. Resolve `[ISSUE_ID]` from the argument (or the worktree branch name when none was given), reconcile the cache (children added since the last sync must not slip a container through a stale read), then check the marker:
+1. **Refuse containers** — Linear only, and BEFORE initialization: the next step claims the session-guard lease and creates workflow state, and containers never hold state. Resolve `[ISSUE_ID]` from the argument (or the worktree branch name when none was given), then resolve the tracker BEFORE any Linear command — when `TRACKER` was not passed in caller context, run `.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]` and use its output. `TRACKER` = `github` → skip this whole step (a GitHub-only project must not abort on Linear auth/sync in a guard that cannot apply to it). For Linear items, reconcile the cache (children added since the last sync must not slip a container through a stale read), then check the marker:
    ```bash
    .agents/skills/linear/scripts/linear.sh sync --reconcile
    .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
