@@ -6,6 +6,20 @@ set -euo pipefail
 worktree="${1:-.}"
 remote_head=""
 
+# Fail closed on an unusable worktree BEFORE any resolution: with the old
+# `|| true` swallow, a nonexistent path fell through to the main fallback
+# with exit 0, handing callers an unverified base (vstack#1225). The
+# WORKTREE_DEFAULT_BRANCH override answers for a worktree too, so the path
+# is validated on that arm as well.
+if [[ ! -d "$worktree" ]]; then
+    echo "resolve-base-branch: worktree path does not exist: $worktree" >&2
+    exit 1
+fi
+if ! git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "resolve-base-branch: not inside a git work tree: $worktree" >&2
+    exit 1
+fi
+
 if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
     base_branch="$WORKTREE_DEFAULT_BRANCH"
 else

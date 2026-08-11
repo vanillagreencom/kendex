@@ -79,8 +79,15 @@ assert_eq "$distinct_count" "4" "four rapid consecutive mints are all distinct"
 default_branch="$(WORKTREE_DEFAULT_BRANCH=trunk "$REPO_ROOT/skills/orch/scripts/resolve-base-branch" "$REPO_ROOT")"
 assert_eq "$default_branch" "trunk" "resolve-base-branch honors WORKTREE_DEFAULT_BRANCH"
 
-fallback_branch="$("$REPO_ROOT/skills/orch/scripts/resolve-base-branch" "$TMP_ROOT/not-a-git-repo")"
-assert_eq "$fallback_branch" "main" "resolve-base-branch falls back to main"
+# vstack#1225: a nonexistent path is no longer laundered into the main
+# fallback — it fails closed. The fallback still serves a VALID repo whose
+# origin/HEAD is unresolvable (covered in tests/resolve-base-branch.sh).
+set +e
+fallback_branch="$("$REPO_ROOT/skills/orch/scripts/resolve-base-branch" "$TMP_ROOT/not-a-git-repo" 2>/dev/null)"
+fallback_code=$?
+set -e
+assert_eq "$fallback_code" "1" "resolve-base-branch fails closed on a nonexistent path"
+assert_eq "$fallback_branch" "" "and prints no base branch for it"
 
 assert_eq "$("$REPO_ROOT/skills/orch/scripts/tracker-for-issue" issue-353)" "github" "tracker-for-issue detects GitHub ids"
 assert_eq "$("$REPO_ROOT/skills/orch/scripts/tracker-for-issue" CC-353)" "linear" "tracker-for-issue detects Linear ids"
