@@ -1993,7 +1993,11 @@ load_exclude_tracked() {
         # marker (-e follows and misses it; -L does not). An anchor that
         # cannot even be entered is unverifiable, and unverifiable never
         # earns hermetic mode.
-        _elt_walk="$(CDPATH= cd -- "$_elt_anchor" 2>/dev/null && pwd)" || _elt_walk=""
+        # -P / pwd -P: the walk must scan the PHYSICAL ancestry git itself
+        # probed — logical cd through a symlinked dir plus `..` can land
+        # somewhere git never looked, granting hermetic mode off an
+        # unrelated marker-free lineage.
+        _elt_walk="$(CDPATH= cd -P -- "$_elt_anchor" 2>/dev/null && pwd -P)" || _elt_walk=""
         if [ -z "$_elt_walk" ]; then
           EXCLUDE_TRACKED_ERROR="repository probe says 'not a git repository' and the anchor ('$_elt_anchor') cannot be entered to verify — refusing hermetic mode on an unverifiable anchor"
         fi
