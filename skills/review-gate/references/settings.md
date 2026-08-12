@@ -71,8 +71,11 @@ Workflows that execute repository-controlled code with a write-capable token
 are the gate's own attack surface: a malicious PR could edit the predicate,
 read the token, or post an `approved` status. The v2 writer closes this by
 construction — the one workflow that writes the gate status runs the
-DEFAULT-branch engine on every leg with credentials-dropped checkouts, and
-reads PR data only through the API, so no PR-controlled code ever executes
-with the write-capable token and no trust-posture knob exists. The
+DEFAULT-branch engine on every leg that runs it, with credentials-dropped
+checkouts, and reads PR data only through the API, so no PR-controlled code
+ever executes with the write-capable token and no trust-posture knob
+exists. The PR-attached legs reach a relay that checks out nothing and
+executes no engine, which does not weaken the conclusion — it removes the
+only code path those legs had. The
 corollary: a PR that repairs a broken engine cannot open its own gate — it
 merges via the ruleset's bypass actor. Wiring: [adoption.md](adoption.md).

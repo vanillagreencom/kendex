@@ -69,14 +69,40 @@
   group. Single-writer serialization, converge-all, and the write-ordering
   guard are unchanged; eviction marks simply land where nothing gates on them.
   The relay derives its own workflow file from `github.workflow_ref`, so a
-  renamed consumer copy needs no new ADAPT, and it holds `actions: write` as
-  its complete job scope — the writer itself still holds no `actions` scope
-  and never re-runs CI. On a fork `pull_request_review` the relay cannot
-  dispatch (read-only token) and stays a green no-op, so fork review evidence
-  converges on the cron floor exactly as before.
+  renamed consumer copy needs no new ADAPT. Its complete scope is
+  `actions: write` (dispatch only — job-level permissions replace the
+  workflow default rather than extend it) — the writer itself still holds no
+  `actions` scope and never re-runs CI. On a
+  fork `pull_request_review` the relay cannot dispatch (read-only token) and
+  stays a green no-op, so fork review evidence converges on the cron floor
+  exactly as before.
+  The relay never reddens a PR to report its own trouble: it holds no
+  `statuses` scope, so a failed dispatch cannot make the gate look converged
+  — only leave it stale, which the cron floor already owns — while a red
+  check would pin the PR at `UNSTABLE`, the very defect being fixed. It
+  retries once honoring `retry-after`/`x-ratelimit-reset` (else GitHub's 60s
+  floor, since a 5-second retry lands inside every secondary-rate-limit
+  window), then warns and exits 0. It carries no escalation of its own: a
+  sustained dispatch outage surfaces as gate staleness, which
+  `pr-watch --heal` already reduces on across every open PR, rather than as
+  N red PRs or a widened relay scope.
+  A second, independent loop breaker lives inside the step: the
+  workflow self-dispatches, nothing throttles a group-less relay, and the
+  job `if:` is a line adoption docs invite consumers to hand-edit.
+  **Residual, stated rather than papered over**: this removes
+  *eviction-driven* cancelled checks, not every cancelled check — a relay
+  hung to its `timeout-minutes` still leaves one. **Cost**: one
+  billed-minimum, non-evictable run per PR-attached event, and one more
+  runner allocation on the event-fast path.
+  The workflow assertions now run against BOTH copies — the shipped template
+  and this repo's self-adoption `.github/workflows/` copy, which is
+  hand-maintained and previously had no guard at all. The relay's step script
+  is extracted from each file and EXECUTED against a `gh` stub, and the two
+  extracted steps are asserted byte-identical, so a template edit that is not
+  mirrored fails loudly instead of silently proving a file CI never runs.
   **Consumer action required**: workflow YAML is repo-owned after adoption, so
   `vstack refresh` does not deliver this — each repo takes it as its own PR
-  (migration steps, permissions delta, and the ruleset caveat:
+  (migration steps, permissions delta, cost note, and the ruleset caveat:
   `skills/review-gate/references/adoption.md` § Updating an already-adopted
   copy).
 

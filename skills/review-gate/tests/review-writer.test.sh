@@ -51,11 +51,15 @@
 #   w30. zero open PRs / ghost author        -> clean pass
 #   wp1-wp3. pagination merges               -> page-two PRs enumerate; a
 #                                               page-two guard entry defers
-# Template pins (tpl:*): grep-pins on review-gate-writer.yml for the
-# workflow-level expressions offline runs cannot execute.
-# Relay step (relay:*): the request-converge step's SCRIPT is extracted from
-#   the template and executed against a gh stub — its behavior is not a
-#   workflow expression, so it is proved rather than pinned (VST-210).
+# Workflow pins (tpl:*): grep-pins on the workflow YAML for expressions
+#   offline runs cannot execute (job if:, permissions, triggers, refs).
+# Relay step (relay:*): the request-converge step's SCRIPT, extracted from the
+#   YAML and EXECUTED against a gh stub — not a pin, the real shell (VST-210).
+# BOTH run against BOTH copies: the shipped template AND this repo's
+#   self-adoption .github/workflows/ copy, which is what actually gates every
+#   vstack PR and is hand-maintained. Template-only assertions would prove the
+#   behavior of a file CI never runs. The second path is skipped when absent so
+#   a consumer install (vendored skill, no such workflow) still passes.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -538,181 +542,329 @@ rc=0; out=$(run_writer STUB_VERDICT_LINE="$AWAITING" STUB_GATE_HISTORY='[]' \
 assert_eq "$rc" "0" "w30b: absent override key exits 0"
 assert_contains "$(cat "$ENV_LOG")" "OUTAGE=<unset>" "w30b: absent key leaves the predicate's own resolution untouched"
 
-echo "=== workflow template pins (review-gate-writer.yml) ==="
+# ------------------------------------------------------------- the copies ---
 
-# Grep-pins on the shipped template (precedent: the retired
-# workflow-eviction-routing suite pinned approval-rerun.yml the same way). Runtime behavior of workflow-level expressions
-# is offline-untestable — the job-level if: evaluates on GitHub — so F4's
-# billing behavior is asserted in Layer 2 (the sandbox observes push/
-# merge-group completions as SKIPPED writer runs); these pins keep the
-# expressions from being silently dropped or reworded.
 TEMPLATE="$SKILL_ROOT/templates/review-gate-writer.yml"
-pin() { # needle, name
-  if grep -qF -- "$1" "$TEMPLATE"; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "$2"
-  else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        missing from template: %s\n' "$2" "$1"
-  fi
-}
-# Every status STATE converges (no state filter of ANY spelling): under
-# newest-row evidence semantics a success→pending/failure transition is a
-# withdrawal and must close the gate event-fast. Two teeth: the write
-# job's if: is pinned as the complete exact line (an equivalent filter
-# cannot hide in a rewrite), and any `github.event.state` reference at
-# all fails (catches quote variants and inverted filters alike). Grep's
-# exit code is branched explicitly — 1 is the passing absence; anything
-# else (2 = read error) fails rather than laundering into a pass.
-# Scoped to the write job's block (it is the template's last job): a
-# template-wide search could be satisfied by a condition on some other job.
-write_block="$(sed -n '/^  write:/,$p' "$TEMPLATE")"
-# The RELAY block: from request-converge up to the write job that follows it.
-relay_block="$(sed -n '/^  request-converge:/,/^  write:/p' "$TEMPLATE")"
-if [ -z "$relay_block" ] || [ -z "$write_block" ]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: could not slice the relay and write job blocks (job renamed or reordered?)"
-fi
-if grep -qF -- "    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'" <<<"$write_block"; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: the write job's if: is exactly the two converge legs (VST-210: no PR-attached leg holds the evictable group)"
+SELF_ADOPTION="$SKILL_ROOT/../../.github/workflows/review-gate-writer.yml"
+
+WORKFLOWS=()
+WORKFLOW_LABELS=()
+if [[ -f "$TEMPLATE" ]]; then
+  WORKFLOWS+=("$TEMPLATE"); WORKFLOW_LABELS+=("template")
 else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: the write job's if: is exactly the two converge legs (VST-210: no PR-attached leg holds the evictable group)"
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "the shipped template is missing at $TEMPLATE"
 fi
-if grep -qF -- "    if: github.event_name != 'merge_group' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'" <<<"$relay_block"; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: the relay's if: is the NEGATIVE list (a newly added PR-attached trigger relays by default, and the dispatch target is excluded so no loop exists)"
+if [[ -f "$SELF_ADOPTION" ]]; then
+  WORKFLOWS+=("$SELF_ADOPTION"); WORKFLOW_LABELS+=("self-adoption copy")
 else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: the relay's if: is the NEGATIVE list (a newly added PR-attached trigger relays by default, and the dispatch target is excluded so no loop exists)"
-fi
-# The whole point of VST-210: the relay is the job PR-attached runs execute,
-# so it must hold NO concurrency group — an evictable relay would put the
-# CANCELLED check straight back into the PR's rollup.
-rc=0; grep -q '^    concurrency:' <<<"$relay_block" || rc=$?
-case "$rc" in
-  1) PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: the relay holds NO concurrency group (it can never be evicted, so it can never leave a cancelled check on a PR)" ;;
-  0) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: the relay grew a concurrency group — PR-attached runs are evictable again (VST-210 regression)" ;;
-  *) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: the relay block could not be read (grep error)" ;;
-esac
-rc=0; grep -qF -- "github.event.state" "$TEMPLATE" || rc=$?
-case "$rc" in
-  1) PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: no status state filter of any spelling" ;;
-  0) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: a status state filter returned — withdrawals would wait for the cron floor" ;;
-  *) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: the template could not be read (grep error)" ;;
-esac
-pin "cancel-in-progress: false" "tpl: pending writer runs are never cancelled mid-write"
-pin "group: review-gate-writer" "tpl: single writer concurrency group"
-pin "github.event.pull_request.head.repo.full_name != github.repository" "tpl: fork pull_request_review read-only flag"
-pin "if: failure() || cancelled()" "tpl: VST-36 escalation covers timeout-cancelled jobs"
-pin "persist-credentials: false" "tpl: checkouts drop credentials"
-# actions:write is SCOPED, not banned (VST-210): the relay needs it to
-# dispatch the converge leg, and nothing else may hold it. Two teeth — the
-# write job must not have it (the writer still never re-runs CI), and the
-# template-wide count must be exactly the relay's one, so it cannot reappear
-# at workflow level or on the merge-group job.
-rc=0; grep -qF -- "actions: write" <<<"$write_block" || rc=$?
-case "$rc" in
-  1) PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: the WRITE job holds no actions:write — the writer never re-runs CI" ;;
-  0) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: the write job requested actions:write (the writer never re-runs CI)" ;;
-  *) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: the write block could not be read (grep error)" ;;
-esac
-actions_write_count="$(grep -cF -- "actions: write" "$TEMPLATE" || true)"
-if [[ "$actions_write_count" == "1" ]] && grep -qF -- "actions: write" <<<"$relay_block"; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: exactly ONE actions:write in the template, and it is the relay's dispatch scope"
-else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        actions:write occurrences: %s (expected exactly 1, on the relay job)\n' "tpl: exactly ONE actions:write in the template, and it is the relay's dispatch scope" "$actions_write_count"
-fi
-# The || 'main' arm keeps an empty default_branch expression from letting
-# actions/checkout fall back to the event's own default ref — the
-# merge-group job would get the queue's synthetic ref, the write job's
-# pull_request_target leg the PR's BASE branch (not necessarily the
-# default branch), both under a write-capable token. BOTH checkouts are
-# counted: a one-match pin would stay green if either job regressed to
-# the bare expression.
-fallback_ref_count="$(grep -cF -- "ref: \${{ github.event.repository.default_branch || 'main' }}" "$TEMPLATE" || true)"
-if [[ "$fallback_ref_count" == "2" ]]; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: BOTH checkouts pin the default branch with the empty-expression fallback"
-else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected exactly 2 fallback refs, found %s\n' "tpl: BOTH checkouts pin the default branch with the empty-expression fallback" "$fallback_ref_count"
-fi
-if grep -qF -- 'ref: ${{ github.event.repository.default_branch }}' "$TEMPLATE"; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "tpl: a checkout regressed to the bare default_branch expression (empty resolution would reach actions/checkout's own fallback)"
-else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: no checkout uses the bare default_branch expression"
+  printf '  note  %s\n' "no .github/workflows/review-gate-writer.yml here (consumer install) — template only"
 fi
 
-echo "=== relay step behavior (request-converge, VST-210) ==="
+# ------------------------------------------------------------------ pins ----
 
-# The relay's step is an ordinary shell script, so it is EXECUTED here
-# rather than pinned: extracted verbatim from the template and run against a
-# gh stub whose exit codes are scripted per attempt. Extraction failure is
-# fatal on its own — a renamed step that silently yielded an empty script
-# would make every case below pass against nothing.
-RELAY_STEP="$TMP_ROOT/relay-step.sh"
-awk '
-  /^      - name: Request a converge pass$/ { found = 1; next }
-  found && !inblock && /^        run: \|$/ { inblock = 1; next }
-  inblock {
-    if ($0 ~ /^          / || $0 == "") { sub(/^          /, ""); print; next }
-    exit
+pin_workflows() { # file, label
+  local wf="$1" tag="$2"
+  local write_block relay_block rc count
+
+  pin() { # needle, name
+    if grep -qF -- "$1" "$wf"; then
+      PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "$2"
+    else
+      FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        missing: %s\n' "$tag" "$2" "$1"
+    fi
   }
-' "$TEMPLATE" > "$RELAY_STEP"
-if [[ -s "$RELAY_STEP" ]] && grep -qF -- "/dispatches" "$RELAY_STEP"; then
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "relay: the step script extracted from the template (non-empty, dispatches)"
-else
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "relay: could NOT extract the step script from the template — every case below would prove nothing"
-fi
+  # The write job is the file's last job; the relay sits between the
+  # merge-group job and it.
+  write_block="$(sed -n '/^  write:/,$p' "$wf")"
+  relay_block="$(sed -n '/^  request-converge:/,/^  write:/p' "$wf")"
+  if [[ -z "$write_block" || -z "$relay_block" ]]; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "could not slice the relay and write job blocks (job renamed or reordered?)"
+    return
+  fi
 
+  # --- leg routing -----------------------------------------------------
+  if grep -qF -- "    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'" <<<"$write_block"; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the write job's if: is exactly the two converge legs (VST-210: no PR-attached leg holds the evictable group)"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the write job's if: is exactly the two converge legs (VST-210: no PR-attached leg holds the evictable group)"
+  fi
+  if grep -qF -- "    if: github.event_name != 'merge_group' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'" <<<"$relay_block"; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay's if: is the NEGATIVE list (a newly added PR-attached trigger relays by default, and the dispatch target is excluded so no loop exists)"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay's if: is the NEGATIVE list (a newly added PR-attached trigger relays by default, and the dispatch target is excluded so no loop exists)"
+  fi
+
+  # EVERY status STATE converges (no state filter of ANY spelling): under
+  # newest-row evidence semantics a success→pending/failure transition is a
+  # withdrawal and must close the gate event-fast. Grep's exit code is
+  # branched explicitly — 1 is the passing absence; anything else (2 = read
+  # error) fails rather than laundering into a pass.
+  rc=0; grep -qF -- "github.event.state" "$wf" || rc=$?
+  case "$rc" in
+    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: no status state filter of any spelling" ;;
+    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: a status state filter returned — withdrawals would wait for the cron floor" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the workflow could not be read (grep error)" ;;
+  esac
+
+  # --- the triggers the split made load-bearing ------------------------
+  # workflow_dispatch stopped being a manual convenience at VST-210: it is
+  # the relay's dispatch target. A consumer pruning it as "we never kick it
+  # by hand" silently strips every event-fast path down to the cron floor,
+  # and every relay run burns its retry against a 422.
+  pin "  workflow_dispatch: {}" "tpl: workflow_dispatch stays in on: — it is the relay's DISPATCH TARGET, not a manual kick"
+  pin "    - cron:" "tpl: the schedule floor survives — with the PR-attached legs relaying, it is the write job's only non-dispatch leg"
+
+  # --- concurrency -----------------------------------------------------
+  pin "cancel-in-progress: false" "tpl: pending writer runs are never cancelled mid-write"
+  pin "group: review-gate-writer" "tpl: single writer concurrency group"
+  # The whole point of VST-210: the relay is the job PR-attached runs
+  # execute, so it must hold NO concurrency group — an evictable relay would
+  # put the CANCELLED check straight back into the PR's rollup.
+  rc=0; grep -q '^    concurrency:' <<<"$relay_block" || rc=$?
+  case "$rc" in
+    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay holds NO concurrency group (it can never be evicted, so it can never leave a cancelled check on a PR)" ;;
+    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay grew a concurrency group — PR-attached runs are evictable again (VST-210 regression)" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay block could not be read (grep error)" ;;
+  esac
+
+  # --- the relay executes nothing ---------------------------------------
+  # The relay is the job every PR-attached leg reaches, pull_request_target
+  # included. Its stated design is "no checkout, no engine, no PR code".
+  # The persist-credentials pin below is satisfied anywhere in the file, so
+  # a checkout added HERE would otherwise keep the suite green.
+  rc=0; grep -q 'uses: actions/checkout' <<<"$relay_block" || rc=$?
+  case "$rc" in
+    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay checks nothing out — the pull_request_target leg's job holds no repository content at all" ;;
+    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay grew a checkout — it is the pull_request_target job and must execute no repository code" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay block could not be read (grep error)" ;;
+  esac
+
+  # --- permissions ------------------------------------------------------
+  rc=0; grep -qF -- "actions: write" <<<"$write_block" || rc=$?
+  case "$rc" in
+    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the WRITE job holds no actions:write — the writer never re-runs CI" ;;
+    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the write job requested actions:write (the writer never re-runs CI)" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the write block could not be read (grep error)" ;;
+  esac
+  count="$(grep -cF -- "actions: write" "$wf" || true)"
+  if [[ "$count" == "1" ]] && grep -qF -- "actions: write" <<<"$relay_block"; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: exactly ONE actions:write in the workflow, and it is the relay's dispatch scope"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        actions:write occurrences: %s (expected exactly 1, on the relay job)\n' "$tag" "tpl: exactly ONE actions:write in the workflow, and it is the relay's dispatch scope" "$count"
+  fi
+
+  # --- the dispatch ref: which ENGINE the indirection executes ----------
+  # The single expression that decides that. github.ref_name here would be
+  # the PR's BASE branch on the pull_request_target leg, so the relay would
+  # dispatch whatever engine lives on a non-default branch — silently
+  # breaking the default-branch-defined-writer guarantee the design rests
+  # on. Two teeth: the exact literal is present on the relay, and no OTHER
+  # DISPATCH_REF value can exist anywhere.
+  if grep -qF -- "DISPATCH_REF: \${{ github.event.repository.default_branch || 'main' }}" <<<"$relay_block"; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay dispatches onto the DEFAULT branch with the empty-expression fallback"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay's DISPATCH_REF is not the default-branch expression — the converge pass would run a non-default-branch engine"
+  fi
+  count="$(grep -cF -- "DISPATCH_REF:" "$wf" || true)"
+  assert_eq "$count" "1" "[$tag] tpl: exactly ONE DISPATCH_REF binding (a second could not be reached by the literal pin above)"
+
+  # --- the loop breaker's second tooth ---------------------------------
+  # The job if: is the first breaker and the line adoption.md tells
+  # consumers to hand-edit; the step's own EVENT_NAME guard survives that
+  # mis-edit. Nothing throttles a self-dispatch loop once started — the
+  # relay holds no concurrency group by design.
+  rc=0; grep -q '^      EVENT_NAME: \${{ github\.event_name }}$' <<<"$relay_block" || rc=$?
+  case "$rc" in
+    0) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the RELAY binds EVENT_NAME (its step's independent loop breaker reads it)" ;;
+    1) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay lost its EVENT_NAME binding — the step's loop breaker reads an unset var (the write job's identical binding does NOT cover this)" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay block could not be read (grep error)" ;;
+  esac
+  assert_contains "$relay_block" "workflow_dispatch|schedule)" "[$tag] tpl: the relay step refuses to dispatch when it ran on a converge leg"
+
+  # --- the relay's scope is dispatch and nothing else -------------------
+  # Its dispatch failure exits GREEN by decision (a red relay recreates the
+  # UNSTABLE pin) and it carries NO escalation — sustained failure surfaces
+  # as gate staleness via the cron floor and pr-watch --heal. So issues:write
+  # must not appear here: the rolling incident stays on the write job, and a
+  # relay that grew the scope would mean the decision was reversed silently.
+  rc=0; grep -q '^      issues: write$' <<<"$relay_block" || rc=$?
+  case "$rc" in
+    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay holds NO issues:write — dispatch is its whole scope; sustained failure is detected as gate staleness, not by this job" ;;
+    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay grew issues:write — the no-escalation decision was reversed without updating the docs that state it" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay block could not be read (grep error)" ;;
+  esac
+
+  # --- checkouts --------------------------------------------------------
+  pin "if: failure() || cancelled()" "tpl: VST-36 escalation covers timeout-cancelled jobs"
+  pin "persist-credentials: false" "tpl: checkouts drop credentials"
+  pin "github.event.pull_request.head.repo.full_name != github.repository" "tpl: fork pull_request_review read-only flag"
+  # BOTH engine checkouts are counted: a one-match pin would stay green if
+  # either job regressed to the bare expression.
+  count="$(grep -cF -- "ref: \${{ github.event.repository.default_branch || 'main' }}" "$wf" || true)"
+  assert_eq "$count" "2" "[$tag] tpl: BOTH checkouts pin the default branch with the empty-expression fallback"
+  rc=0; grep -qF -- 'ref: ${{ github.event.repository.default_branch }}' "$wf" || rc=$?
+  case "$rc" in
+    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: no checkout uses the bare default_branch expression" ;;
+    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: a checkout regressed to the bare default_branch expression (empty resolution would reach actions/checkout's own fallback)" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the workflow could not be read (grep error)" ;;
+  esac
+}
+
+echo "=== workflow pins ==="
+for i in "${!WORKFLOWS[@]}"; do
+  pin_workflows "${WORKFLOWS[$i]}" "${WORKFLOW_LABELS[$i]}"
+done
+
+# ---------------------------------------------------- relay step behavior ---
+
+# The relay's step is an ordinary shell script, so it is EXECUTED rather than
+# pinned: extracted verbatim and run against a gh stub whose exit codes and
+# response headers are scripted per attempt. Extraction failure is fatal on
+# its own — a renamed step that silently yielded an empty script would make
+# every case below pass against nothing.
 RELAY_BIN="$TMP_ROOT/relay-bin"
 mkdir -p "$RELAY_BIN"
-# Records each invocation and exits with the Nth code of GH_CODES, so a
-# transient-then-success sequence and a hard double failure are both driven.
+# Records each invocation to a file (NOT stdout: the step redirects gh's
+# stdout into its response capture), replays the scripted header fixture as
+# the response, and exits with the Nth code of GH_CODES.
 cat > "$RELAY_BIN/gh" <<'RELAY_GH'
 #!/usr/bin/env bash
 echo "gh $*" >> "$GH_LOG"
 n=$(grep -c . "$GH_LOG")
+[ -n "${GH_HEADERS:-}" ] && printf '%s\n' "$GH_HEADERS"
 set -- $GH_CODES
 eval "code=\${$n:-0}"
 exit "$code"
 RELAY_GH
 chmod +x "$RELAY_BIN/gh"
+# The step's backoff is a real >=60s sleep. Stubbing it keeps the offline
+# suite fast AND makes the wait itself assertable — the argument is recorded.
+cat > "$RELAY_BIN/sleep" <<'RELAY_SLEEP'
+#!/usr/bin/env bash
+echo "$1" >> "$SLEEP_LOG"
+exit 0
+RELAY_SLEEP
+chmod +x "$RELAY_BIN/sleep"
 
 RELAY_LOG="$TMP_ROOT/relay-gh.log"
-relay_run() { # read_only workflow_ref gh_codes -> RELAY_RC, RELAY_OUT, RELAY_CALLS
-  : > "$RELAY_LOG"
+SLEEP_LOG="$TMP_ROOT/relay-sleep.log"
+
+relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, headers
+  : > "$RELAY_LOG"; : > "$SLEEP_LOG"
   set +e
-  RELAY_OUT="$(GH_LOG="$RELAY_LOG" GH_CODES="$3" PATH="$RELAY_BIN:$PATH" \
-    WRITER_READ_ONLY="$1" WORKFLOW_REF="$2" GH_REPO="o/r" DISPATCH_REF="main" \
-    bash "$RELAY_STEP" 2>&1)"
+  RELAY_OUT="$(GH_LOG="$RELAY_LOG" SLEEP_LOG="$SLEEP_LOG" GH_CODES="$4" GH_HEADERS="${6:-}" \
+    PATH="$RELAY_BIN:$PATH" \
+    WRITER_READ_ONLY="$2" WORKFLOW_REF="$3" EVENT_NAME="${5:-pull_request_target}" \
+    GH_REPO="o/r" DISPATCH_REF="main" \
+    bash "$1" 2>&1)"
   RELAY_RC=$?
   set -e
   RELAY_CALLS="$(cat "$RELAY_LOG")"
+  RELAY_SLEEPS="$(cat "$SLEEP_LOG")"
 }
 
-relay_run 0 "o/r/.github/workflows/review-gate-writer.yml@refs/heads/main" "0"
-assert_eq "$RELAY_RC" "0" "relay1: an ordinary PR-attached leg exits 0"
-assert_eq "$RELAY_CALLS" \
-  "gh api -X POST repos/o/r/actions/workflows/review-gate-writer.yml/dispatches -f ref=main" \
-  "relay1: dispatches THIS workflow's file on the default branch, exactly once"
+relay_battery() { # file, label
+  local wf="$1" tag="$2" step="$TMP_ROOT/relay-step-$2.sh"
+  local ref="o/r/.github/workflows/review-gate-writer.yml@refs/heads/main"
+  awk '
+    /^      - name: Request a converge pass$/ { found = 1; next }
+    found && !inblock && /^        run: \|$/ { inblock = 1; next }
+    inblock {
+      if ($0 ~ /^          / || $0 == "") { sub(/^          /, ""); print; next }
+      exit
+    }
+  ' "$wf" > "$step"
+  if [[ -s "$step" ]] && grep -qF -- "/dispatches" "$step"; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "relay: the step script extracted from the workflow (non-empty, dispatches)"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay: could NOT extract the step script — every case below would prove nothing"
+    return
+  fi
 
-# Control for the derivation: a repo that renamed its copy must dispatch the
-# renamed file. Without this, relay1 would also pass against a hardcoded name.
-relay_run 0 "o/r/.github/workflows/gate.yml@refs/heads/trunk" "0"
-assert_eq "$RELAY_CALLS" \
-  "gh api -X POST repos/o/r/actions/workflows/gate.yml/dispatches -f ref=main" \
-  "relay2: a RENAMED consumer copy dispatches its own file (github.workflow_ref is read, not a hardcoded name — no ADAPT line)"
+  relay_run "$step" 0 "$ref" "0"
+  assert_eq "$RELAY_RC" "0" "[$tag] relay1: an ordinary PR-attached leg exits 0"
+  assert_eq "$RELAY_CALLS" \
+    "gh api -i -X POST repos/o/r/actions/workflows/review-gate-writer.yml/dispatches -f ref=main" \
+    "[$tag] relay1: dispatches THIS workflow's file on the default branch, exactly once"
 
-relay_run 1 "o/r/.github/workflows/review-gate-writer.yml@refs/heads/main" "0"
-assert_eq "$RELAY_RC" "0" "relay3: fork pull_request_review (read-only token) is a GREEN no-op, never a red run"
-assert_eq "$RELAY_CALLS" "" "relay3: the read-only leg dispatches NOTHING — the cron floor converges fork review evidence"
+  # Control for the derivation: a repo that renamed its copy must dispatch
+  # the renamed file. Without this, relay1 would also pass against a
+  # hardcoded name.
+  relay_run "$step" 0 "o/r/.github/workflows/gate.yml@refs/heads/trunk" "0"
+  assert_eq "$RELAY_CALLS" \
+    "gh api -i -X POST repos/o/r/actions/workflows/gate.yml/dispatches -f ref=main" \
+    "[$tag] relay2: a RENAMED consumer copy dispatches its own file (github.workflow_ref is read, not a hardcoded name — no ADAPT line)"
 
-relay_run 0 "" "0"
-assert_eq "$RELAY_RC" "1" "relay4: an underivable workflow_ref fails LOUDLY instead of dispatching a garbage path"
-assert_eq "$RELAY_CALLS" "" "relay4: nothing is dispatched when the file name could not be derived"
-assert_contains "$RELAY_OUT" "::error::" "relay4: the underivable case annotates the run"
+  relay_run "$step" 1 "$ref" "0"
+  assert_eq "$RELAY_RC" "0" "[$tag] relay3: fork pull_request_review (read-only token) is a GREEN no-op, never a red run"
+  assert_eq "$RELAY_CALLS" "" "[$tag] relay3: the read-only leg dispatches NOTHING — the cron floor converges fork review evidence"
 
-relay_run 0 "o/r/.github/workflows/review-gate-writer.yml@refs/heads/main" "1 0"
-assert_eq "$RELAY_RC" "0" "relay5: a transient dispatch failure is retried once and succeeds (a red relay is itself a check on the PR)"
-assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "2" "relay5: exactly two attempts — one bounded retry, not a loop"
+  relay_run "$step" 0 "" "0"
+  assert_eq "$RELAY_RC" "1" "[$tag] relay4: an underivable workflow_ref fails LOUDLY instead of dispatching a garbage path"
+  assert_eq "$RELAY_CALLS" "" "[$tag] relay4: nothing is dispatched when the file name could not be derived"
+  assert_contains "$RELAY_OUT" "::error::" "[$tag] relay4: the underivable case annotates the run"
 
-relay_run 0 "o/r/.github/workflows/review-gate-writer.yml@refs/heads/main" "1 1"
-assert_eq "$RELAY_RC" "1" "relay6: two failed dispatches fail LOUDLY — a gate nothing was asked to converge must never look green (the exit status is branched explicitly, not left to the runner's default bash -e)"
-assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "2" "relay6: the hard-failure path still stops after two attempts"
+  relay_run "$step" 0 "$ref" "1 0"
+  assert_eq "$RELAY_RC" "0" "[$tag] relay5: a transient dispatch failure is retried once and succeeds"
+  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "2" "[$tag] relay5: exactly two attempts — one bounded retry, not a loop"
+
+  # GREEN on double failure, deliberately: the relay holds no statuses
+  # scope, so it cannot make the gate look converged — only leave it stale,
+  # which the cron floor owns. A red here would pin the PR at UNSTABLE, the
+  # exact defect the split removes.
+  relay_run "$step" 0 "$ref" "1 1"
+  assert_eq "$RELAY_RC" "0" "[$tag] relay6: two failed dispatches exit GREEN — reddening would recreate the UNSTABLE pin for a fault the cron floor recovers from"
+  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "2" "[$tag] relay6: the double-failure path still stops after two attempts"
+  assert_contains "$RELAY_OUT" "::warning::could not request a converge pass after two attempts" "[$tag] relay6: the double failure is announced as a WARNING — the annotation is the per-run trace, gate staleness is the detector of record"
+  rc=0; grep -qF -- "::error::" <<<"$RELAY_OUT" || rc=$?
+  case "$rc" in
+    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "relay6: and NOT as an error — an error annotation on a green job is the shape a future 'restore fail-loud' edit leaves behind" ;;
+    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay6: the double-failure path emitted ::error:: — decide one way: green+warning (current) or red, not a mixed signal" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay6: the relay output could not be read (grep error)" ;;
+  esac
+
+  # --- the loop breaker, independent of the job if: --------------------
+  relay_run "$step" 0 "$ref" "0" workflow_dispatch
+  assert_eq "$RELAY_RC" "0" "[$tag] relay7: a relay that ran on the workflow_dispatch leg exits 0"
+  assert_eq "$RELAY_CALLS" "" "[$tag] relay7: and dispatches NOTHING — the step's own guard breaks a self-dispatch loop even if the job if: was mis-edited"
+  assert_contains "$RELAY_OUT" "::warning::" "[$tag] relay7: the mis-edit is announced, not silently absorbed"
+  relay_run "$step" 0 "$ref" "0" schedule
+  assert_eq "$RELAY_CALLS" "" "[$tag] relay8: the schedule converge leg is refused by the same guard"
+
+  # --- backoff: the retry must be able to outlast the limit it retries --
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target
+  assert_eq "$RELAY_SLEEPS" "60" "[$tag] relay9: with no rate-limit headers the retry waits GitHub's documented 60s floor, not a token blip (a 5s retry lands inside every secondary-limit window)"
+
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
+retry-after: 77
+content-type: application/json"
+  assert_eq "$RELAY_SLEEPS" "77" "[$tag] relay10: a retry-after header is honored over the floor"
+
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
+retry-after: 4000
+content-type: application/json"
+  assert_eq "$RELAY_SLEEPS" "120" "[$tag] relay11: an absurd retry-after is capped so the wait still fits the job's timeout-minutes"
+}
+
+echo "=== relay step behavior (request-converge, VST-210) ==="
+for i in "${!WORKFLOWS[@]}"; do
+  relay_battery "${WORKFLOWS[$i]}" "${WORKFLOW_LABELS[$i]}"
+done
+
+# The battery above proves each copy's step behaves; this proves they are the
+# SAME step. Behavior equivalence under the cases we thought to write is
+# weaker than byte-identity for a script that exists in two hand-maintained
+# places — a divergence the cases do not happen to probe would otherwise ship.
+# The step is pure logic with no vendored paths in it, so unlike the rest of
+# the file it has no legitimate ADAPT reason to differ.
+if [[ -f "$TEMPLATE" && -f "$SELF_ADOPTION" ]]; then
+  if diff -q "$TMP_ROOT/relay-step-template.sh" "$TMP_ROOT/relay-step-self-adoption copy.sh" >/dev/null 2>&1; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "relay: the template's and the self-adoption copy's relay steps are byte-identical (the step carries no ADAPT, so any drift is unintended)"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "relay: the two copies' relay steps DIVERGED — a template edit was not mirrored into .github/workflows/"
+    diff "$TMP_ROOT/relay-step-template.sh" "$TMP_ROOT/relay-step-self-adoption copy.sh" | head -20
+  fi
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -31,8 +31,9 @@ trusting an adoption.
 2. **Copy `.agents/skills/review-gate/templates/review-gate-writer.yml`**
    into `.github/workflows/`.
    Repo-owned after the copy — workflow YAML is not an ongoing sync target.
-   The one workflow is the ONLY writer of the gate status: it runs the
-   default-branch engine on every leg, so no PR can influence its own gate
+   The one workflow is the ONLY writer of the gate status: every leg that
+   runs the engine runs the DEFAULT-branch one (PR-attached legs run no
+   engine at all — they relay), so no PR can influence its own gate
    evaluation and no trust-posture decision exists.
    The ADAPT markers in the file are the three `|| 'main'` default-branch
    fallbacks (both checkouts and the relay's dispatch ref) — set them to the
@@ -120,11 +121,24 @@ each repo takes it as its own PR. What changed in the template:
 
 - A new `request-converge` job (the relay) now runs every PR-attached leg;
   the `write` job's `if:` narrowed to `workflow_dispatch`/`schedule`.
-- **Permissions delta**: the relay holds `actions: write` — and, because
-  job-level `permissions` replace the workflow default rather than extend
-  it, that is its complete scope (no `contents`, no `statuses`). It exists
-  solely to dispatch this same workflow's converge leg; the `write` job
-  still holds no `actions` scope, so the writer still never re-runs CI.
+- **Permissions delta**: the relay holds `actions: write` and nothing else
+  — because job-level `permissions` replace the workflow default rather than
+  extend it, that is its complete scope: no `contents`, no `statuses`, no
+  `issues`. It exists solely to dispatch this same workflow's converge leg;
+  the `write` job still holds no `actions` scope, so the writer still never
+  re-runs CI.
+- **The relay carries no VST-36 escalation, by decision.** The rolling
+  incident issue stays on the `write` job. Because the relay also does not
+  redden the PR (below), a sustained dispatch outage is detected through
+  **gate staleness** rather than through any individual relay run: every
+  event falls back to the cron floor, gates sit unconverged past that
+  floor's period, and `pr-watch.sh --heal` is the reducer that already
+  watches for exactly that across every open PR (`gate-stale` → one writer
+  dispatch per invocation). Each relay run's own log carries a
+  `::warning::`. This is a deliberate trade — not reddening PRs and not
+  widening the relay's permissions, at the cost of no per-run alarm — so if
+  you need a louder signal, add it to your staleness monitoring, not to the
+  relay's scope.
 - **`workflow_dispatch` must stay in `on:`** — it is the dispatch target,
   not just the manual kick. Dropping it strips every event-fast path down
   to the cron floor. (`workflow_dispatch` is one of the two events
@@ -137,13 +151,37 @@ each repo takes it as its own PR. What changed in the template:
   required `Evaluate and write the review gate` would block every PR. Per
   the wiring rule above, require the status context only.
 
+- **The relay never reddens the PR to report its own failure.** Two
+  dispatch attempts (the retry honors `retry-after`/`x-ratelimit-reset`,
+  else GitHub's documented 60s floor — a 5-second retry lands inside every
+  secondary-rate-limit window and could never succeed against the one
+  failure class it exists for; the backoff is capped so it still fits the
+  job's `timeout-minutes`); on double failure it warns and exits 0 instead
+  of exiting non-zero. The reasoning: it
+  holds no `statuses` scope, so a skipped dispatch cannot make the gate look
+  converged — only leave it stale, which the cron floor already owns —
+  whereas a red relay check pins the PR at `UNSTABLE`, the defect being
+  fixed. Do not "restore fail-loud" here without also moving the visibility
+  somewhere that is not a PR's mergeability.
+
 Why bother, per repo: without it, a burst of PR events leaves an evicted
 writer run as a `CANCELLED` check on the PR, and `mergeStateStatus` reads
 `UNSTABLE` until someone manually reruns it — a false not-ready signal for
-every human and tool that reads it. Verify after adopting: push twice in
-quick succession to an open PR, then check that `gh pr checks` shows no
-cancelled writer entry and `gh pr view --json mergeStateStatus` is not
-`UNSTABLE` on that account.
+every human and tool that reads it.
+
+What it costs, per repo: one extra billed-minimum Actions run per
+PR-attached event. The relay is unconditional and deliberately group-less,
+so unlike the writer group it coalesces nothing — that is one run per event,
+including every `status` transition every CI provider posts on every open
+head — and the event-fast path now waits on two runner allocations instead
+of one. Repos on a constrained or self-hosted runner pool should size that
+before adopting. The residual is honest: this removes *eviction-driven*
+cancelled checks, not every cancelled check — a relay hung to its
+`timeout-minutes` still leaves one.
+
+Verify after adopting: push twice in quick succession to an open PR, then
+check that `gh pr checks` shows no cancelled writer entry and
+`gh pr view --json mergeStateStatus` is not `UNSTABLE` on that account.
 
 ## Per-repo settings — decision axes
 

@@ -67,6 +67,13 @@ OVERRIDE_CTX="vstack-reviewer-outage"
 # name would silently find zero runs on a differently-named sandbox and turn
 # every CI-observing probe into a false verdict.
 CI_WORKFLOW="${E2E_CI_WORKFLOW:-CI}"
+# How deep sfinal's shared writer-run fetch goes. Raised past the old 200
+# because VST-210 roughly doubles the runs per PR-attached event (a relay run
+# plus the converge run it dispatches). The number is a headroom choice, not a
+# guarantee: sfinal proves the window actually contains the replay and fails
+# loudly when it does not, so raising this reduces false truncation reports
+# rather than hiding truncation.
+RUN_WINDOW="${E2E_RUN_WINDOW:-600}"
 
 PASS=0
 FAIL=0
@@ -671,14 +678,36 @@ s11() { # THE SAFETY SCENARIO. The gate no longer proves anything about CI,
 sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
            # of any leg red'd during the replay
   CURRENT=sfinal
-  local reds evicted killed unknown id started
+  local reds evicted killed unknown id started runs oldest
+  local pr_evicted=0 pr_killed=0 ev
   # Bounded to THIS replay: an unbounded window would drag in runs from
   # earlier sessions (including deliberately-broken engine versions) and
   # either fail a healthy replay or hide a fresh regression behind old runs.
   # REPLAY_SINCE is stamped at driver start.
-  reds="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit 200 \
-    --json conclusion,createdAt \
-    --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and .conclusion == "failure")] | length')"
+  #
+  # ONE fetch, shared by every check below — and it must be proven to CONTAIN
+  # the replay window. `gh run list` returns the NEWEST runs, so once the
+  # replay outgrows the limit the window silently drops its OLDEST runs and
+  # every count below reports a clean zero it did not earn. VST-210 roughly
+  # doubles the runs per PR-attached event (the relay plus the converge run
+  # it dispatches), which halved the headroom this limit used to have. The
+  # containment test is the same "no evidence is not evidence" discipline the
+  # cancelled-run classifier already applies to an unreadable jobs list.
+  if ! runs="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit "$RUN_WINDOW" \
+      --json databaseId,event,conclusion,createdAt)"; then
+    bad "could not read the writer run list — every cross-cutting check below is unproven, not proven"
+    return
+  fi
+  oldest="$(jq -r 'sort_by(.createdAt) | .[0].createdAt // ""' <<<"$runs")"
+  if [ -z "$oldest" ]; then
+    bad "the writer run list came back empty — the replay drove events, so this is a read fault, not a clean window"
+    return
+  fi
+  if [ "$(jq 'length' <<<"$runs")" -ge "$RUN_WINDOW" ] && [ ! "$oldest" \< "$REPLAY_SINCE" ]; then
+    bad "run window TRUNCATED: $RUN_WINDOW runs returned and the oldest ($oldest) is still inside the replay window — older runs were dropped, so the counts below are unproven, not proven"
+    return
+  fi
+  reds="$(jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and .conclusion == "failure")] | length' <<<"$runs")"
   if [ "${reds:-0}" = "0" ]; then
     ok "no writer run of ANY leg failed during the replay"
   else
@@ -689,12 +718,19 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
   # harmless by design, because every executing run converges every open PR)
   # versus a run KILLED by its own timeout mid-work (a malfunction the
   # VST-36 escalation exists for). Tell them apart by whether any step ran.
+  #
+  # merge_group is NOT a PR-attached leg for this purpose and is excluded
+  # from the VST-210 tally below: its job holds no concurrency group, its
+  # runs never attach to a PR head, and the replay itself manufactures
+  # cancelled merge_group runs on purpose — s10/s11 fail a queue entry and
+  # then dequeue it, and GitHub cancels whatever was attached to the
+  # dissolved group's synthetic ref. queue_ci_terminal_runs already filters
+  # cancelled merge_group runs for exactly this reason.
   evicted=0
   killed=0
   unknown=0
-  for id in $(gh run list -R "$REPO" --workflow "Review gate writer" --limit 200 \
-      --json databaseId,conclusion,createdAt \
-      --jq '.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and .conclusion == "cancelled") | .databaseId'); do
+  for id in $(jq -r '.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and .conclusion == "cancelled") | .databaseId' <<<"$runs"); do
+    ev="$(jq -r '.[] | select(.databaseId == '"$id"') | .event' <<<"$runs")"
     # An UNREADABLE jobs list is not evidence of a harmless eviction — it is
     # no evidence at all. Separate the read failure from the verdict so a
     # transient 5xx or a permission fault cannot launder a killed run into
@@ -702,18 +738,32 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
     if ! started="$(gh api "repos/$REPO/actions/runs/$id/jobs" \
         --jq '[.jobs[] | .steps[]? | select(.conclusion != "skipped" and (.started_at // "") != "")] | length')"; then
       unknown=$((unknown + 1))
-      note "cancelled run $id: jobs list unreadable — cannot classify"
+      note "cancelled run $id ($ev): jobs list unreadable — cannot classify"
       continue
     fi
     case "$started" in
       ''|*[!0-9]*)
         unknown=$((unknown + 1))
-        note "cancelled run $id: unparseable jobs response — cannot classify"
+        note "cancelled run $id ($ev): unparseable jobs response — cannot classify"
         ;;
-      0) evicted=$((evicted + 1)) ;;
+      0)
+        evicted=$((evicted + 1))
+        # A never-started cancellation on a PR-attached leg is the VST-210
+        # defect itself: only eviction from the writer group produces one,
+        # and after the split no PR-attached leg can hold that group.
+        case "$ev" in
+          workflow_dispatch|schedule|merge_group) : ;;
+          *) pr_evicted=$((pr_evicted + 1))
+             note "cancelled run $id ($ev) never started a step — an EVICTION on a PR-attached leg" ;;
+        esac
+        ;;
       *)
         killed=$((killed + 1))
-        note "cancelled run $id executed steps before dying — investigate"
+        note "cancelled run $id ($ev) executed steps before dying — investigate"
+        case "$ev" in
+          workflow_dispatch|schedule|merge_group) : ;;
+          *) pr_killed=$((pr_killed + 1)) ;;
+        esac
         ;;
     esac
   done
@@ -721,39 +771,37 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
     bad "$unknown cancelled writer run(s) could not be classified (jobs list unreadable)"
   fi
   note "concurrency evictions during the replay: $evicted (harmless: converge-all means the surviving run covers those heads)"
-  # VST-210, the live tooth: harmless-to-CONVERGENCE was never the whole
-  # story — an evicted run is still a CHECK RUN, and one attached to a PR
-  # head pins that PR at mergeStateStatus UNSTABLE until someone reruns it
-  # by hand. Since the relay/converge split, only the two default-branch
-  # legs can hold the evictable group, so a cancelled run on ANY PR-attached
-  # leg
-  # (pull_request_target, pull_request_review, status, an opted-in
-  # check_run) means the split regressed. Runs are counted by leg rather
-  # than by rollup membership because the leg is what decides which sha the
-  # run attaches to.
-  local pr_attached_cancels
-  pr_attached_cancels="$(gh run list -R "$REPO" --workflow "Review gate writer" --limit 200 \
-    --json event,conclusion,createdAt \
-    --jq '[.[] | select(.createdAt >= "'"$REPLAY_SINCE"'" and .conclusion == "cancelled"
-             and .event != "workflow_dispatch" and .event != "schedule")] | length')"
-  case "$pr_attached_cancels" in
-    ''|*[!0-9]*)
-      bad "could not count PR-attached cancelled runs (unreadable run list) — the VST-210 split is unproven, not proven"
-      ;;
-    0)
-      ok "no cancelled run on any PR-attached leg — evictions land on default-branch runs only, so none can pin a PR at UNSTABLE (VST-210)"
-      ;;
-    *)
-      bad "$pr_attached_cancels cancelled run(s) on PR-attached legs — the relay/converge split regressed and these pin their PRs at UNSTABLE (VST-210)"
-      ;;
-  esac
   if [ "$killed" = "0" ]; then
     ok "no writer run was killed mid-work (evictions only)"
   else
     bad "$killed writer run(s) were cancelled after executing steps"
   fi
-  if [ "$evicted" -gt 0 ]; then
-    ok "eviction actually occurred ($evicted runs) and no scenario stranded — converge-all (binding F2) proven live, not theoretically"
+  # VST-210, the live tooth: harmless-to-CONVERGENCE was never the whole
+  # story — an evicted run is still a CHECK RUN, and one attached to a PR
+  # head pins that PR at mergeStateStatus UNSTABLE until someone reruns it
+  # by hand. After the split only the default-branch legs can hold the
+  # evictable group, so an EVICTION on a PR-attached leg proves the topology
+  # regressed.
+  #
+  # The two PR-attached cancellation shapes are reported apart because they
+  # mean different things. A never-started one is eviction — the defect. A
+  # run that executed steps and then died is a relay killed by its own
+  # timeout-minutes: still a cancelled check on the PR head (the residual
+  # this change documents rather than eliminates), but NOT evidence that the
+  # split came undone, and misreporting it as such would send the next
+  # reader hunting a topology bug that is not there.
+  if [ "$pr_evicted" -gt 0 ]; then
+    bad "$pr_evicted PR-attached run(s) were EVICTED from the writer group — the relay/converge split regressed and these pin their PRs at UNSTABLE (VST-210)"
+  elif [ "$evicted" -gt 0 ]; then
+    ok "eviction actually occurred ($evicted runs) and NONE landed on a PR-attached leg — the split is proven under real pressure, and converge-all (binding F2) stranded nothing (VST-210)"
+  else
+    # No eviction, no proof. Zero PR-attached evictions out of zero
+    # evictions is arithmetic, not evidence, and announcing it as a pass
+    # would be the loudest kind of vacuous green.
+    note "no concurrency eviction occurred in this replay — the VST-210 split is UNTESTED here, not proven; re-run with more overlapping PR activity to put the group under pressure"
+  fi
+  if [ "$pr_killed" -gt 0 ]; then
+    bad "$pr_killed PR-attached run(s) were cancelled AFTER executing steps — a relay hit its timeout-minutes; a cancelled check still pins that PR at UNSTABLE (documented residual, NOT a split regression — do not chase the topology)"
   fi
   # The cron leg is a LIVENESS check, not a replay-window one: the schedule
   # fires every 15 minutes (best-effort), so a short replay can legitimately

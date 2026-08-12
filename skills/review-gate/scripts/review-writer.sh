@@ -51,18 +51,22 @@
 # idempotent: when the current entry already matches state + description the
 # writer no-ops, so idle cron ticks append nothing.
 #
-# NO FORK SPECIAL CASES: every leg holds a write-capable default-branch
-# token, so fork heads take the same path as same-repo heads. The one
-# exception is pull_request_review fired by a FORK PR, whose token GitHub
-# downgrades to read-only: the workflow flags it with WRITER_READ_ONLY=1 and
-# this script exits GREEN as a no-op before touching anything — fork review
-# evidence converges on the cron floor.
+# NO FORK SPECIAL CASES: every leg that reaches this script holds a
+# write-capable default-branch token, so fork heads take the same path as
+# same-repo heads. The read-only exception is pull_request_review fired by a
+# FORK PR — and since VST-210 that leg never reaches this script at all: it
+# lands on the shipped workflow's RELAY job, which flags the case, dispatches
+# nothing, and exits green, so fork review evidence converges on the cron
+# floor. WRITER_READ_ONLY below remains an honored input (defaulting to 0)
+# for a consumer that wires some other leg straight into this script.
 #
 # Env (required): GH_TOKEN (or ambient gh auth), GH_REPO.
 # Env (leg selection):
 #   EVENT_NAME    the triggering event. "merge_group" posts the queue
 #                 success (HEAD_SHA required, no PR identifiers); every
-#                 other value — including empty — is equivalent.
+#                 other value — including empty — is equivalent. The shipped
+#                 workflow reaches this script only on workflow_dispatch,
+#                 schedule and merge_group; PR-attached legs relay.
 #   WRITER_READ_ONLY  "1": exit 0 immediately, reading and posting nothing.
 #   PR_NUMBER / HEAD_SHA / PR_AUTHOR  the INTERNAL single-head contract used
 #                 by the enumeration's recursive per-PR invocation.

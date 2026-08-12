@@ -127,9 +127,29 @@ nothing else.
   single-writer group. Convergence is unchanged — what changes is WHERE an
   eviction's `CANCELLED` check lands. Attached to a PR head it pinned that
   PR at `mergeStateStatus UNSTABLE` until a manual rerun (VST-210); on the
-  default-branch runs the relay dispatches into, nothing gates on it. Cost
-  of the split: one extra short run per PR event, and seconds of added
-  event-fast latency.
+  default-branch runs the relay dispatches into, nothing gates on it.
+  **Cost**: one *billed-minimum, non-evictable* run per PR-attached event —
+  the relay coalesces nothing, so unlike the writer group there is one per
+  event, including every `status` transition from every CI provider — and
+  event-fast latency grows by a whole extra run lifecycle (two queue +
+  runner-allocation waits instead of one), which is seconds at best and
+  unbounded at worst, since GitHub does not bound allocation. Still far
+  under the 15-minute cron floor. Size that before adopting on a
+  capacity-limited runner pool.
+  **Residual**: this removes *eviction-driven* cancelled checks, not every
+  cancelled check — a relay that hangs to its `timeout-minutes` is still a
+  cancelled check on the PR head. Its dispatch failures therefore exit green
+  and escalate (below) rather than redden.
+- **The relay never reddens a PR to report its own failure.** It holds no
+  `statuses` scope, so a failed dispatch cannot make the gate look
+  converged — only leave it stale, which the cron floor and `pr-watch
+  --heal` already own. Reddening would re-create the exact `UNSTABLE` pin
+  the split removes. Two dispatch attempts (the retry honors
+  `retry-after`/`x-ratelimit-reset`, else GitHub's 60s floor, capped to fit
+  the job budget); on double failure it warns and exits 0. It carries no
+  VST-36 escalation of its own — a sustained dispatch outage shows up as
+  **gate staleness**, which `pr-watch --heal` already reduces on across
+  every open PR, rather than as N red PRs or a widened relay scope.
 - **Write ordering.** Before any `success` post it re-reads the status and
   defers when any gate entry was created at/after this run's evaluation
   instant — a newer run's state AND description (which carries the audit
