@@ -4,11 +4,11 @@
 
 - **orch: the post-merge main sync proves which checkout owns the base branch
   before advancing it, and reports a stale base as a warning.** `merge-pr.md`
-  § 5 step 4 ran `git -C [MAIN_REPO_ROOT] merge --ff-only origin/[BASE]`
+  § 5 step 4 ran `git -C [MAIN_REPO_ROOT] merge --ff-only origin/[BASE_BRANCH]`
   unconditionally. `merge --ff-only` advances whatever branch the target
   checkout has on `HEAD`, so a main checkout parked on a foreign branch got
-  THAT branch fast-forwarded, exited 0, and left local `[BASE]` untouched with
-  nothing reported — in one observed session the main checkout drifted 30
+  THAT branch fast-forwarded, exited 0, and left local `[BASE_BRANCH]`
+  untouched with nothing reported — in one observed session the main checkout drifted 30
   commits behind `origin/main` across four merges, a branch cut from it needed
   a mid-flight rebase and full revalidation, two review agents produced false
   findings from the stale tree (one filed issue needed a correction pass), and
@@ -16,9 +16,10 @@
   deleted. The step now reads `rev-parse --abbrev-ref HEAD` first and routes:
   on the base branch it ff-merges in place; on any other branch (or detached
   `HEAD`) it advances the local ref by name with
-  `fetch . "refs/remotes/origin/[BASE]:refs/heads/[BASE]"`, which re-uses the
-  tracking ref the origin fetch already updated — no second network round trip
-  and no credential helper — while updating a non-checked-out branch and
+  `git -C [MAIN_REPO_ROOT] fetch .
+  "refs/remotes/origin/[BASE_BRANCH]:refs/heads/[BASE_BRANCH]"`, which re-uses
+  the tracking ref the origin fetch already updated — no second network round
+  trip and no credential helper — while updating a non-checked-out branch and
   refusing a non-fast-forward; when that refspec is refused because another
   worktree holds the branch, it locates that worktree via `worktree list` and
   ff-merges there. Three named blocking outcomes replace the old
@@ -26,8 +27,8 @@
   file git listed and its checkout), a non-fast-forward rejection (naming both
   shas), and an unreachable base — and § 7 now always carries a `Base sync`
   row, a WARNING with the stale local sha, the origin sha, and the cause
-  whenever local `[BASE]` could not be advanced. `start-worktree.md`'s existing
-  `base-freshness` gate needed no new machinery — it is reached by every
+  whenever local `[BASE_BRANCH]` could not be advanced. `start-worktree.md`'s
+  existing `base-freshness` gate needed no new machinery — it is reached by every
   `start.md` § 5 route, and bare `worktree create` already cuts new branches
   from a freshly fetched `origin/<default>` — so its wording was corrected to
   stop reading as reuse-only. `workflow_helpers.sh` pins the precondition, both
