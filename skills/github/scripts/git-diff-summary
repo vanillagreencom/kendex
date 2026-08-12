@@ -119,10 +119,11 @@ new_side_rs_siblings() {
 
 # Emit one candidate-agnostic record per finding in the declaring module on
 # stdin, so a file is parsed once no matter how many candidates consult it:
-#   G<TAB><target>   mod declaration with #[cfg(test)] among its attributes
-#   U<TAB><target>   mod declaration without the gate
-#   I<TAB><target>   include! of the target file (an include compiles in the
-#                    includer's cfg context — an ungated production route)
+#   G<TAB><target>   route with #[cfg(test)] among its attributes
+#   U<TAB><target>   route without the gate
+# A route is a mod declaration or an include! of the target file; both
+# carry their attribute gate (#[cfg(test)] include!("x.rs") is a gated
+# route, an unattributed include an ungated production one).
 # <target> is the repo-relative file the declaration resolves to, lexically
 # normalized (`.`/`..` segments folded) so equivalent spellings compare
 # equal. A bare `mod name;` emits both of its legal forms, name.rs and
@@ -222,13 +223,14 @@ scan_decl_records() {
             }
             ml_orig = o; ml_mask = m
         }
-        # include! routes in one consumed chunk (mc masked, oc original).
-        # Token boundary: a preceding identifier character means a
-        # different macro. The argument must BE a string literal (any
-        # bracket form); a computed expression (concat!/env!/const) emits
-        # nothing — even one whose parts are all literals — per the
-        # fail-closed rule for shapes the scanner cannot evaluate.
-        function emit_includes(mc, oc,   ioff, iq, iap, mrest, orest) {
+        # include! routes in one consumed chunk (mc masked, oc original),
+        # emitted with the chunk item attribute gate (inc_gated). Token
+        # boundary: a preceding identifier character means a different
+        # macro. The argument must BE a string literal (any bracket form);
+        # a computed expression (concat!/env!/const) emits nothing — even
+        # one whose parts are all literals — per the fail-closed rule for
+        # shapes the scanner cannot evaluate.
+        function emit_includes(mc, oc, inc_gated,   ioff, iq, iap, mrest, orest) {
             ioff = 0
             while ((iq = index(substr(mc, ioff + 1), "include!")) > 0) {
                 iap = ioff + iq
@@ -237,7 +239,8 @@ scan_decl_records() {
                     orest = substr(oc, iap)
                     if (match(mrest, /^include![[:space:]]*[([{][[:space:]]*(r#*)?"[^"]*"/) \
                         && match(mrest, /"[^"]*"/))
-                        printf "I\t%s\n", normpath(join(fdir, substr(orest, RSTART + 1, RLENGTH - 2)))
+                        printf "%s\t%s\n", (inc_gated ? "G" : "U"), \
+                            normpath(join(fdir, substr(orest, RSTART + 1, RLENGTH - 2)))
                 }
                 ioff = iap + 7
             }
@@ -336,6 +339,27 @@ scan_decl_records() {
                     gated = 0; pathattr = ""
                     continue
                 }
+                # Macro INVOCATION opener (ident! or path::to::ident! plus
+                # any delimiter): the token tree only becomes items after
+                # expansion, which the scanner does not evaluate — skip it
+                # whole so item-like tokens (`discard! { mod cand; }`)
+                # fabricate nothing. include! is the one macro the scanner
+                # DOES evaluate; it falls through to the chunk scan.
+                if (match(mbuf, /^(r#)?[A-Za-z_][A-Za-z0-9_]*(::(r#)?[A-Za-z_][A-Za-z0-9_]*)*![[:space:]]*[([{]/)) {
+                    mname = substr(mbuf, 1, RLENGTH)
+                    mdelim = substr(mbuf, RLENGTH, 1)
+                    sub(/![[:space:]]*[([{]$/, "", mname)
+                    sub(/^.*::/, "", mname)
+                    sub(/^r#/, "", mname)
+                    if (mname != "include") {
+                        skip_open = mdelim
+                        skip_close = (mdelim == "{") ? "}" : (mdelim == "(" ? ")" : "]")
+                        skip_depth = 1
+                        buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
+                        gated = 0; pathattr = ""
+                        continue
+                    }
+                }
                 # Any other item: consume to the next boundary (; { or })
                 # on the mask, scanning the chunk for include! routes. A
                 # multiline include! completes when its statement boundary
@@ -345,7 +369,7 @@ scan_decl_records() {
                     mchunk = substr(mbuf, 1, RSTART)
                     ochunk = substr(buf, 1, RSTART)
                     buf = substr(buf, RSTART + 1); mbuf = substr(mbuf, RSTART + 1)
-                    emit_includes(mchunk, ochunk)
+                    emit_includes(mchunk, ochunk, gated)
                     gated = 0; pathattr = ""
                     continue
                 }
@@ -449,7 +473,7 @@ is_cfg_test_declared() {
         $3 == "ERR" { if ($2 in rd) print "err"; next }
         $4 != cand { next }
         $3 == "G" { print "gated"; next }
-        $3 == "U" || $3 == "I" { print "ungated" }
+        $3 == "U" { print "ungated" }
     ')
     case "$routes" in *err*) return 1 ;; esac
     case "$routes" in *ungated*) return 1 ;; esac
@@ -646,6 +670,9 @@ main() {
         split("\n") | map(select(length > 0)) | map(
             capture("^(?<status>[AMDRC])[0-9]*\t(?<path>.+)$") // null
         ) | map(select(. != null)) |
+        # Rename rows carry "old<TAB>new": keep the DESTINATION — it is what
+        # exists on the new side and what scope classification keys on.
+        map(.path = (.path | split("\t") | last)) |
 
         # Classify each file into domain + scope
         map(. + {

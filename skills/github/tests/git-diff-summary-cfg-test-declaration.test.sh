@@ -1362,5 +1362,96 @@ assert_eq "paren-bodied macro body is skipped whole" \
 assert_eq "paren-bodied macro body is not production scope" \
     "support" "$(jq -r '.scope' <<<"$macro_paren_json")"
 
+# A #[cfg(test)]-gated include! is a GATED route: when every route to the
+# file is gated, it is test-only. (The ungated direction is covered by the
+# earlier "include! route keeps panic_path_added" case.)
+gated_include_repo="$SANDBOX/gated-include"
+init_repo "$gated_include_repo"
+mkdir -p "$gated_include_repo/src"
+cat > "$gated_include_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+include!("cand.rs");
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$gated_include_repo" add src
+git -C "$gated_include_repo" commit -q -m lib
+cat > "$gated_include_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$gated_include_repo" add src/cand.rs
+gated_include_json="$($SUMMARY -C "$gated_include_repo" --staged)"
+assert_eq "cfg(test)-gated include! is a gated route" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$gated_include_json")"
+assert_eq "cfg(test)-gated include! is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$gated_include_json")"
+
+# A macro INVOCATION's token tree only becomes items after expansion: an
+# item-like body (discard! { mod cand; }) must fabricate no route.
+invocation_repo="$SANDBOX/macro-invocation"
+init_repo "$invocation_repo"
+mkdir -p "$invocation_repo/src"
+cat > "$invocation_repo/src/lib.rs" <<'RUST'
+discard! { mod cand; }
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$invocation_repo" add src
+git -C "$invocation_repo" commit -q -m lib
+cat > "$invocation_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$invocation_repo" add src/cand.rs
+invocation_json="$($SUMMARY -C "$invocation_repo" --staged)"
+assert_eq "macro invocation token tree fabricates no ungated route" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$invocation_json")"
+assert_eq "macro invocation token tree is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$invocation_json")"
+
+# Rename rows key on the DESTINATION path: a renamed gated fixture must
+# classify by its new name, and no tab-joined path may leak into output.
+rename_repo="$SANDBOX/rename-dest"
+init_repo "$rename_repo"
+mkdir -p "$rename_repo/src"
+cat > "$rename_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+#[path = "new_fix.rs"]
+mod fixtures;
+RUST
+cat > "$rename_repo/src/old_fix.rs" <<'RUST'
+pub fn fixture_one() -> u32 { 1 }
+pub fn fixture_two() -> u32 { 2 }
+pub fn fixture_three() -> u32 { 3 }
+pub fn fixture_four() -> u32 { 4 }
+pub fn fixture_five() -> u32 { 5 }
+pub fn fixture_six() -> u32 { 6 }
+pub fn fixture_seven() -> u32 { 7 }
+pub fn fixture_eight() -> u32 { 8 }
+RUST
+git -C "$rename_repo" add src
+git -C "$rename_repo" commit -q -m base
+git -C "$rename_repo" mv src/old_fix.rs src/new_fix.rs
+cat >> "$rename_repo/src/new_fix.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$rename_repo" add src/new_fix.rs
+rename_json="$($SUMMARY -C "$rename_repo" --staged)"
+assert_eq "renamed gated fixture classifies by destination" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$rename_json")"
+assert_eq "renamed gated fixture is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$rename_json")"
+assert_eq "no tab-joined rename path leaks into domains" \
+    "false" "$(jq -r '[.domains[].files[]] | map(test("\t")) | any' <<<"$rename_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
