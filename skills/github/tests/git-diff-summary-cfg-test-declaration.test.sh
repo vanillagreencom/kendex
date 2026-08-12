@@ -1912,5 +1912,64 @@ symlink_json="$($SUMMARY -C "$symlink_repo" --staged)"
 assert_eq "symlinked declaring module fails closed to production"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$symlink_json")"
 assert_eq "symlinked declaring module keeps production scope"     "production" "$(jq -r '.scope' <<<"$symlink_json")"
 
+# A semicolon nested in a token group (the length of an array type) is not an
+# item boundary: splitting there would drop the pending #[cfg(test)] gate and
+# record the include that follows as an ungated production route.
+semi_repo="$SANDBOX/nested-semicolon"
+init_repo "$semi_repo"
+mkdir -p "$semi_repo/src"
+cat > "$semi_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+const BUF: [u8; 4] = include!("cand.rs");
+RUST
+git -C "$semi_repo" add src
+git -C "$semi_repo" commit -q -m lib
+cat > "$semi_repo/src/cand.rs" <<'RUST'
+[
+    1u8,
+    2,
+    3,
+    if false { panic!("unreachable") } else { 4 },
+]
+RUST
+git -C "$semi_repo" add src/cand.rs
+semi_json="$($SUMMARY -C "$semi_repo" --staged)"
+assert_eq "semicolon in a nested group keeps the item gate"     '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$semi_json")"
+assert_eq "nested-semicolon fixture stays support scope"     "support" "$(jq -r '.scope' <<<"$semi_json")"
+
+# A DANGLING worktree symlink is unreadable, not absent: the symlink guard
+# must be reached before the existence probe, which follows the link and
+# would otherwise report the declaring module as missing (no record).
+dangling_repo="$SANDBOX/dangling-symlink"
+init_repo "$dangling_repo"
+mkdir -p "$dangling_repo/src"
+cat > "$dangling_repo/src/lib.rs" <<'RUST'
+pub fn unrelated() -> u32 {
+    0
+}
+RUST
+cat > "$dangling_repo/src/gate.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+RUST
+cat > "$dangling_repo/src/cand.rs" <<'RUST'
+pub fn ok() -> u32 {
+    1
+}
+RUST
+git -C "$dangling_repo" add src
+git -C "$dangling_repo" commit -q -m lib
+cat > "$dangling_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+rm "$dangling_repo/src/lib.rs"
+ln -s ../nowhere/missing.rs "$dangling_repo/src/lib.rs"
+dangling_json="$($SUMMARY -C "$dangling_repo" --head)"
+assert_eq "dangling symlink declaring module fails closed to production"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$dangling_json")"
+assert_eq "dangling symlink keeps production scope"     "production" "$(jq -r '.scope' <<<"$dangling_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
