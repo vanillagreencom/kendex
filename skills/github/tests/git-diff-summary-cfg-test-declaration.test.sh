@@ -1971,5 +1971,30 @@ dangling_json="$($SUMMARY -C "$dangling_repo" --head)"
 assert_eq "dangling symlink declaring module fails closed to production"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$dangling_json")"
 assert_eq "dangling symlink keeps production scope"     "production" "$(jq -r '.scope' <<<"$dangling_json")"
 
+# A brace nested in a ( ) or [ ] group opens a block EXPRESSION, not an item
+# body: it must not end the item and drop the pending gate. Only a brace at
+# token-group depth 0 opens a skip region.
+brace_repo="$SANDBOX/nested-brace-group"
+init_repo "$brace_repo"
+mkdir -p "$brace_repo/src"
+cat > "$brace_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+const B: [fn(); { 1 }] = [include!("cand.rs"); 1];
+RUST
+git -C "$brace_repo" add src
+git -C "$brace_repo" commit -q -m lib
+cat > "$brace_repo/src/cand.rs" <<'RUST'
+{
+    fn helper() {
+        panic!("boom");
+    }
+    helper as fn()
+}
+RUST
+git -C "$brace_repo" add src/cand.rs
+brace_json="$($SUMMARY -C "$brace_repo" --staged)"
+assert_eq "brace in a nested group keeps the item gate"     '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$brace_json")"
+assert_eq "nested-brace fixture stays support scope"     "support" "$(jq -r '.scope' <<<"$brace_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

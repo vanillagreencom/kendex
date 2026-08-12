@@ -197,22 +197,22 @@ scan_decl_records() {
         # leave attribute tokens to swallow the declaration that follows.
         # Quoted brackets are inert: the scan runs on the mask. 0 when the
         # attribute is not closed in this buffer yet (it continues next line).
-        # Offset of the first item boundary in the masked buffer. Braces
-        # bound an item at any depth, as before; a SEMICOLON does not when it
-        # sits inside a ( ) or [ ] token group — the length in an array type
-        # ([u8; 4]) is not the end of the item, and splitting there would
-        # drop the pending attribute gate and record what follows as ungated.
-        # 0 when the item has no boundary in this buffer yet.
+        # Offset of the first item boundary in the masked buffer: a ; { or }
+        # at token-group depth 0. Inside a ( ) or [ ] group none of them ends
+        # the item — the length in an array type ([u8; 4]) is not a statement
+        # end, and a brace there opens a block EXPRESSION, not an item body.
+        # Splitting at either would drop the pending attribute gate and
+        # record what follows as an ungated production route. 0 when the item
+        # has no boundary in this buffer yet.
         function item_boundary(ms,   i, n, c, pd, bd) {
             n = length(ms); pd = 0; bd = 0
             for (i = 1; i <= n; i++) {
                 c = substr(ms, i, 1)
-                if (c == "{" || c == "}") return i
                 if (c == "(") pd++
                 else if (c == ")") { if (pd > 0) pd-- }
                 else if (c == "[") bd++
                 else if (c == "]") { if (bd > 0) bd-- }
-                else if (c == ";" && pd == 0 && bd == 0) return i
+                else if (pd == 0 && bd == 0 && (c == ";" || c == "{" || c == "}")) return i
             }
             return 0
         }
