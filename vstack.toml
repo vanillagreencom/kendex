@@ -77,8 +77,6 @@ reviewer-perf = ["reviewer"]
 
 reviewer-safety = ["reviewer"]
 
-reviewer-structure = ["reviewer"]
-
 reviewer-test = ["reviewer"]
 
 generalist = [
@@ -124,7 +122,7 @@ researcher = [
 # Skills given to all agents of a role
 [role-skills]
 analyst = ["linear", "github"]
-engineer = ["dev", "github", "decider", "linear"]
+engineer = ["dev", "github", "decider", "linear", "preflight", "code-quality"]
 manager = ["dev", "github", "project-management", "linear", "decider"]
 reviewer = ["reviewer"]
 

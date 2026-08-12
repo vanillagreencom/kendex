@@ -1,6 +1,6 @@
 ---
 name: size-ratchet
-description: "Tighten-only file-size gate: every tracked file over the line threshold (default 1000) must be frozen in a baseline TSV at its current size, and the baseline only moves down — new offenders, growth of a baselined file, and a baseline looser than reality all fail; --update lowers/removes rows but never adds or raises one, so deliberate growth is a visible hand-edit in review. Load when adding, tuning, or debugging a repo's file-size ratchet, its baseline, its exclusion list, or SIZE_RATCHET_* settings."
+description: "Tighten-only file-size gate: every tracked file over the line threshold (default 1000) must be frozen in a baseline TSV at its current size, and the baseline only moves down — new offenders, growth of a baselined file, and a baseline looser than reality all fail; --update lowers/removes rows but never adds or raises one, so deliberate growth is a visible hand-edit in review. Load when adding, tuning, or debugging a repo's file-size ratchet, its baseline, its exclusion list, or SIZE_RATCHET_* settings — or when a change grows files in a repo that has a baseline."
 license: MIT
 user-invocable: true
 metadata:
@@ -23,7 +23,7 @@ a ledger: rows only go down or away, and the only way a number goes up is a
 human editing the row in a reviewed diff.
 
 ```bash
-.agents/skills/size-ratchet/scripts/size-ratchet            # check (CI / pre-merge)
+.agents/skills/size-ratchet/scripts/size-ratchet            # check (commit hook / pre-PR / CI)
 .agents/skills/size-ratchet/scripts/size-ratchet --update   # tighten the baseline
 ```
 

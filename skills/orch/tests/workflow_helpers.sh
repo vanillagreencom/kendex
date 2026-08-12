@@ -414,15 +414,16 @@ assert_file_contains "$dev_implement" 'ambient precondition check first, then th
 # classified as command substitution under Codex approval=never and rejected
 # before it runs, even for a read-only search over Markdown inline code. The
 # canonical rule (regex hex escape `\x60` in single quotes, regex mode, one
-# simple command) lives in reviewer SKILL.md § Harness-Safe Shell; the dev
-# sites that generate validation/audit search commands must carry the concise
-# rule and point back at it rather than duplicating the essay.
-reviewer_skill="$REPO_ROOT/skills/reviewer/SKILL.md"
+# simple command) lives in orch SKILL.md § Harness-Safe Shell, with the worked
+# example in references/codex-runtime.md; the dev/reviewer sites that generate
+# validation/audit search commands carry the concise rule and point back at it
+# rather than duplicating the essay.
+codex_runtime="$REPO_ROOT/skills/orch/references/codex-runtime.md"
 dev_fix="$REPO_ROOT/skills/dev/workflows/dev-fix.md"
-assert_file_contains "$reviewer_skill" 'regex hex escape `\x60` in single quotes' "reviewer skill holds the canonical hex-escape rule"
-assert_file_contains "$reviewer_skill" "rg -n '\\x60vstack refresh\\x60' skills/" "reviewer skill shows the worked safe-search example"
+assert_file_contains "$codex_runtime" 'regex hex escape `\x60`' "codex-runtime reference holds the canonical hex-escape rule"
+assert_file_contains "$codex_runtime" "rg -n '\\x60vstack refresh\\x60' skills/" "codex-runtime reference shows the worked safe-search example"
 assert_file_contains "$orch_skill" 'command substitution to the classifier' "orch Harness-Safe Shell bans literal backticks in generated commands"
-assert_file_contains "$orch_skill" 'reviewer SKILL.md § Harness-Safe Shell' "orch skill cross-references the canonical backtick rule"
+assert_file_contains "$orch_skill" 'references/codex-runtime.md' "orch skill cross-references the canonical backtick rule"
 assert_file_contains "$dev_skill" 'Never put a literal backtick in a generated search command' "dev skill carries the backtick prohibition"
 assert_file_contains "$dev_skill" '`\x60`' "dev skill shows the hex-escape replacement"
 assert_file_contains "$dev_implement" 'regex hex escape `\x60` in single quotes' "dev-implement § 5 prescribes the hex-escape search shape"
@@ -488,7 +489,12 @@ assert_file_contains "$submit_workflow" 'test -f [DECISION_FILE_PATH]' "submit-p
 assert_file_contains "$submit_workflow" 'omit entries whose path fails' "submit-pr omits unverified decision paths from the PR body"
 assert_file_contains "$reviewer_review_workflow" 'decision-path provenance rule' "reviewer review workflow names the provenance rule on broken paths"
 assert_file_contains "$reviewer_review_workflow" 'do not hunt for the intended file' "reviewer review workflow stops reviewers from burning a cycle on bad paths"
-assert_file_contains "$reviewer_review_workflow" 'decisions search "[RELEVANT_KEYWORDS]"' "reviewer review workflow routes recovery through the decider CLI"
+# Reviewers do NOT run their own decider recovery: a broken decision path is
+# noted in the report and the review proceeds without it — decision context
+# is the orchestrator's to provide, and reviewer-side searching burned
+# cycles re-deriving what the delegation should have carried.
+assert_file_contains "$reviewer_review_workflow" 'note the broken reference in your report' "reviewer review workflow reports the broken path instead of recovering it"
+assert_file_not_contains "$reviewer_review_workflow" 'decisions search' "reviewer review workflow carries no reviewer-side decider recovery"
 
 # vstack#698 — dev-session status in reviewer slot accounting: the dev-start
 # persistence write recorded child_sessions without a status field while the
@@ -561,11 +567,16 @@ assert_file_contains "$post_summary_workflow" 'unreconciled pre-rebase SHA is fo
 assert_file_contains "$state_schema" '`rebase_map` | object' "workflow-state schema documents the rebase map field"
 assert_file_contains "$state_schema" 'resolve through it repeatedly until no key matches' "workflow-state schema documents chained map resolution"
 
+# Perf QA recording rules live in the reviewer skill's perf-qa reference,
+# loaded from qa-review § 2.3; the workflow itself must route the perf agent
+# there and stay free of pipe-based capture guidance.
+perf_qa_ref="$REPO_ROOT/skills/reviewer/references/perf-qa.md"
 assert_file_not_contains "$qa_workflow" "Pipe benchmark output" "qa-review avoids pipe-based benchmark recording"
 assert_file_not_contains "$qa_workflow" "pipe results" "qa-review avoids pipe-based perf capture guidance"
-assert_file_contains "$qa_workflow" "Do not use shell pipelines" "qa-review bans Codex-unsafe benchmark shell plumbing"
-assert_file_contains "$qa_workflow" "benchmark recorder fails closed on all-zero counters" "qa-review documents all-zero recorder fallback"
-assert_file_contains "$qa_workflow" "targeted regression command reports numeric regressions" "qa-review reports targeted numeric regressions"
+assert_file_contains "$qa_workflow" "references/perf-qa.md" "qa-review routes the perf agent to the perf-qa reference"
+assert_file_contains "$perf_qa_ref" "Do not use shell pipelines" "perf-qa reference bans Codex-unsafe benchmark shell plumbing"
+assert_file_contains "$perf_qa_ref" "benchmark recorder fails closed on all-zero counters" "perf-qa reference documents all-zero recorder fallback"
+assert_file_contains "$perf_qa_ref" "targeted regression command reports numeric regressions" "perf-qa reference reports targeted numeric regressions"
 
 # vstack#729 — tiered-CI guard-job skip propagation: a schedule-only
 # guard/classifier job's `skipped` result propagates through the `needs`

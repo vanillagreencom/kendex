@@ -293,6 +293,27 @@ jobs:
       - name: review-gate selftest against this repo's settings
         run: skills/review-gate/scripts/review-predicate-selftest.sh
 
+  preflight:
+    # Dogfoods the preflight skill on this repo's own PR diffs. PR-time on
+    # purpose despite the fast/full split: the whole run is seconds of
+    # diff-scoped checks, and its findings (fail-open bash, dead doc
+    # citations, unlinked TODOs, broken JSON/TOML) are exactly the classes
+    # that otherwise surface as bot-review round-trips. Not a required
+    # context; merge-group correctness is owned by the sharded suites.
+    name: Preflight (diff-scoped deterministic checks)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: preflight against the PR base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: skills/preflight/scripts/preflight --base "origin/$BASE_REF"
+
   cli-tests:
     name: CLI (cargo test + integration check)
     # Merge-queue only — same split as skill-suites above.

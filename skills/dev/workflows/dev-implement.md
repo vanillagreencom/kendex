@@ -260,13 +260,25 @@ Update relevant docs if implementation changes documented APIs or architecture.
 
 ## 5. Validate
 
+Run preflight first when installed (`test -x .agents/skills/preflight/scripts/preflight`). Fix every finding; preflight findings are never carried into review:
+
+```bash
+.agents/skills/preflight/scripts/preflight --repo [WORKTREE_PATH]
+```
+
+In a ratcheted repo (a size-ratchet baseline exists), also run the gate before opening the PR:
+
+```bash
+.agents/skills/size-ratchet/scripts/size-ratchet
+```
+
 ```bash
 # Run the project's build/test/lint validation command
 ```
 
 Run required verification commands in their normalized form from § 2.4 — ambient precondition check first, then the bare command; never an env-assignment prefix, and never an `env`-wrapped substitute.
 
-Validation or audit searches over backtick-bearing text (Markdown inline code) never carry a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes as one simple command (canonical rule: reviewer SKILL.md § Harness-Safe Shell).
+Validation or audit searches over backtick-bearing text (Markdown inline code) never carry a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes as one simple command (canonical rule: orch SKILL.md § Harness-Safe Shell).
 
 **Long-running validation.** If this run can outlast a turn, follow [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation): the invariant is that the completion tail (commit → QA labels → summary → artifact → return, § 7-10) is never lost; the wait mechanics are your harness's.
 

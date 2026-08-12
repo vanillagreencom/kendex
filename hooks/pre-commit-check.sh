@@ -171,7 +171,8 @@ if echo "$STAGED" | grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc)$'; then
         # because they must not be linted, and no amount of `biome check --write`
         # makes them processable. Without this flag the hook reports a lint
         # failure for a commit that has nothing to lint.
-        # shellcheck disable=SC2086 -- intentional word splitting of file list
+        # Intentional word splitting of the file list:
+        # shellcheck disable=SC2086
         if ! OUTPUT=$(cd "$REPO_ROOT" && "$BIOME" check --no-errors-on-unmatched $FILES 2>&1); then
           echo "biome check failed on staged files. Run 'biome check --write' first." >&2
           echo "$OUTPUT" | head -20 >&2
@@ -180,6 +181,52 @@ if echo "$STAGED" | grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc)$'; then
       fi
     fi
   fi
+fi
+
+# Preflight lane (no-op when the skill isn't installed): diff-scoped
+# deterministic checks on the staged change — shell syntax + fail-open lint,
+# dead doc citations, unlinked TODOs, JSON/TOML syntax. High-precision,
+# fail-only; its findings are always real defects to fix before committing.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -n "$REPO_ROOT" ]; then
+  for PREFLIGHT in "$REPO_ROOT/.agents/skills/preflight/scripts/preflight" "$REPO_ROOT/skills/preflight/scripts/preflight"; do
+    [ -x "$PREFLIGHT" ] || continue
+    if ! PREFLIGHT_OUTPUT=$("$PREFLIGHT" --staged --repo "$REPO_ROOT" 2>&1); then
+      print_output_tail "$PREFLIGHT_OUTPUT"
+      echo "preflight found defects in the staged change. Fix them before committing." >&2
+      exit 2
+    fi
+    break
+  done
+
+  # Size-ratchet lane: runs only in repos that adopted the ratchet (a baseline
+  # exists at the configured or default path), so installing the skill alone
+  # never starts enforcing. The script is the single source of truth — same
+  # verdict the CI gate gives, moved to commit time; its diagnostics name the
+  # remedy (split the file, or hand-lower the baseline row in a reviewed diff).
+  # Any nonzero — violations (1) or could-not-measure (2) — blocks, matching
+  # the gate's never-degrade-to-passing contract; CI remains the backstop.
+  for RATCHET in "$REPO_ROOT/.agents/skills/size-ratchet/scripts/size-ratchet" "$REPO_ROOT/skills/size-ratchet/scripts/size-ratchet"; do
+    [ -x "$RATCHET" ] || continue
+    SR_BASELINE="${SIZE_RATCHET_BASELINE:-}"
+    if [ -z "$SR_BASELINE" ]; then
+      for SETTINGS_FILE in "$REPO_ROOT/vstack.settings.toml" "$REPO_ROOT/.vstack/settings.toml"; do
+        [ -f "$SETTINGS_FILE" ] || continue
+        SR_BASELINE=$(sed -n 's/^[[:space:]]*SIZE_RATCHET_BASELINE[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$SETTINGS_FILE" | head -1)
+        [ -n "$SR_BASELINE" ] && break
+      done
+    fi
+    SR_BASELINE="${SR_BASELINE:-tools/size-ratchet-baseline.tsv}"
+    case "$SR_BASELINE" in /*) ;; *) SR_BASELINE="$REPO_ROOT/$SR_BASELINE" ;; esac
+    if [ -f "$SR_BASELINE" ]; then
+      if ! RATCHET_OUTPUT=$(cd "$REPO_ROOT" && "$RATCHET" 2>&1); then
+        print_output_tail "$RATCHET_OUTPUT"
+        echo "size-ratchet blocked the commit. Split the offending file, or hand-lower its baseline row (tighten-only) as part of this change." >&2
+        exit 2
+      fi
+    fi
+    break
+  done
 fi
 
 exit 0

@@ -6,7 +6,7 @@
 
 ## 1. Environment Setup
 
-Keep shell commands harness-safe: use one simple command per call with explicit arguments. Avoid inline shell loops, command substitution, heredocs, pipelines used only to pass values, and redirected writes to `tmp/`; Codex may treat those helper shapes as approval-required under `never` approval. For required multi-file reads, read each file directly. For generated Markdown/JSON files, use the harness file-write/edit tool or `apply_patch` instead of shell redirection. When a fix item requires searching backtick-bearing text (Markdown inline code), never put a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes (canonical rule: reviewer SKILL.md § Harness-Safe Shell).
+Keep shell commands harness-safe: use one simple command per call with explicit arguments. Avoid inline shell loops, command substitution, heredocs, pipelines used only to pass values, and redirected writes to `tmp/`; Codex may treat those helper shapes as approval-required under `never` approval. For required multi-file reads, read each file directly. For generated Markdown/JSON files, use the harness file-write/edit tool or `apply_patch` instead of shell redirection. When a fix item requires searching backtick-bearing text (Markdown inline code), never put a literal backtick in the command — write the pattern with the regex hex escape `\x60` in single quotes (canonical rule: orch SKILL.md § Harness-Safe Shell).
 
 ---
 

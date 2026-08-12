@@ -572,23 +572,24 @@ assert_eq "$("$CHECK" --file "$good" | jq -r '.reason')" "valid" "a schema-corre
 assert_eq "$(detail_of "$good")" "" "a valid artifact carries no detail"
 
 # --- The authoring path must carry the requirements, not just the recovery path ---
-# This is the actual defect in vstack#885: an agent that follows the workflow
-# text without opening the schema file had strictly less information than the
-# rejection it would then receive.
-qa_review="$REPO_ROOT/skills/reviewer/workflows/qa-review.md"
-assert_file_contains "$qa_review" "priority" "qa-review 2.6 names the priority field inline"
-assert_file_contains "$qa_review" "1-4" "qa-review 2.6 states the priority range inline"
-assert_file_contains "$qa_review" "no line numbers" "qa-review 2.6 states the location shape inline"
-assert_file_contains "$qa_review" "recommendation" "qa-review 2.6 names recommendation inline"
-assert_file_contains "$qa_review" "fix" "qa-review 2.6 names the suggestion categories inline"
-
+# vstack#885's defect was an authoring path with strictly less information than
+# the rejection it would then receive. The current answer is mechanical, not
+# duplicated prose: the schema file is the single field authority, and every
+# review workflow + the reviewer SKILL require a pre-return self-check with this
+# same validator, so a rejection can never first surface at the orchestrator.
 reviewer_skill="$REPO_ROOT/skills/reviewer/SKILL.md"
+schema_doc="$REPO_ROOT/skills/reviewer/schemas/review-finding.md"
 assert_file_contains "$reviewer_skill" "Output Contract" "reviewer SKILL has an output-contract section"
-assert_file_contains "$reviewer_skill" "1-4" "reviewer SKILL states the priority range"
-assert_file_contains "$reviewer_skill" "no 5" "reviewer SKILL says there is no P5"
-assert_file_contains "$reviewer_skill" 'not `detail`' "reviewer SKILL warns against the detail alias"
-assert_file_contains "$reviewer_skill" 'not `remediation`' "reviewer SKILL warns against the remediation alias"
-assert_file_contains "$reviewer_skill" "no line numbers" "reviewer SKILL states the location shape"
+assert_file_contains "$reviewer_skill" "review-artifact-check" "reviewer SKILL mandates the pre-return self-check"
+assert_file_contains "$schema_doc" "1-4" "schema states the priority range"
+assert_file_contains "$schema_doc" "no P5" "schema says there is no P5"
+assert_file_contains "$schema_doc" "no line numbers" "schema states the location shape"
+assert_file_contains "$schema_doc" "recommendation" "schema names the recommendation field"
+for wf in review codebase-review qa-review; do
+  wf_file="$REPO_ROOT/skills/reviewer/workflows/$wf.md"
+  assert_file_contains "$wf_file" "schemas/review-finding.md" "$wf workflow points at the schema authority"
+  assert_file_contains "$wf_file" "review-artifact-check" "$wf workflow carries the pre-return self-check"
+done
 
 review_pr_recovery="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 assert_file_contains "$review_pr_recovery" "integer 1-4" "review-pr's rejection text states the priority range"

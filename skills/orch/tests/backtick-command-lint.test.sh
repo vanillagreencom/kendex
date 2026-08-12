@@ -4,7 +4,7 @@
 # in a command is classified as command substitution and rejected before it
 # runs — even a read-only `rg`/`grep` search over Markdown inline code, and
 # even inside double quotes (where the substitution would be real). The
-# canonical rule (reviewer SKILL.md § Harness-Safe Shell) is to write the
+# canonical rule (orch SKILL.md § Harness-Safe Shell) is to write the
 # pattern with the regex hex escape `\x60` in single quotes, in regex mode.
 # The orch/dev docs must therefore never present a command containing a
 # literal backtick inside a fenced ```bash / ```sh block.

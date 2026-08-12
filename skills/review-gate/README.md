@@ -9,6 +9,14 @@ answer as a commit status your branch rules require.
 It does **not** check your tests. That is your branch protection's job, and
 keeping the two separate is what makes this small enough to trust.
 
+> **This skill runs in CI, so it must be COMMITTED to your repo.** GitHub
+> Actions checks out only tracked files — a machine-local `.agents` install
+> (symlinked or untracked) does not exist there. Vendor the skill as tracked
+> files at `.agents/skills/review-gate/` (what `vstack refresh` produces in a
+> consuming repo, committed), plus the copied workflow under
+> `.github/workflows/`. If the engine is not in the commit, the gate is not
+> in your CI.
+
 ## How it flows
 
 ```

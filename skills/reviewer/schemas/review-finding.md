@@ -1,10 +1,8 @@
 # Review Finding Schema
 
-All review/QA agents output JSON to `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`.
+Canonical JSON output shape for every review/QA verdict. Artifact path: `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`, where `{agent}` is the FULL agent name including its `reviewer-` prefix (`reviewer-security` → `review-reviewer-security-20260720-141530.json`). Codebase reviews insert `-codebase` before the timestamp.
 
-`{agent}` is your FULL agent name, including its `reviewer-` prefix. For `reviewer-security` the file is `review-reviewer-security-20260720-141530.json`. The doubled `review-reviewer-` is correct — do not shorten or de-duplicate it to `review-security-…`; orch's `review-artifact-check` globs the literal full agent name and reports the artifact `missing` otherwise.
-
-Create the JSON artifact with the active harness file-write/edit tool. In Codex, use `apply_patch` to add or update the target file under `tmp/`. Do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes for review artifacts.
+Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) — never shell redirection, heredocs, `tee`, or command substitution. The validating authority is orch's `review-artifact-check`; self-validate with it before returning (reviewer SKILL.md § Output Contract).
 
 ## Schema
 
@@ -52,44 +50,32 @@ Create the JSON artifact with the active harness file-write/edit tool. In Codex,
 }
 ```
 
-## Verdict Rules
+## Verdict
 
-- `action_required`: 1+ items in `blockers[]`
-- `pass`: `blockers[]` empty (suggestions may exist)
-
-## qa_metadata
-
-Per-agent QA payload (see `workflows/qa-review.md`); `{}` when there is none. A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass — orch's `review-artifact-check` rejects such artifacts with reason `no_review` regardless of verdict, so a self-reported no-review can never satisfy review acceptance. Artifacts without `qa_metadata` are validated as usual.
-
-Declaring `qa_metadata` also commits the artifact to usable findings. `review-artifact-check` rejects such an artifact with reason `incomplete` under either of two independent conditions: when its `blockers[]` or `suggestions[]` is missing or not an array (a truncated write can keep `verdict`/`summary` while silently losing the findings, so the verdict cannot be trusted), or when a present `blockers[]`/`suggestions[]` item omits a required item field below — `id`, `title`, `location`, `description`, `recommendation`, `priority` (a number in 1–4), `estimate` (a number in 1–5), plus `category ∈ {fix,issue}` for suggestions (the orchestrator routes suggestions on `category`, so a category-less item is unroutable; the rejection's `detail` field names the offending item and field). `questions[]` is exempt: it is PR-comment-triage-only. Artifacts without `qa_metadata` keep the tolerant existence + `verdict` validation.
+`action_required` when `blockers[]` is non-empty; `pass` when it is empty (suggestions may exist).
 
 ## Arrays
 
-- `blockers[]`: Items that block PR merge — dev must fix (may escalate to issues if unfixable)
-- `suggestions[]`: Non-blocking improvements — categorized by review agent
-- `questions[]`: Questions needing response (PR comment triage only)
+- `blockers[]`: block PR merge — dev must fix (may escalate to issues if unfixable)
+- `suggestions[]`: non-blocking improvements, categorized by the review agent
+- `questions[]`: PR-comment triage only — questions needing a response
 
 ## Item Fields (blockers/suggestions)
 
+Every item requires all of these; one missing field rejects the whole artifact.
+
 | Field | Required | Description |
 |-------|----------|-------------|
-| `id` | Yes | Sequential number within array |
-| `title` | Yes | Concise issue title (5-10 words) — used if item becomes a tracked issue |
-| `location` | Yes | Stable file path with function/struct names for precision (no line numbers — they go stale). If line or diff-hunk evidence is useful, include it in `description`. |
+| `id` | Yes | Sequential number within its array |
+| `title` | Yes | Concise title (5-10 words) — used if the item becomes a tracked issue |
+| `location` | Yes | One string: stable path plus symbol, no line numbers (they go stale) — line/hunk evidence belongs in `description` |
 | `description` | Yes | Problem statement |
 | `recommendation` | Yes | Actionable fix/improvement steps |
-| `priority` | Yes | 1-4 (P1=Urgent, P2=High, P3=Normal, P4=Low) |
+| `priority` | Yes | Integer 1-4 (P1 Urgent, P2 High, P3 Normal, P4 Low). There is no P5 — a finding below P4 is not worth reporting |
 | `estimate` | Yes | 1-5 points (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+) |
-| `category` | Suggestions only | `fix` (apply in this PR) or `issue` (track separately) |
+| `category` | Suggestions only | `fix` (apply in this PR) or `issue` (track separately) — the orchestrator routes on this field |
 
-### Description Quality
-
-`category: "issue"` items become tracked issues — write at issue quality.
-
-| Field | Blockers / fix items | Issue items (`category: "issue"`) |
-|-------|---------------------|-----------------------------------|
-| `description` | Brief (1 sentence OK) | 2-3 sentences: what, why, impact |
-| `recommendation` | Brief fix instruction | Bullet-list requirements (`* item`) |
+`category: "issue"` items become tracked issues — write at issue quality: `description` 2-3 sentences (what, why, impact); `recommendation` as bullet-list requirements.
 
 ## Question Fields (PR comment triage only)
 
@@ -103,10 +89,16 @@ Declaring `qa_metadata` also commits the artifact to usable findings. `review-ar
 | `source_id` | Yes | Thread or comment ID for reply routing |
 | `source_type` | Yes | `inline` or `pr-level` |
 
-## Priority
+## qa_metadata
 
-1=Urgent > 2=High > 3=Normal > 4=Low
+Per-agent QA payload (`workflows/qa-review.md`); `{}` when there is none. A reviewer that could not actually perform its review must set `{"review_performed": false, "reason": "<snake_case_reason>"}` instead of a bare pass — `review-artifact-check` rejects such artifacts (`no_review`) regardless of verdict.
 
-## Estimate
+Declaring a `qa_metadata` object also commits the artifact to usable findings: `review-artifact-check` rejects it (`incomplete`) when `blockers[]`/`suggestions[]` are missing or not arrays, or when a present item omits a required field above (`questions[]` is exempt). Artifacts without `qa_metadata` keep the tolerant existence + `verdict` validation. Full rejection semantics: `review-artifact-check --help`.
 
-Points (1-5): 1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+
+Example per-agent payloads:
+
+| Agent | qa_metadata key | Required fields |
+|-------|-----------------|-----------------|
+| safety audit | `safety` | `tool_results`, `unsafe_block_count`, `violations[]` |
+| performance QA | `perf_qa` | `percentiles`, `regression_pct`, `regressions[]`, `platform`, `baseline_sha` |
+| architecture review | `arch_review` | `dimension_scores`, `overall_score`, `pass` |

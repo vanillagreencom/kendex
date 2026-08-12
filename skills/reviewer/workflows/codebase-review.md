@@ -1,64 +1,26 @@
 # Codebase Review Lifecycle
 
-Whole-codebase review for ad-hoc early-stage audits. No PR, no issue, no diff, no fix delegation.
+Whole-codebase review for ad-hoc early-stage audits: no PR, no issue, no diff. You review and return a verdict; the orchestrator owns fanout, collection, and presentation.
 
-Review agents audit the same worktree from their specialist perspective and return the standard reviewer JSON.
+## 1. Scope
 
-**Ownership**: You review the specified codebase. Return verdict to orchestrator. No issue tracker state changes.
+The delegation message provides `Worktree`, optional `Scope`, optional `Exclusions`. Default scope: all tracked, non-generated project code plus the tests, configs, and docs your domain needs — enumerated with `git -C [WORKTREE_PATH] ls-files`, never sampled or restricted to changed files. Default exclusions: harness mirrors (`.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.pi/`, `.cursor/`), vendor/dependency dirs, build outputs, generated artifacts, binaries, lockfiles.
 
----
+If the scope is too large to review honestly within context/tool limits, return `action_required` with a blocker naming the coverage gap and the smallest useful split.
 
-## 1. Establish Scope
+## 2. Review
 
-Extract from delegation message:
-- `Worktree` path
-- `Scope` description, if provided
-- `Exclusions`, if provided
+Review per your agent file and the reviewer skill's Ethos, reading the relevant code before writing any finding — never from filenames or search hits alone. Findings may be pre-existing; report only what is actionable and material for an early-stage quality pass.
 
-Default scope: all tracked, non-generated project code files, plus tests, configs, and docs relevant to your review domain. Do not sample or restrict to changed files.
+## 3. Artifact, Validate, Return
 
-Default exclusions: `.git/`, harness mirrors (`.agents/`, `.claude/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`), dependency/vendor dirs (`node_modules/`, `vendor/`), build outputs (`target/`, `dist/`, `build/`, `coverage/`), generated artifacts, binary assets, and lockfiles unless your domain specifically requires them.
+Write the JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md) to `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json` (`mkdir -p [WORKTREE_PATH]/tmp` first if needed). Verdict: `action_required` when `blockers[]` is non-empty, else `pass`. Self-validate until `"ok": true`:
 
-Use `git -C [WORKTREE_PATH] ls-files` to enumerate tracked files. Do not use `git diff`; this is not a change review.
+```bash
+.agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] 0
+```
 
-If the requested scope is too large to review honestly before context/tool limits, return `action_required` with a blocker describing the coverage gap and the smallest useful split.
-
----
-
-## 2. Review Codebase
-
-Apply the reviewer skill's General Review Ethos and Reviewer Scope Boundaries. Stay within this agent's domain; do not duplicate another specialist unless your domain adds distinct evidence, impact, or remediation.
-
-Inspect files broadly enough to support every finding. Do not report speculative issues from filenames or search hits alone; read the relevant code before writing the finding.
-
-For whole-codebase audits, findings may be pre-existing. Report only issues that are actionable, material, and worth addressing in an early-stage quality pass.
-
----
-
-## 3. Classify Findings
-
-Read the orch skill's recommendation-bias patterns if available. Apply its actionability checks to ALL findings before entering `blockers[]` or `suggestions[]`.
-
-**Verdict rules:**
-- `action_required`: 1+ items in `blockers[]`
-- `pass`: `blockers[]` empty
-
----
-
-## 4. Return JSON Report
-
-Build JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md). Target artifact path: `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json`.
-
-`[AGENT]` is your FULL agent name, including its `reviewer-` prefix. For `reviewer-security` the file is `review-reviewer-security-codebase-20260720-141530.json`. The doubled `review-reviewer-` is correct — do not shorten or de-duplicate it to `review-security-codebase-…`; orch's `review-artifact-check` globs the literal full agent name and reports the artifact `missing` otherwise.
-
-Artifact write path:
-- Create `[WORKTREE_PATH]/tmp` with `mkdir -p [WORKTREE_PATH]/tmp` if it does not exist.
-- Write the JSON with the harness file-write/edit tool. In Codex, use `apply_patch` to add or update the exact artifact path.
-- Do not use shell redirection, heredocs, `tee`, `echo >`, command substitution, or redirected `cat` writes to create the JSON.
-
-Send this result to the orchestrator as an agent-to-agent message. **Writing the JSON to disk is not a return**.
-
-**Return exactly** (`[AGENT]` is your full agent name including the `reviewer-` prefix, e.g. `review-reviewer-security-codebase-20260720-141530.json`):
+Send exactly one agent-to-agent message, then go idle:
 
 <output_format>
 Verdict: [pass|action_required]
@@ -68,15 +30,4 @@ File: [WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json
 ```
 </output_format>
 
----
-
-## Constraints
-
-**Do NOT**:
-- Modify project files other than the required `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json` review artifact (`[AGENT]` in full, prefix included — `reviewer-security` → `review-reviewer-security-codebase-…`)
-- Modify issue tracker state
-- Create commits or push changes
-- Call other subagents
-- Convert findings into issues
-
-**Orchestrator handles**: fanout, collection, and presentation only.
+**Do NOT**: modify project files other than the artifact, modify tracker state, commit, push, call other subagents, or convert findings into issues.

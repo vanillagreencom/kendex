@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+- **reviewer: ground-up rewrite driven by 24-PR escape mining; new
+  `preflight` skill; `reviewer-structure` retired.** A survey of the last 6
+  PRs in each of four consuming repos classified every bug that escaped
+  internal review; the reviewer skill and all reviewer agents were rewritten
+  from scratch around those classes, on the principle that frontier reviewers
+  need domain probes and contracts, not technique tutorials. Cut outright:
+  the duplicated field tables, repeated artifact-naming warnings, the inlined
+  Harness-Safe Shell essay (orch is the canonical home; the worked backtick
+  example moved to `references/codex-runtime.md`), the central scope-boundary
+  table (each agent file owns its scope and its leave-to-peers line),
+  reviewer-side decider recovery (a broken decision path is noted and
+  reviewed without — decision context is the orchestrator's to provide; the
+  `decider` and `github` skill dependencies drop with it), the perf agent's
+  33-row resource library, and every generic read-the-architecture-docs
+  boilerplate section. In their place: every review workflow mandates a
+  pre-return self-check with orch's `review-artifact-check`, the ethos adds
+  "report the class, not the instance", and re-review rounds scope to the
+  fix diff plus blast radius while sweeping each fixed defect's class.
+  Agents carry mined high-yield probes instead of generic checklists:
+  fail-open catalogue (`reviewer-error`), must-fail controls and assertion
+  tightness (`reviewer-test`), claim/derivation/citation verification
+  (`reviewer-doc`, now xhigh effort — doc drift is the largest escape class),
+  boundary probes (`reviewer-correctness`), ownership-gating class
+  enforcement (`reviewer-security`), file/process races (`reviewer-safety`),
+  mechanism-over-shapes (`reviewer-quality`), spec review (`reviewer-arch`).
+  Perf benchmark recording contracts live in
+  `skills/reviewer/references/perf-qa.md`, loaded only by the perf agent.
+  A new `code-quality` skill (VST-212, modeled on Turso's) gives dev agents
+  the authoring mirror of the reviewer probes — no fail-open branches,
+  prove-your-guards, comment do's/don'ts (why-not-what, no temporal markers
+  or review archaeology), over-engineering and cleanup rules — one generic
+  copy upstream, repo specifics via the `[skill-instructions]` seam; wired
+  into `[role-skills] engineer`.
+  Size-ratchet enforcement moves earlier without changing semantics: the
+  pre-commit hook now runs the repo's own ratchet script — adoption-gated on
+  a baseline existing, so installing the skill alone never starts enforcing
+  — and dev-implement § 5 runs it pre-PR, replacing the CI-round-trip
+  discovery path; the reviewer-side duplicate of the size rule is gone with
+  `reviewer-structure`, leaving the script as the single source of truth.
+  **Breaking**: the `reviewer-structure` agent is retired — its file-size job
+  is size-ratchet's, TODO hygiene is preflight's, god objects and test
+  placement fold into `reviewer-quality`; remove it from consuming-repo
+  configs on next refresh. The new `preflight` skill is a diff-scoped,
+  fail-only deterministic checker (shell syntax + shellcheck error lanes,
+  masked-return/unchecked-`mktemp` fail-open lint, dead doc citations,
+  unlinked TODO markers, JSON/TOML syntax) wired into dev-implement § 5, the
+  pre-commit hook, `[role-skills] engineer`, and a PR-time CI dogfood job.
+  Consumer adoption: `[agent-skills]`/`[role-skills]` are project-owned
+  after install, so existing consumers opt in by adding `preflight` and
+  `code-quality` to their own config and running `vstack refresh`; the
+  updated pre-commit hook arrives with refresh and its preflight lane
+  self-gates on the skill being installed. CI use of preflight, like
+  review-gate, requires the installed skill committed to the repo.
+
 - **orch: claude handoff lanes launch autonomous and verify brief delivery**
   (VST-191 / #1173). `open-terminal` now renders a permission argument into
   claude lane launch commands, sourced from the new

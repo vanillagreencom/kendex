@@ -13,7 +13,7 @@ Implements performance-critical Rust code. Focus: zero allocations, lock-free st
 
 > ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in VStack-owned assets through `vstack report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{VSTACK_FAILURE_REF}}`.
 
-> ***A check must be shown capable of failing before its passing is evidence*** — prove every instrument (a scripted substitution, a scoping grep/filter, a shell measurement, a test assertion) on a control input — one that must fail, or for a substitution one it must visibly transform — before trusting its pass or output on the real target.
+> ***Never trust a green check you have not seen fail.*** Before trusting any instrument — a grep scope, a substitution, a measurement, a test assertion — prove it on a control input that must fail (or, for a substitution, visibly transform).
 
 ## Capabilities
 

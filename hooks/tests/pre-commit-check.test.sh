@@ -316,6 +316,81 @@ assert_eq "$rc" "2" "a real biome finding still blocks the commit"
 assert_contains "$err" "biome check failed on staged files" "biome guidance line still present"
 assert_contains "$err" "noUnusedVariables" "biome diagnostics reach stderr"
 
+# --- Fixture F: preflight lane ----------------------------------------------
+# The lane runs the installed preflight script in --staged mode and blocks on
+# findings. Shim proves invocation shape, the block, and the clean pass.
+REPO_F="$TMP_ROOT/preflight-repo"
+make_repo "$REPO_F"
+mkdir -p "$REPO_F/.agents/skills/preflight/scripts"
+cat >"$REPO_F/.agents/skills/preflight/scripts/preflight" <<'EOF'
+#!/usr/bin/env bash
+echo "preflight $*" >>"$CARGO_LOG"
+if [ "${PREFLIGHT_EXIT:-0}" != "0" ]; then
+  echo "scripts/x.sh:3: [fail-open] unchecked mktemp in a file without errexit"
+fi
+exit "${PREFLIGHT_EXIT:-0}"
+EOF
+chmod +x "$REPO_F/.agents/skills/preflight/scripts/preflight"
+printf 'x\n' >"$REPO_F/file.txt"
+git -C "$REPO_F" add -A
+
+run_hook "$REPO_F"
+assert_eq "$rc" "0" "clean preflight does not block the commit"
+assert_contains "$log" "preflight --staged" "preflight lane runs in --staged mode"
+
+run_hook "$REPO_F" PREFLIGHT_EXIT=1
+assert_eq "$rc" "2" "a preflight finding blocks the commit"
+assert_contains "$err" "preflight found defects in the staged change" "preflight guidance line reaches stderr"
+assert_contains "$err" "unchecked mktemp" "preflight diagnostics reach stderr"
+
+# --- Fixture G: size-ratchet lane -------------------------------------------
+# The lane is adoption-gated: it runs ONLY when a baseline exists at the
+# configured or default path, so installing the skill never starts enforcing.
+REPO_G="$TMP_ROOT/ratchet-repo"
+make_repo "$REPO_G"
+mkdir -p "$REPO_G/.agents/skills/size-ratchet/scripts"
+cat >"$REPO_G/.agents/skills/size-ratchet/scripts/size-ratchet" <<'EOF'
+#!/usr/bin/env bash
+echo "size-ratchet $*" >>"$CARGO_LOG"
+if [ "${RATCHET_EXIT:-0}" != "0" ]; then
+  echo "src/big.rs: 1207 lines, over threshold 1000 with no baseline row" >&2
+fi
+exit "${RATCHET_EXIT:-0}"
+EOF
+chmod +x "$REPO_G/.agents/skills/size-ratchet/scripts/size-ratchet"
+printf 'x\n' >"$REPO_G/file.txt"
+git -C "$REPO_G" add -A
+
+# No baseline anywhere: the lane must not run at all — a would-be violation
+# cannot block (proves the adoption gate, not just the happy path).
+run_hook "$REPO_G" RATCHET_EXIT=1
+assert_eq "$rc" "0" "without a baseline the ratchet lane never runs"
+if [[ "$log" == *"size-ratchet"* ]]; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "ratchet shim was invoked despite no baseline"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "ratchet shim not invoked without a baseline"
+fi
+
+# Default baseline path adopts the lane; a violation blocks with the remedy.
+mkdir -p "$REPO_G/tools"
+printf 'src/big.rs\t1200\n' >"$REPO_G/tools/size-ratchet-baseline.tsv"
+run_hook "$REPO_G" RATCHET_EXIT=1
+assert_eq "$rc" "2" "a ratchet violation blocks the commit once a baseline exists"
+assert_contains "$err" "size-ratchet blocked the commit" "ratchet remedy line reaches stderr"
+assert_contains "$err" "over threshold" "ratchet diagnostics reach stderr"
+
+run_hook "$REPO_G"
+assert_eq "$rc" "0" "a clean ratchet run does not block"
+
+# Custom baseline path via vstack.settings.toml is honored for the adoption
+# check (the settings key is how ratcheted repos relocate the baseline).
+rm "$REPO_G/tools/size-ratchet-baseline.tsv"
+printf '[env]\nSIZE_RATCHET_BASELINE = "ci/ratchet.tsv"\n' >"$REPO_G/vstack.settings.toml"
+mkdir -p "$REPO_G/ci"
+printf 'src/big.rs\t1200\n' >"$REPO_G/ci/ratchet.tsv"
+run_hook "$REPO_G" RATCHET_EXIT=1
+assert_eq "$rc" "2" "settings-relocated baseline still adopts the ratchet lane"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

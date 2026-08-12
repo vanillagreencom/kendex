@@ -65,8 +65,6 @@ reviewer-safety = ""
 
 reviewer-security = ""
 
-reviewer-structure = ""
-
 reviewer-test = ""
 
 rust = ""
@@ -103,8 +101,6 @@ reviewer-quality = ""
 reviewer-safety = ""
 
 reviewer-security = ""
-
-reviewer-structure = ""
 
 reviewer-test = ""
 
@@ -220,7 +216,7 @@ reviewer-arch = { color = "yellow", model = "inherit", effort = "xhigh", deny-to
 
 reviewer-correctness = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
 
-reviewer-doc = { color = "yellow", model = "inherit", effort = "medium", deny-tools = ["Agent", "AskUserQuestion"], background = true }
+reviewer-doc = { color = "yellow", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
 
 reviewer-error = { color = "orange", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
 
@@ -231,8 +227,6 @@ reviewer-quality = { color = "purple", model = "inherit", effort = "xhigh", deny
 reviewer-safety = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
 
 reviewer-security = { color = "red", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
-
-reviewer-structure = { color = "cyan", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
 
 reviewer-test = { color = "blue", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = true }
 
@@ -255,7 +249,7 @@ reviewer-arch = { color = "#eab308", model = "openai/gpt-5.5", deny-tools = ["ta
 
 reviewer-correctness = { color = "#ef4444", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
 
-reviewer-doc = { color = "#eab308", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "medium" }
+reviewer-doc = { color = "#eab308", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
 
 reviewer-error = { color = "#f97316", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
 
@@ -266,8 +260,6 @@ reviewer-quality = { color = "#a855f7", model = "openai/gpt-5.5", deny-tools = [
 reviewer-safety = { color = "#ef4444", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
 
 reviewer-security = { color = "#ef4444", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
-
-reviewer-structure = { color = "#06b6d4", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
 
 reviewer-test = { color = "#3b82f6", model = "openai/gpt-5.5", deny-tools = ["task", "question"], mode = "subagent", model-reasoning-effort = "xhigh" }
 
@@ -290,7 +282,7 @@ reviewer-arch = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-rea
 
 reviewer-correctness = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Correctness-Atlas", "Reviewer-Correctness-Delta", "Reviewer-Correctness-Echo", "Reviewer-Correctness-Nova", "Reviewer-Correctness-Orion", "Reviewer-Correctness-Vector"] }
 
-reviewer-doc = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "medium", nickname-candidates = ["Reviewer-Doc-Atlas", "Reviewer-Doc-Delta", "Reviewer-Doc-Echo", "Reviewer-Doc-Nova", "Reviewer-Doc-Orion", "Reviewer-Doc-Vector"] }
+reviewer-doc = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Doc-Atlas", "Reviewer-Doc-Delta", "Reviewer-Doc-Echo", "Reviewer-Doc-Nova", "Reviewer-Doc-Orion", "Reviewer-Doc-Vector"] }
 
 reviewer-error = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Error-Atlas", "Reviewer-Error-Delta", "Reviewer-Error-Echo", "Reviewer-Error-Nova", "Reviewer-Error-Orion", "Reviewer-Error-Vector"] }
 
@@ -301,8 +293,6 @@ reviewer-quality = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-
 reviewer-safety = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Safety-Atlas", "Reviewer-Safety-Delta", "Reviewer-Safety-Echo", "Reviewer-Safety-Nova", "Reviewer-Safety-Orion", "Reviewer-Safety-Vector"] }
 
 reviewer-security = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Security-Atlas", "Reviewer-Security-Delta", "Reviewer-Security-Echo", "Reviewer-Security-Nova", "Reviewer-Security-Orion", "Reviewer-Security-Vector"] }
-
-reviewer-structure = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Structure-Atlas", "Reviewer-Structure-Delta", "Reviewer-Structure-Echo", "Reviewer-Structure-Nova", "Reviewer-Structure-Orion", "Reviewer-Structure-Vector"] }
 
 reviewer-test = { model = "gpt-5.5", sandbox-mode = "workspace-write", model-reasoning-effort = "xhigh", nickname-candidates = ["Reviewer-Test-Atlas", "Reviewer-Test-Delta", "Reviewer-Test-Echo", "Reviewer-Test-Nova", "Reviewer-Test-Orion", "Reviewer-Test-Vector"] }
 
@@ -338,8 +328,6 @@ reviewer-quality = { color = "purple", model = "inherit", deny-tools = ["subagen
 reviewer-safety = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
 
 reviewer-security = { color = "red", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
-
-reviewer-structure = { color = "cyan", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
 
 reviewer-test = { color = "blue", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "delegate_subagent", "question", "tasks_write"], allowed-subagents = [], pane = false }
 
