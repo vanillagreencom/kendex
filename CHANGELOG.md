@@ -70,17 +70,28 @@
   Lane scratch now has one owner and one rule: the run creates exactly one
   directory under `TMPDIR`, it holds nothing but the per-lane stderr captures,
   and each lane's review is held in memory from the moment it is reaped —
-  never read back from that directory. A lane's review lives beside the union
-  as `<output>.<target>.json`, or in a parent-owned temp file when there is no
-  `--output`. Losing scratch now costs the log replay (reported as such) and
-  never a verdict, in both modes. Two truthfulness fixes ride along: an
-  artifact that holds no JSON value at all is unusable rather than a healthy
-  lane contributing nothing (`jq` exits 0 and prints nothing for it, so it
-  used to merge as a phantom lane and could publish a pass over a real
-  blocker), and a lane that exits 0 with no usable artifact is recorded with
-  the never-answered code 5 instead of a bare `exit 0`. Unusable artifacts now
-  report `jq`'s own reason, and the "union of N lanes" line counts the lanes
-  the written artifact actually carries.
+  never read back from that directory. Losing that directory costs the log
+  replay (reported as such) and never a verdict. Where a lane's review sits
+  until it is reaped depends on the mode: with `--output` it is the durable
+  sibling `<output>.<target>.json`, beyond the reach of any temp-space actor;
+  without `--output` it is an ordinary temp file, so an actor that removes
+  temp *files* still costs that lane — but loudly, with coverage `"degraded"`,
+  the lane recorded at exit 5, and the loss named on stderr, never as a silent
+  pass. Lane children now run under a restrictive umask, so the sidecars they
+  write in temp space are owner-only.
+
+  Artifact handling got stricter in the same pass. An artifact is accepted
+  only if it holds exactly one JSON object carrying the shape the union merge
+  consumes: previously an artifact that held no JSON value at all merged as a
+  phantom healthy lane (`jq` exits 0 printing nothing for it) and could
+  publish a pass over a real blocker, while one carrying a malformed finding —
+  `blockers: ["bad"]` — aborted the whole merge and delivered no union even
+  when the other lane was fine. Both are now that lane answering unusably
+  (exit 4, coverage degraded), and the healthy lanes still publish. Each lane
+  artifact is read exactly once, so the reported cause is the one that
+  actually rejected it. A lane that exits 0 with no usable artifact is
+  recorded with the never-answered code 5 instead of a bare `exit 0`, and the
+  "union of N lanes" line counts the lanes the written artifact carries.
 
 - **orch: claude handoff lanes launch autonomous and verify brief delivery**
   (VST-191 / #1173). `open-terminal` now renders a permission argument into

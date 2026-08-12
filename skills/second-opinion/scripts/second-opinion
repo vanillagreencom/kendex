@@ -701,8 +701,12 @@ if $MULTI_LANE; then
     # Stdout-mode lane artifacts plus each child's own sidecar family
     # (<art>.noreview.json, <art>.raw.txt, …): the mktemp name makes the glob
     # unambiguous, and a glob that matches nothing is a no-op for rm -f.
+    # Never let cleanup decide the run's exit status: rm -f still fails on an
+    # entry it cannot unlink (a directory, a foreign-owned file in a sticky
+    # /tmp), and inside this EXIT trap that failure would override a delivered
+    # two-lane union with a non-zero status.
     for art in ${LANE_TMP_FILES[@]+"${LANE_TMP_FILES[@]}"}; do
-      rm -f "$art" "$art".*
+      rm -f "$art" "$art".* || true
     done
   }
   trap 'cleanup_lanes' EXIT
@@ -721,6 +725,15 @@ if $MULTI_LANE; then
   SELF="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
   LANE_OUTS=()
   LANE_ERRS=()
+  # Lane children write their sidecar families (.raw.txt, .retry.txt,
+  # .noreview.json, .failed.json) beside the artifact path they are handed,
+  # with plain `printf > path`, so they carry the ambient umask — and in stdout
+  # mode that path is in the TMPDIR root, where 0644 leaves the model's raw
+  # review of the reviewed repository readable by every local user for the life
+  # of the run. Spawn the children owner-only; restored before the union write
+  # so the caller's own --output artifact keeps the caller's umask.
+  LANE_UMASK_PREV=$(umask)
+  umask 077
   for lane in "${REVIEW_LANES[@]}"; do
     if [[ -n "$OUTPUT_PATH" ]]; then
       lane_out="${OUTPUT_PATH}.${lane}.json"
@@ -735,6 +748,33 @@ if $MULTI_LANE; then
     LANE_OUTS+=("$lane_out")
     LANE_ERRS+=("$lane_err")
   done
+  umask "$LANE_UMASK_PREV"
+
+  # Gate every lane artifact on the shape the union merge actually consumes.
+  # A zero exit and a parse are not enough: the merge adds `{source: …}` to
+  # each finding, iterates questions, lowercases locations and concatenates
+  # summaries, so a top-level-complete artifact carrying `blockers: ["bad"]`
+  # parses fine and then aborts the merge under `set -e` — no union at all,
+  # even though the other lane returned a perfectly good review. Rejecting it
+  # here keeps that lane's failure local (exit 4, coverage degraded) and lets
+  # the healthy lanes publish. Slurped, so a stream of several JSON values is
+  # refused too rather than smuggling extra lanes into the merge.
+  LANE_WRAP_JQ='
+    def bad(m): error("invalid review artifact: " + m);
+    def check(k):
+      if (.[k] | type) != "array" then bad(k + " is not an array")
+      elif any(.[k][]; type != "object") then bad(k + " holds a non-object entry")
+      elif any(.[k][]; .location != null and (.location | type) != "string")
+        then bad(k + " holds a non-string location")
+      else . end;
+    if length == 0 then bad("artifact holds no JSON value at all")
+    elif length > 1 then bad("artifact holds " + (length | tostring) + " JSON values, expected one")
+    else .[0] end
+    | if type != "object" then bad("artifact is not a JSON object")
+      elif (.questions | type) != "array" then bad("questions is not an array")
+      elif .summary != null and (.summary | type) != "string" then bad("summary is not a string")
+      else check("blockers") | check("suggestions") end
+    | {target: $target, review: .}'
 
   LANES_FAILED_JSON="[]"
   LANE_WRAPS=()
@@ -749,38 +789,58 @@ if $MULTI_LANE; then
     # reaper can clear scratch while lanes run) the log is lost and nothing
     # else is. Branch on the read ITSELF rather than a prior -r test: a capture
     # removed between the test and the read would otherwise emit the bare
-    # "can't read" error this branch exists to replace. One message covers both
-    # orderings, states the observed condition instead of an inferred cause,
-    # and never colours the lane's own verdict.
-    if ! sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" 2>/dev/null >&2; then
+    # "can't read" error this branch exists to replace. The one message covers
+    # removal before and during the read, states the observed condition instead
+    # of an inferred cause, and never colours the lane's own verdict.
+    #
+    # Redirection order below is load-bearing: fd1 must be duplicated from the
+    # REAL stderr BEFORE fd2 is silenced. Written the other way round
+    # (2>/dev/null first) `>&2` dupes fd1 from the already-silenced fd2 and the
+    # whole replay — an operator's only view of a lane's cause text, and how
+    # exit 5 is diagnosed — goes to /dev/null on the success path, where no
+    # verdict assertion would ever notice. The `jq … 2>&1 >/dev/null` capture
+    # further down wants the opposite order and is correct as written.
+    if ! sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" >&2 2>/dev/null; then
       echo "→ lane stderr replay unavailable (scratch capture unreadable): $lane" >&2
     fi
     lane_ok=false
-    if [[ $lane_rc -eq 0 && -s "${LANE_OUTS[$i]}" ]]; then
-      # A zero exit with a non-empty file is not proof of a valid artifact —
-      # jq must parse it, or the merge would abort on one corrupt lane. The
-      # wrapped review is held IN MEMORY from here on (VST-221): the union
-      # merge must not depend on a scratch file surviving between this reap and
-      # the final write, or losing scratch would report healthy lanes as
-      # unparseable and drop a verdict both models actually delivered.
+    # Read the artifact ONCE, into memory (VST-221). Everything downstream —
+    # the wrap, and the cause reported when the wrap is refused — works on
+    # those same bytes, so a test-then-read pair can no longer straddle the
+    # mid-run clearing this fix is about, and the reported cause is always the
+    # one that actually rejected the lane rather than whatever a later re-read
+    # happens to find (an artifact removed a moment after being rejected as
+    # malformed would otherwise be explained as "No such file or directory").
+    lane_raw=""
+    if [[ $lane_rc -eq 0 ]]; then
+      lane_raw=$(cat "${LANE_OUTS[$i]}" 2>/dev/null) || lane_raw=""
+    fi
+    if [[ $lane_rc -eq 0 && -n "$lane_raw" ]]; then
+      # A zero exit and readable content are not proof of a usable artifact —
+      # it must survive LANE_WRAP_JQ, or one bad lane takes the whole merge
+      # down with it. The wrapped review is held IN MEMORY from here on: the
+      # union merge must not depend on a scratch file surviving between this
+      # reap and the final write, or losing scratch would report healthy lanes
+      # as unusable and drop a verdict both models actually delivered.
       #
-      # A parse that "succeeds" is not enough either: jq exits 0 and prints
-      # NOTHING for input that holds no JSON value at all (a whitespace-only
-      # artifact clears the -s test above), which would push an empty element
-      # into the merge — a lane counted as healthy that contributes no
-      # findings, dropping a real blocker while coverage still reads "full".
-      # The wrap must be non-empty to count.
-      if lane_wrap=$(jq -c --arg target "$lane" '{target: $target, review: .}' "${LANE_OUTS[$i]}" 2>/dev/null) \
+      # The wrap must also be NON-EMPTY: jq exits 0 printing nothing for input
+      # that holds no JSON value at all, which would push an empty element into
+      # the merge — a lane counted as healthy that contributes no findings,
+      # dropping a real blocker while coverage still reads "full".
+      if lane_wrap=$(printf '%s\n' "$lane_raw" | jq -c -s --arg target "$lane" "$LANE_WRAP_JQ" 2>/dev/null) \
          && [[ -n "$lane_wrap" ]]; then
         LANE_WRAPS+=("$lane_wrap")
         lane_ok=true
       else
         # Say WHY it is unusable — jq's own message names a truncated artifact,
-        # a malformed one, or a vanished file, and in stdout mode the artifact
-        # itself is gone at exit, so the log line is the only evidence left.
-        lane_reason=$(jq --arg target "$lane" '{target: $target, review: .}' "${LANE_OUTS[$i]}" 2>&1 >/dev/null | head -1) || true
+        # a malformed one, or the shape the merge could not have consumed. In
+        # stdout mode the artifact is gone at exit, so this line is the only
+        # evidence left. `2>&1 >/dev/null` is the opposite order from the sed
+        # replay above on purpose: here fd2 must reach the pipe before fd1 is
+        # discarded.
+        lane_reason=$(printf '%s\n' "$lane_raw" | jq -s --arg target "$lane" "$LANE_WRAP_JQ" 2>&1 >/dev/null | head -1) || true
         [[ -n "$lane_reason" ]] || lane_reason="no JSON value in artifact"
-        echo "→ lane produced an unparseable artifact: $lane ($lane_reason)" >&2
+        echo "→ lane produced an unusable artifact: $lane ($lane_reason)" >&2
         lane_rc="$EXIT_NO_REVIEW"
       fi
     elif [[ $lane_rc -eq 0 ]]; then
