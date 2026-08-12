@@ -16,8 +16,10 @@
   deleted. The step now reads `rev-parse --abbrev-ref HEAD` first and routes:
   on the base branch it ff-merges in place; on any other branch (or detached
   `HEAD`) it advances the local ref by name with
-  `fetch origin "[BASE]:[BASE]"`, which updates a non-checked-out branch and
-  refuses a non-fast-forward; when that refspec is refused because another
+  `fetch . "refs/remotes/origin/[BASE]:refs/heads/[BASE]"`, which re-uses the
+  tracking ref the origin fetch already updated — no second network round trip
+  and no credential helper — while updating a non-checked-out branch and
+  refusing a non-fast-forward; when that refspec is refused because another
   worktree holds the branch, it locates that worktree via `worktree list` and
   ff-merges there. Three named blocking outcomes replace the old
   "surface the divergence" note — a merge-blocking dirty tree (naming every

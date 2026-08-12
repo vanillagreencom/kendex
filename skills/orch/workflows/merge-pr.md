@@ -391,9 +391,9 @@ merge. Detach them first.
    | `MAIN_HEAD_BRANCH` | Action |
    |--------------------|--------|
    | `[BASE_BRANCH]` | Advance in place: `git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"` |
-   | Any other branch, or `HEAD` (detached) | Do NOT ff-merge — advance the local ref by name instead: `git -C [MAIN_REPO_ROOT] fetch origin "[BASE_BRANCH]:[BASE_BRANCH]"`. That refspec form updates a branch no checkout has on `HEAD` and REFUSES a non-fast-forward, which is exactly the wanted semantics. |
+   | Any other branch, or `HEAD` (detached) | Do NOT ff-merge — advance the local ref by name instead: `git -C [MAIN_REPO_ROOT] fetch . "refs/remotes/origin/[BASE_BRANCH]:refs/heads/[BASE_BRANCH]"`. Fetching from `.` re-uses the tracking ref the origin fetch above already updated, so it needs no second network round trip and no credential helper; the refspec form updates a branch no checkout has on `HEAD` and REFUSES a non-fast-forward, which is exactly the wanted semantics. |
 
-   The by-name fetch fails when `[BASE_BRANCH]` is checked out in another
+   The by-name update fails when `[BASE_BRANCH]` is checked out in another
    worktree (`refusing to fetch into branch ... checked out at ...`). That is
    not a stale outcome — locate that worktree and advance it there:
    ```bash
@@ -413,9 +413,9 @@ merge. Detach them first.
 
    | Outcome | Report |
    |---------|--------|
-   | The ff-merge refuses on uncommitted changes (`Your local changes to the following files would be overwritten by merge`) | **Blocking** post-merge condition naming every file git listed and the checkout it sits in — not an informational note |
-   | The by-name fetch is rejected as non-fast-forward | **Blocking** — local `[BASE_BRANCH]` has diverged from `origin/[BASE_BRANCH]`; name both shas |
-   | `[BASE_BRANCH]` is checked out in no reachable worktree and the by-name fetch failed for any other reason | **Blocking** — name the sha `origin/[BASE_BRANCH]` now points at and the git error |
+   | Either ff-merge refuses on uncommitted changes (`Your local changes to the following files would be overwritten by merge`) | **Blocking** post-merge condition naming every file git listed and the checkout it sits in — not an informational note |
+   | Any of the three updates — the in-place ff-merge, the by-name update, or the `[BASE_WORKTREE]` ff-merge — is rejected as non-fast-forward | **Blocking** — local `[BASE_BRANCH]` has diverged from `origin/[BASE_BRANCH]`; name both shas |
+   | `[BASE_BRANCH]` is checked out in no reachable worktree and the by-name update failed for any other reason | **Blocking** — name the sha `origin/[BASE_BRANCH]` now points at and the git error |
 
    **Report the result in § 7 either way.** When local `[BASE_BRANCH]` advanced,
    § 7 records the new sha. When it could NOT be advanced, § 7 must carry a
@@ -545,8 +545,8 @@ error). Report it the same way in the batch shape below.
 | ⏭️ | #[P] | [ISSUE_ID] - [TITLE] | Review threads |
 | ❌ | #[Q] | [ISSUE_ID] - [TITLE] | Merge conflicts |
 
-Total: [N] PRs merged | Base sync: local `[BASE_BRANCH]` → [NEW_SHA]
-(or `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] — [CAUSE]`)
+Total: [N] PRs merged | Base sync: local `[BASE_BRANCH]` → [NEW_SHA], or
+`⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`
 
 ### 🧹 STALE CLEANUP
 

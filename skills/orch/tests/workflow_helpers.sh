@@ -292,12 +292,14 @@ assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] merge --ff-only 
 # routes, the blocking dirty outcome, and the § 7 stale WARNING are pinned.
 assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] rev-parse --abbrev-ref HEAD' "merge-pr sync resolves the main checkout's HEAD branch before advancing the base"
 assert_file_contains "$merge_workflow" 'Use the output as `MAIN_HEAD_BRANCH` and route on it' "merge-pr sync routes on MAIN_HEAD_BRANCH instead of ff-merging unconditionally"
-assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] fetch origin "[BASE_BRANCH]:[BASE_BRANCH]"' "merge-pr sync advances a non-checked-out base by name with a refusing refspec"
+assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] fetch . "refs/remotes/origin/[BASE_BRANCH]:refs/heads/[BASE_BRANCH]"' "merge-pr sync advances a non-checked-out base by name from the already-fetched tracking ref, with a refusing refspec"
 assert_file_contains "$merge_workflow" 'refusing to fetch into branch ... checked out at ...' "merge-pr sync routes the by-name fetch refusal to the worktree owning the base branch"
 assert_file_contains "$merge_workflow" 'git -C [BASE_WORKTREE] merge --ff-only "origin/[BASE_BRANCH]"' "merge-pr sync fast-forwards the base in its own worktree"
 assert_file_contains "$merge_workflow" '**Blocking** post-merge condition naming every file git listed' "merge-pr reports a merge-blocking dirty tree as blocking, naming the files"
+assert_file_contains "$merge_workflow" 'the in-place ff-merge, the by-name update, or the `[BASE_WORKTREE]` ff-merge — is rejected as non-fast-forward' "merge-pr treats a non-fast-forward as blocking on every update route, not only the by-name one"
 assert_file_contains "$merge_workflow" 'The `Base sync` row is never omitted' "merge-pr § 7 always reports the base sync outcome"
 assert_file_contains "$merge_workflow" '⚠️ local [BASE_BRANCH] STALE at' "merge-pr § 7 warns with the stale local base sha when the sync could not advance it"
+assert_file_contains "$merge_workflow" '`⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`' "merge-pr batch shape names both shas in the stale-base warning, matching the single-PR shape"
 assert_file_not_contains "$merge_workflow" 'divergence for manual handling' "merge-pr replaces the informational sync-failure note with defined blocking outcomes"
 
 # start-worktree's base-freshness gate is reached by every start.md § 5 route,
