@@ -533,6 +533,13 @@ assert_stderr_has "lane failed: claude (exit 4)" "the unusable lane records 4"
 # to /dev/null while every other assertion still passes.
 echo "=== scenario 7: healthy lanes -> both logs replayed, artifacts owner-only ==="
 out7="$TMP_ROOT/out7.json"
+# A reused --output path can already carry a lane family from an earlier run.
+# The umask governs only files a child CREATES: writing through a surviving
+# inode keeps that inode's mode, so a stale 0644 artifact would stay
+# world-readable through every later run against the same path.
+printf 'stale\n' > "$out7.codex.json"
+printf 'stale raw response\n' > "$out7.codex.json.raw.txt"
+chmod 644 "$out7.codex.json" "$out7.codex.json.raw.txt"
 rc7=0
 run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" --output "$out7" || rc7=$?
 assert_eq "$rc7" "0" "two healthy lanes exit 0"
@@ -541,6 +548,7 @@ assert_stderr_has "[codex] " "the codex lane's log is replayed, lane-prefixed"
 assert_stderr_has "[claude] " "the claude lane's log is replayed, lane-prefixed"
 assert_owner_only "$out7.codex.json" "the codex lane artifact is owner-only"
 assert_owner_only "$out7.claude.json" "the claude lane artifact is owner-only"
+assert_file_absent "$out7.codex.json.raw.txt" "a previous run's lane sidecar does not survive"
 
 # --- Scenario 8: a failing lane's own cause text survives ---------------------
 # review-pr documents the replayed cause as how an operator diagnoses exit 5.

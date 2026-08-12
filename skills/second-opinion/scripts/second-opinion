@@ -739,6 +739,14 @@ if $MULTI_LANE; then
   for lane in "${REVIEW_LANES[@]}"; do
     if [[ -n "$OUTPUT_PATH" ]]; then
       lane_out="${OUTPUT_PATH}.${lane}.json"
+      # Same policy as the stale union artifact above, applied to this lane's
+      # family: a previous run's lane artifact is misleading whether or not
+      # this run overwrites it, and the umask only governs files the child
+      # CREATES — writing through a surviving inode keeps that inode's old
+      # mode, so a family left at 0644 would stay world-readable through every
+      # later run. Unremovable here means the artifact family cannot be
+      # guaranteed clean, which is worth failing on before any model spend.
+      rm -f "$lane_out" "$lane_out".*
     else
       lane_out=$(mktemp)
       LANE_TMP_FILES+=("$lane_out")
