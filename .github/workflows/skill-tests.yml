@@ -31,8 +31,21 @@ permissions:
   contents: read
 
 jobs:
-  skill-suites:
-    name: Skill suites (shell + node)
+  # SHARDED (#1251): the serial monolith crossed its own 25-minute timeout
+  # as the suites grew (the review-gate wrapper battery alone spawns a full
+  # ~250-case selftest per fixture), and a timed-out job reports
+  # "cancelled" — which the merge queue turns into a SILENT ejection.
+  # Three shards bound wall time at the slowest shard and give suite
+  # growth per-shard headroom instead of a shared cliff. The ruleset's
+  # required context is the AGGREGATOR below, whose name is unchanged —
+  # shard names are not required contexts, so shards can be rebalanced or
+  # added without touching repo settings.
+  skill-suites-shard:
+    name: Skill suites shard (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [review-gate, shell, node]
     # Merge-queue only (the fast/full split — see the header). A job-level
     # if:, not workflow-level `paths`/conditions: a SKIPPED job still
     # reports its context, so the ruleset's required contexts stay satisfied
@@ -44,7 +57,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ---- shard: review-gate — the heavyweight wrapper battery alone ----
+      - name: review-gate suites
+        if: matrix.shard == 'review-gate'
+        run: |
+          set -u
+          fail=0
+          failed=""
+          for t in skills/review-gate/tests/*.sh; do
+            echo "=== $t"
+            if ! bash "$t"; then
+              echo "FAILED: $t"
+              fail=1
+              failed="$failed $t"
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "FAILED SUITES:$failed"
+          fi
+          exit "$fail"
+
+      # ---- shard: shell — lints, orch, every other shell suite ----------
       - name: executable bits on skill tests and scripts
+        if: matrix.shard == 'shell'
         run: |
           set -u
           fail=0
@@ -62,6 +97,7 @@ jobs:
       # carrying only a `bugs:` URL sends agents to hand-file in this repo
       # regardless of who owns the asset (#863).
       - name: skills point reports at `vstack report`
+        if: matrix.shard == 'shell'
         run: |
           set -u
           fail=0
@@ -74,12 +110,14 @@ jobs:
           exit "$fail"
 
       - name: orch suite (run-all)
+        if: matrix.shard == 'shell'
         run: bash skills/orch/tests/run-all.sh
 
       # A failure is announced twice: inline where it happened, and in a
       # FAILED SUITES block at the end — the tail of a red job must name the
       # culprits instead of showing only the later suites passing (#1029).
       - name: all other skill suites
+        if: matrix.shard == 'shell'
         run: |
           set -u
           fail=0
@@ -87,6 +125,7 @@ jobs:
           for t in skills/*/tests/*.sh; do
             case "$t" in
               skills/orch/tests/*) continue ;;
+              skills/review-gate/tests/*) continue ;; # its own shard
             esac
             echo "=== $t"
             if ! bash "$t"; then
@@ -104,6 +143,7 @@ jobs:
       # where it happened, and a FAILED SUITES block at the end so a red
       # job's tail names the culprits instead of showing only later suites.
       - name: hook suites
+        if: matrix.shard == 'shell'
         run: |
           set -u
           fail=0
@@ -122,19 +162,23 @@ jobs:
           exit "$fail"
 
       - uses: actions/setup-node@v4
+        if: matrix.shard == 'node'
         with:
           node-version: 22.19.0
 
       - name: deep-research node suite
+        if: matrix.shard == 'node'
         run: node --test skills/deep-research/tests/deep-research.test.mjs
 
       - uses: oven-sh/setup-bun@v2
+        if: matrix.shard == 'node'
         with:
           bun-version: 1.3.14
 
       # Pi 0.80.4 introduced agent_settled but was not published to npm;
       # 0.80.5 is the earliest installable compatible dependency set.
       - name: pi-qol regression suite
+        if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-qol
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.80.5 @earendil-works/pi-ai@0.80.5 @earendil-works/pi-coding-agent@0.80.5 @earendil-works/pi-tui@0.80.5
@@ -148,6 +192,7 @@ jobs:
       # they already skip off Linux. The whole directory is still globbed, so new test
       # files run here without editing this step.
       - name: pi-agents-tmux suite
+        if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-agents-tmux
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox
@@ -157,6 +202,7 @@ jobs:
       # unversioned resolves the registry's latest major, so the proxy transport
       # test would validate a different major than consumers actually install.
       - name: pi-codex-minimal-tools suite
+        if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-codex-minimal-tools
         run: |
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox 'undici@^7.25.0'
@@ -166,6 +212,7 @@ jobs:
       # and rpc-fallback import nothing outside the package), so unlike the
       # suites above no npm install is needed.
       - name: pi-questions suite
+        if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-questions
         run: bun test ./extensions/__tests__
 
@@ -179,6 +226,7 @@ jobs:
       # an inconsistent lockfile be reconciled and still pass the comparison,
       # preserving the exact class this check exists to close.
       - name: pi-claude-bridge unit suite
+        if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-claude-bridge
         run: |
           npm ci --no-audit --no-fund
@@ -190,8 +238,31 @@ jobs:
       # dependency downgrade before, as an invisible generated-file hunk. A clean
       # lockfile build must reproduce the committed bytes exactly.
       - name: pi-claude-bridge bundle matches a clean lockfile build
+        if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
+
+  # AGGREGATOR — this job's name is the ruleset's required context, kept
+  # byte-identical across the sharding so repo settings never change. On PR
+  # heads the expression is false and the job reports `skipped`, exactly as
+  # the monolith did. In a merge group it runs after every shard and fails
+  # unless ALL shards succeeded — `always()` is required in the expression
+  # because skipped/failed needs would otherwise skip this job too, and a
+  # skipped required context on a merge group would satisfy the ruleset
+  # without any suite having run (the fail-open this line exists to close).
+  skill-suites:
+    name: Skill suites (shell + node)
+    needs: [skill-suites-shard]
+    if: always() && github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every shard succeeded
+        env:
+          SHARDS_RESULT: ${{ needs.skill-suites-shard.result }}
+        run: |
+          echo "shards: $SHARDS_RESULT"
+          [ "$SHARDS_RESULT" = "success" ]
 
   gate-selftest:
     # DELIBERATELY UNGATED: no `needs`, no approval condition, no path
