@@ -171,6 +171,22 @@ scan_decl_records() {
             return out
         }
         function mkhashes(k,   h) { h = ""; while (k-- > 0) h = h "#"; return h }
+        # Length of the attribute item opening the masked buffer, through its
+        # matching ]. An attribute body is a token tree that may nest bracket
+        # groups (#[cfg_attr(any(), allow([dead_code]))]), so the close is
+        # found by delimiter depth, not by the first ] — stopping early would
+        # leave attribute tokens to swallow the declaration that follows.
+        # Quoted brackets are inert: the scan runs on the mask. 0 when the
+        # attribute is not closed in this buffer yet (it continues next line).
+        function attr_len(ms,   i, n, c, depth) {
+            n = length(ms); depth = 0
+            for (i = index(ms, "["); i > 0 && i <= n; i++) {
+                c = substr(ms, i, 1)
+                if (c == "[") depth++
+                else if (c == "]" && --depth == 0) return i
+            }
+            return 0
+        }
         # Lex one line into two SAME-LENGTH strings: ml_orig (comment bytes
         # blanked to spaces, literals intact) and ml_mask (literal interiors
         # additionally blanked to "."). Item/brace/boundary matching runs on
@@ -252,26 +268,58 @@ scan_decl_records() {
             }
             ml_orig = o; ml_mask = m
         }
+        # The direct string-literal argument of an include! call, read from
+        # the original at the offsets located on the mask; "" when the
+        # argument is anything else. The literal must BE the whole argument
+        # (raw hashes and a rustc-accepted trailing comma allowed); a
+        # computed expression (concat!/env!/const) yields nothing — even one
+        # whose parts are all literals — per the fail-closed rule for shapes
+        # the scanner cannot evaluate. Byte/C-prefixed literals never match:
+        # they are not valid in this position.
+        function include_value(ms, os) {
+            if (match(ms, /^[[:space:]]*(r#*)?"[^"]*"#*[[:space:]]*,?[[:space:]]*$/) \
+                && match(ms, /"[^"]*"/))
+                return substr(os, RSTART + 1, RLENGTH - 2)
+            return ""
+        }
         # include! routes in one consumed chunk (mc masked, oc original),
-        # emitted with the chunk item attribute gate (inc_gated). Token
-        # boundary: a preceding identifier character means a different
-        # macro. The argument must BE a string literal (any bracket form);
-        # a computed expression (concat!/env!/const) emits nothing — even
-        # one whose parts are all literals — per the fail-closed rule for
-        # shapes the scanner cannot evaluate.
-        function emit_includes(mc, oc, inc_gated,   ioff, iq, iap, mrest, orest) {
-            ioff = 0
-            while ((iq = index(substr(mc, ioff + 1), "include")) > 0) {
-                iap = ioff + iq
-                if (iap == 1 || substr(mc, iap - 1, 1) !~ /[A-Za-z0-9_]/) {
-                    mrest = substr(mc, iap)
-                    orest = substr(oc, iap)
-                    if (match(mrest, /^include[[:space:]]*![[:space:]]*[([{][[:space:]]*(r#*)?"[^"]*"/) \
-                        && match(mrest, /"[^"]*"/))
-                        printf "%s\t%s\n", (inc_gated ? "G" : "U"), \
-                            normpath(join(fdir, substr(orest, RSTART + 1, RLENGTH - 2)))
+        # emitted with the chunk item attribute gate (inc_gated). The chunk
+        # is walked as TOKENS: the argument tree of every macro invocation
+        # is jumped over whole, because Rust expands nothing inside the
+        # tokens of another macro — an include! nested there (stringify!
+        # (include!("cand.rs"))) is not a route and must fabricate no
+        # record. Only an include! reached at chunk level emits. A tree left
+        # unclosed by the chunk boundary stops the walk (no record).
+        function emit_includes(mc, oc, inc_gated,   n, ip, mrest, mlen, mname, dopen, dclose, dstart, dend, depth, val) {
+            n = length(mc); ip = 1
+            while (ip <= n) {
+                if (ip > 1 && substr(mc, ip - 1, 1) ~ /[A-Za-z0-9_]/) { ip++; continue }
+                mrest = substr(mc, ip)
+                if (!match(mrest, /^(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*([[:space:]]*::[[:space:]]*(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*)*[[:space:]]*![[:space:]]*[([{]/)) {
+                    ip++; continue
                 }
-                ioff = iap + 7
+                mlen = RLENGTH
+                mname = substr(mrest, 1, mlen)
+                dopen = substr(mrest, mlen, 1)
+                dclose = (dopen == "{") ? "}" : (dopen == "(" ? ")" : "]")
+                sub(/[[:space:]]*![[:space:]]*[([{]$/, "", mname)
+                sub(/^.*::[[:space:]]*/, "", mname)
+                sub(/^r#/, "", mname)
+                dstart = ip + mlen - 1
+                depth = 1; dend = dstart + 1
+                while (dend <= n && depth > 0) {
+                    if (substr(mc, dend, 1) == dopen) depth++
+                    else if (substr(mc, dend, 1) == dclose) depth--
+                    dend++
+                }
+                if (depth > 0) return
+                if (mname == "include") {
+                    val = include_value(substr(mc, dstart + 1, dend - dstart - 2), \
+                                        substr(oc, dstart + 1, dend - dstart - 2))
+                    if (val != "")
+                        printf "%s\t%s\n", (inc_gated ? "G" : "U"), normpath(join(fdir, val))
+                }
+                ip = dend
             }
         }
         # Lines are NOT items: source is accumulated into a cross-line
@@ -319,8 +367,9 @@ scan_decl_records() {
                 # contributing nothing to the pending outer-attribute gate
                 # state, so the next declaration still scans.
                 if (mbuf ~ /^#[[:space:]]*![[:space:]]*\[/) {
-                    if (match(mbuf, /^#[[:space:]]*![[:space:]]*\[[^]]*\][[:space:]]*/)) {
-                        buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
+                    alen = attr_len(mbuf)
+                    if (alen > 0) {
+                        buf = substr(buf, alen + 1); mbuf = substr(mbuf, alen + 1)
                         continue
                     }
                     break
@@ -328,8 +377,8 @@ scan_decl_records() {
                 # Attribute item. An opened-but-unclosed one waits for the
                 # next line (rustc accepts attributes split across lines).
                 if (mbuf ~ /^#[[:space:]]*\[/) {
-                    if (match(mbuf, /^#[[:space:]]*\[[^]]*\][[:space:]]*/)) {
-                        alen = RLENGTH
+                    alen = attr_len(mbuf)
+                    if (alen > 0) {
                         mattr = substr(mbuf, 1, alen)
                         oattr = substr(buf, 1, alen)
                         # rustc accepts whitespace between attribute tokens
@@ -427,11 +476,10 @@ scan_decl_records() {
                         ipos++
                     }
                     if (idepth > 0) break
-                    iseg = substr(mbuf, idelim + 1, ipos - idelim - 2)
-                    if (match(iseg, /^[[:space:]]*(r#*)?"[^"]*"#*[[:space:]]*$/) \
-                        && match(iseg, /"[^"]*"/))
-                        printf "%s\t%s\n", (gated ? "G" : "U"), \
-                            normpath(join(fdir, substr(substr(buf, idelim + 1, ipos - idelim - 2), RSTART + 1, RLENGTH - 2)))
+                    ival = include_value(substr(mbuf, idelim + 1, ipos - idelim - 2), \
+                                         substr(buf, idelim + 1, ipos - idelim - 2))
+                    if (ival != "")
+                        printf "%s\t%s\n", (gated ? "G" : "U"), normpath(join(fdir, ival))
                     buf = substr(buf, ipos); mbuf = substr(mbuf, ipos)
                     if (mbuf ~ /^[[:space:]]*;/) {
                         sub(/^[[:space:]]*;/, "", buf); sub(/^[[:space:]]*;/, "", mbuf)

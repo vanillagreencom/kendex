@@ -1812,5 +1812,77 @@ rawinc_json="$($SUMMARY -C "$rawinc_repo" --staged)"
 assert_eq "hash-raw brace include emits its production route"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$rawinc_json")"
 assert_eq "hash-raw brace include fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$rawinc_json")"
 
+# An include! token nested in ANOTHER macro's argument tree is never expanded
+# by Rust (stringify! keeps it as tokens), so it must fabricate no route:
+# nested macro token trees emit nothing, never a mis-resolved record.
+nestinc_repo="$SANDBOX/nested-include"
+init_repo "$nestinc_repo"
+mkdir -p "$nestinc_repo/src"
+cat > "$nestinc_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+const TOKENS: &str = stringify!(include!("cand.rs"));
+RUST
+git -C "$nestinc_repo" add src
+git -C "$nestinc_repo" commit -q -m lib
+cat > "$nestinc_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$nestinc_repo" add src/cand.rs
+nestinc_json="$($SUMMARY -C "$nestinc_repo" --staged)"
+assert_eq "include nested in another macro fabricates no production route"     '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$nestinc_json")"
+assert_eq "nested-include fixture stays support scope"     "support" "$(jq -r '.scope' <<<"$nestinc_json")"
+
+# rustc accepts a trailing comma in an include! argument list; the direct
+# string literal is still the argument and its route must emit.
+comma_repo="$SANDBOX/include-trailing-comma"
+init_repo "$comma_repo"
+mkdir -p "$comma_repo/src"
+cat > "$comma_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+include!("cand.rs",);
+RUST
+git -C "$comma_repo" add src
+git -C "$comma_repo" commit -q -m lib
+cat > "$comma_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$comma_repo" add src/cand.rs
+comma_json="$($SUMMARY -C "$comma_repo" --staged)"
+assert_eq "trailing-comma include emits its production route"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$comma_json")"
+assert_eq "trailing-comma include fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$comma_json")"
+
+# An attribute's token tree may nest bracket groups: consumption must balance
+# delimiters, not stop at the first closing bracket, or the leftover tokens
+# swallow the declaration that follows.
+nestattr_repo="$SANDBOX/nested-attr-brackets"
+init_repo "$nestattr_repo"
+mkdir -p "$nestattr_repo/src"
+cat > "$nestattr_repo/src/lib.rs" <<'RUST'
+#[cfg_attr(any(), allow([dead_code]))]
+mod cand;
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+RUST
+git -C "$nestattr_repo" add src
+git -C "$nestattr_repo" commit -q -m lib
+cat > "$nestattr_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$nestattr_repo" add src/cand.rs
+nestattr_json="$($SUMMARY -C "$nestattr_repo" --staged)"
+assert_eq "nested attribute brackets do not swallow the declaration"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$nestattr_json")"
+assert_eq "nested-attribute fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$nestattr_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
