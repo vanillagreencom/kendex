@@ -11,7 +11,7 @@ Streaming assistant responses are aborted when either safety condition fires:
 - the same substantial line repeats 24 times and contributes at least 1,536 repeated characters; or
 - one response reaches 96,000 streamed characters.
 
-This targets model decoding collapse such as thousands of identical planning sentences or malformed tool tags. Short repeated syntax lines do not reset or trigger repetition streaks, but still count toward the hard response-size cap. Pi keeps the partial response and marks it interrupted; Output Policy shows a warning telling the user to retry or switch models. All thresholds are live settings; changes apply to the next assistant message. The whole model-output guard, repetition detection, and the hard character cap can each be disabled independently.
+This targets model decoding collapse such as thousands of identical planning sentences or malformed tool tags. Blank lines and recognized syntax-only lines (tool/XML tags, code fences, and Markdown separators) do not reset or trigger repetition streaks; other short content resets the streak. All lines still count toward the hard response-size cap. Pi keeps the partial response and marks it interrupted; Output Policy shows a warning telling the user to retry or switch models. All thresholds are live settings; changes apply to the next assistant message. The whole model-output guard, repetition detection, and the hard character cap can each be disabled independently.
 
 ## Two budgets, one policy
 
@@ -85,7 +85,7 @@ Project settings in `.pi/settings.json` apply only after Pi marks the workspace 
 | Maximum streamed characters | Abort one assistant response at this character count; `0` disables only this cap. |
 | Detect repeated output | Enable repetition detection independently from the hard character cap. |
 | Maximum repeated blocks | Consecutive identical substantial lines required before aborting. |
-| Minimum repeated block length | Exclude shorter lines from repetition streaks without resetting a substantial repeated block. |
+| Minimum repeated block length | Exclude shorter lines from repetition detection; only blank or recognized syntax-only lines preserve an existing substantial streak. |
 | Minimum repeated characters | Repeated-text floor that must also be reached before aborting. |
 
 ### Truncation

@@ -361,6 +361,21 @@ function normalizedRepeatBlock(line: string): string {
 	return line.trim().replace(/\s+/g, " ");
 }
 
+function isIgnorableRepeatSyntaxBlock(block: string): boolean {
+	// Preserve a substantial repetition streak only across syntax-only lines
+	// produced by common model/tool protocols. Short prose, labels, values, and
+	// headings are semantic content and must break the streak.
+	return /^<\/?[A-Za-z][A-Za-z0-9:._-]*(?:\s+[^<>]*)?\/?>$/.test(block)
+		|| /^(?:`{3,}|~{3,})(?:[A-Za-z0-9_.+-]+)?$/.test(block)
+		|| /^(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/.test(block);
+}
+
+function resetModelOutputRepeatStreak(state: ModelOutputGuardState): void {
+	state.lastBlock = undefined;
+	state.consecutiveRepeats = 0;
+	state.repeatedChars = 0;
+}
+
 export function inspectModelOutputDelta(
 	state: ModelOutputGuardState,
 	delta: string,
@@ -380,7 +395,11 @@ export function inspectModelOutputDelta(
 		state.pending = state.pending.slice(newline + 1);
 		newline = state.pending.indexOf("\n");
 		if (!block) continue;
-		if (block.length < options.minRepeatBlockChars) continue;
+		if (isIgnorableRepeatSyntaxBlock(block)) continue;
+		if (block.length < options.minRepeatBlockChars) {
+			resetModelOutputRepeatStreak(state);
+			continue;
+		}
 		if (block === state.lastBlock) {
 			state.consecutiveRepeats += 1;
 			state.repeatedChars += block.length;
@@ -708,8 +727,9 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
-	// Pi tears down and rebinds extension instances when replacing sessions, so
-	// this closure is already scoped to one active session runtime.
+	// Pi 0.84.1 invokes the extension factory once per loaded session runtime.
+	// Session replacement emits shutdown, invalidates the old runner, and loads a
+	// new ExtensionAPI/factory closure, so this state cannot cross session runtimes.
 	let modelOutputState = createModelOutputGuardState();
 	let modelOutputConfig: ModelOutputGuardConfigSnapshot | undefined;
 
@@ -753,6 +773,10 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 	pi.on("message_update", (event: any, ctx: ExtensionContext) => {
 		const delta = assistantStreamDelta(event);
 		if (delta === undefined) return;
+		// Pi 0.84.1 agent-core guarantees one assistant message_start before any
+		// message_update. This lazy snapshot only supports isolated direct/mock
+		// event injection; delta events expose no safe boundary to infer if start is
+		// absent, so do not reset via timing, contentIndex, or delta-shape heuristics.
 		const config = modelOutputConfig ?? snapshotModelOutputConfig(ctx);
 		if (!config.enabled) return;
 		const detection = inspectModelOutputDelta(modelOutputState, delta, config.options);

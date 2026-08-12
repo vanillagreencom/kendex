@@ -68,7 +68,7 @@
         {
           "key": "modelOutputGuard.minRepeatBlockChars",
           "label": "Minimum repeated block length",
-          "description": "Ignore shorter repeated lines for repetition streaks. They still count toward the hard response-size cap.",
+          "description": "Exclude shorter lines from repetition detection. Blank and recognized syntax-only lines preserve an existing streak; other short content resets it. All lines still count toward the hard response-size cap.",
           "type": "number",
           "default": 32,
           "category": "Model Output Guard",

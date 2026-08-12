@@ -93,6 +93,47 @@ describe("model output guard", () => {
 		expect(inspectModelOutputDelta(shortState, Array.from({ length: 100 }, () => "</invoke>\n").join(""), options)).toBeUndefined();
 	});
 
+	test("distinct short semantic lines reset a repeated substantial heading across arbitrary chunks", () => {
+		const state = createModelOutputGuardState();
+		const heading = `Repeated report heading ${"h".repeat(48)}`;
+		const report = Array.from({ length: 40 }, (_, i) => `${heading}\nvalue ${i}\n`).join("");
+		let detection;
+		for (let offset = 0; offset < report.length && !detection; offset += 11) {
+			detection = inspectModelOutputDelta(state, report.slice(offset, offset + 11), options);
+		}
+		expect(heading.length * 24).toBeGreaterThanOrEqual(options.minRepeatedChars);
+		expect(detection).toBeUndefined();
+		expect(state.lastBlock).toBeUndefined();
+		expect(state.consecutiveRepeats).toBe(0);
+		expect(state.repeatedChars).toBe(0);
+	});
+
+	test("blank and recognized syntax-only lines preserve a substantial repetition streak", () => {
+		const block = `Repeated substantial block ${"r".repeat(40)}`;
+		const syntaxOptions = {
+			...options,
+			maxConsecutiveRepeats: 3,
+			minRepeatedChars: block.length * 3,
+		};
+		const state = createModelOutputGuardState();
+		const output = `${block}\n\n</invoke>\n\`\`\`ts\n---\n${"-".repeat(80)}\n${block}\n<parameter name="path-to-a-long-tool-argument">\n~~~\n${block}\n`;
+		expect(inspectModelOutputDelta(state, output, syntaxOptions)?.reason).toBe("repetition");
+	});
+
+	test("short semantic content breaks a substantial repetition streak", () => {
+		const block = `Repeated substantial block ${"r".repeat(40)}`;
+		const semanticOptions = {
+			...options,
+			maxConsecutiveRepeats: 3,
+			minRepeatedChars: block.length * 3,
+		};
+		const state = createModelOutputGuardState();
+		expect(inspectModelOutputDelta(state, `${block}\n${block}\nOK\n${block}\n`, semanticOptions)).toBeUndefined();
+		expect(state.lastBlock).toBe(block);
+		expect(state.consecutiveRepeats).toBe(1);
+		expect(state.repeatedChars).toBe(block.length);
+	});
+
 	test("fires exactly at repetition count and repeated-character boundaries", () => {
 		const block = `Repeated substantial block ${"r".repeat(40)}`;
 		const blockChars = block.length;
@@ -505,7 +546,23 @@ describe("model output guard handler", () => {
 		});
 	});
 
-	test("lazy fallback snapshots once when message_start is unavailable", async () => {
+	test("message_start prevents the hard cap from carrying across assistant messages", async () => {
+		await withConfigAsync({ "modelOutputGuard.maxChars": 100 }, async (cwd) => {
+			const fake = createFakePi();
+			outputPolicy(fake.pi);
+			const guard = guardCtx(cwd);
+			await fake.fire("message_start", { message: { role: "assistant" } }, guard.ctx);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(60) } }, guard.ctx);
+			expect(guard.aborts()).toBe(0);
+			await fake.fire("message_start", { message: { role: "assistant" } }, guard.ctx);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(60) } }, guard.ctx);
+			expect(guard.aborts()).toBe(0);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(40) } }, guard.ctx);
+			expect(guard.aborts()).toBe(1);
+		});
+	});
+
+	test("lazy snapshot supports isolated direct event injection without boundary inference", async () => {
 		await withConfigAsync({ "modelOutputGuard.maxChars": 100 }, async (cwd) => {
 			const fake = createFakePi();
 			outputPolicy(fake.pi);
@@ -517,7 +574,7 @@ describe("model output guard handler", () => {
 		});
 	});
 
-	test("session runtime instances keep independent guard state", async () => {
+	test("separate session runtime closures isolate stream state and lifecycle resets", async () => {
 		await withConfigAsync({
 			"modelOutputGuard.maxConsecutiveRepeats": 3,
 			"modelOutputGuard.minRepeatedChars": 90,
@@ -531,6 +588,7 @@ describe("model output guard handler", () => {
 			const block = `${"repeat me ".repeat(5)}\n`;
 			await firstPi.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: block.repeat(2) } }, first.ctx);
 			await secondPi.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: block } }, second.ctx);
+			await secondPi.fire("session_start", { reason: "resume" }, second.ctx);
 			expect(first.aborts()).toBe(0);
 			expect(second.aborts()).toBe(0);
 			await firstPi.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: block } }, first.ctx);
