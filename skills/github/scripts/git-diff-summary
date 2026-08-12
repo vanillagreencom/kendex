@@ -281,6 +281,11 @@ scan_decl_records() {
         # An incomplete tail (open attribute, unterminated statement,
         # unclosed inline block) stays in the buffer for the next line.
         {
+            # Crate shebang: Rust permits #! followed by anything but [ as
+            # the FIRST LINE only — a preamble, not an item. Dropped here,
+            # or the generic-item branch would consume it together with
+            # the next declaration through its semicolon.
+            if (NR == 1 && $0 ~ /^#!/ && $0 !~ /^#![[:space:]]*\[/) next
             mask_line($0)
             if (buf == "") { buf = ml_orig; mbuf = ml_mask }
             else { buf = buf " " ml_orig; mbuf = mbuf " " ml_mask }

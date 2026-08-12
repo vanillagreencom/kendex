@@ -1691,5 +1691,30 @@ cstr_json="$($SUMMARY -C "$cstr_repo" --staged)"
 assert_eq "c-string raw literal does not corrupt structure; ungated route survives"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$cstr_json")"
 assert_eq "c-string fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$cstr_json")"
 
+# A crate shebang is a first-line preamble, not an item — it must not be
+# consumed together with the following ungated declaration.
+shebang_repo="$SANDBOX/shebang"
+init_repo "$shebang_repo"
+mkdir -p "$shebang_repo/src"
+cat > "$shebang_repo/src/main.rs" <<'RUST'
+#!/usr/bin/env rustx
+mod cand;
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+fn main() {}
+RUST
+git -C "$shebang_repo" add src
+git -C "$shebang_repo" commit -q -m lib
+cat > "$shebang_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$shebang_repo" add src/cand.rs
+shebang_json="$($SUMMARY -C "$shebang_repo" --staged)"
+assert_eq "shebang does not swallow the following declaration"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$shebang_json")"
+assert_eq "shebang fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$shebang_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
