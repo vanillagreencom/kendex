@@ -721,16 +721,20 @@ fi
 # end — otherwise the run dies before a single lane spawns and the stale-
 # artifact cleanup those lines exist for never happens.
 #
-# This asserts the parent reaches lane execution, not that the run succeeds:
-# the recursive child derives its own directories from the same caller path and
-# still cannot write one that begins with a dash. That is a separate gap in the
-# single-lane write path, untouched here.
-echo "=== scenario 15: a dashed --output does not abort before lanes spawn ==="
-# The exit status is deliberately not asserted: it reflects the child gap
-# above, and pinning it would break the day that gap is closed.
-( cd "$TMP_ROOT" && run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" --output -dashed.json ) || true
+# A bare `-dashed.json` — no `./` to hide the leading dash — has to work end to
+# end: the parent's own preflight, and every path the recursive lane child
+# derives from the same value while writing its artifact and sidecars.
+echo "=== scenario 15: a dashed --output works end to end ==="
+rc15=0
+( cd "$TMP_ROOT" && run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" --output -dashed.json ) || rc15=$?
+dashed="$TMP_ROOT/-dashed.json"
+assert_eq "$rc15" "0" "a dashed --output value does not fail the run"
 assert_stderr_has "[codex] " "lanes still run when --output begins with a dash"
 assert_stderr_has "[claude] " "both lanes are reached"
+assert_file_exists "$dashed" "the union is written to the dashed path"
+assert_jq "$dashed" '.qa_metadata.coverage' "full" "both lanes answered through the dashed path"
+assert_jq "$dashed" '.blockers | length' "1" "the union carries the lane's blocker"
+assert_file_exists "$dashed.claude.json" "the lane artifact is written beside the dashed union"
 
 # --- Scenario 16: the stderr capture cannot cost a lane its verdict ----------
 # A redirection named on the launch is performed by the forked child before the

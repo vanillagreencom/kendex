@@ -94,6 +94,23 @@ EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
 EXIT_CLI_FAILED=5
 
+# The containing directory of a path, without `dirname`. --output is caller
+# input and may legitimately begin with '-', which dirname parses as options —
+# and the `--` end-of-options marker is not available here, because BSD dirname
+# can reject it on the macOS Bash 3.2 support target. Parameter expansion has
+# neither problem. Mirrors dirname for the cases that reach it: no slash yields
+# ".", a root-level path yields "/".
+path_dir() {
+  local path="$1" dir="${1%/*}"
+  if [[ "$dir" == "$path" ]]; then
+    printf '%s' "."
+  elif [[ -z "$dir" ]]; then
+    printf '%s' "/"
+  else
+    printf '%s' "$dir"
+  fi
+}
+
 # --- Help ---------------------------------------------------------------------
 
 show_help() {
@@ -720,17 +737,10 @@ if $MULTI_LANE; then
   # caller that continues past the advisory failure. Clear it before lanes
   # spawn.
   # --output is caller input and may begin with '-', which every one of these
-  # utilities would parse as options: `--` marks the end of options, and the
-  # containing directory comes from parameter expansion because BSD dirname
-  # can reject `--` on the macOS Bash 3.2 support target.
+  # utilities would parse as options: `--` marks the end of options, and
+  # path_dir stands in for dirname, which cannot take that marker portably.
   if [[ -n "$OUTPUT_PATH" ]]; then
-    out_dir="${OUTPUT_PATH%/*}"
-    if [[ "$out_dir" == "$OUTPUT_PATH" ]]; then
-      out_dir="."
-    elif [[ -z "$out_dir" ]]; then
-      out_dir="/"
-    fi
-    mkdir -p -- "$out_dir"
+    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     rm -f -- "$OUTPUT_PATH"
   fi
 
@@ -872,7 +882,12 @@ if $MULTI_LANE; then
     # Nothing read at all (absent or zero-byte artifact) still reads empty.
     lane_raw=""
     if [[ $lane_rc -eq 0 ]]; then
-      lane_raw=$(cat "${LANE_OUTS[$i]}" 2>/dev/null; printf X)
+      # Read through a redirection, not a path operand: the lane artifact's
+      # name carries the caller's --output value, which may begin with '-' and
+      # would otherwise be parsed as options — the lane would then look like it
+      # exited 0 having produced nothing. A redirection has no such parsing,
+      # and needs no `--` marker to be portable.
+      lane_raw=$(cat 2>/dev/null < "${LANE_OUTS[$i]}"; printf X)
       lane_raw="${lane_raw%X}"
     fi
     if [[ $lane_rc -eq 0 && -n "$lane_raw" ]]; then
@@ -1089,7 +1104,7 @@ preserve_cli_failure_and_fail() {
   fi
 
   if [[ -n "$OUTPUT_PATH" ]]; then
-    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     sidecar="${OUTPUT_PATH}.failed.json"
   else
     sidecar=$(mktemp)
@@ -1242,7 +1257,7 @@ RAW_PRESERVED_PATH=""
 preserve_raw_response() {
   local raw="$1"
   if [[ -n "$OUTPUT_PATH" ]]; then
-    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     RAW_PRESERVED_PATH="${OUTPUT_PATH}.raw.txt"
   else
     RAW_PRESERVED_PATH=$(mktemp)
@@ -1262,7 +1277,7 @@ preserve_raw_and_fail() {
   if [[ -n "$RAW_PRESERVED_PATH" ]]; then
     raw_path="$RAW_PRESERVED_PATH"
   elif [[ -n "$OUTPUT_PATH" ]]; then
-    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     raw_path="${OUTPUT_PATH}.raw.txt"
     printf '%s\n' "$raw" > "$raw_path"
   else
@@ -1353,7 +1368,7 @@ preserve_no_review_and_fail() {
   fi
 
   if [[ -n "$OUTPUT_PATH" ]]; then
-    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     sidecar="${OUTPUT_PATH}.${suffix}.json"
   else
     sidecar=$(mktemp)
@@ -1483,7 +1498,7 @@ fi
 # --- Output -------------------------------------------------------------------
 
 if [[ -n "$OUTPUT_PATH" ]]; then
-  mkdir -p "$(dirname "$OUTPUT_PATH")"
+  mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
   printf '%s\n' "$RESULT" > "$OUTPUT_PATH"
   echo "→ Written: $OUTPUT_PATH" >&2
   echo "$OUTPUT_PATH"
