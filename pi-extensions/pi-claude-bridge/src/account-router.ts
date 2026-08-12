@@ -153,11 +153,13 @@ export class RetryEventBuffer {
 	private committed = false;
 	private ended = false;
 	private discarded = false;
+	private readonly target: AssistantMessageEventStream;
+	private readonly onCommit?: () => void;
 
-	constructor(
-		private readonly target: AssistantMessageEventStream,
-		private readonly onCommit?: () => void,
-	) {}
+	constructor(target: AssistantMessageEventStream, onCommit?: () => void) {
+		this.target = target;
+		this.onCommit = onCommit;
+	}
 
 	push(event: AssistantMessageEvent): void {
 		if (this.discarded) return;

@@ -44488,16 +44488,16 @@ function commitsVisibleOutput(event) {
   return event.type === "toolcall_end";
 }
 var RetryEventBuffer = class {
-  constructor(target, onCommit) {
-    this.target = target;
-    this.onCommit = onCommit;
-  }
-  target;
-  onCommit;
   pending = [];
   committed = false;
   ended = false;
   discarded = false;
+  target;
+  onCommit;
+  constructor(target, onCommit) {
+    this.target = target;
+    this.onCommit = onCommit;
+  }
   push(event) {
     if (this.discarded) return;
     if (this.committed) {
