@@ -1884,5 +1884,33 @@ nestattr_json="$($SUMMARY -C "$nestattr_repo" --staged)"
 assert_eq "nested attribute brackets do not swallow the declaration"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$nestattr_json")"
 assert_eq "nested-attribute fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$nestattr_json")"
 
+# A tracked declaring module that is a SYMLINK stores its target path as the
+# blob, so reading it yields link text, not Rust: no declarations parse and a
+# gated sibling would win. Cargo compiles through the link, so the route is
+# real — the entry must be treated as unreadable and fail closed.
+symlink_repo="$SANDBOX/symlink-declaring-module"
+init_repo "$symlink_repo"
+mkdir -p "$symlink_repo/real" "$symlink_repo/src"
+cat > "$symlink_repo/real/lib_src.rs" <<'RUST'
+mod cand;
+RUST
+ln -s ../real/lib_src.rs "$symlink_repo/src/lib.rs"
+cat > "$symlink_repo/src/gate.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+RUST
+git -C "$symlink_repo" add real src
+git -C "$symlink_repo" commit -q -m lib
+cat > "$symlink_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$symlink_repo" add src/cand.rs
+symlink_json="$($SUMMARY -C "$symlink_repo" --staged)"
+assert_eq "symlinked declaring module fails closed to production"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$symlink_json")"
+assert_eq "symlinked declaring module keeps production scope"     "production" "$(jq -r '.scope' <<<"$symlink_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

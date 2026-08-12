@@ -94,11 +94,27 @@ resolve_default_base() {
 # masking but never qualify as path/include VALUES — they are not valid
 # in those positions in Rust.
 
+# Mode of a path's new-side entry, empty when it has none. Reads main()'s
+# diff_ref.
+new_side_mode() {
+    case "$diff_ref" in
+        --staged|HEAD) git ls-files -s -- "$1" 2>/dev/null ;;
+        *)             git ls-tree HEAD -- "$1" 2>/dev/null ;;
+    esac | awk 'NR == 1 { print $1 }'
+}
+
 # Emits the new-side content of a file: HEAD for a base...HEAD diff, the
 # index for --staged, the worktree for --head. Reads main()'s diff_ref.
 # Exit 0 with content when readable, 2 when the file does not exist on the
 # new side, 1 on a read failure — callers must fail closed on 1.
 new_side_content() {
+    # A symlink entry (mode 120000) stores its TARGET PATH as the blob, so
+    # reading it yields link text instead of Rust — an empty parse that
+    # would silently drop every declaration the linked module holds while
+    # rustc compiles through the link and honours them. Reported unreadable
+    # so consulting candidates fail closed, never scanned as a module that
+    # happens to declare nothing.
+    if [ "$(new_side_mode "$1")" = 120000 ]; then return 1; fi
     case "$diff_ref" in
         --staged)
             git ls-files --error-unmatch -- "$1" >/dev/null 2>&1 || return 2
@@ -110,6 +126,7 @@ new_side_content() {
             # declarations that reclassify a tracked change.
             git ls-files --error-unmatch -- "$1" >/dev/null 2>&1 || return 2
             [ -e "$1" ] || return 2
+            [ -L "$1" ] && return 1
             cat "$1" 2>/dev/null || return 1
             ;;
         *)

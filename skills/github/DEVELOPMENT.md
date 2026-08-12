@@ -53,7 +53,8 @@ nested macro token trees are jumped over rather than scanned, so an
 
 **Verdict.** A candidate whose every found route is `#[cfg(test)]`-gated is
 test scope. Any ungated route, no route found, a `bin/` segment or
-`lib.rs`/`main.rs` crate root, or a read failure keeps the file-local
-classification: every shape the scanner cannot resolve fails toward no
+`lib.rs`/`main.rs` crate root, or a read failure — including a symlinked
+declaring module, whose blob is link text rather than source — keeps the
+file-local classification: every shape the scanner cannot resolve fails toward no
 record rather than a guessed one. The residual limits of this model are
 enumerated in the `git-diff-summary` header.
