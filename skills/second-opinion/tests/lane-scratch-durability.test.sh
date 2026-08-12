@@ -42,8 +42,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 # A scenario below deliberately leaves a directory the run cannot write into,
-# so make the tree removable before removing it.
-trap 'chmod -R u+rwX "$TMP_ROOT" 2>/dev/null; rm -rf "$TMP_ROOT"' EXIT
+# so make the tree removable before removing it. Both commands are guarded for
+# the same reason the production trap guards its own: a trap runs under set -e,
+# so a failure here would skip the rest of the cleanup and override the exit
+# status of a suite whose assertions all passed.
+trap 'chmod -R u+rwX "$TMP_ROOT" 2>/dev/null || true; rm -rf "$TMP_ROOT" || true' EXIT
 
 mkdir -p "$TMP_ROOT/proj/skills"
 git init -q "$TMP_ROOT/proj"
@@ -660,11 +663,40 @@ assert_jq "$TMP_ROOT/out-twovalues.json" '.agent' "external-union(codex)" \
 # failure would both decide the run's exit status and skip the artifact cleanup
 # that follows it in the trap.
 echo "=== scenario 14: unremovable scratch entry -> exit 0, cleanup still runs ==="
+# The hazard rests on mode bits, and mode bits do not stop root: on a
+# privileged runner — a root CI container — the plant is removable, the
+# parent's removal succeeds, and this scenario would pass whether or not the
+# guard exists. Prove the property on a throwaway copy of the same shape first,
+# so a runner that cannot reproduce it loses this coverage loudly.
+hazard_name="the planted shape is genuinely unremovable by this user"
+hazard_probe="$TMP_ROOT/hazard-probe"
+rm -rf "$hazard_probe" 2>/dev/null || true
+mkdir -p "$hazard_probe/locked/inner"
+chmod 500 "$hazard_probe/locked"
+hazard_rc=0
+rm -rf "$hazard_probe" 2>/dev/null || hazard_rc=$?
+chmod -R u+rwX "$hazard_probe" 2>/dev/null || true
+rm -rf "$hazard_probe" 2>/dev/null || true
+if [[ "$hazard_rc" -ne 0 ]]; then
+  pass "$hazard_name"
+else
+  fail "$hazard_name"
+  printf '        a 0500 directory holding a child was removable here (running as root?),\n' >&2
+  printf '        so this scenario cannot prove the cleanup guard it exists to cover\n' >&2
+fi
+
 rc14=0
 run_lanes "$ANSWER_CLAUDE" "$TMP_ROOT/bin/lane-plant-locked $TMP_ROOT/resp-codex.json" || rc14=$?
 assert_eq "$rc14" "0" "a scratch directory that cannot be removed does not fail the run"
 assert_jq "$TMP_ROOT/last.stdout" '.agent' "external-union(codex+claude)" "the union is still delivered"
 assert_no_leftovers "the trap reached the artifact cleanup below the failing removal"
+planted_name="the hazard was actually planted in the run's scratch directory"
+if [[ -n "$(find "$SCRATCH" -type d -name locked 2>/dev/null | head -1 || true)" ]]; then
+  pass "$planted_name"
+else
+  fail "$planted_name"
+  printf '        nothing survived the parent removal — the stub planted nothing to block it\n' >&2
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
