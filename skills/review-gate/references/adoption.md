@@ -179,9 +179,11 @@ reducer they and harness monitors share.
 - The consumer's vendored-copy drift check passes.
 - The first PURE re-vendor PR after adoption carries a trusted non-author
   review object at head, and on the vendored tree no unresolved thread from a
-  summary-capable reviewer — read before resolving anything. A location-bound
-  reviewer's threads are recorded, not graded ([vendored-paths.md](vendored-paths.md)
-  § Verifying on a real re-vendor PR, whose pass rule this mirrors).
+  summary-capable reviewer, except one raising a carve-out regression, which
+  blocks the re-vendor and is a correct outcome — read before resolving
+  anything. A location-bound reviewer's threads are recorded, not graded
+  ([vendored-paths.md](vendored-paths.md) § Verifying on a real re-vendor PR,
+  whose pass rule this mirrors).
 - For engine changes (not adoptions): the live sandbox replay
   (`.agents/skills/review-gate/tests/e2e-sandbox.sh`) against the org
   sandbox, which mirrors the fleet ruleset shape.

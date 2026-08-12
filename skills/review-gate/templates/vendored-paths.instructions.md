@@ -30,6 +30,16 @@ that.**
   README, its settings tables, its test layout): summary body, or omit. This
   repo cannot act on it.
 
+**Carve-out — a production-impacting regression these bytes introduce.** If
+this bump brings in a correctness, security, or data-loss defect that will run
+here, comment inline and say it blocks. That is the first rule, not an
+exception to it: the remedy IS repo-owned — holding or reverting this vendor
+bump until upstream fixes it acts on the pin, and blocking this PR is how that
+remedy gets exercised. The bar is a defect you would hold a release for.
+Style, naming, duplication, test layout, missing coverage, and "this could be
+cleaner" never qualify, however severe they look — those are the summary-body
+case above, and using this carve-out for them is what it exists to prevent.
+
 Every inline comment opens a review thread that blocks the merge until someone
 answers it, and this PR class lands in several consuming repos at once — one
 upstream finding costs one blocking thread per reviewer per repo. The summary

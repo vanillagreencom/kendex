@@ -69,6 +69,7 @@ the fix would land, and pick the surface from that:
 |---|---|
 | A repo-owned file — the vendor pin or checksum manifest, settings, CI wiring, adoption glue | Inline comment. In scope, keep it. |
 | The vendored bytes themselves | Review body only. Upstream's call. |
+| The vendored bytes, where the bump introduces a production-impacting regression that runs HERE — correctness, security, data loss | Inline comment, and it may block. See the carve-out below. |
 | The upstream repo's own docs, config, or conventions | Review body only, or omit. |
 
 The first row is the class worth protecting. A re-vendor PR that moves the
@@ -77,10 +78,20 @@ that finding is repo-local, actionable, and a duplicate of nothing upstream. A
 path-based silence rule suppresses it along with the noise; a remedy-based rule
 keeps it.
 
-The other two rows are the duplication. They are not wrong — they are
+The review-body rows are the duplication. They are not wrong — they are
 un-actionable HERE: any local edit forks the pinned surface, which the
 byte-identity check exists to prevent. Stating them in the review body keeps
 the signal, costs no thread, and leaves one place to harvest them from.
+
+The regression row is that reasoning applied honestly, not an exception to it.
+"The remedy cannot happen in this PR" is TRUE for a defect whose only fix is an
+upstream edit, and FALSE for one the bump introduces into what runs here:
+holding or reverting the bump until upstream fixes it is a repo-owned action on
+the pin, exercised by blocking the PR. Routing that to a non-blocking surface
+ships a known defect. Keep the bar at a defect you would hold a release for —
+correctness, security, data loss — because every softer reading (style, naming,
+duplication, test layout, missing coverage) is exactly the inline traffic the
+rule exists to stop, and a carve-out that admits them repeals it.
 
 An instruction that constrains only the REMEDY ("flag it, but do not ask for
 local edits") does not suppress anything: the reviewer still opens the thread,
@@ -240,10 +251,13 @@ compare on the base name, or read the same reviews from the REST
 **Pass**: a trusted non-author review object at the current head; on the
 vendored tree, no unresolved thread from a summary-capable reviewer; gate
 `success`. A repo-owned finding still arriving inline is the control that
-proves the reviewer is still reading rather than merely silent. Threads from a
-location-bound reviewer are counted and recorded, not graded — one consolidated
-thread is what the instruction asks for, and more than one is the accepted
-residual above, not a failure.
+proves the reviewer is still reading rather than merely silent — and so is an
+inline thread raising a carve-out regression: read what a thread SAYS before
+grading it, because that one is the rule working. Hold or revert the bump, or
+resolve it on an upstream fix, then re-read; it is a blocked re-vendor, never a
+failed rollout. Threads from a location-bound reviewer are counted and
+recorded, not graded — one consolidated thread is what the instruction asks
+for, and more than one is the accepted residual above, not a failure.
 
 **Suspect, not proven**: threads at zero with `body_chars` also at zero. Body
 length cannot establish whether anything was examined — a reviewer with
