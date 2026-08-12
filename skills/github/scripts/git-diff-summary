@@ -282,6 +282,17 @@ scan_decl_records() {
                     buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
                 }
                 if (mbuf == "") break
+                # Inner attribute item (#![...]): binds to the ENCLOSING
+                # module, not to what follows — consumed on its own,
+                # contributing nothing to the pending outer-attribute gate
+                # state, so the next declaration still scans.
+                if (mbuf ~ /^#!\[/) {
+                    if (match(mbuf, /^#!\[[^]]*\][[:space:]]*/)) {
+                        buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
+                        continue
+                    }
+                    break
+                }
                 # Attribute item. An opened-but-unclosed one waits for the
                 # next line (rustc accepts attributes split across lines).
                 if (mbuf ~ /^#\[/) {

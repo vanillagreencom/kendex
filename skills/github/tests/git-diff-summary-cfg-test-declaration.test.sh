@@ -1572,5 +1572,59 @@ assert_eq "whitespace and trailing-comma cfg spellings both gate" \
 assert_eq "whitespace and trailing-comma cfg spellings are not production" \
     "support" "$(jq -r '.scope' <<<"$cfg_spelling_json")"
 
+# An inner attribute is its own item: it must not be consumed together
+# with the following declaration (which would swallow an ungated route).
+inner_attr_repo="$SANDBOX/inner-attr"
+init_repo "$inner_attr_repo"
+mkdir -p "$inner_attr_repo/src"
+cat > "$inner_attr_repo/src/lib.rs" <<'RUST'
+#![allow(dead_code)]
+pub mod cand;
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$inner_attr_repo" add src
+git -C "$inner_attr_repo" commit -q -m lib
+cat > "$inner_attr_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$inner_attr_repo" add src/cand.rs
+inner_attr_json="$($SUMMARY -C "$inner_attr_repo" --staged)"
+assert_eq "inner attribute does not swallow the following declaration" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$inner_attr_json")"
+assert_eq "inner attribute keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$inner_attr_json")"
+
+# An inner #![cfg(test)] binds to the enclosing module, not the next item:
+# the following declaration stays ungated.
+inner_cfg_repo="$SANDBOX/inner-cfg"
+init_repo "$inner_cfg_repo"
+mkdir -p "$inner_cfg_repo/src"
+cat > "$inner_cfg_repo/src/lib.rs" <<'RUST'
+#![cfg(test)]
+pub mod cand;
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$inner_cfg_repo" add src
+git -C "$inner_cfg_repo" commit -q -m lib
+cat > "$inner_cfg_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$inner_cfg_repo" add src/cand.rs
+inner_cfg_json="$($SUMMARY -C "$inner_cfg_repo" --staged)"
+assert_eq "inner cfg(test) does not gate the next declaration" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$inner_cfg_json")"
+assert_eq "inner cfg(test) keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$inner_cfg_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
