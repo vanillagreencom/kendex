@@ -1085,5 +1085,193 @@ assert_eq "torture line: ungated routes win for shared/inc_b, gated for onlygate
 assert_eq "torture line: scope is production" \
     "production" "$(jq -r '.scope' <<<"$torture_json")"
 
+# A quoted "{" inside an inline block must not inflate brace depth and
+# swallow the ungated declaration that follows the block (gated twin lives
+# in a second declaring file).
+quoted_open_repo="$SANDBOX/quoted-open-brace"
+init_repo "$quoted_open_repo"
+mkdir -p "$quoted_open_repo/src"
+cat > "$quoted_open_repo/src/lib.rs" <<'RUST'
+mod wrapper { const OPEN: &str = "{"; } pub mod cand;
+RUST
+cat > "$quoted_open_repo/src/other.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$quoted_open_repo" add src
+git -C "$quoted_open_repo" commit -q -m lib
+cat > "$quoted_open_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$quoted_open_repo" add src/cand.rs
+quoted_open_json="$($SUMMARY -C "$quoted_open_repo" --staged)"
+assert_eq "quoted { does not swallow the following ungated declaration" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$quoted_open_json")"
+assert_eq "quoted { keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$quoted_open_json")"
+
+# A quoted "}" inside an inline block must not end the skip region early
+# and expose a nested gated declaration as a top-level route.
+quoted_close_repo="$SANDBOX/quoted-close-brace"
+init_repo "$quoted_close_repo"
+mkdir -p "$quoted_close_repo/src"
+cat > "$quoted_close_repo/src/lib.rs" <<'RUST'
+mod outer {
+    const CLOSE: &str = "}";
+    #[cfg(test)]
+    #[path = "cand.rs"]
+    mod cand_fixtures;
+}
+pub fn real() -> u32 {
+    1
+}
+RUST
+git -C "$quoted_close_repo" add src
+git -C "$quoted_close_repo" commit -q -m lib
+cat > "$quoted_close_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$quoted_close_repo" add src/cand.rs
+quoted_close_json="$($SUMMARY -C "$quoted_close_repo" --staged)"
+assert_eq "quoted } does not expose a nested gated declaration" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$quoted_close_json")"
+assert_eq "quoted } keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$quoted_close_json")"
+
+# A quoted URL's // is not a comment: the constant's statement must not
+# swallow the following ungated declaration.
+url_repo="$SANDBOX/quoted-url"
+init_repo "$url_repo"
+mkdir -p "$url_repo/src"
+cat > "$url_repo/src/lib.rs" <<'RUST'
+const URL: &str = "https://example.com";
+pub mod cand;
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$url_repo" add src
+git -C "$url_repo" commit -q -m lib
+cat > "$url_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$url_repo" add src/cand.rs
+url_json="$($SUMMARY -C "$url_repo" --staged)"
+assert_eq "quoted // keeps the following ungated declaration alive" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$url_json")"
+assert_eq "quoted // keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$url_json")"
+
+# include! with a computed argument emits NO route, even when the parts are
+# string literals — the scanner does not evaluate macros (declared
+# limitation, fail-closed as no-record), so the gated route wins.
+computed_include_repo="$SANDBOX/computed-include"
+init_repo "$computed_include_repo"
+mkdir -p "$computed_include_repo/src"
+cat > "$computed_include_repo/src/lib.rs" <<'RUST'
+include!(concat!("cand.rs", ""));
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$computed_include_repo" add src
+git -C "$computed_include_repo" commit -q -m lib
+cat > "$computed_include_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$computed_include_repo" add src/cand.rs
+computed_include_json="$($SUMMARY -C "$computed_include_repo" --staged)"
+assert_eq "computed include! argument emits no route; gated decl wins" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$computed_include_json")"
+assert_eq "computed include! argument is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$computed_include_json")"
+
+# Raw identifiers are valid module names: mod r#type; declares module
+# `type`, and its ungated #[path] route must be recorded.
+rawident_repo="$SANDBOX/raw-ident"
+init_repo "$rawident_repo"
+mkdir -p "$rawident_repo/src"
+cat > "$rawident_repo/src/lib.rs" <<'RUST'
+#[path = "cand.rs"]
+pub mod r#type;
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$rawident_repo" add src
+git -C "$rawident_repo" commit -q -m lib
+cat > "$rawident_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$rawident_repo" add src/cand.rs
+rawident_json="$($SUMMARY -C "$rawident_repo" --staged)"
+assert_eq "raw-identifier declaration keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$rawident_json")"
+assert_eq "raw-identifier declaration stays production scope" \
+    "production" "$(jq -r '.scope' <<<"$rawident_json")"
+
+# String-awareness torture: quoted braces and a URL, a decoy literal in the
+# statement before a real include!, and a raw-identifier #[path] declaration
+# — ungated routes must survive for inc.rs and target.rs (production) while
+# onlygated.rs keeps only its gated route (test).
+strtorture_repo="$SANDBOX/string-torture"
+init_repo "$strtorture_repo"
+mkdir -p "$strtorture_repo/src"
+cat > "$strtorture_repo/src/lib.rs" <<'RUST'
+const URL: &str = "https://example.com/{}";
+mod wrapper { const OPEN: &str = "{"; }
+const DECOY: &str = "decoy.rs"; include!("inc.rs");
+#[path = "target.rs"] pub mod r#kind;
+
+#[cfg(test)]
+#[path = "inc.rs"]
+mod inc_fx;
+
+#[cfg(test)]
+#[path = "target.rs"]
+mod t_fx;
+
+#[cfg(test)]
+#[path = "onlygated.rs"]
+mod og;
+RUST
+git -C "$strtorture_repo" add src
+git -C "$strtorture_repo" commit -q -m lib
+cat > "$strtorture_repo/src/inc.rs" <<'RUST'
+pub fn decode(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+cat > "$strtorture_repo/src/target.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+cat > "$strtorture_repo/src/onlygated.rs" <<'RUST'
+pub fn fixture() -> u32 {
+    "7".parse().unwrap()
+}
+RUST
+git -C "$strtorture_repo" add src/inc.rs src/target.rs src/onlygated.rs
+strtorture_json="$($SUMMARY -C "$strtorture_repo" --staged)"
+assert_eq "string torture: ungated routes survive, gated-only stays test" \
+    '["panic_path_added","test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$strtorture_json")"
+assert_eq "string torture: scope is production" \
+    "production" "$(jq -r '.scope' <<<"$strtorture_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

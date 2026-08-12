@@ -125,10 +125,13 @@ declaring module, the shared-test-fixture shape. `git-diff-summary` resolves
 that by reading declaring modules on the diff's new side (HEAD for a
 `base...HEAD` diff, the index for `--staged`, the worktree for `--head`,
 tracked files only): every `.rs` file in the candidate's directory and its
-ancestor directories is scanned once, comments stripped (line-comment
-precedence, nested block comments), and each `mod` declaration — bare
-(`name.rs` and `name/mod.rs` forms) or `#[path]` — plus each `include!`
-call is resolved to a lexically normalized repo-relative target; bare
+ancestor directories is scanned once with comment- and string-aware
+lexing (line-comment precedence, nested block comments, string/char
+literal contents masked so quoted braces or `//` cannot corrupt parsing),
+and each `mod` declaration — bare (`name.rs` and `name/mod.rs` forms,
+raw identifiers accepted) or `#[path]` — plus each `include!` whose
+argument is a direct string literal is resolved to a lexically
+normalized repo-relative target; bare
 `mod name;` declarations resolve in the declaring file's module directory —
 its own directory for `mod.rs`/`lib.rs`/`main.rs`, its directory plus its
 file stem otherwise — while `#[path]` values (plain or raw strings) and

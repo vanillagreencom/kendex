@@ -64,15 +64,17 @@ resolve_default_base() {
 # Residual limitations: production routes the scanner cannot see can still
 # let a gated declaration win. Crate roots are only recognized by the bin/
 # directory convention (candidates under a bin/ segment are skipped), not
-# via Cargo.toml `path =` wiring; include! calls with computed paths
-# (concat!/env!) are not matched; #[path]/include! declarations living in
-# a directory that is neither the candidate's own nor one of its ancestors
+# via Cargo.toml `path =` wiring; include! calls whose argument is not a
+# direct string literal (concat!/env!/consts — even concatenations of
+# literals) emit no record; #[path]/include! declarations living in a
+# directory that is neither the candidate's own nor one of its ancestors
 # are not consulted; declarations inside inline module blocks are skipped
-# outright (no records — never a mis-resolved one); and a /* opener inside
-# a string literal reads as a comment and can hide a later ungated
-# declaration. A file that is production-reachable only through one of
-# those shapes while also carrying a #[cfg(test)]-gated declaration still
-# classifies as test.
+# outright (no records — never a mis-resolved one); and declarations
+# produced by macro expansion (macro_rules!/proc-macro bodies) are
+# invisible. Every one of these fails toward NO record for the shape, so
+# a file that is production-reachable only through one of them while also
+# carrying a #[cfg(test)]-gated declaration still classifies as test —
+# that is the declared trade-off, and the only one.
 
 # Emits the new-side content of a file: HEAD for a base...HEAD diff, the
 # index for --staged, the worktree for --head. Reads main()'s diff_ref.
@@ -149,34 +151,89 @@ scan_decl_records() {
             for (i = 1; i <= top; i++) out = out (i > 1 ? "/" : "") stack[i]
             return out
         }
-        # Comment stripping with Rust semantics the coarse version missed:
-        # // takes precedence over /* on the same line, and block comments
-        # nest (depth counter, carried across lines). A /* inside a string
-        # literal still reads as a comment — stated limitation.
-        function strip_comments(s,   out, i, n, two) {
-            out = ""; i = 1; n = length(s)
-            while (i <= n) {
-                two = substr(s, i, 2)
-                if (cdepth > 0) {
-                    if (two == "*/") { cdepth--; i += 2 }
-                    else if (two == "/*") { cdepth++; i += 2 }
-                    else i++
-                } else if (two == "//") break
-                else if (two == "/*") { cdepth = 1; i += 2 }
-                else { out = out substr(s, i, 1); i++ }
+        function mkhashes(k,   h) { h = ""; while (k-- > 0) h = h "#"; return h }
+        # Lex one line into two SAME-LENGTH strings: ml_orig (comment bytes
+        # blanked to spaces, literals intact) and ml_mask (literal interiors
+        # additionally blanked to "."). Item/brace/boundary matching runs on
+        # the mask, so quoted braces, quoted //, and quoted /* are inert;
+        # value extraction reads the same offsets from ml_orig. Handles
+        # nested block comments, // precedence, "..." with escapes, r"..."
+        # and r#*"..."#* raw strings (both may span lines), and char
+        # literals vs lifetimes (a quote not forming a char literal is kept).
+        function mask_line(s,   n, i, c, c2, o, m, j, seg, k, hs) {
+            n = length(s); o = ""; m = ""; i = 1
+            # Fast path: nothing that opens a comment, string, or char
+            # literal, and no open cross-line state.
+            if (cdepth == 0 && instr == 0 && s !~ /["\047\/]/) {
+                ml_orig = s; ml_mask = s; return
             }
-            return out
+            while (i <= n) {
+                c = substr(s, i, 1)
+                c2 = substr(s, i, 2)
+                if (cdepth > 0) {
+                    if (c2 == "*/") { cdepth--; o = o "  "; m = m "  "; i += 2 }
+                    else if (c2 == "/*") { cdepth++; o = o "  "; m = m "  "; i += 2 }
+                    else { o = o " "; m = m " "; i++ }
+                } else if (instr == 1) {
+                    if (c == "\\" && i < n) { o = o substr(s, i, 2); m = m ".."; i += 2 }
+                    else if (c == "\"") { instr = 0; o = o c; m = m c; i++ }
+                    else { o = o c; m = m "."; i++ }
+                } else if (instr == 2) {
+                    hs = mkhashes(rawh)
+                    if (c == "\"" && substr(s, i + 1, rawh) == hs) {
+                        o = o substr(s, i, rawh + 1); m = m substr(s, i, rawh + 1)
+                        i += rawh + 1; instr = 0
+                    } else { o = o c; m = m "."; i++ }
+                } else if (c2 == "//") {
+                    while (i <= n) { o = o " "; m = m " "; i++ }
+                } else if (c2 == "/*") {
+                    cdepth = 1; o = o "  "; m = m "  "; i += 2
+                } else if (c == "\"") {
+                    instr = 1; o = o c; m = m c; i++
+                } else if (c == "r" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
+                           && match(substr(s, i), /^r#*"/)) {
+                    rawh = RLENGTH - 2
+                    o = o substr(s, i, RLENGTH); m = m substr(s, i, RLENGTH)
+                    i += RLENGTH; instr = 2
+                } else if (c == "\047") {
+                    if (substr(s, i + 1, 1) == "\\") {
+                        # escaped char literal: consume to its closing quote
+                        j = i + 3
+                        while (j <= n && substr(s, j, 1) != "\047") j++
+                        if (j > n) j = n
+                        seg = j - i + 1
+                        o = o substr(s, i, seg)
+                        m = m "\047"
+                        for (k = 2; k < seg; k++) m = m "."
+                        if (seg >= 2) m = m "\047"
+                        i = j + 1
+                    } else if (substr(s, i + 2, 1) == "\047") {
+                        # plain char literal (may hold { } ; / ")
+                        o = o substr(s, i, 3); m = m "\047.\047"; i += 3
+                    } else {
+                        # lifetime: keep the quote, no literal opened
+                        o = o c; m = m c; i++
+                    }
+                } else { o = o c; m = m c; i++ }
+            }
+            ml_orig = o; ml_mask = m
         }
-        # Every include! route in one consumed chunk (token boundary: a
-        # preceding identifier character means a different macro).
-        function emit_includes(chunk,   ioff, iq, iap, irest) {
+        # include! routes in one consumed chunk (mc masked, oc original).
+        # Token boundary: a preceding identifier character means a
+        # different macro. The argument must BE a string literal (any
+        # bracket form); a computed expression (concat!/env!/const) emits
+        # nothing — even one whose parts are all literals — per the
+        # fail-closed rule for shapes the scanner cannot evaluate.
+        function emit_includes(mc, oc,   ioff, iq, iap, mrest, orest) {
             ioff = 0
-            while ((iq = index(substr(chunk, ioff + 1), "include!")) > 0) {
+            while ((iq = index(substr(mc, ioff + 1), "include!")) > 0) {
                 iap = ioff + iq
-                if (iap == 1 || substr(chunk, iap - 1, 1) !~ /[A-Za-z0-9_]/) {
-                    irest = substr(chunk, iap)
-                    if (match(irest, /"[^"]*"/))
-                        printf "I\t%s\n", normpath(join(fdir, substr(irest, RSTART + 1, RLENGTH - 2)))
+                if (iap == 1 || substr(mc, iap - 1, 1) !~ /[A-Za-z0-9_]/) {
+                    mrest = substr(mc, iap)
+                    orest = substr(oc, iap)
+                    if (match(mrest, /^include![[:space:]]*[([{][[:space:]]*(r#*)?"[^"]*"/) \
+                        && match(mrest, /"[^"]*"/))
+                        printf "I\t%s\n", normpath(join(fdir, substr(orest, RSTART + 1, RLENGTH - 2)))
                 }
                 ioff = iap + 7
             }
@@ -188,56 +245,59 @@ scan_decl_records() {
         # An incomplete tail (open attribute, unterminated statement,
         # unclosed inline block) stays in the buffer for the next line.
         {
-            line = strip_comments($0)
-            if (buf == "") buf = line
-            else buf = buf " " line
+            mask_line($0)
+            if (buf == "") { buf = ml_orig; mbuf = ml_mask }
+            else { buf = buf " " ml_orig; mbuf = mbuf " " ml_mask }
             for (;;) {
                 # Inside an inline module block (mod name { ... }): Rust
                 # resolves nested declarations into the inline chain, which
                 # this scanner does not model — a shape it cannot
                 # faithfully parse must produce NO record, never a
-                # mis-resolved one. Consume by brace depth, emit nothing.
+                # mis-resolved one. Consume by brace depth on the MASK
+                # (quoted braces are invisible), emit nothing.
                 if (inline_depth > 0) {
-                    blen = length(buf); bi = 1
+                    blen = length(mbuf); bi = 1
                     while (bi <= blen && inline_depth > 0) {
-                        bc = substr(buf, bi, 1)
+                        bc = substr(mbuf, bi, 1)
                         if (bc == "{") inline_depth++
                         else if (bc == "}") inline_depth--
                         bi++
                     }
-                    buf = substr(buf, bi)
-                    if (inline_depth > 0) { buf = ""; break }
+                    buf = substr(buf, bi); mbuf = substr(mbuf, bi)
+                    if (inline_depth > 0) { buf = ""; mbuf = ""; break }
                     continue
                 }
-                sub(/^[[:space:]]*/, "", buf)
-                if (buf == "") break
+                if (match(mbuf, /^[[:space:]]+/)) {
+                    buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
+                }
+                if (mbuf == "") break
                 # Attribute item. An opened-but-unclosed one waits for the
                 # next line (rustc accepts attributes split across lines).
-                if (buf ~ /^#\[/) {
-                    if (match(buf, /^#\[[^]]*\][[:space:]]*/)) {
-                        attr = substr(buf, 1, RLENGTH)
-                        if (attr ~ /^#\[cfg\(test\)\]/) gated = 1
-                        # Plain and raw string values, including hash-raw
-                        # (r"...", r#"..."#); a literal quote INSIDE a
-                        # hash-raw value would cut early — pathological
-                        # for a file path.
-                        if (attr ~ /^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/) {
-                            p = attr
-                            sub(/^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/, "", p)
-                            sub(/".*/, "", p)
-                            pathattr = p
-                        }
-                        buf = substr(buf, RLENGTH + 1)
+                if (mbuf ~ /^#\[/) {
+                    if (match(mbuf, /^#\[[^]]*\][[:space:]]*/)) {
+                        alen = RLENGTH
+                        mattr = substr(mbuf, 1, alen)
+                        oattr = substr(buf, 1, alen)
+                        if (mattr ~ /^#\[cfg\(test\)\]/) gated = 1
+                        # Plain and raw string values, including hash-raw:
+                        # the literal is located on the mask (its interior
+                        # can hide no quote) and read from the original.
+                        if (mattr ~ /^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/ \
+                            && match(mattr, /"[^"]*"/))
+                            pathattr = substr(oattr, RSTART + 1, RLENGTH - 2)
+                        buf = substr(buf, alen + 1); mbuf = substr(mbuf, alen + 1)
                         continue
                     }
                     break
                 }
-                # File-module declaration item.
-                if (match(buf, /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;/)) {
-                    name = substr(buf, 1, RLENGTH)
-                    buf = substr(buf, RLENGTH + 1)
+                # File-module declaration item (raw identifiers accepted:
+                # `mod r#type;` declares module type -> type.rs).
+                if (match(mbuf, /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+(r#)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;/)) {
+                    name = substr(mbuf, 1, RLENGTH)
+                    buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
                     sub(/^pub([(][^)]*[)])?[[:space:]]+/, "", name)
                     sub(/^mod[[:space:]]+/, "", name)
+                    sub(/^r#/, "", name)
                     sub(/[[:space:]]*;.*$/, "", name)
                     kind = (gated ? "G" : "U")
                     if (pathattr != "")
@@ -253,22 +313,22 @@ scan_decl_records() {
                 }
                 # Inline-module opener: enter the skip region (its own
                 # attributes, gated or not, apply to the skipped block).
-                if (match(buf, /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\{/)) {
-                    buf = substr(buf, RLENGTH + 1)
+                if (match(mbuf, /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+(r#)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\{/)) {
+                    buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
                     inline_depth = 1
                     gated = 0; pathattr = ""
                     continue
                 }
-                # Any other item: consume to the next boundary (; { or }),
-                # scanning the chunk for include! routes. A multiline
-                # include! (literal on a later line) completes when its
-                # statement boundary arrives; a closed call with no
-                # literal (computed path) emits nothing. Without a
-                # boundary the item continues on the next line.
-                if (match(buf, /[;{}]/)) {
-                    chunk = substr(buf, 1, RSTART)
-                    buf = substr(buf, RSTART + 1)
-                    emit_includes(chunk)
+                # Any other item: consume to the next boundary (; { or })
+                # on the mask, scanning the chunk for include! routes. A
+                # multiline include! completes when its statement boundary
+                # arrives. Without a boundary the item continues on the
+                # next line.
+                if (match(mbuf, /[;{}]/)) {
+                    mchunk = substr(mbuf, 1, RSTART)
+                    ochunk = substr(buf, 1, RSTART)
+                    buf = substr(buf, RSTART + 1); mbuf = substr(mbuf, RSTART + 1)
+                    emit_includes(mchunk, ochunk)
                     gated = 0; pathattr = ""
                     continue
                 }
