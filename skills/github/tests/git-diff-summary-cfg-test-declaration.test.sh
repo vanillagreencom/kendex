@@ -1666,5 +1666,30 @@ tokens_json="$($SUMMARY -C "$tokens_repo" --staged)"
 assert_eq "token spellings: byte raw string, spaced visibility/include/attr, unicode ident all keep production"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$tokens_json")"
 assert_eq "token spellings keep production scope"     "production" "$(jq -r '.scope' <<<"$tokens_json")"
 
+# C-string literals (Rust 2021+): cr#"..."# with an embedded quote must
+# lex as a raw string (not an ordinary string closing early and
+# corrupting structure), and byte/C forms never qualify as route values.
+cstr_repo="$SANDBOX/c-strings"
+init_repo "$cstr_repo"
+mkdir -p "$cstr_repo/src"
+cat > "$cstr_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+const C: &core::ffi::CStr = cr#"a"b{"#;
+pub mod cand;
+RUST
+git -C "$cstr_repo" add src
+git -C "$cstr_repo" commit -q -m lib
+cat > "$cstr_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$cstr_repo" add src/cand.rs
+cstr_json="$($SUMMARY -C "$cstr_repo" --staged)"
+assert_eq "c-string raw literal does not corrupt structure; ungated route survives"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$cstr_json")"
+assert_eq "c-string fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$cstr_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

@@ -77,7 +77,22 @@ resolve_default_base() {
 # construction. Every one of these fails toward NO record for the shape, so
 # a file that is production-reachable only through one of them while also
 # carrying a #[cfg(test)]-gated declaration still classifies as test —
-# that is the declared trade-off, and the only one.
+# that is the declared trade-off.
+#
+# Deliberately unmodeled SPELLING SEMANTICS, direction stated: string
+# ESCAPES in path/include literals are recorded as their source spelling,
+# not decoded ("cand\x2ers" does not match cand.rs); cfg_attr-conditional
+# path attributes are consumed as ordinary attributes (the declaration
+# resolves by its alias); a local macro_rules! shadowing `include` is
+# still read as the built-in. Each can, in a deliberately crafted
+# dual-declaration file, hide a production route and downgrade — but each
+# requires the AUTHOR writing pathological spellings of their own code,
+# and this scanner is review-flag hygiene, not an adversarial control: an
+# author evading their own review flags has simpler routes than escape
+# obfuscation, and the spellings themselves are what a human review
+# flags. Byte/C string literals (b"", br#""#, c"", cr#""#) are lexed for
+# masking but never qualify as path/include VALUES — they are not valid
+# in those positions in Rust.
 
 # Emits the new-side content of a file: HEAD for a base...HEAD diff, the
 # index for --staged, the worktree for --head. Reads main()'s diff_ref.
@@ -193,17 +208,17 @@ scan_decl_records() {
                     cdepth = 1; o = o "  "; m = m "  "; i += 2
                 } else if (c == "\"") {
                     instr = 1; o = o c; m = m c; i++
-                } else if (c == "b" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
-                           && match(substr(s, i), /^br#*"/)) {
-                    # byte raw string: same raw machinery, prefix is br
+                } else if (c ~ /[bc]/ && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
+                           && match(substr(s, i), /^[bc]r#*"/)) {
+                    # byte/C raw string: same raw machinery, prefix br or cr
                     rawh = RLENGTH - 3
                     rawhs = mkhashes(rawh)
                     o = o substr(s, i, RLENGTH); m = m substr(s, i, RLENGTH)
                     i += RLENGTH; instr = 2
-                } else if (c == "b" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
+                } else if (c ~ /[bc]/ && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
                            && substr(s, i + 1, 1) ~ /["\047]/) {
-                    # byte string or byte char: consume the b, let the
-                    # quote branch on the next pass open the literal
+                    # byte/C string or byte char: consume the prefix, let
+                    # the quote branch on the next pass open the literal
                     o = o c; m = m c; i++
                 } else if (c == "r" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
                            && match(substr(s, i), /^r#*"/)) {
@@ -251,7 +266,7 @@ scan_decl_records() {
                 if (iap == 1 || substr(mc, iap - 1, 1) !~ /[A-Za-z0-9_]/) {
                     mrest = substr(mc, iap)
                     orest = substr(oc, iap)
-                    if (match(mrest, /^include[[:space:]]*![[:space:]]*[([{][[:space:]]*(b?r#*)?"[^"]*"/) \
+                    if (match(mrest, /^include[[:space:]]*![[:space:]]*[([{][[:space:]]*(r#*)?"[^"]*"/) \
                         && match(mrest, /"[^"]*"/))
                         printf "%s\t%s\n", (inc_gated ? "G" : "U"), \
                             normpath(join(fdir, substr(orest, RSTART + 1, RLENGTH - 2)))
@@ -319,7 +334,7 @@ scan_decl_records() {
                         # Plain and raw string values, including hash-raw:
                         # the literal is located on the mask (its interior
                         # can hide no quote) and read from the original.
-                        if (mattr ~ /^#[[:space:]]*\[[[:space:]]*path[[:space:]]*=[[:space:]]*(b?r#*)?"/ \
+                        if (mattr ~ /^#[[:space:]]*\[[[:space:]]*path[[:space:]]*=[[:space:]]*(r#*)?"/ \
                             && match(mattr, /"[^"]*"/))
                             pathattr = substr(oattr, RSTART + 1, RLENGTH - 2)
                         buf = substr(buf, alen + 1); mbuf = substr(mbuf, alen + 1)
