@@ -545,7 +545,19 @@ assert_contains "$(cat "$ENV_LOG")" "OUTAGE=<unset>" "w30b: absent key leaves th
 # ------------------------------------------------------------- the copies ---
 
 TEMPLATE="$SKILL_ROOT/templates/review-gate-writer.yml"
-SELF_ADOPTION="$SKILL_ROOT/../../.github/workflows/review-gate-writer.yml"
+# Walk up to the enclosing repo rather than assuming a fixed depth: this skill
+# sits at skills/review-gate/ in the catalog but at .agents/skills/review-gate/
+# in a consumer, so a hardcoded ../../ resolves to different places and would
+# silently report "no copy here" in one of them.
+SELF_ADOPTION=""
+_dir="$SKILL_ROOT"
+while [[ "$_dir" != "/" ]]; do
+  if [[ -e "$_dir/.git" || -d "$_dir/.github" ]]; then
+    SELF_ADOPTION="$_dir/.github/workflows/review-gate-writer.yml"
+    break
+  fi
+  _dir="$(dirname "$_dir")"
+done
 
 WORKFLOWS=()
 WORKFLOW_LABELS=()
@@ -554,10 +566,10 @@ if [[ -f "$TEMPLATE" ]]; then
 else
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "the shipped template is missing at $TEMPLATE"
 fi
-if [[ -f "$SELF_ADOPTION" ]]; then
+if [[ -n "$SELF_ADOPTION" && -f "$SELF_ADOPTION" ]]; then
   WORKFLOWS+=("$SELF_ADOPTION"); WORKFLOW_LABELS+=("self-adoption copy")
 else
-  printf '  note  %s\n' "no .github/workflows/review-gate-writer.yml here (consumer install) — template only"
+  printf '  note  %s\n' "no adopted workflow found at ${SELF_ADOPTION:-<no enclosing repo root>} — asserting the template only"
 fi
 
 # ------------------------------------------------------------------ pins ----
@@ -668,6 +680,52 @@ pin_workflows() { # file, label
   count="$(grep -cF -- "DISPATCH_REF:" "$wf" || true)"
   assert_eq "$count" "1" "[$tag] tpl: exactly ONE DISPATCH_REF binding (a second could not be reached by the literal pin above)"
 
+  # --- the budget pair: backoff cap vs the job's timeout ----------------
+  # Both halves were reconciled by hand in round 1 and only one was pinned.
+  # Assert the RELATION, not the literals, so a deliberate coordinated retune
+  # still passes and an uncoordinated one lands on a test that explains why.
+  local tmo cap_s worst
+  tmo="$(grep -oE '^    timeout-minutes: [0-9]+' <<<"$relay_block" | head -n 1 | awk '{print $2}')"
+  cap_s="$(grep -oE '^          cap=[0-9]+' <<<"$relay_block" | head -n 1 | cut -d= -f2)"
+  if [[ -z "$tmo" || -z "$cap_s" ]]; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        timeout-minutes=%s cap=%s\n' "$tag" "tpl: could not read the relay's timeout-minutes and backoff cap — the budget pair is unpinned" "$tmo" "$cap_s"
+  else
+    # Worst case the step can produce: two bounded dispatch attempts plus the
+    # capped wait between them.
+    worst=$(( 60 + cap_s + 60 ))
+    if (( tmo * 60 > worst )); then
+      PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay's timeout budget (${tmo}m) still outlasts its worst case (60s + ${cap_s}s cap + 60s = ${worst}s) — a retry can finish instead of being CANCELLED on the PR head"
+    else
+      FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay's timeout budget (${tmo}m) is NOT above its worst case (${worst}s) — a rate-limit retry would be killed by the timeout, leaving a cancelled check on the PR head"
+    fi
+  fi
+
+  # --- no unbounded or unchecked calls in the relay ---------------------
+  assert_contains "$relay_block" "timeout 60 gh api" "[$tag] tpl: each dispatch attempt is time-bounded — an unresponsive API would otherwise hang to timeout-minutes and be CANCELLED on the PR head"
+  # Comment lines stripped first: the block explains WHY it allocates no temp
+  # file, and a needle that its own rationale satisfies is not a check.
+  rc=0; grep -v '^ *#' <<<"$relay_block" | grep -q 'mktemp' || rc=$?
+  case "$rc" in
+    1) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay allocates no temp file — an unchecked mktemp is an undeclared failure path (empty name, ambiguous redirect) on a job that must never red" ;;
+    0) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay grew an mktemp — check it or drop it; the response belongs in a variable" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay block could not be read (grep error)" ;;
+  esac
+  # The no-match guard inside header(): without it a pipefail shell kills the
+  # step on the ordinary path where the API simply sent no such header.
+  # STRUCTURAL, not a single needle: EVERY grep in the relay's script must
+  # tolerate a no-match. A bare one exits 1 on the ordinary path where the
+  # API simply sent no such header, and under a pipefail shell that status
+  # propagates out of the command substitution and `set -e` reds the PR.
+  local bare_greps
+  bare_greps="$(grep -v '^ *#' <<<"$relay_block" | grep -c 'grep ' || true)"
+  local guarded_greps
+  guarded_greps="$(grep -v '^ *#' <<<"$relay_block" | grep 'grep ' | grep -c '|| true' || true)"
+  if [[ "$bare_greps" == "$guarded_greps" && "$bare_greps" != "0" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: all $bare_greps grep(s) in the relay step tolerate a no-match (a bare one reds the PR under pipefail on the ORDINARY path)"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        %s grep(s) in the relay step, only %s guarded with || true\n' "$tag" "tpl: every grep in the relay step must tolerate a no-match under pipefail" "$bare_greps" "$guarded_greps"
+  fi
+
   # --- the loop breaker's second tooth ---------------------------------
   # The job if: is the first breaker and the line adoption.md tells
   # consumers to hand-edit; the step's own EVENT_NAME guard survives that
@@ -749,22 +807,63 @@ chmod +x "$RELAY_BIN/sleep"
 RELAY_LOG="$TMP_ROOT/relay-gh.log"
 SLEEP_LOG="$TMP_ROOT/relay-sleep.log"
 
-relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, headers
+# THE SHELLS THE RUNNER ACTUALLY USES. A `run:` block with no `shell:` key
+# gets `bash -e {0}`; an explicit `shell: bash` gets
+# `bash --noprofile --norc -eo pipefail {0}`. Running the extracted step under
+# plain `bash` — as this harness first did — models NEITHER, and that gap hid
+# real reds: under `-e` an underivable workflow_ref exited 1, and under
+# pipefail a no-match `grep` inside the header helper killed the step on the
+# ORDINARY retry path. Every case runs under both, and the two must agree.
+RELAY_SHELLS=("-e" "-eo pipefail")
+
+_relay_once() { # shell-flags, step-path, read_only, ref, codes, event, headers
   : > "$RELAY_LOG"; : > "$SLEEP_LOG"
   set +e
-  RELAY_OUT="$(GH_LOG="$RELAY_LOG" SLEEP_LOG="$SLEEP_LOG" GH_CODES="$4" GH_HEADERS="${6:-}" \
+  RELAY_OUT="$(GH_LOG="$RELAY_LOG" SLEEP_LOG="$SLEEP_LOG" GH_CODES="$5" GH_HEADERS="${7:-}" \
     PATH="$RELAY_BIN:$PATH" \
-    WRITER_READ_ONLY="$2" WORKFLOW_REF="$3" EVENT_NAME="${5:-pull_request_target}" \
+    WRITER_READ_ONLY="$3" WORKFLOW_REF="$4" EVENT_NAME="${6:-pull_request_target}" \
     GH_REPO="o/r" DISPATCH_REF="main" \
-    bash "$1" 2>&1)"
+    bash $1 "$2" 2>&1)"
   RELAY_RC=$?
   set -e
   RELAY_CALLS="$(cat "$RELAY_LOG")"
   RELAY_SLEEPS="$(cat "$SLEEP_LOG")"
 }
 
+relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, headers
+  local first_rc="" first_calls="" first_sleeps="" flags
+  for flags in "${RELAY_SHELLS[@]}"; do
+    _relay_once "$flags" "$@"
+    # THE INVARIANT, asserted on every case rather than per-case so a future
+    # case cannot forget it: the relay never reds. It runs on PR-attached
+    # legs, so a non-zero exit is a failed check on the PR head and pins
+    # mergeStateStatus at UNSTABLE — the defect VST-210 removes. Nothing this
+    # step can hit justifies that, because it holds no statuses scope and can
+    # only ever leave the gate stale, which the cron floor owns.
+    if [[ "$RELAY_RC" != "0" ]]; then
+      FAIL=$((FAIL + 1))
+      printf '  FAIL  %s\n        exit %s under [bash %s]\n        output: %s\n' \
+        "relay INVARIANT: the relay never reds a PR head (case: ro=$2 ref='$3' codes='$4' event='${5:-pull_request_target}')" \
+        "$RELAY_RC" "$flags" "$RELAY_OUT"
+    else
+      PASS=$((PASS + 1))
+    fi
+    if [[ -z "$first_rc" ]]; then
+      first_rc="$RELAY_RC"; first_calls="$RELAY_CALLS"; first_sleeps="$RELAY_SLEEPS"
+    elif [[ "$RELAY_RC" != "$first_rc" || "$RELAY_CALLS" != "$first_calls" || "$RELAY_SLEEPS" != "$first_sleeps" ]]; then
+      FAIL=$((FAIL + 1))
+      printf '  FAIL  %s\n        [bash %s] rc=%s vs rc=%s under [bash %s]\n' \
+        "relay INVARIANT: behavior is identical under both runner shells (a pipefail-only difference is a latent red)" \
+        "$flags" "$RELAY_RC" "$first_rc" "${RELAY_SHELLS[0]}"
+    else
+      PASS=$((PASS + 1))
+    fi
+  done
+}
+
+RELAY_STEPS=()
 relay_battery() { # file, label
-  local wf="$1" tag="$2" step="$TMP_ROOT/relay-step-$2.sh"
+  local wf="$1" tag="$2" step="$TMP_ROOT/relay-step-${#RELAY_STEPS[@]}.sh"
   local ref="o/r/.github/workflows/review-gate-writer.yml@refs/heads/main"
   awk '
     /^      - name: Request a converge pass$/ { found = 1; next }
@@ -775,6 +874,7 @@ relay_battery() { # file, label
     }
   ' "$wf" > "$step"
   if [[ -s "$step" ]] && grep -qF -- "/dispatches" "$step"; then
+    RELAY_STEPS+=("$step")
     PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "relay: the step script extracted from the workflow (non-empty, dispatches)"
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay: could NOT extract the step script — every case below would prove nothing"
@@ -800,9 +900,8 @@ relay_battery() { # file, label
   assert_eq "$RELAY_CALLS" "" "[$tag] relay3: the read-only leg dispatches NOTHING — the cron floor converges fork review evidence"
 
   relay_run "$step" 0 "" "0"
-  assert_eq "$RELAY_RC" "1" "[$tag] relay4: an underivable workflow_ref fails LOUDLY instead of dispatching a garbage path"
-  assert_eq "$RELAY_CALLS" "" "[$tag] relay4: nothing is dispatched when the file name could not be derived"
-  assert_contains "$RELAY_OUT" "::error::" "[$tag] relay4: the underivable case annotates the run"
+  assert_eq "$RELAY_CALLS" "" "[$tag] relay4: an underivable workflow_ref dispatches NOTHING — never a garbage path (fail-closed)"
+  assert_contains "$RELAY_OUT" "::warning::could not derive this workflow's file name" "[$tag] relay4: and warns instead of reddening — this is a PERMANENT condition, so a red here would pin every open PR at UNSTABLE forever while the cron floor keeps converging them anyway"
 
   relay_run "$step" 0 "$ref" "1 0"
   assert_eq "$RELAY_RC" "0" "[$tag] relay5: a transient dispatch failure is retried once and succeeds"
@@ -832,8 +931,11 @@ relay_battery() { # file, label
   assert_eq "$RELAY_CALLS" "" "[$tag] relay8: the schedule converge leg is refused by the same guard"
 
   # --- backoff: the retry must be able to outlast the limit it retries --
+  # No response at all — a transport failure, not an HTTP rate-limit answer.
+  # The minute-long floor is for the secondary limit (relay15); spending it
+  # on a connection blip is a paid runner hold for nothing.
   relay_run "$step" 0 "$ref" "1 0" pull_request_target
-  assert_eq "$RELAY_SLEEPS" "60" "[$tag] relay9: with no rate-limit headers the retry waits GitHub's documented 60s floor, not a token blip (a 5s retry lands inside every secondary-limit window)"
+  assert_eq "$RELAY_SLEEPS" "5" "[$tag] relay9: a failure with NO response at all retries quickly — the 60s floor belongs to the rate-limit shapes, not to every failure"
 
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 retry-after: 77
@@ -843,7 +945,59 @@ content-type: application/json"
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 retry-after: 4000
 content-type: application/json"
-  assert_eq "$RELAY_SLEEPS" "120" "[$tag] relay11: an absurd retry-after is capped so the wait still fits the job's timeout-minutes"
+  assert_eq "$RELAY_SLEEPS" "" "[$tag] relay11: a wait beyond the job's budget is NOT slept — retrying inside the window we were told to stay out of is a guaranteed failure bought with a paid runner hold"
+  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "1" "[$tag] relay11: and the second attempt is skipped entirely"
+  assert_contains "$RELAY_OUT" "beyond this job's budget" "[$tag] relay11: the deferral names its reason"
+
+  # --- the PRIMARY-limit shape: reset epoch, no retry-after ---------------
+  # Computed from now so the case is not time-brittle.
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
+x-ratelimit-remaining: 0
+x-ratelimit-reset: $(( $(date +%s) + 90 ))"
+  case "$RELAY_SLEEPS" in
+    88|89|90) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "relay12: x-ratelimit-reset is honored (primary-limit shape: reset epoch, no retry-after) — slept ${RELAY_SLEEPS}s" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        expected ~90, got: %s\n' "$tag" "relay12: x-ratelimit-reset is honored (primary-limit shape)" "$RELAY_SLEEPS" ;;
+  esac
+
+  # A reset already in the past must not produce a negative sleep.
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
+x-ratelimit-reset: 1000000000"
+  assert_eq "$RELAY_SLEEPS" "60" "[$tag] relay13: a reset epoch in the PAST falls to the floor, never a negative sleep"
+
+  # The clamp direction relay10 cannot reach: a server value UNDER a minute
+  # still lands inside the secondary-limit window it is retrying.
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
+retry-after: 3"
+  assert_eq "$RELAY_SLEEPS" "60" "[$tag] relay14: a sub-minute retry-after is raised to GitHub's 60s floor — obeying 3s verbatim retries back inside the limit"
+
+  # No server guidance: the minute is for being rate limited, not for a blip.
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
+content-type: application/json"
+  assert_eq "$RELAY_SLEEPS" "60" "[$tag] relay15: a 403 with no headers is treated as the secondary limit — the floor applies"
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
+content-type: application/json"
+  assert_eq "$RELAY_SLEEPS" "5" "[$tag] relay16: a 5xx blip retries QUICKLY — a minute of paid runner hold buys nothing against a transient"
+
+  # PERMANENT failures buy nothing by waiting: no sleep, no second attempt.
+  # 404 is the shape a renamed/deleted workflow file produces, and 422 the
+  # shape a bad ref produces — both settled answers.
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 404 Not Found"
+  assert_eq "$RELAY_SLEEPS" "" "[$tag] relay19: a 404 is not slept on — a missing workflow file is a settled answer, and this job holds a runner on a PR head"
+  assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "1" "[$tag] relay19: and the second attempt is skipped"
+  assert_contains "$RELAY_OUT" "failed permanently (HTTP 404)" "[$tag] relay19: the deferral names the permanent status"
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 422 Unprocessable Entity"
+  assert_eq "$RELAY_SLEEPS" "" "[$tag] relay20: a 422 (bad ref) is not slept on either"
+
+  # Sanitizers: neither a non-numeric nor an out-of-range value may reach sleep.
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
+retry-after: soon"
+  assert_eq "$RELAY_SLEEPS" "5" "[$tag] relay17: a non-numeric retry-after is discarded, not passed to sleep"
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
+retry-after: soon"
+  assert_eq "$RELAY_SLEEPS" "60" "[$tag] relay17b: a non-numeric retry-after on a RATE-LIMIT response falls to the floor, not to the transient's quick retry"
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
+retry-after: 999999999"
+  assert_eq "$RELAY_SLEEPS" "5" "[$tag] relay18: an out-of-range retry-after is discarded before it can overflow the arithmetic or reach sleep"
 }
 
 echo "=== relay step behavior (request-converge, VST-210) ==="
@@ -857,13 +1011,38 @@ done
 # places — a divergence the cases do not happen to probe would otherwise ship.
 # The step is pure logic with no vendored paths in it, so unlike the rest of
 # the file it has no legitimate ADAPT reason to differ.
-if [[ -f "$TEMPLATE" && -f "$SELF_ADOPTION" ]]; then
-  if diff -q "$TMP_ROOT/relay-step-template.sh" "$TMP_ROOT/relay-step-self-adoption copy.sh" >/dev/null 2>&1; then
-    PASS=$((PASS + 1)); printf '  ok    %s\n' "relay: the template's and the self-adoption copy's relay steps are byte-identical (the step carries no ADAPT, so any drift is unintended)"
+# WHOLE-FILE drift, not just the relay step. This round found a stale claim
+# surviving in the adopted copy because the only cross-copy tooth covered the
+# extracted step. Comments are compared out because ADAPT deliberately rewords
+# them (vendored paths, default-branch notes) — prose drift between the copies
+# is therefore NOT machine-checkable here and stays a review concern; what IS
+# checked is that every line of CODE matches once the vendored script path is
+# normalized, which is the class that changes behavior.
+if [[ "${#WORKFLOWS[@]}" -eq 2 ]]; then
+  _norm() { # strip comments and blank lines, normalize the vendored path
+    grep -v '^ *#' "$1" | grep -v '^ *$' | sed 's#\.agents/skills/review-gate/#skills/review-gate/#g'
+  }
+  if diff -q <(_norm "${WORKFLOWS[0]}") <(_norm "${WORKFLOWS[1]}") >/dev/null 2>&1; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "drift: the template and the adopted copy are identical in CODE once the vendored path is normalized"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "relay: the two copies' relay steps DIVERGED — a template edit was not mirrored into .github/workflows/"
-    diff "$TMP_ROOT/relay-step-template.sh" "$TMP_ROOT/relay-step-self-adoption copy.sh" | head -20
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "drift: the template and the adopted copy DIVERGED in code — a template edit was not mirrored"
+    diff <(_norm "${WORKFLOWS[0]}") <(_norm "${WORKFLOWS[1]}") | head -20
   fi
+fi
+
+if [[ "${#RELAY_STEPS[@]}" -eq 2 ]]; then
+  # diff exits 0 identical, 1 differing, >1 could-not-read. A missing input
+  # must never be reported as drift, nor drift as a read failure.
+  # rc captured, not read from a bare command: under this file's `set -e` a
+  # differing diff would abort the suite before reaching the verdict below —
+  # real drift would then look like a silent early finish rather than a FAIL.
+  rc=0; diff -q "${RELAY_STEPS[0]}" "${RELAY_STEPS[1]}" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) PASS=$((PASS + 1)); printf '  ok    %s\n' "relay: the template's and the adopted copy's relay steps are byte-identical (the step carries no ADAPT, so any drift is unintended)" ;;
+    1) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "relay: the two copies' relay steps DIVERGED — a template edit was not mirrored into the adopted workflow"
+       diff "${RELAY_STEPS[0]}" "${RELAY_STEPS[1]}" | head -20 ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "relay: the extracted relay steps could not be compared (diff read error) — drift is unproven, not disproven" ;;
+  esac
 fi
 
 echo

@@ -80,12 +80,30 @@
   `statuses` scope, so a failed dispatch cannot make the gate look converged
   — only leave it stale, which the cron floor already owns — while a red
   check would pin the PR at `UNSTABLE`, the very defect being fixed. It
-  retries once honoring `retry-after`/`x-ratelimit-reset` (else GitHub's 60s
-  floor, since a 5-second retry lands inside every secondary-rate-limit
-  window), then warns and exits 0. It carries no escalation of its own: a
+  retries once after a wait clamped to 60-120s (a 5-second retry lands
+  inside every secondary-rate-limit window; a plain transient still retries
+  in 5s; a permanent answer — 404, 422, 401 — is not retried at all, and
+  neither is a server-advertised wait beyond the cap, since both would pay
+  for a retry that cannot succeed), then warns and exits 0. It carries no escalation of its own: a
   sustained dispatch outage surfaces as gate staleness, which
   `pr-watch --heal` already reduces on across every open PR, rather than as
   N red PRs or a widened relay scope.
+  **The relay never exits non-zero.** That is now the pinned invariant, not
+  a property of one branch: it runs on PR-attached legs, so any red — or any
+  hang long enough to be CANCELLED — is a failed check on the PR head and
+  the original defect all over again. Every fault warns and exits 0
+  (including an underivable `github.workflow_ref`, which is a *permanent*
+  condition that would otherwise have pinned every open PR forever), and
+  every wait is bounded: each dispatch attempt is wrapped in `timeout`, the
+  backoff is clamped, and the job's `timeout-minutes` is asserted to outlast
+  the worst case rather than merely stated to.
+  The test harness now runs the extracted step under the shells the runner
+  actually uses — `bash -e` (a `run:` block's default) and
+  `bash -eo pipefail` (an explicit `shell: bash`) — and asserts exit 0 on
+  every modeled path under both. Running it under plain `bash`, as it did
+  before, modeled neither and hid two live reds: the underivable-ref path,
+  and a no-match `grep` in the header helper that killed the step on the
+  ordinary retry path under pipefail.
   A second, independent loop breaker lives inside the step: the
   workflow self-dispatches, nothing throttles a group-less relay, and the
   job `if:` is a line adoption docs invite consumers to hand-edit.

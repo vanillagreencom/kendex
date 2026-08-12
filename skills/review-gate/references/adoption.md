@@ -151,13 +151,24 @@ each repo takes it as its own PR. What changed in the template:
   required `Evaluate and write the review gate` would block every PR. Per
   the wiring rule above, require the status context only.
 
-- **The relay never reddens the PR to report its own failure.** Two
+- **The relay never exits non-zero.** Treat this as an invariant when you
+  edit the copy: the job runs on PR-attached legs, so a red — or a hang long
+  enough to be cancelled — is a failed check on the PR head and the defect
+  this change removes. Every fault warns and exits 0, and every wait is
+  bounded (`timeout` per dispatch attempt, a clamped backoff, and a
+  `timeout-minutes` proven to outlast the worst case). Two
   dispatch attempts (the retry honors `retry-after`/`x-ratelimit-reset`,
-  else GitHub's documented 60s floor — a 5-second retry lands inside every
+  clamped to 60-120s — a 5-second retry lands inside every
   secondary-rate-limit window and could never succeed against the one
-  failure class it exists for; the backoff is capped so it still fits the
-  job's `timeout-minutes`); on double failure it warns and exits 0 instead
-  of exiting non-zero. The reasoning: it
+  failure class it exists for, and the upper clamp keeps the wait inside the
+  job's `timeout-minutes`. A wait the server advertises beyond that cap is
+  not slept at all: the event defers to the cron floor rather than pay for a
+  retry that is guaranteed to land inside the window. A plain transient
+  failure retries in 5s — the minute is for rate limits, not for blips — and
+  a permanent answer (404 for a renamed workflow file, 422 for a bad ref, 401
+  for a revoked token) is not retried at all, since no wait changes it);
+  on double failure it warns and exits 0 instead of exiting non-zero. The
+  reasoning: it
   holds no `statuses` scope, so a skipped dispatch cannot make the gate look
   converged — only leave it stale, which the cron floor already owns —
   whereas a red relay check pins the PR at `UNSTABLE`, the defect being
@@ -169,8 +180,9 @@ writer run as a `CANCELLED` check on the PR, and `mergeStateStatus` reads
 `UNSTABLE` until someone manually reruns it — a false not-ready signal for
 every human and tool that reads it.
 
-What it costs, per repo: one extra billed-minimum Actions run per
-PR-attached event. The relay is unconditional and deliberately group-less,
+What it costs, per repo: one extra Actions run per PR-attached event —
+billed-minimum on the success path, but a rate-limited relay holds its
+runner for the backoff (up to two minutes) before deferring. The relay is unconditional and deliberately group-less,
 so unlike the writer group it coalesces nothing — that is one run per event,
 including every `status` transition every CI provider posts on every open
 head — and the event-fast path now waits on two runner allocations instead

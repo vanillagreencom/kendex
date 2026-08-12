@@ -46,11 +46,13 @@
 #
 # RESIDUAL, stated honestly: this removes EVICTION-driven cancelled checks,
 # not every cancelled check. A relay hung long enough to hit
-# timeout-minutes is still a CANCELLED check on the PR head. That is why
-# the relay's own dispatch failure exits GREEN and escalates instead of
-# reddening (see the step), and why the sandbox replay classifies a
-# PR-attached cancellation by whether it executed steps: only a
-# never-started run proves the split regressed.
+# timeout-minutes would still be a CANCELLED check on the PR head — which
+# is why every wait in the step below is bounded. The relay's own dispatch
+# failure exits GREEN and WARNS instead of reddening; it raises no alarm of
+# its own, and a sustained outage is detected as GATE STALENESS (the cron
+# floor plus pr-watch --heal), never by this job. The sandbox replay
+# classifies a PR-attached cancellation by whether it executed steps: only
+# a never-started run proves the split regressed.
 #
 # NO dispatch loop: the relay's if: excludes the two legs it dispatches
 # into, so a converge run can never re-enter the relay. (workflow_dispatch
@@ -271,60 +273,124 @@ jobs:
           fi
           workflow_file="${WORKFLOW_REF%%@*}"
           workflow_file="${workflow_file##*/}"
-          # An empty derivation must not fall through to a dispatch against
-          # a garbage path: that would 404 and read as a dispatch outage.
+          # THE INVARIANT: this step NEVER exits non-zero. It runs on the
+          # PR-attached legs, so a red — or a hang long enough to be
+          # CANCELLED — is a failed check on the PR head and pins
+          # mergeStateStatus at UNSTABLE, which is the entire defect VST-210
+          # exists to remove. The relay holds no statuses scope, so no
+          # failure of it can make the gate look converged; the worst it can
+          # do is leave the gate STALE, and the 15-minute cron floor already
+          # owns that state. So every fault below warns and exits 0, and
+          # every unbounded wait is bounded. The suite asserts rc 0 on every
+          # modeled path under both `bash -e` and `bash -eo pipefail`.
           if [ -z "$workflow_file" ]; then
-            echo "::error::could not derive this workflow's file name from github.workflow_ref ('$WORKFLOW_REF'); no converge pass requested"
-            exit 1
+            echo "::warning::could not derive this workflow's file name from github.workflow_ref ('$WORKFLOW_REF'); no converge pass requested — this event converges on the cron floor instead"
+            exit 0
           fi
-          resp="$(mktemp)"
-          dispatch() { # -> 0 on success; response headers+body land in $resp
-            gh api -i -X POST "repos/$GH_REPO/actions/workflows/$workflow_file/dispatches" -f ref="$DISPATCH_REF" > "$resp" 2>&1
+          # Response captured in a VARIABLE, not a temp file: an unchecked
+          # mktemp is an undeclared failure path (empty name -> ambiguous
+          # redirect), and there is nothing here a file buys.
+          resp=""
+          dispatch() { # -> gh's status; headers+body land in $resp
+            # BOUNDED. Without this an unresponsive API hangs until the job's
+            # timeout-minutes and GitHub cancels the run — a cancelled check
+            # on the PR head, the same symptom by a different road. 60s per
+            # attempt keeps the worst case (60 + capped wait + 60) inside the
+            # job budget.
+            resp="$(timeout 60 gh api -i -X POST "repos/$GH_REPO/actions/workflows/$workflow_file/dispatches" -f ref="$DISPATCH_REF" 2>&1)"
           }
-          header() { # name -> value of the first matching response header
-            grep -i "^$1:" "$resp" | head -n 1 | tr -d '\r' | awk '{print $2}'
+          header() { # name -> first matching response header's value
+            # `|| true` is load-bearing: a no-match grep exits 1, and under a
+            # shell with pipefail that status propagates out of the command
+            # substitution and `set -e` kills the step — reddening the PR on
+            # the ORDINARY path where the API simply sent no such header.
+            { grep -i "^$1:" <<<"$resp" || true; } | head -n 1 | tr -d '\r' | awk '{print $2}'
+          }
+          header_status() { # -> the response's HTTP status code, if any
+            { grep -i '^HTTP/' <<<"$resp" || true; } | head -n 1 | awk '{print $2}'
           }
           if dispatch; then
             echo "requested a converge pass ($workflow_file on $DISPATCH_REF)"
             exit 0
           fi
-          cat "$resp"
-          # BACKOFF, not a token blip pause. The one recurring failure class
-          # here is GitHub's SECONDARY rate limit (content-generating
-          # requests: 80/min, 500/hour, shared by this token) — and a
-          # 5-second retry lands inside every secondary-limit window, so it
-          # could never succeed against the failure it exists for. Honor
-          # retry-after / x-ratelimit-reset when the response carries one,
-          # else GitHub's documented floor of at least a minute. Capped so
-          # the wait always fits the job's timeout-minutes with room for
-          # the second attempt.
+          printf '%s\n' "$resp"
+          # HOW LONG TO WAIT, and whether waiting is worth anything.
+          # The failure class that recurs here is GitHub's SECONDARY rate
+          # limit (content-generating requests: 80/min, 500/hour, shared by
+          # this token), for which the documented guidance is to honor
+          # retry-after / x-ratelimit-reset and otherwise wait at least a
+          # minute. A transient 5xx is a different animal and deserves a
+          # quick retry, not a minute of paid runner hold.
+          cap=120
+          floor=60
           wait_s="$(header retry-after)"
-          case "$wait_s" in ''|*[!0-9]*) wait_s="" ;; esac
+          # Digits only, and bounded in LENGTH: an absurd or malformed value
+          # must fall back rather than reach `sleep` or overflow the
+          # arithmetic below. Six digits is already ~28 hours against a 120s
+          # cap.
+          case "$wait_s" in ''|*[!0-9]*|??????*) wait_s="" ;; esac
           if [ -z "$wait_s" ]; then
             reset="$(header x-ratelimit-reset)"
+            # The PRIMARY-limit shape: x-ratelimit-remaining: 0 plus a reset
+            # epoch and NO retry-after. Same length bound; a reset already in
+            # the past yields a negative value, which the floor absorbs.
+            #
+            # KEEP THIS BRANCH. Deleting it as "unreachable" was proposed and
+            # rejected: this is a real GitHub response shape, and without it
+            # a primary-limit answer falls to the 60s floor instead of the
+            # reset's own (up to the cap), making the retry MORE likely to
+            # land inside the window and fail. It is covered by tests rather
+            # than removed.
             case "$reset" in
-              ''|*[!0-9]*) : ;;
+              ''|*[!0-9]*|???????????*) : ;;
               *) wait_s=$(( reset - $(date +%s) )) ;;
             esac
           fi
-          if [ -z "$wait_s" ] || [ "$wait_s" -lt 60 ]; then wait_s=60; fi
-          if [ "$wait_s" -gt 120 ]; then wait_s=120; fi
+          if [ -n "$wait_s" ] && [ "$wait_s" -gt "$cap" ]; then
+            # The server named a window longer than this job can wait out.
+            # Sleeping the cap and retrying anyway would retry INSIDE the
+            # window we were just told to stay out of: guaranteed to fail,
+            # and a paid runner hold to reach that failure. Defer instead.
+            echo "::warning::the API asked for ${wait_s}s before retrying, beyond this job's budget; not retrying — this event converges on the cron floor instead"
+            exit 0
+          fi
+          # WHAT KIND OF FAILURE, before deciding whether waiting can help.
+          http_status="$(header_status)"
+          case "$http_status" in
+            400|401|404|405|422)
+              # Permanent: a bad ref, a missing/renamed workflow file, a
+              # revoked token, a malformed request. No amount of waiting
+              # changes the answer, and this job runs on a PR head — holding
+              # a runner a minute to re-ask a settled question is the paid
+              # version of doing nothing. Defer immediately.
+              echo "::warning::the dispatch failed permanently (HTTP $http_status); not retrying — this event converges on the cron floor instead"
+              exit 0
+              ;;
+          esac
+          if [ -z "$wait_s" ]; then
+            # No server guidance. Distinguish "you are being rate limited"
+            # from "something blipped": only the former earns the minute.
+            case "$http_status" in
+              403|429) wait_s="$floor" ;;
+              *)       wait_s=5 ;;
+            esac
+          elif [ "$wait_s" -lt "$floor" ]; then
+            # A server-supplied window under a minute still lands inside the
+            # secondary-limit window it is retrying; the floor is the point
+            # of honoring the header at all.
+            wait_s="$floor"
+          fi
           echo "::warning::could not request a converge pass; retrying once in ${wait_s}s"
           sleep "$wait_s"
           if dispatch; then
             echo "requested a converge pass on retry ($workflow_file on $DISPATCH_REF)"
             exit 0
           fi
-          cat "$resp"
+          printf '%s\n' "$resp"
           # GREEN, deliberately — the one place this job's reasoning departs
           # from the writer's fail-loud contract, and a decision rather than
-          # an oversight. The relay holds NO statuses scope: it cannot make
-          # the gate look converged, only leave it STALE, which is the state
-          # the 15-minute cron floor already owns. Reddening here would put a
-          # failed check on the PR head and pin mergeStateStatus at UNSTABLE
-          # — reproducing the exact defect this split removes, for a fault
-          # the cron floor recovers from on its own. Same trade the fork
-          # read-only branch above already makes.
+          # an oversight. See THE INVARIANT above for why a red here would
+          # cost more than the fault it reports.
           #
           # HOW A SUSTAINED OUTAGE IS SEEN, since it is deliberately not a
           # red check and this job carries no VST-36 escalation (the rolling
@@ -333,13 +399,10 @@ jobs:
           # then falls to the cron floor, so gates sit unconverged longer
           # than the floor's period — which is precisely what
           # `pr-watch.sh --heal` reduces on (gate-stale -> one writer
-          # dispatch per invocation, plus a heal-dispatched line), and what
-          # the writer's own escalation reports if the dispatched runs are
-          # themselves failing. A dispatch outage that never reaches the
-          # write job leaves the warning below in each relay run's log as
-          # its only per-run trace; that is accepted, because the detector
-          # of record is the staleness reducer that already runs against
-          # every open PR.
+          # dispatch per invocation, plus a heal-dispatched line). Each relay
+          # run's log carries the warning below as its only per-run trace;
+          # the detector of record is the staleness reducer that already runs
+          # against every open PR.
           echo "::warning::could not request a converge pass after two attempts; this event converges on the cron floor instead (sustained failure surfaces as gate staleness — pr-watch --heal)"
 
   write:

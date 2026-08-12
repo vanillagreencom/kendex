@@ -137,16 +137,24 @@ nothing else.
   under the 15-minute cron floor. Size that before adopting on a
   capacity-limited runner pool.
   **Residual**: this removes *eviction-driven* cancelled checks, not every
-  cancelled check — a relay that hangs to its `timeout-minutes` is still a
-  cancelled check on the PR head. Its dispatch failures therefore exit green
-  and escalate (below) rather than redden.
-- **The relay never reddens a PR to report its own failure.** It holds no
+  cancelled check — a relay that hangs to its `timeout-minutes` would still
+  be a cancelled check on the PR head, which is why every wait in the step is
+  bounded. Its dispatch failures exit green and warn (below) rather than
+  redden.
+- **The relay never exits non-zero — a pinned invariant, not a per-branch
+  choice.** It holds no
   `statuses` scope, so a failed dispatch cannot make the gate look
   converged — only leave it stale, which the cron floor and `pr-watch
   --heal` already own. Reddening would re-create the exact `UNSTABLE` pin
   the split removes. Two dispatch attempts (the retry honors
-  `retry-after`/`x-ratelimit-reset`, else GitHub's 60s floor, capped to fit
-  the job budget); on double failure it warns and exits 0. It carries no
+  `retry-after`/`x-ratelimit-reset` **clamped to 60-120s**, a 60s floor when
+  a rate-limit answer carries no header, and a quick 5s retry for a plain
+  transient; a permanent answer — 404 for a renamed workflow file, 422 for a
+  bad ref, 401 for a revoked token — is not retried at all, and neither is a
+  server-advertised wait beyond the cap, since retrying inside a window we
+  were told to stay out of would only buy a paid runner hold; both defer to
+  the cron floor); on double failure it
+  warns and exits 0. It carries no
   VST-36 escalation of its own — a sustained dispatch outage shows up as
   **gate staleness**, which `pr-watch --heal` already reduces on across
   every open PR, rather than as N red PRs or a widened relay scope.
