@@ -68,11 +68,13 @@ resolve_default_base() {
 # direct string literal (concat!/env!/consts — even concatenations of
 # literals) emit no record; #[path]/include! declarations living in a
 # directory that is neither the candidate's own nor one of its ancestors
-# are not consulted; declarations inside inline module blocks and
-# macro_rules! definition bodies are skipped outright (no records — never
-# a mis-resolved one); and declarations produced by macro EXPANSION
-# (invoking a macro_rules! or proc macro) are invisible by construction.
-# Every one of these fails toward NO record for the shape, so
+# are not consulted; declarations inside any braced body — inline
+# modules, macro definitions and invocations, and non-module item bodies
+# (fn/impl/struct/...) — are skipped outright (no records — never a
+# mis-resolved one), which also makes block-level #[path] modules and
+# includes inside bodies invisible; and declarations produced by macro
+# EXPANSION (invoking a macro_rules! or proc macro) are invisible by
+# construction. Every one of these fails toward NO record for the shape, so
 # a file that is production-reachable only through one of them while also
 # carrying a #[cfg(test)]-gated declaration still classifies as test —
 # that is the declared trade-off, and the only one.
@@ -287,11 +289,14 @@ scan_decl_records() {
                         alen = RLENGTH
                         mattr = substr(mbuf, 1, alen)
                         oattr = substr(buf, 1, alen)
-                        if (mattr ~ /^#\[cfg\(test\)\]/) gated = 1
+                        # rustc accepts whitespace between attribute tokens
+                        # and a trailing comma after the predicate (both
+                        # verified: #[cfg ( test )] and #[cfg(test,)]).
+                        if (mattr ~ /^#\[[[:space:]]*cfg[[:space:]]*\([[:space:]]*test[[:space:]]*,?[[:space:]]*\)[[:space:]]*\]/) gated = 1
                         # Plain and raw string values, including hash-raw:
                         # the literal is located on the mask (its interior
                         # can hide no quote) and read from the original.
-                        if (mattr ~ /^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/ \
+                        if (mattr ~ /^#\[[[:space:]]*path[[:space:]]*=[[:space:]]*(r#*)?"/ \
                             && match(mattr, /"[^"]*"/))
                             pathattr = substr(oattr, RSTART + 1, RLENGTH - 2)
                         buf = substr(buf, alen + 1); mbuf = substr(mbuf, alen + 1)
@@ -364,13 +369,22 @@ scan_decl_records() {
                 # on the mask, scanning the chunk for include! routes. A
                 # multiline include! completes when its statement boundary
                 # arrives. Without a boundary the item continues on the
-                # next line.
+                # next line. A { boundary opens the body of a non-module
+                # item (fn/impl/struct/...): a body is not a top-level
+                # item stream — block-level #[path] modules resolve by
+                # block-chain rules and includes there compile in the
+                # enclosing cfg context — so it is a skip region like the
+                # others, emitting nothing (declared limitation).
                 if (match(mbuf, /[;{}]/)) {
+                    bchar = substr(mbuf, RSTART, 1)
                     mchunk = substr(mbuf, 1, RSTART)
                     ochunk = substr(buf, 1, RSTART)
                     buf = substr(buf, RSTART + 1); mbuf = substr(mbuf, RSTART + 1)
                     emit_includes(mchunk, ochunk, gated)
                     gated = 0; pathattr = ""
+                    if (bchar == "{") {
+                        skip_open = "{"; skip_close = "}"; skip_depth = 1
+                    }
                     continue
                 }
                 break

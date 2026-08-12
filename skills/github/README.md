@@ -136,7 +136,8 @@ normalized repo-relative target; bare
 its own directory for `mod.rs`/`lib.rs`/`main.rs`, its directory plus its
 file stem otherwise — while `#[path]` values (plain or raw strings) and
 `include!` literals resolve in the containing file's directory, per the
-Rust reference; declarations inside inline module blocks are skipped
+Rust reference; declarations inside braced bodies (inline modules, macro
+definitions and invocations, fn and other item bodies) are skipped
 entirely. A candidate whose every matching route is
 `#[cfg(test)]`-gated classifies as test; anything else keeps production
 classification — an ungated declaration or `include!` of the file, no route

@@ -1453,5 +1453,124 @@ assert_eq "renamed gated fixture is not production scope" \
 assert_eq "no tab-joined rename path leaks into domains" \
     "false" "$(jq -r '[.domains[].files[]] | map(test("\t")) | any' <<<"$rename_json")"
 
+# Braced non-module item bodies are skip regions. Direction one: a decl
+# nested in a gated fn body must not surface as an UNGATED top-level route
+# that cancels the real gated declaration.
+gated_body_repo="$SANDBOX/gated-fn-body"
+init_repo "$gated_body_repo"
+mkdir -p "$gated_body_repo/src"
+cat > "$gated_body_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+fn setup() {
+    #[path = "cand.rs"]
+    mod nested;
+}
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$gated_body_repo" add src
+git -C "$gated_body_repo" commit -q -m lib
+cat > "$gated_body_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$gated_body_repo" add src/cand.rs
+gated_body_json="$($SUMMARY -C "$gated_body_repo" --staged)"
+assert_eq "decl nested in a gated fn body does not cancel the gated route" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$gated_body_json")"
+assert_eq "decl nested in a gated fn body is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$gated_body_json")"
+
+# Direction two: a gated declaration inside an fn body must not fabricate a
+# gated route either — the body emits nothing at all.
+body_fabricate_repo="$SANDBOX/body-fabricate"
+init_repo "$body_fabricate_repo"
+mkdir -p "$body_fabricate_repo/src"
+cat > "$body_fabricate_repo/src/lib.rs" <<'RUST'
+fn setup() {
+    #[cfg(test)]
+    #[path = "cand.rs"]
+    mod nested;
+}
+RUST
+git -C "$body_fabricate_repo" add src
+git -C "$body_fabricate_repo" commit -q -m lib
+cat > "$body_fabricate_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$body_fabricate_repo" add src/cand.rs
+body_fabricate_json="$($SUMMARY -C "$body_fabricate_repo" --staged)"
+assert_eq "gated decl in an fn body does not fabricate a route" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$body_fabricate_json")"
+assert_eq "gated decl in an fn body keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$body_fabricate_json")"
+
+# The include! variant: an include inside a gated fn body must not surface
+# as an ungated route.
+body_include_repo="$SANDBOX/body-include"
+init_repo "$body_include_repo"
+mkdir -p "$body_include_repo/src"
+cat > "$body_include_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+fn cases() {
+    include!("cand.rs");
+}
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$body_include_repo" add src
+git -C "$body_include_repo" commit -q -m lib
+cat > "$body_include_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$body_include_repo" add src/cand.rs
+body_include_json="$($SUMMARY -C "$body_include_repo" --staged)"
+assert_eq "include! in a gated fn body does not surface ungated" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$body_include_json")"
+assert_eq "include! in a gated fn body is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$body_include_json")"
+
+# rustc-accepted cfg spellings: whitespace between tokens and a trailing
+# comma after the predicate both gate.
+cfg_spelling_repo="$SANDBOX/cfg-spellings"
+init_repo "$cfg_spelling_repo"
+mkdir -p "$cfg_spelling_repo/src"
+cat > "$cfg_spelling_repo/src/lib.rs" <<'RUST'
+#[cfg ( test )]
+#[path = "cand_a.rs"]
+mod fixture_a;
+
+#[cfg(test,)]
+#[path = "cand_b.rs"]
+mod fixture_b;
+RUST
+git -C "$cfg_spelling_repo" add src
+git -C "$cfg_spelling_repo" commit -q -m lib
+cat > "$cfg_spelling_repo/src/cand_a.rs" <<'RUST'
+pub fn a() -> u32 {
+    "1".parse().unwrap()
+}
+RUST
+cat > "$cfg_spelling_repo/src/cand_b.rs" <<'RUST'
+pub fn b() -> u32 {
+    "2".parse().unwrap()
+}
+RUST
+git -C "$cfg_spelling_repo" add src/cand_a.rs src/cand_b.rs
+cfg_spelling_json="$($SUMMARY -C "$cfg_spelling_repo" --staged)"
+assert_eq "whitespace and trailing-comma cfg spellings both gate" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$cfg_spelling_json")"
+assert_eq "whitespace and trailing-comma cfg spellings are not production" \
+    "support" "$(jq -r '.scope' <<<"$cfg_spelling_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
