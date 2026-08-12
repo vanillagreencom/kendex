@@ -419,7 +419,7 @@ run_lanes() {
   mkdir -p "$SCRATCH"
   rm -f "$PERM_PROBE" "$PERM_PROBE.count"
   set +e
-  env TMPDIR="$SCRATCH" \
+  env TMPDIR="$SCRATCH" PATH="${LANE_TEST_PATH:-$PATH}" \
     SECOND_OPINION_CLAUDE_CMD="$claude_cmd" \
     SECOND_OPINION_CODEX_CMD="$codex_cmd" \
     "$SECOND_OPINION" review --range HEAD --cwd "$WORK" "$@" \
@@ -731,6 +731,52 @@ echo "=== scenario 15: a dashed --output does not abort before lanes spawn ==="
 ( cd "$TMP_ROOT" && run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" --output -dashed.json ) || true
 assert_stderr_has "[codex] " "lanes still run when --output begins with a dash"
 assert_stderr_has "[claude] " "both lanes are reached"
+
+# --- Scenario 16: the stderr capture cannot cost a lane its verdict ----------
+# A redirection named on the launch is performed by the forked child before the
+# command runs, so an unusable capture target kills the lane outright: no
+# review, no artifact, the lane recorded as failed, and its blockers missing
+# from a union that still publishes. That makes scratch loss cost a VERDICT,
+# which is precisely what this skill promises it cannot.
+#
+# Driven deterministically rather than by racing the fan-out: a mktemp shim
+# fixes the scratch directory's path so an unusable capture target — a
+# directory where the lane wants a file — can be planted before the run. Same
+# failure the vanishing directory produces at the same moment, without a timing
+# assumption.
+echo "=== scenario 16: an unusable stderr capture costs the log, never the lane ==="
+mkdir -p "$TMP_ROOT/shimbin"
+REAL_MKTEMP="$(command -v mktemp)"
+FIXED_SCRATCH="$TMP_ROOT/fixed-scratch"
+cat > "$TMP_ROOT/shimbin/mktemp" <<SH
+#!/usr/bin/env bash
+# Only 'mktemp -d' is answered with the fixed path; every other call defers to
+# the real mktemp, resolved absolutely so this shim cannot recurse into itself.
+set -euo pipefail
+for a in "\$@"; do
+  if [[ "\$a" == "-d" ]]; then
+    mkdir -p "$FIXED_SCRATCH"
+    printf '%s\n' "$FIXED_SCRATCH"
+    exit 0
+  fi
+done
+exec "$REAL_MKTEMP" "\$@"
+SH
+chmod +x "$TMP_ROOT/shimbin/mktemp"
+rm -rf "$FIXED_SCRATCH"
+mkdir -p "$FIXED_SCRATCH/lane-claude.stderr"
+out16="$TMP_ROOT/out16.json"
+rc16=0
+LANE_TEST_PATH="$TMP_ROOT/shimbin:$PATH"
+run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" --output "$out16" || rc16=$?
+LANE_TEST_PATH=""
+assert_eq "$rc16" "0" "an unusable capture does not fail the run"
+assert_file_exists "$out16" "the union is still written"
+assert_jq "$out16" '.qa_metadata.coverage' "full" "no lane is lost to its capture"
+assert_jq "$out16" '[.qa_metadata.lanes[] | select(.target == "claude")][0].status' "ok" \
+  "the affected lane answered — not recorded as failed"
+assert_jq "$out16" '.blockers | length' "1" "the affected lane's blocker reaches the union"
+assert_stderr_has "capture could not be opened" "the lost capture is reported on stderr"
 
 echo
 printf 'pass: %d   fail: %d   skip: %d\n' "$PASS" "$FAIL" "$SKIP"

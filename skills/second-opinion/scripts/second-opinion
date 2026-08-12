@@ -772,8 +772,32 @@ if $MULTI_LANE; then
       LANE_TMP_FILES+=("$lane_out")
     fi
     lane_err="$LANE_TMP_DIR/lane-${lane}.stderr"
-    "$SELF" review --target "$lane" --range "$REVIEW_RANGE" --cwd "$CWD" \
-      --timeout "$TIMEOUT" --output "$lane_out" >/dev/null 2>"$lane_err" &
+    # The capture exists only so the lane's log can be replayed, so it must
+    # never be able to stop the lane from running. A redirection named on the
+    # launch itself is performed by the forked child BEFORE the command runs:
+    # if the scratch directory has gone by then — the same actor this whole
+    # change is about, and every lane after the first is exposed for as long as
+    # the fan-out takes — the child dies without ever reviewing, and scratch
+    # loss costs a VERDICT rather than a log.
+    #
+    # So the lane opens the capture itself, in its own process, with a fallback
+    # that cannot fail, and hands the result to the review as an already-open
+    # descriptor: duplicating an open fd cannot fail no matter what happens to
+    # the directory afterwards. fd 4 parks the real stderr for the duration of
+    # the attempt so bash's own open error does not reach the operator
+    # unattributed; the loss is reported in the same shape as the other capture
+    # losses instead.
+    (
+      exec 4>&2 2>/dev/null
+      if exec 3>"$lane_err"; then
+        exec 2>&4 4>&-
+      else
+        exec 3>/dev/null 2>&4 4>&-
+        echo "→ lane stderr capture could not be opened — log replay lost: $lane" >&2
+      fi
+      exec "$SELF" review --target "$lane" --range "$REVIEW_RANGE" --cwd "$CWD" \
+        --timeout "$TIMEOUT" --output "$lane_out" >/dev/null 2>&3 3>&-
+    ) &
     LANE_PIDS+=($!)
     LANE_OUTS+=("$lane_out")
     LANE_ERRS+=("$lane_err")
