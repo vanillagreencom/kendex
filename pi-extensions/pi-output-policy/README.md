@@ -2,7 +2,16 @@
 
 ![Output Policy settings panel](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-output-policy/assets/settings-panel.png)
 
-Large-output policy for Pi tool results: minimization, bounded truncation, and full-output preservation. Tuned to keep long autonomous runs under provider request-buffer limits without losing the full tool output (it lands on disk).
+Large-output policy for Pi model responses and tool results: runaway-response interruption, minimization, bounded truncation, and full-output preservation. Tuned to keep degenerate model streams from overwhelming the TUI and long autonomous runs under provider request-buffer limits without losing full tool output (it lands on disk).
+
+## Runaway model output guard
+
+Streaming assistant responses are aborted when either safety condition fires:
+
+- the same substantial line repeats 24 times and contributes at least 1,536 repeated characters; or
+- one response reaches 96,000 streamed characters.
+
+This targets model decoding collapse such as thousands of identical planning sentences or malformed tool tags. Short repeated syntax lines do not reset or trigger repetition streaks, but still count toward the hard response-size cap. Pi keeps the partial response and marks it interrupted; Output Policy shows a warning telling the user to retry or switch models. All thresholds are live settings. The whole model-output guard, repetition detection, and the hard character cap can each be disabled independently.
 
 ## Two budgets, one policy
 
@@ -29,6 +38,7 @@ Any per-knob value you set in `vstack.extensionManager.config["@vanillagreen/pi-
 
 ## Highlights
 
+- Stops degenerate streaming model responses before repeated prose or tool tags overwhelm the TUI/session.
 - Preserves oversized tool output to disk and includes the artifact path in results.
 - Head truncation for search/listing tools; tail truncation for command/log tools.
 - Explicit truncation notices show size, line count, direction, artifact path, per-turn/session bytes saved, and continuation guidance.
@@ -66,6 +76,17 @@ Project settings in `.pi/settings.json` apply only after Pi marks the workspace 
 | --- | --- |
 | Enable output policy | Master toggle. |
 | Policy mode | `balanced` (default), `compact`, or `compat`. See [Policy modes](#policy-modes). |
+
+### Model output guard
+
+| Setting | What it does |
+| --- | --- |
+| Stop runaway model output | Enable repetition detection and the hard response-size cap. |
+| Maximum streamed characters | Abort one assistant response at this character count; `0` disables only this cap. |
+| Detect repeated output | Enable repetition detection independently from the hard character cap. |
+| Maximum repeated blocks | Consecutive identical substantial lines required before aborting. |
+| Minimum repeated block length | Exclude shorter lines from repetition streaks without resetting a substantial repeated block. |
+| Minimum repeated characters | Repeated-text floor that must also be reached before aborting. |
 
 ### Truncation
 

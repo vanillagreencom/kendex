@@ -8,6 +8,11 @@ const INSTALL_SYMBOL = Symbol.for("vstack.pi-output-policy.installed");
 const CONFIG_ID = "@vanillagreen/pi-output-policy";
 const DEFAULT_MINIMIZER_MAX_CAPTURE_BYTES = 1024 * 1024;
 const DEFAULT_SHELL_MINIMIZER_ENABLED = true;
+const DEFAULT_MODEL_OUTPUT_MAX_CHARS = 96_000;
+const DEFAULT_MODEL_OUTPUT_MAX_CONSECUTIVE_REPEATS = 24;
+const DEFAULT_MODEL_OUTPUT_MIN_REPEAT_BLOCK_CHARS = 32;
+const DEFAULT_MODEL_OUTPUT_MIN_REPEATED_CHARS = 1_536;
+const MAX_PENDING_MODEL_OUTPUT_CHARS = 16_384;
 
 // Tools whose `details` carry state-bearing data (task lists, background-task
 // snapshots, subagent run records). Sanitization would corrupt restore
@@ -98,6 +103,30 @@ interface TruncationMeta {
 interface SessionCounters {
 	turnSavedBytes: number;
 	sessionSavedBytes: number;
+}
+
+export interface ModelOutputGuardState {
+	aborted: boolean;
+	consecutiveRepeats: number;
+	lastBlock?: string;
+	pending: string;
+	repeatedChars: number;
+	totalChars: number;
+}
+
+export interface ModelOutputGuardOptions {
+	maxChars: number;
+	maxConsecutiveRepeats: number;
+	minRepeatBlockChars: number;
+	minRepeatedChars: number;
+	repetitionEnabled?: boolean;
+}
+
+export interface ModelOutputGuardDetection {
+	block?: string;
+	consecutiveRepeats?: number;
+	reason: "max-chars" | "repetition";
+	totalChars: number;
 }
 
 const SESSION_COUNTERS = new Map<string, SessionCounters>();
@@ -300,6 +329,84 @@ export function isSanitizeExceptTool(toolName: string, cwd?: string): boolean {
 
 export function __resetSessionCountersForTests(): void {
 	SESSION_COUNTERS.clear();
+}
+
+export function createModelOutputGuardState(): ModelOutputGuardState {
+	return {
+		aborted: false,
+		consecutiveRepeats: 0,
+		pending: "",
+		repeatedChars: 0,
+		totalChars: 0,
+	};
+}
+
+function normalizedRepeatBlock(line: string): string {
+	return line.trim().replace(/\s+/g, " ");
+}
+
+export function inspectModelOutputDelta(
+	state: ModelOutputGuardState,
+	delta: string,
+	options: ModelOutputGuardOptions,
+): ModelOutputGuardDetection | undefined {
+	if (state.aborted || delta.length === 0) return undefined;
+	state.totalChars += delta.length;
+	if (options.maxChars > 0 && state.totalChars >= options.maxChars) {
+		return { reason: "max-chars", totalChars: state.totalChars };
+	}
+
+	if (options.repetitionEnabled === false) return undefined;
+	state.pending = `${state.pending}${delta.replace(/\r\n?/g, "\n")}`;
+	let newline = state.pending.indexOf("\n");
+	while (newline >= 0) {
+		const block = normalizedRepeatBlock(state.pending.slice(0, newline));
+		state.pending = state.pending.slice(newline + 1);
+		newline = state.pending.indexOf("\n");
+		if (!block) continue;
+		if (block.length < options.minRepeatBlockChars) continue;
+		if (block === state.lastBlock) {
+			state.consecutiveRepeats += 1;
+			state.repeatedChars += block.length;
+		} else {
+			state.lastBlock = block;
+			state.consecutiveRepeats = 1;
+			state.repeatedChars = block.length;
+		}
+		if (
+			state.consecutiveRepeats >= options.maxConsecutiveRepeats
+			&& state.repeatedChars >= options.minRepeatedChars
+		) {
+			return {
+				block,
+				consecutiveRepeats: state.consecutiveRepeats,
+				reason: "repetition",
+				totalChars: state.totalChars,
+			};
+		}
+	}
+
+	if (state.pending.length > MAX_PENDING_MODEL_OUTPUT_CHARS) {
+		state.pending = state.pending.slice(-MAX_PENDING_MODEL_OUTPUT_CHARS);
+	}
+	return undefined;
+}
+
+function modelOutputGuardOptions(cwd?: string): ModelOutputGuardOptions {
+	return {
+		maxChars: Math.max(0, Math.floor(settingNumber("modelOutputGuard.maxChars", DEFAULT_MODEL_OUTPUT_MAX_CHARS, cwd))),
+		maxConsecutiveRepeats: Math.max(2, Math.floor(settingNumber("modelOutputGuard.maxConsecutiveRepeats", DEFAULT_MODEL_OUTPUT_MAX_CONSECUTIVE_REPEATS, cwd))),
+		repetitionEnabled: settingBoolean("modelOutputGuard.repetition.enabled", true, cwd),
+		minRepeatBlockChars: Math.max(8, Math.floor(settingNumber("modelOutputGuard.minRepeatBlockChars", DEFAULT_MODEL_OUTPUT_MIN_REPEAT_BLOCK_CHARS, cwd))),
+		minRepeatedChars: Math.max(64, Math.floor(settingNumber("modelOutputGuard.minRepeatedChars", DEFAULT_MODEL_OUTPUT_MIN_REPEATED_CHARS, cwd))),
+	};
+}
+
+function assistantStreamDelta(event: any): string | undefined {
+	const update = event?.assistantMessageEvent ?? event;
+	if (!update || typeof update.delta !== "string") return undefined;
+	if (!["text", "text_delta", "thinking", "thinking_delta", "toolcall_delta"].includes(String(update.type ?? ""))) return undefined;
+	return update.delta;
 }
 
 function byteLength(text: string): number {
@@ -581,8 +688,14 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
+	let modelOutputState = createModelOutputGuardState();
+
+	const resetModelOutputState = () => {
+		modelOutputState = createModelOutputGuardState();
+	};
 
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
+		resetModelOutputState();
 		recordProjectTrust(ctx);
 		SESSION_COUNTERS.delete(sessionIdForContext(ctx));
 		if (settingBoolean("enabled", true, ctx.cwd)) {
@@ -592,11 +705,36 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 	});
 
 	pi.on("turn_start", async (_event, ctx: ExtensionContext) => {
+		resetModelOutputState();
 		counters(sessionIdForContext(ctx)).turnSavedBytes = 0;
 	});
 
 	pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
+		resetModelOutputState();
 		SESSION_COUNTERS.delete(sessionIdForContext(ctx));
+	});
+
+	pi.on("message_start", (event: any) => {
+		if (event?.message?.role === "assistant") resetModelOutputState();
+	});
+
+	pi.on("message_update", (event: any, ctx: ExtensionContext) => {
+		recordProjectTrust(ctx);
+		if (!settingBoolean("enabled", true, ctx.cwd) || !settingBoolean("modelOutputGuard.enabled", true, ctx.cwd)) return;
+		const delta = assistantStreamDelta(event);
+		if (delta === undefined) return;
+		const detection = inspectModelOutputDelta(modelOutputState, delta, modelOutputGuardOptions(ctx.cwd));
+		if (!detection || modelOutputState.aborted) return;
+		modelOutputState.aborted = true;
+		const detail = detection.reason === "repetition"
+			? `${detection.consecutiveRepeats} consecutive repeated blocks`
+			: `${detection.totalChars.toLocaleString()} streamed characters`;
+		ctx.abort();
+		try {
+			ctx.ui.notify(`Model output stopped: ${detail}. Retry or switch model.`, "warning");
+		} catch (error) {
+			console.warn(`pi-output-policy: model-output warning failed (${stringifyError(error)})`);
+		}
 	});
 
 	pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {

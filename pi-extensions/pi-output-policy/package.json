@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-output-policy",
-  "version": "1.1.1",
-  "description": "OMP-style large-output policy for Pi tool results: minimization, bounded truncation, and spill-file preservation.",
+  "version": "1.2.0",
+  "description": "Large-output policy for Pi: runaway model-output guards plus tool-result minimization, truncation, and spill preservation.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -23,10 +23,64 @@
         {
           "key": "enabled",
           "label": "Enable output policy",
-          "description": "Apply minimization, spill, truncation, and UI safety caps to tool results.",
+          "description": "Apply runaway model-output guards plus minimization, spill, truncation, and UI safety caps to tool results.",
           "type": "boolean",
           "default": true,
           "category": "General",
+          "apply": "live"
+        },
+        {
+          "key": "modelOutputGuard.enabled",
+          "label": "Stop runaway model output",
+          "description": "Abort a streaming assistant response when it repeats the same substantial block too many times or exceeds the hard character budget.",
+          "type": "boolean",
+          "default": true,
+          "category": "Model Output Guard",
+          "apply": "live"
+        },
+        {
+          "key": "modelOutputGuard.maxChars",
+          "label": "Maximum streamed characters",
+          "description": "Hard fallback cap for one assistant response. Set 0 to disable the character cap while keeping repetition detection.",
+          "type": "number",
+          "default": 96000,
+          "category": "Model Output Guard",
+          "apply": "live"
+        },
+        {
+          "key": "modelOutputGuard.repetition.enabled",
+          "label": "Detect repeated output",
+          "description": "Enable consecutive substantial-block repetition detection independently from the hard character cap.",
+          "type": "boolean",
+          "default": true,
+          "category": "Model Output Guard",
+          "apply": "live"
+        },
+        {
+          "key": "modelOutputGuard.maxConsecutiveRepeats",
+          "label": "Maximum repeated blocks",
+          "description": "Abort after this many consecutive identical substantial lines, once the repeated-character floor is also reached.",
+          "type": "number",
+          "default": 24,
+          "category": "Model Output Guard",
+          "apply": "live"
+        },
+        {
+          "key": "modelOutputGuard.minRepeatBlockChars",
+          "label": "Minimum repeated block length",
+          "description": "Ignore shorter repeated lines for repetition streaks. They still count toward the hard response-size cap.",
+          "type": "number",
+          "default": 32,
+          "category": "Model Output Guard",
+          "apply": "live"
+        },
+        {
+          "key": "modelOutputGuard.minRepeatedChars",
+          "label": "Minimum repeated characters",
+          "description": "Require at least this much repeated text before aborting, reducing false positives on short intentional repetition.",
+          "type": "number",
+          "default": 1536,
+          "category": "Model Output Guard",
           "apply": "live"
         },
         {

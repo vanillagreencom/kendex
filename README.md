@@ -276,7 +276,7 @@ If a Pi extension declares production dependencies (`dependencies` or `optionalD
 | [`pi-codex-minimal-tools`](pi-extensions/pi-codex-minimal-tools/README.md) | Codex-style image, patch, and image-generation tools alongside Pi natives. |
 | [`pi-extension-manager`](pi-extensions/pi-extension-manager/README.md) | Pi-styled package manager and inline settings editor. |
 | [`pi-hooks`](pi-extensions/pi-hooks/README.md) | First-class Pi port of the vstack safety hooks: bare-cd blocking, pre-commit fmt+clippy, post-edit clippy, end-of-turn lint. |
-| [`pi-output-policy`](pi-extensions/pi-output-policy/README.md) | Large-output policy with transcript-budget-aware truncation, spill-file preservation, and balanced/compact/compat modes. |
+| [`pi-output-policy`](pi-extensions/pi-output-policy/README.md) | Large-output policy with runaway model-response interruption, transcript-budget-aware tool truncation, spill-file preservation, and balanced/compact/compat modes. |
 | [`pi-prompt-stash`](pi-extensions/pi-prompt-stash/README.md) | Per-session prompt stash history with stash/pop editor. |
 | [`pi-qol`](pi-extensions/pi-qol/README.md) | Compact statusline, multiline input, image chips, session naming and search. |
 | [`pi-questions`](pi-extensions/pi-questions/README.md) | Structured multi-tab popup questions with bridge-driven replies. |

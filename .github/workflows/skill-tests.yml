@@ -196,6 +196,10 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.80.5 @earendil-works/pi-ai@0.80.5 @earendil-works/pi-coding-agent@0.80.5 @earendil-works/pi-tui@0.80.5
           bun test ./tests
 
+      - name: pi-output-policy suite
+        working-directory: pi-extensions/pi-output-policy
+        run: bun test ./tests
+
       # Pi 0.84.x is the release the extensions are audited against, so the
       # suites that assert 0.84 wire-format parity install that line rather
       # than the 0.80.5 floor above.

@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import outputPolicy, {
 	__resetSessionCountersForTests,
+	createModelOutputGuardState,
+	inspectModelOutputDelta,
 	isSanitizeExceptTool,
 	minimizeShellOutput,
 	processText,
@@ -29,6 +31,20 @@ function withConfig(config: Record<string, unknown>, run: (cwd: string) => void)
 	}
 }
 
+async function withConfigAsync(config: Record<string, unknown>, run: (cwd: string) => Promise<void>): Promise<void> {
+	const dir = mkdtempSync(join(tmpdir(), "pi-output-policy-test-"));
+	try {
+		mkdirSync(join(dir, ".pi"), { recursive: true });
+		writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({
+			vstack: { extensionManager: { config: { [CONFIG_ID]: config } } },
+		}, null, 2));
+		recordProjectTrust({ cwd: dir, isProjectTrusted: () => true });
+		await run(dir);
+	} finally {
+		rmSync(dir, { force: true, recursive: true });
+	}
+}
+
 let testSeq = 0;
 function fakeCtx(cwd: string): any {
 	testSeq += 1;
@@ -45,6 +61,70 @@ function fakeCtx(cwd: string): any {
 
 beforeEach(() => {
 	__resetSessionCountersForTests();
+});
+
+describe("model output guard", () => {
+	const options = {
+		maxChars: 96_000,
+		maxConsecutiveRepeats: 24,
+		minRepeatBlockChars: 32,
+		minRepeatedChars: 1_536,
+	};
+
+	test("detects the DeepSeek-style repeated paragraph loop across stream chunks and short malformed tags", () => {
+		const state = createModelOutputGuardState();
+		const block = "Let me launch it in background and check config dirs after a few seconds.";
+		const spam = Array.from({ length: 40 }, () => `${block}\n</invoke>\n\n`).join("");
+		let detection;
+		for (let offset = 0; offset < spam.length && !detection; offset += 17) {
+			detection = inspectModelOutputDelta(state, spam.slice(offset, offset + 17), options);
+		}
+		expect(detection?.reason).toBe("repetition");
+		expect(detection?.consecutiveRepeats).toBe(24);
+		expect(detection?.totalChars ?? 0).toBeLessThan(spam.length);
+	});
+
+	test("does not flag varied output or repeated short syntax lines", () => {
+		const state = createModelOutputGuardState();
+		const varied = Array.from({ length: 100 }, (_, i) => `Useful distinct result ${i}: ${"x".repeat(40)}\n`).join("");
+		expect(inspectModelOutputDelta(state, varied, options)).toBeUndefined();
+		const shortState = createModelOutputGuardState();
+		expect(inspectModelOutputDelta(shortState, Array.from({ length: 100 }, () => "</invoke>\n").join(""), options)).toBeUndefined();
+	});
+
+	test("fires exactly at repetition count and repeated-character boundaries", () => {
+		const block = `Repeated substantial block ${"r".repeat(40)}`;
+		const blockChars = block.length;
+		const thresholdOptions = { ...options, maxConsecutiveRepeats: 3, minRepeatedChars: blockChars * 3 };
+		const state = createModelOutputGuardState();
+		expect(inspectModelOutputDelta(state, `${block}\n${block}\n`, thresholdOptions)).toBeUndefined();
+		expect(inspectModelOutputDelta(state, `${block}\n`, thresholdOptions)?.reason).toBe("repetition");
+
+		const charFloor = createModelOutputGuardState();
+		expect(inspectModelOutputDelta(charFloor, `${block}\n${block}\n${block}\n`, { ...thresholdOptions, minRepeatedChars: blockChars * 3 + 1 })).toBeUndefined();
+	});
+
+	test("minimum block length boundary and substantial different blocks reset streaks", () => {
+		const block = "b".repeat(32);
+		const boundaryOptions = { ...options, maxConsecutiveRepeats: 2, minRepeatedChars: 64, minRepeatBlockChars: 32 };
+		expect(inspectModelOutputDelta(createModelOutputGuardState(), `${"a".repeat(31)}\n${"a".repeat(31)}\n`, boundaryOptions)).toBeUndefined();
+		expect(inspectModelOutputDelta(createModelOutputGuardState(), `${block}\n${block}\n`, boundaryOptions)?.reason).toBe("repetition");
+
+		const interrupted = createModelOutputGuardState();
+		const different = `Different substantial block ${"d".repeat(40)}`;
+		expect(inspectModelOutputDelta(interrupted, `${block}\n${different}\n${block}\n`, boundaryOptions)).toBeUndefined();
+	});
+
+	test("hard character cap fires at exact boundary, zero disables it, and repetition can be disabled", () => {
+		const below = createModelOutputGuardState();
+		expect(inspectModelOutputDelta(below, "x".repeat(899), { ...options, maxChars: 900 })).toBeUndefined();
+		expect(inspectModelOutputDelta(below, "x", { ...options, maxChars: 900 })).toEqual({ reason: "max-chars", totalChars: 900 });
+		const uncapped = createModelOutputGuardState();
+		expect(inspectModelOutputDelta(uncapped, "x".repeat(100_000), { ...options, maxChars: 0 })).toBeUndefined();
+		const repetitionOff = createModelOutputGuardState();
+		const repeated = Array.from({ length: 100 }, () => `${"repeat ".repeat(10)}\n`).join("");
+		expect(inspectModelOutputDelta(repetitionOff, repeated, { ...options, maxChars: 0, repetitionEnabled: false })).toBeUndefined();
+	});
 });
 
 describe("shell minimizer", () => {
@@ -317,6 +397,121 @@ function createFakePi(): FakePi {
 		},
 	};
 }
+
+describe("model output guard handler", () => {
+	function guardCtx(cwd: string, notify: (message: string) => void = () => {}) {
+		let aborts = 0;
+		return {
+			ctx: {
+				...fakeCtx(cwd),
+				abort: () => { aborts += 1; },
+				ui: { notify },
+			},
+			aborts: () => aborts,
+		};
+	}
+
+	test("aborts once and warns when streamed assistant text degenerates", async () => {
+		await withConfigAsync({
+			"modelOutputGuard.maxConsecutiveRepeats": 3,
+			"modelOutputGuard.minRepeatedChars": 90,
+		}, async (cwd) => {
+			const fake = createFakePi();
+			outputPolicy(fake.pi);
+			const notices: string[] = [];
+			const guard = guardCtx(cwd, (message) => notices.push(message));
+			const delta = Array.from({ length: 8 }, () => `${"repeat me ".repeat(5)}\n`).join("");
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta } }, guard.ctx);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta } }, guard.ctx);
+			expect(guard.aborts()).toBe(1);
+			expect(notices).toHaveLength(1);
+			expect(notices[0]).toContain("Model output stopped");
+		});
+	});
+
+	test("counts thinking and tool-call argument deltas toward the hard cap", async () => {
+		for (const type of ["thinking_delta", "toolcall_delta"]) {
+			await withConfigAsync({ "modelOutputGuard.maxChars": 100 }, async (cwd) => {
+				const fake = createFakePi();
+				outputPolicy(fake.pi);
+				const guard = guardCtx(cwd);
+				await fake.fire("message_update", { assistantMessageEvent: { type, delta: "x".repeat(100) } }, guard.ctx);
+				expect(guard.aborts()).toBe(1);
+			});
+		}
+	});
+
+	test("notification failures cannot prevent abort", async () => {
+		await withConfigAsync({ "modelOutputGuard.maxChars": 100 }, async (cwd) => {
+			const fake = createFakePi();
+			outputPolicy(fake.pi);
+			const guard = guardCtx(cwd, () => { throw new Error("no UI"); });
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(101) } }, guard.ctx);
+			expect(guard.aborts()).toBe(1);
+		});
+	});
+
+	test("all lifecycle resets clear partial streaks and re-arm after abort", async () => {
+		await withConfigAsync({
+			"modelOutputGuard.maxConsecutiveRepeats": 3,
+			"modelOutputGuard.minRepeatedChars": 90,
+		}, async (cwd) => {
+			const cases = [
+				["message_start", { message: { role: "assistant" } }],
+				["turn_start", { turnIndex: 1 }],
+				["session_start", { reason: "new" }],
+				["session_shutdown", { reason: "quit" }],
+			] as const;
+			for (const [resetEvent, payload] of cases) {
+				const fake = createFakePi();
+				outputPolicy(fake.pi);
+				const guard = guardCtx(cwd);
+				const block = `${"repeat me ".repeat(5)}\n`;
+				await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: block.repeat(2) } }, guard.ctx);
+				await fake.fire(resetEvent, payload, guard.ctx);
+				await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: block.repeat(2) } }, guard.ctx);
+				expect(guard.aborts()).toBe(0);
+			}
+
+			const fake = createFakePi();
+			outputPolicy(fake.pi);
+			const guard = guardCtx(cwd);
+			const spam = `${"repeat me ".repeat(5)}\n`.repeat(3);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: spam } }, guard.ctx);
+			expect(guard.aborts()).toBe(1);
+			await fake.fire("message_start", { message: { role: "assistant" } }, guard.ctx);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: spam } }, guard.ctx);
+			expect(guard.aborts()).toBe(2);
+		});
+	});
+
+	test("repetition can be disabled while the hard cap remains active", async () => {
+		await withConfigAsync({
+			"modelOutputGuard.maxChars": 500,
+			"modelOutputGuard.repetition.enabled": false,
+		}, async (cwd) => {
+			const fake = createFakePi();
+			outputPolicy(fake.pi);
+			const guard = guardCtx(cwd);
+			const block = `${"repeat me ".repeat(5)}\n`;
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: block.repeat(8) } }, guard.ctx);
+			expect(guard.aborts()).toBe(0);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(500) } }, guard.ctx);
+			expect(guard.aborts()).toBe(1);
+		});
+	});
+
+	test("can be disabled independently from tool output policy", async () => {
+		await withConfigAsync({ "modelOutputGuard.enabled": false }, async (cwd) => {
+			const fake = createFakePi();
+			outputPolicy(fake.pi);
+			const guard = guardCtx(cwd);
+			const delta = Array.from({ length: 100 }, () => `${"repeat me ".repeat(5)}\n`).join("");
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta } }, guard.ctx);
+			expect(guard.aborts()).toBe(0);
+		});
+	});
+});
 
 describe("tool_result handler (default-on sanitization & metadata)", () => {
 	test("oversized non-allowlisted details are sanitized and carry a marker", async () => {
