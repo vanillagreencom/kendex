@@ -129,12 +129,17 @@ reviewer is location-bound.
 
 The reviewer routes; the session captures. Once per re-vendor train, on ONE
 consumer PR, collect upstream-remedy findings from BOTH surfaces: the review
-bodies, AND any consolidated vendored-path thread a location-bound reviewer
-left. Reading only the bodies drops that class's entire output — its findings
-are never anywhere else.
+bodies, AND EVERY vendored-path thread a location-bound reviewer left — one
+consolidated thread where it honored the bound, one thread per finding where
+its schema could not (the accepted residual above), which is why this is not
+scoped to a consolidated thread. Reading only the bodies drops that class's
+entire output — its findings are never anywhere else.
 
-`vstack report --skill review-gate` routes the report upstream. Two
-preconditions, each silent when unmet:
+`vstack report --skill review-gate --title [TITLE] --body-file [PATH]` routes
+the report upstream. The command is non-interactive and validates arguments
+before doing anything: `--title` is required, and exactly one of `--body` or
+`--body-file` must be given — with neither (or both) it exits without filing.
+Two further preconditions, each silent when unmet:
 
 - **The selector is required.** With no `--skill`/`--agent`/`--hook`/`--asset`,
   the CLI warns once that ownership could not be determined and files against
@@ -218,7 +223,15 @@ the only thing step 3 reads.
 
 Step 1 answers the evidence question only for rows with `at_head` true whose
 login is non-author AND in the repo's
-`REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` (empty list = any non-author). This
+`REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` (empty list = any non-author), and
+only at the repo's `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE`. Under the `any`
+default every such row counts. Under `approved` a login contributes evidence
+only when its newest `APPROVED` at head is not followed by a newer
+`CHANGES_REQUESTED` from that same login — a trailing `COMMENTED` never
+withdraws an approval, but a `COMMENTED` row on its own is not evidence there.
+Read the `state` field against the repo's setting: counting a bare `COMMENTED`
+as evidence under `approved` passes a verification the predicate's review-object
+term fails, while the gate is green off a different evidence surface. This
 view reports bot logins WITHOUT the `[bot]` suffix the trusted list carries —
 compare on the base name, or read the same reviews from the REST
 `pulls/[PR]/reviews` endpoint, which returns the suffixed login and
