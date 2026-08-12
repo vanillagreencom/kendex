@@ -55,9 +55,14 @@ SECOND_OPINION="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
 
 PASS=0
 FAIL=0
+SKIP=0
 
 pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1" >&2; }
+# For a check this runner cannot construct — never for one it merely did not
+# run. Counted separately so the summary line stays honest about coverage that
+# was not obtained.
+skip() { SKIP=$((SKIP + 1)); printf '  skip  %s\n' "$1"; }
 
 assert_eq() {
   local got="$1" want="$2" name="$3"
@@ -677,10 +682,12 @@ assert_jq "$TMP_ROOT/out-twovalues.json" '.agent' "external-union(codex)" \
 echo "=== scenario 14: unremovable scratch entry -> exit 0, cleanup still runs ==="
 # The hazard rests on mode bits, and mode bits do not stop root: on a
 # privileged runner — a root CI container — the plant is removable, the
-# parent's removal succeeds, and this scenario would pass whether or not the
-# guard exists. Prove the property on a throwaway copy of the same shape first,
-# so a runner that cannot reproduce it loses this coverage loudly.
-hazard_name="the planted shape is genuinely unremovable by this user"
+# parent's removal succeeds, and every assertion here becomes meaningless.
+# Build the same shape on a throwaway copy first and see whether it actually
+# resists removal. If it does not, this runner cannot construct the hazard at
+# all, so the scenario is skipped with its reason rather than passed (which
+# would hide the coverage loss) or failed (which would break a runner for a
+# property it cannot express).
 hazard_probe="$TMP_ROOT/hazard-probe"
 rm -rf "$hazard_probe" 2>/dev/null || true
 mkdir -p "$hazard_probe/locked/inner"
@@ -689,27 +696,42 @@ hazard_rc=0
 rm -rf "$hazard_probe" 2>/dev/null || hazard_rc=$?
 chmod -R u+rwX "$hazard_probe" 2>/dev/null || true
 rm -rf "$hazard_probe" 2>/dev/null || true
-if [[ "$hazard_rc" -ne 0 ]]; then
-  pass "$hazard_name"
+
+if [[ "$hazard_rc" -eq 0 ]]; then
+  skip "scenario 14: a 0500 directory holding a child is removable by this user (effectively privileged), so the unremovable-entry hazard cannot be built and the cleanup guard goes unproven here"
 else
-  fail "$hazard_name"
-  printf '        a 0500 directory holding a child was removable here (running as root?),\n' >&2
-  printf '        so this scenario cannot prove the cleanup guard it exists to cover\n' >&2
+  pass "the planted shape is genuinely unremovable by this user"
+  rc14=0
+  run_lanes "$ANSWER_CLAUDE" "$TMP_ROOT/bin/lane-plant-locked $TMP_ROOT/resp-codex.json" || rc14=$?
+  assert_eq "$rc14" "0" "a scratch directory that cannot be removed does not fail the run"
+  assert_jq "$TMP_ROOT/last.stdout" '.agent' "external-union(codex+claude)" "the union is still delivered"
+  assert_no_leftovers "the trap reached the artifact cleanup below the failing removal"
+  planted_name="the hazard was actually planted in the run's scratch directory"
+  if [[ -n "$(find "$SCRATCH" -type d -name locked 2>/dev/null | head -1 || true)" ]]; then
+    pass "$planted_name"
+  else
+    fail "$planted_name"
+    printf '        nothing survived the parent removal — the stub planted nothing to block it\n' >&2
+  fi
 fi
 
-rc14=0
-run_lanes "$ANSWER_CLAUDE" "$TMP_ROOT/bin/lane-plant-locked $TMP_ROOT/resp-codex.json" || rc14=$?
-assert_eq "$rc14" "0" "a scratch directory that cannot be removed does not fail the run"
-assert_jq "$TMP_ROOT/last.stdout" '.agent' "external-union(codex+claude)" "the union is still delivered"
-assert_no_leftovers "the trap reached the artifact cleanup below the failing removal"
-planted_name="the hazard was actually planted in the run's scratch directory"
-if [[ -n "$(find "$SCRATCH" -type d -name locked 2>/dev/null | head -1 || true)" ]]; then
-  pass "$planted_name"
-else
-  fail "$planted_name"
-  printf '        nothing survived the parent removal — the stub planted nothing to block it\n' >&2
-fi
+# --- Scenario 15: an --output value that begins with a dash ------------------
+# --output is caller input. A bare `-name.json` is a valid path and an invalid
+# option, so the pre-spawn cleanup utilities must be told where their options
+# end — otherwise the run dies before a single lane spawns and the stale-
+# artifact cleanup those lines exist for never happens.
+#
+# This asserts the parent reaches lane execution, not that the run succeeds:
+# the recursive child derives its own directories from the same caller path and
+# still cannot write one that begins with a dash. That is a separate gap in the
+# single-lane write path, untouched here.
+echo "=== scenario 15: a dashed --output does not abort before lanes spawn ==="
+# The exit status is deliberately not asserted: it reflects the child gap
+# above, and pinning it would break the day that gap is closed.
+( cd "$TMP_ROOT" && run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" --output -dashed.json ) || true
+assert_stderr_has "[codex] " "lanes still run when --output begins with a dash"
+assert_stderr_has "[claude] " "both lanes are reached"
 
 echo
-printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+printf 'pass: %d   fail: %d   skip: %d\n' "$PASS" "$FAIL" "$SKIP"
 [[ "$FAIL" -eq 0 ]]

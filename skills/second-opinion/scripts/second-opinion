@@ -719,9 +719,19 @@ if $MULTI_LANE; then
   # left by a PREVIOUS run at the same path would read as a fresh pass to a
   # caller that continues past the advisory failure. Clear it before lanes
   # spawn.
+  # --output is caller input and may begin with '-', which every one of these
+  # utilities would parse as options: `--` marks the end of options, and the
+  # containing directory comes from parameter expansion because BSD dirname
+  # can reject `--` on the macOS Bash 3.2 support target.
   if [[ -n "$OUTPUT_PATH" ]]; then
-    mkdir -p "$(dirname "$OUTPUT_PATH")"
-    rm -f "$OUTPUT_PATH"
+    out_dir="${OUTPUT_PATH%/*}"
+    if [[ "$out_dir" == "$OUTPUT_PATH" ]]; then
+      out_dir="."
+    elif [[ -z "$out_dir" ]]; then
+      out_dir="/"
+    fi
+    mkdir -p -- "$out_dir"
+    rm -f -- "$OUTPUT_PATH"
   fi
 
   SELF="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
@@ -754,7 +764,7 @@ if $MULTI_LANE; then
       # name that cannot collide with a caller's file.) Keep in step with
       # preserve_cli_failure_and_fail, preserve_raw_and_fail and
       # preserve_no_review_and_fail, the only writers of these sidecars.
-      rm -f "$lane_out" \
+      rm -f -- "$lane_out" \
         "$lane_out.raw.txt" "$lane_out.retry.txt" "$lane_out.failed.json" \
         "$lane_out.noreview.json" "$lane_out.incomplete.json"
     else
