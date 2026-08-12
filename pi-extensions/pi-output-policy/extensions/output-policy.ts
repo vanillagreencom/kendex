@@ -361,12 +361,22 @@ function normalizedRepeatBlock(line: string): string {
 	return line.trim().replace(/\s+/g, " ");
 }
 
-function isIgnorableRepeatSyntaxBlock(block: string): boolean {
+function isCommonMarkFenceLine(line: string): boolean {
+	// CommonMark permits up to three leading spaces and an optional info string.
+	// Backtick-fence info strings cannot contain backticks; tilde-fence info
+	// strings have no equivalent character restriction.
+	const match = /^(?: {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+	if (!match) return false;
+	return match[1].startsWith("~") || !match[2].includes("`");
+}
+
+function isIgnorableRepeatSyntaxBlock(line: string): boolean {
 	// Preserve a substantial repetition streak only across syntax-only lines
 	// produced by common model/tool protocols. Short prose, labels, values, and
 	// headings are semantic content and must break the streak.
+	const block = normalizedRepeatBlock(line);
 	return /^<\/?[A-Za-z][A-Za-z0-9:._-]*(?:\s+[^<>]*)?\/?>$/.test(block)
-		|| /^(?:`{3,}|~{3,})(?:[A-Za-z0-9_.+-]+)?$/.test(block)
+		|| isCommonMarkFenceLine(line)
 		|| /^(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/.test(block);
 }
 
@@ -391,11 +401,12 @@ export function inspectModelOutputDelta(
 	state.pending = `${state.pending}${delta.replace(/\r\n?/g, "\n")}`;
 	let newline = state.pending.indexOf("\n");
 	while (newline >= 0) {
-		const block = normalizedRepeatBlock(state.pending.slice(0, newline));
+		const line = state.pending.slice(0, newline);
+		const block = normalizedRepeatBlock(line);
 		state.pending = state.pending.slice(newline + 1);
 		newline = state.pending.indexOf("\n");
 		if (!block) continue;
-		if (isIgnorableRepeatSyntaxBlock(block)) continue;
+		if (isIgnorableRepeatSyntaxBlock(line)) continue;
 		if (block.length < options.minRepeatBlockChars) {
 			resetModelOutputRepeatStreak(state);
 			continue;

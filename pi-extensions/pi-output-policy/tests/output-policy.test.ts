@@ -120,6 +120,35 @@ describe("model output guard", () => {
 		expect(inspectModelOutputDelta(state, output, syntaxOptions)?.reason).toBe("repetition");
 	});
 
+	test("CommonMark fences with spaced info strings preserve a substantial repetition streak", () => {
+		const block = `Repeated substantial block ${"r".repeat(40)}`;
+		const fenceOptions = {
+			...options,
+			maxConsecutiveRepeats: 3,
+			minRepeatedChars: block.length * 3,
+		};
+		for (const fence of ["``` ts", "~~~ shell session"]) {
+			const state = createModelOutputGuardState();
+			const output = `${block}\n${fence}\n${block}\n${fence}\n${block}\n`;
+			expect(inspectModelOutputDelta(state, output, fenceOptions)?.reason).toBe("repetition");
+		}
+	});
+
+	test("fence-like semantic content and invalid backtick info reset a repetition streak", () => {
+		const block = `Repeated substantial block ${"r".repeat(40)}`;
+		const fenceOptions = {
+			...options,
+			maxConsecutiveRepeats: 3,
+			minRepeatedChars: block.length * 3,
+		};
+		for (const line of ["note: ``` ts", "    ``` ts", "``` ts `invalid`"]) {
+			const state = createModelOutputGuardState();
+			const output = `${block}\n${block}\n${line}\n${block}\n`;
+			expect(inspectModelOutputDelta(state, output, fenceOptions)).toBeUndefined();
+			expect(state.consecutiveRepeats).toBe(1);
+		}
+	});
+
 	test("short semantic content breaks a substantial repetition streak", () => {
 		const block = `Repeated substantial block ${"r".repeat(40)}`;
 		const semanticOptions = {
