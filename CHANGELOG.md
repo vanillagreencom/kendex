@@ -77,8 +77,10 @@
   without `--output` it is an ordinary temp file, so an actor that removes
   temp *files* still costs that lane — but loudly, with coverage `"degraded"`,
   the lane recorded at exit 5, and the loss named on stderr, never as a silent
-  pass. Lane children now run under a restrictive umask, so the sidecars they
-  write in temp space are owner-only.
+  pass. Lane children now run under a restrictive umask, so every file they
+  write — the sidecars in temp space and the `<output>.<target>.json` lane
+  artifacts alike — is owner-only; the union artifact at `--output` is written
+  by the parent and still follows the caller's umask.
 
   Artifact handling got stricter in the same pass. An artifact is accepted
   only if it holds exactly one JSON object carrying the shape the union merge

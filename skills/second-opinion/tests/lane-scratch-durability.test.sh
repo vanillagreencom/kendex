@@ -41,7 +41,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+# A scenario below deliberately leaves a directory the run cannot write into,
+# so make the tree removable before removing it.
+trap 'chmod -R u+rwX "$TMP_ROOT" 2>/dev/null; rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/proj/skills"
 git init -q "$TMP_ROOT/proj"
@@ -151,6 +153,20 @@ assert_probe_empty() {
   fi
 }
 
+# An empty "loose files" recording only means something if the probe actually
+# looked at files. Without this, a renamed sidecar makes the permission check
+# vacuous and still green.
+assert_probe_saw_files() {
+  local probe="$1" name="$2" count=0
+  [[ -s "$probe" ]] && count="$(tr -d ' \n' < "$probe")"
+  if [[ "$count" =~ ^[0-9]+$ ]] && [[ "$count" -gt 0 ]]; then
+    pass "$name"
+  else
+    fail "$name"
+    printf '        probe saw %s files in temp space\n' "${count:-0}" >&2
+  fi
+}
+
 # --- Reviewed repo ------------------------------------------------------------
 WORK="$TMP_ROOT/work"
 mkdir -p "$WORK"
@@ -239,8 +255,17 @@ SH
 #   steal   remove it — the lane exited 0 but left nothing
 #   blank   whitespace: passes a non-empty test, holds no JSON value
 #   trunc   a real parse failure, so jq's own message is what gets reported
+#   newline a single newline: nothing a shell read can distinguish from empty
+#           unless the read preserves the bytes, and the classification must
+#           not turn on that
+#   double  two concatenated JSON objects — one lane trying to be two
 #   poison  parses, top level complete, but a finding is a string — the shape
 #           the union merge cannot consume
+#   poison-sugg / bad-loc / bad-questions / bad-summary
+#           the remaining shapes the merge depends on: it adds {source: …} to
+#           every suggestion, lowercases .location, iterates .questions[] and
+#           concatenates .summary, so each one aborts the merge if it gets past
+#           the gate
 cat > "$TMP_ROOT/bin/lane-sabotage" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -251,11 +276,19 @@ while ! jq -e . "$target" >/dev/null 2>&1 && [[ $waited -lt 300 ]]; do
   sleep 0.1
   waited=$((waited + 1))
 done
+head='{"agent":"external-claude","timestamp":"2026-01-01T00:00:00Z","verdict":"pass"'
+numloc='{"id":1,"title":"t","description":"d","recommendation":"r","priority":2,"estimate":1,"location":7}'
 case "$action" in
-  steal)  rm -f "$target" ;;
-  blank)  printf '   \n' > "$target" ;;
-  trunc)  printf '{"agent":"external-cla' > "$target" ;;
-  poison) printf '%s' '{"agent":"external-claude","timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"s","blockers":["bad"],"suggestions":[],"questions":[],"qa_metadata":{}}' > "$target" ;;
+  steal)   rm -f "$target" ;;
+  blank)   printf '   \n' > "$target" ;;
+  newline) printf '\n' > "$target" ;;
+  trunc)   printf '{"agent":"external-cla' > "$target" ;;
+  double)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
+  poison)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[\"bad\"],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
+  poison-sugg)   printf '%s' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[\"bad\"],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
+  bad-loc)       printf '%s' "$head,\"summary\":\"s\",\"blockers\":[$numloc],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
+  bad-questions) printf '%s' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":\"nope\",\"qa_metadata\":{}}" > "$target" ;;
+  bad-summary)   printf '%s' "$head,\"summary\":42,\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
 esac
 [[ "$rc" -eq 0 ]] || exit "$rc"
 cat "$resp"
@@ -266,19 +299,49 @@ SH
 # readable beyond its owner, and only then answers. The recording happens while
 # both lanes are still live, which is exactly the window in which those files
 # are exposed on a shared host.
+#
+# It also records HOW MANY files it saw, and fails outright if the handshake
+# times out. An empty "loose files" recording otherwise means either "nothing
+# was exposed" or "the probe never saw anything", and a renamed sidecar would
+# silently turn the permission assertion into a no-op that still passes.
 cat > "$TMP_ROOT/bin/lane-probe-perms" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
 waited=0
+seen=""
 while [[ \$waited -lt 300 ]]; do
   if [[ -n "\$(find "$SCRATCH" -type f -name '*.raw.txt' 2>/dev/null)" ]]; then
+    seen=1
     break
   fi
   sleep 0.1
   waited=\$((waited + 1))
 done
+if [[ -z "\$seen" ]]; then
+  echo "probe stub: no *.raw.txt appeared in temp space — handshake never happened" >&2
+  exit 1
+fi
+find "$SCRATCH" -type f 2>/dev/null | wc -l > "$PERM_PROBE.count"
 find "$SCRATCH" -type f \( -perm -g+r -o -perm -o+r \) > "$PERM_PROBE" 2>/dev/null || true
+cat "\$1"
+SH
+
+# Lane stub that leaves an entry inside the parent's scratch directory that the
+# parent cannot unlink — a directory it has no write permission on, holding a
+# child. That is the reviewed repo's own agent CLI touching scratch, the actor
+# from the field report. The parent's `rm -rf` on that directory then fails,
+# and inside the EXIT trap that must not decide the run's exit status or skip
+# the cleanup that follows it. Deliberately plants no regular file, so the
+# leftover assertion still speaks only about what the run itself wrote.
+cat > "$TMP_ROOT/bin/lane-plant-locked" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+for d in \$(find "$SCRATCH" -mindepth 1 -maxdepth 1 -type d 2>/dev/null); do
+  mkdir -p "\$d/locked/inner"
+  chmod 500 "\$d/locked"
+done
 cat "\$1"
 SH
 
@@ -307,7 +370,8 @@ done
 cat "\$1"
 SH
 chmod +x "$TMP_ROOT/bin/lane-answer" "$TMP_ROOT/bin/lane-fail" "$TMP_ROOT/bin/lane-reap" \
-  "$TMP_ROOT/bin/lane-sabotage" "$TMP_ROOT/bin/lane-probe-perms" "$TMP_ROOT/bin/lane-plant-dir"
+  "$TMP_ROOT/bin/lane-sabotage" "$TMP_ROOT/bin/lane-probe-perms" "$TMP_ROOT/bin/lane-plant-dir" \
+  "$TMP_ROOT/bin/lane-plant-locked"
 
 cat > "$TMP_ROOT/resp-claude.json" <<'JSON'
 {"agent":"external-claude","timestamp":"2026-01-01T00:00:00Z","verdict":"action_required",
@@ -342,9 +406,10 @@ run_lanes() {
   local claude_cmd="$1" codex_cmd="$2"
   shift 2
   local rc=0
+  chmod -R u+rwX "$SCRATCH" 2>/dev/null || true
   rm -rf "$SCRATCH"
   mkdir -p "$SCRATCH"
-  rm -f "$PERM_PROBE"
+  rm -f "$PERM_PROBE" "$PERM_PROBE.count"
   set +e
   env TMPDIR="$SCRATCH" \
     SECOND_OPINION_CLAUDE_CMD="$claude_cmd" \
@@ -539,6 +604,7 @@ run_lanes "$TMP_ROOT/bin/lane-probe-perms $TMP_ROOT/resp-claude.json" \
 assert_eq "$rc11" "0" "the surviving lane keeps the run at exit 0"
 assert_jq "$TMP_ROOT/last.stdout" '.qa_metadata.coverage' "degraded" "the prose lane degrades coverage"
 assert_jq "$TMP_ROOT/last.stdout" '.blockers | length' "1" "the answering lane's blocker still ships"
+assert_probe_saw_files "$PERM_PROBE.count" "the permission probe actually observed temp files"
 assert_probe_empty "$PERM_PROBE" "no temp file is readable beyond its owner while lanes are live"
 assert_no_leftovers "the lane artifact and its sidecar family are both cleaned up"
 
@@ -553,6 +619,52 @@ run_lanes "$ANSWER_CLAUDE" "$TMP_ROOT/bin/lane-plant-dir $TMP_ROOT/resp-codex.js
 assert_eq "$rc12" "0" "a cleanup that cannot unlink an entry does not fail the run"
 assert_jq "$TMP_ROOT/last.stdout" '.agent' "external-union(codex+claude)" "the union is still delivered"
 assert_jq "$TMP_ROOT/last.stdout" '.blockers | length' "1" "with both lanes' findings"
+
+# --- Scenario 13: every clause of the artifact gate -------------------------
+# The gate refuses several distinct shapes and each one is load-bearing: past
+# the gate, the merge adds {source: …} to every blocker AND suggestion,
+# lowercases .location, iterates .questions[] and concatenates .summary — so a
+# clause that stops firing costs the whole union, not just its lane. Each is
+# pinned to its own message so a clause cannot be covered by its neighbour.
+echo "=== scenario 13: each artifact-gate clause rejects its own shape ==="
+# assert_gate_rejects <label> <sabotage-action> <expected cause fragment>
+assert_gate_rejects() {
+  local label="$1" action="$2" cause="$3" out rc=0
+  out="$TMP_ROOT/out-$label.json"
+  run_lanes "$ANSWER_CLAUDE" \
+    "$TMP_ROOT/bin/lane-sabotage $TMP_ROOT/resp-codex-blocker.json $out.claude.json $action 0" \
+    --output "$out" || rc=$?
+  assert_eq "$rc" "0" "$label: the run still exits 0"
+  assert_jq "$out" '.blockers | length' "1" "$label: the healthy lane's blocker still ships"
+  assert_jq "$out" '.qa_metadata.coverage' "degraded" "$label: coverage degrades"
+  assert_jq "$out" '[.qa_metadata.lanes[] | select(.target == "claude")][0].exit_code' "4" \
+    "$label: the rejected lane records 4"
+  assert_stderr_has "$cause" "$label: the rejected clause names itself"
+}
+assert_gate_rejects "suggestions" poison-sugg "suggestions holds a non-object entry"
+assert_gate_rejects "location" bad-loc "blockers holds a non-string location"
+assert_gate_rejects "questions" bad-questions "questions is not an array"
+assert_gate_rejects "summary" bad-summary "summary is not a string"
+# A newline-only artifact must reach the gate like any other malformed shape,
+# not read back as "nothing was there" through a shell that strips newlines.
+assert_gate_rejects "newline" newline "holds no JSON value at all"
+# One lane may not smuggle in a second review: without the refusal the first
+# value is silently accepted, the second dropped, and coverage still reads full.
+assert_gate_rejects "twovalues" double "holds 2 JSON values, expected one"
+assert_jq "$TMP_ROOT/out-twovalues.json" '.agent' "external-union(codex)" \
+  "twovalues: the union carries only the lanes that answered once"
+
+# --- Scenario 14: an unremovable entry inside the scratch directory ----------
+# Same rule as scenario 12, one line earlier in the same trap: `rm -rf` on the
+# scratch directory fails when something inside it cannot be unlinked, and that
+# failure would both decide the run's exit status and skip the artifact cleanup
+# that follows it in the trap.
+echo "=== scenario 14: unremovable scratch entry -> exit 0, cleanup still runs ==="
+rc14=0
+run_lanes "$ANSWER_CLAUDE" "$TMP_ROOT/bin/lane-plant-locked $TMP_ROOT/resp-codex.json" || rc14=$?
+assert_eq "$rc14" "0" "a scratch directory that cannot be removed does not fail the run"
+assert_jq "$TMP_ROOT/last.stdout" '.agent' "external-union(codex+claude)" "the union is still delivered"
+assert_no_leftovers "the trap reached the artifact cleanup below the failing removal"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

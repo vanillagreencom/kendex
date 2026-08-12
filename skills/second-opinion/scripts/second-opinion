@@ -697,14 +697,16 @@ if $MULTI_LANE; then
     if [[ ${#LANE_PIDS[@]} -gt 0 ]]; then
       wait ${LANE_PIDS[@]+"${LANE_PIDS[@]}"} 2>/dev/null || true
     fi
-    rm -rf "$LANE_TMP_DIR"
+    # Never let cleanup decide the run's exit status: rm still fails on an
+    # entry it cannot unlink (something under a directory the run cannot write,
+    # a foreign-owned file in a sticky /tmp), and inside this EXIT trap that
+    # failure would both override a delivered two-lane union with a non-zero
+    # status and skip everything below it. Every command in this trap is
+    # guarded for that reason.
+    rm -rf "$LANE_TMP_DIR" || true
     # Stdout-mode lane artifacts plus each child's own sidecar family
     # (<art>.noreview.json, <art>.raw.txt, …): the mktemp name makes the glob
     # unambiguous, and a glob that matches nothing is a no-op for rm -f.
-    # Never let cleanup decide the run's exit status: rm -f still fails on an
-    # entry it cannot unlink (a directory, a foreign-owned file in a sticky
-    # /tmp), and inside this EXIT trap that failure would override a delivered
-    # two-lane union with a non-zero status.
     for art in ${LANE_TMP_FILES[@]+"${LANE_TMP_FILES[@]}"}; do
       rm -f "$art" "$art".* || true
     done
@@ -811,9 +813,15 @@ if $MULTI_LANE; then
     # one that actually rejected the lane rather than whatever a later re-read
     # happens to find (an artifact removed a moment after being rejected as
     # malformed would otherwise be explained as "No such file or directory").
+    # The sentinel keeps "empty" meaning what it says: command substitution
+    # strips ALL trailing newlines, so a newline-only artifact would read back
+    # as the empty string and take the never-answered branch below while a
+    # space-only one would not — the classification must not turn on that.
+    # Nothing read at all (absent or zero-byte artifact) still reads empty.
     lane_raw=""
     if [[ $lane_rc -eq 0 ]]; then
-      lane_raw=$(cat "${LANE_OUTS[$i]}" 2>/dev/null) || lane_raw=""
+      lane_raw=$(cat "${LANE_OUTS[$i]}" 2>/dev/null; printf X)
+      lane_raw="${lane_raw%X}"
     fi
     if [[ $lane_rc -eq 0 && -n "$lane_raw" ]]; then
       # A zero exit and readable content are not proof of a usable artifact —
