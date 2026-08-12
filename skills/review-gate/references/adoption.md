@@ -178,8 +178,11 @@ reducer they and harness monitors share.
   this repo's trust values).
 - The consumer's vendored-copy drift check passes.
 - The first PURE re-vendor PR after adoption carries a trusted non-author
-  review object at head with no unresolved thread on a vendored path
-  ([vendored-paths.md](vendored-paths.md) § Verifying on a real re-vendor PR).
+  review object at head, and on the vendored tree no unresolved thread from a
+  summary-capable reviewer plus at most one consolidated thread from each
+  location-bound one — read before resolving anything
+  ([vendored-paths.md](vendored-paths.md) § Verifying on a real re-vendor PR,
+  whose pass rule this mirrors).
 - For engine changes (not adoptions): the live sandbox replay
   (`.agents/skills/review-gate/tests/e2e-sandbox.sh`) against the org
   sandbox, which mirrors the fleet ruleset shape.

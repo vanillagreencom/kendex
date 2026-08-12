@@ -112,11 +112,28 @@ reviewer is location-bound.
 
 ## The consumer session's half
 
-The reviewer routes; the session captures. Once per re-vendor train, read the
-review bodies on ONE consumer PR and file anything upstream-remedy at the
-upstream repo — `vstack report` routes vstack-owned assets. Do not fix it
-locally, and do not file the same finding from each consumer: reviewers have no
-cross-repo memory and will restate the same finding in every one.
+The reviewer routes; the session captures. Once per re-vendor train, on ONE
+consumer PR, collect upstream-remedy findings from BOTH surfaces: the review
+bodies, AND any consolidated vendored-path thread a location-bound reviewer
+left. Reading only the bodies drops that class's entire output — its findings
+are never anywhere else.
+
+`vstack report --skill review-gate` routes the report upstream. Two
+preconditions, each silent when unmet:
+
+- **The selector is required.** With no `--skill`/`--agent`/`--hook`/`--asset`,
+  the CLI warns once that ownership could not be determined and files against
+  the LOCAL repo.
+- **For a skill, only the installed `SKILL.md` frontmatter decides.** A lock
+  entry never opts a skill upstream — skills are self-attributing by design, so
+  routing needs the vendored `SKILL.md` present at the install path and
+  carrying `source: vstack` (or the upstream `repository` slug). A repo that
+  vendored only the scripts subtree has no frontmatter to read and files
+  locally. Check before relying on it, or open the upstream issue by hand.
+
+Do not fix it locally, and do not file the same finding from each consumer:
+reviewers have no cross-repo memory and will restate the same finding in every
+one.
 
 ## Wiring a repo
 
@@ -127,13 +144,20 @@ cross-repo memory and will restate the same finding in every one.
    copy, like the writer workflow.
 2. Check the glob against the paths a real re-vendor PR touches. An `applyTo`
    that does not match the vendored tree is dead config that lints green.
-3. Classify each reviewer the repo runs as summary-capable or location-bound
+3. **Replace any existing instruction scoped to the same tree — do not add
+   alongside it.** A repo that already carries a vendored-tree clause almost
+   certainly carries a remedy-only one ("flag them, but do not ask for local
+   edits"), which permits exactly the inline comments this replaces. Two
+   instructions over one glob leave the reviewer to pick, and it picks the
+   permissive one. Merge any repo-specific carve-outs the old clause held into
+   the new body rather than keeping both files.
+4. Classify each reviewer the repo runs as summary-capable or location-bound
    (above). A repo whose reviewers are ALL location-bound gets a bounded
    improvement, not silence — decide whether that is worth the wiring before
    doing it.
-4. Mirror the rule in the repo's reviewer-guidance file, for reviewers that do
+5. Mirror the rule in the repo's reviewer-guidance file, for reviewers that do
    not read path-scoped instructions.
-5. Change no gate settings. Do not add the vendored tree to a carry class, do
+6. Change no gate settings. Do not add the vendored tree to a carry class, do
    not remove it from `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, and do not widen
    `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` to a CI check as a substitute for
    review — a context trusted for this PR class is trusted for every PR class.
@@ -154,13 +178,20 @@ hides every failure mode this check exists to catch.
 #    fresh one, so read the head in the same call and compare per review.
 gh pr view [PR] --repo [OWNER/REPO] --json reviews,headRefOid --jq '.headRefOid as $head | .reviews[] | {login: .author.login, state: .state, at_head: (.commit.oid == $head), body_chars: (.body | length)}'
 
-# 2. Threads: at most the bounded per-reviewer allowance below, on the
-#    vendored tree.
+# 2. Threads on the vendored tree, BEFORE resolving any of them: the flag
+#    filters to isResolved == false, so a reviewer that ignored the
+#    one-comment bound reads as zero once its threads have been answered.
 .agents/skills/github/scripts/github.sh pr-threads [PR] --unresolved
 
 # 3. The gate's own answer for this head.
 gh pr checks [PR] --repo [OWNER/REPO]
 ```
+
+**Steps 2 and 3 cannot come from the same snapshot** wherever threads are
+enforced — server-side or via `REVIEW_GATE_THREADS`. The gate cannot reach
+`success` while threads are open, and resolving them to reach it empties step
+2. Record step 2's threads and their authors first, resolve them, then read
+step 3.
 
 Step 1 answers the evidence question only for rows with `at_head` true whose
 login is non-author AND in the repo's
@@ -176,12 +207,18 @@ one consolidated thread from each location-bound one; gate `success`. A
 repo-owned finding still arriving inline is the control that proves the
 reviewer is still reading rather than merely silent.
 
-**Not a pass**: threads down to zero with `body_chars` also at zero. That is
-the exclusion failure wearing a green badge — a review object the gate accepts
-while nothing was examined. Its check-run twin is a trusted context passing
-with a reviewed-nothing summary; the skip patterns do not catch that (see the
-trap above), so read the check's own output rather than trusting the green.
+**Suspect, not proven**: threads at zero with `body_chars` also at zero. Body
+length cannot establish whether anything was examined — a reviewer with
+genuinely nothing to say reads the same, and the gate accepts a trusted review
+at head without inspecting its body at all. Treat it as a prompt to check, not
+a verdict, and confirm with a signal that actually distinguishes exclusion:
+a summary-capable reviewer states its own reviewed-file count in the body
+(reviewed N of N changed files), and the reviewer's configuration either
+carries a path exclusion over the vendored tree or does not. The check-run twin
+is a trusted context passing with a reviewed-nothing summary; the skip patterns
+do not catch that (see the trap above), so read the check's own output rather
+than trusting the green.
 
-**On failure**, revert the instruction file and merge the PR through the
-documented review path. A starved gate is a worse outcome than duplicate
+**On confirmed failure**, revert the instruction file and merge the PR through
+the documented review path. A starved gate is a worse outcome than duplicate
 threads, and the override exists for the gap, not for a standing posture.
