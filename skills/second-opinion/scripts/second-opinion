@@ -904,7 +904,16 @@ if $MULTI_LANE; then
       # inside a string, so the gate's verdict is the verdict it would reach on
       # the file itself. The group's stderr goes nowhere because the only
       # writer to it is tr, already silenced.
-      { lane_raw=$(tr '\000' '\001' 2>/dev/null < "${LANE_OUTS[$i]}"; printf X); } 2>/dev/null
+      #
+      # A failed read is poisoned with that same byte rather than checked: the
+      # sentinel makes `printf X` the last command, so the substitution's own
+      # status is always 0 and tr's is unrecoverable from it. Without the
+      # poison a read that died partway — the file unlinked under it, or an I/O
+      # error — would hand the gate a prefix that can parse clean on its own,
+      # and an artifact nobody managed to read would be merged as a healthy
+      # lane. Appending the byte makes the truncation something jq refuses, so
+      # a read that did not finish can only ever land in answered-unusably.
+      { lane_raw=$(tr '\000' '\001' 2>/dev/null < "${LANE_OUTS[$i]}" || printf '\001'; printf X); } 2>/dev/null
       lane_raw="${lane_raw%X}"
       # A zero exit and readable content are not proof of a usable artifact —
       # it must survive LANE_WRAP_JQ, or one bad lane takes the whole merge

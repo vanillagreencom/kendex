@@ -270,6 +270,8 @@ SH
 #           test against the file itself can tell it from an empty artifact
 #   nul-tail a complete review with a NUL appended: bytes jq refuses on disk,
 #           whose clean prefix is exactly what a shell string would carry
+#   unread  replace it with a directory: passes a size test, but no read of it
+#           can ever succeed, and no partial bytes may pass for a review
 #   double  two concatenated JSON objects — one lane trying to be two
 #   poison  parses, top level complete, but a finding is a string — the shape
 #           the union merge cannot consume
@@ -296,6 +298,7 @@ case "$action" in
   newline) printf '\n' > "$target" ;;
   nul)     printf '\0' > "$target" ;;
   nul-tail) printf '%s\0' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
+  unread)  rm -f "$target"; mkdir -p "$target" ;;
   trunc)   printf '{"agent":"external-cla' > "$target" ;;
   double)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
   poison)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[\"bad\"],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
@@ -686,6 +689,19 @@ assert_gate_rejects "nul" nul "Invalid numeric literal"
 assert_gate_rejects "nul-tail" nul-tail "Invalid numeric literal"
 assert_jq "$TMP_ROOT/out-nul-tail.json" '.agent' "external-union(codex)" \
   "nul-tail: the union carries only the lane whose bytes parse"
+# The read itself can fail, and the sentinel that preserves trailing newlines
+# also makes the substitution's exit status permanently 0, so nothing downstream
+# can ask whether the read finished. The guard is to append a byte jq refuses
+# whenever it did not, which puts every failed read in answered-unusably no
+# matter what bytes it managed to emit first. A directory in the artifact's
+# place passes the size test and can never be read at all: that pins the guard
+# firing and the cause it reports. The case it exists for — a read that emits a
+# prefix which parses on its own before failing — needs a mid-read I/O error
+# this suite cannot construct portably, so the guard is verified here by the
+# path it shares with that case, not by the case itself.
+assert_gate_rejects "unread" unread "Invalid numeric literal"
+assert_jq "$TMP_ROOT/out-unread.json" '.agent' "external-union(codex)" \
+  "unread: an artifact nobody could read is not a healthy lane"
 # Bash 4.4+ warns about NUL bytes it dropped from a command substitution. No
 # NUL now reaches a shell string, so the warning has no occasion to fire — and
 # it never named a lane or told an operator anything they could act on, while
