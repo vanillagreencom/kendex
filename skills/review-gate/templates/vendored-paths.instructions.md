@@ -43,6 +43,12 @@ upstream-remedy finding together, anchored anywhere in this tree. One thread
 per reviewer per PR is the bound; one thread per finding is what this
 instruction exists to prevent.
 
+If your output contract binds one finding to one comment and consolidation is
+genuinely unavailable to you, every comment you post must still state plainly
+that the remedy is upstream and must not ask for a local edit. That part is not
+optional: it is what stops the same finding being re-litigated in the next
+consuming repo.
+
 **Do not stay silent instead.** Review the PR and submit a review: the merge
 gate needs a review object at this head, so a skipped review blocks the merge
 as hard as an unanswered thread does.

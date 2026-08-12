@@ -102,9 +102,24 @@ per-repo:
 
 For a location-bound reviewer the rule is a BOUND, not a surface change: at
 most ONE consolidated comment per PR carrying every upstream-remedy finding
-together, anchored anywhere in the vendored tree. That is inside its output
-contract, and it converts a cost that grows with the finding count into a
-constant one thread, which the verification below can check.
+together, anchored anywhere in the vendored tree.
+
+**Accepted residual — the bound is an instruction, not a mechanism.** A
+reviewer whose output schema binds one finding to one location cannot merge
+unrelated defects however the instruction is worded, and will still emit one
+thread per finding. Expect that: read the thread count as an observable, not as
+compliance, and answer and resolve those threads like any others. What this doc
+buys for that reviewer class does not come from thread count at all — it comes
+from remedy-locus routing, which states each upstream-remedy finding once as
+upstream's to fix, so it is not re-litigated in the next consumer or argued
+back into the upstream repo. **A location-bound reviewer exceeding one thread
+is not by itself a failed rollout.**
+
+Recorded so it is not re-opened: the rejected alternative is an adapter or
+post-processing transport that collects such findings and republishes them as a
+summary. That is new engine machinery — a second publisher on the review
+surface, carrying its own trust and ordering questions — and deliberately out
+of scope for a reviewer-instruction change.
 
 Classify each of the repo's reviewers before wiring, by reading a review body
 it posted on a recent PR: a body identical across PRs is a template, and that
@@ -202,10 +217,12 @@ compare on the base name, or read the same reviews from the REST
 `commit_id`.
 
 **Pass**: a trusted non-author review object at the current head; on the
-vendored tree, no unresolved thread from a summary-capable reviewer and at most
-one consolidated thread from each location-bound one; gate `success`. A
-repo-owned finding still arriving inline is the control that proves the
-reviewer is still reading rather than merely silent.
+vendored tree, no unresolved thread from a summary-capable reviewer; gate
+`success`. A repo-owned finding still arriving inline is the control that
+proves the reviewer is still reading rather than merely silent. Threads from a
+location-bound reviewer are counted and recorded, not graded — one consolidated
+thread is what the instruction asks for, and more than one is the accepted
+residual above, not a failure.
 
 **Suspect, not proven**: threads at zero with `body_chars` also at zero. Body
 length cannot establish whether anything was examined — a reviewer with
