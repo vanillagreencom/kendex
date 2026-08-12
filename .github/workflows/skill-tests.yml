@@ -6,7 +6,7 @@ name: Skill Tests
 # consuming repos drop tracked vendoring: quality is proven at the source,
 # not re-proven per consumer.
 #
-# THE FAST/FULL SPLIT: the two heavy suite jobs run ONLY in the merge queue
+# THE FAST/FULL SPLIT: the heavy suite shards and the CLI job run ONLY in the merge queue
 # — on PR pushes and main pushes they report `skipped`, which satisfies the
 # ruleset's required contexts while the pending "Review gate" status is what
 # actually blocks merge. A PR bills zero heavy runner-minutes through every
@@ -56,6 +56,18 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+
+      # A shard name outside the known set would match NO step conditions
+      # and pass vacuously — refuse it up front so a matrix/step rename
+      # desync fails loud instead of green-and-empty.
+      - name: shard name is known
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          case "$SHARD" in
+            review-gate|shell|node) ;;
+            *) echo "unknown shard '$SHARD' — no steps would run"; exit 1 ;;
+          esac
 
       # ---- shard: review-gate — the heavyweight wrapper battery alone ----
       - name: review-gate suites
