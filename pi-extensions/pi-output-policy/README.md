@@ -11,7 +11,7 @@ Streaming assistant responses are aborted when either safety condition fires:
 - the same substantial line repeats 24 times and contributes at least 1,536 repeated characters; or
 - one response reaches 96,000 streamed characters.
 
-This targets model decoding collapse such as thousands of identical planning sentences or malformed tool tags. Short repeated syntax lines do not reset or trigger repetition streaks, but still count toward the hard response-size cap. Pi keeps the partial response and marks it interrupted; Output Policy shows a warning telling the user to retry or switch models. All thresholds are live settings. The whole model-output guard, repetition detection, and the hard character cap can each be disabled independently.
+This targets model decoding collapse such as thousands of identical planning sentences or malformed tool tags. Short repeated syntax lines do not reset or trigger repetition streaks, but still count toward the hard response-size cap. Pi keeps the partial response and marks it interrupted; Output Policy shows a warning telling the user to retry or switch models. All thresholds are live settings; changes apply to the next assistant message. The whole model-output guard, repetition detection, and the hard character cap can each be disabled independently.
 
 ## Two budgets, one policy
 

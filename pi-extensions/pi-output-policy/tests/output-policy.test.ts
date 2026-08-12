@@ -17,13 +17,17 @@ import outputPolicy, {
 
 const CONFIG_ID = "@vanillagreen/pi-output-policy";
 
+function writeConfig(cwd: string, config: Record<string, unknown>): void {
+	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({
+		vstack: { extensionManager: { config: { [CONFIG_ID]: config } } },
+	}, null, 2));
+}
+
 function withConfig(config: Record<string, unknown>, run: (cwd: string) => void): void {
 	const dir = mkdtempSync(join(tmpdir(), "pi-output-policy-test-"));
 	try {
-		mkdirSync(join(dir, ".pi"), { recursive: true });
-		writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({
-			vstack: { extensionManager: { config: { [CONFIG_ID]: config } } },
-		}, null, 2));
+		writeConfig(dir, config);
 		recordProjectTrust({ cwd: dir, isProjectTrusted: () => true });
 		run(dir);
 	} finally {
@@ -34,10 +38,7 @@ function withConfig(config: Record<string, unknown>, run: (cwd: string) => void)
 async function withConfigAsync(config: Record<string, unknown>, run: (cwd: string) => Promise<void>): Promise<void> {
 	const dir = mkdtempSync(join(tmpdir(), "pi-output-policy-test-"));
 	try {
-		mkdirSync(join(dir, ".pi"), { recursive: true });
-		writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({
-			vstack: { extensionManager: { config: { [CONFIG_ID]: config } } },
-		}, null, 2));
+		writeConfig(dir, config);
 		recordProjectTrust({ cwd: dir, isProjectTrusted: () => true });
 		await run(dir);
 	} finally {
@@ -482,6 +483,59 @@ describe("model output guard handler", () => {
 			await fake.fire("message_start", { message: { role: "assistant" } }, guard.ctx);
 			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: spam } }, guard.ctx);
 			expect(guard.aborts()).toBe(2);
+		});
+	});
+
+	test("snapshots settings once per assistant message and refreshes on the next message", async () => {
+		await withConfigAsync({ "modelOutputGuard.maxChars": 100 }, async (cwd) => {
+			const fake = createFakePi();
+			outputPolicy(fake.pi);
+			const guard = guardCtx(cwd);
+			await fake.fire("message_start", { message: { role: "assistant" } }, guard.ctx);
+			writeConfig(cwd, { "modelOutputGuard.maxChars": 200 });
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(60) } }, guard.ctx);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(40) } }, guard.ctx);
+			expect(guard.aborts()).toBe(1);
+
+			await fake.fire("message_start", { message: { role: "assistant" } }, guard.ctx);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(100) } }, guard.ctx);
+			expect(guard.aborts()).toBe(1);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(100) } }, guard.ctx);
+			expect(guard.aborts()).toBe(2);
+		});
+	});
+
+	test("lazy fallback snapshots once when message_start is unavailable", async () => {
+		await withConfigAsync({ "modelOutputGuard.maxChars": 100 }, async (cwd) => {
+			const fake = createFakePi();
+			outputPolicy(fake.pi);
+			const guard = guardCtx(cwd);
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(60) } }, guard.ctx);
+			writeConfig(cwd, { "modelOutputGuard.maxChars": 200 });
+			await fake.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: "x".repeat(40) } }, guard.ctx);
+			expect(guard.aborts()).toBe(1);
+		});
+	});
+
+	test("session runtime instances keep independent guard state", async () => {
+		await withConfigAsync({
+			"modelOutputGuard.maxConsecutiveRepeats": 3,
+			"modelOutputGuard.minRepeatedChars": 90,
+		}, async (cwd) => {
+			const firstPi = createFakePi();
+			const secondPi = createFakePi();
+			outputPolicy(firstPi.pi);
+			outputPolicy(secondPi.pi);
+			const first = guardCtx(cwd);
+			const second = guardCtx(cwd);
+			const block = `${"repeat me ".repeat(5)}\n`;
+			await firstPi.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: block.repeat(2) } }, first.ctx);
+			await secondPi.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: block } }, second.ctx);
+			expect(first.aborts()).toBe(0);
+			expect(second.aborts()).toBe(0);
+			await firstPi.fire("message_update", { assistantMessageEvent: { type: "text_delta", delta: block } }, first.ctx);
+			expect(first.aborts()).toBe(1);
+			expect(second.aborts()).toBe(0);
 		});
 	});
 

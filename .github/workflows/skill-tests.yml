@@ -197,6 +197,7 @@ jobs:
           bun test ./tests
 
       - name: pi-output-policy suite
+        if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-output-policy
         run: bun test ./tests
 

@@ -23,7 +23,7 @@
         {
           "key": "enabled",
           "label": "Enable output policy",
-          "description": "Apply runaway model-output guards plus minimization, spill, truncation, and UI safety caps to tool results.",
+          "description": "Apply runaway model-output guards plus minimization, spill, truncation, and UI safety caps to tool results. Guard changes take effect on the next assistant message.",
           "type": "boolean",
           "default": true,
           "category": "General",
@@ -32,7 +32,7 @@
         {
           "key": "modelOutputGuard.enabled",
           "label": "Stop runaway model output",
-          "description": "Abort a streaming assistant response when it repeats the same substantial block too many times or exceeds the hard character budget.",
+          "description": "Abort a streaming assistant response when it repeats the same substantial block too many times or exceeds the hard character budget. Changes take effect on the next assistant message.",
           "type": "boolean",
           "default": true,
           "category": "Model Output Guard",

@@ -129,6 +129,11 @@ export interface ModelOutputGuardDetection {
 	totalChars: number;
 }
 
+interface ModelOutputGuardConfigSnapshot {
+	enabled: boolean;
+	options: ModelOutputGuardOptions;
+}
+
 const SESSION_COUNTERS = new Map<string, SessionCounters>();
 
 function counters(sessionId: string): SessionCounters {
@@ -306,6 +311,17 @@ function settingString(key: string, fallback: string, cwd?: string): string {
 	return typeof value === "string" ? value : fallback;
 }
 
+function configNumber(config: VstackConfig, key: string, fallback: number): number {
+	const value = config[key];
+	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+	return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function configBoolean(config: VstackConfig, key: string, fallback: boolean): boolean {
+	const value = config[key];
+	return typeof value === "boolean" ? value : fallback;
+}
+
 export function resolvePolicyMode(cwd?: string): PolicyMode {
 	const raw = settingString("policyMode", DEFAULT_POLICY_MODE, cwd).toLowerCase().trim();
 	if (raw === "compat" || raw === "balanced" || raw === "compact") return raw;
@@ -392,13 +408,17 @@ export function inspectModelOutputDelta(
 	return undefined;
 }
 
-function modelOutputGuardOptions(cwd?: string): ModelOutputGuardOptions {
+function modelOutputGuardConfigSnapshot(cwd?: string): ModelOutputGuardConfigSnapshot {
+	const config = readVstackConfig(cwd);
 	return {
-		maxChars: Math.max(0, Math.floor(settingNumber("modelOutputGuard.maxChars", DEFAULT_MODEL_OUTPUT_MAX_CHARS, cwd))),
-		maxConsecutiveRepeats: Math.max(2, Math.floor(settingNumber("modelOutputGuard.maxConsecutiveRepeats", DEFAULT_MODEL_OUTPUT_MAX_CONSECUTIVE_REPEATS, cwd))),
-		repetitionEnabled: settingBoolean("modelOutputGuard.repetition.enabled", true, cwd),
-		minRepeatBlockChars: Math.max(8, Math.floor(settingNumber("modelOutputGuard.minRepeatBlockChars", DEFAULT_MODEL_OUTPUT_MIN_REPEAT_BLOCK_CHARS, cwd))),
-		minRepeatedChars: Math.max(64, Math.floor(settingNumber("modelOutputGuard.minRepeatedChars", DEFAULT_MODEL_OUTPUT_MIN_REPEATED_CHARS, cwd))),
+		enabled: configBoolean(config, "enabled", true) && configBoolean(config, "modelOutputGuard.enabled", true),
+		options: {
+			maxChars: Math.max(0, Math.floor(configNumber(config, "modelOutputGuard.maxChars", DEFAULT_MODEL_OUTPUT_MAX_CHARS))),
+			maxConsecutiveRepeats: Math.max(2, Math.floor(configNumber(config, "modelOutputGuard.maxConsecutiveRepeats", DEFAULT_MODEL_OUTPUT_MAX_CONSECUTIVE_REPEATS))),
+			repetitionEnabled: configBoolean(config, "modelOutputGuard.repetition.enabled", true),
+			minRepeatBlockChars: Math.max(8, Math.floor(configNumber(config, "modelOutputGuard.minRepeatBlockChars", DEFAULT_MODEL_OUTPUT_MIN_REPEAT_BLOCK_CHARS))),
+			minRepeatedChars: Math.max(64, Math.floor(configNumber(config, "modelOutputGuard.minRepeatedChars", DEFAULT_MODEL_OUTPUT_MIN_REPEATED_CHARS))),
+		},
 	};
 }
 
@@ -688,10 +708,20 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
+	// Pi tears down and rebinds extension instances when replacing sessions, so
+	// this closure is already scoped to one active session runtime.
 	let modelOutputState = createModelOutputGuardState();
+	let modelOutputConfig: ModelOutputGuardConfigSnapshot | undefined;
 
 	const resetModelOutputState = () => {
 		modelOutputState = createModelOutputGuardState();
+		modelOutputConfig = undefined;
+	};
+
+	const snapshotModelOutputConfig = (ctx: ExtensionContext) => {
+		recordProjectTrust(ctx);
+		modelOutputConfig = modelOutputGuardConfigSnapshot(ctx.cwd);
+		return modelOutputConfig;
 	};
 
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
@@ -714,16 +744,18 @@ export default function outputPolicy(pi: ExtensionAPI): void {
 		SESSION_COUNTERS.delete(sessionIdForContext(ctx));
 	});
 
-	pi.on("message_start", (event: any) => {
-		if (event?.message?.role === "assistant") resetModelOutputState();
+	pi.on("message_start", (event: any, ctx: ExtensionContext) => {
+		if (event?.message?.role !== "assistant") return;
+		resetModelOutputState();
+		snapshotModelOutputConfig(ctx);
 	});
 
 	pi.on("message_update", (event: any, ctx: ExtensionContext) => {
-		recordProjectTrust(ctx);
-		if (!settingBoolean("enabled", true, ctx.cwd) || !settingBoolean("modelOutputGuard.enabled", true, ctx.cwd)) return;
 		const delta = assistantStreamDelta(event);
 		if (delta === undefined) return;
-		const detection = inspectModelOutputDelta(modelOutputState, delta, modelOutputGuardOptions(ctx.cwd));
+		const config = modelOutputConfig ?? snapshotModelOutputConfig(ctx);
+		if (!config.enabled) return;
+		const detection = inspectModelOutputDelta(modelOutputState, delta, config.options);
 		if (!detection || modelOutputState.aborted) return;
 		modelOutputState.aborted = true;
 		const detail = detection.reason === "repetition"
