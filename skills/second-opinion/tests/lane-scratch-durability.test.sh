@@ -540,6 +540,9 @@ out7="$TMP_ROOT/out7.json"
 printf 'stale\n' > "$out7.codex.json"
 printf 'stale raw response\n' > "$out7.codex.json.raw.txt"
 chmod 644 "$out7.codex.json" "$out7.codex.json.raw.txt"
+# The output path belongs to the caller, not to this tool: clearing the lane's
+# own family must not take anything else of theirs sitting under that prefix.
+printf 'my own notes\n' > "$out7.codex.json.notes"
 rc7=0
 run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" --output "$out7" || rc7=$?
 assert_eq "$rc7" "0" "two healthy lanes exit 0"
@@ -549,6 +552,7 @@ assert_stderr_has "[claude] " "the claude lane's log is replayed, lane-prefixed"
 assert_owner_only "$out7.codex.json" "the codex lane artifact is owner-only"
 assert_owner_only "$out7.claude.json" "the claude lane artifact is owner-only"
 assert_file_absent "$out7.codex.json.raw.txt" "a previous run's lane sidecar does not survive"
+assert_file_exists "$out7.codex.json.notes" "an unrelated caller file under the same prefix survives"
 
 # --- Scenario 8: a failing lane's own cause text survives ---------------------
 # review-pr documents the replayed cause as how an operator diagnoses exit 5.

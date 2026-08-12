@@ -64,14 +64,18 @@ key: for the same slot the stricter class wins.
 
 With `--output`, the union is written there and each lane's own artifact is
 kept beside it as `<output>.<target>.json`, with that lane's sidecar family
-(`.raw.txt`, `.retry.txt`, `.noreview.json`, `.failed.json`) next to it.
+(`.raw.txt`, `.retry.txt`, `.failed.json`, `.noreview.json`, `.incomplete.json`)
+next to it.
 Without `--output` the union goes to stdout and the per-lane artifacts are
 temp files the parent removes.
 
-Stale files at those paths are removed before lanes spawn — the union artifact
-and every lane's own family. A previous run's union would otherwise read as a
-fresh pass to a caller that continued past an advisory failure, and a previous
-run's lane artifact is misleading whether or not the current run overwrites it.
+Stale files at those paths are removed before lanes spawn — the union artifact,
+and each lane's artifact and those exact sidecar suffixes. A previous run's
+union would otherwise read as a fresh pass to a caller that continued past an
+advisory failure, and a previous run's lane artifact is misleading whether or
+not the current run overwrites it. The suffixes are enumerated, never globbed:
+the output path belongs to the caller, and anything else of theirs sitting
+under the same prefix is not this tool's to delete.
 
 Lane children run under a restrictive umask, so every file they write — lane
 artifacts and sidecars alike — is owner-only. The union artifact is written by
