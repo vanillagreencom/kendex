@@ -36,7 +36,7 @@ If invoked as `start github OWNER/REPO#N`, parse it before initialization:
    - `tracker`: `[TRACKER]` when parsed
    - `github_repo`: `[GITHUB_REPO]` when parsed
 
-3. **Gate on base freshness.** This expedited path reuses a worktree created earlier, so prove the base is current before any agent spends budget on it:
+3. **Gate on base freshness.** Every § 5 route out of `start.md` — continue-here, handoff, manual — lands here, so this one gate covers both a worktree just created in `start.md` § 4 and one reused from an earlier session. Prove the base is current before any agent spends budget on it:
    ```bash
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
    ```

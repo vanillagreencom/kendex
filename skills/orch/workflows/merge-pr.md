@@ -367,20 +367,62 @@ merge. Detach them first.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/github/scripts/git-https-auth -C [MAIN_REPO_ROOT] fetch --prune origin "+refs/heads/[BASE_BRANCH]:refs/remotes/origin/[BASE_BRANCH]"
-   git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"
-   git -C [MAIN_REPO_ROOT] worktree prune
    ```
    Target `origin` only. Optional secondary remotes must not block closure of
    the current PR. The fetch uses `git-https-auth`, which preserves normal SSH
    behavior unless a GitHub SSH remote is present and `gh` auth is valid; then
    it applies a per-command HTTPS/`gh auth git-credential` fallback. Fetch the
    base branch with an explicit refspec so narrowed `remote.origin.fetch`
-   config cannot leave `origin/[BASE_BRANCH]` stale or missing. Keep the local
-   fast-forward merge on plain `git` so credential helper config is not exposed
-   to merge-time repository hooks. Sync to the explicit fetched
-   `origin/[BASE_BRANCH]` ref with `--ff-only` so local main never gains
-   merge-bubble commits; if the fast-forward fails, stop and surface the
-   divergence for manual handling.
+   config cannot leave `origin/[BASE_BRANCH]` stale or missing. Keep every
+   local ref update below on plain `git` so credential helper config is not
+   exposed to merge-time repository hooks.
+
+   **Precondition — resolve which checkout owns `[BASE_BRANCH]` before
+   advancing it.** `merge --ff-only` advances whatever branch the target
+   checkout currently has on `HEAD`, not `[BASE_BRANCH]` by name: run in a
+   `[MAIN_REPO_ROOT]` sitting on a foreign branch it fast-forwards THAT branch
+   and exits 0, leaving local `[BASE_BRANCH]` exactly where it was with nothing
+   reported.
+   ```bash
+   git -C [MAIN_REPO_ROOT] rev-parse --abbrev-ref HEAD
+   ```
+   Use the output as `MAIN_HEAD_BRANCH` and route on it:
+
+   | `MAIN_HEAD_BRANCH` | Action |
+   |--------------------|--------|
+   | `[BASE_BRANCH]` | Advance in place: `git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"` |
+   | Any other branch, or `HEAD` (detached) | Do NOT ff-merge — advance the local ref by name instead: `git -C [MAIN_REPO_ROOT] fetch origin "[BASE_BRANCH]:[BASE_BRANCH]"`. That refspec form updates a branch no checkout has on `HEAD` and REFUSES a non-fast-forward, which is exactly the wanted semantics. |
+
+   The by-name fetch fails when `[BASE_BRANCH]` is checked out in another
+   worktree (`refusing to fetch into branch ... checked out at ...`). That is
+   not a stale outcome — locate that worktree and advance it there:
+   ```bash
+   git -C [MAIN_REPO_ROOT] worktree list
+   ```
+   Read the path whose bracketed branch is `[BASE_BRANCH]` as `BASE_WORKTREE`,
+   then `git -C [BASE_WORKTREE] merge --ff-only "origin/[BASE_BRANCH]"`.
+
+   Then prune stale worktree registrations:
+   ```bash
+   git -C [MAIN_REPO_ROOT] worktree prune
+   ```
+
+   **Blocking outcomes.** Each of these leaves local `[BASE_BRANCH]` behind
+   `origin/[BASE_BRANCH]`. Never record the sync as done on any of them, and
+   carry the named cause into § 7:
+
+   | Outcome | Report |
+   |---------|--------|
+   | The ff-merge refuses on uncommitted changes (`Your local changes to the following files would be overwritten by merge`) | **Blocking** post-merge condition naming every file git listed and the checkout it sits in — not an informational note |
+   | The by-name fetch is rejected as non-fast-forward | **Blocking** — local `[BASE_BRANCH]` has diverged from `origin/[BASE_BRANCH]`; name both shas |
+   | `[BASE_BRANCH]` is checked out in no reachable worktree and the by-name fetch failed for any other reason | **Blocking** — name the sha `origin/[BASE_BRANCH]` now points at and the git error |
+
+   **Report the result in § 7 either way.** When local `[BASE_BRANCH]` advanced,
+   § 7 records the new sha. When it could NOT be advanced, § 7 must carry a
+   WARNING naming the stale local sha, the `origin/[BASE_BRANCH]` sha, and the
+   cause — a stale main checkout is what later manual branch cuts start from
+   and what any agent reading `[MAIN_REPO_ROOT]` for repo facts will answer
+   from.
 
 5. **Sweep stale branches & worktrees** (after all PRs merged and synced). Default: scoped to current PR only — do not enumerate unrelated branches or sibling worktrees.
 
@@ -469,11 +511,18 @@ For each file flagged as overlapping in § 2.1:
 | Branch | [BRANCH_NAME] (deleted) |
 | Worktree | cleaned up |
 | Issue Tracker | [ISSUE_ID] → Done (via magic words) |
+| Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
 Include a `Review gate` row only when the merge did not proceed on a plain
 `approved`/`reviewed` verdict — surface `⚠️ reviewer-down proceed (no reviewer
 posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)` so a
 non-organic gate is visible in the record.
+
+The `Base sync` row is never omitted. When § 5 step 4 hit a blocking outcome,
+it carries the WARNING instead of a sha: `⚠️ local [BASE_BRANCH] STALE at
+[LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`, where `[CAUSE]`
+is the named blocking outcome (the dirty files, the divergence, or the git
+error). Report it the same way in the batch shape below.
 </output_format>
 
 ### Multiple PRs (`all`)
@@ -496,7 +545,8 @@ non-organic gate is visible in the record.
 | ⏭️ | #[P] | [ISSUE_ID] - [TITLE] | Review threads |
 | ❌ | #[Q] | [ISSUE_ID] - [TITLE] | Merge conflicts |
 
-Total: [N] PRs merged | Synced: origin fetch via git-https-auth + local ff-only merge
+Total: [N] PRs merged | Base sync: local `[BASE_BRANCH]` → [NEW_SHA]
+(or `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] — [CAUSE]`)
 
 ### 🧹 STALE CLEANUP
 

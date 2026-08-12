@@ -284,7 +284,27 @@ assert_file_contains "$merge_workflow" 'Treat `CHECK.transient` as the' "merge-p
 assert_file_contains "$merge_workflow" '.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 15 600' "merge-pr uses bounded CI wait for pending checks"
 assert_file_contains "$merge_workflow" 'Do not repeat § 3.1 indefinitely' "merge-pr forbids unbounded transient wait loops"
 assert_file_contains "$merge_workflow" 'git-https-auth -C [MAIN_REPO_ROOT] fetch --prune origin "+refs/heads/[BASE_BRANCH]:refs/remotes/origin/[BASE_BRANCH]"' "merge-pr sync fetches explicit origin base branch through HTTPS auth helper"
-assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"' "merge-pr sync fast-forwards to quoted fetched origin base branch with plain git"
+assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"' "merge-pr sync fast-forwards in place with plain git when the main checkout is on the base branch"
+
+# The post-merge sync must prove WHICH branch the ff-merge would advance before
+# running it: on a foreign HEAD the merge succeeds against that branch and local
+# base stays stale with nothing reported. Precondition, both non-ff-merge
+# routes, the blocking dirty outcome, and the § 7 stale WARNING are pinned.
+assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] rev-parse --abbrev-ref HEAD' "merge-pr sync resolves the main checkout's HEAD branch before advancing the base"
+assert_file_contains "$merge_workflow" 'Use the output as `MAIN_HEAD_BRANCH` and route on it' "merge-pr sync routes on MAIN_HEAD_BRANCH instead of ff-merging unconditionally"
+assert_file_contains "$merge_workflow" 'git -C [MAIN_REPO_ROOT] fetch origin "[BASE_BRANCH]:[BASE_BRANCH]"' "merge-pr sync advances a non-checked-out base by name with a refusing refspec"
+assert_file_contains "$merge_workflow" 'refusing to fetch into branch ... checked out at ...' "merge-pr sync routes the by-name fetch refusal to the worktree owning the base branch"
+assert_file_contains "$merge_workflow" 'git -C [BASE_WORKTREE] merge --ff-only "origin/[BASE_BRANCH]"' "merge-pr sync fast-forwards the base in its own worktree"
+assert_file_contains "$merge_workflow" '**Blocking** post-merge condition naming every file git listed' "merge-pr reports a merge-blocking dirty tree as blocking, naming the files"
+assert_file_contains "$merge_workflow" 'The `Base sync` row is never omitted' "merge-pr § 7 always reports the base sync outcome"
+assert_file_contains "$merge_workflow" '⚠️ local [BASE_BRANCH] STALE at' "merge-pr § 7 warns with the stale local base sha when the sync could not advance it"
+assert_file_not_contains "$merge_workflow" 'divergence for manual handling' "merge-pr replaces the informational sync-failure note with defined blocking outcomes"
+
+# start-worktree's base-freshness gate is reached by every start.md § 5 route,
+# so it must not read as reuse-only.
+start_worktree_workflow="$REPO_ROOT/skills/orch/workflows/start-worktree.md"
+assert_file_contains "$start_worktree_workflow" '.agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]' "start-worktree gates on the base-freshness script"
+assert_file_contains "$start_worktree_workflow" 'a worktree just created in `start.md` § 4 and one reused from an earlier session' "start-worktree's freshness gate covers freshly created worktrees, not only reused ones"
 assert_file_not_contains "$merge_workflow" 'branch -D "$PR_BRANCH"' "merge-pr § 5a no longer force-deletes the PR branch unconditionally"
 assert_file_contains "$merge_workflow" 'branch refs/heads/[PR_BRANCH]' "merge-pr § 5a guards branch delete against worktree checkout"
 assert_file_contains "$merge_workflow" 'a GitHub-native approval verdict is required' "merge-pr treats not_approved as a merge gate in approval mode"
