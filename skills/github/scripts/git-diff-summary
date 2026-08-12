@@ -407,6 +407,36 @@ scan_decl_records() {
                         gated = 0; pathattr = ""
                         continue
                     }
+                    # include! handled HERE for every delimiter form: the
+                    # generic boundary would cut a brace-form argument at
+                    # the opening brace and then skip it as a body, losing
+                    # the route. Find the matching close at depth 0 on the
+                    # mask; a direct string-literal argument emits with
+                    # the pending gate, anything else is a computed
+                    # argument (declared no-record) consumed silently. No
+                    # close in the buffer yet means the call continues on
+                    # a later line: wait for it.
+                    idelim = RLENGTH
+                    iclose = (mdelim == "{") ? "}" : (mdelim == "(" ? ")" : "]")
+                    idepth = 1; ipos = idelim + 1; blen2 = length(mbuf)
+                    while (ipos <= blen2 && idepth > 0) {
+                        ic = substr(mbuf, ipos, 1)
+                        if (ic == mdelim) idepth++
+                        else if (ic == iclose) idepth--
+                        ipos++
+                    }
+                    if (idepth > 0) break
+                    iseg = substr(mbuf, idelim + 1, ipos - idelim - 2)
+                    if (match(iseg, /^[[:space:]]*(r#*)?"[^"]*"[[:space:]]*$/) \
+                        && match(iseg, /"[^"]*"/))
+                        printf "%s\t%s\n", (gated ? "G" : "U"), \
+                            normpath(join(fdir, substr(substr(buf, idelim + 1, ipos - idelim - 2), RSTART + 1, RLENGTH - 2)))
+                    buf = substr(buf, ipos); mbuf = substr(mbuf, ipos)
+                    if (mbuf ~ /^[[:space:]]*;/) {
+                        sub(/^[[:space:]]*;/, "", buf); sub(/^[[:space:]]*;/, "", mbuf)
+                    }
+                    gated = 0; pathattr = ""
+                    continue
                 }
                 # Any other item: consume to the next boundary (; { or })
                 # on the mask, scanning the chunk for include! routes. A

@@ -1716,5 +1716,29 @@ shebang_json="$($SUMMARY -C "$shebang_repo" --staged)"
 assert_eq "shebang does not swallow the following declaration"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$shebang_json")"
 assert_eq "shebang fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$shebang_json")"
 
+# Brace-delimited include invocation: include! { "cand.rs" } is a valid
+# production route and must emit, not be cut at the opening brace and
+# skipped as a body.
+binc_repo="$SANDBOX/brace-include"
+init_repo "$binc_repo"
+mkdir -p "$binc_repo/src"
+cat > "$binc_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+include! { "cand.rs" }
+RUST
+git -C "$binc_repo" add src
+git -C "$binc_repo" commit -q -m lib
+cat > "$binc_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$binc_repo" add src/cand.rs
+binc_json="$($SUMMARY -C "$binc_repo" --staged)"
+assert_eq "brace-delimited include emits its production route"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$binc_json")"
+assert_eq "brace-include fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$binc_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
