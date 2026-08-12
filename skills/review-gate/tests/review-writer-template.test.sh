@@ -18,9 +18,10 @@
 # runs. In a CONSUMER the adopted copy is normally PRESENT and legitimately
 # differs from the template (its own default branch in the ADAPT markers, an
 # optional check_run guard) — so the pins and the relay battery run against it
-# there too, while the whole-file drift check does not, being a
-# self-adoption-only invariant. Only the template is asserted when no adopted
-# copy is found at all.
+# there too, and every ADAPT-bearing pin asserts the SHAPE the ADAPT preserves
+# rather than the catalog's own value; only the catalog additionally pins the
+# literal. The whole-file drift check is a self-adoption-only invariant. Only
+# the template is asserted when no adopted copy is found at all.
 #
 # THE RELAY NEVER REDS is the invariant every relay case asserts, over both
 # the runner's shells AND over its own environment (each env: binding dropped
@@ -56,6 +57,22 @@ assert_contains() {
   fi
 }
 
+# EXACT on the clamped wait the step computed and announced (RELAY_WAIT), not
+# on the number handed to sleep — that one carries the step's random jitter.
+# The relationship between the two is asserted per run in relay_run, so
+# nothing is lost by pinning the deterministic half here. Nothing below reads
+# a clock: the step's is stubbed, so no case is time-dependent.
+RELAY_JITTER_MAX=0
+assert_sleep() { # base, tag, name
+  local base="$1" tag="$2" name="$3"
+  if [[ "$RELAY_WAIT" == "$base" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "$name"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        expected a %ss wait, got: %s (slept [%s])\n' \
+      "$tag" "$name" "$base" "${RELAY_WAIT:-<no retry warning>}" "$RELAY_SLEEPS"
+  fi
+}
+
 # ------------------------------------------------------------- the copies ---
 
 TEMPLATE="$SKILL_ROOT/templates/review-gate-writer.yml"
@@ -73,6 +90,15 @@ while [[ "$_dir" != "/" ]]; do
   _dir="$(dirname "$_dir")"
 done
 
+# CATALOG or CONSUMER. Which one this is decides two things: whether the
+# adopted copy is this repo's own artifact or a consumer's ADAPTed one (its
+# label, and whether the whole-file drift check is meaningful), and whether
+# the ADAPT'd literals may be pinned as literals at all.
+IS_CATALOG=0
+[[ "$SKILL_ROOT" == */skills/review-gate && "$SKILL_ROOT" != */.agents/* ]] && IS_CATALOG=1
+ADOPTED_LABEL="adopted copy"
+[[ "$IS_CATALOG" -eq 1 ]] && ADOPTED_LABEL="self-adoption copy"
+
 WORKFLOWS=()
 WORKFLOW_LABELS=()
 if [[ -f "$TEMPLATE" ]]; then
@@ -81,7 +107,7 @@ else
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "the shipped template is missing at $TEMPLATE"
 fi
 if [[ -n "$SELF_ADOPTION" && -f "$SELF_ADOPTION" ]]; then
-  WORKFLOWS+=("$SELF_ADOPTION"); WORKFLOW_LABELS+=("self-adoption copy")
+  WORKFLOWS+=("$SELF_ADOPTION"); WORKFLOW_LABELS+=("$ADOPTED_LABEL")
 else
   printf '  note  %s\n' "no adopted workflow found at ${SELF_ADOPTION:-<no enclosing repo root>} — asserting the template only"
 fi
@@ -91,6 +117,10 @@ fi
 pin_workflows() { # file, label
   local wf="$1" tag="$2"
   local write_block relay_block rc count
+  # The ADAPT-shape regexes below match a quoted branch name; a literal
+  # apostrophe inside a single-quoted pattern is unwritable, so hold one here.
+  local q="'"
+
 
   pin() { # needle, name
     if grep -qF -- "$1" "$wf"; then
@@ -114,10 +144,21 @@ pin_workflows() { # file, label
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the write job's if: is exactly the two converge legs (VST-210: no PR-attached leg holds the evictable group)"
   fi
-  if grep -qF -- "    if: github.event_name != 'merge_group' && github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'" <<<"$relay_block"; then
-    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay's if: is the NEGATIVE list (a newly added PR-attached trigger relays by default, and the dispatch target is excluded so no loop exists)"
+  # TERM-WISE, not full-line: adoption.md invites a consumer to hand-add a
+  # check_run name guard to this very expression, so a byte-equality pin fails
+  # the repos that followed the documented instruction. What must survive any
+  # such edit are the three exclusions — without them a converge leg relays and
+  # the self-dispatch loop has no throttle.
+  local if_line if_missing term
+  if_line="$(grep -m 1 -E '^    if: ' <<<"$relay_block" || true)"
+  if_missing=""
+  for term in "github.event_name != 'merge_group'" "github.event_name != 'workflow_dispatch'" "github.event_name != 'schedule'"; do
+    grep -qF -- "$term" <<<"$if_line" || if_missing="${if_missing:+$if_missing }[$term]"
+  done
+  if [[ -n "$if_line" && -z "$if_missing" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay's if: keeps all three NEGATIVE terms (a newly added PR-attached trigger relays by default, and both dispatch targets are excluded so no loop exists)"
   else
-    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay's if: is the NEGATIVE list (a newly added PR-attached trigger relays by default, and the dispatch target is excluded so no loop exists)"
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        missing from the relay if: %s\n' "$tag" "tpl: the relay's if: keeps all three NEGATIVE terms (a newly added PR-attached trigger relays by default, and both dispatch targets are excluded so no loop exists)" "${if_missing:-<no if: line at all>}"
   fi
 
   # EVERY status STATE converges (no state filter of ANY spelling): under
@@ -186,19 +227,21 @@ pin_workflows() { # file, label
   # breaking the default-branch-defined-writer guarantee the design rests
   # on. Two teeth: the exact literal is present on the relay, and no OTHER
   # DISPATCH_REF value can exist anywhere.
-  if grep -qF -- "DISPATCH_REF: \${{ github.event.repository.default_branch || 'main' }}" <<<"$relay_block"; then
+  if grep -qE -- "DISPATCH_REF: \\\$\{\{ github\.event\.repository\.default_branch \|\| ${q}[^${q}]+${q} \}\}" <<<"$relay_block"; then
     PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay dispatches onto the DEFAULT branch with the empty-expression fallback"
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay's DISPATCH_REF is not the default-branch expression — the converge pass would run a non-default-branch engine"
   fi
-  count="$(grep -cF -- "DISPATCH_REF:" "$wf" || true)"
-  assert_eq "$count" "1" "[$tag] tpl: exactly ONE DISPATCH_REF binding (a second could not be reached by the literal pin above)"
+  # The env: BINDING, at its own indentation — the step reads the same name
+  # into a defaulted local, and counting that as a second binding would make
+  # the pin fire on the fail-closed guard instead of on a real second value.
+  count="$(grep -cE '^      DISPATCH_REF: ' "$wf" || true)"
+  assert_eq "$count" "1" "[$tag] tpl: exactly ONE DISPATCH_REF binding (a second could not be reached by the shape pin above)"
 
   # --- the budget pair: backoff cap vs the job's timeout ----------------
-  # Both halves were reconciled by hand in round 1 and only one was pinned.
   # Assert the RELATION, not the literals, so a deliberate coordinated retune
   # still passes and an uncoordinated one lands on a test that explains why.
-  local tmo cap_s attempt_s worst
+  local tmo cap_s attempt_s jitter_s worst
   # `|| true` on each: a no-match grep exits 1, and under this file's
   # `set -euo pipefail` that status propagates out of the command
   # substitution and kills the SUITE — so removing the very term being pinned
@@ -209,14 +252,15 @@ pin_workflows() { # file, label
   # Extracted, not hardcoded: all three terms of the budget come from the
   # file, so raising any one of them without the others lands here.
   attempt_s="$(grep -oE 'timeout [0-9]+ gh api' <<<"$relay_block" | head -n 1 | awk '{print $2}' || true)"
-  if [[ -z "$tmo" || -z "$cap_s" || -z "$attempt_s" ]]; then
-    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        timeout-minutes=%s cap=%s per-attempt=%s\n' "$tag" "tpl: could not read the relay's timeout-minutes, backoff cap and per-attempt bound — the budget is unpinned" "$tmo" "$cap_s" "$attempt_s"
+  jitter_s="$(grep -oE '^          jitter_max=[0-9]+' <<<"$relay_block" | head -n 1 | cut -d= -f2 || true)"
+  if [[ -z "$tmo" || -z "$cap_s" || -z "$attempt_s" || -z "$jitter_s" ]]; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        timeout-minutes=%s cap=%s per-attempt=%s jitter_max=%s\n' "$tag" "tpl: could not read the relay's timeout-minutes, backoff cap, per-attempt bound and jitter bound — the budget is unpinned" "$tmo" "$cap_s" "$attempt_s" "$jitter_s"
   else
     # Worst case the step can produce: two bounded dispatch attempts plus the
-    # capped wait between them.
-    worst=$(( 2 * attempt_s + cap_s ))
+    # capped wait between them plus the jitter added on top of that wait.
+    worst=$(( 2 * attempt_s + cap_s + jitter_s ))
     if (( tmo * 60 > worst )); then
-      PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay's timeout budget (${tmo}m) still outlasts its worst case (2 x ${attempt_s}s attempts + ${cap_s}s cap = ${worst}s) — a retry can finish instead of being CANCELLED on the PR head"
+      PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the relay's timeout budget (${tmo}m) still outlasts its worst case (2 x ${attempt_s}s attempts + ${cap_s}s cap + ${jitter_s}s jitter = ${worst}s) — a retry can finish instead of being CANCELLED on the PR head"
     else
       FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay's timeout budget (${tmo}m) is NOT above its worst case (${worst}s) — a rate-limit retry would be killed by the timeout, leaving a cancelled check on the PR head"
     fi
@@ -225,7 +269,15 @@ pin_workflows() { # file, label
   # --- no unbounded or unchecked calls in the relay ---------------------
   assert_contains "$relay_block" "tr -d '\\r'" "[$tag] tpl: response header reads strip CR — a CRLF status line otherwise carries \\r into the status comparison"
   assert_eq "$(grep -cF -- "tr -d '\\r'" <<<"$relay_block" || true)" "2" "[$tag] tpl: BOTH header readers normalize CR (header and header_status), not just one"
-  assert_contains "$relay_block" "timeout 60 gh api" "[$tag] tpl: each dispatch attempt is time-bounded — an unresponsive API would otherwise hang to timeout-minutes and be CANCELLED on the PR head"
+  # VALUE-AGNOSTIC: the magnitude is the extracted relation's business above.
+  # A literal here contradicts it — a coordinated retune to 90s attempts and a
+  # 10-minute budget satisfies the relation and reds this pin.
+  rc=0; grep -qE 'timeout [0-9]+ gh api' <<<"$relay_block" || rc=$?
+  case "$rc" in
+    0) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: each dispatch attempt is time-bounded — an unresponsive API would otherwise hang to timeout-minutes and be CANCELLED on the PR head" ;;
+    1) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: a dispatch attempt lost its timeout bound — an unresponsive API hangs to timeout-minutes and lands a CANCELLED check on the PR head" ;;
+    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "tpl: the relay block could not be read (grep error)" ;;
+  esac
   # Comment lines stripped first: the block explains WHY it allocates no temp
   # file, and a needle that its own rationale satisfies is not a check.
   rc=0; grep -v '^ *#' <<<"$relay_block" | grep -q 'mktemp' || rc=$?
@@ -292,11 +344,21 @@ pin_workflows() { # file, label
 
   # --- checkouts --------------------------------------------------------
   pin "if: failure() || cancelled()" "tpl: VST-36 escalation covers timeout-cancelled jobs"
-  pin "persist-credentials: false" "tpl: checkouts drop credentials"
+  # COUNTED against the checkouts: a single-match pin is satisfied by the
+  # first checkout in the file and says nothing about the second, so dropping
+  # it from the write job's checkout leaves the suite green.
+  local checkouts creds
+  checkouts="$(grep -c 'uses: actions/checkout' "$wf" || true)"
+  creds="$(grep -cF -- "persist-credentials: false" "$wf" || true)"
+  if [[ "$checkouts" != "0" && "$creds" == "$checkouts" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: all $checkouts checkout(s) drop credentials"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        %s checkout(s), %s persist-credentials: false\n' "$tag" "tpl: EVERY checkout must drop credentials (a write-capable token on a checked-out tree is the pull_request_target hazard)" "$checkouts" "$creds"
+  fi
   pin "github.event.pull_request.head.repo.full_name != github.repository" "tpl: fork pull_request_review read-only flag"
   # BOTH engine checkouts are counted: a one-match pin would stay green if
   # either job regressed to the bare expression.
-  count="$(grep -cF -- "ref: \${{ github.event.repository.default_branch || 'main' }}" "$wf" || true)"
+  count="$(grep -cE -- "ref: \\\$\{\{ github\.event\.repository\.default_branch \|\| ${q}[^${q}]+${q} \}\}" "$wf" || true)"
   assert_eq "$count" "2" "[$tag] tpl: BOTH checkouts pin the default branch with the empty-expression fallback"
   rc=0; grep -qF -- 'ref: ${{ github.event.repository.default_branch }}' "$wf" || rc=$?
   case "$rc" in
@@ -310,6 +372,24 @@ echo "=== workflow pins ==="
 for i in "${!WORKFLOWS[@]}"; do
   pin_workflows "${WORKFLOWS[$i]}" "${WORKFLOW_LABELS[$i]}"
 done
+
+# The ADAPT'd literal itself — CATALOG ONLY. The three pins above accept any
+# quoted fallback branch because adoption.md instructs consumers to change it,
+# and a literal pin there fails exactly the repos that followed the
+# instruction. In this repo the value is not config to be discovered, so it is
+# pinned here: two checkouts and the relay's DISPATCH_REF, all on 'main'.
+_bad=""
+if [[ "$IS_CATALOG" -eq 1 ]]; then
+  for i in "${!WORKFLOWS[@]}"; do
+    _count="$(grep -cF -- "github.event.repository.default_branch || 'main'" "${WORKFLOWS[$i]}" || true)"
+    [[ "$_count" == "3" ]] || _bad="${_bad:+$_bad, }${WORKFLOW_LABELS[$i]}=$_count"
+  done
+  if [[ -z "$_bad" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    %s\n' "tpl: this repo's own ADAPT value is 'main' at all three sites (both checkouts and the relay's DISPATCH_REF)"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected 3 per copy, got: %s\n' "tpl: this repo's ADAPT value must be 'main' at all three sites — a wrong fallback dispatches a branch that does not exist, and every dispatch 422s into the cron floor" "$_bad"
+  fi
+fi
 
 # ---------------------------------------------------- relay step behavior ---
 
@@ -341,6 +421,22 @@ echo "$1" >> "$SLEEP_LOG"
 exit 0
 RELAY_SLEEP
 chmod +x "$RELAY_BIN/sleep"
+# The step derives an exhausted window's wait as `reset - $(date +%s)`. With a
+# REAL clock the fixture's reset epoch is stamped when the case is built and
+# the subtraction happens when the step runs, so a case that straddles a
+# one-second boundary computes a wait one lower than the case it is compared
+# against — and relay_run runs every case twice and asserts the two agree.
+# Measured at 43 disagreements in 64 parallel runs. Freezing the clock removes
+# the race outright and lets the waits be asserted exactly.
+FAKE_NOW=1700000000
+cat > "$RELAY_BIN/date" <<'RELAY_DATE'
+#!/usr/bin/env bash
+[ "$1" = "+%s" ] && { echo "${FAKE_NOW:-1700000000}"; exit 0; }
+for d in /usr/bin/date /bin/date; do [ -x "$d" ] && exec "$d" "$@"; done
+echo "date stub: no system date found" >&2
+exit 127
+RELAY_DATE
+chmod +x "$RELAY_BIN/date"
 
 RELAY_LOG="$TMP_ROOT/relay-gh.log"
 SLEEP_LOG="$TMP_ROOT/relay-sleep.log"
@@ -348,10 +444,10 @@ SLEEP_LOG="$TMP_ROOT/relay-sleep.log"
 # THE SHELLS THE RUNNER ACTUALLY USES. A `run:` block with no `shell:` key
 # gets `bash -e {0}`; an explicit `shell: bash` gets
 # `bash --noprofile --norc -eo pipefail {0}`. Running the extracted step under
-# plain `bash` — as this harness first did — models NEITHER, and that gap hid
-# real reds: under `-e` an underivable workflow_ref exited 1, and under
-# pipefail a no-match `grep` inside the header helper killed the step on the
-# ORDINARY retry path. Every case runs under both, and the two must agree.
+# plain `bash` models NEITHER, and the difference is load-bearing: under `-e`
+# an underivable workflow_ref exits 1, and under pipefail a no-match `grep`
+# inside the header helper kills the step on the ORDINARY retry path. Every
+# case runs under both, and the two must agree.
 RELAY_SHELLS=("-e" "-eo pipefail")
 
 # RELAY_DROP names one env: binding to leave UNSET for this invocation, so
@@ -359,7 +455,7 @@ RELAY_SHELLS=("-e" "-eo pipefail")
 # API responses. The step runs under `set -u`, so an unbound read is a red —
 # and a red here is a failed check on a PR head, permanently, on every event.
 RELAY_DROP=""
-_relay_once() { # shell-flags, step-path, read_only, ref, codes, event, headers
+_relay_once() { # shell-flags, step-path, read_only, ref, codes, event, headers, check_name
   : > "$RELAY_LOG"; : > "$SLEEP_LOG"
   local env_kv=(
     "WRITER_READ_ONLY=$3"
@@ -367,6 +463,7 @@ _relay_once() { # shell-flags, step-path, read_only, ref, codes, event, headers
     "EVENT_NAME=${6:-pull_request_target}"
     "GH_REPO=o/r"
     "DISPATCH_REF=main"
+    "CHECK_NAME=${8:-}"
   )
   local keep=() kv
   for kv in "${env_kv[@]}"; do
@@ -374,18 +471,29 @@ _relay_once() { # shell-flags, step-path, read_only, ref, codes, event, headers
     keep+=("$kv")
   done
   set +e
-  RELAY_OUT="$(env -u WRITER_READ_ONLY -u WORKFLOW_REF -u EVENT_NAME -u GH_REPO -u DISPATCH_REF \
+  RELAY_OUT="$(env -u WRITER_READ_ONLY -u WORKFLOW_REF -u EVENT_NAME -u GH_REPO -u DISPATCH_REF -u CHECK_NAME \
     GH_LOG="$RELAY_LOG" SLEEP_LOG="$SLEEP_LOG" GH_CODES="$5" GH_HEADERS="${7:-}" \
-    PATH="$RELAY_BIN:$PATH" "${keep[@]}" \
+    FAKE_NOW="$FAKE_NOW" PATH="$RELAY_BIN:$PATH" "${keep[@]}" \
     bash $1 "$2" 2>&1)"
   RELAY_RC=$?
   set -e
   RELAY_CALLS="$(cat "$RELAY_LOG")"
   RELAY_SLEEPS="$(cat "$SLEEP_LOG")"
+  # The step announces the CLAMPED wait and its JITTER separately and sleeps
+  # their sum. Split them back out. The clamp is the whole deterministic
+  # computation — it is what every case asserts and what the two shells are
+  # compared on; the jitter is random by construction, so comparing IT across
+  # shells would compare noise, not behavior. The recorded sleep is not
+  # dropped: relay_run asserts, per shell, that it equals the sum the step
+  # announced and that the jitter stayed inside its declared bound.
+  RELAY_WAIT=""; RELAY_JITTER=""
+  if [[ "$RELAY_OUT" =~ retrying\ once\ in\ ([0-9]+)s\ \+\ ([0-9]+)s\ jitter ]]; then
+    RELAY_WAIT="${BASH_REMATCH[1]}"; RELAY_JITTER="${BASH_REMATCH[2]}"
+  fi
 }
 
-relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, headers
-  local first_rc="" first_calls="" first_sleeps="" flags
+relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, headers, check_name
+  local first_rc="" first_calls="" first_wait="" flags detail
   for flags in "${RELAY_SHELLS[@]}"; do
     _relay_once "$flags" "$@"
     # THE INVARIANT, asserted on every case rather than per-case so a future
@@ -394,6 +502,22 @@ relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, header
     # mergeStateStatus at UNSTABLE — the defect VST-210 removes. Nothing this
     # step can hit justifies that, because it holds no statuses scope and can
     # only ever leave the gate stale, which the cron floor owns.
+    # What was announced is what was slept, and the jitter stayed inside its
+    # bound. Per shell, because the cross-shell comparison normalizes the
+    # random half out — without this nothing would catch a jitter that escaped
+    # its bound or a sleep that ignored the wait it printed.
+    if [[ -n "$RELAY_SLEEPS" || -n "$RELAY_WAIT" ]]; then
+      if [[ "$RELAY_WAIT" =~ ^[0-9]+$ && "$RELAY_JITTER" =~ ^[0-9]+$ ]] \
+         && (( RELAY_JITTER < RELAY_JITTER_MAX )) \
+         && [[ "$RELAY_SLEEPS" == "$(( RELAY_WAIT + RELAY_JITTER ))" ]]; then
+        PASS=$((PASS + 1))
+      else
+        FAIL=$((FAIL + 1))
+        printf '  FAIL  %s\n        [bash %s] announced %ss + %ss jitter (bound %s), slept: [%s]\n' \
+          "relay INVARIANT: the wait slept is the wait announced, and the jitter is bounded" \
+          "$flags" "${RELAY_WAIT:-<none>}" "${RELAY_JITTER:-<none>}" "$RELAY_JITTER_MAX" "$RELAY_SLEEPS"
+      fi
+    fi
     if [[ "$RELAY_RC" != "0" ]]; then
       FAIL=$((FAIL + 1))
       printf '  FAIL  %s\n        exit %s under [bash %s]\n        output: %s\n' \
@@ -403,12 +527,25 @@ relay_run() { # step-path, read_only, workflow_ref, gh_codes, event_name, header
       PASS=$((PASS + 1))
     fi
     if [[ -z "$first_rc" ]]; then
-      first_rc="$RELAY_RC"; first_calls="$RELAY_CALLS"; first_sleeps="$RELAY_SLEEPS"
-    elif [[ "$RELAY_RC" != "$first_rc" || "$RELAY_CALLS" != "$first_calls" || "$RELAY_SLEEPS" != "$first_sleeps" ]]; then
+      first_rc="$RELAY_RC"; first_calls="$RELAY_CALLS"; first_wait="$RELAY_WAIT"
+    elif [[ "$RELAY_RC" != "$first_rc" || "$RELAY_CALLS" != "$first_calls" || "$RELAY_WAIT" != "$first_wait" ]]; then
       FAIL=$((FAIL + 1))
-      printf '  FAIL  %s\n        [bash %s] rc=%s vs rc=%s under [bash %s]\n' \
+      # Three dimensions are compared, so the diagnostic must say WHICH one
+      # moved: printing rc alone reports "rc=0 vs rc=0" for a divergence in
+      # the calls or the wait and sends the reader looking at exit codes.
+      detail=""
+      if [[ "$RELAY_RC" != "$first_rc" ]]; then
+        detail+="$(printf '\n        rc:           %s -> %s' "$first_rc" "$RELAY_RC")"
+      fi
+      if [[ "$RELAY_CALLS" != "$first_calls" ]]; then
+        detail+="$(printf '\n        RELAY_CALLS:  [%s] -> [%s]' "$first_calls" "$RELAY_CALLS")"
+      fi
+      if [[ "$RELAY_WAIT" != "$first_wait" ]]; then
+        detail+="$(printf '\n        wait:         [%s] -> [%s]' "$first_wait" "$RELAY_WAIT")"
+      fi
+      printf '  FAIL  %s\n        [bash %s] diverged from [bash %s]:%s\n' \
         "relay INVARIANT: behavior is identical under both runner shells (a pipefail-only difference is a latent red)" \
-        "$flags" "$RELAY_RC" "$first_rc" "${RELAY_SHELLS[0]}"
+        "$flags" "${RELAY_SHELLS[0]}" "$detail"
     else
       PASS=$((PASS + 1))
     fi
@@ -432,6 +569,13 @@ relay_battery() { # file, label
     PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "relay: the step script extracted from the workflow (non-empty, dispatches)"
   else
     FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay: could NOT extract the step script — every case below would prove nothing"
+    return
+  fi
+  # Read from the step, not hardcoded: every wait assertion below is stated as
+  # an exact clamp plus this bound, so a retuned jitter must move them with it.
+  RELAY_JITTER_MAX="$(grep -oE '^jitter_max=[0-9]+' "$step" | head -n 1 | cut -d= -f2 || true)"
+  if [[ -z "$RELAY_JITTER_MAX" ]]; then
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n' "$tag" "relay: could not read jitter_max from the extracted step — every wait assertion below would be unbounded"
     return
   fi
 
@@ -488,15 +632,17 @@ relay_battery() { # file, label
   # --- the retry ladder, against REAL response shapes ------------------
   # EVERY GitHub response — including 404s, 422s and 5xx — carries the five
   # x-ratelimit headers. Fixtures that omit them model a response GitHub does
-  # not send, and that is precisely how a dead ladder passed review: reading
-  # x-ratelimit-reset whenever retry-after was absent fired on every failure,
-  # produced an hour-scale wait, tripped the budget refusal, and left the
-  # relay making exactly one attempt in production while the suite stayed
-  # green. So every fixture below carries a realistic header set, and the
-  # rate-limit cases differ from the ordinary ones only where GitHub differs:
-  # x-ratelimit-remaining, retry-after, or the secondary-limit body.
+  # not send, and the difference is not cosmetic: reading x-ratelimit-reset
+  # whenever retry-after is absent fires on every failure, produces an
+  # hour-scale wait, trips the budget refusal, and leaves the relay making
+  # exactly one attempt in production while a header-less fixture stays green.
+  # So every fixture below carries a realistic header set, and the rate-limit
+  # cases differ from the ordinary ones only where GitHub differs:
+  # x-ratelimit-remaining, retry-after, a 429 status, or the secondary-limit
+  # body. `now` is the STUBBED clock the step reads, so a reset epoch built
+  # from it means exactly what the step computes.
   local rl_ok rl_spent now
-  now="$(date +%s)"
+  now="$FAKE_NOW"
   rl_ok="X-Ratelimit-Limit: 5000
 X-Ratelimit-Remaining: 4947
 X-Ratelimit-Reset: $(( now + 1400 ))
@@ -507,13 +653,21 @@ X-Ratelimit-Resource: core"
 
   # No response at all — a transport failure, not an HTTP answer.
   relay_run "$step" 0 "$ref" "1 0" pull_request_target
-  assert_eq "$RELAY_SLEEPS" "5" "[$tag] relay9: a failure with NO response at all retries quickly — the 60s floor belongs to the rate-limit shapes, not to every failure"
+  assert_sleep 5 "$tag" "relay9: a failure with NO response at all retries quickly — the 60s floor belongs to the rate-limit shapes, not to every failure"
+  assert_contains "$RELAY_OUT" "no HTTP response, gh exit 1" "[$tag] relay9: and the warning names the cause — this job's whole run log is that warning, so one naming no cause has nowhere to send its reader"
+
+  # `timeout` kills the attempt: not an API answer at all, and the one cause
+  # whose fix (the bound itself) is in this file rather than at GitHub.
+  relay_run "$step" 0 "$ref" "124 0" pull_request_target
+  assert_sleep 5 "$tag" "relay9b: a dispatch killed by its own per-attempt bound retries quickly"
+  assert_contains "$RELAY_OUT" "the dispatch API did not respond within" "[$tag] relay9b: and is reported as a timeout, not as an HTTP answer"
 
   # SECONDARY limit, the shape that sends retry-after.
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 retry-after: 77
 $rl_ok"
-  assert_eq "$RELAY_SLEEPS" "77" "[$tag] relay10: retry-after is honored (secondary limit)"
+  assert_sleep 77 "$tag" "relay10: retry-after is honored (secondary limit)"
+  assert_contains "$RELAY_OUT" "HTTP 403, gh exit 1" "[$tag] relay10: and the warning names the status it backed off from"
 
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 retry-after: 4000
@@ -523,43 +677,56 @@ $rl_ok"
   assert_contains "$RELAY_OUT" "beyond this job's budget" "[$tag] relay11: the deferral names its reason"
 
   # PRIMARY limit: the window is SPENT (remaining 0) and a reset epoch says
-  # when it refills. Computed from now so the case is not time-brittle.
+  # when it refills. Exact against the stubbed clock.
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 $rl_spent
 X-Ratelimit-Reset: $(( now + 90 ))"
-  case "$RELAY_SLEEPS" in
-    88|89|90) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "relay12: an EXHAUSTED window (remaining 0) honors its reset epoch — slept ${RELAY_SLEEPS}s" ;;
-    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        expected ~90, got: %s\n' "$tag" "relay12: an exhausted window honors its reset epoch" "$RELAY_SLEEPS" ;;
-  esac
+  assert_sleep 90 "$tag" "relay12: an EXHAUSTED window (remaining 0) honors its reset epoch"
 
-  # THE REGRESSION THIS ROUND FIXED: the same reset epoch with the window
-  # HEALTHY is an ordinary header, not rate-limit evidence. Reading it here
-  # is what killed the ladder.
+  # The same reset epoch with the window HEALTHY is an ordinary header, not
+  # rate-limit evidence.
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
 $rl_ok"
-  assert_eq "$RELAY_SLEEPS" "5" "[$tag] relay12b: a healthy window's reset epoch is NOT a wait instruction — a 5xx still takes the quick transient retry (the dead-ladder regression)"
+  assert_sleep 5 "$tag" "relay12b: a healthy window's reset epoch is not a wait instruction — a 5xx still takes the quick transient retry"
   assert_eq "$(grep -c . <<<"$RELAY_CALLS")" "2" "[$tag] relay12b: and the retry actually happens"
 
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 $rl_spent
 X-Ratelimit-Reset: 1000000000"
-  assert_eq "$RELAY_SLEEPS" "60" "[$tag] relay13: a reset epoch in the PAST falls to the floor, never a negative sleep"
+  assert_sleep 60 "$tag" "relay13: a reset epoch in the PAST falls to the floor, never a negative sleep"
+
+  # An exhausted window whose reset header is missing or unusable: the
+  # sanitizer must drop it and leave the floor, never pass it to sleep.
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
+$rl_spent"
+  assert_sleep 60 "$tag" "relay13b: an exhausted window with NO reset header takes the floor — the derivation is skipped, not attempted against an empty value"
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
+$rl_spent
+X-Ratelimit-Reset: soon"
+  assert_sleep 60 "$tag" "relay13c: and a NON-NUMERIC reset is discarded before it can reach the arithmetic"
 
   # The clamp direction relay10 cannot reach.
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 retry-after: 3
 $rl_ok"
-  assert_eq "$RELAY_SLEEPS" "60" "[$tag] relay14: a sub-minute retry-after is raised to the 60s floor — obeying 3s verbatim retries back inside the limit"
+  assert_sleep 60 "$tag" "relay14: a sub-minute retry-after is raised to the 60s floor — obeying 3s verbatim retries back inside the limit"
 
   # SECONDARY limit without retry-after: the body is the only evidence left.
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 $rl_ok
 {\"message\":\"You have exceeded a secondary rate limit. Please wait a few minutes before you try again.\"}"
-  assert_eq "$RELAY_SLEEPS" "60" "[$tag] relay15: a secondary-limit 403 that sends no retry-after is recognized from its body and takes the floor"
+  assert_sleep 60 "$tag" "relay15: a secondary-limit 403 that sends no retry-after is recognized from its body and takes the floor"
+
+  # The status the secondary limit is documented to use, carrying neither a
+  # retry-after nor a spent window: classified as a rate limit, or it would be
+  # retried in 5s inside the window it was just refused by.
+  relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 429 Too Many Requests
+$rl_ok"
+  assert_sleep 60 "$tag" "relay15b: an HTTP 429 with a healthy window and no retry-after is still a rate limit and takes the floor"
 
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
 $rl_ok"
-  assert_eq "$RELAY_SLEEPS" "5" "[$tag] relay16: a 5xx blip retries QUICKLY — a minute of paid runner hold buys nothing against a transient"
+  assert_sleep 5 "$tag" "relay16: a 5xx blip retries QUICKLY — a minute of paid runner hold buys nothing against a transient"
 
   # PERMANENT answers buy nothing by waiting: no sleep, no second attempt.
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 404 Not Found
@@ -573,9 +740,9 @@ $rl_ok"
 
   # THE PERMISSIONS 403 — the most reachable permanent failure this job has,
   # since it is the only one needing actions:write in a hand-edited file. It
-  # is byte-for-byte a 403 with a healthy window and no retry-after, which
-  # the previous ladder spent 60s on and then retried into a certain failure,
-  # on every event, forever.
+  # is byte-for-byte a 403 with a healthy window and no retry-after, which a
+  # ladder treating any 403 as a rate limit spends 60s on and then retries
+  # into a certain failure, on every event, forever.
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 $rl_ok
 {\"message\":\"Resource not accessible by integration\"}"
@@ -587,19 +754,30 @@ $rl_ok
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
 retry-after: soon
 $rl_ok"
-  assert_eq "$RELAY_SLEEPS" "5" "[$tag] relay17: a non-numeric retry-after is discarded, not passed to sleep"
+  assert_sleep 5 "$tag" "relay17: a non-numeric retry-after is discarded, not passed to sleep"
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 403 Forbidden
 retry-after: soon
 $rl_spent
 X-Ratelimit-Reset: $(( now + 70 ))"
-  case "$RELAY_SLEEPS" in
-    68|69|70) PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "relay17b: a non-numeric retry-after is discarded but an EXHAUSTED window still governs — slept ${RELAY_SLEEPS}s" ;;
-    *) FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        expected ~70, got: %s\n' "$tag" "relay17b: a discarded retry-after falls through to the exhausted window" "$RELAY_SLEEPS" ;;
-  esac
+  assert_sleep 70 "$tag" "relay17b: a non-numeric retry-after is discarded but an EXHAUSTED window still governs"
   relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
 retry-after: 999999999
 $rl_ok"
-  assert_eq "$RELAY_SLEEPS" "5" "[$tag] relay18: an out-of-range retry-after is discarded before it can overflow the arithmetic or reach sleep"
+  assert_sleep 5 "$tag" "relay18: an out-of-range retry-after is discarded before it can overflow the arithmetic or reach sleep"
+
+  # --- the check_run opt-in's self-amplification breaker ----------------
+  # The relay's if: is a NEGATIVE list, so a repo that adds the check_run
+  # trigger makes THIS workflow's own job completions relayable events — and
+  # the relay holds no concurrency group to throttle what follows.
+  relay_run "$step" 0 "$ref" "0" check_run "" "Request a gate convergence pass"
+  assert_eq "$RELAY_CALLS" "" "[$tag] relay23: a check_run naming the relay's OWN job dispatches NOTHING — the relay does not relay its own check runs"
+  assert_contains "$RELAY_OUT" "::warning::" "[$tag] relay23: and says so, rather than absorbing the event silently"
+  relay_run "$step" 0 "$ref" "0" check_run "" "Evaluate and write the review gate"
+  assert_eq "$RELAY_CALLS" "" "[$tag] relay23b: the write job's own check run is refused by the same guard"
+  relay_run "$step" 0 "$ref" "0" check_run "" "CodeRabbit"
+  assert_eq "$RELAY_CALLS" \
+    "gh api -i -X POST repos/o/r/actions/workflows/review-gate-writer.yml/dispatches -f ref=main" \
+    "[$tag] relay23c: a REVIEWER's check run still relays — the guard names this workflow's jobs, not every check run"
 
   # --- the invariant over the step's ENVIRONMENT ------------------------
   # The step runs under `set -u`, so its never-reds guarantee is only as good
@@ -607,22 +785,45 @@ $rl_ok"
   # tells consumers to hand-edit — the check_run guard goes on this job's
   # if:, and the ADAPT'd dispatch ref is three lines from WORKFLOW_REF — so a
   # dropped line is a live class, not a hypothetical. Unbound, each of these
-  # used to kill the step before it printed anything, on every PR-attached
-  # run, permanently. relay_run asserts rc 0 under both shells for each.
+  # kills the step before it prints anything, on every PR-attached run,
+  # permanently. relay_run asserts rc 0 under both shells for each.
   local dropped
-  for dropped in EVENT_NAME WRITER_READ_ONLY WORKFLOW_REF GH_REPO DISPATCH_REF; do
+  for dropped in EVENT_NAME WRITER_READ_ONLY WORKFLOW_REF GH_REPO DISPATCH_REF CHECK_NAME; do
     RELAY_DROP="$dropped"
     relay_run "$step" 0 "$ref" "1 0" pull_request_target "HTTP/2.0 502 Bad Gateway
 $rl_ok"
     RELAY_DROP=""
   done
-  # And the two that decide whether anything is dispatched still fail CLOSED
-  # when unbound — degrading to green must not mean degrading to a dispatch
-  # against a garbage target.
-  RELAY_DROP=WORKFLOW_REF
-  relay_run "$step" 0 "$ref" "1 0" pull_request_target
-  assert_eq "$RELAY_CALLS" "" "[$tag] relay22: an unbound WORKFLOW_REF dispatches NOTHING (it lands on the underivable-ref warn-and-defer path, not on a garbage path)"
+  # EVENT_NAME unbound is the one drop that changes nothing about the
+  # dispatch: the step goes on to relay, with its second loop breaker unable
+  # to confirm the leg. That is a deliberate choice (the job if: still guards
+  # it) and it must be announced, or the breaker is silently off.
+  RELAY_DROP=EVENT_NAME
+  relay_run "$step" 0 "$ref" "0" pull_request_target
+  assert_contains "$RELAY_OUT" "EVENT_NAME is unbound" "[$tag] relay24: an unbound EVENT_NAME warns that the step's loop breaker cannot verify the leg"
+  assert_eq "$RELAY_CALLS" \
+    "gh api -i -X POST repos/o/r/actions/workflows/review-gate-writer.yml/dispatches -f ref=main" \
+    "[$tag] relay24: and the dispatch still happens — the job if: is the remaining guard, so this degrades loudly rather than closing"
   RELAY_DROP=""
+  # And the three bindings the dispatch itself is built from must fail CLOSED
+  # when unbound — degrading to green must not mean degrading to a dispatch
+  # against a garbage target, and must not mean SIMULATING one either. Two of
+  # them expand inside a command substitution, where `set -u` kills only the
+  # subshell: gh is never reached, and a step that did not guard would sail on
+  # to warn, sleep, "retry" and report an API answer it never received. So
+  # each case asserts BOTH that nothing was dispatched and that nothing was
+  # waited on, plus a warning that names the binding a maintainer must restore.
+  local drop_case
+  for drop_case in "WORKFLOW_REF|could not derive this workflow's file name|relay22: an unbound WORKFLOW_REF" \
+                   "GH_REPO|env: block is missing GH_REPO|relay22b: an unbound GH_REPO" \
+                   "DISPATCH_REF|env: block is missing DISPATCH_REF|relay22c: an unbound DISPATCH_REF"; do
+    RELAY_DROP="${drop_case%%|*}"
+    relay_run "$step" 0 "$ref" "1 0" pull_request_target
+    assert_eq "$RELAY_CALLS" "" "[$tag] ${drop_case##*|} dispatches NOTHING — it lands on a warn-and-defer path, not on a garbage target"
+    assert_eq "$RELAY_SLEEPS" "" "[$tag] ${drop_case##*|} waits for NOTHING — a guard that let the step reach the retry ladder would be reporting an API answer that never arrived"
+    assert_contains "$RELAY_OUT" "$(cut -d'|' -f2 <<<"$drop_case")" "[$tag] ${drop_case##*|} names the binding in its warning — the whole output of this run is that one line"
+    RELAY_DROP=""
+  done
 }
 
 echo "=== relay step behavior (request-converge, VST-210) ==="
@@ -636,23 +837,22 @@ done
 # places — a divergence the cases do not happen to probe would otherwise ship.
 # The step is pure logic with no vendored paths in it, so unlike the rest of
 # the file it has no legitimate ADAPT reason to differ.
-# WHOLE-FILE drift, not just the relay step. This round found a stale claim
-# surviving in the adopted copy because the only cross-copy tooth covered the
-# extracted step. Comments are compared out because ADAPT deliberately rewords
+# WHOLE-FILE drift, not just the relay step: a cross-copy tooth covering only
+# the extracted step leaves a stale claim anywhere else in the adopted copy
+# unchecked. Comments are compared out because ADAPT deliberately rewords
 # them (vendored paths, default-branch notes) — prose drift between the copies
 # is therefore NOT machine-checkable here and stays a review concern; what IS
 # checked is that every line of CODE matches once the vendored script path is
 # normalized, which is the class that changes behavior.
-# Scoped to SELF-adoption. In the catalog the two files are the same artifact
-# modulo the vendored script path, so any other code difference is drift. In a
-# CONSUMER they are legitimately different: the adopted copy carries the repo's
-# own ADAPTs (its default branch in the `|| 'main'` fallbacks, possibly a
-# check_run guard on the relay's if:), so diffing them there would report
-# intended configuration as drift. The relay-step byte-identity check below
-# stays unconditional — that script carries no branch name and no vendored
-# path, so it is ADAPT-free even for a consumer.
-IS_CATALOG=0
-[[ "$SKILL_ROOT" == */skills/review-gate && "$SKILL_ROOT" != */.agents/* ]] && IS_CATALOG=1
+# Scoped to SELF-adoption (IS_CATALOG, decided above). In the catalog the two
+# files are the same artifact modulo the vendored script path, so any other
+# code difference is drift. In a CONSUMER they are legitimately different: the
+# adopted copy carries the repo's own ADAPTs (its default branch in the
+# `|| 'main'` fallbacks, possibly a check_run guard on the relay's if:), so
+# diffing them there would report intended configuration as drift. The
+# relay-step byte-identity check below stays unconditional — that script
+# carries no branch name and no vendored path, so it is ADAPT-free even for a
+# consumer.
 if [[ "${#WORKFLOWS[@]}" -eq 2 && "$IS_CATALOG" -eq 0 ]]; then
   printf '  note  %s\n' "adopted copy carries this repo's own ADAPTs (not the catalog) — whole-file drift not checked; the relay step's byte-identity still is"
 fi

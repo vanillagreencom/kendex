@@ -80,17 +80,28 @@
   `statuses` scope, so a failed dispatch cannot make the gate look converged
   — only leave it stale, which the cron floor already owns — while a red
   check would pin the PR at `UNSTABLE`, the very defect being fixed. It
-  retries once after a wait floored at 60s and capped at 120s — nothing is
-  clamped DOWN any more: a window beyond the cap is never slept and never
-  retried, so the set of waits it can sleep is 5s or 60-120s (a 5-second
-  retry lands inside every secondary-rate-limit window; a plain transient
-  still retries
-  in 5s; a permanent answer — 404, 422, 401, and 403 with no rate-limit
-  evidence — is not retried at all, and neither is a named window beyond the
-  cap, since both would pay for a retry that cannot succeed), then warns and
-  exits 0. `x-ratelimit-reset` counts as a wait instruction only when
-  `x-ratelimit-remaining` is 0: it rides on every GitHub response, so reading
-  it unconditionally silently disabled the entire retry. It carries no escalation of its own: a
+  retries once after a wait floored at 60s and capped at 120s, plus up to 14s
+  of jitter — nothing is clamped DOWN any more: a window beyond the cap is
+  never slept and never retried, so the set of waits it can sleep is 5s or
+  60-120s (a 5-second retry lands inside every secondary-rate-limit window; a
+  plain transient still retries in 5s; a permanent answer — 400, 401, 404,
+  405, 422, and 403 with no rate-limit evidence — is not retried at all, and
+  neither is a named window beyond the cap, since both would pay for a retry
+  that cannot succeed), then warns and exits 0. Rate-limit evidence is
+  `retry-after`, an exhausted window, a secondary-limit body, or an HTTP 429,
+  all classified at one site; the jitter exists because the relay is
+  group-less, so without it N runs of one event burst compute the same wait
+  from the same headers and re-POST in lockstep. `x-ratelimit-reset` counts
+  as a wait instruction only when `x-ratelimit-remaining` is 0: it rides on
+  every GitHub response, so reading it unconditionally silently disabled the
+  entire retry. Its `env:` block is load-bearing in full — `GH_REPO` or
+  `DISPATCH_REF` unbound makes it refuse to dispatch and name the binding,
+  rather than expand to nothing inside a command substitution and report an
+  API answer that never arrived — and with the `check_run` opt-in enabled it
+  refuses events naming its own jobs, which the negative `if:` would
+  otherwise relay back into itself. Every transient warning names its cause
+  (target, HTTP status, gh exit, or a per-attempt timeout). It carries no
+  escalation of its own: a
   sustained dispatch outage surfaces as gate staleness, which
   `pr-watch --heal` already reduces on across every open PR, rather than as
   N red PRs or a widened relay scope.

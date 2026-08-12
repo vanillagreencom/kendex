@@ -678,7 +678,7 @@ s11() { # THE SAFETY SCENARIO. The gate no longer proves anything about CI,
 sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
            # of any leg red'd during the replay
   CURRENT=sfinal
-  local reds evicted killed unknown id started runs oldest
+  local reds killed unknown id started runs oldest
   local pr_evicted=0 pr_killed=0 writer_evicted=0 mg_cancelled=0 ev
   # Bounded to THIS replay: an unbounded window would drag in runs from
   # earlier sessions (including deliberately-broken engine versions) and
@@ -726,7 +726,6 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
   # then dequeue it, and GitHub cancels whatever was attached to the
   # dissolved group's synthetic ref. queue_ci_terminal_runs already filters
   # cancelled merge_group runs for exactly this reason.
-  evicted=0
   killed=0
   unknown=0
   while read -r id ev; do
@@ -747,7 +746,6 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
         note "cancelled run $id ($ev): unparseable jobs response — cannot classify"
         ;;
       0)
-        evicted=$((evicted + 1))
         # WHICH never-started cancellations mean what:
         #   workflow_dispatch/schedule -> a real writer-group eviction. This
         #     is the ONLY shape that proves the group was contended, so it
@@ -771,20 +769,30 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
         esac
         ;;
       *)
-        # merge_group is excluded here for the same reason it is excluded
-        # above: a queue entry dequeued mid-run executes steps and then dies,
-        # which is routine replay traffic rather than a writer malfunction.
+        # ONE classification per run, in three disjoint arms — the two `bad`
+        # lines below read these counters, so a run counted twice is reported
+        # twice with contradictory guidance ("investigate" and "do not chase
+        # the topology") for the same cancellation.
+        #   merge_group -> excluded for the same reason it is excluded above:
+        #     a queue entry dequeued mid-run executes steps and then dies,
+        #     which is routine replay traffic, not a writer malfunction.
+        #   workflow_dispatch/schedule -> a converge run killed by its own
+        #     timeout mid-work: the malfunction the VST-36 escalation exists
+        #     for, and it attaches to a default-branch head.
+        #   anything else -> a PR-attached run that executed steps: a relay
+        #     killed by its own timeout-minutes. Still a cancelled check on
+        #     the PR head (the residual this change documents rather than
+        #     eliminates), but NOT evidence the split came undone.
         case "$ev" in
           merge_group)
             mg_cancelled=$((mg_cancelled + 1))
             note "cancelled run $id ($ev) executed steps before dying — queue dissolution, not a writer fault" ;;
-          *)
+          workflow_dispatch|schedule)
             killed=$((killed + 1))
             note "cancelled run $id ($ev) executed steps before dying — investigate" ;;
-        esac
-        case "$ev" in
-          workflow_dispatch|schedule|merge_group) : ;;
-          *) pr_killed=$((pr_killed + 1)) ;;
+          *)
+            pr_killed=$((pr_killed + 1))
+            note "cancelled run $id ($ev) executed steps before dying — a relay hit its own timeout-minutes on a PR-attached leg" ;;
         esac
         ;;
     esac
@@ -794,9 +802,9 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
   fi
   note "writer-group evictions during the replay: $writer_evicted (harmless to convergence: converge-all means the surviving run covers those heads); merge_group cancellations (queue dissolution, not evictions): $mg_cancelled"
   if [ "$killed" = "0" ]; then
-    ok "no writer run was killed mid-work (evictions only)"
+    ok "no converge-leg writer run was killed mid-work (evictions only)"
   else
-    bad "$killed writer run(s) were cancelled after executing steps"
+    bad "$killed converge-leg writer run(s) were cancelled after executing steps"
   fi
   # VST-210, the live tooth: harmless-to-CONVERGENCE was never the whole
   # story — an evicted run is still a CHECK RUN, and one attached to a PR
@@ -806,12 +814,11 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
   # regressed.
   #
   # The two PR-attached cancellation shapes are reported apart because they
-  # mean different things. A never-started one is eviction — the defect. A
-  # run that executed steps and then died is a relay killed by its own
-  # timeout-minutes: still a cancelled check on the PR head (the residual
-  # this change documents rather than eliminates), but NOT evidence that the
-  # split came undone, and misreporting it as such would send the next
-  # reader hunting a topology bug that is not there.
+  # mean different things: a never-started one is eviction — the defect —
+  # while one that executed steps is a relay killed by its own timeout, and
+  # misreporting that as eviction sends the next reader hunting a topology bug
+  # that is not there. The classifier above counts each run into exactly one
+  # of them, so the two `bad` lines here cover disjoint sets.
   if [ "$pr_evicted" -gt 0 ]; then
     bad "$pr_evicted PR-attached run(s) were EVICTED from the writer group — the relay/converge split regressed and these pin their PRs at UNSTABLE (VST-210)"
   elif [ "$writer_evicted" -gt 0 ]; then

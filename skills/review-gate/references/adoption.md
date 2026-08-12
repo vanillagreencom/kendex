@@ -41,6 +41,14 @@ trusting an adoption.
    paths are already the consumer's, and the relay derives its own workflow
    file name from `github.workflow_ref`, so renaming the copy needs no
    further change.
+   While editing those fallbacks, note that the relay's whole `env:` block is
+   load-bearing, not just the three you are changing: every binding in it is
+   read by the step, and a dropped line does not red the job — it degrades it.
+   `GH_REPO` or `DISPATCH_REF` missing makes the relay refuse to dispatch at
+   all (fail-closed, with a warning naming the binding) and every event falls
+   to the cron floor; `WORKFLOW_REF` missing does the same; `EVENT_NAME` or
+   `CHECK_NAME` missing turns off one of the loop breakers. Change the
+   fallback values, keep the lines.
 3. **Add the ungated selftest job** to the repo's CI (below).
 4. **Set the repo's `REVIEW_GATE_*` keys** in `vstack.settings.toml`
    (decision axes below; full key table in [settings.md](settings.md)).
@@ -124,9 +132,16 @@ each repo takes it as its own PR. What changed in the template:
 - **Permissions delta**: the relay holds `actions: write` and nothing else
   — because job-level `permissions` replace the workflow default rather than
   extend it, that is its complete scope: no `contents`, no `statuses`, no
-  `issues`. It exists solely to dispatch this same workflow's converge leg;
-  the `write` job still holds no `actions` scope, so the writer still never
-  re-runs CI.
+  `issues`. Know what that scope actually grants, because it is coarser than
+  its purpose: `actions: write` is the finest grain GitHub offers here, and it
+  authorizes dispatching **any** workflow in the repo, plus cancelling and
+  re-running runs and deleting runs, logs and artifacts. There is no
+  one-workflow scoping. The containment argument is the job, not the token:
+  the relay checks nothing out and executes no PR-controlled code, so nothing
+  a PR author writes can reach that token. Keep it that way when you edit the
+  copy — a checkout added to this job is what turns the delta into an
+  exposure. The `write` job still holds no `actions` scope, so the writer
+  still never re-runs CI.
 - **The relay carries no VST-36 escalation, by decision.** The rolling
   incident issue stays on the `write` job. Because the relay also does not
   redden the PR (below), a sustained dispatch outage is detected through
@@ -145,7 +160,11 @@ each repo takes it as its own PR. What changed in the template:
   `GITHUB_TOKEN` is documented to trigger, which is what makes the relay
   work where the recursion suppression stops other self-triggering.)
 - A repo with the opt-in `check_run` trigger moves its check-name guard
-  from the `write` job's `if:` to the relay's.
+  from the `write` job's `if:` to the relay's. The relay's `if:` is a
+  *negative* list, so with `check_run` on, this workflow's own job
+  completions become relayable events — the step refuses to dispatch on a
+  `check_run` naming one of its own three jobs, and your check-name guard on
+  the `if:` is what keeps every other repo check from billing a skipped run.
 - **Check the ruleset first** if it ever named a writer JOB (rather than the
   gate status context): the job appearing on PR heads is now the relay, so a
   required `Evaluate and write the review gate` would block every PR. Per
@@ -165,8 +184,8 @@ each repo takes it as its own PR. What changed in the template:
   out at all: the event defers to the cron floor rather than pay for a retry
   guaranteed to land inside the window. A plain transient retries in 5s — the
   minute is for rate limits, not for blips. A permanent answer is not retried
-  at all: 404 for a renamed workflow file, 422 for a bad ref, 401 for a
-  revoked token, and **403 with no rate-limit evidence**, which is the
+  at all: 400, 404 for a renamed workflow file, 405, 422 for a bad ref, 401
+  for a revoked token, and **403 with no rate-limit evidence**, which is the
   `Resource not accessible by integration` shape a trimmed permissions block
   or an org token policy produces — the likeliest permanent failure this job
   has, since it is the only one needing `actions: write`. Note that

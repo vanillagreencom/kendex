@@ -130,16 +130,20 @@ nothing else.
   PR at `mergeStateStatus UNSTABLE` until a manual rerun (VST-210); on the
   default-branch runs the relay dispatches into, nothing gates on it.
   **Cost**: one *non-evictable* run per PR-attached event — seconds and a
-  billed minimum on the success path, up to about four minutes of runner hold
-  in the worst modeled failure (a 60s-bounded attempt, a wait capped at 120s,
-  a second 60s-bounded attempt), inside the job's 5-minute budget —
-  the relay coalesces nothing, so unlike the writer group there is one per
-  event, including every `status` transition from every CI provider — and
-  event-fast latency grows by a whole extra run lifecycle (two queue +
-  runner-allocation waits instead of one), which is seconds at best and
-  unbounded at worst, since GitHub does not bound allocation. Still far
-  under the 15-minute cron floor. Size that before adopting on a
-  capacity-limited runner pool.
+  billed minimum on the success path, up to about 4.2 minutes of runner hold
+  in the worst modeled failure (a 60s-bounded attempt, a wait capped at 120s
+  plus up to 14s of jitter, a second 60s-bounded attempt), inside the job's
+  5-minute budget — the relay coalesces nothing, so unlike the writer group
+  there is one per event, including every `status` transition from every CI
+  provider. Each run also spends one content-creating API request against the
+  repo's shared secondary-limit budget; exhausting that budget degrades events
+  to the cron floor rather than breaking convergence. Event-fast latency grows
+  by a whole extra run lifecycle (two queue + runner-allocation waits instead
+  of one): typically seconds, well inside the cron floor's period, and when
+  runner allocation exceeds that period the scheduled pass converges the head
+  first and the dispatched run is a redundant no-op — an overrun costs a run,
+  not convergence. Size that before adopting on a capacity-limited runner
+  pool.
   **Residual**: this removes *eviction-driven* cancelled checks, not every
   cancelled check — a relay that hangs to its `timeout-minutes` would still
   be a cancelled check on the PR head, which is why every wait in the step is
@@ -154,10 +158,13 @@ nothing else.
   a three-way rule. A **rate-limit** answer waits the window the server
   named — `retry-after`, or `x-ratelimit-reset` *only when
   `x-ratelimit-remaining` is 0* — floored at 60s; a secondary limit that
-  sends no header is recognized from its body. A plain **transient** waits
-  5s. A **permanent** answer is not retried at all: 404 for a renamed
-  workflow file, 422 for a bad ref, 401 for a revoked token, and 403 when it
-  carries no rate-limit evidence — the `Resource not accessible by
+  sends no header is recognized from its body or from an HTTP 429. Every wait
+  then carries bounded jitter, because the relay is group-less: without it, N
+  runs of one event burst read the same headers and re-POST in lockstep. A
+  plain **transient** waits
+  5s. A **permanent** answer is not retried at all: 400, 404 for a renamed
+  workflow file, 405, 422 for a bad ref, 401 for a revoked token, and 403
+  when it carries no rate-limit evidence — the `Resource not accessible by
   integration` shape, which is the likeliest failure a hand-edited
   permissions block produces. A named window beyond the 120s budget is not
   waited out either; both defer to the cron floor. `x-ratelimit-reset` is on

@@ -5,8 +5,10 @@
 # Lines marked ADAPT are per-repo values. This one workflow replaces the old
 # four-workflow mesh (the PR-side gate pair, approval-rerun, approval-sweep,
 # review-gate-queue): exactly one writer, default-branch-defined, which
-# evaluates review-predicate.sh and posts the gate commit status on every
-# leg that reaches it (workflow_dispatch, schedule, merge_group). The
+# posts the gate commit status on every leg that reaches it
+# (workflow_dispatch, schedule, merge_group), evaluating
+# review-predicate.sh on the two converge legs — the merge_group leg posts
+# unconditional green without reading the predicate (see below). The
 # PR-attached legs relay into it — see SHAPE.
 #
 # SHAPE — relay / converge (VST-210). Three jobs, and which one runs is
@@ -37,14 +39,20 @@
 # — and the relay is unconditional and group-less, so unlike the writer
 # group it coalesces nothing: that is one billed-minimum run per event,
 # including every status transition from every CI provider on every open
-# head. A run that has to back off holds its runner longer — worst modeled
-# case ~4 minutes (a 60s-bounded attempt, a wait capped at 120s, a second
-# 60s-bounded attempt), inside the 5-minute job budget. Event-fast latency grows by a whole run lifecycle (the relay's own
-# queue and runner allocation, then the converge run's, which now starts
-# only after the relay finishes) — dominated by runner allocation, which
-# GitHub does not bound, so "seconds" is the good case, not the ceiling. It
-# stays far under the 15-minute cron floor. A repo on a constrained or
-# self-hosted runner pool should size that before adopting.
+# head. Each run also spends one content-creating API request against the
+# repo's SHARED secondary-limit budget; exhausting that budget degrades
+# every event to the cron floor rather than breaking convergence. A run
+# that has to back off holds its runner longer — worst modeled case ~4.2
+# minutes (a 60s-bounded attempt, a wait capped at 120s plus up to 14s of
+# jitter, a second 60s-bounded attempt), inside the 5-minute job budget.
+# Event-fast latency grows by a whole run lifecycle (the relay's own queue
+# and runner allocation, then the converge run's, which now starts only
+# after the relay finishes) — dominated by runner allocation, which GitHub
+# does not bound. Typically that is seconds, well inside the cron floor's
+# period; when allocation exceeds the period, the scheduled pass converges
+# the head first and the dispatched run is a redundant no-op, so an overrun
+# costs a run, not convergence. A repo on a constrained or self-hosted
+# runner pool should size that before adopting.
 #
 # RESIDUAL, stated honestly: this removes EVICTION-driven cancelled checks,
 # not every cancelled check. A relay hung long enough to hit
@@ -134,11 +142,11 @@ name: Review gate writer
   # goes on the RELAY, not the write job: check_run is a PR-attached leg,
   # and the relay's if: is a negative list precisely so a newly added
   # trigger relays by default instead of silently doing nothing. `created`
-  # matters under newest-run semantics (vstack#1110): a reviewer STARTING a
-  # fresh round withdraws its own older clean success, and without the
-  # created leg that downward transition waits for the run's completion or
-  # the cron floor. Repos without the opt-in converge withdrawals on the
-  # cron floor — the same accepted class as thread resolution.
+  # matters under newest-run semantics: a reviewer STARTING a fresh round
+  # withdraws its own older clean success, and without the created leg that
+  # downward transition waits for the run's completion or the cron floor.
+  # Repos without the opt-in converge withdrawals on the cron floor — the
+  # same accepted class as thread resolution.
 
 permissions:
   contents: read
@@ -225,9 +233,14 @@ jobs:
       # relay's COMPLETE scope: no contents (it never checks anything out),
       # no statuses (it never writes the gate), no issues (it carries no
       # escalation — see the step's green-exit note), none of the writer's
-      # evidence reads. actions:write exists only to dispatch this same
-      # workflow's converge leg — the writer still never re-runs CI, and
-      # the write job below still holds no actions scope at all.
+      # evidence reads. actions:write is the FINEST grain GitHub offers for
+      # dispatching, and it is not scoped to one workflow: it authorizes
+      # dispatching ANY workflow in the repo, plus cancelling and re-running
+      # runs and deleting runs, logs and artifacts. What contains it is this
+      # job, not the token — the relay checks nothing out and executes no
+      # PR-controlled code, so nothing a PR author writes can reach it. The
+      # writer still never re-runs CI, and the write job below still holds
+      # no actions scope at all.
       actions: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -251,6 +264,11 @@ jobs:
       # job that leg now reaches) and handled as a green no-op, never a red
       # run; the cron floor converges fork review evidence.
       WRITER_READ_ONLY: ${{ (github.event_name == 'pull_request_review' && github.event.pull_request.head.repo.full_name != github.repository) && '1' || '0' }}
+      # Payload for the step's THIRD loop breaker. Empty on every leg but
+      # check_run — the opt-in leg whose events this workflow's own jobs
+      # create, and the one leg the relay's negative if: would otherwise
+      # relay straight back into itself.
+      CHECK_NAME: ${{ github.event.check_run.name }}
     steps:
       - name: Request a converge pass
         run: |
@@ -263,17 +281,34 @@ jobs:
           # is one hand-edited expression in a repo-owned file that
           # adoption.md actively invites consumers to edit; this guard
           # survives that mis-edit. A converge leg must never relay.
-          # Every main-shell read is DEFAULTED. `set -u` is kept for genuine
-          # typos, but an env: binding dropped by a consumer hand-edit must
-          # not be the one way this job reds: unbound, each of these killed
-          # the step before it printed anything, on every PR-attached run,
-          # permanently — the defect this job exists to prevent, delivered by
-          # the job itself. Each default lands on a path that is already
+          # Every main-shell read is DEFAULTED, the two that build the
+          # dispatch target included. `set -u` is kept for genuine typos,
+          # but an env: binding dropped by a consumer hand-edit must not be
+          # the one way this job reds: an unbound read kills the step before
+          # it prints anything, on every PR-attached run, permanently — the
+          # defect this job exists to prevent, delivered by the job itself. Each default lands on a path that is already
           # green and already tested. (review-writer.sh, under the same
           # `set -u`, already reads WRITER_READ_ONLY this way.)
+          gh_repo="${GH_REPO:-}"
+          dispatch_ref="${DISPATCH_REF:-}"
           case "${EVENT_NAME:-}" in
             workflow_dispatch|schedule)
-              echo "::warning::the relay ran on a CONVERGE leg ('$EVENT_NAME') — the job if: has been mis-edited; refusing to dispatch (a self-dispatch loop has no throttle)"
+              echo "::warning::the relay ran on a CONVERGE leg ('${EVENT_NAME:-}') — the job if: has been mis-edited; refusing to dispatch (a self-dispatch loop has no throttle)"
+              exit 0
+              ;;
+            '')
+              echo "::warning::EVENT_NAME is unbound, so this guard cannot verify the run is a PR-attached leg; the job if: is the only loop breaker left"
+              ;;
+          esac
+          # THIRD breaker, for the check_run opt-in only. The relay's if: is
+          # a NEGATIVE list, so once check_run is added this workflow's OWN
+          # job completions are relayable events — and the relay holds no
+          # concurrency group to throttle the amplification. A consumer's
+          # reviewer check name is repo config, but these three names are
+          # this file's own and travel with it.
+          case "${CHECK_NAME:-}" in
+            "Request a gate convergence pass"|"Evaluate and write the review gate"|"Post the gate context on the merge-group sha")
+              echo "::warning::the check_run event is this workflow's own job ('${CHECK_NAME:-}'); refusing to dispatch — relaying our own check runs amplifies without adding evidence"
               exit 0
               ;;
           esac
@@ -298,6 +333,19 @@ jobs:
             echo "::warning::could not derive this workflow's file name from github.workflow_ref ('${WORKFLOW_REF:-<unset>}'); no converge pass requested — this event converges on the cron floor instead"
             exit 0
           fi
+          # FAIL CLOSED on an incomplete env: block, before the first
+          # attempt. These two are substituted into the request itself, and
+          # a defaulted-to-empty read there is worse than a red: the
+          # expansion happens inside a command substitution, where `set -u`
+          # kills only the SUBSHELL — gh is never reached, and the step
+          # would otherwise go on to describe an API answer it never got.
+          missing=""
+          [ -n "$gh_repo" ] || missing="GH_REPO"
+          [ -n "$dispatch_ref" ] || missing="${missing:+$missing and }DISPATCH_REF"
+          if [ -n "$missing" ]; then
+            echo "::warning::the relay's env: block is missing $missing; no converge pass requested — this event converges on the cron floor instead"
+            exit 0
+          fi
           # Response captured in a VARIABLE, not a temp file: an unchecked
           # mktemp is an undeclared failure path (empty name -> ambiguous
           # redirect), and there is nothing here a file buys.
@@ -308,7 +356,7 @@ jobs:
             # on the PR head, the same symptom by a different road. 60s per
             # attempt keeps the worst case (60 + capped wait + 60) inside the
             # job budget.
-            resp="$(timeout 60 gh api -i -X POST "repos/$GH_REPO/actions/workflows/$workflow_file/dispatches" -f ref="$DISPATCH_REF" 2>&1)"
+            resp="$(timeout 60 gh api -i -X POST "repos/$gh_repo/actions/workflows/$workflow_file/dispatches" -f ref="$dispatch_ref" 2>&1)"
           }
           header() { # name -> first matching response header's value
             # `|| true` is load-bearing: a no-match grep exits 1, and under a
@@ -320,28 +368,46 @@ jobs:
           header_status() { # -> the response's HTTP status code, if any
             { grep -i '^HTTP/' <<<"$resp" || true; } | head -n 1 | tr -d '\r' | awk '{print $2}'
           }
-          if dispatch; then
-            echo "requested a converge pass ($workflow_file on $DISPATCH_REF)"
+          why() { # gh's exit status -> the cause of the attempt that failed
+            # A warning naming no cause sends its reader to the log of a job
+            # whose entire output is that warning. `timeout` reports 124 for
+            # a bound it enforced, which is not an API answer at all.
+            local st
+            st="$(header_status)"
+            if [ "$1" = "124" ]; then
+              printf '%s' "the dispatch API did not respond within 60s"
+            elif [ -n "$st" ]; then
+              printf '%s' "HTTP $st, gh exit $1"
+            else
+              printf '%s' "no HTTP response, gh exit $1"
+            fi
+          }
+          rc=0
+          dispatch || rc=$?
+          if [ "$rc" = "0" ]; then
+            echo "requested a converge pass ($workflow_file on $dispatch_ref)"
             exit 0
           fi
           printf '%s\n' "$resp"
-          # CLASSIFY -> DERIVE -> REFUSE -> CLAMP, one site each.
+          # CLASSIFY -> DERIVE -> REFUSE -> CLAMP -> JITTER, one site each.
           cap=120
           floor=60
+          jitter_max=15
           #
           # (1) CLASSIFY. Is this answer settled, or is waiting worth
           # something? The only rate-limit EVIDENCE is a retry-after header
           # (secondary limit), an exhausted window (x-ratelimit-remaining 0,
-          # primary limit), or the secondary limit saying so in the body.
+          # primary limit), the secondary limit saying so in the body, or a
+          # 429 status.
           #
           # x-ratelimit-reset ALONE IS NOT EVIDENCE. GitHub returns the core
           # window's reset epoch on ordinary responses including failures —
           # verified live: a 422 for a bad ref comes back with
           # x-ratelimit-remaining: 4947 and a reset up to an hour out. Reading
-          # `reset` whenever retry-after is absent therefore fired on nearly
-          # every failure, put an hour-scale number into the wait, tripped the
-          # budget refusal below, and killed the retry for every case —
-          # including the secondary limit it was added for. Gate it on
+          # `reset` whenever retry-after is absent therefore fires on nearly
+          # every failure, puts an hour-scale number into the wait, trips the
+          # budget refusal below, and kills the retry for every case —
+          # including the secondary limit it would be there for. Gate it on
           # `remaining`, which is what actually says the window is spent.
           http_status="$(header_status)"
           remaining="$(header x-ratelimit-remaining)"
@@ -367,6 +433,13 @@ jobs:
             # The secondary limit does not always send retry-after and does
             # not decrement the primary window, so the body is the only
             # remaining evidence. Without this arm it would look permanent.
+            rate_limited=1
+          elif [ "$http_status" = "429" ]; then
+            # The status the secondary limit is documented to use. It is
+            # classified HERE so the clamp below reads one flag: a 429 that
+            # sent no retry-after and spent no primary window would
+            # otherwise look like an ordinary blip and be retried in 5s,
+            # inside the window it was just refused by.
             rate_limited=1
           fi
           # (2) PERMANENT answers buy nothing by waiting. 403 is in this list
@@ -400,17 +473,26 @@ jobs:
           if [ -n "$server_wait" ]; then
             wait_s="$server_wait"
             [ "$wait_s" -lt "$floor" ] && wait_s="$floor"
-          elif [ "$rate_limited" = "1" ] || [ "$http_status" = "429" ]; then
+          elif [ "$rate_limited" = "1" ]; then
             wait_s="$floor"
           else
             # A blip — 5xx, a dropped connection, no response at all. The
             # minute is for rate limits; spending it here buys nothing.
             wait_s=5
           fi
-          echo "::warning::could not request a converge pass; retrying once in ${wait_s}s"
-          sleep "$wait_s"
-          if dispatch; then
-            echo "requested a converge pass on retry ($workflow_file on $DISPATCH_REF)"
+          # (5) JITTER. The relay holds no concurrency group, so N runs of
+          # the same event burst compute the SAME wait from the same headers
+          # and re-POST in lockstep — worst on the exhausted-window path,
+          # where every run reads one shared reset epoch. The spread is
+          # bounded so the timeout budget above still reconciles, and it is
+          # added after the clamp so it can only ever lengthen a wait.
+          jitter_s=$(( RANDOM % jitter_max ))
+          echo "::warning::could not request a converge pass ($workflow_file on $dispatch_ref): $(why "$rc"); retrying once in ${wait_s}s + ${jitter_s}s jitter"
+          sleep "$(( wait_s + jitter_s ))"
+          rc=0
+          dispatch || rc=$?
+          if [ "$rc" = "0" ]; then
+            echo "requested a converge pass on retry ($workflow_file on $dispatch_ref)"
             exit 0
           fi
           printf '%s\n' "$resp"
@@ -430,8 +512,7 @@ jobs:
           # run's log carries the warning below as its only per-run trace;
           # the detector of record is the staleness reducer that already runs
           # against every open PR.
-          echo "::warning::could not request a converge pass after two attempts; this event converges on the cron floor instead (sustained failure surfaces as gate staleness — pr-watch --heal)"
-
+          echo "::warning::could not request a converge pass after two attempts ($workflow_file on $dispatch_ref): $(why "$rc"); this event converges on the cron floor instead (sustained failure surfaces as gate staleness — pr-watch --heal)"
   write:
     # ONE job-level writer group, cancel-in-progress: false. This is a
     # WASTE reducer, not the correctness mechanism: single-writer runs can
