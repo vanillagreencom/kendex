@@ -134,7 +134,12 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
-   Use the printed token as `[DEV_ROUND_ID]`. Also note the delegated review-item numbers (the `#[N]` in `[FORMATTED_ITEMS]`) as `[ITEM_NUMBERS]` (comma-separated) for step 6's exact item-set check.
+   Use the printed token as `[DEV_ROUND_ID]`. Then **persist the delegated item set on disk** — one `--item [N] '[ITEM_TEXT]'` per delegated review item, where `[N]` is the item's `#[N]` number and `[ITEM_TEXT]` is that item's formatted block from `[FORMATTED_ITEMS]` verbatim (plain text, no backticks):
+
+   ```bash
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --item [N] '[ITEM_TEXT]' [--item [N] '[ITEM_TEXT]']...
+   ```
+   This writes the round record `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json` (schema: [`../schemas/dev-round.md`](../schemas/dev-round.md)) — the on-disk source of truth step 6's exact item-set check reads, and what a respawned agent reads to recover its items when the delegation survives in no one's context. Without it, the delegated set exists only in this session's context and a mid-round agent loss leaves the round's receipt unrecoverable.
 
    **In Claude Code**, when the target agent is already alive: send the delegation message before creating and assigning its task — task assignment wakes a live agent immediately, and an agent woken by the bare `task_assignment` payload starts the round without the delegation.
 
@@ -165,15 +170,15 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
 
 6. **Wait for completion, then accept deterministically.** Acceptance is a function of two checks — **A** (the round-scoped on-disk artifact) and **B** (git completion for this fix round) — never the return message, which is informational for display (a return is routinely absent when a long validation outlasts the agent's turn, vstack#770/#818).
 
-   **Check A** — read `dev_round_id`, then run `dev-artifact-check` in round mode with the delegated item numbers (run each as its own tool call):
+   **Check A** — read `dev_round_id`, then run `dev-artifact-check` in round mode against the persisted round record (run each as its own tool call):
 
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
    ```
    ```bash
-   .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items [ITEM_NUMBERS]
+   .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```
-   `--expect-items [ITEM_NUMBERS]` requires the artifact's `items[]` to cover EXACTLY the delegated set (each item present once, no unknown/duplicate, decisions valid, reasoning non-empty) — a 1-item artifact cannot satisfy a 10-item group. The round id guarantees only THIS cycle's receipt is read (vstack#776).
+   `--expect-items-from-round` reads the delegated set from the step 5 round record (`tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and requires the artifact's `items[]` to cover EXACTLY that set (each item present once, no unknown/duplicate, decisions valid, reasoning non-empty) — a 1-item artifact cannot satisfy a 10-item group. The round id guarantees only THIS cycle's receipt and record are read (vstack#776). If the check exits 2 reporting the round record missing, step 5's persistence never ran — write the record now from the delegated items (still in this session's context) and re-run; only if that context is also gone fall back to `--expect-items [ITEM_NUMBERS]` with numbers you can still prove.
 
    **Check B** — the fix commit landed and nothing was left behind:
 
@@ -191,7 +196,7 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    |---|---|---|
    | `ok==true` | pass | **Accept** — first confirm exact-commit binding (artifact `.commit` == `git -C [WORKTREE_PATH] rev-parse HEAD`; an all-items-skipped round's `.commit` is the unchanged HEAD), then parse item decisions (Applied/Skipped/Blocked), commits, and validate from the return when present, else from the artifact's `items[]`/`commit`/`validate` (recovery, vstack#770). → step 7. |
    | `ok==true` | fail | Artifact claims done but the worktree is dirty / the commit is missing. **Re-read git ONCE after a brief pause** (transient lag) before classifying B failed; if still failing → re-delegate only the specific missing step (commit or revert leftover work). |
-   | `ok==false` | pass | Fix code appears landed but the round did **not** finish (its per-item decisions are unproven — B shows a clean tree, not that THIS round's tail ran). Do NOT re-run the fix and do NOT accept on git alone. Send ONE **report-only tail-reconciliation** nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item) and re-report your item decisions; do NOT re-run the fix."* Accept only once a valid artifact for THIS `dev_round_id` appears (→ the `ok==true` row). |
+   | `ok==false` | pass | Fix code appears landed but the round did **not** finish (its per-item decisions are unproven — B shows a clean tree, not that THIS round's tail ran). Do NOT re-run the fix and do NOT accept on git alone. Send ONE **report-only tail-reconciliation** nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if you no longer have the delegation, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* The round record makes this nudge self-sufficient even for an agent respawned mid-round. Accept only once a valid artifact for THIS `dev_round_id` appears (→ the `ok==true` row). |
    | `ok==false` | fail | **Not done** — no completion evidence. Wait to the per-delegation deadline, then escalate (ping → respawn) per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting). |
 
    **Analysis round (read-only delegation).** If this cycle was explicitly delegated as investigate-and-recommend instead of applying items (e.g. the items' premise needed re-deriving first), the honest receipt is `kind: analysis` — no `commit`, no `validate`, no `items`, recommendation in `summary` (schema: [`../schemas/dev-return.md`](../schemas/dev-return.md) § Analysis rounds). Run Check A **without** `--expect-items` (there is no delegated item set), and B expects no new commit and a clean worktree; there is no exact-commit binding and no validate gate for the round. On A `ok==true` (artifact `kind` is `analysis`) + B pass: accept the round, read the `summary` recommendation, and decide — delegate the actual fixes as a fresh round, or close/re-scope the items with reasoning. A `kind` that does not match what was delegated is a mis-filed round: treat as the `ok==false` row.

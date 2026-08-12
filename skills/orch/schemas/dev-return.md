@@ -23,6 +23,13 @@ timed-out old-round agent rewriting late, a bundle group-A receipt consumed by
 group-B, or a cross-round `ci-fix` receipt could all be mis-accepted at the single
 reused path. `dev_delegated_at` remains, now solely as the watchdog deadline.
 
+Fix rounds have an input-side sibling record bound by the same token:
+`tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`, the round's **delegated item set**
+persisted by the orchestrator at stamp time (vstack#1230) — what
+`dev-artifact-check --expect-items-from-round` checks this artifact's `items[]`
+against, and what a respawned agent reads to write a truthful receipt. Schema:
+[`dev-round.md`](dev-round.md).
+
 `[ISSUE_ID]` is the normalized workflow-state key — `issue-N` for GitHub,
 `PROJ-123` for Linear; for a **bundled** delegation it is the Parent ID. It (and
 `[ROUND_ID]`) must match the path-safe grammar `^[A-Za-z0-9._-]+$` with no `..` —

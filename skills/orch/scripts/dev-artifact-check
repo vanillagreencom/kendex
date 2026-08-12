@@ -53,7 +53,8 @@ EXPECT_GRAMMAR='^[0-9]+(,[0-9]+)*$'
 usage() {
   cat << 'EOF'
 Usage:
-  dev-artifact-check --worktree WT --issue ISSUE --round-id RID [--expect-items N,N,...]
+  dev-artifact-check --worktree WT --issue ISSUE --round-id RID \
+    [--expect-items N,N,... | --expect-items-from-round]
   dev-artifact-check --file <json_path> [--round-id RID] [--expect-items N,N,...]
 
 Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
@@ -70,6 +71,15 @@ separated set (e.g. 1,2,3,4,5,6) — never a count. items[] must cover
 EXACTLY that set — each expected n present once, no unknown/duplicate n, every
 decision ∈ {Applied,Skipped,Blocked}, every reasoning non-empty. Without it, a
 fix/bundled artifact only needs a non-empty, well-formed items[].
+
+--expect-items-from-round (round mode only; excludes --expect-items): derive
+the expected set from the round record WT/tmp/dev-round-ISSUE-RID.json that
+dev-round-write persisted at delegation — the on-disk source of truth for the
+delegated item set, instead of a number list typed from the orchestrator's
+context. The record's internal .round_id must equal RID and its items[] must
+be a non-empty array of numeric .n; a missing, mismatched, or malformed record
+means the expected set cannot be established, so the check refuses to run
+(exit 2) rather than silently degrading to the weaker fallback gate.
 
 Prints JSON: {ok: bool, path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|"incomplete",
@@ -322,6 +332,7 @@ fi
 file=""
 want_round=""
 expect_items=""
+expect_from_round=false
 repo=""
 
 if [[ "${1:-}" == "--file" ]]; then
@@ -333,6 +344,8 @@ if [[ "${1:-}" == "--file" ]]; then
     case "$1" in
       --round-id)     need "$1" $#; want_round="$2"; shift 2 ;;
       --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
+      --expect-items-from-round)
+        die "--expect-items-from-round requires round mode (there is no worktree/issue/round to resolve a round record from)" ;;
       *) die "unknown --file argument: $1" ;;
     esac
   done
@@ -346,6 +359,7 @@ elif [[ "${1:-}" == --* ]]; then
       --issue)        need "$1" $#; issue="$2"; shift 2 ;;
       --round-id)     need "$1" $#; round_id="$2"; shift 2 ;;
       --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
+      --expect-items-from-round) expect_from_round=true; shift ;;
       *) die "unknown argument: $1" ;;
     esac
   done
@@ -356,6 +370,32 @@ elif [[ "${1:-}" == --* ]]; then
   want_round="$round_id"
   repo="$worktree"
   file="$worktree/tmp/dev-return-$issue-$round_id.json"
+
+  # Derive the expected item set from the persisted round record (vstack#1230).
+  # A record that cannot supply the set — missing, unparseable, wrong internal
+  # token, or malformed items — is a usage/environment failure (exit 2), never
+  # a silent downgrade to the weaker fix/bundled fallback gate.
+  if [[ "$expect_from_round" == "true" ]]; then
+    [[ -z "$expect_items" ]] \
+      || die "--expect-items and --expect-items-from-round are mutually exclusive: one expected-set source"
+    round_record="$worktree/tmp/dev-round-$issue-$round_id.json"
+    [[ -f "$round_record" ]] \
+      || die "round record $round_record not found — was dev-round-write run when the round was stamped?"
+    jq -e --arg want "$round_id" '
+      ((.round_id? | type) == "string") and (.round_id == $want)
+    ' "$round_record" >/dev/null 2>&1 \
+      || die "round record $round_record does not carry internal round_id '$round_id' — not this round's record"
+    expect_items="$(jq -r '
+      if ((.items? | type) == "array")
+         and ((.items | length) > 0)
+         and (all(.items[]; (type == "object") and ((.n? | type) == "number")))
+      then [.items[].n | tostring] | join(",")
+      else empty
+      end
+    ' "$round_record" 2>/dev/null || true)"
+    [[ -n "$expect_items" ]] \
+      || die "round record $round_record has no usable items[] (expected a non-empty array of numeric n)"
+  fi
 else
   # Neither --file nor round mode → usage error. One identity model (round id);
   # the legacy positional mode was removed with its only caller.

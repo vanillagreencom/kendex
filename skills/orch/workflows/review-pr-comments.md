@@ -326,7 +326,12 @@ Issue suggestions: [N] items → § 6.2 audit
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
-   Use the printed token as `[DEV_ROUND_ID]`; note this group's delegated item numbers (`#[N]`) as `[ITEM_NUMBERS]` (comma-separated) for step 5's exact item-set check.
+   Use the printed token as `[DEV_ROUND_ID]`. Then **persist this group's delegated item set on disk** — one `--item [N] '[ITEM_TEXT]'` per item marked "Fixing" in this group, where `[N]` is the item's `#[N]` number and `[ITEM_TEXT]` is that item's formatted block from the delegation verbatim (plain text, no backticks):
+
+   ```bash
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --item [N] '[ITEM_TEXT]' [--item [N] '[ITEM_TEXT]']...
+   ```
+   This writes the round record `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json` (schema: [`../schemas/dev-round.md`](../schemas/dev-round.md)) — the on-disk source step 5's exact item-set check reads, and what a respawned agent reads to recover its items. Each group's fresh round id scopes its own record, so a prior group's set can never be checked against this group's receipt.
 
    **In Claude Code**, when the target agent is already alive: send the delegation message before creating and assigning its task — task assignment wakes a live agent immediately, and an agent woken by the bare `task_assignment` payload starts the round without the delegation.
 
@@ -354,15 +359,15 @@ Issue suggestions: [N] items → § 6.2 audit
 
 5. **Wait for completion, then accept deterministically.** Acceptance is a function of two checks — **A** (the round-scoped on-disk artifact) and **B** (git completion for this fix round) — never the return message, which is informational for display (a return is routinely absent when a long validation outlasts the agent's turn, vstack#770/#818).
 
-   **Check A** — read `dev_round_id`, then run `dev-artifact-check` in round mode with this group's item numbers (run each as its own tool call):
+   **Check A** — read `dev_round_id`, then run `dev-artifact-check` in round mode against this group's persisted round record (run each as its own tool call):
 
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
    ```
    ```bash
-   .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items [ITEM_NUMBERS]
+   .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```
-   `--expect-items [ITEM_NUMBERS]` requires the artifact's `items[]` to cover EXACTLY the delegated set (each once, no unknown/duplicate, valid decision, non-empty reasoning). The round id guarantees only THIS cycle's receipt is read (vstack#776).
+   `--expect-items-from-round` reads this group's delegated set from the step 3 round record and requires the artifact's `items[]` to cover EXACTLY that set (each once, no unknown/duplicate, valid decision, non-empty reasoning). The round id guarantees only THIS cycle's receipt and record are read (vstack#776). On exit 2 (record missing) apply the recovery rule in [`dev-fix.md` § 2](dev-fix.md) step 6.
 
    **Check B** — the fix commit landed and nothing was left behind:
 

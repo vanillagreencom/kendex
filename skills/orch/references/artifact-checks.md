@@ -1,6 +1,6 @@
 # Completion-artifact reference
 
-Full contracts behind the `review-artifact-check` / `dev-return-write` / `dev-artifact-check` rows and the round-closure mechanics in [../SKILL.md](../SKILL.md). Each script's `--help` carries its flag reference.
+Full contracts behind the `review-artifact-check` / `dev-return-write` / `dev-round-write` / `dev-artifact-check` rows and the round-closure mechanics in [../SKILL.md](../SKILL.md). Each script's `--help` carries its flag reference.
 
 ## `review-artifact-check`
 
@@ -14,13 +14,17 @@ Validates a reviewer's on-disk JSON artifact — exists, `mtime >=` delegation e
 
 Deterministically writes a dev agent's round-scoped completion artifact (`[WORKTREE]/tmp/dev-return-[ISSUE_ID]-[ROUND_ID].json`) with `jq`, atomically (temp+mv), instead of hand-authoring the JSON, and prints the artifact's absolute path. It writes `round_id`/`schema_version` and validates its inputs (exit 2 on a bad `--kind`, missing required argument, malformed `--validate`, bad `--item` DECISION, empty REASONING, an `--issue`/`--round-id` outside `^[A-Za-z0-9._-]+$`, or a `fix`/`--bundled` invocation with no `--item`). `--kind analysis` spells a read-only investigate-and-recommend round truthfully: it requires exactly one of `--summary TEXT` (inline — so a harness-refused file write is not a dead end) or `--summary-file PATH` (the recommendation/evidence) and rejects `--commit`/`--validate`/`--validate-note`/`--item`/`--bundled`, omitting those keys from the artifact so no validation outcome can be asserted for a round that ran none. Flags: `dev-return-write --help`. Canonical schema: `../schemas/dev-return.md`.
 
+## `dev-round-write`
+
+Orchestrator-side twin of `dev-return-write` for the round's *input*: persists a fix round's delegated item set to `[WORKTREE]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` (atomic temp+mv, prints the path) at the moment the round is stamped, so the set survives the orchestrator's context. One `--item N TEXT` per delegated item (N = the delegated `#[N]` number, unique; TEXT = the item's formatted block verbatim). The record carries the internal `round_id` token, mirroring the dev-return binding, and is read by `dev-artifact-check --expect-items-from-round`, by a respawned dev agent recovering its items, and by the `ok==false` tail-reconciliation nudge. Flags: `dev-round-write --help`. Canonical schema: `../schemas/dev-round.md`.
+
 ## `dev-artifact-check`
 
-Validates a dev agent's round-scoped completion artifact and prints `{ok, path, reason}` (`valid`|`missing`|`invalid`|`incomplete`, gates ordered missing → invalid → incomplete → valid). Round mode (`--worktree WT --issue ISSUE --round-id RID [--expect-items N,N,...]`) resolves `WT/tmp/dev-return-ISSUE-RID.json` and requires:
+Validates a dev agent's round-scoped completion artifact and prints `{ok, path, reason}` (`valid`|`missing`|`invalid`|`incomplete`, gates ordered missing → invalid → incomplete → valid). Round mode (`--worktree WT --issue ISSUE --round-id RID [--expect-items N,N,... | --expect-items-from-round]`) resolves `WT/tmp/dev-return-ISSUE-RID.json` and requires:
 
 - the internal `round_id == RID` — clock-independent identity; there is no mtime gate;
 - type-strict scalars: `.kind` ∈ implement|fix|analysis; `.issue`/`.branch` non-empty strings; `.round_id` string; `.schema_version` number. implement/fix additionally require `.commit`/`.validate` non-empty strings; `analysis` (complete-without-code, vstack#952) requires the inverse — no `.commit`/`.validate`/`.validate_note` key present at all (their presence is `invalid`);
-- the items rule: `--expect-items` is the exact delegated set for fix rounds; otherwise non-empty and well-formed for fix/bundled, while `implement` allows `items: []`. `analysis` completeness is its `.summary` (the recommendation) being a non-empty string, else `incomplete`.
+- the items rule: the expected set is the exact delegated set for fix rounds — supplied inline (`--expect-items N,N,...`) or, preferably, read from the persisted round record (`--expect-items-from-round` resolves `WT/tmp/dev-round-ISSUE-RID.json`, requires its internal `round_id == RID`, and refuses to run — exit 2, never a silent downgrade — when the record is missing, token-mismatched, or malformed). Otherwise items must be non-empty and well-formed for fix/bundled, while `implement` allows `items: []`. `analysis` completeness is its `.summary` (the recommendation) being a non-empty string, else `incomplete`.
 
 A fresh valid artifact for the current round lets `dev-start.md` § 3 accept a completion whose return message never arrived because the validation outlasted the turn; git/tracker corroboration stays in orch. `--file <path> [--round-id RID] [--expect-items ...]` validates one explicit artifact. One identity model (round id) — no mtime gate, no legacy positional mode.
 

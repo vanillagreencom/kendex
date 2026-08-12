@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# dev-round-write — persist a fix round's delegated item set to a round-scoped
+# on-disk record at delegation time, so the set survives the orchestrator's
+# context (vstack#1230).
+#
+# Before this record existed, the delegated item set lived only in the
+# delegation message: a dev agent respawned mid-round could not write a
+# truthful completion artifact (the curated, renumbered subset is not
+# recoverable from the raw review JSONs), and dev-artifact-check
+# --expect-items had no on-disk source of truth — the orchestrator typed the
+# numbers from its own context. The orchestrator runs THIS one command
+# immediately after stamping the round (`workflow-state new-round-id`), before
+# delegating.
+#
+# The record follows the dev-return round-token discipline (vstack#776): it is
+# named [WORKTREE]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json AND carries
+# "round_id": ROUND_ID inside, so a copied/renamed file from another round can
+# never stand in for this round's record. Readers:
+#   - dev-artifact-check --expect-items-from-round derives the exact expected
+#     item-number set from it (rejecting a record whose internal token differs);
+#   - a respawned dev agent (dev/workflows/dev-fix.md § 6) reads items[].text
+#     to recover exactly what was delegated instead of guessing;
+#   - the ok==false tail-reconciliation nudge can point at it, making the nudge
+#     self-sufficient after any respawn.
+#
+# Usage:
+#   dev-round-write --worktree PATH --issue ID --round-id RID \
+#     --item N TEXT [--item N TEXT]...
+#
+# One --item per delegated review item: N is the item's delegated number (the
+# `#[N]` in the formatted items — a set, so duplicates are rejected), TEXT is
+# that item's full formatted block verbatim (multi-line is fine; plain text, no
+# backticks, so the command stays classifier-safe under Codex approval=never).
+#
+# Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
+#   {
+#     "schema_version": 1,                  // required, number
+#     "round_id": "[ROUND_ID]",             // required, matches the filename token
+#     "issue": "[ISSUE_ID]",                // required, normalized state key
+#     "items": [{"n": 1, "text": "…"}]      // required, >=1 entry
+#   }
+#
+# It is a sanctioned single-command invocation (harness-safe: one command with
+# explicit arguments, no shell redirection in the caller's command; the write is
+# internal and atomic — temp file + mv). Writes the record and prints its
+# absolute path (one line). All usage/validation errors exit 2.
+
+set -euo pipefail
+
+PROG="dev-round-write"
+
+# Path-safe token grammar for --issue / --round-id: no '/', no '..', no
+# whitespace, so a value can never escape the tmp/ directory. Shared verbatim
+# with dev-return-write and dev-artifact-check.
+ID_GRAMMAR='^[A-Za-z0-9._-]+$'
+
+die() {
+  printf '%s: %s\n' "$PROG" "$1" >&2
+  exit 2
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  dev-round-write --worktree PATH --issue ID --round-id RID \
+    --item N TEXT [--item N TEXT]...
+
+Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
+(atomically) and prints its absolute path. One --item per delegated review
+item: N is the item's delegated number (duplicates rejected — the set is what
+dev-artifact-check --expect-items-from-round checks against), TEXT is the
+item's full formatted block verbatim (non-empty plain text, no backticks).
+--issue / --round-id must match ^[A-Za-z0-9._-]+$ with no '..'. Canonical
+schema: skills/orch/schemas/dev-round.md.
+EOF
+}
+
+# This script's own flag vocabulary — distinguishes a forgotten value from
+# legitimate prose that merely begins with '--'.
+is_own_flag() {
+  case "$1" in
+    --worktree|--issue|--round-id|--item|-h|--help) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+need() {
+  # $1 = flag name, $2 = current argc ($#), $3 = the would-be value.
+  (( $2 >= 2 )) || die "$1 requires a value"
+  if is_own_flag "$3"; then
+    die "$1 requires a value, got flag '$3' (value missing?)"
+  fi
+}
+
+no_dup() {
+  # $1 = flag name, $2 = its presence boolean. A single-valued flag supplied
+  # twice would silently last-win.
+  [[ "$2" == "false" ]] || die "$1 supplied more than once"
+}
+
+check_id_token() {
+  # $1 = flag name, $2 = value.
+  [[ -n "$2" ]] || die "$1 is required (non-empty)"
+  [[ "$2" =~ $ID_GRAMMAR && "$2" != *..* ]] \
+    || die "$1 '$2' must match ${ID_GRAMMAR} with no '..' (path-safe: no '/' or whitespace)"
+}
+
+worktree=""
+issue=""
+round_id=""
+item_n=()
+item_text=()
+seen_n=" "
+worktree_given=false
+issue_given=false
+round_id_given=false
+
+while (( $# > 0 )); do
+  case "$1" in
+    --worktree) need "$1" $# "${2:-}"; no_dup "$1" "$worktree_given"; worktree_given=true; worktree="$2"; shift 2 ;;
+    --issue)    need "$1" $# "${2:-}"; no_dup "$1" "$issue_given";    issue_given=true;    issue="$2"; shift 2 ;;
+    --round-id) need "$1" $# "${2:-}"; no_dup "$1" "$round_id_given"; round_id_given=true; round_id="$2"; shift 2 ;;
+    --item)
+      # Consumes exactly 2 args: N TEXT.
+      if (( $# < 3 )); then
+        die "--item requires exactly 2 arguments: N TEXT"
+      fi
+      n="$2"; text="$3"
+      if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+        die "--item N must be a non-negative integer, got '$n'"
+      fi
+      case "$seen_n" in
+        *" $n "*) die "duplicate --item number $n: the delegated items form a set" ;;
+      esac
+      # An empty or whitespace-only text records nothing recoverable; a text
+      # that is one of this script's own flags is a forgotten value.
+      [[ -n "${text//[[:space:]]/}" ]] \
+        || die "--item TEXT must contain non-whitespace text (item $n)"
+      if is_own_flag "$text"; then
+        die "--item TEXT must be the item's formatted block, got flag '$text' (item $n; value missing?)"
+      fi
+      seen_n="$seen_n$n "
+      item_n+=("$n")
+      item_text+=("$text")
+      shift 3
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+
+[[ -n "$worktree" ]] || die "--worktree is required"
+[[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
+check_id_token --issue "$issue"
+check_id_token --round-id "$round_id"
+(( ${#item_n[@]} > 0 )) \
+  || die "at least one --item is required: a fix round with no delegated items has nothing to persist"
+
+# --- Build the items array deterministically with jq ---
+items_json="$(
+  for i in "${!item_n[@]}"; do
+    jq -n \
+      --argjson n "${item_n[$i]}" \
+      --arg text "${item_text[$i]}" \
+      '{n: $n, text: $text}'
+  done | jq -s '.'
+)"
+
+# --- Compute the absolute, round-scoped out path ---
+mkdir -p "$worktree/tmp"
+out_dir="$(cd "$worktree/tmp" && pwd)"
+out="$out_dir/dev-round-$issue-$round_id.json"
+
+# --- Write atomically: build to a same-dir temp file, then mv over the target ---
+tmp="$(mktemp "$out_dir/.dev-round-$issue.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+jq -n \
+  --argjson schema_version 1 \
+  --arg round_id "$round_id" \
+  --arg issue "$issue" \
+  --argjson items "$items_json" \
+  '{
+     schema_version: $schema_version,
+     round_id: $round_id,
+     issue: $issue,
+     items: $items
+   }' > "$tmp"
+
+mv "$tmp" "$out"
+trap - EXIT
+
+printf '%s\n' "$out"

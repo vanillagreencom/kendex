@@ -266,6 +266,49 @@ printf 'Recommend: re-scope; seam moved in refactor.\n' > "$rt_wt/analysis.md"
 "$WRITE" --worktree "$rt_wt" --kind analysis --issue issue-9 --round-id 9-10 --branch b --summary-file "$rt_wt/analysis.md" --no-summary >/dev/null
 assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 9-10)" "valid" "writer analysis output round-trips as valid (vstack#952)"
 
+# --- vstack#1230: --expect-items-from-round reads the persisted round record ---
+# The delegated item set is persisted at delegation time (dev-round-write →
+# tmp/dev-round-ISSUE-RID.json), so the exact-set gate has an on-disk source of
+# truth instead of a number list typed from the orchestrator's context.
+ROUND_WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
+rr_wt="$TMP_ROOT/rr"
+mkdir -p "$rr_wt"
+"$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 \
+  --item 1 "fix nil deref" --item 2 "cover expiry" >/dev/null
+"$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c \
+  --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
+assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items-from-round)" "valid" \
+  "artifact covering the persisted round set → valid (writers round-trip)"
+# an artifact missing a delegated item must fail exactly as with explicit numbers
+"$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 8-9 --branch b --commit c \
+  --validate pass --item 1 Applied a >/dev/null
+"$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 8-9 \
+  --item 1 "fix nil deref" --item 2 "cover expiry" >/dev/null
+assert_eq "$(reason --worktree "$rr_wt" --issue issue-9 --round-id 8-9 --expect-items-from-round)" "incomplete" \
+  "artifact missing a persisted delegated item → incomplete"
+set +e
+# a missing round record means the expected set cannot be established — the
+# check refuses to run (exit 2) rather than passing a weaker gate silently
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 9-9 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--expect-items-from-round with no round record exits 2"
+# a round record whose internal token differs is not THIS round's record
+jq -n '{schema_version:1,round_id:"OTHER-1",issue:"issue-9",items:[{n:1,text:"t"}]}' \
+  > "$rr_wt/tmp/dev-round-issue-9-10-10.json"
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 10-10 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--expect-items-from-round with mismatched internal round_id exits 2"
+# a malformed round record (empty/ill-typed items) proves nothing about the set
+jq -n '{schema_version:1,round_id:"11-11",issue:"issue-9",items:[]}' \
+  > "$rr_wt/tmp/dev-round-issue-9-11-11.json"
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 11-11 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--expect-items-from-round with an empty round-record item set exits 2"
+# one expected-set source only
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items 1,2 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--expect-items and --expect-items-from-round together exit 2"
+# --file mode has no worktree/issue/round to resolve a record from
+"$CHECK" --file "$rr_wt/tmp/dev-return-issue-9-7-8.json" --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--file mode rejects --expect-items-from-round"
+set -e
+
 # --- vstack#994: the recorded commit must name a real object in the worktree's repo ---
 # Case 1 (hyprtrade CC-1006): a dev agent hand-reconstructed a full SHA from the
 # short form — same 8-char prefix as HEAD, fabricated tail — and the receipt
@@ -348,10 +391,12 @@ assert_eq "$(reason --file "$gext")" "valid" "--file mode skips the commit gates
 # token in the delegation; ci-fix's agent writes no artifact so it does not.
 ROUND_STAMP="workflow-state new-round-id [ISSUE_ID] dev_round_id"
 ROUND_CHECK="dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]"
-# Fix rounds must carry --expect-items as ONE contiguous command (a regression that
-# drops the flag from the command while leaving it in prose would still pass two
-# independent substring checks — so assert the full string).
-ROUND_CHECK_EXPECT="$ROUND_CHECK --expect-items [ITEM_NUMBERS]"
+# Fix rounds must carry the exact-set gate as ONE contiguous command (a regression
+# that drops the flag from the command while leaving it in prose would still pass
+# two independent substring checks — so assert the full string). Since vstack#1230
+# the expected set comes from the persisted round record, not a typed number list.
+ROUND_CHECK_EXPECT="$ROUND_CHECK --expect-items-from-round"
+ROUND_ITEMS_PERSIST="dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID]"
 WATCHDOG_STAMP="workflow-state set-now [ISSUE_ID] dev_delegated_at"
 ARTIFACT_KEY_LINE="Artifact Key: [ISSUE_ID]"
 LEGACY_CHECK="dev-artifact-check [WORKTREE_PATH] [ISSUE_ID] [DEV_DELEGATED_AT_FROM_PREVIOUS_COMMAND]"
@@ -377,14 +422,16 @@ assert_file_contains "$dev_start" "$ARTIFACT_KEY_LINE" "dev-start delegation car
 orch_dev_fix="$REPO_ROOT/skills/orch/workflows/dev-fix.md"
 assert_file_contains "$orch_dev_fix" "$WATCHDOG_STAMP" "orch dev-fix still stamps dev_delegated_at"
 assert_file_contains "$orch_dev_fix" "$ROUND_STAMP" "orch dev-fix mints dev_round_id before delegation"
-assert_file_contains "$orch_dev_fix" "$ROUND_CHECK_EXPECT" "orch dev-fix accepts via round-mode dev-artifact-check WITH --expect-items in one command"
+assert_file_contains "$orch_dev_fix" "$ROUND_CHECK_EXPECT" "orch dev-fix accepts via round-mode dev-artifact-check WITH --expect-items-from-round in one command"
+assert_file_contains "$orch_dev_fix" "$ROUND_ITEMS_PERSIST" "orch dev-fix persists the delegated item set at stamp time (vstack#1230)"
 assert_file_contains "$orch_dev_fix" "Round ID: [DEV_ROUND_ID]" "orch dev-fix delegation carries the Round ID line"
 assert_file_contains "$orch_dev_fix" "$ARTIFACT_KEY_LINE" "orch dev-fix delegation carries the Artifact Key line"
 
 review_pr_comments="$REPO_ROOT/skills/orch/workflows/review-pr-comments.md"
 assert_file_contains "$review_pr_comments" "$WATCHDOG_STAMP" "review-pr-comments § 6.1 still stamps dev_delegated_at"
 assert_file_contains "$review_pr_comments" "$ROUND_STAMP" "review-pr-comments § 6.1 mints dev_round_id before delegation"
-assert_file_contains "$review_pr_comments" "$ROUND_CHECK_EXPECT" "review-pr-comments accepts via round-mode dev-artifact-check WITH --expect-items in one command"
+assert_file_contains "$review_pr_comments" "$ROUND_CHECK_EXPECT" "review-pr-comments accepts via round-mode dev-artifact-check WITH --expect-items-from-round in one command"
+assert_file_contains "$review_pr_comments" "$ROUND_ITEMS_PERSIST" "review-pr-comments persists each group's delegated item set at stamp time (vstack#1230)"
 assert_file_contains "$review_pr_comments" "Round ID: [DEV_ROUND_ID]" "review-pr-comments delegation carries the Round ID line"
 assert_file_contains "$review_pr_comments" "$ARTIFACT_KEY_LINE" "review-pr-comments delegation carries the Artifact Key line"
 
@@ -425,6 +472,10 @@ dev_implement="$REPO_ROOT/skills/dev/workflows/dev-implement.md"
 assert_file_contains "$dev_implement" "dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID]" "dev-implement § 10 keys the artifact to [ARTIFACT_KEY]"
 dev_fix="$REPO_ROOT/skills/dev/workflows/dev-fix.md"
 assert_file_contains "$dev_fix" "dev-return-write --worktree [WORKTREE_PATH] --kind fix --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID]" "dev-fix § 6 keys the artifact to [ARTIFACT_KEY]"
+# vstack#1230: a respawned agent recovers its delegated item set from the
+# persisted round record instead of guessing (or depending on the orchestrator's
+# context surviving).
+assert_file_contains "$dev_fix" "dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json" "dev-fix § 6 points a respawned agent at the persisted round record"
 
 # --- vstack#952 doc wiring: analysis rounds have a truthful spelling everywhere ---
 # The dev workflows must offer --kind analysis for read-only rounds (never a
@@ -447,6 +498,12 @@ assert_file_contains "$dev_return_schema" "--expect-items" "dev-return schema do
 state_schema="$REPO_ROOT/skills/orch/schemas/workflow-state.md"
 assert_file_contains "$state_schema" "dev_delegated_at" "workflow-state schema documents dev_delegated_at"
 assert_file_contains "$state_schema" "dev_round_id" "workflow-state schema documents dev_round_id"
+
+# --- vstack#1230 schema doc: the round record has its own contract ---
+dev_round_schema="$REPO_ROOT/skills/orch/schemas/dev-round.md"
+assert_file_contains "$dev_round_schema" "dev-round-write" "dev-round schema references the writer"
+assert_file_contains "$dev_round_schema" "round_id" "dev-round schema documents round_id identity"
+assert_file_contains "$dev_round_schema" "--expect-items-from-round" "dev-round schema documents the check-side reader"
 
 # --- vstack#884: the note has to reach the orchestrator, not just the file ---
 # This output IS what orch accepts a completion on, so a caveat stored in the
