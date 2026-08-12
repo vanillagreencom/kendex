@@ -68,10 +68,11 @@ resolve_default_base() {
 # direct string literal (concat!/env!/consts — even concatenations of
 # literals) emit no record; #[path]/include! declarations living in a
 # directory that is neither the candidate's own nor one of its ancestors
-# are not consulted; declarations inside inline module blocks are skipped
-# outright (no records — never a mis-resolved one); and declarations
-# produced by macro expansion (macro_rules!/proc-macro bodies) are
-# invisible. Every one of these fails toward NO record for the shape, so
+# are not consulted; declarations inside inline module blocks and
+# macro_rules! definition bodies are skipped outright (no records — never
+# a mis-resolved one); and declarations produced by macro EXPANSION
+# (invoking a macro_rules! or proc macro) are invisible by construction.
+# Every one of these fails toward NO record for the shape, so
 # a file that is production-reachable only through one of them while also
 # carrying a #[cfg(test)]-gated declaration still classifies as test —
 # that is the declared trade-off, and the only one.
@@ -179,8 +180,7 @@ scan_decl_records() {
                     else if (c == "\"") { instr = 0; o = o c; m = m c; i++ }
                     else { o = o c; m = m "."; i++ }
                 } else if (instr == 2) {
-                    hs = mkhashes(rawh)
-                    if (c == "\"" && substr(s, i + 1, rawh) == hs) {
+                    if (c == "\"" && substr(s, i + 1, rawh) == rawhs) {
                         o = o substr(s, i, rawh + 1); m = m substr(s, i, rawh + 1)
                         i += rawh + 1; instr = 0
                     } else { o = o c; m = m "."; i++ }
@@ -193,6 +193,10 @@ scan_decl_records() {
                 } else if (c == "r" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
                            && match(substr(s, i), /^r#*"/)) {
                     rawh = RLENGTH - 2
+                    # closing-hash sequence computed once per raw string,
+                    # not per character (raw strings can span lines, so
+                    # rawh/rawhs persist across mask_line calls)
+                    rawhs = mkhashes(rawh)
                     o = o substr(s, i, RLENGTH); m = m substr(s, i, RLENGTH)
                     i += RLENGTH; instr = 2
                 } else if (c == "\047") {
@@ -249,22 +253,24 @@ scan_decl_records() {
             if (buf == "") { buf = ml_orig; mbuf = ml_mask }
             else { buf = buf " " ml_orig; mbuf = mbuf " " ml_mask }
             for (;;) {
-                # Inside an inline module block (mod name { ... }): Rust
-                # resolves nested declarations into the inline chain, which
-                # this scanner does not model — a shape it cannot
-                # faithfully parse must produce NO record, never a
-                # mis-resolved one. Consume by brace depth on the MASK
-                # (quoted braces are invisible), emit nothing.
-                if (inline_depth > 0) {
+                # Inside a skip region (inline module block or macro_rules!
+                # definition body): Rust resolves inline-module contents
+                # into the inline chain and macro token trees only exist
+                # after expansion — neither is a top-level item stream this
+                # scanner can faithfully parse, so it must produce NO
+                # record, never a mis-resolved one. Consume by delimiter
+                # depth on the MASK (quoted delimiters are invisible),
+                # emit nothing.
+                if (skip_depth > 0) {
                     blen = length(mbuf); bi = 1
-                    while (bi <= blen && inline_depth > 0) {
+                    while (bi <= blen && skip_depth > 0) {
                         bc = substr(mbuf, bi, 1)
-                        if (bc == "{") inline_depth++
-                        else if (bc == "}") inline_depth--
+                        if (bc == skip_open) skip_depth++
+                        else if (bc == skip_close) skip_depth--
                         bi++
                     }
                     buf = substr(buf, bi); mbuf = substr(mbuf, bi)
-                    if (inline_depth > 0) { buf = ""; mbuf = ""; break }
+                    if (skip_depth > 0) { buf = ""; mbuf = ""; break }
                     continue
                 }
                 if (match(mbuf, /^[[:space:]]+/)) {
@@ -315,7 +321,18 @@ scan_decl_records() {
                 # attributes, gated or not, apply to the skipped block).
                 if (match(mbuf, /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+(r#)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\{/)) {
                     buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
-                    inline_depth = 1
+                    skip_open = "{"; skip_close = "}"; skip_depth = 1
+                    gated = 0; pathattr = ""
+                    continue
+                }
+                # macro_rules! definition opener: the body is a token tree,
+                # not items — skip it whole. Bodies may use any delimiter
+                # pair; the opener determines which one is depth-tracked.
+                if (match(mbuf, /^macro_rules![[:space:]]*(r#)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*[([{]/)) {
+                    skip_open = substr(mbuf, RLENGTH, 1)
+                    skip_close = (skip_open == "{") ? "}" : (skip_open == "(" ? ")" : "]")
+                    skip_depth = 1
+                    buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
                     gated = 0; pathattr = ""
                     continue
                 }

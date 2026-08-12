@@ -1273,5 +1273,94 @@ assert_eq "string torture: ungated routes survive, gated-only stays test" \
 assert_eq "string torture: scope is production" \
     "production" "$(jq -r '.scope' <<<"$strtorture_json")"
 
+# macro_rules! bodies are token trees, not item streams. Direction one: an
+# ungated `mod cand;` inside a macro DEFINITION must not destroy the real
+# gated route (rustc keeps cand.rs test-only when the macro is never
+# invoked).
+macro_ungated_repo="$SANDBOX/macro-ungated"
+init_repo "$macro_ungated_repo"
+mkdir -p "$macro_ungated_repo/src"
+cat > "$macro_ungated_repo/src/lib.rs" <<'RUST'
+macro_rules! demo {
+    () => {
+        mod cand;
+    };
+}
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$macro_ungated_repo" add src
+git -C "$macro_ungated_repo" commit -q -m lib
+cat > "$macro_ungated_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$macro_ungated_repo" add src/cand.rs
+macro_ungated_json="$($SUMMARY -C "$macro_ungated_repo" --staged)"
+assert_eq "ungated decl in a macro body does not destroy the gated route" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$macro_ungated_json")"
+assert_eq "ungated decl in a macro body is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$macro_ungated_json")"
+
+# Direction two: a gated declaration inside a macro body must not create a
+# route (the file has no real declaration at all).
+macro_gated_repo="$SANDBOX/macro-gated"
+init_repo "$macro_gated_repo"
+mkdir -p "$macro_gated_repo/src"
+cat > "$macro_gated_repo/src/lib.rs" <<'RUST'
+macro_rules! demo {
+    () => {
+        #[cfg(test)]
+        mod cand;
+    };
+}
+RUST
+git -C "$macro_gated_repo" add src
+git -C "$macro_gated_repo" commit -q -m lib
+cat > "$macro_gated_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$macro_gated_repo" add src/cand.rs
+macro_gated_json="$($SUMMARY -C "$macro_gated_repo" --staged)"
+assert_eq "gated decl in a macro body does not create a route" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$macro_gated_json")"
+assert_eq "gated decl in a macro body keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$macro_gated_json")"
+
+# Macro bodies may use paren delimiters (with brace groups inside): the
+# skip must track the opener's delimiter pair.
+macro_paren_repo="$SANDBOX/macro-paren"
+init_repo "$macro_paren_repo"
+mkdir -p "$macro_paren_repo/src"
+cat > "$macro_paren_repo/src/lib.rs" <<'RUST'
+macro_rules! demo (
+    () => {
+        mod cand;
+    };
+);
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$macro_paren_repo" add src
+git -C "$macro_paren_repo" commit -q -m lib
+cat > "$macro_paren_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$macro_paren_repo" add src/cand.rs
+macro_paren_json="$($SUMMARY -C "$macro_paren_repo" --staged)"
+assert_eq "paren-bodied macro body is skipped whole" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$macro_paren_json")"
+assert_eq "paren-bodied macro body is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$macro_paren_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
