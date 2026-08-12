@@ -193,6 +193,18 @@ scan_decl_records() {
                     cdepth = 1; o = o "  "; m = m "  "; i += 2
                 } else if (c == "\"") {
                     instr = 1; o = o c; m = m c; i++
+                } else if (c == "b" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
+                           && match(substr(s, i), /^br#*"/)) {
+                    # byte raw string: same raw machinery, prefix is br
+                    rawh = RLENGTH - 3
+                    rawhs = mkhashes(rawh)
+                    o = o substr(s, i, RLENGTH); m = m substr(s, i, RLENGTH)
+                    i += RLENGTH; instr = 2
+                } else if (c == "b" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
+                           && substr(s, i + 1, 1) ~ /["\047]/) {
+                    # byte string or byte char: consume the b, let the
+                    # quote branch on the next pass open the literal
+                    o = o c; m = m c; i++
                 } else if (c == "r" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) \
                            && match(substr(s, i), /^r#*"/)) {
                     rawh = RLENGTH - 2
@@ -234,12 +246,12 @@ scan_decl_records() {
         # shapes the scanner cannot evaluate.
         function emit_includes(mc, oc, inc_gated,   ioff, iq, iap, mrest, orest) {
             ioff = 0
-            while ((iq = index(substr(mc, ioff + 1), "include!")) > 0) {
+            while ((iq = index(substr(mc, ioff + 1), "include")) > 0) {
                 iap = ioff + iq
                 if (iap == 1 || substr(mc, iap - 1, 1) !~ /[A-Za-z0-9_]/) {
                     mrest = substr(mc, iap)
                     orest = substr(oc, iap)
-                    if (match(mrest, /^include![[:space:]]*[([{][[:space:]]*(r#*)?"[^"]*"/) \
+                    if (match(mrest, /^include[[:space:]]*![[:space:]]*[([{][[:space:]]*(b?r#*)?"[^"]*"/) \
                         && match(mrest, /"[^"]*"/))
                         printf "%s\t%s\n", (inc_gated ? "G" : "U"), \
                             normpath(join(fdir, substr(orest, RSTART + 1, RLENGTH - 2)))
@@ -286,8 +298,8 @@ scan_decl_records() {
                 # module, not to what follows — consumed on its own,
                 # contributing nothing to the pending outer-attribute gate
                 # state, so the next declaration still scans.
-                if (mbuf ~ /^#!\[/) {
-                    if (match(mbuf, /^#!\[[^]]*\][[:space:]]*/)) {
+                if (mbuf ~ /^#[[:space:]]*![[:space:]]*\[/) {
+                    if (match(mbuf, /^#[[:space:]]*![[:space:]]*\[[^]]*\][[:space:]]*/)) {
                         buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
                         continue
                     }
@@ -295,19 +307,19 @@ scan_decl_records() {
                 }
                 # Attribute item. An opened-but-unclosed one waits for the
                 # next line (rustc accepts attributes split across lines).
-                if (mbuf ~ /^#\[/) {
-                    if (match(mbuf, /^#\[[^]]*\][[:space:]]*/)) {
+                if (mbuf ~ /^#[[:space:]]*\[/) {
+                    if (match(mbuf, /^#[[:space:]]*\[[^]]*\][[:space:]]*/)) {
                         alen = RLENGTH
                         mattr = substr(mbuf, 1, alen)
                         oattr = substr(buf, 1, alen)
                         # rustc accepts whitespace between attribute tokens
                         # and a trailing comma after the predicate (both
                         # verified: #[cfg ( test )] and #[cfg(test,)]).
-                        if (mattr ~ /^#\[[[:space:]]*cfg[[:space:]]*\([[:space:]]*test[[:space:]]*,?[[:space:]]*\)[[:space:]]*\]/) gated = 1
+                        if (mattr ~ /^#[[:space:]]*\[[[:space:]]*cfg[[:space:]]*\([[:space:]]*test[[:space:]]*,?[[:space:]]*\)[[:space:]]*\]/) gated = 1
                         # Plain and raw string values, including hash-raw:
                         # the literal is located on the mask (its interior
                         # can hide no quote) and read from the original.
-                        if (mattr ~ /^#\[[[:space:]]*path[[:space:]]*=[[:space:]]*(r#*)?"/ \
+                        if (mattr ~ /^#[[:space:]]*\[[[:space:]]*path[[:space:]]*=[[:space:]]*(b?r#*)?"/ \
                             && match(mattr, /"[^"]*"/))
                             pathattr = substr(oattr, RSTART + 1, RLENGTH - 2)
                         buf = substr(buf, alen + 1); mbuf = substr(mbuf, alen + 1)
@@ -317,10 +329,10 @@ scan_decl_records() {
                 }
                 # File-module declaration item (raw identifiers accepted:
                 # `mod r#type;` declares module type -> type.rs).
-                if (match(mbuf, /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+(r#)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;/)) {
+                if (match(mbuf, /^(pub([[:space:]]*[(][^)]*[)][[:space:]]*|[[:space:]]+))?mod[[:space:]]+(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*[[:space:]]*;/)) {
                     name = substr(mbuf, 1, RLENGTH)
                     buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
-                    sub(/^pub([(][^)]*[)])?[[:space:]]+/, "", name)
+                    sub(/^pub([[:space:]]*[(][^)]*[)][[:space:]]*|[[:space:]]+)/, "", name)
                     sub(/^mod[[:space:]]+/, "", name)
                     sub(/^r#/, "", name)
                     sub(/[[:space:]]*;.*$/, "", name)
@@ -338,7 +350,7 @@ scan_decl_records() {
                 }
                 # Inline-module opener: enter the skip region (its own
                 # attributes, gated or not, apply to the skipped block).
-                if (match(mbuf, /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+(r#)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\{/)) {
+                if (match(mbuf, /^(pub([[:space:]]*[(][^)]*[)][[:space:]]*|[[:space:]]+))?mod[[:space:]]+(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*[[:space:]]*\{/)) {
                     buf = substr(buf, RLENGTH + 1); mbuf = substr(mbuf, RLENGTH + 1)
                     skip_open = "{"; skip_close = "}"; skip_depth = 1
                     gated = 0; pathattr = ""
@@ -347,7 +359,7 @@ scan_decl_records() {
                 # macro_rules! definition opener: the body is a token tree,
                 # not items — skip it whole. Bodies may use any delimiter
                 # pair; the opener determines which one is depth-tracked.
-                if (match(mbuf, /^macro_rules![[:space:]]*(r#)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*[([{]/)) {
+                if (match(mbuf, /^macro_rules[[:space:]]*![[:space:]]*(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*[[:space:]]*[([{]/)) {
                     skip_open = substr(mbuf, RLENGTH, 1)
                     skip_close = (skip_open == "{") ? "}" : (skip_open == "(" ? ")" : "]")
                     skip_depth = 1
@@ -361,11 +373,11 @@ scan_decl_records() {
                 # whole so item-like tokens (`discard! { mod cand; }`)
                 # fabricate nothing. include! is the one macro the scanner
                 # DOES evaluate; it falls through to the chunk scan.
-                if (match(mbuf, /^(r#)?[A-Za-z_][A-Za-z0-9_]*(::(r#)?[A-Za-z_][A-Za-z0-9_]*)*![[:space:]]*[([{]/)) {
+                if (match(mbuf, /^(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*([[:space:]]*::[[:space:]]*(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*)*[[:space:]]*![[:space:]]*[([{]/)) {
                     mname = substr(mbuf, 1, RLENGTH)
                     mdelim = substr(mbuf, RLENGTH, 1)
-                    sub(/![[:space:]]*[([{]$/, "", mname)
-                    sub(/^.*::/, "", mname)
+                    sub(/[[:space:]]*![[:space:]]*[([{]$/, "", mname)
+                    sub(/^.*::[[:space:]]*/, "", mname)
                     sub(/^r#/, "", mname)
                     if (mname != "include") {
                         skip_open = mdelim

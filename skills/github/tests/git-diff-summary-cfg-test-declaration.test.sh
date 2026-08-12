@@ -1626,5 +1626,45 @@ assert_eq "inner cfg(test) does not gate the next declaration" \
 assert_eq "inner cfg(test) keeps production scope" \
     "production" "$(jq -r '.scope' <<<"$inner_cfg_json")"
 
+# Token-spelling completeness: whitespace at every token boundary rustc
+# accepts, byte-string prefixes, and Unicode identifiers. One repo, one
+# torture lib.rs: every route below is UNGATED and must keep production
+# scope against a gated twin declaration for the same file.
+tokens_repo="$SANDBOX/token-spellings"
+init_repo "$tokens_repo"
+mkdir -p "$tokens_repo/src"
+cat > "$tokens_repo/src/lib.rs" <<'RUST'
+const RAW: &[u8] = br#"\"{"#;
+pub ( crate ) mod cand;
+include ! ("cand2.rs");
+# [path = "cand3.rs"] pub mod alias3;
+pub mod 模块;
+#[cfg(test)]
+#[path = "cand.rs"]
+mod f1;
+#[cfg(test)]
+#[path = "cand2.rs"]
+mod f2;
+#[cfg(test)]
+#[path = "cand3.rs"]
+mod f3;
+#[cfg(test)]
+#[path = "模块.rs"]
+mod f4;
+RUST
+git -C "$tokens_repo" add src
+git -C "$tokens_repo" commit -q -m lib
+for f in cand cand2 cand3 模块; do
+cat > "$tokens_repo/src/$f.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$tokens_repo" add "src/$f.rs"
+done
+tokens_json="$($SUMMARY -C "$tokens_repo" --staged)"
+assert_eq "token spellings: byte raw string, spaced visibility/include/attr, unicode ident all keep production"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$tokens_json")"
+assert_eq "token spellings keep production scope"     "production" "$(jq -r '.scope' <<<"$tokens_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi
