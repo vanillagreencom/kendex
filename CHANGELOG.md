@@ -80,11 +80,17 @@
   `statuses` scope, so a failed dispatch cannot make the gate look converged
   — only leave it stale, which the cron floor already owns — while a red
   check would pin the PR at `UNSTABLE`, the very defect being fixed. It
-  retries once after a wait clamped to 60-120s (a 5-second retry lands
-  inside every secondary-rate-limit window; a plain transient still retries
-  in 5s; a permanent answer — 404, 422, 401 — is not retried at all, and
-  neither is a server-advertised wait beyond the cap, since both would pay
-  for a retry that cannot succeed), then warns and exits 0. It carries no escalation of its own: a
+  retries once after a wait floored at 60s and capped at 120s — nothing is
+  clamped DOWN any more: a window beyond the cap is never slept and never
+  retried, so the set of waits it can sleep is 5s or 60-120s (a 5-second
+  retry lands inside every secondary-rate-limit window; a plain transient
+  still retries
+  in 5s; a permanent answer — 404, 422, 401, and 403 with no rate-limit
+  evidence — is not retried at all, and neither is a named window beyond the
+  cap, since both would pay for a retry that cannot succeed), then warns and
+  exits 0. `x-ratelimit-reset` counts as a wait instruction only when
+  `x-ratelimit-remaining` is 0: it rides on every GitHub response, so reading
+  it unconditionally silently disabled the entire retry. It carries no escalation of its own: a
   sustained dispatch outage surfaces as gate staleness, which
   `pr-watch --heal` already reduces on across every open PR, rather than as
   N red PRs or a widened relay scope.
@@ -95,8 +101,8 @@
   (including an underivable `github.workflow_ref`, which is a *permanent*
   condition that would otherwise have pinned every open PR forever), and
   every wait is bounded: each dispatch attempt is wrapped in `timeout`, the
-  backoff is clamped, and the job's `timeout-minutes` is asserted to outlast
-  the worst case rather than merely stated to.
+  backoff is floored and capped, and the job's `timeout-minutes` is asserted
+  to outlast the worst case rather than merely stated to.
   The test harness now runs the extracted step under the shells the runner
   actually uses — `bash -e` (a `run:` block's default) and
   `bash -eo pipefail` (an explicit `shell: bash`) — and asserts exit 0 on

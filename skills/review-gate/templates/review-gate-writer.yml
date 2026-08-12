@@ -37,7 +37,9 @@
 # — and the relay is unconditional and group-less, so unlike the writer
 # group it coalesces nothing: that is one billed-minimum run per event,
 # including every status transition from every CI provider on every open
-# head. Event-fast latency grows by a whole run lifecycle (the relay's own
+# head. A run that has to back off holds its runner longer — worst modeled
+# case ~4 minutes (a 60s-bounded attempt, a wait capped at 120s, a second
+# 60s-bounded attempt), inside the 5-minute job budget. Event-fast latency grows by a whole run lifecycle (the relay's own
 # queue and runner allocation, then the converge run's, which now starts
 # only after the relay finishes) — dominated by runner allocation, which
 # GitHub does not bound, so "seconds" is the good case, not the ceiling. It
@@ -261,17 +263,26 @@ jobs:
           # is one hand-edited expression in a repo-owned file that
           # adoption.md actively invites consumers to edit; this guard
           # survives that mis-edit. A converge leg must never relay.
-          case "$EVENT_NAME" in
+          # Every main-shell read is DEFAULTED. `set -u` is kept for genuine
+          # typos, but an env: binding dropped by a consumer hand-edit must
+          # not be the one way this job reds: unbound, each of these killed
+          # the step before it printed anything, on every PR-attached run,
+          # permanently — the defect this job exists to prevent, delivered by
+          # the job itself. Each default lands on a path that is already
+          # green and already tested. (review-writer.sh, under the same
+          # `set -u`, already reads WRITER_READ_ONLY this way.)
+          case "${EVENT_NAME:-}" in
             workflow_dispatch|schedule)
               echo "::warning::the relay ran on a CONVERGE leg ('$EVENT_NAME') — the job if: has been mis-edited; refusing to dispatch (a self-dispatch loop has no throttle)"
               exit 0
               ;;
           esac
-          if [ "$WRITER_READ_ONLY" = "1" ]; then
+          if [ "${WRITER_READ_ONLY:-0}" = "1" ]; then
             echo "read-only token (fork pull_request_review); cannot dispatch — the scheduled writer pass converges this head"
             exit 0
           fi
-          workflow_file="${WORKFLOW_REF%%@*}"
+          workflow_file="${WORKFLOW_REF:-}"
+          workflow_file="${workflow_file%%@*}"
           workflow_file="${workflow_file##*/}"
           # THE INVARIANT: this step NEVER exits non-zero. It runs on the
           # PR-attached legs, so a red — or a hang long enough to be
@@ -284,7 +295,7 @@ jobs:
           # every unbounded wait is bounded. The suite asserts rc 0 on every
           # modeled path under both `bash -e` and `bash -eo pipefail`.
           if [ -z "$workflow_file" ]; then
-            echo "::warning::could not derive this workflow's file name from github.workflow_ref ('$WORKFLOW_REF'); no converge pass requested — this event converges on the cron floor instead"
+            echo "::warning::could not derive this workflow's file name from github.workflow_ref ('${WORKFLOW_REF:-<unset>}'); no converge pass requested — this event converges on the cron floor instead"
             exit 0
           fi
           # Response captured in a VARIABLE, not a temp file: an unchecked
@@ -307,78 +318,94 @@ jobs:
             { grep -i "^$1:" <<<"$resp" || true; } | head -n 1 | tr -d '\r' | awk '{print $2}'
           }
           header_status() { # -> the response's HTTP status code, if any
-            { grep -i '^HTTP/' <<<"$resp" || true; } | head -n 1 | awk '{print $2}'
+            { grep -i '^HTTP/' <<<"$resp" || true; } | head -n 1 | tr -d '\r' | awk '{print $2}'
           }
           if dispatch; then
             echo "requested a converge pass ($workflow_file on $DISPATCH_REF)"
             exit 0
           fi
           printf '%s\n' "$resp"
-          # HOW LONG TO WAIT, and whether waiting is worth anything.
-          # The failure class that recurs here is GitHub's SECONDARY rate
-          # limit (content-generating requests: 80/min, 500/hour, shared by
-          # this token), for which the documented guidance is to honor
-          # retry-after / x-ratelimit-reset and otherwise wait at least a
-          # minute. A transient 5xx is a different animal and deserves a
-          # quick retry, not a minute of paid runner hold.
+          # CLASSIFY -> DERIVE -> REFUSE -> CLAMP, one site each.
           cap=120
           floor=60
-          wait_s="$(header retry-after)"
+          #
+          # (1) CLASSIFY. Is this answer settled, or is waiting worth
+          # something? The only rate-limit EVIDENCE is a retry-after header
+          # (secondary limit), an exhausted window (x-ratelimit-remaining 0,
+          # primary limit), or the secondary limit saying so in the body.
+          #
+          # x-ratelimit-reset ALONE IS NOT EVIDENCE. GitHub returns the core
+          # window's reset epoch on ordinary responses including failures —
+          # verified live: a 422 for a bad ref comes back with
+          # x-ratelimit-remaining: 4947 and a reset up to an hour out. Reading
+          # `reset` whenever retry-after is absent therefore fired on nearly
+          # every failure, put an hour-scale number into the wait, tripped the
+          # budget refusal below, and killed the retry for every case —
+          # including the secondary limit it was added for. Gate it on
+          # `remaining`, which is what actually says the window is spent.
+          http_status="$(header_status)"
+          remaining="$(header x-ratelimit-remaining)"
+          case "$remaining" in ''|*[!0-9]*) remaining="" ;; esac
+          rate_limited=0
+          server_wait=""
+          retry_after="$(header retry-after)"
           # Digits only, and bounded in LENGTH: an absurd or malformed value
           # must fall back rather than reach `sleep` or overflow the
-          # arithmetic below. Six digits is already ~28 hours against a 120s
-          # cap.
-          case "$wait_s" in ''|*[!0-9]*|??????*) wait_s="" ;; esac
-          if [ -z "$wait_s" ]; then
+          # arithmetic. Six digits is already ~28 hours against a 120s cap.
+          case "$retry_after" in ''|*[!0-9]*|??????*) retry_after="" ;; esac
+          if [ -n "$retry_after" ]; then
+            rate_limited=1
+            server_wait="$retry_after"
+          elif [ "$remaining" = "0" ]; then
+            rate_limited=1
             reset="$(header x-ratelimit-reset)"
-            # The PRIMARY-limit shape: x-ratelimit-remaining: 0 plus a reset
-            # epoch and NO retry-after. Same length bound; a reset already in
-            # the past yields a negative value, which the floor absorbs.
-            #
-            # KEEP THIS BRANCH. Deleting it as "unreachable" was proposed and
-            # rejected: this is a real GitHub response shape, and without it
-            # a primary-limit answer falls to the 60s floor instead of the
-            # reset's own (up to the cap), making the retry MORE likely to
-            # land inside the window and fail. It is covered by tests rather
-            # than removed.
             case "$reset" in
               ''|*[!0-9]*|???????????*) : ;;
-              *) wait_s=$(( reset - $(date +%s) )) ;;
+              *) server_wait=$(( reset - $(date +%s) )) ;;
             esac
+          elif [ "$http_status" = "403" ] && grep -qi 'secondary rate limit' <<<"$resp"; then
+            # The secondary limit does not always send retry-after and does
+            # not decrement the primary window, so the body is the only
+            # remaining evidence. Without this arm it would look permanent.
+            rate_limited=1
           fi
-          if [ -n "$wait_s" ] && [ "$wait_s" -gt "$cap" ]; then
-            # The server named a window longer than this job can wait out.
-            # Sleeping the cap and retrying anyway would retry INSIDE the
-            # window we were just told to stay out of: guaranteed to fail,
-            # and a paid runner hold to reach that failure. Defer instead.
-            echo "::warning::the API asked for ${wait_s}s before retrying, beyond this job's budget; not retrying — this event converges on the cron floor instead"
+          # (2) PERMANENT answers buy nothing by waiting. 403 is in this list
+          # ONLY when nothing above found rate-limit evidence: a GITHUB_TOKEN
+          # scope failure ("Resource not accessible by integration") returns
+          # 403 with a healthy window and no retry-after, and this job is the
+          # only one needing actions:write in a repo-owned file that gets
+          # hand-edited on copy — so a trimmed permissions block or an org
+          # token policy is the most reachable permanent failure it has.
+          # Retrying it holds a paid runner to re-ask a settled question, on
+          # every PR-attached event, forever.
+          permanent=""
+          case "$http_status" in
+            400|401|404|405|422) permanent="$http_status" ;;
+            403) [ "$rate_limited" = "1" ] || permanent="403 (not rate limited — most likely the token lacks actions:write; check the repo/org default GITHUB_TOKEN workflow permissions)" ;;
+          esac
+          if [ -n "$permanent" ]; then
+            echo "::warning::the dispatch was refused permanently (HTTP $permanent); not retrying — this event converges on the cron floor instead"
             exit 0
           fi
-          # WHAT KIND OF FAILURE, before deciding whether waiting can help.
-          http_status="$(header_status)"
-          case "$http_status" in
-            400|401|404|405|422)
-              # Permanent: a bad ref, a missing/renamed workflow file, a
-              # revoked token, a malformed request. No amount of waiting
-              # changes the answer, and this job runs on a PR head — holding
-              # a runner a minute to re-ask a settled question is the paid
-              # version of doing nothing. Defer immediately.
-              echo "::warning::the dispatch failed permanently (HTTP $http_status); not retrying — this event converges on the cron floor instead"
-              exit 0
-              ;;
-          esac
-          if [ -z "$wait_s" ]; then
-            # No server guidance. Distinguish "you are being rate limited"
-            # from "something blipped": only the former earns the minute.
-            case "$http_status" in
-              403|429) wait_s="$floor" ;;
-              *)       wait_s=5 ;;
-            esac
-          elif [ "$wait_s" -lt "$floor" ]; then
-            # A server-supplied window under a minute still lands inside the
-            # secondary-limit window it is retrying; the floor is the point
-            # of honoring the header at all.
+          # (3) REFUSE a window this job cannot wait out. Retrying inside a
+          # window the server named would fail by construction, and the wait
+          # is a paid runner hold to reach that failure.
+          if [ -n "$server_wait" ] && [ "$server_wait" -gt "$cap" ]; then
+            echo "::warning::the rate-limit window runs another ${server_wait}s, beyond this job's budget; not retrying — this event converges on the cron floor instead"
+            exit 0
+          fi
+          # (4) CLAMP, assigned once. A server-named window under a minute
+          # still lands inside the secondary-limit window it is retrying, so
+          # the floor is the point of honoring the header at all.
+          if [ -n "$server_wait" ]; then
+            wait_s="$server_wait"
+            [ "$wait_s" -lt "$floor" ] && wait_s="$floor"
+          elif [ "$rate_limited" = "1" ] || [ "$http_status" = "429" ]; then
             wait_s="$floor"
+          else
+            # A blip — 5xx, a dropped connection, no response at all. The
+            # minute is for rate limits; spending it here buys nothing.
+            wait_s=5
           fi
           echo "::warning::could not request a converge pass; retrying once in ${wait_s}s"
           sleep "$wait_s"

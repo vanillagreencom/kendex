@@ -155,18 +155,23 @@ each repo takes it as its own PR. What changed in the template:
   edit the copy: the job runs on PR-attached legs, so a red — or a hang long
   enough to be cancelled — is a failed check on the PR head and the defect
   this change removes. Every fault warns and exits 0, and every wait is
-  bounded (`timeout` per dispatch attempt, a clamped backoff, and a
+  bounded (`timeout` per dispatch attempt, a floored and capped backoff, and a
   `timeout-minutes` proven to outlast the worst case). Two
   dispatch attempts (the retry honors `retry-after`/`x-ratelimit-reset`,
-  clamped to 60-120s — a 5-second retry lands inside every
+  floored at 60s and capped at 120s — a 5-second retry lands inside every
   secondary-rate-limit window and could never succeed against the one
-  failure class it exists for, and the upper clamp keeps the wait inside the
-  job's `timeout-minutes`. A wait the server advertises beyond that cap is
-  not slept at all: the event defers to the cron floor rather than pay for a
-  retry that is guaranteed to land inside the window. A plain transient
-  failure retries in 5s — the minute is for rate limits, not for blips — and
-  a permanent answer (404 for a renamed workflow file, 422 for a bad ref, 401
-  for a revoked token) is not retried at all, since no wait changes it);
+  failure class it exists for, and the cap keeps the wait inside the job's
+  `timeout-minutes`. A window the server names beyond that cap is not waited
+  out at all: the event defers to the cron floor rather than pay for a retry
+  guaranteed to land inside the window. A plain transient retries in 5s — the
+  minute is for rate limits, not for blips. A permanent answer is not retried
+  at all: 404 for a renamed workflow file, 422 for a bad ref, 401 for a
+  revoked token, and **403 with no rate-limit evidence**, which is the
+  `Resource not accessible by integration` shape a trimmed permissions block
+  or an org token policy produces — the likeliest permanent failure this job
+  has, since it is the only one needing `actions: write`. Note that
+  `x-ratelimit-reset` rides on every GitHub response, so it counts as a wait
+  instruction only when `x-ratelimit-remaining` is 0);
   on double failure it warns and exits 0 instead of exiting non-zero. The
   reasoning: it
   holds no `statuses` scope, so a skipped dispatch cannot make the gate look
@@ -181,8 +186,10 @@ writer run as a `CANCELLED` check on the PR, and `mergeStateStatus` reads
 every human and tool that reads it.
 
 What it costs, per repo: one extra Actions run per PR-attached event —
-billed-minimum on the success path, but a rate-limited relay holds its
-runner for the backoff (up to two minutes) before deferring. The relay is unconditional and deliberately group-less,
+seconds and a billed minimum on the success path, and up to about four
+minutes of runner hold in the worst modeled failure (a 60s-bounded attempt,
+a wait capped at 120s, a second 60s-bounded attempt), which still fits
+inside the job's 5-minute budget. The relay is unconditional and deliberately group-less,
 so unlike the writer group it coalesces nothing — that is one run per event,
 including every `status` transition every CI provider posts on every open
 head — and the event-fast path now waits on two runner allocations instead
@@ -191,9 +198,18 @@ before adopting. The residual is honest: this removes *eviction-driven*
 cancelled checks, not every cancelled check — a relay hung to its
 `timeout-minutes` still leaves one.
 
-Verify after adopting: push twice in quick succession to an open PR, then
-check that `gh pr checks` shows no cancelled writer entry and
-`gh pr view --json mergeStateStatus` is not `UNSTABLE` on that account.
+Verify after adopting — and note that the first check alone passes even when
+the relay is deferring every event, so run both:
+
+1. **Something was actually dispatched.** After a push to an open PR,
+   `gh run list --workflow "Review gate writer" --event workflow_dispatch --limit 5`
+   must show a run created just after it. This is the only check that
+   distinguishes a working relay from one that defers everything — the
+   failure mode a missing `actions: write` produces. If nothing appears, the
+   relay's own run log carries a `::warning::` naming the reason.
+2. **No cancelled check pins the PR.** Push twice in quick succession, then
+   confirm `gh pr checks` shows no cancelled writer entry and
+   `gh pr view --json mergeStateStatus` is not `UNSTABLE` on that account.
 
 ## Per-repo settings — decision axes
 

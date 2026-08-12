@@ -123,12 +123,16 @@ nothing else.
 - **Relay / converge split.** PR-attached legs (`pull_request_target`,
   `pull_request_review`, `status`, an opted-in `check_run`) do NOT run the
   engine: they run a group-less relay job that dispatches a converge pass
-  and exits in seconds. Only `workflow_dispatch` and `schedule` hold the
+  and exits — in seconds on the success path, up to about four minutes when
+  it has to back off (see Cost). Only `workflow_dispatch` and `schedule` hold the
   single-writer group. Convergence is unchanged — what changes is WHERE an
   eviction's `CANCELLED` check lands. Attached to a PR head it pinned that
   PR at `mergeStateStatus UNSTABLE` until a manual rerun (VST-210); on the
   default-branch runs the relay dispatches into, nothing gates on it.
-  **Cost**: one *billed-minimum, non-evictable* run per PR-attached event —
+  **Cost**: one *non-evictable* run per PR-attached event — seconds and a
+  billed minimum on the success path, up to about four minutes of runner hold
+  in the worst modeled failure (a 60s-bounded attempt, a wait capped at 120s,
+  a second 60s-bounded attempt), inside the job's 5-minute budget —
   the relay coalesces nothing, so unlike the writer group there is one per
   event, including every `status` transition from every CI provider — and
   event-fast latency grows by a whole extra run lifecycle (two queue +
@@ -147,13 +151,18 @@ nothing else.
   converged — only leave it stale, which the cron floor and `pr-watch
   --heal` already own. Reddening would re-create the exact `UNSTABLE` pin
   the split removes. Two dispatch attempts (the retry honors
-  `retry-after`/`x-ratelimit-reset` **clamped to 60-120s**, a 60s floor when
-  a rate-limit answer carries no header, and a quick 5s retry for a plain
-  transient; a permanent answer — 404 for a renamed workflow file, 422 for a
-  bad ref, 401 for a revoked token — is not retried at all, and neither is a
-  server-advertised wait beyond the cap, since retrying inside a window we
-  were told to stay out of would only buy a paid runner hold; both defer to
-  the cron floor); on double failure it
+  a three-way rule. A **rate-limit** answer waits the window the server
+  named — `retry-after`, or `x-ratelimit-reset` *only when
+  `x-ratelimit-remaining` is 0* — floored at 60s; a secondary limit that
+  sends no header is recognized from its body. A plain **transient** waits
+  5s. A **permanent** answer is not retried at all: 404 for a renamed
+  workflow file, 422 for a bad ref, 401 for a revoked token, and 403 when it
+  carries no rate-limit evidence — the `Resource not accessible by
+  integration` shape, which is the likeliest failure a hand-edited
+  permissions block produces. A named window beyond the 120s budget is not
+  waited out either; both defer to the cron floor. `x-ratelimit-reset` is on
+  *every* GitHub response, so treating it as a wait instruction on its own
+  silently disables the whole retry); on double failure it
   warns and exits 0. It carries no
   VST-36 escalation of its own — a sustained dispatch outage shows up as
   **gate staleness**, which `pr-watch --heal` already reduces on across
