@@ -674,17 +674,23 @@ if $MULTI_LANE; then
   # is empty, and pins the SAME resolved range for every lane.
   derive_review_scope "$CWD" "$RANGE"
 
+  # Lane scratch has one owner and one rule (VST-221): LANE_TMP_DIR is the only
+  # directory this run creates, and it holds nothing but the per-lane stderr
+  # captures — so removing it, by the cleanup below at exit or by an outsider
+  # mid-run, can only ever cost a log replay. A lane's REVIEW is never in it:
+  # with --output it is the durable sibling <output>.<lane>.json, without one it
+  # is a plain temp file this parent creates and removes, on the same footing as
+  # every other mktemp file here. And the parent holds each lane's review in
+  # memory from the moment that lane is reaped, so nothing it still needs is on
+  # disk after the reap either.
   LANE_TMP_DIR=$(mktemp -d)
+  LANE_TMP_FILES=()
   LANE_PIDS=()
   # On any exit — including INT/TERM — kill still-running lane children before
   # cleanup: an interrupted parent must not leave external model CLIs running
   # (and billing) in the background, writing orphaned sidecars.
-  # LANE_TMP_DIR holds only per-lane stderr captures. Nothing the union merge
-  # needs lives there past each lane's reap (VST-221), so this removal — which
-  # runs at exit, after the union artifact is written — can never cost a
-  # verdict, and neither can an outsider removing the directory early.
   cleanup_lanes() {
-    local pid
+    local pid art
     for pid in ${LANE_PIDS[@]+"${LANE_PIDS[@]}"}; do
       kill "$pid" 2>/dev/null || true
     done
@@ -692,6 +698,12 @@ if $MULTI_LANE; then
       wait ${LANE_PIDS[@]+"${LANE_PIDS[@]}"} 2>/dev/null || true
     fi
     rm -rf "$LANE_TMP_DIR"
+    # Stdout-mode lane artifacts plus each child's own sidecar family
+    # (<art>.noreview.json, <art>.raw.txt, …): the mktemp name makes the glob
+    # unambiguous, and a glob that matches nothing is a no-op for rm -f.
+    for art in ${LANE_TMP_FILES[@]+"${LANE_TMP_FILES[@]}"}; do
+      rm -f "$art" "$art".*
+    done
   }
   trap 'cleanup_lanes' EXIT
   trap 'exit 130' INT
@@ -713,7 +725,8 @@ if $MULTI_LANE; then
     if [[ -n "$OUTPUT_PATH" ]]; then
       lane_out="${OUTPUT_PATH}.${lane}.json"
     else
-      lane_out="$LANE_TMP_DIR/lane-${lane}.json"
+      lane_out=$(mktemp)
+      LANE_TMP_FILES+=("$lane_out")
     fi
     lane_err="$LANE_TMP_DIR/lane-${lane}.stderr"
     "$SELF" review --target "$lane" --range "$REVIEW_RANGE" --cwd "$CWD" \
@@ -734,12 +747,13 @@ if $MULTI_LANE; then
     # attributable in sequential order. The stderr capture is scratch: when it
     # is gone (VST-221 — the reviewed repo's own agent CLI, a sandbox, or a tmp
     # reaper can clear scratch while lanes run) the log is lost and nothing
-    # else is, so say that plainly rather than emitting a bare read error and
-    # never let it colour the lane's own verdict.
-    if [[ -r "${LANE_ERRS[$i]}" ]]; then
-      sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" >&2 || true
-    else
-      echo "→ lane stderr unavailable (scratch capture removed mid-run): $lane" >&2
+    # else is. Branch on the read ITSELF rather than a prior -r test: a capture
+    # removed between the test and the read would otherwise emit the bare
+    # "can't read" error this branch exists to replace. One message covers both
+    # orderings, states the observed condition instead of an inferred cause,
+    # and never colours the lane's own verdict.
+    if ! sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" 2>/dev/null >&2; then
+      echo "→ lane stderr replay unavailable (scratch capture unreadable): $lane" >&2
     fi
     lane_ok=false
     if [[ $lane_rc -eq 0 && -s "${LANE_OUTS[$i]}" ]]; then
@@ -749,11 +763,24 @@ if $MULTI_LANE; then
       # merge must not depend on a scratch file surviving between this reap and
       # the final write, or losing scratch would report healthy lanes as
       # unparseable and drop a verdict both models actually delivered.
-      if lane_wrap=$(jq -c --arg target "$lane" '{target: $target, review: .}' "${LANE_OUTS[$i]}" 2>/dev/null); then
+      #
+      # A parse that "succeeds" is not enough either: jq exits 0 and prints
+      # NOTHING for input that holds no JSON value at all (a whitespace-only
+      # artifact clears the -s test above), which would push an empty element
+      # into the merge — a lane counted as healthy that contributes no
+      # findings, dropping a real blocker while coverage still reads "full".
+      # The wrap must be non-empty to count.
+      if lane_wrap=$(jq -c --arg target "$lane" '{target: $target, review: .}' "${LANE_OUTS[$i]}" 2>/dev/null) \
+         && [[ -n "$lane_wrap" ]]; then
         LANE_WRAPS+=("$lane_wrap")
         lane_ok=true
       else
-        echo "→ lane produced an unparseable artifact: $lane" >&2
+        # Say WHY it is unusable — jq's own message names a truncated artifact,
+        # a malformed one, or a vanished file, and in stdout mode the artifact
+        # itself is gone at exit, so the log line is the only evidence left.
+        lane_reason=$(jq --arg target "$lane" '{target: $target, review: .}' "${LANE_OUTS[$i]}" 2>&1 >/dev/null | head -1) || true
+        [[ -n "$lane_reason" ]] || lane_reason="no JSON value in artifact"
+        echo "→ lane produced an unparseable artifact: $lane ($lane_reason)" >&2
         lane_rc="$EXIT_NO_REVIEW"
       fi
     elif [[ $lane_rc -eq 0 ]]; then
@@ -842,7 +869,11 @@ if $MULTI_LANE; then
 
   if [[ -n "$OUTPUT_PATH" ]]; then
     printf '%s\n' "$MERGED" > "$OUTPUT_PATH"
-    echo "→ Written: $OUTPUT_PATH (union of ${#LANE_WRAPS[@]} lanes)" >&2
+    # Count what the artifact CARRIES, not what went into the merge: a count
+    # taken from the input array describes the artifact without being bound to
+    # it, and the two silently disagreed once already (VST-221 review).
+    union_lanes=$(printf '%s\n' "$MERGED" | jq '[.qa_metadata.lanes[] | select(.status == "ok")] | length') || union_lanes="?"
+    echo "→ Written: $OUTPUT_PATH (union of $union_lanes lanes)" >&2
     echo "$OUTPUT_PATH"
   else
     printf '%s\n' "$MERGED"

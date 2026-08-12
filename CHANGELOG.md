@@ -63,11 +63,24 @@
   clearing that directory while lanes ran — the reviewed repo's own agent CLI,
   a sandbox, a tmp reaper — made the parent report both healthy lanes as
   "unparseable" and exit 4 with no external verdict, even though valid lane
-  artifacts sat intact beside the union path. Each lane's review is now held
-  in memory from the moment it is reaped, so the temp directory holds only the
-  per-lane stderr capture: losing it costs the log replay (reported as such)
-  and never a verdict. A lane that exits 0 with no usable artifact is also
-  recorded with the never-answered code 5 instead of a bare `exit 0`.
+  artifacts sat intact beside the union path. Without `--output` the lane
+  reviews lived in that directory too, so clearing it dropped a model's real
+  findings while the union still published a pass.
+
+  Lane scratch now has one owner and one rule: the run creates exactly one
+  directory under `TMPDIR`, it holds nothing but the per-lane stderr captures,
+  and each lane's review is held in memory from the moment it is reaped —
+  never read back from that directory. A lane's review lives beside the union
+  as `<output>.<target>.json`, or in a parent-owned temp file when there is no
+  `--output`. Losing scratch now costs the log replay (reported as such) and
+  never a verdict, in both modes. Two truthfulness fixes ride along: an
+  artifact that holds no JSON value at all is unusable rather than a healthy
+  lane contributing nothing (`jq` exits 0 and prints nothing for it, so it
+  used to merge as a phantom lane and could publish a pass over a real
+  blocker), and a lane that exits 0 with no usable artifact is recorded with
+  the never-answered code 5 instead of a bare `exit 0`. Unusable artifacts now
+  report `jq`'s own reason, and the "union of N lanes" line counts the lanes
+  the written artifact actually carries.
 
 - **orch: claude handoff lanes launch autonomous and verify brief delivery**
   (VST-191 / #1173). `open-terminal` now renders a permission argument into
