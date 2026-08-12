@@ -286,19 +286,19 @@ set -euo pipefail
 cat >/dev/null
 resp="$1"; target="$2"; action="$3"; rc="$4"
 waited=0
-while ! jq -e . "$target" >/dev/null 2>&1 && [[ $waited -lt 300 ]]; do
+while ! jq -e . < "$target" >/dev/null 2>&1 && [[ $waited -lt 300 ]]; do
   sleep 0.1
   waited=$((waited + 1))
 done
 head='{"agent":"external-claude","timestamp":"2026-01-01T00:00:00Z","verdict":"pass"'
 numloc='{"id":1,"title":"t","description":"d","recommendation":"r","priority":2,"estimate":1,"location":7}'
 case "$action" in
-  steal)   rm -f "$target" ;;
+  steal)   rm -f -- "$target" ;;
   blank)   printf '   \n' > "$target" ;;
   newline) printf '\n' > "$target" ;;
   nul)     printf '\0' > "$target" ;;
   nul-tail) printf '%s\0' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
-  unread)  rm -f "$target"; mkdir -p "$target" ;;
+  unread)  rm -f -- "$target"; mkdir -p -- "$target" ;;
   trunc)   printf '{"agent":"external-cla' > "$target" ;;
   double)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
   poison)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[\"bad\"],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
