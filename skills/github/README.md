@@ -119,30 +119,14 @@ informational `test_panic_path_added` flag instead: a test assertion is not a
 production panic path, so `refix-route` treats that flag as non-risk and the
 round falls through to blockers/size/small handling.
 
-A file with no file-local test marker is still test-only when the gate lives
-at its declaration site — `#[cfg(test)] #[path = "..."] mod x;` in the
-declaring module, the shared-test-fixture shape. `git-diff-summary` resolves
-that by reading declaring modules on the diff's new side (HEAD for a
-`base...HEAD` diff, the index for `--staged`, the worktree for `--head`,
-tracked files only): every `.rs` file in the candidate's directory and its
-ancestor directories is scanned once with comment- and string-aware
-lexing (line-comment precedence, nested block comments, string/char
-literal contents masked so quoted braces or `//` cannot corrupt parsing),
-and each `mod` declaration — bare (`name.rs` and `name/mod.rs` forms,
-raw identifiers accepted) or `#[path]` — plus each `include!` whose
-argument is a direct string literal is resolved to a lexically
-normalized repo-relative target; bare
-`mod name;` declarations resolve in the declaring file's module directory —
-its own directory for `mod.rs`/`lib.rs`/`main.rs`, its directory plus its
-file stem otherwise — while `#[path]` values (plain or raw strings) and
-`include!` literals resolve in the containing file's directory, per the
-Rust reference; declarations inside braced bodies (inline modules, macro
-definitions and invocations, fn and other item bodies) are skipped
-entirely. A candidate whose every matching route is
-`#[cfg(test)]`-gated classifies as test; anything else keeps production
-classification — an ungated declaration or `include!` of the file, no route
-found, a `bin/` or `lib.rs`/`main.rs` crate root, or an unreadable
-declaring module (read failures fail closed).
+A file carrying no test marker of its own is still treated as a test surface
+when the gate lives at its declaration site — the shared-fixture shape
+`#[cfg(test)] #[path = "..."] mod x;` in the module that declares it — so
+panics added to such a file also emit `test_panic_path_added`. A file
+declared or `include!`d anywhere without the gate, one whose declaration is
+not found, and a crate root all keep their file-local classification, as does
+any file whose declaring module cannot be read. See
+[DEVELOPMENT.md](./DEVELOPMENT.md) for how declarations are resolved.
 
 ## Verification (pr-cross-check --verify)
 
