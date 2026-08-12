@@ -756,8 +756,14 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
         #     pressure would let a replay that never contended the group
         #     announce a proof — the vacuous green, re-entered through
         #     guaranteed-present artifacts instead of luck.
-        #   anything else -> a PR-attached leg holding the evictable group,
-        #     which is the VST-210 defect itself.
+        #   anything else -> a PR-attached leg that never ran. Two causes
+        #     produce this identical shape, and run metadata cannot separate
+        #     them: the leg held the evictable group (the VST-210 defect
+        #     itself), or close_pr deleted its head branch while the run was
+        #     still queued, which cancels it the same way. Counted as one
+        #     bucket whose verdict names both — silently excluding the
+        #     teardown case would excuse a real eviction too, since every
+        #     replay branch is torn down eventually.
         case "$ev" in
           workflow_dispatch|schedule)
             writer_evicted=$((writer_evicted + 1)) ;;
@@ -765,7 +771,7 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
             mg_cancelled=$((mg_cancelled + 1)) ;;
           *)
             pr_evicted=$((pr_evicted + 1))
-            note "cancelled run $id ($ev) never started a step — an EVICTION on a PR-attached leg" ;;
+            note "cancelled run $id ($ev) never started a step — an EVICTION on a PR-attached leg, unless its head branch was deleted while it was still queued" ;;
         esac
         ;;
       *)
@@ -780,7 +786,8 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
         #     timeout mid-work: the malfunction the VST-36 escalation exists
         #     for, and it attaches to a default-branch head.
         #   anything else -> a PR-attached run that executed steps: a relay
-        #     killed by its own timeout-minutes. Still a cancelled check on
+        #     killed by its own timeout-minutes, or by the teardown that
+        #     deleted its head branch mid-run. Still a cancelled check on
         #     the PR head (the residual this change documents rather than
         #     eliminates), but NOT evidence the split came undone.
         case "$ev" in
@@ -792,7 +799,7 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
             note "cancelled run $id ($ev) executed steps before dying — investigate" ;;
           *)
             pr_killed=$((pr_killed + 1))
-            note "cancelled run $id ($ev) executed steps before dying — a relay hit its own timeout-minutes on a PR-attached leg" ;;
+            note "cancelled run $id ($ev) executed steps before dying — a relay hit its own timeout-minutes on a PR-attached leg, or teardown deleted the branch under it" ;;
         esac
         ;;
     esac
@@ -820,7 +827,7 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
   # that is not there. The classifier above counts each run into exactly one
   # of them, so the two `bad` lines here cover disjoint sets.
   if [ "$pr_evicted" -gt 0 ]; then
-    bad "$pr_evicted PR-attached run(s) were EVICTED from the writer group — the relay/converge split regressed and these pin their PRs at UNSTABLE (VST-210)"
+    bad "$pr_evicted PR-attached run(s) were cancelled before starting a step — either the relay/converge split regressed (an EVICTION from the writer group) or teardown deleted the head branch while the run was still queued; check each run's head branch before chasing the topology. Either cause pins the PR at UNSTABLE (VST-210)"
   elif [ "$writer_evicted" -gt 0 ]; then
     ok "the writer group was really contended ($writer_evicted eviction(s), all on default-branch legs) and NONE landed on a PR-attached leg — the split is proven under real pressure, and converge-all (binding F2) stranded nothing (VST-210)"
   else
@@ -830,7 +837,7 @@ sfinal() { # cross-cutting: the cron leg is alive and green, and NO writer run
     note "the writer group was never contended in this replay ($mg_cancelled merge_group cancellation(s) are queue dissolution, not eviction) — the VST-210 split is UNTESTED here, not proven; re-run with more overlapping PR activity to put the group under pressure"
   fi
   if [ "$pr_killed" -gt 0 ]; then
-    bad "$pr_killed PR-attached run(s) were cancelled AFTER executing steps — a relay hit its timeout-minutes; a cancelled check still pins that PR at UNSTABLE (documented residual, NOT a split regression — do not chase the topology)"
+    bad "$pr_killed PR-attached run(s) were cancelled AFTER executing steps — a relay hit its timeout-minutes, or teardown deleted the branch under it; a cancelled check still pins that PR at UNSTABLE (documented residual, NOT a split regression — do not chase the topology)"
   fi
   # The cron leg is a LIVENESS check, not a replay-window one: the schedule
   # fires every 15 minutes (best-effort), so a short replay can legitimately

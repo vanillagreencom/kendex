@@ -220,6 +220,26 @@ pin_workflows() { # file, label
     FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        actions:write occurrences: %s (expected exactly 1, on the relay job)\n' "$tag" "tpl: exactly ONE actions:write in the workflow, and it is the relay's dispatch scope" "$count"
   fi
 
+  # --- the check_run loop breaker names THIS workflow's own jobs --------
+  # The breaker is a literal list, and its only job is to recognise this
+  # workflow's own job completions once a consumer opts check_run in. Rename
+  # a job without the list and the guard silently stops matching — and the
+  # relay holds no concurrency group to throttle the self-amplification that
+  # follows. Pin the two sets to each other so a rename cannot land alone.
+  # Job names are the 4-space `name:`; step names carry a `- ` and do not
+  # match. The guard's arm is read as the one case-pattern line, not the
+  # whole block, so the `esac`-bound prose above it contributes no quotes.
+  local job_names guard_names
+  job_names="$(grep -E '^    name: ' "$wf" | sed 's/^    name: //' | sort)"
+  guard_names="$(sed -n '/case "\${CHECK_NAME:-}" in/,/esac/p' "$wf" \
+    | grep -E '^ *"[^"]+"(\|"[^"]+")*\)$' \
+    | tr '|' '\n' | sed 's/[")]//g; s/^ *//' | sort)"
+  if [[ -n "$guard_names" && "$job_names" == "$guard_names" ]]; then
+    PASS=$((PASS + 1)); printf '  ok    [%s] %s\n' "$tag" "tpl: the check_run breaker lists exactly this workflow's job names — a rename cannot slip past it"
+  else
+    FAIL=$((FAIL + 1)); printf '  FAIL  [%s] %s\n        jobs:  [%s]\n        guard: [%s]\n' "$tag" "tpl: the check_run breaker's list has drifted from the workflow's job names — a check_run opt-in would relay this workflow's own completions with no concurrency group to throttle it" "$(tr '\n' '/' <<<"$job_names")" "$(tr '\n' '/' <<<"$guard_names")"
+  fi
+
   # --- the dispatch ref: which ENGINE the indirection executes ----------
   # The single expression that decides that. github.ref_name here would be
   # the PR's BASE branch on the pull_request_target leg, so the relay would

@@ -165,6 +165,11 @@ each repo takes it as its own PR. What changed in the template:
   completions become relayable events — the step refuses to dispatch on a
   `check_run` naming one of its own three jobs, and your check-name guard on
   the `if:` is what keeps every other repo check from billing a skipped run.
+  That refusal is a literal list of the three job `name:` values, so if you
+  rename a job in your copy, rename it in the list too — the template's suite
+  pins the two together, but only within the copy it reads. A rename that
+  lands alone leaves a guard that matches nothing, and the relay holds no
+  concurrency group to throttle the self-amplification that follows.
 - **Check the ruleset first** if it ever named a writer JOB (rather than the
   gate status context): the job appearing on PR heads is now the relay, so a
   required `Evaluate and write the review gate` would block every PR. Per
