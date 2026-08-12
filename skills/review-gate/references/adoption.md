@@ -205,10 +205,10 @@ writer run as a `CANCELLED` check on the PR, and `mergeStateStatus` reads
 every human and tool that reads it.
 
 What it costs, per repo: one extra Actions run per PR-attached event —
-seconds and a billed minimum on the success path, and up to about four
+seconds and a billed minimum on the success path, and up to about 4.2
 minutes of runner hold in the worst modeled failure (a 60s-bounded attempt,
-a wait capped at 120s, a second 60s-bounded attempt), which still fits
-inside the job's 5-minute budget. The relay is unconditional and deliberately group-less,
+a wait capped at 120s plus up to 14s of jitter, a second 60s-bounded
+attempt), which still fits inside the job's 5-minute budget. The relay is unconditional and deliberately group-less,
 so unlike the writer group it coalesces nothing — that is one run per event,
 including every `status` transition every CI provider posts on every open
 head — and the event-fast path now waits on two runner allocations instead

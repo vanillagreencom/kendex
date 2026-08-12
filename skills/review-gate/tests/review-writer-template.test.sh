@@ -421,6 +421,18 @@ echo "$1" >> "$SLEEP_LOG"
 exit 0
 RELAY_SLEEP
 chmod +x "$RELAY_BIN/sleep"
+# The step bounds each dispatch with `timeout 60 gh api ...`. GNU `timeout` is
+# coreutils, absent from a default macOS — which this suite must run on (Bash
+# 3.2). Without a shim every attempt exits 127 before reaching the gh stub and
+# 56 assertions fail there and only there. Pass-through, not a real timer: the
+# stub answers instantly, and the timeout-killed case is modelled by GH_CODES
+# handing back 124, which this propagates like the real command does.
+cat > "$RELAY_BIN/timeout" <<'RELAY_TIMEOUT'
+#!/usr/bin/env bash
+shift
+exec "$@"
+RELAY_TIMEOUT
+chmod +x "$RELAY_BIN/timeout"
 # The step derives an exhausted window's wait as `reset - $(date +%s)`. With a
 # REAL clock the fixture's reset epoch is stamped when the case is built and
 # the subtraction happens when the step runs, so a case that straddles a

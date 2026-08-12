@@ -123,11 +123,11 @@ nothing else.
 - **Relay / converge split.** PR-attached legs (`pull_request_target`,
   `pull_request_review`, `status`, an opted-in `check_run`) do NOT run the
   engine: they run a group-less relay job that dispatches a converge pass
-  and exits — in seconds on the success path, up to about four minutes when
+  and exits — in seconds on the success path, up to about 4.2 minutes when
   it has to back off (see Cost). Only `workflow_dispatch` and `schedule` hold the
   single-writer group. Convergence is unchanged — what changes is WHERE an
   eviction's `CANCELLED` check lands. Attached to a PR head it pinned that
-  PR at `mergeStateStatus UNSTABLE` until a manual rerun (VST-210); on the
+  PR at `mergeStateStatus UNSTABLE` until a manual rerun; on the
   default-branch runs the relay dispatches into, nothing gates on it.
   **Cost**: one *non-evictable* run per PR-attached event — seconds and a
   billed minimum on the success path, up to about 4.2 minutes of runner hold
@@ -170,9 +170,9 @@ nothing else.
   waited out either; both defer to the cron floor. `x-ratelimit-reset` is on
   *every* GitHub response, so treating it as a wait instruction on its own
   silently disables the whole retry); on double failure it
-  warns and exits 0. It carries no
-  VST-36 escalation of its own — a sustained dispatch outage shows up as
-  **gate staleness**, which `pr-watch --heal` already reduces on across
+  warns and exits 0. It files no
+  rolling incident of its own — a sustained dispatch outage shows up as
+  **gate staleness**, which `pr-watch --heal` already reduces across
   every open PR, rather than as N red PRs or a widened relay scope.
 - **Write ordering.** Before any `success` post it re-reads the status and
   defers when any gate entry was created at/after this run's evaluation
