@@ -875,22 +875,29 @@ if $MULTI_LANE; then
     # one that actually rejected the lane rather than whatever a later re-read
     # happens to find (an artifact removed a moment after being rejected as
     # malformed would otherwise be explained as "No such file or directory").
-    # The sentinel keeps "empty" meaning what it says: command substitution
-    # strips ALL trailing newlines, so a newline-only artifact would read back
-    # as the empty string and take the never-answered branch below while a
-    # space-only one would not — the classification must not turn on that.
-    # Nothing read at all (absent or zero-byte artifact) still reads empty.
+    # Which failure class a lane lands in is decided by what it WROTE, so the
+    # test is the artifact's size on disk. A shell string cannot stand in for
+    # that: command substitution cannot hold NUL bytes, so an artifact holding
+    # only a NUL reads back as the empty string and would be called
+    # never-answered even though the lane did produce a byte — and the contract
+    # is that the line between the classes is whether any bytes exist at all.
+    # Testing before reading cannot revive the older hazard: an artifact that
+    # vanishes between the two lands in answered-unusably, because the gate
+    # then has nothing to parse, and never in never-answered.
     lane_raw=""
-    if [[ $lane_rc -eq 0 ]]; then
+    if [[ $lane_rc -eq 0 && -s "${LANE_OUTS[$i]}" ]]; then
       # Read through a redirection, not a path operand: the lane artifact's
       # name carries the caller's --output value, which may begin with '-' and
       # would otherwise be parsed as options — the lane would then look like it
       # exited 0 having produced nothing. A redirection has no such parsing,
-      # and needs no `--` marker to be portable.
-      lane_raw=$(cat 2>/dev/null < "${LANE_OUTS[$i]}"; printf X)
+      # and needs no `--` marker to be portable. The sentinel keeps the gate's
+      # input faithful to the file, which command substitution would otherwise
+      # shorten by every trailing newline. The group's stderr goes nowhere
+      # because the only writers to it are cat, already silenced, and bash's
+      # own unattributed "ignored null byte" warning — the classification line
+      # below names the lane and the cause instead.
+      { lane_raw=$(cat 2>/dev/null < "${LANE_OUTS[$i]}"; printf X); } 2>/dev/null
       lane_raw="${lane_raw%X}"
-    fi
-    if [[ $lane_rc -eq 0 && -n "$lane_raw" ]]; then
       # A zero exit and readable content are not proof of a usable artifact —
       # it must survive LANE_WRAP_JQ, or one bad lane takes the whole merge
       # down with it. The wrapped review is held IN MEMORY from here on: the
