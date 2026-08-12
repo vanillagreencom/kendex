@@ -1740,5 +1740,77 @@ binc_json="$($SUMMARY -C "$binc_repo" --staged)"
 assert_eq "brace-delimited include emits its production route"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$binc_json")"
 assert_eq "brace-include fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$binc_json")"
 
+# A leading UTF-8 BOM is an encoding preamble rustc accepts before the first
+# item — like the shebang it must not be consumed together with the ungated
+# declaration that follows it.
+bom_repo="$SANDBOX/bom"
+init_repo "$bom_repo"
+mkdir -p "$bom_repo/src"
+printf '\xef\xbb\xbf' > "$bom_repo/src/lib.rs"
+cat >> "$bom_repo/src/lib.rs" <<'RUST'
+mod cand;
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+RUST
+git -C "$bom_repo" add src
+git -C "$bom_repo" commit -q -m lib
+cat > "$bom_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$bom_repo" add src/cand.rs
+bom_json="$($SUMMARY -C "$bom_repo" --staged)"
+assert_eq "BOM does not swallow the following declaration"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$bom_json")"
+assert_eq "BOM fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$bom_json")"
+
+# An absolutely-qualified macro path (::std::include!) is the same invocation:
+# the leading :: must not push it onto the generic boundary path, where a
+# brace argument is cut at the opening brace and skipped as a body.
+absinc_repo="$SANDBOX/abs-include"
+init_repo "$absinc_repo"
+mkdir -p "$absinc_repo/src"
+cat > "$absinc_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+::std::include! { "cand.rs" }
+RUST
+git -C "$absinc_repo" add src
+git -C "$absinc_repo" commit -q -m lib
+cat > "$absinc_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$absinc_repo" add src/cand.rs
+absinc_json="$($SUMMARY -C "$absinc_repo" --staged)"
+assert_eq "absolute-path include emits its production route"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$absinc_json")"
+assert_eq "absolute-path include fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$absinc_json")"
+
+# A hash-raw literal argument to a brace-delimited include! is still a direct
+# string literal: its closing hashes must not disqualify the route.
+rawinc_repo="$SANDBOX/raw-brace-include"
+init_repo "$rawinc_repo"
+mkdir -p "$rawinc_repo/src"
+cat > "$rawinc_repo/src/lib.rs" <<'RUST'
+#[cfg(test)]
+#[path = "cand.rs"]
+mod fixtures;
+include! { r#"cand.rs"# }
+RUST
+git -C "$rawinc_repo" add src
+git -C "$rawinc_repo" commit -q -m lib
+cat > "$rawinc_repo/src/cand.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$rawinc_repo" add src/cand.rs
+rawinc_json="$($SUMMARY -C "$rawinc_repo" --staged)"
+assert_eq "hash-raw brace include emits its production route"     '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$rawinc_json")"
+assert_eq "hash-raw brace include fixture keeps production scope"     "production" "$(jq -r '.scope' <<<"$rawinc_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

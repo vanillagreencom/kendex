@@ -387,13 +387,14 @@ scan_decl_records() {
                     gated = 0; pathattr = ""
                     continue
                 }
-                # Macro INVOCATION opener (ident! or path::to::ident! plus
-                # any delimiter): the token tree only becomes items after
+                # Macro INVOCATION opener (ident!, path::to::ident! or the
+                # absolutely-qualified ::path::to::ident!, plus any
+                # delimiter): the token tree only becomes items after
                 # expansion, which the scanner does not evaluate — skip it
                 # whole so item-like tokens (`discard! { mod cand; }`)
                 # fabricate nothing. include! is the one macro the scanner
                 # DOES evaluate; it falls through to the chunk scan.
-                if (match(mbuf, /^(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*([[:space:]]*::[[:space:]]*(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*)*[[:space:]]*![[:space:]]*[([{]/)) {
+                if (match(mbuf, /^(::[[:space:]]*)?(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*([[:space:]]*::[[:space:]]*(r#)?([A-Za-z_]|[^\001-\177])([A-Za-z0-9_]|[^\001-\177])*)*[[:space:]]*![[:space:]]*[([{]/)) {
                     mname = substr(mbuf, 1, RLENGTH)
                     mdelim = substr(mbuf, RLENGTH, 1)
                     sub(/[[:space:]]*![[:space:]]*[([{]$/, "", mname)
@@ -427,7 +428,7 @@ scan_decl_records() {
                     }
                     if (idepth > 0) break
                     iseg = substr(mbuf, idelim + 1, ipos - idelim - 2)
-                    if (match(iseg, /^[[:space:]]*(r#*)?"[^"]*"[[:space:]]*$/) \
+                    if (match(iseg, /^[[:space:]]*(r#*)?"[^"]*"#*[[:space:]]*$/) \
                         && match(iseg, /"[^"]*"/))
                         printf "%s\t%s\n", (gated ? "G" : "U"), \
                             normpath(join(fdir, substr(substr(buf, idelim + 1, ipos - idelim - 2), RSTART + 1, RLENGTH - 2)))
@@ -501,6 +502,11 @@ scan_declaring_file() {
         DECL_CACHE="$DECL_CACHE$1"$'\t'"$fdir"$'\t'ERR$'\n'
         return 0
     fi
+    # A UTF-8 BOM is an encoding preamble rustc accepts ahead of everything
+    # else (including a shebang), not part of the first item. Stripped
+    # byte-exactly here so the anchored item matchers see the real first
+    # token instead of falling through to the generic-item branch.
+    content=${content#$'\xef\xbb\xbf'}
     records=$(printf '%s\n' "$content" | scan_decl_records "$moddir" "$fdir" \
         | awk -v f="$1" -v d="$fdir" '{print f "\t" d "\t" $0}')
     [ -n "$records" ] && DECL_CACHE="$DECL_CACHE$records"$'\n'
