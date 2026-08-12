@@ -244,17 +244,22 @@ jq -n \
 # delegated — e.g. a retry with a partial list shrinking the set the
 # completion artifact is checked against. jq output is deterministic, so a
 # byte comparison decides identity.
-if [[ -f "$out" ]]; then
-  if cmp -s "$tmp" "$out"; then
-    rm -f "$tmp"
-    trap - EXIT
-    printf '%s\n' "$out"
-    exit 0
-  fi
-  die "round record $out already exists with different content — the delegated set is stamped once per round; a changed delegation needs a NEW round id (workflow-state new-round-id)"
+# Placement is ATOMIC create-if-absent, not check-then-move: a bare
+# existence test races a concurrent retry (both observe absent, both mv,
+# last write silently wins — exactly the rewrite this block forbids).
+# ln(2) fails with EEXIST atomically, so exactly one contender places the
+# record; every other lands in the comparison branch below, where an
+# identical retry is idempotent and a divergent one refuses.
+if ln "$tmp" "$out" 2>/dev/null; then
+  rm -f "$tmp"
+  trap - EXIT
+  printf '%s\n' "$out"
+  exit 0
 fi
-
-mv "$tmp" "$out"
-trap - EXIT
-
-printf '%s\n' "$out"
+if cmp -s "$tmp" "$out"; then
+  rm -f "$tmp"
+  trap - EXIT
+  printf '%s\n' "$out"
+  exit 0
+fi
+die "round record $out already exists with different content — the delegated set is stamped once per round; a changed delegation needs a NEW round id (workflow-state new-round-id)"

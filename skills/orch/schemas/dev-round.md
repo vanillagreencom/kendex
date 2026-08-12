@@ -17,7 +17,7 @@ The record follows the same round-token discipline as the completion artifact:
 - its filename is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`, and
 - it carries `"round_id": ROUND_ID` inside.
 
-`[ISSUE_ID]` is the normalized workflow-state key (`issue-N` for GitHub,
+`[ISSUE_ID]` is the normalized workflow-state key — dev-side workflows name this same value `[ARTIFACT_KEY]`, and for a bundled round it is the Parent ID (`issue-N` for GitHub,
 `PROJ-123` for Linear); it and `[ROUND_ID]` must match the path-safe grammar
 `^[A-Za-z0-9._-]+$` with no `..`. Readers reject a record whose internal token
 differs from the expected round id, so a copied or renamed file from another

@@ -139,7 +139,7 @@ remains, now solely as the stall watchdog deadline.
 - Writes `round_id` and `schema_version: 1`; builds the JSON with `jq` (never string concat) to a same-dir temp file and `mv`s it over the target (atomic — a concurrent checker never sees a partial artifact, and a failed generation leaves any prior receipt intact).
 - Any usage/validation error → stderr + exit 2 (bad `--kind`, missing required arg, malformed `--validate`, path-unsafe `--issue`/`--round-id`, bad `--item` DECISION, empty REASONING, non-integer `N`, a missing or explicitly empty `--summary-file` value, a whitespace-only `--summary`, `--summary` combined with `--summary-file` (presence-based — an empty value still counts as supplied), a single-valued flag supplied twice, a value slot filled by one of the script's own flag tokens (a forgotten value), a `fix`/`--bundled` invocation with no `--item`, or an analysis invocation carrying a rejected flag); on success prints the artifact's absolute path.
 
-### `dev-round-write` — the round's input record (vstack#1230)
+### `dev-round-write` — the round's input record
 
 The orchestrator-side twin of `dev-return-write`, run at stamp time (immediately
 after `new-round-id`, before delegating a fix round): it persists the delegated
