@@ -40,13 +40,22 @@ exclusion, ignore-paths, a path filter on the review trigger — is the obvious
 answer and the one that starves the gate:
 
 - A pure re-vendor PR has no other files. With the tree excluded the reviewer
-  has nothing to review and either posts no review object at all (the gate sits
-  at `awaiting` with no reviewer that can ever clear it), or posts a
-  reviewed-nothing pass on a check-run or status surface, which
-  `REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` correctly classifies as not-evidence.
+  has nothing to review, and both of its remaining outcomes are bad. It posts
+  no review object at all — the gate sits at `awaiting` with no reviewer that
+  can ever clear it. Or it posts a reviewed-nothing pass on a trusted
+  check-run or status context, which the gate accepts as evidence and turns
+  green.
+- **`REVIEW_GATE_CHECKRUN_SKIP_PATTERNS` does not close the second outcome.**
+  It is a literal, case-insensitive substring match of the configured markers
+  against the check's title plus summary; the shipped defaults are `rate
+  limited`, `skipped`, and `queued`. A pass whose summary says only that it
+  reviewed no files matches none of them and counts as full evidence. The
+  filter catches a reviewer that announces WHY it did nothing, not a reviewer
+  with nothing to do — so path exclusion trades a starved gate for a hollow
+  green one, which is worse: nothing looks wrong.
 - Mixed PRs still carry a repo-owned file, so the reviewer still produces a
-  review and the configuration looks healthy. The starvation appears only on
-  the pure class, after the change has shipped.
+  review and the configuration looks healthy. Both failures appear only on the
+  pure class, after the change has shipped.
 
 **Never exclude a path that can constitute an entire PR's diff.** The same rule
 rules out narrowing a review trigger by path, for the same reason.
@@ -77,6 +86,30 @@ An instruction that constrains only the REMEDY ("flag it, but do not ask for
 local edits") does not suppress anything: the reviewer still opens the thread,
 and the thread still blocks the merge. Constrain the surface.
 
+### Reviewer classes — where a review body exists, and where it does not
+
+The routing above assumes the reviewer can put a finding somewhere other than a
+file location. Not every one can, and the difference is per-reviewer, not
+per-repo:
+
+- **Summary-capable** — it authors its own review body: an overview, a per-file
+  table, its own finding prose. An upstream-remedy finding goes there and costs
+  no thread.
+- **Location-bound** — every finding it emits is anchored to a file and line,
+  and its review body, where it has one, is a fixed template it does not author
+  findings into. Told to "use the summary body", such a reviewer can only drop
+  the finding or leave it inline — and dropping it is the worse outcome.
+
+For a location-bound reviewer the rule is a BOUND, not a surface change: at
+most ONE consolidated comment per PR carrying every upstream-remedy finding
+together, anchored anywhere in the vendored tree. That is inside its output
+contract, and it converts a cost that grows with the finding count into a
+constant one thread, which the verification below can check.
+
+Classify each of the repo's reviewers before wiring, by reading a review body
+it posted on a recent PR: a body identical across PRs is a template, and that
+reviewer is location-bound.
+
 ## The consumer session's half
 
 The reviewer routes; the session captures. Once per re-vendor train, read the
@@ -93,9 +126,13 @@ cross-repo memory and will restate the same finding in every one.
    the copy, like the writer workflow.
 2. Check the glob against the paths a real re-vendor PR touches. An `applyTo`
    that does not match the vendored tree is dead config that lints green.
-3. Mirror the rule in the repo's reviewer-guidance file, for reviewers that do
+3. Classify each reviewer the repo runs as summary-capable or location-bound
+   (above). A repo whose reviewers are ALL location-bound gets a bounded
+   improvement, not silence — decide whether that is worth the wiring before
+   doing it.
+4. Mirror the rule in the repo's reviewer-guidance file, for reviewers that do
    not read path-scoped instructions.
-4. Change no gate settings. Do not add the vendored tree to a carry class, do
+5. Change no gate settings. Do not add the vendored tree to a carry class, do
    not remove it from `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`, and do not widen
    `REVIEW_GATE_TRUSTED_STATUS_CONTEXTS` to a CI check as a substitute for
    review — a context trusted for this PR class is trusted for every PR class.
@@ -112,23 +149,37 @@ after the change, and use a PURE one (vendored files only): the mixed class
 hides every failure mode this check exists to catch.
 
 ```bash
-# 1. Evidence at head: at least one trusted non-author review object.
-gh pr view [PR] --repo [OWNER/REPO] --json reviews
+# 1. Evidence AT HEAD. The reviews list shows a stale round exactly like a
+#    fresh one, so read the head in the same call and compare per review.
+gh pr view [PR] --repo [OWNER/REPO] --json reviews,headRefOid --jq '.headRefOid as $head | .reviews[] | {login: .author.login, state: .state, at_head: (.commit.oid == $head), body_chars: (.body | length)}'
 
-# 2. Threads: expect none whose path is under the vendored tree.
+# 2. Threads: at most the bounded per-reviewer allowance below, on the
+#    vendored tree.
 .agents/skills/github/scripts/github.sh pr-threads [PR] --unresolved
 
 # 3. The gate's own answer for this head.
 gh pr checks [PR] --repo [OWNER/REPO]
 ```
 
-**Pass**: a trusted non-author review object at head, no unresolved thread on a
-vendored path, gate `success`. A repo-owned finding still arriving inline is
-the control that proves the reviewer is still reading — not merely silent.
+Step 1 answers the evidence question only for rows with `at_head` true whose
+login is non-author AND in the repo's
+`REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` (empty list = any non-author). This
+view reports bot logins WITHOUT the `[bot]` suffix the trusted list carries —
+compare on the base name, or read the same reviews from the REST
+`pulls/[PR]/reviews` endpoint, which returns the suffixed login and
+`commit_id`.
 
-**Not a pass**: zero threads AND an empty review body. That is the exclusion
-failure wearing a green badge; the review object may be evidence the gate
-accepts while nothing was examined.
+**Pass**: a trusted non-author review object at the current head; on the
+vendored tree, no unresolved thread from a summary-capable reviewer and at most
+one consolidated thread from each location-bound one; gate `success`. A
+repo-owned finding still arriving inline is the control that proves the
+reviewer is still reading rather than merely silent.
+
+**Not a pass**: threads down to zero with `body_chars` also at zero. That is
+the exclusion failure wearing a green badge — a review object the gate accepts
+while nothing was examined. Its check-run twin is a trusted context passing
+with a reviewed-nothing summary; the skip patterns do not catch that (see the
+trap above), so read the check's own output rather than trusting the green.
 
 **On failure**, revert the instruction file and merge the PR through the
 documented review path. A starved gate is a worse outcome than duplicate

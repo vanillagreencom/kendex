@@ -35,6 +35,13 @@ upstream finding costs one blocking thread per reviewer per repo. The summary
 body carries the same finding at no such cost and is harvested upstream once
 per re-vendor train.
 
+**If every finding you emit is anchored to a file location** — you have no
+review body you author, only a fixed template — then do not drop the finding
+and do not spread it. Post ONE consolidated comment for this PR carrying every
+upstream-remedy finding together, anchored anywhere in this tree. One thread
+per reviewer per PR is the bound; one thread per finding is what this
+instruction exists to prevent.
+
 **Do not stay silent instead.** Review the PR and submit a review: the merge
 gate needs a review object at this head, so a skipped review blocks the merge
 as hard as an unanswered thread does.

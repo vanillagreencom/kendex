@@ -70,7 +70,9 @@ sessions answering them carry the argument back upstream as though it were new.
   A remedy in a repo-owned file (the vendor pin, settings, CI wiring) is local
   and belongs inline — a re-vendor that moves pinned bytes without updating the
   pin is a real defect. A remedy in the vendored bytes belongs in the review
-  summary body, which creates no thread.
+  summary body, which creates no thread — or, for a reviewer that can only
+  anchor findings to file locations, in ONE consolidated comment for the whole
+  PR rather than one per finding.
 - **Do not silence the reviewer by excluding the path.** A pure re-vendor PR is
   nothing but vendored files, so a reviewer that skips them produces no review
   object and the review gate's evidence term starves with no reviewer that can
