@@ -2,10 +2,11 @@
 applyTo: "[VENDORED_GLOB]"
 ---
 
-<!-- Copy to the repo's path-scoped reviewer instruction directory and fill:
-     [VENDORED_GLOB] the vendored tree, verified against a real re-vendor PR's
-     file list; [UPSTREAM_REPO] the owning repository; [PIN_CHECK] the
-     repo-owned control that fails on byte drift. Delete this comment.
+<!-- Copy to .github/instructions/ as a *.instructions.md file, and fill:
+     [VENDORED_GLOB] the vendored tree, whose root is per-repo — verify it
+     against a real re-vendor PR's file list rather than assuming an install
+     path; [UPSTREAM_REPO] the owning repository; [PIN_CHECK] the repo-owned
+     control that fails on byte drift. Delete this comment.
      Rationale and the verification protocol: review-gate
      references/vendored-paths.md. -->
 

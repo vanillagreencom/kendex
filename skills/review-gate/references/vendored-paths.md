@@ -121,9 +121,10 @@ cross-repo memory and will restate the same finding in every one.
 ## Wiring a repo
 
 1. Copy [`../templates/vendored-paths.instructions.md`](../templates/vendored-paths.instructions.md)
-   into the repo's path-scoped reviewer instruction directory, set `applyTo` to
-   the repo's actual vendored glob, and fill the placeholders. Repo-owned after
-   the copy, like the writer workflow.
+   into the repo's path-scoped reviewer instruction directory —
+   `.github/instructions/`, as a `*.instructions.md` file — set `applyTo` to the
+   repo's actual vendored glob, and fill the placeholders. Repo-owned after the
+   copy, like the writer workflow.
 2. Check the glob against the paths a real re-vendor PR touches. An `applyTo`
    that does not match the vendored tree is dead config that lints green.
 3. Classify each reviewer the repo runs as summary-capable or location-bound
