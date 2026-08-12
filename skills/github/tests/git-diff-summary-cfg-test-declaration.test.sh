@@ -922,5 +922,168 @@ assert_eq "hash-raw #[path] ungated declaration keeps panic_path_added" \
 assert_eq "hash-raw #[path] ungated declaration stays production scope" \
     "production" "$(jq -r '.scope' <<<"$hashraw_json")"
 
+# An attribute-prefixed inline opener on one line (#[cfg(test)] mod outer {)
+# must still enter the skip region: its inner ungated declaration must not
+# fabricate a route that cancels the real gated one.
+attr_opener_repo="$SANDBOX/attr-opener"
+init_repo "$attr_opener_repo"
+mkdir -p "$attr_opener_repo/src"
+cat > "$attr_opener_repo/src/lib.rs" <<'RUST'
+#[cfg(test)] mod outer {
+    pub mod cand;
+}
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$attr_opener_repo" add src
+git -C "$attr_opener_repo" commit -q -m lib
+cat > "$attr_opener_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$attr_opener_repo" add src/cand.rs
+attr_opener_json="$($SUMMARY -C "$attr_opener_repo" --staged)"
+assert_eq "attribute-prefixed inline opener still skips its block" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$attr_opener_json")"
+assert_eq "attribute-prefixed inline opener is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$attr_opener_json")"
+
+# Every include! on a line is a route, not just the first.
+multi_include_repo="$SANDBOX/multi-include"
+init_repo "$multi_include_repo"
+mkdir -p "$multi_include_repo/src"
+cat > "$multi_include_repo/src/lib.rs" <<'RUST'
+include!("first.rs"); include!("shared_impl.rs");
+
+#[cfg(test)]
+#[path = "shared_impl.rs"]
+mod shared_fixtures;
+RUST
+cat > "$multi_include_repo/src/first.rs" <<'RUST'
+pub const FIRST: u32 = 1;
+RUST
+git -C "$multi_include_repo" add src
+git -C "$multi_include_repo" commit -q -m lib
+cat > "$multi_include_repo/src/shared_impl.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$multi_include_repo" add src/shared_impl.rs
+multi_include_json="$($SUMMARY -C "$multi_include_repo" --staged)"
+assert_eq "second include! on a line keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$multi_include_json")"
+assert_eq "second include! on a line keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$multi_include_json")"
+
+# Every declaration on a line is recorded, not just the first.
+multi_decl_repo="$SANDBOX/multi-decl"
+init_repo "$multi_decl_repo"
+mkdir -p "$multi_decl_repo/src"
+cat > "$multi_decl_repo/src/lib.rs" <<'RUST'
+mod first; pub mod shared;
+
+#[cfg(test)]
+#[path = "shared.rs"]
+mod shared_fixtures;
+RUST
+cat > "$multi_decl_repo/src/first.rs" <<'RUST'
+pub const FIRST: u32 = 1;
+RUST
+git -C "$multi_decl_repo" add src
+git -C "$multi_decl_repo" commit -q -m lib
+cat > "$multi_decl_repo/src/shared.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+git -C "$multi_decl_repo" add src/shared.rs
+multi_decl_json="$($SUMMARY -C "$multi_decl_repo" --staged)"
+assert_eq "second declaration on a line keeps panic_path_added" \
+    '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$multi_decl_json")"
+assert_eq "second declaration on a line keeps production scope" \
+    "production" "$(jq -r '.scope' <<<"$multi_decl_json")"
+
+# A single-line inline block (mod m { include!("cand.rs") }) emits nothing:
+# the include inside must not cancel the real gated route.
+oneline_inline_repo="$SANDBOX/oneline-inline"
+init_repo "$oneline_inline_repo"
+mkdir -p "$oneline_inline_repo/src"
+cat > "$oneline_inline_repo/src/lib.rs" <<'RUST'
+mod m { include!("cand.rs") }
+
+#[cfg(test)]
+#[path = "cand.rs"]
+mod cand_fixtures;
+RUST
+git -C "$oneline_inline_repo" add src
+git -C "$oneline_inline_repo" commit -q -m lib
+cat > "$oneline_inline_repo/src/cand.rs" <<'RUST'
+pub fn sample() -> u32 {
+    "3".parse().unwrap()
+}
+RUST
+git -C "$oneline_inline_repo" add src/cand.rs
+oneline_inline_json="$($SUMMARY -C "$oneline_inline_repo" --staged)"
+assert_eq "single-line inline block include! emits no route" \
+    '["test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$oneline_inline_json")"
+assert_eq "single-line inline block is not production scope" \
+    "support" "$(jq -r '.scope' <<<"$oneline_inline_json")"
+
+# Torture line: several declarations, an attributed inline block, and two
+# include! calls share ONE line; gated twins exist for each interesting
+# target. shared.rs and inc_b.rs have ungated routes on that line
+# (production), onlygated.rs has only its gated route (test).
+torture_repo="$SANDBOX/torture"
+init_repo "$torture_repo"
+mkdir -p "$torture_repo/src"
+cat > "$torture_repo/src/lib.rs" <<'RUST'
+mod first; pub mod shared; #[cfg(test)] mod outer { mod inner; } include!("inc_a.rs"); include!("inc_b.rs");
+
+#[cfg(test)]
+#[path = "shared.rs"]
+mod shared_fx;
+
+#[cfg(test)]
+#[path = "inc_b.rs"]
+mod inc_fx;
+
+#[cfg(test)]
+#[path = "onlygated.rs"]
+mod og;
+RUST
+cat > "$torture_repo/src/first.rs" <<'RUST'
+pub const FIRST: u32 = 1;
+RUST
+cat > "$torture_repo/src/inc_a.rs" <<'RUST'
+pub const INC_A: u32 = 1;
+RUST
+git -C "$torture_repo" add src
+git -C "$torture_repo" commit -q -m lib
+cat > "$torture_repo/src/shared.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+cat > "$torture_repo/src/inc_b.rs" <<'RUST'
+pub fn decode(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+cat > "$torture_repo/src/onlygated.rs" <<'RUST'
+pub fn fixture() -> u32 {
+    "7".parse().unwrap()
+}
+RUST
+git -C "$torture_repo" add src/shared.rs src/inc_b.rs src/onlygated.rs
+torture_json="$($SUMMARY -C "$torture_repo" --staged)"
+assert_eq "torture line: ungated routes win for shared/inc_b, gated for onlygated" \
+    '["panic_path_added","test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$torture_json")"
+assert_eq "torture line: scope is production" \
+    "production" "$(jq -r '.scope' <<<"$torture_json")"
+
 printf '\nPASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then exit 1; fi

@@ -167,108 +167,113 @@ scan_decl_records() {
             }
             return out
         }
+        # Every include! route in one consumed chunk (token boundary: a
+        # preceding identifier character means a different macro).
+        function emit_includes(chunk,   ioff, iq, iap, irest) {
+            ioff = 0
+            while ((iq = index(substr(chunk, ioff + 1), "include!")) > 0) {
+                iap = ioff + iq
+                if (iap == 1 || substr(chunk, iap - 1, 1) !~ /[A-Za-z0-9_]/) {
+                    irest = substr(chunk, iap)
+                    if (match(irest, /"[^"]*"/))
+                        printf "I\t%s\n", normpath(join(fdir, substr(irest, RSTART + 1, RLENGTH - 2)))
+                }
+                ioff = iap + 7
+            }
+        }
+        # Lines are NOT items: source is accumulated into a cross-line
+        # buffer and consumed one ITEM at a time (attribute, file-module
+        # declaration, inline-module block, other statement), so several
+        # items on one line and one item across several lines both parse.
+        # An incomplete tail (open attribute, unterminated statement,
+        # unclosed inline block) stays in the buffer for the next line.
         {
             line = strip_comments($0)
-            sub(/^[[:space:]]*/, "", line)
-            # Blank and comment-only lines keep pending attributes (attrs
-            # may precede their item across lines).
-            if (line == "") next
-            # Declarations inside inline module blocks (mod name { ... })
-            # resolve into the inline module chain, which this scanner does
-            # not model. A shape it cannot faithfully parse must produce NO
-            # record — never a mis-resolved one — so the whole block is
-            # skipped by brace depth, and pending state cannot leak across
-            # the boundary.
-            if (inline_depth > 0) {
-                tmp = line
-                inline_depth += gsub(/\{/, "{", tmp) - gsub(/\}/, "}", tmp)
-                if (inline_depth < 0) inline_depth = 0
-                gated = 0; pathattr = ""; pending_attr = ""; pending_include = 0
-                next
-            }
-            # An attribute opened but not closed on the previous line
-            # (rustc accepts `#[path =` split from its value) continues
-            # here; rejoin before parsing.
-            if (pending_attr != "") {
-                line = pending_attr " " line
-                pending_attr = ""
-            }
-            # An inline-module opener left open at end of line starts a
-            # skip region (a single-line `mod m { ... }` nets zero and
-            # stays inert — its inner declarations never anchor at ^).
-            if (line ~ /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\{/) {
-                tmp = line
-                delta = gsub(/\{/, "{", tmp) - gsub(/\}/, "}", tmp)
-                if (delta > 0) {
-                    inline_depth = delta
-                    gated = 0; pathattr = ""; pending_include = 0
-                    next
+            if (buf == "") buf = line
+            else buf = buf " " line
+            for (;;) {
+                # Inside an inline module block (mod name { ... }): Rust
+                # resolves nested declarations into the inline chain, which
+                # this scanner does not model — a shape it cannot
+                # faithfully parse must produce NO record, never a
+                # mis-resolved one. Consume by brace depth, emit nothing.
+                if (inline_depth > 0) {
+                    blen = length(buf); bi = 1
+                    while (bi <= blen && inline_depth > 0) {
+                        bc = substr(buf, bi, 1)
+                        if (bc == "{") inline_depth++
+                        else if (bc == "}") inline_depth--
+                        bi++
+                    }
+                    buf = substr(buf, bi)
+                    if (inline_depth > 0) { buf = ""; break }
+                    continue
                 }
-            }
-            # include! routes resolve their string-literal argument. A
-            # literal on a later line (formatted call left open) is tracked
-            # across lines until the closing paren; a call that CLOSES
-            # without a literal (computed path) sets no pending state and
-            # stays unmatched — stated limitation.
-            if (pending_include) {
-                if (match(line, /"[^"]*"/)) {
-                    printf "I\t%s\n", normpath(join(fdir, substr(line, RSTART + 1, RLENGTH - 2)))
-                    pending_include = 0
-                } else if (index(line, ")") > 0) pending_include = 0
-            }
-            # A real include! token only: a preceding identifier character
-            # means a different macro (my_include!).
-            ipos = 0; off = 0
-            while ((q = index(substr(line, off + 1), "include!")) > 0) {
-                ap = off + q
-                if (ap == 1 || substr(line, ap - 1, 1) !~ /[A-Za-z0-9_]/) { ipos = ap; break }
-                off = ap + 7
-            }
-            if (ipos > 0) {
-                rest = substr(line, ipos)
-                if (match(rest, /"[^"]*"/))
-                    printf "I\t%s\n", normpath(join(fdir, substr(rest, RSTART + 1, RLENGTH - 2)))
-                else if (index(rest, ")") == 0) pending_include = 1
-            }
-            # Consume leading attributes; several may share the decl line.
-            while (match(line, /^#\[[^]]*\][[:space:]]*/)) {
-                attr = substr(line, 1, RLENGTH)
-                if (attr ~ /^#\[cfg\(test\)\]/) gated = 1
-                # Plain and raw string values, including hash-raw
-                # (r"...", r#"..."#); a literal quote INSIDE a hash-raw
-                # value would cut early — pathological for a file path.
-                if (attr ~ /^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/) {
-                    p = attr
-                    sub(/^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/, "", p)
-                    sub(/".*/, "", p)
-                    pathattr = p
+                sub(/^[[:space:]]*/, "", buf)
+                if (buf == "") break
+                # Attribute item. An opened-but-unclosed one waits for the
+                # next line (rustc accepts attributes split across lines).
+                if (buf ~ /^#\[/) {
+                    if (match(buf, /^#\[[^]]*\][[:space:]]*/)) {
+                        attr = substr(buf, 1, RLENGTH)
+                        if (attr ~ /^#\[cfg\(test\)\]/) gated = 1
+                        # Plain and raw string values, including hash-raw
+                        # (r"...", r#"..."#); a literal quote INSIDE a
+                        # hash-raw value would cut early — pathological
+                        # for a file path.
+                        if (attr ~ /^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/) {
+                            p = attr
+                            sub(/^#\[path[[:space:]]*=[[:space:]]*(r#*)?"/, "", p)
+                            sub(/".*/, "", p)
+                            pathattr = p
+                        }
+                        buf = substr(buf, RLENGTH + 1)
+                        continue
+                    }
+                    break
                 }
-                line = substr(line, RLENGTH + 1)
-            }
-            if (line == "") next
-            # Attribute opened but not closed on this line: carry it (and
-            # any attrs already consumed stay pending in gated/pathattr).
-            if (line ~ /^#\[/ && index(line, "]") == 0) {
-                pending_attr = line
-                next
-            }
-            if (line ~ /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;/) {
-                name = line
-                sub(/^pub([(][^)]*[)])?[[:space:]]+/, "", name)
-                sub(/^mod[[:space:]]+/, "", name)
-                sub(/[[:space:]]*;.*$/, "", name)
-                kind = (gated ? "G" : "U")
-                if (pathattr != "")
-                    printf "%s\t%s\n", kind, normpath(join(fdir, pathattr))
-                else {
-                    # Both legal forms of a bare declaration: name.rs and
-                    # the directory form name/mod.rs.
-                    printf "%s\t%s\n", kind, normpath(join(moddir, name ".rs"))
-                    printf "%s\t%s\n", kind, normpath(join(moddir, name "/mod.rs"))
+                # File-module declaration item.
+                if (match(buf, /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;/)) {
+                    name = substr(buf, 1, RLENGTH)
+                    buf = substr(buf, RLENGTH + 1)
+                    sub(/^pub([(][^)]*[)])?[[:space:]]+/, "", name)
+                    sub(/^mod[[:space:]]+/, "", name)
+                    sub(/[[:space:]]*;.*$/, "", name)
+                    kind = (gated ? "G" : "U")
+                    if (pathattr != "")
+                        printf "%s\t%s\n", kind, normpath(join(fdir, pathattr))
+                    else {
+                        # Both legal forms of a bare declaration: name.rs
+                        # and the directory form name/mod.rs.
+                        printf "%s\t%s\n", kind, normpath(join(moddir, name ".rs"))
+                        printf "%s\t%s\n", kind, normpath(join(moddir, name "/mod.rs"))
+                    }
+                    gated = 0; pathattr = ""
+                    continue
                 }
+                # Inline-module opener: enter the skip region (its own
+                # attributes, gated or not, apply to the skipped block).
+                if (match(buf, /^(pub([(][^)]*[)])?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\{/)) {
+                    buf = substr(buf, RLENGTH + 1)
+                    inline_depth = 1
+                    gated = 0; pathattr = ""
+                    continue
+                }
+                # Any other item: consume to the next boundary (; { or }),
+                # scanning the chunk for include! routes. A multiline
+                # include! (literal on a later line) completes when its
+                # statement boundary arrives; a closed call with no
+                # literal (computed path) emits nothing. Without a
+                # boundary the item continues on the next line.
+                if (match(buf, /[;{}]/)) {
+                    chunk = substr(buf, 1, RSTART)
+                    buf = substr(buf, RSTART + 1)
+                    emit_includes(chunk)
+                    gated = 0; pathattr = ""
+                    continue
+                }
+                break
             }
-            gated = 0
-            pathattr = ""
         }
     '
 }
