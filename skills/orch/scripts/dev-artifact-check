@@ -291,8 +291,10 @@ validate_artifact() {
       # while the artifact's item numbers are EXACTLY 1..N — a legitimate
       # singleton re-fix (--expect-items 2) or a shifted set never matches.
       # The hint rides in its own field; `warning` keeps its documented
-      # commit_unreachable|null contract.
-      if [[ "$expect_items" =~ ^[0-9]+$ ]] && [ "$expect_items" -gt 1 ] \
+      # commit_unreachable|null contract. It diagnoses a TYPED count only: a
+      # set derived from the round record (--expect-items-from-round) cannot
+      # be that misuse, so it never hints even when the shapes coincide.
+      if [[ "$expect_from_round" != "true" && "$expect_items" =~ ^[0-9]+$ ]] && [ "$expect_items" -gt 1 ] \
         && jq -e --argjson n "$expect_items" \
           '((.items? | type) == "array")
              and (all(.items[];
@@ -381,20 +383,28 @@ elif [[ "${1:-}" == --* ]]; then
     round_record="$worktree/tmp/dev-round-$issue-$round_id.json"
     [[ -f "$round_record" ]] \
       || die "round record $round_record not found — was dev-round-write run when the round was stamped?"
+    jq empty "$round_record" >/dev/null 2>&1 \
+      || die "round record $round_record is not parseable JSON"
     jq -e --arg want "$round_id" '
       ((.round_id? | type) == "string") and (.round_id == $want)
     ' "$round_record" >/dev/null 2>&1 \
       || die "round record $round_record does not carry internal round_id '$round_id' — not this round's record"
-    expect_items="$(jq -r '
-      if ((.items? | type) == "array")
-         and ((.items | length) > 0)
-         and (all(.items[]; (type == "object") and ((.n? | type) == "number")))
-      then [.items[].n | tostring] | join(",")
-      else empty
-      end
-    ' "$round_record" 2>/dev/null || true)"
-    [[ -n "$expect_items" ]] \
-      || die "round record $round_record has no usable items[] (expected a non-empty array of numeric n)"
+    # Full record schema, not just the token: a record dev-round-write could
+    # not have written (wrong issue, missing schema_version, ill-typed or
+    # empty items/text) is no source of truth for the expected set.
+    jq -e --arg issue "$issue" '
+      ((.schema_version? | type) == "number")
+      and ((.issue? | type) == "string") and (.issue == $issue)
+      and ((.items? | type) == "array") and ((.items | length) > 0)
+      and all(.items[];
+            (type == "object")
+            and ((.n? | type) == "number") and (.n == (.n | floor)) and (.n >= 0)
+            and ((.text? | type) == "string")
+            and ((.text | gsub("[[:space:]]"; "")) != ""))
+      and (([.items[].n] | length) == ([.items[].n] | unique | length))
+    ' "$round_record" >/dev/null 2>&1 \
+      || die "round record $round_record fails the dev-round schema (schema_version number, issue '$issue', non-empty items[] of unique integer n + non-empty text) — see skills/orch/schemas/dev-round.md"
+    expect_items="$(jq -r '[.items[].n | tostring] | join(",")' "$round_record")"
   fi
 else
   # Neither --file nor round mode → usage error. One identity model (round id);

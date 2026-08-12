@@ -25,12 +25,25 @@
 #
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
-#     --item N TEXT [--item N TEXT]...
+#     (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH)
 #
 # One --item per delegated review item: N is the item's delegated number (the
-# `#[N]` in the formatted items — a set, so duplicates are rejected), TEXT is
-# that item's full formatted block verbatim (multi-line is fine; plain text, no
-# backticks, so the command stays classifier-safe under Codex approval=never).
+# `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
+# integer, no leading zeros), TEXT is that item's full formatted block verbatim
+# (multi-line is fine; plain text, no backticks, so the command stays
+# classifier-safe under Codex approval=never). When the item text is
+# shell-hostile — real review blocks routinely carry backticks, which strict
+# harness classifiers reject even quoted — the orchestrator instead builds a
+# JSON array of {n, text} with its harness file-write tool and passes it as
+# --items-file (mutually exclusive with --item; same n/text rules, extra
+# element keys are dropped on normalization).
+#
+# A round's record is IMMUTABLE once written: re-running with identical content
+# is an idempotent retry (success, same path); different content under the same
+# round id is refused (exit 2) — a partial-list retry must never silently
+# shrink the authoritative delegated set. A changed delegation mints a NEW
+# round id (`workflow-state new-round-id`), which is the round-token
+# discipline: one token, one delegation, one item set.
 #
 # Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
 #   {
@@ -63,15 +76,22 @@ usage() {
   cat <<'EOF'
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
-    --item N TEXT [--item N TEXT]...
+    (--item N TEXT [--item N TEXT]... | --items-file JSON_PATH)
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
 (atomically) and prints its absolute path. One --item per delegated review
 item: N is the item's delegated number (duplicates rejected — the set is what
-dev-artifact-check --expect-items-from-round checks against), TEXT is the
-item's full formatted block verbatim (non-empty plain text, no backticks).
---issue / --round-id must match ^[A-Za-z0-9._-]+$ with no '..'. Canonical
-schema: skills/orch/schemas/dev-round.md.
+dev-artifact-check --expect-items-from-round checks against; canonical integer,
+no leading zeros), TEXT is the item's full formatted block verbatim (non-empty
+plain text, no backticks). For shell-hostile item text (backticks, quotes),
+build a JSON array of {n, text} with the harness file-write tool and pass
+--items-file JSON_PATH instead (mutually exclusive with --item; same rules —
+integer n, unique, non-empty text; extra element keys are dropped).
+A round's record is immutable: an identical re-invocation is an idempotent
+success; different content under the same round id exits 2 — a changed
+delegation needs a NEW round id. --issue / --round-id must match
+^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
+skills/orch/schemas/dev-round.md.
 EOF
 }
 
@@ -79,7 +99,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|-h|--help) return 0 ;;
+    --worktree|--issue|--round-id|--item|--items-file|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -108,26 +128,31 @@ check_id_token() {
 worktree=""
 issue=""
 round_id=""
+items_file=""
 item_n=()
 item_text=()
 seen_n=" "
 worktree_given=false
 issue_given=false
 round_id_given=false
+items_file_given=false
 
 while (( $# > 0 )); do
   case "$1" in
     --worktree) need "$1" $# "${2:-}"; no_dup "$1" "$worktree_given"; worktree_given=true; worktree="$2"; shift 2 ;;
     --issue)    need "$1" $# "${2:-}"; no_dup "$1" "$issue_given";    issue_given=true;    issue="$2"; shift 2 ;;
     --round-id) need "$1" $# "${2:-}"; no_dup "$1" "$round_id_given"; round_id_given=true; round_id="$2"; shift 2 ;;
+    --items-file) need "$1" $# "${2:-}"; no_dup "$1" "$items_file_given"; items_file_given=true; items_file="$2"; shift 2 ;;
     --item)
       # Consumes exactly 2 args: N TEXT.
       if (( $# < 3 )); then
         die "--item requires exactly 2 arguments: N TEXT"
       fi
       n="$2"; text="$3"
-      if ! [[ "$n" =~ ^[0-9]+$ ]]; then
-        die "--item N must be a non-negative integer, got '$n'"
+      # Canonical integer only: '01' would survive a bare digits check but is
+      # not a JSON number and would make jq --argjson fail downstream.
+      if ! [[ "$n" =~ ^(0|[1-9][0-9]*)$ ]]; then
+        die "--item N must be a non-negative integer with no leading zeros, got '$n'"
       fi
       case "$seen_n" in
         *" $n "*) die "duplicate --item number $n: the delegated items form a set" ;;
@@ -153,18 +178,43 @@ done
 [[ -d "$worktree" ]] || die "--worktree path '$worktree' is not a directory"
 check_id_token --issue "$issue"
 check_id_token --round-id "$round_id"
-(( ${#item_n[@]} > 0 )) \
-  || die "at least one --item is required: a fix round with no delegated items has nothing to persist"
 
-# --- Build the items array deterministically with jq ---
-items_json="$(
-  for i in "${!item_n[@]}"; do
-    jq -n \
-      --argjson n "${item_n[$i]}" \
-      --arg text "${item_text[$i]}" \
-      '{n: $n, text: $text}'
-  done | jq -s '.'
-)"
+# --- Exactly one item source: inline --item xor --items-file ---
+if [[ "$items_file_given" == "true" ]] && (( ${#item_n[@]} > 0 )); then
+  die "--item and --items-file are mutually exclusive: provide one item source"
+fi
+if [[ "$items_file_given" == "true" ]]; then
+  [[ -n "$items_file" ]] || die "--items-file requires a non-empty path"
+  [[ -f "$items_file" ]] || die "--items-file path '$items_file' does not exist"
+  jq empty "$items_file" >/dev/null 2>&1 \
+    || die "--items-file '$items_file' is not parseable JSON"
+  # Same rules as inline --item, enforced on the file: a non-empty array whose
+  # every element carries an integer n >= 0 (unique — the numbers form a set)
+  # and a non-empty, non-whitespace text string.
+  jq -e '
+    (type == "array") and (length > 0)
+    and all(.[];
+          (type == "object")
+          and ((.n? | type) == "number") and (.n == (.n | floor)) and (.n >= 0)
+          and ((.text? | type) == "string")
+          and ((.text | gsub("[[:space:]]"; "")) != ""))
+    and (([.[].n] | length) == ([.[].n] | unique | length))
+  ' "$items_file" >/dev/null 2>&1 \
+    || die "--items-file '$items_file' must be a non-empty JSON array of {n, text} — integer n >= 0, unique, non-empty text"
+  items_json="$(jq 'map({n: .n, text: .text})' "$items_file")"
+else
+  (( ${#item_n[@]} > 0 )) \
+    || die "at least one --item (or --items-file) is required: a fix round with no delegated items has nothing to persist"
+  # --- Build the items array deterministically with jq ---
+  items_json="$(
+    for i in "${!item_n[@]}"; do
+      jq -n \
+        --argjson n "${item_n[$i]}" \
+        --arg text "${item_text[$i]}" \
+        '{n: $n, text: $text}'
+    done | jq -s '.'
+  )"
+fi
 
 # --- Compute the absolute, round-scoped out path ---
 mkdir -p "$worktree/tmp"
@@ -186,6 +236,23 @@ jq -n \
      issue: $issue,
      items: $items
    }' > "$tmp"
+
+# --- Same-round records are immutable ---
+# The record is the authoritative delegated set for exactly one delegation.
+# An identical re-invocation (a retry after an unclear failure) is idempotent;
+# different content under the same token would silently rewrite what was
+# delegated — e.g. a retry with a partial list shrinking the set the
+# completion artifact is checked against. jq output is deterministic, so a
+# byte comparison decides identity.
+if [[ -f "$out" ]]; then
+  if cmp -s "$tmp" "$out"; then
+    rm -f "$tmp"
+    trap - EXIT
+    printf '%s\n' "$out"
+    exit 0
+  fi
+  die "round record $out already exists with different content — the delegated set is stamped once per round; a changed delegation needs a NEW round id (workflow-state new-round-id)"
+fi
 
 mv "$tmp" "$out"
 trap - EXIT

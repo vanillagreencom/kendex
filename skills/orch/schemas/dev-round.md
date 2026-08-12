@@ -31,15 +31,36 @@ delegation (`dev-fix.md` § 2 step 5, `review-pr-comments.md` § 6.1 step 3):
 
 ```bash
 .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] \
+  --round-id [DEV_ROUND_ID] --items-file [ITEMS_JSON_PATH]
+```
+
+`[ITEMS_JSON_PATH]` is a JSON file the orchestrator builds with its harness
+file-write tool (per SKILL § Harness-Safe Shell — file bodies go through
+harness file tools, and a literal backtick in a command is rejected by strict
+classifiers even quoted): a non-empty array of `{"n": …, "text": "…"}`, one per
+delegated review item. `n` is the item's delegated number (an integer >= 0,
+unique — the numbers form a set), `text` the item's full formatted block
+verbatim. Extra element keys are dropped on normalization. When every item's
+text is plain (no backticks, quotes, or `$`), the inline form is equivalent:
+
+```bash
+.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] \
   --round-id [DEV_ROUND_ID] --item [N] '[ITEM_TEXT]' [--item [N] '[ITEM_TEXT]']...
 ```
 
-One `--item` per delegated review item: `[N]` is the item's delegated number
-(the `#[N]` in the formatted items — duplicates are rejected, the numbers form
-a set), `[ITEM_TEXT]` is that item's full formatted block verbatim (multi-line
-is fine; plain text, no backticks). It is a sanctioned single-command
-invocation (harness-safe, atomic temp-file + `mv` write) and prints the
-record's absolute path.
+Inline `[N]` must be a canonical integer (no leading zeros — `01` is not a
+JSON number). The two item sources are mutually exclusive. Either form is a
+sanctioned single-command invocation (harness-safe, atomic temp-file + `mv`
+write) and prints the record's absolute path; all usage/validation errors
+exit 2.
+
+**Immutable per round** (vstack#1230): re-running with byte-identical content
+is an idempotent retry (success, same path); different content under the same
+round id exits 2 — a retry with a partial list must never silently shrink the
+authoritative delegated set. A changed delegation mints a NEW round id
+(`workflow-state new-round-id`), the same one-token-one-delegation discipline
+the completion artifact follows. Analysis (read-only) rounds have no delegated
+items and write NO record — the writer rejects an empty set by design.
 
 ## Schema
 
@@ -61,16 +82,19 @@ record's absolute path.
 | `schema_version` | Yes | (constant `1`) | Record schema version (number) |
 | `round_id` | Yes | `--round-id` | Per-delegation token; must equal the filename token and the round's `dev_round_id` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key; grammar `^[A-Za-z0-9._-]+$`, no `..` |
-| `items` | Yes (>=1) | `--item N TEXT` | The delegated item set: `n` is the delegated item number (unique), `text` the item's formatted block verbatim |
+| `items` | Yes (>=1) | `--item N TEXT` / `--items-file` | The delegated item set: `n` is the delegated item number (integer >= 0, unique), `text` the item's formatted block verbatim (non-empty) |
 
 ## Readers
 
 - **`dev-artifact-check --expect-items-from-round`** (round mode only) derives
   the exact expected item-number set from `items[].n` instead of a typed
-  `--expect-items` list. A missing, unparseable, token-mismatched, or malformed
-  record means the expected set cannot be established, so the check refuses to
-  run (exit 2) — never a silent downgrade to the weaker fix/bundled fallback
-  gate.
+  `--expect-items` list. It validates the FULL record schema — parseable JSON,
+  internal `round_id` equal to the expected token, `issue` equal to `--issue`,
+  `schema_version` a number, non-empty `items[]` of unique integer `n` with
+  non-empty `text` — and refuses to run (exit 2) on a missing or unusable
+  record: never a silent downgrade to the weaker fix/bundled fallback gate.
+  The count-vs-set `hint` diagnoses a typed `--expect-items` count only and is
+  never emitted for a from-round set.
 - **A respawned dev agent** (`dev/workflows/dev-fix.md` § 6) reads `items[]`
   to recover exactly what was delegated — item numbers and texts — instead of
   guessing a mapping from the raw review JSONs, which would put fabricated

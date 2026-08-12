@@ -326,12 +326,12 @@ Issue suggestions: [N] items → § 6.2 audit
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
-   Use the printed token as `[DEV_ROUND_ID]`. Then **persist this group's delegated item set on disk** — one `--item [N] '[ITEM_TEXT]'` per item marked "Fixing" in this group, where `[N]` is the item's `#[N]` number and `[ITEM_TEXT]` is that item's formatted block from the delegation verbatim (plain text, no backticks):
+   Use the printed token as `[DEV_ROUND_ID]`. Then **persist this group's delegated item set on disk**. Default route ([Harness-Safe Shell](../SKILL.md#harness-safe-shell)): write the group's item set to `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array with one `{"n": [N], "text": "[ITEM_TEXT]"}` per item marked "Fixing" in this group, `[N]` the item's `#[N]` number and `[ITEM_TEXT]` that item's formatted block from the delegation verbatim — then run:
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --item [N] '[ITEM_TEXT]' [--item [N] '[ITEM_TEXT]']...
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
    ```
-   This writes the round record `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json` (schema: [`../schemas/dev-round.md`](../schemas/dev-round.md)) — the on-disk source step 5's exact item-set check reads, and what a respawned agent reads to recover its items. Each group's fresh round id scopes its own record, so a prior group's set can never be checked against this group's receipt.
+   The file route keeps backticks/quotes in review text out of the command line (strict harness classifiers reject a literal backtick even quoted); only when every item's text is plain may you pass them inline as `--item [N] '[ITEM_TEXT]'` pairs in the same single command. This writes the round record `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json` (schema: [`../schemas/dev-round.md`](../schemas/dev-round.md)) — the on-disk source step 5's exact item-set check reads, and what a respawned agent reads to recover its items. The record is immutable per round (a changed set means a fresh `new-round-id`), and each group's fresh round id scopes its own record, so a prior group's set can never be checked against this group's receipt.
 
    **In Claude Code**, when the target agent is already alive: send the delegation message before creating and assigning its task — task assignment wakes a live agent immediately, and an agent woken by the bare `task_assignment` payload starts the round without the delegation.
 

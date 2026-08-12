@@ -134,12 +134,16 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
-   Use the printed token as `[DEV_ROUND_ID]`. Then **persist the delegated item set on disk** — one `--item [N] '[ITEM_TEXT]'` per delegated review item, where `[N]` is the item's `#[N]` number and `[ITEM_TEXT]` is that item's formatted block from `[FORMATTED_ITEMS]` verbatim (plain text, no backticks):
+   Use the printed token as `[DEV_ROUND_ID]`. Then **persist the delegated item set on disk**. Default route ([Harness-Safe Shell](../SKILL.md#harness-safe-shell)): write the item set to `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array with one `{"n": [N], "text": "[ITEM_TEXT]"}` per delegated review item, `[N]` the item's `#[N]` number and `[ITEM_TEXT]` that item's formatted block from `[FORMATTED_ITEMS]` verbatim — then run:
 
    ```bash
-   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --item [N] '[ITEM_TEXT]' [--item [N] '[ITEM_TEXT]']...
+   .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
    ```
-   This writes the round record `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json` (schema: [`../schemas/dev-round.md`](../schemas/dev-round.md)) — the on-disk source of truth step 6's exact item-set check reads, and what a respawned agent reads to recover its items when the delegation survives in no one's context. Without it, the delegated set exists only in this session's context and a mid-round agent loss leaves the round's receipt unrecoverable.
+   Real review blocks routinely carry backticks and quotes; the file route keeps them out of the command line entirely (a literal backtick in a command is rejected by strict harness classifiers even quoted). Only when EVERY item's text is plain — no backticks, no quotes, no `$` — may you pass the items inline instead, one `--item [N] '[ITEM_TEXT]'` per item in the same single command.
+
+   This writes the round record `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json` (schema: [`../schemas/dev-round.md`](../schemas/dev-round.md)) — the on-disk source of truth step 6's exact item-set check reads, and what a respawned agent reads to recover its items when the delegation survives in no one's context. Without it, the delegated set exists only in this session's context and a mid-round agent loss leaves the round's receipt unrecoverable. The record is immutable per round — an identical retry is idempotent, but changing the set means a NEW delegation: re-run `new-round-id` and persist the new set under the fresh token.
+
+   **Analysis (read-only) delegation**: an investigate-and-recommend round has NO delegated item set — skip `dev-round-write` entirely (the writer rejects an empty set, and an empty record would misrepresent the round); step 6 runs Check A without an expected-set flag per its analysis rule.
 
    **In Claude Code**, when the target agent is already alive: send the delegation message before creating and assigning its task — task assignment wakes a live agent immediately, and an agent woken by the bare `task_assignment` payload starts the round without the delegation.
 

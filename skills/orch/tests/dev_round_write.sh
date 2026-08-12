@@ -66,14 +66,67 @@ assert_eq "$(jq -r '.items[0].n' "$out")" "1" "first item keeps its delegated nu
 assert_eq "$(jq -r '.items[0].n | type' "$out")" "number" ".items[].n is a JSON number"
 assert_eq "$(jq -r '.items[1].text' "$out")" "$ITEM2" ".items[].text preserves the formatted block verbatim (multi-line)"
 
-# --- re-running for the same round replaces the record (atomic overwrite) ---
-"$WRITE" --worktree "$worktree" --issue issue-1230 --round-id "$RID" --item 3 "replacement" >/dev/null
-assert_eq "$(jq -c '[.items[].n]' "$out")" "[3]" "re-run for the same round replaces the record"
+# --- same-round records are IMMUTABLE: the delegated set is stamped once ---
+# An identical re-invocation is an idempotent retry → success, same path,
+# content untouched. A DIFFERENT set under the same round id would silently
+# rewrite the authoritative delegated set (e.g. a retry with a partial list) —
+# refused: a changed delegation needs a NEW round id.
+out_rerun="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id "$RID" \
+  --item 1 "$ITEM1" --item 2 "$ITEM2")"
+assert_eq "$out_rerun" "$out" "identical re-invocation is idempotent (exit 0, same path)"
+assert_eq "$(jq -c '[.items[].n]' "$out")" "[1,2]" "identical re-invocation leaves the record unchanged"
+assert_exit2 "a different item set under the same round id exits 2 (immutable round)" \
+  --worktree "$worktree" --issue issue-1230 --round-id "$RID" --item 3 "replacement"
+assert_eq "$(jq -c '[.items[].n]' "$out")" "[1,2]" "the refused rewrite left the original record intact"
 
 # --- a fresh round id scopes a distinct file; the prior round's record survives ---
 out2="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 2-2 --item 1 "next round")"
 assert_eq "$([[ "$out2" != "$out" && -f "$out" && -f "$out2" ]] && echo yes)" "yes" \
   "a new round id writes a distinct record without clobbering the prior round's"
+
+# --- --items-file: the harness-safe route for shell-hostile item text ---
+# Real review blocks carry backticks and quotes; Codex rejects a literal
+# backtick in a command even single-quoted, so the orchestrator builds the JSON
+# with the harness file-write tool and passes one plain --items-file path.
+items_file="$TMP_ROOT/items.json"
+printf '%s' '[{"n":1,"text":"#1 | fix `parse()` — do not touch '"'"'raw'"'"' mode"},{"n":4,"text":"#4 | second item"}]' > "$items_file"
+outf="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 3-3 --items-file "$items_file")"
+assert_eq "$(jq -c '[.items[].n]' "$outf")" "[1,4]" "--items-file records the file's item numbers"
+assert_eq "$(jq -r '.items[0].text' "$outf")" '#1 | fix `parse()` — do not touch '"'"'raw'"'"' mode' \
+  "--items-file preserves backticks/quotes in item text verbatim"
+# extra keys in an element are dropped, not stored (the record schema is {n, text})
+printf '%s' '[{"n":1,"text":"t","extra":"x"}]' > "$items_file"
+outf="$("$WRITE" --worktree "$worktree" --issue issue-1230 --round-id 4-4 --items-file "$items_file")"
+assert_eq "$(jq -c '.items[0] | keys_unsorted' "$outf")" '["n","text"]' "--items-file normalizes elements to {n, text}"
+
+assert_exit2 "--items-file with --item exits 2 (one item source)" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file" --item 1 t
+assert_exit2 "--items-file with a nonexistent path exits 2" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$TMP_ROOT/nope.json"
+printf 'not json' > "$items_file"
+assert_exit2 "--items-file with unparseable JSON exits 2" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file"
+printf '%s' '{"n":1,"text":"t"}' > "$items_file"
+assert_exit2 "--items-file with a non-array top level exits 2" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file"
+printf '%s' '[]' > "$items_file"
+assert_exit2 "--items-file with an empty array exits 2" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file"
+printf '%s' '[{"n":1}]' > "$items_file"
+assert_exit2 "--items-file element without text exits 2" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file"
+printf '%s' '[{"n":1.5,"text":"t"}]' > "$items_file"
+assert_exit2 "--items-file with a non-integer n exits 2" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file"
+printf '%s' '[{"n":-1,"text":"t"}]' > "$items_file"
+assert_exit2 "--items-file with a negative n exits 2" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file"
+printf '%s' '[{"n":1,"text":"a"},{"n":1,"text":"b"}]' > "$items_file"
+assert_exit2 "--items-file with a duplicate n exits 2 (a set, not a list)" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file"
+printf '%s' '[{"n":1,"text":"   "}]' > "$items_file"
+assert_exit2 "--items-file with whitespace-only text exits 2" \
+  --worktree "$worktree" --issue i --round-id 5-5 --items-file "$items_file"
 
 # --- usage/validation errors: all exit 2, nothing written ---
 assert_exit2 "no --item exits 2 (an empty delegated set is not a fix round)" \
@@ -89,6 +142,8 @@ assert_exit2 "path-traversal --round-id (..) exits 2" \
   --worktree "$worktree" --issue i --round-id ".." --item 1 t
 assert_exit2 "non-numeric --item N exits 2" \
   --worktree "$worktree" --issue i --round-id 1-1 --item x t
+assert_exit2 "leading-zero --item N exits 2 (not a canonical integer)" \
+  --worktree "$worktree" --issue i --round-id 1-1 --item 01 t
 assert_exit2 "empty --item TEXT exits 2" \
   --worktree "$worktree" --issue i --round-id 1-1 --item 1 ""
 assert_exit2 "whitespace-only --item TEXT exits 2" \

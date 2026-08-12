@@ -301,6 +301,37 @@ jq -n '{schema_version:1,round_id:"11-11",issue:"issue-9",items:[]}' \
   > "$rr_wt/tmp/dev-round-issue-9-11-11.json"
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 11-11 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items-from-round with an empty round-record item set exits 2"
+# the reader validates the FULL record schema, not just the token
+printf 'not json' > "$rr_wt/tmp/dev-round-issue-9-12-12.json"
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 12-12 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--expect-items-from-round with an unparseable round record exits 2"
+jq -n '{schema_version:1,round_id:"13-13",issue:"issue-OTHER",items:[{n:1,text:"t"}]}' \
+  > "$rr_wt/tmp/dev-round-issue-9-13-13.json"
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 13-13 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--expect-items-from-round with a mismatched internal issue exits 2"
+jq -n '{round_id:"14-14",issue:"issue-9",items:[{n:1,text:"t"}]}' \
+  > "$rr_wt/tmp/dev-round-issue-9-14-14.json"
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 14-14 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--expect-items-from-round with a record missing schema_version exits 2"
+jq -n '{schema_version:1,round_id:"15-15",issue:"issue-9",items:[{n:1,text:""}]}' \
+  > "$rr_wt/tmp/dev-round-issue-9-15-15.json"
+"$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 15-15 --expect-items-from-round >/dev/null 2>&1
+assert_eq "$?" "2" "--expect-items-from-round with an empty item text exits 2"
+set -e
+# the count-vs-set hint diagnoses a TYPED --expect-items count; a set read from
+# the round record cannot be that misuse, so from-round must not emit the hint
+# even when the shapes coincide (control first: the inline form still fires it).
+"$WRITE" --worktree "$rr_wt" --kind fix --issue issue-9 --round-id 16-16 --branch b --commit c \
+  --validate pass --item 1 Applied a --item 2 Applied b --item 3 Applied c >/dev/null
+hint_inline="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items 3 2>/dev/null | jq -r '.hint' || true)"
+assert_eq "$([[ "$hint_inline" != "null" ]] && echo fires)" "fires" \
+  "control: inline --expect-items 3 against items 1..3 fires the count-vs-set hint"
+"$ROUND_WRITE" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --item 3 "only item three" >/dev/null
+hint_round="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items-from-round 2>/dev/null | jq -r '.hint' || true)"
+assert_eq "$hint_round" "null" "--expect-items-from-round never emits the count-vs-set hint (reason stays incomplete)"
+reason_round="$("$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 16-16 --expect-items-from-round 2>/dev/null | jq -r '.reason' || true)"
+assert_eq "$reason_round" "incomplete" "from-round set mismatch still reports incomplete"
+set +e
 # one expected-set source only
 "$CHECK" --worktree "$rr_wt" --issue issue-9 --round-id 7-8 --expect-items 1,2 --expect-items-from-round >/dev/null 2>&1
 assert_eq "$?" "2" "--expect-items and --expect-items-from-round together exit 2"

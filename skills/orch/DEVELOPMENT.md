@@ -139,6 +139,35 @@ remains, now solely as the stall watchdog deadline.
 - Writes `round_id` and `schema_version: 1`; builds the JSON with `jq` (never string concat) to a same-dir temp file and `mv`s it over the target (atomic — a concurrent checker never sees a partial artifact, and a failed generation leaves any prior receipt intact).
 - Any usage/validation error → stderr + exit 2 (bad `--kind`, missing required arg, malformed `--validate`, path-unsafe `--issue`/`--round-id`, bad `--item` DECISION, empty REASONING, non-integer `N`, a missing or explicitly empty `--summary-file` value, a whitespace-only `--summary`, `--summary` combined with `--summary-file` (presence-based — an empty value still counts as supplied), a single-valued flag supplied twice, a value slot filled by one of the script's own flag tokens (a forgotten value), a `fix`/`--bundled` invocation with no `--item`, or an analysis invocation carrying a rejected flag); on success prints the artifact's absolute path.
 
+### `dev-round-write` — the round's input record (vstack#1230)
+
+The orchestrator-side twin of `dev-return-write`, run at stamp time (immediately
+after `new-round-id`, before delegating a fix round): it persists the delegated
+item set to `tmp/dev-round-[ISSUE]-[RID].json` so the set survives the
+orchestrator's context — the gap that made a mid-round respawn's receipt
+unrecoverable when the delegation existed only in session memory.
+
+- Required: `--worktree --issue --round-id` plus exactly one item source —
+  inline `--item N TEXT` (repeatable; `N` a canonical non-negative integer, no
+  leading zeros, unique across items; `TEXT` the item's formatted block
+  verbatim, non-empty) or `--items-file JSON_PATH` (a non-empty JSON array of
+  `{n, text}` under the same rules, built with the harness file-write tool —
+  the route for shell-hostile item text, since a literal backtick in a command
+  is rejected by strict harness classifiers even quoted; extra element keys
+  are dropped on normalization).
+- Same path-safe `--issue`/`--round-id` grammar, atomic temp+`mv` write, and
+  exit-2 error contract as `dev-return-write`; prints the record's absolute
+  path.
+- **Immutable per round**: an identical re-invocation is an idempotent success
+  (byte-compared — jq output is deterministic); different content under the
+  same round id exits 2, because a retry with a partial list must never
+  silently shrink the authoritative delegated set. A changed delegation mints
+  a new round id.
+- Read by `dev-artifact-check --expect-items-from-round`, by a respawned dev
+  agent recovering its items (`dev/workflows/dev-fix.md` § 6), and by the
+  `ok==false` tail-reconciliation nudge. Canonical schema:
+  [`schemas/dev-round.md`](./schemas/dev-round.md).
+
 ### `dev-artifact-check` — gates, ordered
 
 `{ok, path, reason}`, first failing gate wins: **missing → invalid → incomplete → valid**.
@@ -151,10 +180,19 @@ remains, now solely as the stall watchdog deadline.
   - kind `implement` without `bundled` allows `items: []`.
   - kind `analysis` is complete-without-code: its gate is `.summary` being a non-empty string (the recommendation/evidence — the round's deliverable), not items.
 
-Modes: round mode `--worktree WT --issue ISSUE --round-id RID [--expect-items ...]`
-(the production path) and `--file <path> [--round-id RID] [--expect-items ...]` (a
-test/parity affordance for explicit-path / round-trip checks — no production
-caller). There is one identity model — round id — with no mtime gate and no legacy
+Modes: round mode `--worktree WT --issue ISSUE --round-id RID [--expect-items ...
+| --expect-items-from-round]` (the production path) and `--file <path>
+[--round-id RID] [--expect-items ...]` (a test/parity affordance for
+explicit-path / round-trip checks — no production caller).
+`--expect-items-from-round` (round mode only, mutually exclusive with
+`--expect-items`) derives the expected set from the `dev-round-write` record at
+`WT/tmp/dev-round-ISSUE-RID.json`, validating the record's full schema —
+parseable JSON, internal `round_id == RID`, `issue` matching `--issue`,
+`schema_version` a number, non-empty `items[]` of unique integer `n` with
+non-empty `text` — and exits 2 (refuses to run, never silently downgrades to
+the weaker fallback gate) when the record is missing or unusable. The
+count-vs-set `hint` diagnoses a typed `--expect-items` count only and is never
+emitted for a from-round set. There is one identity model — round id — with no mtime gate and no legacy
 positional mode. All four dev/QA delegation paths (dev-start, dev-fix,
 review-pr-comments, ci-fix) mint a fresh `dev_round_id` before delegating and accept
 via round mode; ci-fix's agent writes no artifact, so its check is expectedly
