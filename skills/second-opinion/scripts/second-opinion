@@ -878,7 +878,7 @@ if $MULTI_LANE; then
     # Which failure class a lane lands in is decided by what it WROTE, so the
     # test is the artifact's size on disk. A shell string cannot stand in for
     # that: command substitution cannot hold NUL bytes, so an artifact holding
-    # only a NUL reads back as the empty string and would be called
+    # only a NUL would read back as the empty string and be called
     # never-answered even though the lane did produce a byte — and the contract
     # is that the line between the classes is whether any bytes exist at all.
     # Testing before reading cannot revive the older hazard: an artifact that
@@ -892,11 +892,19 @@ if $MULTI_LANE; then
       # exited 0 having produced nothing. A redirection has no such parsing,
       # and needs no `--` marker to be portable. The sentinel keeps the gate's
       # input faithful to the file, which command substitution would otherwise
-      # shorten by every trailing newline. The group's stderr goes nowhere
-      # because the only writers to it are cat, already silenced, and bash's
-      # own unattributed "ignored null byte" warning — the classification line
-      # below names the lane and the cause instead.
-      { lane_raw=$(cat 2>/dev/null < "${LANE_OUTS[$i]}"; printf X); } 2>/dev/null
+      # shorten by every trailing newline.
+      #
+      # NUL is translated rather than read, because a shell string is the one
+      # thing that cannot carry it: bash drops NUL bytes from a command
+      # substitution, so an artifact jq refuses on disk — valid JSON with a NUL
+      # appended, say — would reach the gate as the clean prefix and be counted
+      # a healthy lane, coverage reading "full" over bytes no reader would
+      # accept. 0x01 stands in for it because jq refuses every control
+      # character below 0x20 in exactly the positions it refuses NUL, bare or
+      # inside a string, so the gate's verdict is the verdict it would reach on
+      # the file itself. The group's stderr goes nowhere because the only
+      # writer to it is tr, already silenced.
+      { lane_raw=$(tr '\000' '\001' 2>/dev/null < "${LANE_OUTS[$i]}"; printf X); } 2>/dev/null
       lane_raw="${lane_raw%X}"
       # A zero exit and readable content are not proof of a usable artifact —
       # it must survive LANE_WRAP_JQ, or one bad lane takes the whole merge
@@ -1013,9 +1021,15 @@ if $MULTI_LANE; then
     printf '%s\n' "$MERGED" > "$OUTPUT_PATH"
     # Count what the artifact CARRIES, not what went into the merge: a count
     # taken from the input array describes the artifact without being bound to
-    # it, and the two silently disagreed once already (VST-221 review).
-    union_lanes=$(printf '%s\n' "$MERGED" | jq '[.qa_metadata.lanes[] | select(.status == "ok")] | length') || union_lanes="?"
-    echo "→ Written: $OUTPUT_PATH (union of $union_lanes lanes)" >&2
+    # it, and the two can disagree without either being wrong on its own terms.
+    # A re-query that fails says so, with jq's message: the merge just produced
+    # this JSON, so a shape it cannot read back is an internal inconsistency,
+    # and a bare "?" would hide the only evidence of it.
+    if union_lanes=$(printf '%s\n' "$MERGED" | jq '[.qa_metadata.lanes[] | select(.status == "ok")] | length' 2>&1); then
+      echo "→ Written: $OUTPUT_PATH (union of $union_lanes lanes)" >&2
+    else
+      echo "→ Written: $OUTPUT_PATH (lane count unavailable: $union_lanes)" >&2
+    fi
     echo "$OUTPUT_PATH"
   else
     printf '%s\n' "$MERGED"

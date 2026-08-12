@@ -268,6 +268,8 @@ SH
 #           not turn on that
 #   nul     a single NUL: a byte no shell string can hold at all, so only a
 #           test against the file itself can tell it from an empty artifact
+#   nul-tail a complete review with a NUL appended: bytes jq refuses on disk,
+#           whose clean prefix is exactly what a shell string would carry
 #   double  two concatenated JSON objects — one lane trying to be two
 #   poison  parses, top level complete, but a finding is a string — the shape
 #           the union merge cannot consume
@@ -293,6 +295,7 @@ case "$action" in
   blank)   printf '   \n' > "$target" ;;
   newline) printf '\n' > "$target" ;;
   nul)     printf '\0' > "$target" ;;
+  nul-tail) printf '%s\0' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
   trunc)   printf '{"agent":"external-cla' > "$target" ;;
   double)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}$head,\"summary\":\"s\",\"blockers\":[],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
   poison)  printf '%s' "$head,\"summary\":\"s\",\"blockers\":[\"bad\"],\"suggestions\":[],\"questions\":[],\"qa_metadata\":{}}" > "$target" ;;
@@ -673,12 +676,20 @@ assert_gate_rejects "summary" bad-summary "summary is not a string"
 assert_gate_rejects "newline" newline "holds no JSON value at all"
 # Same rule, one byte further out: a NUL cannot live in a shell string at all,
 # so a lane that wrote one is only distinguishable from a lane that wrote
-# nothing by asking the file. It answered — unusably — and must record 4.
-assert_gate_rejects "nul" nul "holds no JSON value at all"
-# Bash 4.4+ warns about NUL bytes it dropped from a command substitution. That
-# line names no lane and tells an operator nothing they can act on, while the
-# rejection line right beside it names both. (Bash 3.2 is silent here, where
-# this assertion simply holds trivially.)
+# nothing by asking the file. It answered — unusably — and must record 4, with
+# the parse error the bytes themselves earn.
+assert_gate_rejects "nul" nul "Invalid numeric literal"
+# The case a dropped NUL would hide: a complete review with a NUL appended is
+# bytes jq refuses, but its clean prefix parses. Read through a shell string the
+# lane is counted healthy and coverage still reads "full" over an artifact no
+# reader would accept, so the refusal here is the whole point of the gate.
+assert_gate_rejects "nul-tail" nul-tail "Invalid numeric literal"
+assert_jq "$TMP_ROOT/out-nul-tail.json" '.agent' "external-union(codex)" \
+  "nul-tail: the union carries only the lane whose bytes parse"
+# Bash 4.4+ warns about NUL bytes it dropped from a command substitution. No
+# NUL now reaches a shell string, so the warning has no occasion to fire — and
+# it never named a lane or told an operator anything they could act on, while
+# the rejection line beside it names both.
 assert_stderr_lacks "ignored null byte" "the shell's own NUL warning does not reach the operator"
 # One lane may not smuggle in a second review: without the refusal the first
 # value is silently accepted, the second dropped, and coverage still reads full.
