@@ -202,11 +202,19 @@ gh pr view [PR] --repo [OWNER/REPO] --json reviews,headRefOid --jq '.headRefOid 
 gh pr checks [PR] --repo [OWNER/REPO]
 ```
 
-**Steps 2 and 3 cannot come from the same snapshot** wherever threads are
-enforced — server-side or via `REVIEW_GATE_THREADS`. The gate cannot reach
-`success` while threads are open, and resolving them to reach it empties step
-2. Record step 2's threads and their authors first, resolve them, then read
-step 3.
+**Steps 2 and 3 cannot come from the same snapshot under
+`REVIEW_GATE_THREADS=enforce`** (the default): the predicate reads
+`reviewThreads` and fails closed on any unresolved one, so the gate cannot
+reach `success` while threads are open, and resolving them to reach it empties
+step 2. Record step 2's threads and their authors first, resolve them, then
+read step 3.
+
+Under `REVIEW_GATE_THREADS=off` the predicate skips that read entirely and
+never emits `threads-open`, so step 3 is already green independent of step 2:
+read both from ONE snapshot and resolve nothing. Do not clear real repo-owned
+threads merely to finish a verification. A server-side thread ruleset is not
+the trigger either — it blocks the MERGE, never this status context, which is
+the only thing step 3 reads.
 
 Step 1 answers the evidence question only for rows with `at_head` true whose
 login is non-author AND in the repo's
