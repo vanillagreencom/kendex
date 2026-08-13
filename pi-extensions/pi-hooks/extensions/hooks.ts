@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { isAbsolute, resolve } from "node:path";
 
 import { isBareCd, runPreCommitCheck } from "./bash-guards.js";
+import { refusalReason, repoCopyRefusal } from "./repo-copy-guard.js";
 import { invalidateClippyCache } from "./cargo.js";
 import { getBool, getNumber, readConfig, recordProjectTrust } from "./config.js";
 import { clippyIssuesForFile, workspaceClippyErrors } from "./lint-hooks.js";
@@ -45,6 +46,13 @@ export default function piHooks(pi: ExtensionAPI): void {
 				reason:
 					"Bare 'cd' changes working directory permanently across tool calls. Use a subshell instead: (cd /path && command)",
 			};
+		}
+
+		if (getBool(cfg, "blockRepoCopy")) {
+			const refusal = repoCopyRefusal(command, ctx.cwd);
+			if (refusal) {
+				return { block: true, reason: refusalReason(command, refusal) };
+			}
 		}
 
 		if (getBool(cfg, "preCommitCheck")) {

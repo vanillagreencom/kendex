@@ -36,7 +36,21 @@
   empty for a non-copy command and must record tool use when a copy is actually
   evaluated. Registration needed no config change: `[hook-events]`'s existing
   `"PreToolUse:Bash" = "all"` is matched by the hook's frontmatter, so consuming
-  repos pick it up on the next `vstack refresh`.
+  repos pick it up on the next `vstack refresh`. Operand parsing decides the
+  destination the shell would actually write to rather than assuming the last
+  word: an earlier `cd` sets the base a relative destination resolves against,
+  `cp -t DIR`/`--target-directory=DIR` inverts source and destination, options
+  that consume an argument (`--depth 1`, `--exclude PAT`) no longer shift the
+  operand count, quoted paths containing spaces stay one operand, and a
+  destination variable assigned `$(mktemp -d)` earlier in the same command is
+  resolved. The JSON decode is escape-aware, so an embedded `\"` no longer
+  truncates the command on a host without `jq`, and a payload that names a
+  command the decoder cannot recover is refused rather than allowed — a guard
+  that cannot read its input must not wave the call through, while a
+  well-formed payload carrying no command still passes. Per the Pi hook parity
+  rule (AGENTS.md § Repository conventions), the same predicate ships for Pi in
+  `pi-extensions/pi-hooks` as the `blockRepoCopy` setting (default on), with
+  its own 30-case suite; the package goes to 0.3.0.
 
 - **orch: the post-merge main sync proves which checkout owns the base branch
   before advancing it, and reports a stale base as a warning.** `merge-pr.md`

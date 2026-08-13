@@ -9,6 +9,7 @@ First-class Pi port of the vstack safety hooks. Each hook is independently toggl
 | Hook | Pi event | Behavior |
 | --- | --- | --- |
 | Block bare `cd` | `tool_call` (bash) | Blocks bare `cd /path` commands with no subshell or chaining. Use `(cd /path && command)` instead. |
+| Block repo copy into scratch | `tool_call` (bash) | Refuses a recursive copy (`cp -r`/`-R`/`-a`, recursive or archive `rsync`, `git clone` of a local path, `tar` create-to-extract pipe) when the source carries repository history or a build tree AND the destination resolves under a temp/scratch root. Temp roots are commonly RAM-backed tmpfs, where such a copy fills the filesystem and every process writing there fails with ENOSPC. |
 | Pre-commit fmt + clippy | `tool_call` (bash) | When `git commit` targets the active project repo, runs `cargo fmt --check` then `cargo clippy` in async child processes so Pi stays responsive. Blocks on failure. Skips commits targeting other repos and only fires when `.rs` files are staged or modified; if the bash command contains `git add`, untracked `.rs` files are treated conservatively as possibly staged by that command. |
 | Post-edit clippy | `tool_result` (edit/write of `.rs`) | Runs workspace clippy after `.rs` edits and appends issues mentioning the edited file. Advisory only — doesn't undo the edit. |
 | End-of-turn clippy | `turn_end` | If `.rs` files were touched during the turn, runs workspace clippy and surfaces errors via UI notification. Advisory only. |
@@ -39,6 +40,7 @@ Project settings in `.pi/settings.json` apply only after Pi marks the workspace 
 | --- | --- |
 | Enable hooks | Master toggle. Disable to make the extension inert without uninstalling. |
 | Block bare cd | Toggle the bare-cd block hook. |
+| Block repo copy into scratch | Toggle the recursive-copy-into-scratch block. |
 | Pre-commit fmt + clippy | Toggle the pre-commit hook. |
 | Post-edit clippy | Toggle the post-edit advisory hook. |
 | End-of-turn clippy | Toggle the end-of-turn advisory hook. |

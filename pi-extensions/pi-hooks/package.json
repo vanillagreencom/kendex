@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.1.6",
+  "version": "0.3.0",
   "description": "First-class Pi port of the vstack safety hooks: bare-cd blocking, pre-commit fmt+clippy, post-edit clippy, end-of-turn lint. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
@@ -42,6 +42,15 @@
           "apply": "live"
         },
         {
+          "key": "blockRepoCopy",
+          "label": "Block repo copy into scratch",
+          "description": "Refuse a recursive copy (`cp -r`/`-R`/`-a`, recursive or archive `rsync`, `git clone` of a local path, `tar` create-to-extract pipe) when the source carries repository history or a build tree AND the destination resolves under a temp/scratch root (`/tmp`, `/var/tmp`, `$TMPDIR`, `$CLAUDE_CODE_TMPDIR`, a `mktemp -d`, or any path containing `scratchpad`). Temp roots are commonly RAM-backed tmpfs, where such a copy fills the filesystem and every process writing there fails with ENOSPC. Both halves of the predicate are required, so an expensive tree copied elsewhere and an ordinary directory copied into scratch both pass. Mirrors hooks/block-repo-copy.sh.",
+          "type": "boolean",
+          "default": true,
+          "category": "Bash",
+          "apply": "live"
+        },
+        {
           "key": "preCommitCheck",
           "label": "Pre-commit fmt + clippy",
           "description": "When the agent runs `git commit` in the project repo, run `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` first using async child processes. Block the commit if either fails. Skips commits targeting other repos and only fires when staged or modified .rs files exist; if the bash command contains `git add`, untracked .rs files are treated conservatively as possibly staged by that command. Cost: only paid at commit time.",
@@ -53,7 +62,7 @@
         {
           "key": "postEditLint",
           "label": "Post-edit clippy",
-          "description": "After every edit/write of a .rs file, run `cargo clippy --workspace --all-targets -- -D warnings` and append any issues that mention the edited file to the tool result. Advisory only — does not undo the edit. Cost: full workspace clippy on every Rust edit.",
+          "description": "After every edit/write of a .rs file, run `cargo clippy --workspace --all-targets -- -D warnings` and append any issues that mention the edited file to the tool result. Advisory only \u2014 does not undo the edit. Cost: full workspace clippy on every Rust edit.",
           "type": "boolean",
           "default": true,
           "category": "Rust",

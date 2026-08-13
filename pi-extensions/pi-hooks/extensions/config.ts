@@ -16,6 +16,7 @@ export type VstackConfig = Record<string, unknown>;
 export const DEFAULTS = {
 	enabled: true,
 	blockBareCd: true,
+	blockRepoCopy: true,
 	preCommitCheck: true,
 	postEditLint: true,
 	taskCompletedCheck: true,

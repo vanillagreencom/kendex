@@ -63,6 +63,43 @@ run_hook() {
   shims="$(cat "$SHIM_LOG" 2>/dev/null || true)"
 }
 
+# Feed a payload to the hook verbatim, so a malformed one reaches the parser
+# exactly as written. Captures stderr in $err and the exit code in $rc.
+run_hook_raw() {
+  local payload="$1"
+  shift
+  : >"$SHIM_LOG"
+  set +e
+  env -u CLAUDE_CODE_TMPDIR TMPDIR=/tmp PATH="$BIN_DIR:$PATH" SHIM_LOG="$SHIM_LOG" "$@" \
+    "$BASH_BIN" "$HOOK" <<<"$payload" >/dev/null 2>"$ERR_FILE"
+  rc=$?
+  set -e
+  err="$(cat "$ERR_FILE")"
+}
+
+# A PATH carrying the real binaries but no jq, for the fallback JSON decode.
+NOJQ_BIN="$TMP_ROOT/nojq"
+mkdir -p "$NOJQ_BIN"
+for tool in cat tr sed grep head; do
+  real="$(command -v "$tool" 2>/dev/null || true)"
+  [ -n "$real" ] || continue
+  ln -sf "$real" "$NOJQ_BIN/$tool"
+done
+BASH_BIN="$(command -v bash)"
+
+# Run the hook under an exact PATH, so a case can remove jq or every external
+# tool. Sets $rc only.
+run_hook_path() {
+  local path="$1" command_json
+  command_json=$(printf '%s' "$2" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  set +e
+  env -i HOME="$HOME" PWD="$PWD" TMPDIR=/tmp PATH="$path" \
+    "$BASH_BIN" "$HOOK" <<<"{\"tool_input\":{\"command\":\"$command_json\"}}" \
+    >/dev/null 2>&1
+  rc=$?
+  set -e
+}
+
 assert_eq() {
   local got="$1" want="$2" name="$3"
   if [[ "$got" == "$want" ]]; then
@@ -99,6 +136,8 @@ mkdir -p "$FIX/nodetree/node_modules" "$FIX/nodetree/src"
 # A git worktree: `.git` is a FILE pointing at the common dir, not a directory.
 mkdir -p "$FIX/worktree/src"
 printf 'gitdir: /elsewhere/.git/worktrees/wt\n' >"$FIX/worktree/.git"
+# A repository whose path contains a space.
+mkdir -p "$FIX/spaced dir/.git"
 # The same shape with none of the markers.
 mkdir -p "$FIX/plain/docs"
 touch "$FIX/plain/docs/notes.md" "$FIX/plain/README.md"
@@ -215,6 +254,75 @@ else
   FAIL=$((FAIL + 1))
   printf '  FAIL  %s\n' "the shim log records tool use when the hook does evaluate a copy"
 fi
+
+echo "=== block-repo-copy: operand parsing that decides the destination ==="
+
+run_hook 'cp -r '"$FIX"'/gitrepo $CLAUDE_CODE_TMPDIR/x' CLAUDE_CODE_TMPDIR=/srv/agent-tmp
+assert_eq "$rc" "2" "an unexpanded \$CLAUDE_CODE_TMPDIR destination is a scratch destination"
+
+run_hook "cd /tmp && cp -r $FIX/gitrepo x"
+assert_eq "$rc" "2" "a relative destination resolves against an earlier cd, not the hook's cwd"
+
+run_hook "cd $NON_SCRATCH && cp -r $FIX/gitrepo copy"
+assert_eq "$rc" "0" "a cd to an ordinary directory leaves a relative destination ordinary"
+
+run_hook "cp -r -t /tmp $FIX/gitrepo"
+assert_eq "$rc" "2" "cp -t DIR names the destination, which is not the last operand"
+
+run_hook "cp -r --target-directory=/tmp $FIX/gitrepo"
+assert_eq "$rc" "2" "cp --target-directory=DIR names the destination"
+
+run_hook "cp -r --target-directory=$NON_SCRATCH $FIX/gitrepo"
+assert_eq "$rc" "0" "a target-directory outside scratch is allowed"
+
+run_hook "git clone --depth 1 $FIX/gitrepo $SCRATCH"
+assert_eq "$rc" "2" "a git clone option argument is not counted as an operand"
+
+run_hook "rsync -a --exclude target $FIX/gitrepo $SCRATCH"
+assert_eq "$rc" "2" "an rsync option argument is not counted as an operand"
+
+run_hook "cp -r \"$FIX/spaced dir\" $SCRATCH"
+assert_eq "$rc" "2" "a quoted source path containing a space stays one operand"
+
+run_hook "d=\$(mktemp -d); cp -r $FIX/gitrepo \"\$d\""
+assert_eq "$rc" "2" "a destination variable assigned mktemp -d earlier in the command is scratch"
+
+echo "=== block-repo-copy: enforcement without jq, and the cost of the fast exit ==="
+
+run_hook_path "$NOJQ_BIN" "cp -r \"$FIX/gitrepo\" $SCRATCH"
+assert_eq "$rc" "2" "without jq, a command whose JSON carries escaped quotes is still decoded and refused"
+
+run_hook_path "$NOJQ_BIN" "cp -r \"$FIX/plain\" $SCRATCH"
+assert_eq "$rc" "0" "without jq, an ordinary copy still passes"
+
+# An empty PATH leaves no external tool reachable. A non-copy command must
+# still exit 0, which is only possible if it forks nothing.
+run_hook_path "/nonexistent" "git status --short"
+assert_eq "$rc" "0" "a non-copy command completes with no external tool reachable"
+
+
+echo "=== block-repo-copy: an unreadable payload is refused, not waved through ==="
+
+# The payload names a copy verb but the JSON is truncated, so the destination
+# can never be established. A guard that cannot read its input must not allow
+# the call.
+TRUNCATED='{"tool_name":"Bash","tool_input":{"command":"cp -r '"$FIX"'/gitrepo '"$SCRATCH"
+
+run_hook_raw "$TRUNCATED"
+assert_eq "$rc" "2" "a payload jq cannot parse is refused"
+assert_contains "$err" "could not be read" "the refusal names the payload as the cause"
+
+run_hook_raw "$TRUNCATED" PATH="$NOJQ_BIN"
+assert_eq "$rc" "2" "a payload the builtin reader cannot decode is refused"
+
+# The must-pass control: a well-formed payload that simply carries no command
+# is not a copy, so it passes. Without this, refusing everything would score.
+run_hook_raw '{"tool_name":"Bash","tool_input":{},"cwd":"/home/agent/tar"}'
+assert_eq "$rc" "0" "a well-formed payload carrying no command passes"
+
+run_hook_raw '{"tool_name":"Bash","tool_input":{},"cwd":"/home/agent/tar"}' PATH="$NOJQ_BIN"
+assert_eq "$rc" "0" "a well-formed payload carrying no command passes without jq"
+
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
