@@ -207,10 +207,6 @@ Windows: CLI runs natively; symlink mode falls back to copy.
 
 `*` = needs project-local setup; see that skill's README.
 
-#### Rust and Performance Guidance
-
-Rust and performance reference material now lives directly in the `rust`, `reviewer-perf`, and `reviewer-safety` agent bodies as compact resource tables.
-
 #### UI / Domain
 
 | Skill | Brief |
@@ -286,6 +282,21 @@ If a Pi extension declares production dependencies (`dependencies` or `optionalD
 | [`pi-task-panel`](pi-extensions/pi-task-panel/README.md) | Persistent structured task panel above the status line. |
 | [`pi-tool-renderer`](pi-extensions/pi-tool-renderer/README.md) | Compact Claude/opencode-style renderers for built-in tools. |
 | [`pi-web-tools`](pi-extensions/pi-web-tools/README.md) | First-party web stack: search, deep research, fetch, video, and more. |
+
+## Extras
+
+Extras are optional non-agent packages — theme packs and similar — that a source
+repo can ship under `extras/`. This repo ships none; point vstack at a catalog
+that does.
+
+```bash
+vstack apply <pack> --theme <name> --target ghostty,vscodium,tmux,pi
+```
+
+`vstack apply` uses global/user scope by default. Add `--dry-run` to preview
+changes before writing config, `--no-ghostty-shaders` for palette-only Ghostty
+applies, and `--revert` to undo a previous apply. The TUI's **Extras** tab
+offers the same flow interactively.
 
 ## License
 

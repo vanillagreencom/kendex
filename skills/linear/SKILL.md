@@ -8,7 +8,7 @@ metadata:
   source: vstack
   repository: "https://github.com/vanillagreencom/vstack"
   bugs: "https://github.com/vanillagreencom/vstack/issues"
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Linear CLI
