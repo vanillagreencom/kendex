@@ -216,7 +216,6 @@ Rust and performance reference material now lives directly in the `rust`, `revie
 | Skill | Brief |
 |---|---|
 | [`iced-rs`](skills/iced-rs/) | Iced 0.14 GUI expertise with bundled full-API reference and all upstream examples (incl. `iced_wgpu` source). |
-| [`iced-shadcn`](skills/iced-shadcn/) | shadcn Base UI component planning, family decomposition, and parity audits for Iced. |
 | [`price-handling`](skills/price-handling/) | Price rounding, epsilon comparison, and market-price handling. |
 | [`trading-design`](skills/trading-design/) | Dense, professional trading-style interface design guidance. |
 
@@ -228,7 +227,6 @@ Rust and performance reference material now lives directly in the `rust`, `revie
 | [`deep-research`](skills/deep-research/) | Exa-powered deep research and portable findings report generation. |
 | [`dep-radar`](skills/dep-radar/) | Sweeps pinned versions (SDKs, runtime binaries, npm/cargo deps, vendored forks, model weights), researches upstream, and applies upgrades with their fallout fixed in the same PR. |
 | [`github`](skills/github/)* | Bash CLI over the GitHub API for PR operations: threads, comments, reviews, CI logs, merging, and cross-PR analysis. |
-| [`html-artifact`](skills/html-artifact/) | Standalone HTML artifacts for plans, reports, reviews, explainers, prototypes, and custom editors. |
 | [`dev`](skills/dev/)* | Delegated implementation and review-fix issue workflows for dev agents. |
 | [`linear`](skills/linear/)* | Bash CLI over Linear's GraphQL API with local cache, mutation syncing, and structured output (issues, cycles, milestones, projects). |
 | [`orch`](skills/orch/)* | Primary-agent single work-item orchestration for Linear/GitHub issues: prepare, delegate, review, submit, merge, and launch handoff. Sub-agents do NOT load this directly. |
@@ -288,16 +286,6 @@ If a Pi extension declares production dependencies (`dependencies` or `optionalD
 | [`pi-task-panel`](pi-extensions/pi-task-panel/README.md) | Persistent structured task panel above the status line. |
 | [`pi-tool-renderer`](pi-extensions/pi-tool-renderer/README.md) | Compact Claude/opencode-style renderers for built-in tools. |
 | [`pi-web-tools`](pi-extensions/pi-web-tools/README.md) | First-party web stack: search, deep research, fetch, video, and more. |
-
-## Extras
-
-Extras are optional non-agent packages distributed by vstack, such as theme packs. See [`extras/README.md`](extras/README.md) for the catalog and per-extra documentation.
-
-```bash
-vstack apply vanillagreen-themes --theme ghibli-serene-nature --target ghostty,vscodium,tmux,pi
-```
-
-`vstack apply` uses global/user scope by default for app themes. Add `--dry-run` to preview planned changes before writing config; add `--no-ghostty-shaders` for palette-only Ghostty applies. The TUI's **Extras** tab also lets you pick a theme interactively — select the pack, hit `Apply`, and you get a native picker with a Ghostty shader checkbox plus **Uninstall & revert** after a successful apply.
 
 ## License
 

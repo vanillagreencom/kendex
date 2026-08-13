@@ -79,13 +79,12 @@ main() {
     while [ $# -gt 0 ]; do
         case "$1" in
         --lines)
-            if [ -n "${2:-}" ]; then
-                lines="$2"
-                shift 2
-            else
-                echo "Error: --lines requires a number" >&2
+            if ! [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+                echo "Error: --lines requires a non-negative integer" >&2
                 exit 1
             fi
+            lines="$2"
+            shift 2
             ;;
         --format=*)
             format="${1#--format=}"
@@ -114,6 +113,17 @@ main() {
         echo "Error: PR number required" >&2
         exit 1
     fi
+
+    # Validate before any API work so an unusable format is not discovered
+    # after the fetches, and so early-exit paths agree with the final switch.
+    case "$format" in
+    safe | json) format="safe" ;;
+    text) ;;
+    *)
+        echo "Error: Unknown format: $format. Use: safe, text" >&2
+        exit 1
+        ;;
+    esac
 
     # Check PR exists
     if ! gh pr view "$pr_num" --json title >/dev/null 2>&1; then
@@ -173,13 +183,29 @@ main() {
         exit 1
     fi
 
-    # Fetch failed logs
-    local logs
+    # Fetch failed logs. A fetch failure must not be handed back as if it were
+    # log content: gh's error text would otherwise flow into classify_error_type
+    # and be reported as a real error_type with exit 0.
+    local logs log_status=0
     if [ -n "$job_id" ]; then
-        logs=$(gh run view "$run_id" --job "$job_id" --log-failed 2>&1 | tail -"$lines" || echo "Failed to fetch logs")
+        logs=$(gh run view "$run_id" --job "$job_id" --log-failed 2>&1) || log_status=$?
     else
-        logs=$(gh run view "$run_id" --log-failed 2>&1 | tail -"$lines" || echo "Failed to fetch logs")
+        logs=$(gh run view "$run_id" --log-failed 2>&1) || log_status=$?
     fi
+
+    if [ "$log_status" -ne 0 ]; then
+        local log_detail
+        log_detail=$(printf '%s' "$logs" | tr '\n' ' ' | head -c 300)
+        if [ "$format" = "safe" ]; then
+            jq -n --arg run_id "$run_id" --arg detail "$log_detail" \
+                '{error: "log_fetch_failed", run_id: $run_id, details: $detail}'
+        else
+            echo "Error: failed to fetch logs for run $run_id: $log_detail" >&2
+        fi
+        exit 1
+    fi
+
+    logs=$(printf '%s\n' "$logs" | tail -n "$lines")
 
     # Classify error type
     local error_type

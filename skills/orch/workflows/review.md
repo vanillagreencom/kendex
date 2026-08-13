@@ -1,94 +1,60 @@
 # Review Workflow
 
-On-demand code review for the current session. Reviews recent commits, presents findings, and offers to fix selected items.
-
-## Inputs
+On-demand review of local changes: review, present findings, and offer to fix the selected ones. Always standalone — no managed lifecycle, no caller context.
 
 | Command | Behavior |
 |---------|----------|
-| `review` | Review uncommitted changes since last commit |
-| `review all` | Review all branch changes vs base (committed + uncommitted) |
-| `review last [N]` | Review last N commits |
-| `review [HASH]` | Review changes in specific commit |
+| `review` | Uncommitted changes since the last commit |
+| `review all` | All branch changes vs the base, committed and uncommitted |
+| `review last [N]` | The last N commits |
+| `review [HASH]` | A single commit |
 
-**Always standalone** — no managed lifecycle, no caller context parameters.
-
-**Init:**
-```bash
-.agents/skills/orch/scripts/review-init
-```
-
-Use the JSON fields as `BRANCH`, `WT_PATH`, and `ISSUE_ID`. If `issue_id` is empty, skip workflow-state steps.
-
----
-
-## 1. Determine Review Scope
+## 1. Scope
 
 ```bash
+.agents/skills/orch/scripts/git-context branch .
+.agents/skills/orch/scripts/git-context issue-from-branch .
 .agents/skills/orch/scripts/resolve-base-branch .
 ```
 
-Use the output as `BASE_BRANCH`.
+Use the outputs as `BRANCH`, `ISSUE_ID` (empty means skip every workflow-state step), and `BASE_BRANCH`; `WT_PATH` is the current directory.
 
-**Diff range by argument:**
-
-| Argument | `DIFF_RANGE` | Description |
-|----------|-------------|-------------|
-| (none) | `HEAD` | Uncommitted changes (staged + unstaged) vs last commit |
-| `all` | `origin/[BASE_BRANCH]..` | All branch changes including uncommitted work |
-| `last [N]` | `HEAD~[N]..HEAD` | Last N commits (committed only) |
-| `[HASH]` | `[HASH]~1..[HASH]` | Single commit |
+| Argument | `DIFF_RANGE` |
+|----------|-------------|
+| (none) | `HEAD` — uncommitted, staged and unstaged |
+| `all` | `origin/[BASE_BRANCH]..` |
+| `last [N]` | `HEAD~[N]..HEAD` |
+| `[HASH]` | `[HASH]~1..[HASH]` |
 
 ```bash
-git diff $DIFF_RANGE --stat
+git -C . diff [DIFF_RANGE] --stat
 ```
 
-**If no changes**: Report "No changes to review" and **END**.
+No changes → report "No changes to review" and **END**.
 
-### 1.1 Gather Decision Context
-
-**Skip if** no `ISSUE_ID` extracted from branch.
+**Decision context** — skip when no `ISSUE_ID`:
 
 ```bash
-.agents/skills/decider/scripts/decisions search --issue $ISSUE_ID
+.agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
 ```
 
-Collect decision IDs and summaries from JSON output.
-
-The `path` fields in this JSON output are the ONLY authorized source for decision file paths in delegation guidance — the CLI resolves them from the decision index; never compose or recall a decision path from memory, however plausible the `DXXX-slug` looks (vstack#696). Verify every collected path before injecting it (belt-and-suspenders against index drift) — one simple command per path:
+The `path` fields are the ONLY authorized source for decision file paths — never compose or recall one from memory. Verify each before injecting it, one command per path:
 
 ```bash
 test -f [DECISION_FILE_PATH]
 ```
 
-**If the check fails**: omit that path and carry the one-line note `- decision index lookup failed for [DECISION_ID]` in the `Decisions:` block instead — a broken path must never reach a reviewer.
+A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead.
 
-## 2. Launch Review Agents
+## 2. Launch Reviewers
 
-**Detect team context:**
-```bash
-.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
-```
-```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.team_name // empty'
-```
-Run each block as its own tool call. If state does not exist, use an empty `TEAM`.
+`[AGENTS]` is every `reviewer-*` agent this harness exposes. Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-lifecycle):
 
-**Determine agent list**:
-```bash
-.agents/skills/orch/scripts/list-review-agents
-```
-Use the output as `AGENTS`.
-
-**Resolve the reviewer slot budget** (same contract as `review-pr.md` § 2):
 ```bash
 .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
 ```
-`0` (default) = unlimited: delegate to every reviewer in one parallel batch. When the value is greater than zero and the `[AGENTS]` count exceeds the available slots (the budget minus this session minus live persistent agent sessions), run reviewers in sequential waves of up to the available slots: delegate a wave, wait for each reviewer's return, shut the completed session down to release its slot, then launch the next wave. If the value is `0` but the runtime still rejects a spawn with its thread-limit error, recover per `review-pr.md` § 2.2 persistent-mode thread-limit recovery: continue in sequential waves sized by the reviewers that did spawn and recommend the observed budget to the user. Review state lives in the returned report artifacts, never in reviewer session memory.
 
-**Codex runtime agent type rule**: For each reviewer in `AGENTS`, first call the harness spawn API with `agent_type` equal to that reviewer name. The Codex `task_name` schema accepts only `[a-z0-9_]` and rejects hyphenated names before launch (vstack#751): pass the reviewer name with hyphens translated to underscores as the runtime `task_name` only (`reviewer-arch` → `task_name=reviewer_arch`, `agent_type` unchanged), and attempt that translation before any `worker` fallback — a `task_name` schema rejection is not a missing agent type. When the name was translated, record the runtime `task_name` under `review_agent_runtime_types[reviewer-name].task_name` if workflow state exists; state keys and reports always use the canonical hyphenated name. Do not launch `worker` and simulate reviewer identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical reviewer name in bootstrap/delegation text, reports, and workflow-state keys. If workflow state exists, persist the returned id under `review_agent_ids[reviewer-name]`, and record runtime metadata under `review_agent_runtime_types[reviewer-name]` with `agent_type="worker"` and a fallback reason. Report the fallback in status.
-
-Delegate to each review agent in parallel:
+`0` delegates to every reviewer in one parallel batch. A positive value smaller than the reviewer count runs bounded sequential waves — launch up to the available slots, wait for each return, retire the completed session, launch the next wave. If a spawn fails with the runtime's thread-limit error despite an unlimited budget, continue in waves sized by the reviewers that did spawn and recommend the observed budget to the user. Review state lives in the returned artifacts, never in reviewer session memory. On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`.
 
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/review.md
@@ -103,17 +69,13 @@ Decisions:
 [If none: "- No linked decisions found."]
 </delegation_format>
 
-## 3. Collect & Present Results
+## 3. Collect Results
 
-Wait for all review agents to complete. Unlimited-budget runs: do NOT shutdown — agents needed for potential fix delegation in § 4. Wave runs: completed reviewers are already shut down as each wave drains; their findings live in the report JSONs.
+Wait for every reviewer. Under an unlimited budget do NOT shut them down — they are needed for fix delegation in § 4; in wave mode they are already retired and their findings live in the report JSONs.
 
-Extract `Report` path and `Verdict` from each agent's return. If any agent fails to return the expected format, halt and report error.
+Extract the report path and verdict from each return; halt and report if any return does not carry them. Overall verdict is `action_required` when any reviewer has blockers, else `pass`. With an `ISSUE_ID`, append each path:
 
-Overall verdict: `action_required` if any agent has blockers; `pass` otherwise.
-
-**Update state** (if `ISSUE_ID` exists):
 ```bash
-# For each agent JSON path:
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
 ```
 
@@ -124,29 +86,15 @@ Overall verdict: `action_required` if any agent has blockers; `pass` otherwise.
 | Agent | Verdict | Path |
 |-------|---------|------|
 | **Overall** | `[pass\|action_required]` | |
-| [For each agent:] |
 | [AGENT] | `[verdict]` | `[path]` |
+
 </output_format>
 
-**Route by verdict + items:**
+Blockers or any `fix`/`issue` suggestion → § 4. Otherwise → § 5.
 
-Read agent JSONs, check for items where `category == "fix"` or `category == "issue"`.
+## 4. Present And Fix
 
-| verdict | items? | Next |
-|---------|--------|------|
-| any | yes (or `action_required`) | → § 4 |
-| `pass` | none | → § 6 |
-
-## 4. Present Review Items
-
-**Collect items** from agent JSONs:
-- **Blockers**: items from agents with `action_required` verdict
-- **Fix suggestions**: items where `category == "fix"` from any agent
-- **Issue suggestions**: items where `category == "issue"` from any agent
-
-**If no items** → § 6.
-
-**Present to user:**
+Collect the blockers, the `category == "fix"` suggestions, and the `category == "issue"` suggestions. Decline anything that cannot affect real usage with one line of rationale, per [SKILL.md § The Cycle](../SKILL.md#the-cycle). Nothing left → § 5.
 
 <output_format>
 
@@ -175,71 +123,33 @@ Est: 1 (hours) | 2 (half-day) | 3 (day) | 4 (2-3d) | 5 (week+)
 
 </output_format>
 
-**Omit empty categories.**
+Omit empty categories, then ask (omitting categories with no items): `Apply fixes?` as a multi-select over blockers and fix suggestions, and `Create issues for these?` as a multi-select over issue suggestions that clear the filing bar in [references/finding-disposition.md](../references/finding-disposition.md).
 
-Ask user (omit categories with no items):
+**Never fix as the main agent.** With fix items selected:
 
-| Category | Question | Type |
-|----------|----------|------|
-| Blockers + Fix suggestions | `Apply fixes?` | Multi-select: `#N: [TITLE]`, `All`, `None` |
-| Issue suggestions | `Create issues for these?` | Multi-select: `#N: [TITLE]`, `All`, `None` |
+```bash
+.agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WT_PATH]
+```
 
-| User Choice | Action |
-|-------------|--------|
-| Fix items selected | → § 4.1 (then § 5 with any issue selections) |
-| Issue items only | → § 5 |
-| No items selected | → § 6 |
+**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 tail` with context `worktree`, `lifecycle: "managed"`, `dev_agent` (from state or labels), `issue_id`, `items` (each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: review`. State writes for fixed and escalated items belong to dev-fix — do not re-append them here.
 
-### 4.1 Fix Delegation
+<output_format>
 
-**Never fix as main agent.**
+### Fix Results
 
-1. **Capture pre-fix state** (if `ISSUE_ID` exists):
-   ```bash
-   .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
-   ```
+| # | Decision | Commit | Reasoning |
+|---|----------|--------|-----------|
+| N | Applied/Skipped/Blocked | [SHA] | [explanation] |
 
-2. **Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4.1 step 3` with context:
-   - `worktree`: [WT_PATH]
-   - `lifecycle`: `"managed"`
-   - `dev_agent`: determine from state or labels (same as dev-fix standalone init)
-   - `issue_id`: [ISSUE_ID] (if available)
-   - `items`: [SELECTED_ITEMS — format each as `#[N] | [Agent] | [Location]` with Description + Recommendation]
-   - `source`: `review`
+</output_format>
 
-3. **Present fix results** (state writes for fixed/escalated items are owned by `dev-fix.md` — do not re-append here):
+With issue items selected, or escalated items from the fix round, build an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (or null), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
 
-   <output_format>
+audit-issues is a primary-session wrapper: run it in this session, because it holds the interactive approval gate and its mutations require approvals collected there. Do not delegate the wrapper to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
 
-   ### Fix Results
+## 5. Summary
 
-   | # | Decision | Commit | Reasoning |
-   |---|----------|--------|-----------|
-   | N | Applied/Skipped/Blocked | [SHA] | [explanation] |
-
-   </output_format>
-
-→ § 5 (if issue items selected) or § 6
-
-## 5. Create Issues
-
-**Skip if** no issue suggestions selected AND no escalated items from § 4.1. → § 6
-
-1. **Build audit-input file** from selected issue suggestions and escalated items per `.agents/skills/project-management/schemas/audit-issues-input.md`.
-   - Escalated items: set `origin` from each entry's `outcome` — `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field (legacy state) → `origin: "escalated"`
-   - `source`: `"review"`
-   - `parent_issue`: [ISSUE_ID] if available, else null
-   - `worktree`: [WT_PATH]
-
-2. **Write file**: `tmp/audit-review-YYYYMMDD-HHMMSS.json`
-
-3. **Run Workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6`
-
-   audit-issues is a primary-session wrapper: run it in this session — it contains the § 6 interactive approval gate, and its § 7 mutations require approvals collected at that gate. Do not delegate the wrapper to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues § 4.1 itself spawns as a TPM subagent.
-
-## 6. Summary
-
-**Shutdown review agents.** (Wave runs: already done per wave — nothing left to terminate.)
+Shut the review agents down (wave runs already did).
 
 <output_format>
 
@@ -247,7 +157,7 @@ Ask user (omit categories with no items):
 
 | Metric | Value |
 |--------|-------|
-| Scope | [DIFF_RANGE description — e.g., "12 files, 3 commits vs main"] |
+| Scope | [DIFF_RANGE description — e.g. "12 files, 3 commits vs main"] |
 | Agents | [N] |
 | Blockers | [N] |
 | Fixes applied | [N] |
@@ -256,6 +166,4 @@ Ask user (omit categories with no items):
 
 </output_format>
 
-**Omit zero-value rows** (except Scope and Agents).
-
-→ END
+Omit zero-value rows except Scope and Agents.

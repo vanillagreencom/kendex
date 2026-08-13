@@ -11,9 +11,8 @@ set -euo pipefail
 #   session-root  The managed top-level issue of a worktree session (a single
 #                 delegation / decomposition child worked directly). Whether or
 #                 not it has a parent, it follows the managed lifecycle and
-#                 stays pre-merge until PR merge (see orch start-worktree.md
-#                 § 5.3), so it may be "In Progress" OR "In Review" at
-#                 validation time. This is the default role.
+#                 stays pre-merge until PR merge, so it may be "In Progress"
+#                 OR "In Review" at validation time. This is the default role.
 #
 #   container     A bundle parent whose children are each worked as their own
 #                 PR unit; the container itself is never orchestrated and

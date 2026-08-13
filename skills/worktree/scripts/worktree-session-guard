@@ -1,66 +1,46 @@
 #!/usr/bin/env bash
-# Ownership guard for issue worktrees (vstack#877).
+# Ownership guard for issue worktrees.
 #
-# Ported from hyprtrade's tools/worktree-session-guard, which was written after
-# an incident there (CC-1000) where cleanup passes and second base directories
-# repeatedly destroyed LIVE issue worktrees — registration, local branch, and
-# uncommitted work — while sessions were still working in them. Nothing about
-# the mechanism was project-specific, and the worktree skill already documented
-# the choreography it automates, so it belongs here rather than in a copy per
-# consumer repo.
-#
-# A session that is working an issue claims the issue's worktree here. The claim
-# is recorded as a native Git worktree lock whose reason line carries the lease,
-# so cleanup that goes through Git porcelain fails closed instead of destroying
-# live work:
+# A session working an issue claims the issue's worktree here. The claim is a
+# native Git worktree lock whose reason line carries the lease, so cleanup that
+# goes through Git porcelain fails closed instead of destroying live work:
 #
 #   git worktree remove [--force]   refuses a locked worktree
 #   git worktree prune              never prunes a locked registration, even
 #                                   after the directory itself is gone
 #
-# Using the native lock (rather than a private marker file) is deliberate: it
-# needs no cooperation from the cleanup owner, and the vstack worktree CLI
-# already reads and reports worktree lock reasons.
+# The lease is scoped to the OWNER string, which the calling workflow sets to
+# the issue ID. Two sessions working the same issue share one lease: either may
+# refresh or release it, and this guard cannot tell them apart. What refuses a
+# second implementer is bare `worktree create <ID>`, which surveys worktrees,
+# local and remote refs, and open PRs and exits 75 on existing ownership. The
+# per-issue claim lock is not that gate: it is a repository-local flock taken
+# and released inside one `create` invocation, never held for a session.
 #
-# The lease is scoped to the OWNER string, which the documented workflow sets to
-# the issue ID. Two sessions working the same issue therefore share one lease:
-# either may refresh or release it, and this guard cannot tell them apart.
-#
-# What refuses a second implementer is bare `worktree create <ID>`, which
-# surveys worktrees, local and remote refs, and open PRs, and exits 75 on
-# existing ownership. The vstack per-issue claim lock is not that gate: it is a
-# repository-local flock taken and released inside one `create` invocation, so
-# it only makes that discovery race-free against a concurrent `create`. It is
-# never held for the length of a session.
-#
-# `create --reuse|--restack` skips the refusal by design (vstack#571), so
+# `create --reuse|--restack` skips that refusal by design, so
 # nothing prevents a second implementer there. Passing `--reuse` IS the
 # operator's assertion of ownership; a live sibling on the same issue has to be
 # coordinated out of band, and reuse should never be run against a worktree
 # this session did not itself claim.
 #
-# Limits, stated rather than papered over:
+# Limits:
 #
 #   * Serializes every mutating command through flock(1) when it is on PATH,
 #     and through a mkdir mutex beside the lock file otherwise — stock macOS
 #     ships no flock. The gate is a capability, not a platform, so
-#     wherever the repository's common dir is writable, the claim is mandatory
-#     — flock-less hosts included (vstack#912). Only when neither mechanism
-#     can take the lock does a mutating command fail, and it fails loudly
-#     rather than leaving the session silently unguarded.
+#     wherever the repository's common dir is writable, the claim is mandatory,
+#     flock-less hosts included. Only when neither mechanism can take the lock
+#     does a mutating command fail, and it fails loudly rather than leaving the
+#     session silently unguarded.
 #   * `git worktree remove -f -f` and a plain `rm -rf` still destroy a claimed
 #     worktree. `status` and `list` exist so such a removal can be attributed
 #     afterwards; `list` still reports a registration whose directory is gone.
-#   * The vstack `worktree remove` wrapper hands the INTACT tree to
-#     `git worktree remove --force`; it does not pre-strip the configured
-#     symlinks. Nothing is mutated before git runs, so when this guard's lock
-#     makes git refuse the removal, the worktree is left exactly as it was.
-#     Pre-stripping was the old behavior vstack#800 was filed about — the
-#     installed script carries the fix and cites #800 as history only, and
-#     `cleanup` took the same ordering in vstack#784. Git's deletion is not
-#     transactional, so a failure partway through can still leave the tree
-#     partially removed; repair with `worktree fix-links` run from the main
-#     checkout.
+#   * The `worktree remove` wrapper hands the INTACT tree to
+#     `git worktree remove --force` and does not pre-strip the configured
+#     symlinks, so when this guard's lock makes git refuse the removal the
+#     worktree is left exactly as it was. Git's deletion is not transactional,
+#     so a failure partway through can still leave the tree partially removed;
+#     repair with `worktree fix-links` run from the main checkout.
 #   * A Git worktree lock does NOT block writes, commits, or rebases inside the
 #     worktree. In particular `worktree create --reuse|--restack` skips the
 #     lock-reason refusal entirely and rebases the claimed branch. Probe with
@@ -88,8 +68,7 @@ DEFAULT_TTL_MINUTES=720
 
 # This script's own resolved path, for diagnostics that print recovery
 # commands. Consumers install the skill in different places, so the message
-# must name the copy that is actually running, not a hardcoded location
-# (vstack#907 — the ported text pointed at hyprtrade's tools/ path).
+# must name the copy that is actually running, not a hardcoded location.
 GUARD_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
 EXIT_USAGE=1

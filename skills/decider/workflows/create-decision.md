@@ -1,123 +1,46 @@
-# Create Decision Workflow
+# Create Decision
 
-Create a new decision entry: assign ID, write decision file, add INDEX.md row, update code references.
+Assign an ID, write the decision file, add its INDEX row, restate what it supersedes, and mark the code.
 
-## Inputs
+Inputs: the decision content (summary, rationale, and revisit conditions are all required), plus an optional research reference and the issue that prompted it.
 
-| Input | Source | Required |
-|-------|--------|----------|
-| `decision_content` | Caller (agent reports, research findings) | Yes |
-| `research_ref` | Caller (research docs path) | No |
-| `research_issue_id` | Caller (issue that prompted research) | No |
-
-`decision_content` must include at minimum: summary, rationale, and revisit conditions.
-
----
-
-## 1. Assign Decision ID
-
-### 1.1 Get Next ID
+## 1. Assign the ID and descriptor
 
 ```bash
 .agents/skills/decider/scripts/decisions next-id
 ```
 
-**If `.agents/skills/decider/scripts/decisions` is unavailable**: Read `[project decision documents]/INDEX.md`, inspect only the ID column, infer the numeric-suffix scheme from the last populated ID, then increment the highest number with that same prefix. If the last populated ID has no numeric suffix, stop and ask for the project's explicit ID scheme. If no ID exists, use the project's documented default or `D001`.
+Without the script: read the INDEX ID column, take the last populated value, and increment its numeric suffix. If it has none, ask for the project's scheme rather than guessing.
 
-### 1.2 Generate Descriptor
+Derive a 2-5 word kebab-case descriptor from the summary — "Use Redis for session caching" → `session-caching`.
 
-From decision summary, derive a 2-5 word kebab-case descriptor.
+## 2. Write the decision file
 
-Examples:
-- "Use Redis for session caching" → `session-caching`
-- "Test file organization patterns" → `test-file-organization`
-- "Auth/Cloud Storage Stack" → `auth-cloud-storage`
+Create `[DECISIONS_DIR]/[DECISION_ID]-[DESCRIPTOR].md` from `templates/decision-entry.md`, sized to the decision's scope. Required: today's date, `**Status**: Active`, the research ref or `—`, what was chosen, why, and the revisit conditions. Keep it tight — the research document holds the full analysis.
 
-Store as `[DECISION_ID]` (e.g., `D034` or `ADR-0034`) and `[DESCRIPTOR]` (e.g., `auth-cloud-storage`).
+Link related decisions as `[DECISION_ID](DECISION_ID-descriptor.md)`, and add `**Refines**:` when this extends prior work.
 
----
+## 3. Add the INDEX row
 
-## 2. Select Template
+Append a row per `templates/index-row.md` at the end of the table, before the `---` separator. Each cell is a 5-15 word summary, and the Link cell must name the file just written.
 
-Based on scope of the decision, select the appropriate template from `templates/decision-entry.md`:
+## 4. Restate partially superseded decisions
 
-| Scope | Template | Signals |
-|-------|----------|---------|
-| Single technology choice, clear winner | Minimal | 1-2 rationale points, no alternatives table |
-| Multiple alternatives, patterns to document | Standard | Comparison table, code examples, decision criteria |
-| Architecture-level, multi-concern | Comprehensive | Requirements table, design sections, API specs, impact analysis |
+Skip when no existing decision is affected. Otherwise, for each active decision this one displaces, set the status in **both** the decision file and its INDEX row: `Active ([COMPONENTS] → [DECISION_ID])` when only named components are replaced, `Superseded by [DECISION_ID]` when the whole decision is.
 
----
+## 5. Mark the code
 
-## 3. Write Decision File
-
-1. **Create file** at `[project decision documents]/[DECISION_ID]-[DESCRIPTOR].md`
-
-2. **Fill template** with `decision_content`:
-
-   **Required fields** (all templates):
-   - `**Date**:` — today's date (`YYYY-MM-DD`)
-   - `**Status**:` — `Active`
-   - `**Research**:` — `[RESEARCH_REF]` link or `—`
-   - Decision statement — what was chosen
-   - Rationale — why, bullets preferred
-   - Revisit When — conditions for re-evaluation
-
-   **Keep tight** — reference research for details. Decision documents summarize; research documents contain the full analysis.
-
-3. **Add cross-references** if decision relates to existing decisions:
-   - Link to related decisions: `[DECISION_ID](DECISION_ID-descriptor.md)`
-   - Note if decision refines prior work: `**Refines**: [DECISION_ID](DECISION_ID-descriptor.md)`
-
----
-
-## 4. Add INDEX.md Row
-
-1. **Read** `[project decision documents]/INDEX.md`
-
-2. **Add row** at end of decision table (before `---` separator), per `templates/index-row.md`:
-
-   ```markdown
-   | [DATE] | [DECISION_ID] | [RESEARCH_REF] | [DECISION_SUMMARY] | [RATIONALE_SUMMARY] | [REVISIT_WHEN] | Active | [Full]([DECISION_ID]-[DESCRIPTOR].md) |
-   ```
-
-   Each field should be a tight 5-15 word summary.
-
----
-
-## 5. Update Partially Superseded Decisions
-
-**Skip if** no existing decisions are partially affected.
-
-If the new decision's context references other active decisions as partially affected (e.g., "D011 specified ThreadBound..."):
-
-1. **Read** referenced decision file
-2. **If** new decision replaces specific components but not the whole:
-   - Update status to `Active ([COMPONENTS] → [DECISION_ID])` in both the decision file and INDEX.md row
-3. **If** new decision fully replaces:
-   - Update status to `Superseded by [DECISION_ID]` in both locations
-
----
-
-## 6. Add Code References
-
-**Skip if** decision doesn't affect existing code.
-
-For implementation points tied to this decision:
+Skip when no existing code is affected. At each implementation point tied to this decision:
 
 ```
-// REVISIT([DECISION_ID]): [reason this code may need to change]
+// REVISIT([DECISION_ID]): [what would change]
 ```
 
-Every `REVISIT` comment must reference a decision ID from the INDEX.
+Every `REVISIT` marker names an ID present in the INDEX.
 
----
-
-## 7. Return
-
-Return the created decision reference:
+## 6. Return
 
 ```
 Decision: [DECISION_ID] - [TITLE]
-Path: [project decision documents]/[DECISION_ID]-[DESCRIPTOR].md
+Path: [DECISIONS_DIR]/[DECISION_ID]-[DESCRIPTOR].md
 ```

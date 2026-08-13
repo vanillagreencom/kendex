@@ -6,8 +6,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/github-api.sh"
-# shellcheck source=../lib/pr-branch.sh
-source "$SCRIPT_DIR/../lib/pr-branch.sh"
 
 show_help() {
     cat << 'EOF'
@@ -68,11 +66,7 @@ reply_via_graphql() {
     local url
     url=$(echo "$result" | jq -r '.addPullRequestReviewThreadReply.comment.url // ""')
 
-    if [ -n "$url" ]; then
-        echo "{\"success\": true, \"url\": \"$url\"}"
-    else
-        echo '{"success": true, "url": null}'
-    fi
+    jq -nc --arg url "$url" '{success: true, url: (if $url == "" then null else $url end)}'
 }
 
 # Reply using REST API (for numeric comment IDs)
@@ -90,11 +84,7 @@ reply_via_rest() {
     local url
     url=$(echo "$result" | jq -r '.html_url // .url // ""')
 
-    if [ -n "$url" ]; then
-        echo "{\"success\": true, \"url\": \"$url\"}"
-    else
-        echo '{"success": true, "url": null}'
-    fi
+    jq -nc --arg url "$url" '{success: true, url: (if $url == "" then null else $url end)}'
 }
 
 post_reply() {
@@ -199,15 +189,8 @@ post_reply() {
     # Execute based on ID type
     if [ "$is_thread_id" = "true" ]; then
         # GraphQL for thread IDs
-        local reply_result reply_url
+        local reply_result
         reply_result=$(reply_via_graphql "$id" "$body") || return 1
-        reply_url=$(echo "$reply_result" | jq -r '.url // ""' 2>/dev/null || true)
-        bash "$SCRIPT_DIR/../_activity-emit.sh" pr.comments_left \
-            --severity info \
-            --importance normal \
-            --summary "Reply left on PR review thread" \
-            --details-json "$(jq -cn --arg url "$reply_url" --arg thread_id "$id" '{url: $url, thread_id: $thread_id}')" || true
-        # Thread-id GraphQL path has no PR number in scope — skip branch lookup.
         echo "$reply_result"
     else
         # REST for numeric comment IDs
@@ -220,20 +203,8 @@ post_reply() {
         owner=$(get_owner "$repo_info")
         repo=$(get_repo "$repo_info")
 
-        local reply_result reply_url
+        local reply_result
         reply_result=$(reply_via_rest "$id" "$body" "$pr_num" "$owner" "$repo") || return 1
-        reply_url=$(echo "$reply_result" | jq -r '.url // ""' 2>/dev/null || true)
-        local pr_branch
-        pr_branch=$(pr_branch_name "$pr_num")
-        local emit_args=(
-            --severity info
-            --importance normal
-            --summary "Reply left on PR #$pr_num"
-            --pr-number "$pr_num"
-            --details-json "$(jq -cn --arg url "$reply_url" --arg comment_id "$id" '{url: $url, comment_id: $comment_id}')"
-        )
-        [ -n "$pr_branch" ] && emit_args+=(--branch "$pr_branch")
-        bash "$SCRIPT_DIR/../_activity-emit.sh" pr.comments_left "${emit_args[@]}" || true
         echo "$reply_result"
     fi
 }

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Regression test for repository-aware tpm-audit verification scope (#582).
+# Audit checks must search paths that exist. The resolver derives them from the
+# repository — a narrow change set when one is known, otherwise every tracked
+# source root — so no workflow assumes a repository-root src/, and each issue
+# keeps its own scope so one issue's PR never decides another's verdict. This
+# exercises the resolver against fixtures and pins the workflow's use of it.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -148,6 +152,8 @@ fi
 if grep -Fq '${WORKTREE:-.}/src/' "$WORKFLOW"; then
   fail "tpm-audit still hardcodes a repository-root src directory"
 fi
+grep -Eq 'never assumed|Never substitute `\[WORKTREE\]/src`' "$WORKFLOW" \
+  || fail "tpm-audit lost the no-assumed-repository-root-src rule"
 grep -Fq 'scripts/verification-scope' "$WORKFLOW" \
   || fail "tpm-audit does not invoke verification-scope"
 grep -Fq 'docs-only' "$WORKFLOW" \

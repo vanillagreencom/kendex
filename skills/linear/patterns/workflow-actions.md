@@ -1,15 +1,8 @@
 # Workflow Actions
 
-Portable multi-step issue-tracker CLI patterns for workflows that need more than basic CRUD.
+Multi-step issue/project transitions built from the `linear` skill's commands. Use the command reference in `SKILL.md` for syntax; this file carries only the rules that the commands themselves do not enforce.
 
-Use this reference when orch or TPM workflows need to:
-- change issue/project state
-- move or regroup issues
-- repair relations
-- create gap or research follow-up issues
-- update project dependencies, initiative membership, or ordering
-
-For the underlying command syntax, use the main `linear` skill command docs first.
+Every state change that reflects a decision (cancel, absorb, rescope, reparent, reprioritize) gets a comment recording the reason in the same step. The comment is the audit trail; the state change alone loses why.
 
 ## State Transitions
 
@@ -18,245 +11,72 @@ scripts/linear.sh issues activate [ISSUE_ID] --agent [AGENT]
 scripts/linear.sh issues block [ISSUE_ID] --by [BLOCKER_ID] --reason "[REASON]"
 scripts/linear.sh issues unblock [ISSUE_ID]
 scripts/linear.sh issues complete [ISSUE_ID] --summary-file [SUMMARY_PATH]
-scripts/linear.sh issues update [ISSUE_ID] --state "Done"
 ```
 
-`activate --agent` applies the exclusive `agent:[AGENT]` label together with the "In Progress" transition and fails without changing state when the label does not exist. `complete` posts the completion summary comment before transitioning to "Done", so a failed post leaves the state unchanged.
+`activate --agent` applies the exclusive `agent:*` label with the "In Progress" transition and fails without changing state when the label does not exist. `complete` posts the summary comment before transitioning to Done, so a failed post leaves the state unchanged.
 
-## Cancel / Merge / Combine
+Cancel, duplicate, and absorb are all `comments create` + `issues update --state "Canceled"`; name the surviving issue in the comment on both sides of an absorb.
 
-```bash
-scripts/linear.sh comments create [ISSUE_ID] --body "[REASON]"
-scripts/linear.sh issues update [ISSUE_ID] --state "Canceled"
+## Descriptions
 
-scripts/linear.sh comments create [REMOVE_ID] --body "Duplicate of [KEEP_ID]. [REASON]"
-scripts/linear.sh issues update [REMOVE_ID] --state "Canceled"
+Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`. Inline `--description`/`--body` is for short plain strings, and heredocs are blocked under `never` approval.
 
-scripts/linear.sh comments create [TARGET_ID] --body "Absorbing [REMOVE_ID]: [REASON]"
-scripts/linear.sh comments create [REMOVE_ID] --body "Absorbed into [TARGET_ID]: [REASON]"
-scripts/linear.sh issues update [REMOVE_ID] --state "Canceled"
-```
+After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `cache issues get [PARENT_ID] --with-bundle`), preserving sections that are still valid.
 
-## Cancel Obsolete Issues
-
-```bash
-scripts/linear.sh comments create [ISSUE_ID] --body "Obsolete: [REASON]"
-scripts/linear.sh issues update [ISSUE_ID] --state "Canceled"
-```
-
-## Scope Changes
-
-```bash
-# For a multiline description, write it to a file and use --description-file
-# (preferred for markdown; required under `never` approval where heredocs are blocked).
-scripts/linear.sh issues update [ISSUE_ID] --description-file [DESCRIPTION_PATH]
-scripts/linear.sh comments create [ISSUE_ID] --body "Scope updated: [WHAT_CHANGED]"
-
-scripts/linear.sh issues update [ISSUE_ID] --project "[TARGET_PROJECT]"
-scripts/linear.sh comments create [ISSUE_ID] --body "Moved from [OLD_PROJECT] to [TARGET_PROJECT]: [REASON]"
-```
-
-## Hierarchy Changes
-
-After every hierarchy change, sync the parent description. See [Sync Parent Description](#sync-parent-description).
+## Hierarchy and Relations
 
 ```bash
 scripts/linear.sh issues update [CHILD_ID] --parent [PARENT_ID]
-scripts/linear.sh comments create [CHILD_ID] --body "Made sub-issue of [PARENT_ID]: [REASON]"
-
 scripts/linear.sh issues update [CHILD_ID] --remove-parent
+scripts/linear.sh issues add-relation [ISSUE_ID] --blocks|--blocked-by|--related [OTHER_ID]
+scripts/linear.sh issues remove-relation [ISSUE_ID] --blocks|--blocked-by [OTHER_ID]
 ```
 
-A `make_parent` action carrying `retitle` (the audit's single-PR
-decision — see the audit-output schema) applies it alongside the
-reparenting; skipping it would leave the promoted parent reading as a
-container and split the bundle the audit decided to keep whole:
+A `make_parent` action carrying `retitle` applies the retitle alongside the reparenting; skipping it leaves the promoted parent reading as a container and splits a bundle the audit decided to keep whole.
+
+`--blocks`/`--blocked-by` are guarded: a blocking relation must connect peers of one bundle — same direct parent, or both top-level. The two issues need not share a project. An issue never blocks its own ancestor or descendant, since the hierarchy already encodes that dependency. A rejected cross-subtree pair comes back with the one valid replacement pair, at the level where the subtrees separate, already validated against the same rule.
+
+Never drop a valid dependency because the current structure cannot express it cleanly. Lift child-level dependencies to the parent level when bundles are involved, and use `--related` when the dependency is informational rather than blocking.
+
+## Labels
+
+`--labels` replaces the entire issue-label set, so every update passes the full intended final set — never just the changed label. An unresolvable name now fails the update rather than dropping that label, and `--clear-labels` is the only way to empty the set.
+
+Before any create or label update from a workflow:
+
+1. `scripts/linear.sh sync --reconcile` when the cache is missing or stale, then `scripts/linear.sh cache labels list --format=safe`.
+2. Build the full final set from the project's taxonomy.
+3. Reject unknown labels, parent/group labels (`is_group: true`), missing required categories, and exclusive-category conflicts. Agent labels are exclusive: replace the old `agent:*` rather than adding to it.
+4. Ask for explicit authorization before creating any missing label; never create labels automatically.
+
+Project labels are a separate resource and must not be used for issue-label preflight.
+
+## Bulk and Cycle Assignment
 
 ```bash
-scripts/linear.sh issues update [PARENT_ID] --title "[RETITLE]"
+scripts/linear.sh issues bulk-update [ID_1] [ID_2] --cycle [CYCLE_ID] --state "Todo"
 ```
 
-## Sync Parent Description
+`bulk-update` is non-atomic. On a nonzero exit read its JSON before retrying: `partial: true` means some issues already changed, and `results` identifies which.
 
-After adding/removing/reordering children:
+When a child's state or cycle changes, fetch the parent and promote it when a child advances into active work — never demote it.
 
-1. Read the parent with bundle context.
-2. Rebuild the parent's child list from actual `children[]`.
-3. Preserve sections that are still valid.
-4. Update summary/acceptance criteria only if your project expects parent descriptions to reflect child scope.
-
-Portable minimum:
+## Projects and Initiatives
 
 ```bash
-scripts/linear.sh cache issues get [PARENT_ID] --with-bundle
-# Write the regenerated body to a file, then pass --description-file (preferred for markdown).
-scripts/linear.sh issues update [PARENT_ID] --description-file [DESCRIPTION_PATH]
-```
-
-## Fix Relation Violations
-
-Do not drop a valid dependency just because the current structure cannot express it cleanly.
-
-Preferred order:
-1. lift child-level dependencies to the parent level when bundles are involved
-2. use `related` when the dependency is informational rather than blocking
-
-## Relations
-
-```bash
-scripts/linear.sh issues add-relation [ISSUE_ID] --blocks [OTHER_ID]
-scripts/linear.sh issues add-relation [ISSUE_ID] --blocked-by [OTHER_ID]
-scripts/linear.sh issues add-relation [ISSUE_ID] --related [OTHER_ID]
-
-scripts/linear.sh issues remove-relation [ISSUE_ID] --blocks [OTHER_ID]
-scripts/linear.sh issues remove-relation [ISSUE_ID] --blocked-by [OTHER_ID]
-
-scripts/linear.sh cache issues list-relations [ISSUE_ID]
-```
-
-`--blocks`/`--blocked-by` are guarded: a blocking relation must connect peers of one bundle — two issues with the same direct parent, or two top-level issues. An issue never blocks its own ancestor or descendant; the parent-child hierarchy already encodes that dependency (use `--related` for traceability). Before either acceptance or remediation, the guard proves each parent chain reaches an explicit null root through well-formed edges with unique IDs/identifiers; incomplete, cyclic, or malformed hierarchy responses are rejected before mutation. When a cross-subtree pair is rejected, the error prescribes the one replacement pair at the level where the subtrees separate (the children of the lowest common ancestor); the prescribed command is validated against the same rule, so it always passes.
-
-## Priority Updates
-
-```bash
-scripts/linear.sh issues update [ISSUE_ID] --priority 1
-scripts/linear.sh comments create [ISSUE_ID] --body "Priority updated: [REASON]"
-```
-
-## Label Preflight
-
-Before any issue create or label update from a workflow:
-
-1. Refresh/load issue-label inventory: `scripts/linear.sh sync --reconcile` when the cache is missing or stale, then `scripts/linear.sh cache labels list --format=safe`.
-2. Load project taxonomy/application rules from the calling project.
-3. Build the full final issue-label set.
-4. Reject unknown labels, parent/group labels (`is_group: true` or names used as parents), missing required categories, and exclusive-category conflicts.
-5. Ask for explicit user authorization before creating any missing issue label; never create labels automatically.
-
-Project labels are separate resources and must not be used for issue-label preflight.
-
-## Agent Label Updates
-
-Agent labels are exclusive. Replace the old taxonomy `agent` category label with the new one, preserve all unrelated labels, and update with the full validated final set.
-
-```bash
-scripts/linear.sh cache issues get [ISSUE_ID]
-# FINAL_LABELS = current labels - current agent-category labels + agent:[NAME]
-# Preflight FINAL_LABELS against live issue-label inventory + project taxonomy.
-scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"
-scripts/linear.sh comments create [ISSUE_ID] --body "Agent label updated: [REASON]"
-```
-
-## Label Co-occurrence Fixes
-
-```bash
-scripts/linear.sh cache issues get [ISSUE_ID]
-# FINAL_LABELS = current labels + [MISSING_LABEL]
-# Preflight FINAL_LABELS against live issue-label inventory + project taxonomy.
-scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"
-scripts/linear.sh comments create [ISSUE_ID] --body "Added [MISSING_LABEL]: [REASON]"
-```
-
-Remember that `--labels` replaces the full label set. Never pass only the changed label unless the intended final label set is exactly that one label.
-
-## Cycle Assignment
-
-```bash
-scripts/linear.sh issues update [ISSUE_ID] --cycle [CYCLE_ID] --state "Todo"
-scripts/linear.sh issues bulk-update [ISSUE_ID_1] [ISSUE_ID_2] --cycle [CYCLE_ID] --state "Todo"
-```
-
-`bulk-update` is non-atomic. On nonzero exit, read its JSON output before retrying; `partial: true` means some listed issues already changed and the `results` array identifies which ones.
-
-## Parent State Sync
-
-When changing a child's state or cycle:
-
-1. fetch the parent
-2. do not demote parent state
-3. promote the parent when a child advances into active work
-4. optionally propagate cycle assignment to pending siblings if your project expects bundle-level movement
-
-Portable minimum:
-
-```bash
-scripts/linear.sh cache issues get [PARENT_ID] --with-bundle
-scripts/linear.sh issues update [PARENT_ID] --state "[CHILD_STATE]" --cycle [CYCLE_ID]
-```
-
-## Estimate & Label Updates
-
-```bash
-scripts/linear.sh issues update [ISSUE_ID] --estimate 3
-# For labels: compute FINAL_LABELS from current labels + intended add/replace, preflight, then update.
-scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"
-```
-
-## Create Gap Issues
-
-```bash
-scripts/linear.sh issues create \
-  --title "[TITLE]" \
-  --project "[TARGET_PROJECT]" \
-  --labels "[LABELS]" \
-  --priority [PRIORITY] \
-  --estimate [ESTIMATE] \
-  --description "[DESCRIPTION]"
-```
-
-Then add any blocking relations that the new gap issue should impose.
-
-`[LABELS]` must be the full validated issue-label set, not a partial agent label.
-
-## Create Research Gap
-
-```bash
-scripts/linear.sh issues create \
-  --title "Research: [TOPIC]" \
-  --project "[TARGET_PROJECT]" \
-  --labels "[VALIDATED_RESEARCH_LABELS]" \
-  --priority 3 \
-  --estimate 1 \
-  --description "[RESEARCH_BRIEF]"
-```
-
-`[VALIDATED_RESEARCH_LABELS]` must include the project-required agent/domain/workflow categories and must pass issue-label preflight.
-
-## Project State Changes
-
-```bash
-scripts/linear.sh projects create --name "[NAME]" --description "[DESCRIPTION]"
-scripts/linear.sh projects update [PROJECT_ID] --state started
-scripts/linear.sh projects update [PROJECT_ID] --state completed
-```
-
-## Project Relations
-
-```bash
+scripts/linear.sh projects update [PROJECT_ID] --state started|completed
 scripts/linear.sh projects add-dependency [PROJECT_ID] --blocked-by [OTHER_PROJECT_ID]
-scripts/linear.sh cache projects list-dependencies [PROJECT_ID]
-```
-
-## Initiative Management
-
-```bash
-scripts/linear.sh initiatives create --name "[NAME]" --description "[DESCRIPTION]"
+scripts/linear.sh projects set-sort-order [PROJECT_ID] --after|--before [OTHER_ID]
 scripts/linear.sh initiatives add-project [INITIATIVE_ID] --project [PROJECT_ID]
-scripts/linear.sh cache initiatives list --status Active
-```
-
-## Initiative & Project Status
-
-```bash
 scripts/linear.sh initiatives update [INITIATIVE_ID] --status Active
-scripts/linear.sh projects update [PROJECT_ID] --state started
-scripts/linear.sh projects update [PROJECT_ID] --state completed
 ```
 
-## Project Reorder
+## Creating Follow-up Issues
 
 ```bash
-scripts/linear.sh projects set-sort-order [PROJECT_ID] --after [OTHER_PROJECT_ID]
-scripts/linear.sh projects set-sort-order [PROJECT_ID] --before [OTHER_PROJECT_ID]
-scripts/linear.sh projects set-sort-order [PROJECT_ID] --position [SORT_ORDER]
+scripts/linear.sh issues create \
+  --title "[TITLE]" --project "[TARGET_PROJECT]" --labels "[VALIDATED_LABELS]" \
+  --priority [PRIORITY] --estimate [ESTIMATE] --description-file [PATH]
 ```
+
+`[VALIDATED_LABELS]` is the full preflighted label set including the project's required agent/domain/workflow categories, not a bare agent label. Add any blocking relations the new issue should impose after it exists.

@@ -129,7 +129,7 @@ edit_comment() {
     local result
     result=$(gh api -X PATCH "repos/$owner/$repo/issues/comments/$comment_id" \
         -f body="$body" 2>&1) || {
-        echo "{\"error\": \"Failed to edit comment: $result\"}" >&2
+        jq -nc --arg detail "$result" '{error: ("Failed to edit comment: " + $detail)}' >&2
         exit 1
     }
 
@@ -137,11 +137,7 @@ edit_comment() {
     local url
     url=$(echo "$result" | jq -r '.html_url // .url // ""')
 
-    if [ -n "$url" ]; then
-        echo "{\"success\": true, \"url\": \"$url\"}"
-    else
-        echo '{"success": true, "url": null}'
-    fi
+    jq -nc --arg url "$url" '{success: true, url: (if $url == "" then null else $url end)}'
 }
 
 # Main

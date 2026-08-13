@@ -155,7 +155,11 @@ cache_list_issues() {
             FORMAT="${1#--format=}"
             shift
             ;;
-        --team | --assignee | --created-since | --with-relations) shift 2 ;; # consume but ignore for cache
+        --team | --assignee | --created-since) shift 2 ;; # consume but ignore for cache
+        # Boolean on the live path (issues.sh), so it takes no value here
+        # either. Consuming one would swallow the following filter flag and
+        # return every issue as if that filter had been applied.
+        --with-relations) shift ;;
         --help | -h)
             show_help
             return 0
@@ -213,9 +217,14 @@ cache_list_issues() {
         jq_filter="$jq_filter | [.[] | select((.project.name // \"\") == \"\")]"
     fi
 
-    # Filter by label
+    # Filter by label. Repeated --label flags and the --labels "a,b" spelling
+    # both accumulate comma-joined, so the joined value is split back into names
+    # and every one must be present — comparing the joined string as a single
+    # label name matched nothing at all.
     if [[ -n "$label" ]]; then
-        jq_filter="$jq_filter | [.[] | select([.labels.nodes[].name] | any(. == $(echo "$label" | jq -R '.')))]"
+        local label_jq
+        label_jq=$(echo "$label" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
+        jq_filter="$jq_filter | [.[] | select([.labels.nodes[].name] as \$have | $label_jq | all(. as \$want | \$have | any(. == \$want)))]"
     fi
 
     # Filter by cycle (number, UUID, or keyword: current/previous/next)
@@ -223,40 +232,50 @@ cache_list_issues() {
         local cycle_id=""
         case "$cycle" in
         current | previous | next)
-            local today_iso
+            local today_iso cycles_file="$CACHE_DIR/cycles.json"
             today_iso=$(date -Iseconds)
-            local cycles_file="$CACHE_DIR/cycles.json"
             if [[ -f "$cycles_file" ]]; then
                 local working
-                working=$(jq --arg today "$today_iso" \
-                    '[.[] | select(.startsAt <= $today and .progress < 1)] | sort_by(.startsAt) | last // null' "$cycles_file")
+                working=$(cache_jq_file "$cycles_file" "null" --arg today "$today_iso" \
+                    '[.[] | select(.startsAt <= $today and .progress < 1)] | sort_by(.startsAt) | last // null')
                 case "$cycle" in
                 current)
                     cycle_id=$(echo "$working" | jq -r '.id // empty')
                     ;;
                 previous)
-                    cycle_id=$(jq --argjson w "$working" \
-                        'if $w then [.[] | select(.startsAt < $w.startsAt)] | sort_by(.startsAt) | last | .id else null end' "$cycles_file" | jq -r '. // empty')
+                    cycle_id=$(cache_jq_file "$cycles_file" "null" -r --argjson w "$working" \
+                        'if $w then ([.[] | select(.startsAt < $w.startsAt)] | sort_by(.startsAt) | last | .id) // empty else empty end')
                     ;;
                 next)
-                    cycle_id=$(jq --argjson w "$working" \
-                        'if $w then [.[] | select(.startsAt > $w.startsAt)] | sort_by(.startsAt) | first | .id else null end' "$cycles_file" | jq -r '. // empty')
+                    cycle_id=$(cache_jq_file "$cycles_file" "null" -r --argjson w "$working" \
+                        'if $w then ([.[] | select(.startsAt > $w.startsAt)] | sort_by(.startsAt) | first | .id) // empty else empty end')
                     ;;
                 esac
+            fi
+            # A keyword that resolves to no cycle must not fall through to the
+            # number branch, where the literal word compiles as a jq function
+            # call and the failure reads as "this cycle has no issues".
+            if [[ -z "$cycle_id" ]]; then
+                jq -cn --arg kw "$cycle" --arg file "$cycles_file" \
+                    '{error: ("--cycle " + $kw + " could not be resolved from " + $file + " — sync the cache (linear.sh sync) or pass a cycle number or UUID")}' >&2
+                return 1
             fi
             ;;
         *-*-*-*-*) # UUID pattern
             cycle_id="$cycle"
             ;;
-        *) # Assume cycle number
-            cycle_id=""
+        *) # Cycle number
+            if ! [[ "$cycle" =~ ^[0-9]+$ ]]; then
+                jq -cn --arg v "$cycle" \
+                    '{error: ("--cycle expects a cycle number, UUID, or current/previous/next, got: " + $v)}' >&2
+                return 1
+            fi
             ;;
         esac
 
         if [[ -n "$cycle_id" ]]; then
             jq_filter="$jq_filter | [.[] | select(.cycle != null and .cycle.id == $(echo "$cycle_id" | jq -R '.'))]"
         else
-            # Filter by number
             jq_filter="$jq_filter | [.[] | select(.cycle != null and .cycle.number == $cycle)]"
         fi
     fi
@@ -271,7 +290,7 @@ cache_list_issues() {
 
     # Get issues from cache
     local issues
-    issues=$(jq "$jq_filter" "$CACHE_DIR/issues.json" 2>/dev/null || echo "[]")
+    issues=$(cache_jq_file "$CACHE_DIR/issues.json" "[]" "$jq_filter") || return 1
 
     # Apply client-side search (regex on title+description)
     if [[ -n "$search" ]]; then
@@ -281,7 +300,11 @@ cache_list_issues() {
 
     # Limit results unless --max
     if [[ "$paginate_all" != "true" ]]; then
-        issues=$(echo "$issues" | jq ".[0:$limit]")
+        if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+            jq -cn --arg v "$limit" '{error: ("--limit must be a non-negative integer, got: " + $v)}' >&2
+            return 1
+        fi
+        issues=$(echo "$issues" | jq --argjson n "$limit" '.[0:$n]')
     fi
 
     # Wrap in expected structure for formatters
@@ -330,8 +353,8 @@ cache_get_issue() {
 
     # Find issue in cache
     local issue
-    issue=$(jq --arg id "$issue_id" '.[] | select(.identifier == $id or .id == $id)' \
-        "$CACHE_DIR/issues.json" 2>/dev/null)
+    issue=$(cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$issue_id" \
+        '.[] | select(.identifier == $id or .id == $id)') || return 1
 
     if [[ -z "$issue" || "$issue" == "null" ]]; then
         echo "{\"error\": \"Issue not found in cache: $issue_id\"}" >&2
@@ -422,9 +445,8 @@ cache_get_issue() {
         compact)
             # Inject children from cache (sync doesn't store .children.nodes)
             local children_nodes
-            children_nodes=$(jq --arg id "$issue_id" \
-                '[.[] | select(.parent.identifier == $id) | {identifier, title, state}]' \
-                "$CACHE_DIR/issues.json" 2>/dev/null || echo "[]")
+            children_nodes=$(cache_jq_file "$CACHE_DIR/issues.json" "[]" --arg id "$issue_id" \
+                '[.[] | select(.parent.identifier == $id) | {identifier, title, state}]') || return 1
             local enriched
             enriched=$(echo "$wrapped" | jq --argjson ch "$children_nodes" '.issue.children = {nodes: $ch}')
             _append_attachments "$(format_issue_compact "$enriched")"
@@ -479,7 +501,7 @@ cache_list_children() {
     else
         # Direct children only
         local children
-        children=$(jq --arg p "$issue_id" \
+        children=$(cache_jq_file "$CACHE_DIR/issues.json" "[]" --arg p "$issue_id" \
             '[.[] | select(.parent.identifier == $p) | {
                 id: .identifier,
                 uuid: .id,
@@ -489,7 +511,7 @@ cache_list_children() {
                 assignee: (.assignee.name // ""),
                 priority: (.priority // 0),
                 estimate: (.estimate // 0)
-            }]' "$CACHE_DIR/issues.json" 2>/dev/null || echo "[]")
+            }]') || return 1
 
         if [[ "$pending_only" == "true" ]]; then
             children=$(echo "$children" | jq '[.[] | select(.state_type != "completed" and .state_type != "canceled")]')
@@ -536,7 +558,7 @@ cache_list_relations() {
                 state: .relatedIssue.state.name
             }]
         }
-    ' "$CACHE_DIR/issues.json" 2>/dev/null)
+    ') || return 1
 
     if [[ -z "$result" ]]; then
         echo "{\"error\": \"Issue not found in cache: $issue_id\"}" >&2
@@ -653,21 +675,31 @@ cache_validate_completion() {
         local issue_id="${issue_ids[$i]}"
         local role="${roles[$i]}"
         local issue
-        issue=$(jq --arg id "$issue_id" '.[] | select(.identifier == $id or .id == $id)' \
-            "$CACHE_DIR/issues.json" 2>/dev/null)
+        issue=$(cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$issue_id" \
+            '.[] | select(.identifier == $id or .id == $id)') || return 1
 
-        local state
+        # An issue the cache has never seen cannot be judged against the
+        # completion contract. Reporting it as a state failure is
+        # indistinguishable from "synced, but not Done".
+        if [[ -z "$issue" ]]; then
+            jq -cn --arg id "$issue_id" \
+                '{error: ("Issue not in cache: " + $id + " — cannot validate completion against a snapshot that does not contain it. Run: linear.sh sync")}' >&2
+            return 1
+        fi
+
+        local state state_type parent_id identifier
         state=$(echo "$issue" | jq -r '.state.name // ""')
-        local state_type
         state_type=$(echo "$issue" | jq -r '.state.type // ""')
-        local parent_id
         parent_id=$(echo "$issue" | jq -r '.parent.identifier // ""')
+        # Comment files are keyed by identifier; a caller may have passed a UUID.
+        identifier=$(echo "$issue" | jq -r '.identifier // ""')
 
         # Check comments cache for Completion Summary
         local has_summary="false"
-        local comment_file="$CACHE_DIR/comments/$issue_id.json"
+        local comment_file="$CACHE_DIR/comments/${identifier:-$issue_id}.json"
         if [[ -f "$comment_file" ]]; then
-            has_summary=$(jq 'any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))' "$comment_file" 2>/dev/null || echo "false")
+            has_summary=$(cache_jq_file "$comment_file" "false" \
+                'any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))') || return 1
         fi
 
         local result
@@ -718,9 +750,8 @@ cache_bulk_get_issues() {
     id_json=$(printf '%s\n' "${identifiers[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')
 
     local result
-    result=$(jq --argjson ids "$id_json" \
-        '{issues: {nodes: [.[] | select(.identifier as $id | $ids | any(. == $id))]}}' \
-        "$CACHE_DIR/issues.json" 2>/dev/null)
+    result=$(cache_jq_file "$CACHE_DIR/issues.json" '{"issues":{"nodes":[]}}' --argjson ids "$id_json" \
+        '{issues: {nodes: [.[] | select(.identifier as $id | $ids | any(. == $id))]}}') || return 1
 
     case "$FORMAT" in
     raw) echo "$result" ;;
@@ -772,7 +803,7 @@ cache_list_projects() {
     fi
 
     local projects
-    projects=$(jq "$jq_filter" "$CACHE_DIR/projects.json" 2>/dev/null || echo "[]")
+    projects=$(cache_jq_file "$CACHE_DIR/projects.json" "[]" "$jq_filter") || return 1
 
     if [[ "$first_only" == "true" ]]; then
         echo "$projects" | jq -r '.[0].name // "Backlog"'
@@ -817,9 +848,8 @@ cache_get_project() {
     fi
 
     local project
-    project=$(jq --arg ref "$project_ref" \
-        '.[] | select(.id == $ref or .name == $ref)' \
-        "$CACHE_DIR/projects.json" 2>/dev/null)
+    project=$(cache_jq_file "$CACHE_DIR/projects.json" "" --arg ref "$project_ref" \
+        '.[] | select(.id == $ref or .name == $ref)') || return 1
 
     if [[ -z "$project" || "$project" == "null" ]]; then
         echo "{\"error\": \"Project not found in cache: $project_ref\"}" >&2
@@ -844,14 +874,17 @@ cache_list_dependencies() {
         return 1
     fi
 
-    jq --arg id "$project_id" '.[] | select(.id == $id or .name == $id) | {
+    # No fallback object here: an unreadable cache must not answer "this
+    # project has no dependencies", which is what a well-formed empty
+    # relations payload tells every caller asking whether it is blocked.
+    cache_jq_file "$CACHE_DIR/projects.json" "" --arg id "$project_id" '.[] | select(.id == $id or .name == $id) | {
         project: {
             id: .id,
             name: .name,
             relations: .relations,
             inverseRelations: .inverseRelations
         }
-    }' "$CACHE_DIR/projects.json" 2>/dev/null || echo '{"project": {"relations": {"nodes": []}, "inverseRelations": {"nodes": []}}}'
+    }'
 }
 
 # =============================================================================
@@ -924,7 +957,7 @@ cache_list_labels() {
     done
 
     local labels
-    labels=$(cat "$CACHE_DIR/labels.json" 2>/dev/null || echo "[]")
+    labels=$(cache_jq_file "$CACHE_DIR/labels.json" "[]" '.') || return 1
 
     if [[ -n "$team" ]]; then
         labels=$(echo "$labels" | jq --arg t "$team" '[.[] | select(.team.name == $t)]')
@@ -972,7 +1005,7 @@ cache_list_initiatives() {
     fi
 
     local initiatives
-    initiatives=$(jq "$jq_filter" "$CACHE_DIR/initiatives.json" 2>/dev/null || echo "[]")
+    initiatives=$(cache_jq_file "$CACHE_DIR/initiatives.json" "[]" "$jq_filter") || return 1
 
     # Wrap for formatter
     local result
@@ -1011,9 +1044,8 @@ cache_get_initiative() {
     fi
 
     local initiative
-    initiative=$(jq --arg ref "$ref" \
-        '.[] | select(.id == $ref or .name == $ref)' \
-        "$CACHE_DIR/initiatives.json" 2>/dev/null)
+    initiative=$(cache_jq_file "$CACHE_DIR/initiatives.json" "" --arg ref "$ref" \
+        '.[] | select(.id == $ref or .name == $ref)') || return 1
 
     if [[ -z "$initiative" || "$initiative" == "null" ]]; then
         echo "{\"error\": \"Initiative not found in cache: $ref\"}" >&2
@@ -1064,7 +1096,7 @@ cache_list_cycles() {
     done
 
     local cycles
-    cycles=$(cat "$CACHE_DIR/cycles.json" 2>/dev/null || echo "[]")
+    cycles=$(cache_jq_file "$CACHE_DIR/cycles.json" "[]" '.') || return 1
 
     # Apply type filter (date-based: "current" = most recent started + incomplete)
     local today_iso
@@ -1115,8 +1147,22 @@ cache_list_cycles() {
 # =============================================================================
 
 main() {
+    # `--help` anywhere selects usage, but the token after a value-taking flag
+    # is that flag's VALUE, never a request for help: `--search -h` used to
+    # print usage and exit 0, which a caller parsing the output reads as an
+    # empty result set.
+    local arg skip_value="false"
     for arg in "$@"; do
+        if [[ "$skip_value" == "true" ]]; then
+            skip_value="false"
+            continue
+        fi
         case "$arg" in
+        --project | --project-id | --state | --status | --label | --labels | --cycle | \
+            --updated-since | --created-since | --search | --limit | --format | --team | \
+            --assignee | --include-children-of)
+            skip_value="true"
+            ;;
         --help | -h)
             show_help
             return 0

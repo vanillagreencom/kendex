@@ -1,142 +1,71 @@
 # GitHub Queries
 
-CLI wrapper for GitHub API operations used in PR workflows: PR data/threads/reviews, label mutations, CI logs, merge gating, and cross-PR analysis. Development notes live in `DEVELOPMENT.md`.
+A CLI wrapper over the GitHub API for pull-request work: reading PR data,
+threads and reviews; posting comments and replies; adding and removing labels;
+fetching CI failure logs; gating and performing merges; and comparing several
+PRs before a batch merge.
+
+Every command prints JSON by default, so output can be piped straight into
+`jq`. `SKILL.md` is the full command reference; `DEVELOPMENT.md` covers
+internals.
 
 ## Setup
 
 1. Authenticate: `gh auth login`
-2. Optionally set `GH_BOT_TOKEN` in `.env.local` for bot account operations
-3. Optionally set non-secret defaults such as `GH_ISSUE_PATTERN`, `GH_BOT_USERNAME`, and `GH_VERIFY_CMD` in committed `vstack.settings.toml`
+2. For bot-account operations, set `GH_BOT_TOKEN` in `.env.local`
+3. For shared non-secret defaults, use `vstack.settings.toml` under `[env]`
+
+Requires `gh` and `jq`. `op` is only needed if a token is a 1Password
+reference.
+
+## Usage
 
 ```bash
 ./scripts/github.sh pr-view 123 --json number,title,state
-./scripts/github.sh bot-token
+./scripts/github.sh pr-threads 123 --unresolved
+./scripts/github.sh pr-merge 123 --check
 ./scripts/github.sh label-add 123 needs-review --required
 ./scripts/git-https-auth -C . fetch --prune origin
 ```
 
-`label-add` checks the live label inventory, resolves the target, and lets
-GitHub authorize the selected token's effective label-write grant. It does not
-infer token access from the authenticated user's repository role, which may
-differ for GitHub App and fine-grained tokens. Label names are always treated
-as literal strings, including `@`-prefixed names and values resembling JSON
-types or repository placeholders. The default `--required` policy reports a
-missing label as configuration error and a known GitHub permission denial as a
-capability error. Use `--optional` only when project policy permits the label
-to be skipped; missing-label and permission failures then return a structured
-`optional_unsupported` outcome. Those failures do not successfully mutate the
-target. Authentication, lookup, rate-limit, server, and unexpected API failures
-remain errors in either mode.
+Run `./scripts/github.sh --help` for the command list, or
+`./scripts/github.sh <command> --help` for one command's options.
 
 ## Configuration
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved GitHub token from the parent process | Falls back to `gh` auth |
-| `GH_BOT_TOKEN` | Bot account GitHub token | Falls back to `GH_TOKEN` / `GITHUB_TOKEN` for helper auth, then `gh` auth |
-| `GH_BOT_USERNAME` | Bot username for filtering | `review-bot[bot]` |
-| `GH_ISSUE_PATTERN` | Regex for branch issue extraction | `[A-Z]+-[0-9]+` |
-| `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` token resolution | `10` |
-| `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds to wait for `pr-view` auth preflight | `10` |
-| `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds to wait for `gh pr view` | `30` |
-| `VSTACK_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never`, or `always` for `git-https-auth` SSH→HTTPS fallback | `auto` |
+| `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved token from the parent process | `gh` auth |
+| `GH_BOT_TOKEN` | Bot account token | `GH_TOKEN` / `GITHUB_TOKEN`, then `gh` auth |
+| `GH_BOT_USERNAME` | Bot login used when filtering reviews and comments | `review-bot[bot]` |
+| `GH_ISSUE_PATTERN` | Regex extracting an issue id from a branch name | `[A-Z]+-[0-9]+` |
+| `GH_VERIFY_CMD` | Overrides build/test detection in `pr-cross-check --verify` | auto-detect |
+| `VSTACK_GITHUB_OP_TIMEOUT` | Seconds allowed for `op read` | `10` |
+| `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds allowed for the `pr-view` auth preflight | `10` |
+| `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds allowed for `gh pr view` | `30` |
+| `VSTACK_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never`, or `always` for `git-https-auth` | `auto` |
 
-Keep tokens in `.env.local` unless the parent process injects already-resolved secrets at launch. Token loaders preserve parent-process values over project files for the same variable. `github.sh` then selects one effective router token before resolving 1Password references: first resolved `GH_TOKEN`, then resolved `GH_BOT_TOKEN`, then resolved `GITHUB_TOKEN`; only if no resolved token exists does it consider unresolved `op://` references in that same order. `op read` is only called for that final selected reference. If the selected `op://` reference cannot resolve, `github.sh` drops `GH_TOKEN`/`GITHUB_TOKEN` so `gh` can use keyring auth. Once a resolved `GH_BOT_TOKEN` is selected, helpers preserve that bot identity instead of replacing it with ambient keyring auth. Auth preflight validates selected env tokens with `gh api user`; `gh auth status` is only authoritative for keyring auth when no env token is selected. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables. Shared non-secret defaults can live in `vstack.settings.toml` under `[env]`; `.env.local` still wins for local overrides.
+Values already set in the parent process win over project files. Tokens may be
+literal (`ghp_*`, `github_pat_*`, …) or `op://vault/item/field` references;
+keep them in `.env.local` rather than committed settings.
 
-`pr-view --json ...` emits normal `gh pr view` JSON on success. On failure it
-emits structured JSON on stdout with `status` (`no_pr`, `auth_error`,
-`token_resolution_failed`, `token_resolution_timeout`,
-`token_resolution_unavailable`, `auth_timeout`, `gh_timeout`, or `gh_error`),
-`error`, `detail`, `exit_code`, and `number:null`, then exits nonzero. Stderr
-keeps the raw `gh`/`op` detail for logs.
+`pr-cross-check --verify` picks its build and test commands in this order:
+`GH_VERIFY_CMD`, then a `verify.sh` in the project root, then auto-detection
+from `Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`, or `Makefile`.
 
-`pr-merge --check` reports still-running checks as `ci_pending: ...` and sets
-`transient: true` when those pending checks are the only blockers. Terminal
-failed or cancelled checks remain `ci_failed: ...` and are not transient.
-Actionable review threads (unresolved and not outdated), plus failures to read
-thread state, are permanent blockers. They stop both immediate merge and
-`--auto` before any merge or queue mutation. Only the explicit, dangerous
-`--force` flag bypasses that safety gate. Thread retrieval follows every
-GraphQL page and fails rather than treating an incomplete list as clean.
-Merge execution is exact-head guarded. A successful mutation returns exit `0`
-when already merged, exit `75` with a distinct message when either a required
-merge-queue entry or classic auto-merge is active, and exit `1` when no merged,
-queued, or armed postcondition can be proven. Required-queue membership is read
-through GraphQL because `gh pr view --json` does not expose it.
-`--force` remains immediate-only and cannot be combined with `--auto`; the
-conflicting flags fail before any GitHub lookup or mutation. A nonzero forced
-mutation returns exit `1` unless the exact-head post-state is already `MERGED`.
-Auto-merge or queue enrollment active before the call cannot mask the failure.
+## The merge gate
 
-That gate is deliberately narrower than GitHub's
-`required_conversation_resolution`, which requires *all* conversations resolved
-with no outdated/active distinction: an outdated thread no longer refers to the
-current diff and is not actionable. It is also policy, not mechanism —
-`pr-merge` gates only merges that go through it, and a raw `gh pr merge` or the
-UI Merge button bypasses it. Conversely, where branch protection *is* enabled,
-an outdated thread can become unreachable in the UI while still blocking the
-merge (404 on click, zero visible conversations, merge refused); `pr-threads`
-plus `resolve-thread` clear it by thread id through GraphQL. See SKILL.md
-§ PR blocked with no visible conversations.
+`pr-merge` refuses to merge while a PR has review threads that are unresolved
+and not outdated, and equally when thread state cannot be read at all. This is
+deliberately narrower than GitHub's `required_conversation_resolution`, which
+requires *all* conversations resolved: an outdated thread no longer points at
+the current diff and cannot be acted on.
 
-## Git HTTPS Fallback
+It is also policy, not mechanism — the gate binds only merges routed through
+`pr-merge`, so a raw `gh pr merge` or the GitHub UI still bypasses it.
 
-Use `scripts/git-https-auth` for the GitHub network operations in workflows
-that should succeed with GitHub CLI auth even when project remotes are
-SSH-backed. The helper detects GitHub SSH remotes or explicit GitHub SSH URLs,
-validates the selected env token or `gh` keyring auth, and then runs the git
-command with temporary `credential.helper=!gh auth git-credential` and
-SSH-to-HTTPS rewrite config. It does not persist config and leaves non-GitHub
-or unauthenticated git commands on the normal path.
-
-Prefer targeted post-fetch sync commands in automation:
-
-```bash
-./scripts/git-https-auth -C "$repo" fetch --prune origin "+refs/heads/$base_branch:refs/remotes/origin/$base_branch"
-git -C "$repo" merge --ff-only "origin/$base_branch"
-```
-
-Avoid `git fetch --all` in PR closure workflows unless every remote is required;
-optional secondary remotes should not block syncing `origin` after a merge.
-Fetch into the explicit `refs/remotes/origin/$base_branch` tracking ref and use
-that same `origin/$base_branch` ref for post-merge sync so automation avoids
-`git pull`'s branch/ref resolution ambiguity and does not depend on the
-repository's configured `remote.origin.fetch` refspec.
-
-## Diff Summary Risk Flags
-
-`git-diff-summary` emits JSON for review routing. Rust-specific risk flags
-(`unsafe_code_added`, `repr_c_struct_changed`, `extern_c_changed`,
-`atomics_modified`) scan added lines from `.rs` diffs only. Non-Rust scripts,
-docs, and config can mention `unsafe`, `#[repr(C)]`, `extern "C"`, or
-`Atomic` without triggering Rust risk flags.
-
-Panic patterns (`panic!`/`unwrap()`) added in production source emit
-`panic_path_added`. The same patterns whose enclosing context is a test
-surface — `#[cfg(test)]` modules (found by brace-tracking the block the
-attribute opens), `tests/` dirs, or `*_tests.rs` files — emit the distinct
-informational `test_panic_path_added` flag instead: a test assertion is not a
-production panic path, so `refix-route` treats that flag as non-risk and the
-round falls through to blockers/size/small handling.
-
-A file carrying no test marker of its own is still treated as a test surface
-when the gate lives at its declaration site — the shared-fixture shape
-`#[cfg(test)] #[path = "..."] mod x;` in the module that declares it — so
-panics added to such a file also emit `test_panic_path_added`. A file
-declared or `include!`d anywhere without the gate, one whose declaration is
-not found, and a crate root all keep their file-local classification, as does
-any file whose declaring module cannot be read. See
-[DEVELOPMENT.md](./DEVELOPMENT.md) for how declarations are resolved.
-
-## Verification (pr-cross-check --verify)
-
-`verify-lib.sh` auto-detects the build system. Override order:
-1. `GH_VERIFY_CMD` env var
-2. `verify.sh` in project root
-3. Auto-detect from `Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`, `Makefile`
-
-## Dependencies
-
-- `gh` CLI authenticated
-- `jq`
-- `op` CLI (optional, for 1Password token references)
+Where branch protection *is* enabled, the opposite problem appears: after a
+rebase or force-push an outdated thread can become unreachable in the UI —
+the link 404s and the PR shows no conversations while still refusing to merge.
+List threads with `pr-threads` and clear them by id with `resolve-thread`,
+which reaches threads the UI cannot render.

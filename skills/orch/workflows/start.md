@@ -1,35 +1,25 @@
 # Start Workflow
 
-Start one work item. Never watches or manages other sessions.
-
-## Inputs
+Prepare one work item from the main repo. Never watches or manages other sessions.
 
 | Command | Flow |
 |---------|------|
-| `start` | dashboard → select one item |
-| `start [LINEAR_ID]` | prepare Linear issue → handoff or worktree run |
-| `start github OWNER/REPO#N` | prepare GitHub issue → handoff or worktree run |
+| `start` | pick one item → prepare |
+| `start [LINEAR_ID]` | prepare Linear issue |
+| `start github OWNER/REPO#N` | prepare GitHub issue |
 | `start new ...` | `workflows/start-new.md` |
 
 ## 1. Route
 
-1. If args start with `new`, invoke `workflows/start-new.md`.
-2. Parse explicit work item args before checking cwd:
-   - If args start with `github`, set `tracker=github`, parse `[OWNER/REPO]` and `[N]`, and set `ISSUE_ID=issue-[N]`.
-   - Else set `tracker=linear`, parse `[ISSUE_ID]` if present.
-   - If parsed `ISSUE_ID` starts with `issue-`, set `tracker=github`.
-3. If cwd is a worktree, invoke `workflows/start-worktree.md` with the parsed context and stop.
+1. Args starting with `new` → invoke `workflows/start-new.md`.
+2. Parse explicit args before checking cwd: `github` → `tracker=github`, `[OWNER/REPO]`, `ISSUE_ID=issue-[N]`; otherwise `tracker=linear` with the parsed `[ISSUE_ID]`, promoted to `github` when it starts with `issue-`.
+3. cwd is a worktree → invoke `workflows/start-worktree.md` with that context and stop.
 
-## 2. Main Repo Dashboard
+## 2. Select Work Item
 
 **Skip if** an explicit issue was provided.
 
-1. Run:
-   ```bash
-   .agents/skills/orch/scripts/session-init
-   ```
-2. Output exactly as printed.
-3. Pick one recommended work item. If multiple items exist, convert them into Linear/GitHub issues first; do not spawn a controller session.
+Present the unblocked candidates from the tracker and pick one. If several are wanted, convert them to issues first and hand them off separately — this workflow prepares exactly one.
 
 <output_format>
 
@@ -45,62 +35,59 @@ Start one work item. Never watches or manages other sessions.
 
 ## 3. Resolve Work Item
 
-### Linear
+**Linear** — two commands; the sync precedes the read so children added since the last reconcile cannot slip a container through a stale cache:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
 ```
 
-**Container check** — mechanical, from the `--with-bundle` output. Check the title FIRST: a `(one PR)` title marker always wins and opts the bundle into single-PR delegation, even when it carries the `agent:multi` label (that is how a legacy multi-domain bundle keeps the old reading). Without the marker, the issue is a CONTAINER when it has children or carries the `agent:multi` label. A container is never the work item: it gets no worktree, no session, and no PR — each child is the PR unit and the container closes last (via `merge-pr.md`, after its final child).
+Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)) to the `--with-bundle` output.
 
-- **Container** → do not proceed with it. List its unblocked DIRECT children — `depth == 0` entries of the bundle's flattened children array only; deeper descendants are reached by re-running this section, never selected directly past their own parent's blockers — and pick one as the work item (or present them if the choice is not obvious), then re-run this section for the chosen child. A child is unblocked when its `state_type` is non-terminal and every blocker is resolved. Blockers come from two places: the child's own `blocked_by` AND the container's `blocked_by` — cross-bundle relations live on the parent and apply to every child. The arrays carry IDs only, so resolve each blocker's state (`cache issues get [BLOCKER_ID]`, one call per blocker or a `bulk-get`); only a blocker with non-terminal `state_type` blocks — a Done or canceled blocker does not make a child undispatchable. Independent children may also run in parallel sessions (`workflows/parallel-check.md`).
-- **Explicit single-PR bundle** (`(one PR)` in the title, or a leaf issue whose description carries an internal checklist) → the parent IS the work item: one session, one PR covering all children. This is the exception, not the default, and must be opted into via the marker.
-- **Child (or deeper descendant) of a container** → apply the Ancestor gate (SKILL.md → Coordination): walk the FULL `parent_id` chain (`cache issues get` per ancestor — the child's own fetch carries only `parent_id`, never ancestor titles/labels), classifying each. Any ancestor WITH the `(one PR)` marker → that bundle is the work item unless the user explicitly chose the child. All ancestors containers → the child is the PR unit, gated on the SAME dispatchability test as container expansion: its OWN `state_type` must be non-terminal (an already Done or canceled child is never re-dispatched — stop and say so), and the union of its own `blocked_by` and EVERY container ancestor's must resolve terminal (blocker states fetched in chunks of at most 50 ids, every requested id verified returned — a missing lookup keeps the child blocked — a cross-bundle blocker on the TOP container stops a directly selected grandchild): if blocked, stop and name the live blockers instead of preparing a worktree.
+- **Container** → it is not the work item. List its unblocked DIRECT children (`depth == 0` in the flattened children array; deeper descendants are reached by re-running this section, never selected past their own parent's blockers), pick one, and re-run this section for it.
+- **Explicit single-PR bundle** (`(one PR)` in the title, or a leaf whose description carries an internal checklist) → the parent IS the work item.
+- **Child of a container** → the child is the PR unit, gated on its own non-terminal `state_type` and the union of its own and every container ancestor's blockers. Blocked or terminal → stop and name the live blockers.
 
-### GitHub
+**GitHub**:
 
 ```bash
 gh issue view [N] --repo [OWNER/REPO] --json number,title,body,url,labels,state
 ```
 
-If the issue is not open, stop and ask for a different item.
+Not open → stop and ask for a different item.
 
 ## 4. Prepare Worktree
 
-1. Run:
-   ```bash
-   .agents/skills/worktree/scripts/worktree check
-   ```
-2. Resolve dirty main repo state with the user before creating worktrees.
-3. Check whether the issue worktree already exists:
-   ```bash
-   .agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
-   .agents/skills/worktree/scripts/worktree path [ISSUE_ID]
-   ```
-   If it exists, treat it as active ownership: inspect its branch/PR and monitor or coordinate with the existing owner. Do not spawn a second implementer. Only the confirmed owning session may run `create [ISSUE_ID] --reuse`.
-4. When no issue worktree exists, create it with one command whose exit status is checked directly:
-   ```bash
-   # Linear
-   .agents/skills/worktree/scripts/worktree create [ISSUE_ID]
+```bash
+.agents/skills/worktree/scripts/worktree check
+```
 
-   # GitHub
-   .agents/skills/worktree/scripts/worktree create issue-[N]
-   ```
-   Exit 75 means a branch or open PR already owns the issue even though the configured path was absent; inspect/monitor it instead of delegating. Use the successful create output as `WT_PATH`.
+Resolve a dirty main repo with the user before creating anything. Then check for an existing worktree:
 
-5. **Session-guard lease** — claimed by the working session in `initialize.md` § 1 step 4, which every § 5 route (continue-here, handoff, manual) reaches through `start-worktree.md` § 1. This launcher step never claims: a lease means "a live session is working here", and for a handoff that session is the launched one.
+```bash
+.agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
+.agents/skills/worktree/scripts/worktree path [ISSUE_ID]
+```
 
-## 5. Handoff Or Continue
+An existing worktree means active ownership: inspect its branch and PR and coordinate with that owner. Do not spawn a second implementer; only the confirmed owning session may run `create [ISSUE_ID] --reuse`.
 
-Ask one action:
+Otherwise create it, checking the exit status directly (`issue-[N]` for GitHub items):
+
+```bash
+.agents/skills/worktree/scripts/worktree create [ISSUE_ID]
+```
+
+Exit 75 means a branch or open PR already owns the issue even though the configured path was absent — inspect it instead of delegating. Use the create output as `WT_PATH`.
+
+## 5. Continue Or Hand Off
+
+Ask one question:
 
 | Choice | Action |
 |--------|--------|
-| Continue here | Execute `workflows/start-worktree.md` using `[WT_PATH]` as the worktree context |
-| Launch handoff | Invoke `workflows/handoff.md` |
-| Launch Codex app | Invoke `workflows/handoff.md` with `harness=codex-app`; Codex Desktop creates one app thread per issue via `codex_app` thread tools |
-| Manual | Print worktree path and exact `/orch start ...` command. For GitHub, use `/orch start github [OWNER/REPO]#[N]`; the worktree workflow normalizes it to `issue-[N]`. |
+| Continue here | Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context |
+| Hand off | Invoke `workflows/handoff.md` |
+| Manual | Print the worktree path and the exact command: `/orch start [ISSUE_ID]`, or `/orch start github [OWNER/REPO]#[N]` |
 
 <output_format>
 
@@ -111,10 +98,8 @@ Ask one action:
 | Work item | [ID or OWNER/REPO#N] |
 | Worktree | [WT_PATH] |
 | Branch | [BRANCH] |
-| Next | [continue-here\|handoff\|codex-app\|manual] |
+| Next | [continue-here\|handoff\|manual] |
 
 </output_format>
 
-## 6. End
-
-If launched as handoff, stop after launch.
+Launched as a handoff → stop after launch.

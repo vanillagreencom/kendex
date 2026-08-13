@@ -356,9 +356,53 @@ graphql_query() {
     done
 }
 
+# Reject a value before it reaches a spot that cannot defend itself: an unquoted
+# splice into a JSON payload, a jq program, or a shell arithmetic context. Each
+# of those turns a malformed value into either a wrong-cause diagnostic ("Invalid
+# GraphQL variables JSON") or an injection point.
+# Usage: linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4"
+linear_require_pattern() {
+    local flag="$1" value="$2" pattern="$3" expected="$4"
+    if [[ "$value" =~ $pattern ]]; then
+        return 0
+    fi
+    jq -cn --arg flag "$flag" --arg v "$value" --arg exp "$expected" \
+        '{error: ($flag + " must be " + $exp + ", got: " + $v)}' >&2
+    return 1
+}
+
+LINEAR_UUID_PATTERN='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+
+# An option that takes a value must have one. Without this a trailing `--label`
+# expands `$2` under `set -u` and dies naming `$2` rather than the flag.
+linear_require_option_value() {
+    local flag="$1"
+    if [ "$#" -lt 2 ]; then
+        jq -cn --arg flag "$flag" '{error: ($flag + " requires a value")}' >&2
+        return 1
+    fi
+    return 0
+}
+
+# Days-before-now as an ISO timestamp, for the --updated-since/--created-since
+# "7d" spelling. GNU and BSD date disagree on the flag, so both are tried; a
+# non-numeric count is rejected here rather than reaching either.
+linear_iso_days_ago() {
+    local flag="$1" spec="$2"
+    local days="${spec%d}"
+    if ! [[ "$days" =~ ^[0-9]+$ ]]; then
+        jq -cn --arg flag "$flag" --arg spec "$spec" \
+            '{error: ($flag + " expects a day count such as 7d, got: " + $spec)}' >&2
+        return 1
+    fi
+    date -d "-$days days" -Iseconds 2>/dev/null || date -v-"${days}"d -Iseconds
+}
+
 # Parse common CLI arguments into GraphQL filter
 # Usage: parse_filter "$@"
 # Sets global FILTER_JSON variable
+# Every value is carried through jq --arg: a label, project, team, or state name
+# holding a quote or backslash must not be able to reshape the filter object.
 parse_filter() {
     local filter_parts=()
     local first=75
@@ -367,57 +411,67 @@ parse_filter() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --label)
-            filter_parts+=("\"labels\": {\"name\": {\"eq\": \"$2\"}}")
+            linear_require_option_value "$@" || return 1
+            filter_parts+=("$(jq -cn --arg v "$2" '{labels: {name: {eq: $v}}}')")
             shift 2
             ;;
         --state | --status)
-            # Handle comma-separated states
-            IFS=',' read -ra states <<<"$2"
-            if [ ${#states[@]} -eq 1 ]; then
-                filter_parts+=("\"state\": {\"name\": {\"eq\": \"$2\"}}")
-            else
-                local state_json
-                state_json=$(printf '"%s",' "${states[@]}" | sed 's/,$//')
-                filter_parts+=("\"state\": {\"name\": {\"in\": [$state_json]}}")
-            fi
+            linear_require_option_value "$@" || return 1
+            # A comma-separated list becomes an `in` match; a single name an `eq`.
+            filter_parts+=("$(jq -cn --arg v "$2" '
+                ($v | split(",") | map(sub("^\\s+"; "") | sub("\\s+$"; ""))) as $names |
+                if ($names | length) == 1
+                then {state: {name: {eq: $names[0]}}}
+                else {state: {name: {in: $names}}}
+                end')")
             shift 2
             ;;
         --project)
-            filter_parts+=("\"project\": {\"name\": {\"eq\": \"$2\"}}")
+            linear_require_option_value "$@" || return 1
+            filter_parts+=("$(jq -cn --arg v "$2" '{project: {name: {eq: $v}}}')")
             shift 2
             ;;
         --project-id)
-            filter_parts+=("\"project\": {\"id\": {\"eq\": \"$2\"}}")
+            linear_require_option_value "$@" || return 1
+            filter_parts+=("$(jq -cn --arg v "$2" '{project: {id: {eq: $v}}}')")
             shift 2
             ;;
         --team)
-            filter_parts+=("\"team\": {\"name\": {\"eq\": \"$2\"}}")
+            linear_require_option_value "$@" || return 1
+            filter_parts+=("$(jq -cn --arg v "$2" '{team: {name: {eq: $v}}}')")
             shift 2
             ;;
         --assignee)
+            linear_require_option_value "$@" || return 1
             if [ "$2" = "me" ]; then
-                filter_parts+=("\"assignee\": {\"isMe\": {\"eq\": true}}")
+                filter_parts+=('{"assignee": {"isMe": {"eq": true}}}')
             else
-                filter_parts+=("\"assignee\": {\"name\": {\"eq\": \"$2\"}}")
+                filter_parts+=("$(jq -cn --arg v "$2" '{assignee: {name: {eq: $v}}}')")
             fi
             shift 2
             ;;
         --updated-since)
-            # Convert "7d" format to ISO date
-            local days="${2%d}"
-            local date
-            date=$(date -d "-$days days" -Iseconds 2>/dev/null || date -v-"${days}"d -Iseconds)
-            filter_parts+=("\"updatedAt\": {\"gte\": \"$date\"}")
+            linear_require_option_value "$@" || return 1
+            local updated_since
+            updated_since=$(linear_iso_days_ago "$1" "$2") || return 1
+            filter_parts+=("$(jq -cn --arg v "$updated_since" '{updatedAt: {gte: $v}}')")
             shift 2
             ;;
         --created-since)
-            local days="${2%d}"
-            local date
-            date=$(date -d "-$days days" -Iseconds 2>/dev/null || date -v-"${days}"d -Iseconds)
-            filter_parts+=("\"createdAt\": {\"gte\": \"$date\"}")
+            linear_require_option_value "$@" || return 1
+            local created_since
+            created_since=$(linear_iso_days_ago "$1" "$2") || return 1
+            filter_parts+=("$(jq -cn --arg v "$created_since" '{createdAt: {gte: $v}}')")
             shift 2
             ;;
         --limit)
+            linear_require_option_value "$@" || return 1
+            # FIRST_JSON is spliced into the variables payload and compared
+            # numerically by callers; anything else corrupts both.
+            if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                jq -cn --arg v "$2" '{error: ("--limit must be a non-negative integer, got: " + $v)}' >&2
+                return 1
+            fi
             first="$2"
             shift 2
             ;;
@@ -436,12 +490,8 @@ parse_filter() {
         esac
     done
 
-    # Build filter JSON
     if [ ${#filter_parts[@]} -gt 0 ]; then
-        FILTER_JSON=$(
-            IFS=,
-            echo "{${filter_parts[*]}}"
-        )
+        FILTER_JSON=$(printf '%s\n' "${filter_parts[@]}" | jq -cs 'add')
     else
         FILTER_JSON="{}"
     fi
@@ -462,8 +512,9 @@ resolve_issue_id() {
 
     # Look up by identifier (e.g., PROJ-42)
     local query='query GetIssue($id: String!) { issue(id: $id) { id } }'
-    local result
-    result=$(graphql_query "$query" "{\"id\": \"$issue_ref\"}")
+    local vars result
+    vars=$(jq -cn --arg id "$issue_ref" '{id: $id}')
+    result=$(graphql_query "$query" "$vars")
     local issue_id
     issue_id=$(echo "$result" | jq -r '.issue.id // empty')
 
@@ -489,65 +540,6 @@ normalize_mutation_response() {
         url: (.[$op][$ent].url // null),
         data: .[$op]
     }'
-}
-
-# Normalize query response - maps GraphQL field names to resource names
-# Usage: normalize_query_response "$result" "issueLabels" "labels"
-# Adds aliased key so both .issueLabels.nodes[] and .labels.nodes[] work
-normalize_query_response() {
-    local result="$1"
-    local graphql_key="$2"
-    local resource_key="$3"
-
-    echo "$result" | jq --arg gql "$graphql_key" --arg res "$resource_key" \
-        '. + {($res): .[$gql]}'
-}
-
-# Output formatting helpers (legacy, kept for compatibility)
-format_issues() {
-    jq -r '.issues.nodes[] | "\(.identifier)\t\(.title)\t\(.state.name)"' 2>/dev/null || echo "No issues found"
-}
-
-format_json() {
-    jq '.' 2>/dev/null || cat
-}
-
-# Parse --format argument from args
-# Usage: parse_format_arg "$@"
-# Sets FORMAT global variable, returns remaining args
-# Example: parse_format_arg --format ids --label foo → FORMAT=ids, returns "--label foo"
-parse_format_arg() {
-    FORMAT="${DEFAULT_FORMAT}"
-    local remaining_args=()
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-        --format)
-            FORMAT="$2"
-            shift 2
-            ;;
-        --format=*)
-            FORMAT="${1#--format=}"
-            shift
-            ;;
-        *)
-            remaining_args+=("$1")
-            shift
-            ;;
-        esac
-    done
-
-    # Validate format
-    case "$FORMAT" in
-    safe | raw | ids | table) ;;
-    *)
-        echo "{\"error\": \"Invalid format: $FORMAT. Use: safe, raw, ids, table\"}" >&2
-        return 1
-        ;;
-    esac
-
-    # Return remaining args
-    echo "${remaining_args[@]:-}"
 }
 
 # Team targeting
@@ -689,19 +681,24 @@ resolve_state_id() {
 
     # Look up state by name + team
     local query='query GetState($name: String!, $teamId: ID!) { workflowStates(filter: {name: {eq: $name}, team: {id: {eq: $teamId}}}) { nodes { id } } }'
-    local result
-    result=$(graphql_query "$query" "{\"name\": \"$state_name\", \"teamId\": \"$team_id\"}")
+    local vars result
+    vars=$(jq -cn --arg name "$state_name" --arg teamId "$team_id" '{name: $name, teamId: $teamId}')
+    result=$(graphql_query "$query" "$vars")
     local state_id
     state_id=$(echo "$result" | jq -r '.workflowStates.nodes[0].id // empty')
 
     if [ -z "$state_id" ]; then
-        # Fetch available states for helpful error
+        # Name the unknown state even when the follow-up listing fails — losing
+        # the real diagnostic to a second failed request helps nobody.
+        local team_vars all_result available=""
+        team_vars=$(jq -cn --arg teamId "$team_id" '{teamId: $teamId}')
         local all_query='query GetStates($teamId: ID!) { workflowStates(filter: {team: {id: {eq: $teamId}}}) { nodes { name } } }'
-        local all_result
-        all_result=$(graphql_query "$all_query" "{\"teamId\": \"$team_id\"}")
-        local available
-        available=$(echo "$all_result" | jq -r '[.workflowStates.nodes[].name] | join(", ")')
-        echo "{\"error\": \"State not found: '$state_name'. Available: $available\"}" >&2
+        if all_result=$(graphql_query "$all_query" "$team_vars"); then
+            available=$(echo "$all_result" | jq -r '[.workflowStates.nodes[].name] | join(", ")')
+        fi
+        jq -cn --arg name "$state_name" --arg available "$available" \
+            '{error: ("State not found: " + ($name | tojson) +
+                (if $available == "" then " (state list unavailable)" else ". Available: " + $available end))}' >&2
         return 1
     fi
 
@@ -710,13 +707,21 @@ resolve_state_id() {
 
 # Resolve label name to UUID
 # Usage: resolve_label_id "backend"
-# Warns on miss (non-fatal for callers that handle multiple labels)
+# Exit 1 = the workspace has no such label (a caller handling several labels may
+# skip it). Exit 2 = the lookup itself failed, so whether the label exists is
+# unknown — a caller rebuilding a label set must abort rather than drop it,
+# because "not found" and "could not ask" produce the same empty result.
 resolve_label_id() {
     local label_name="$1"
 
     local query='query GetLabel($name: String!) { issueLabels(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local result
-    result=$(graphql_query "$query" "{\"name\": \"$label_name\"}")
+    local vars result
+    vars=$(jq -cn --arg name "$label_name" '{name: $name}')
+    if ! result=$(graphql_query "$query" "$vars"); then
+        jq -cn --arg name "$label_name" \
+            '{error: ("Label lookup failed for " + ($name | tojson) + ": Linear API request failed (see previous error)")}' >&2
+        return 2
+    fi
     local label_id
     label_id=$(echo "$result" | jq -r '.issueLabels.nodes[0].id // empty')
 
@@ -741,13 +746,14 @@ resolve_milestone_id() {
 
     # Look up by name
     local query='query GetMilestone($name: String!) { projectMilestones(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local result
-    result=$(graphql_query "$query" "{\"name\": \"$milestone_ref\"}")
+    local vars result
+    vars=$(jq -cn --arg name "$milestone_ref" '{name: $name}')
+    result=$(graphql_query "$query" "$vars")
     local milestone_id
     milestone_id=$(echo "$result" | jq -r '.projectMilestones.nodes[0].id // empty')
 
     if [ -z "$milestone_id" ]; then
-        echo "{\"error\": \"Milestone not found: $milestone_ref\"}" >&2
+        jq -cn --arg ref "$milestone_ref" '{error: ("Milestone not found: " + $ref)}' >&2
         return 1
     fi
 

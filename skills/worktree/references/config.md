@@ -1,12 +1,10 @@
 # Configuration and push internals
 
-Deep mechanics behind the worktree tool's setup and `push` behavior. The everyday contract lives in [../SKILL.md](../SKILL.md).
-
-## Project config resolution
-
-Resolves project root via `git rev-parse`, detects default branch automatically, and reads project-specific config from `.env`, `vstack.settings.toml`, then `.env.local` (`.env.local` wins).
+Mechanics behind the worktree tool's setup and `push` behavior. The everyday contract lives in [../SKILL.md](../SKILL.md).
 
 ## Path arguments and canonicalization
+
+Project root resolves via `git rev-parse`, the default branch is detected automatically, and project config is read from `.env`, `vstack.settings.toml`, then `.env.local` (`.env.local` wins).
 
 Path comparisons are canonical (physical, symlink-resolved on both sides), so a worktree registered under a legacy symlinked spelling and addressed via its physical path — or vice versa — is recognized as the same tree, never as a foreign one.
 
@@ -14,19 +12,21 @@ Direct path arguments for mutating commands must be registered worktrees of this
 
 ## `push` resolution and authentication
 
-`push ISSUE_ID` normally resolves through the configured worktree registry. When run from a checkout whose current branch already matches the normalized issue branch, it pushes that active checkout instead. This supports Codex Desktop app-created worktrees that are valid git worktrees but are not registered under `WORKTREE_BASE_DIR`.
+`push ISSUE_ID` normally resolves through the configured worktree registry. When run from a checkout whose current branch already matches the normalized issue branch, it pushes that active checkout instead — this is what supports app-created worktrees, which are valid git worktrees but are not registered under `WORKTREE_BASE_DIR`.
 
-`push` and origin fetches use the GitHub skill's `git-https-auth` behavior when available: GitHub SSH remotes stay unchanged by default, but if `gh` auth is valid the git command gets temporary HTTPS rewrite and `gh auth git-credential` config. This lets Codex/GitHub-authenticated sessions push without a working SSH key. Set `VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never` to force the normal SSH path.
+`push` and origin fetches use the GitHub skill's `git-https-auth` behavior when available: GitHub SSH remotes stay unchanged by default, but if `gh` auth is valid the git command gets temporary HTTPS rewrite and `gh auth git-credential` config, letting a GitHub-authenticated session push without a working SSH key. Remote URLs and git config are not modified. `VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never` forces the normal SSH path.
 
 ## Force-with-lease authorization
 
 When `push` performs its auto-rebase, the following push uses a scoped `--force-with-lease` pinned to the target branch OID known before the rebase. `create --reuse` and the supported `create --restack` conflict-recovery flow persist the same narrowly scoped authorization in the worktree: it records the exact observed remote OID and the exact successfully restacked local head. `push` accepts that rewritten head or later commits built on it, still pins the force-with-lease to the recorded remote OID, and consumes the authorization after success. A different local rewrite, remote movement while conflict resolution is pending, or a moved remote at push time fails closed. Plain pushes are still used with `--no-rebase`.
 
+When the auto-rebase rewrites commits, `push` prints one `rebase-map: <old-sha> <new-sha>` line per rewritten commit on stdout (`dropped` in place of the new SHA when the replayed commit vanished because its patch was already upstream), so callers can remap commit SHAs recorded before the rebase. Commits pair by position when the pre/post counts match, otherwise by commit subject. A push that skips the rebase, or one run with `--no-rebase`, prints no map.
+
 ## Configuration variables
 
 | Variable | Effect |
 |----------|--------|
-| `WORKTREE_BASE_DIR` | Parent directory for created worktrees. Relative paths resolve from the main checkout; absolute paths and `~` are used as-is. Default: `../.worktrees/<checkout-name>` (external per-repo dir beside the checkout). Do not point it inside the repo root: worktree build outputs under the repo can exhaust recursive file-watcher (inotify) budgets |
+| `WORKTREE_BASE_DIR` | Parent directory for created worktrees. Relative paths resolve from the main checkout; absolute paths and `~` are used as-is. Default: `../.worktrees/<checkout-name>`. Do not point it inside the repo root: worktree build outputs under the repo can exhaust recursive file-watcher (inotify) budgets |
 | `WORKTREE_SYMLINKS` | Space-separated paths symlinked from main checkout into each worktree; include `.env.local` only if worktrees should share local secrets/overrides. Point entries at untracked runtime paths — see the tracked-content caveat below |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `path=target` symlinks created inside each worktree, with relative targets resolving from the link location |
 | `WORKTREE_COPIES` | Space-separated files copied from main checkout into each worktree |
@@ -38,26 +38,14 @@ Configured setup paths (`WORKTREE_SYMLINKS`, `WORKTREE_COPIES`, `WORKTREE_MKDIRS
 
 ## Symlink entries that shadow tracked content
 
-When a configured symlink path is a tracked **file** in the worktree branch, the script marks that file assume-unchanged before replacing it so `git status` stays clean (the migration case: a project moving away from committing harness config files).
+When a configured symlink path is a tracked **file** in the worktree branch, the script marks that file assume-unchanged before replacing it so `git status` stays clean.
 
-**Directory entries with tracked content are linked per child.** When a `WORKTREE_SYMLINKS` directory entry contains tracked files, setup does not link the parent. It keeps the entry a real directory, leaves the tracked paths as real files git owns, and symlinks only the entry's untracked children — recursing into children that mix tracked and untracked content. The result is the same as hand-enumerating the untracked subpaths in `WORKTREE_SYMLINKS`, with nothing to maintain per consumer: a newly installed skill under the entry is linked on the next `create`/`fix-links`/auto-repair pass, and a PR that updates the tracked subtree (a vendored review-gate engine, say) merges normally in every worktree because git can write those paths directly. Each untracked child goes through the same quarantine as a top-level entry (below): a child that has materialized as a real file or directory holding data git does not track, or that differs from the index, is never overwritten — it is reported and left in place. A child nesting deeper than 8 levels is reported the same way. Any of these leaves the entry only partially linked, so setup reports failure naming the affected paths rather than succeeding silently; `create`/`fix-links` surface it as an error, and hook-driven auto-repair surfaces it as a blocked warning.
+**Directory entries with tracked content are linked per child.** Setup does not link the parent: the entry stays a real directory, tracked paths stay real files git owns, and only the untracked children are symlinked, recursing into children that mix tracked and untracked content. A newly installed skill under the entry is linked on the next `create`/`fix-links`/auto-repair pass, and a PR updating the tracked subtree merges normally in every worktree because git can write those paths directly.
 
-(Earlier versions linked the parent and marked the tracked files underneath `assume-unchanged`, which made `cherry-pick`/`checkout`/`merge` fail on those paths while `git status` read clean. A worktree still carrying that legacy layout heals on the next `fix-links` or hook-driven repair: the parent link is replaced with a real directory, the assume-unchanged bits are cleared, and missing tracked files are restored from the index — locally modified ones are never touched.)
+Each untracked child goes through the same quarantine as a top-level entry: a child that has materialized as a real file or directory holding data git does not track, or that differs from the index, is reported and left in place, never overwritten. A child nesting deeper than 8 levels is reported the same way. Either leaves the entry partially linked, so setup fails naming the affected paths rather than succeeding silently — an error from `create`/`fix-links`, a blocked warning from hook-driven auto-repair.
 
-`create --reuse` and `create --restack` also reconcile the legacy layout before rebasing: they clear the `assume-unchanged` bits, drop the configured symlinks, and restore the shadowed files from the index, so git can detach HEAD; setup is re-applied on every terminal path — success, a rebase that never started, an aborted conflict, and `restack continue`/`restack abort`. A `--restack` that pauses on conflicts deliberately stays un-shadowed, so conflicts are resolved against real files; the links come back when the restack finishes or is aborted.
+A worktree carrying the legacy layout — a parent link over tracked content, tracked files underneath marked `assume-unchanged` — heals on the next `fix-links` or hook repair: the parent link becomes a real directory, the bits are cleared, and missing tracked files are restored from the index (locally modified ones are never touched). `create --reuse`/`--restack` reconcile the same layout before rebasing so git can detach HEAD, and re-apply setup on every terminal path: success, a rebase that never started, an aborted conflict, `restack continue`, and `restack abort`. A `--restack` paused on conflicts stays un-shadowed so conflicts resolve against real files; the links return when the restack finishes or aborts.
 
 ## `info/exclude` entries
 
-The ignore entry setup writes for each symlinked path goes into the **common** git dir's `info/exclude`, which every checkout of the repo reads — including main, where that path is a real directory rather than a symlink. A plain entry there marked the whole directory ignored in main, so `git add <tracked file under it>` refused with *"The following paths are ignored by one of your .gitignore files"* while `git status` still listed the file as modified, and it outlived the worktree. When the path holds tracked content, setup now follows the entry with `!<path>/`: a trailing-slash pattern matches a real directory but **not** a symlink pointing at one, so main keeps the directory while the worktree's symlink stays ignored. Runtime-only paths keep the plain entry — many projects (vstack's own `.agents` mirror included) rely on it alone to hide the mirror in main, with no `.gitignore` rule behind it, and a negation there would fill main with untracked noise. The shape is re-evaluated on every `create`/`fix-links` against both indexes, main being authoritative, so a path that gains or loses tracked content self-heals.
-
-## Example
-
-Share local env plus generated Claude assets, but keep `.claude/CLAUDE.md` pointed at each worktree's own `AGENTS.md`:
-
-```toml
-[env]
-WORKTREE_BASE_DIR = "~/dev/.worktrees/myproject"
-WORKTREE_SYMLINKS = ".env.local .claude/agents .claude/hooks .claude/skills"
-WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md"
-WORKTREE_MKDIRS = "tmp"
-```
+The ignore entry setup writes for each symlinked path goes into the **common** git dir's `info/exclude`, which every checkout reads — including main, where that path is a real directory rather than a symlink. When the path holds tracked content, setup follows the entry with `!<path>/`: a trailing-slash pattern matches a real directory but **not** a symlink pointing at one, so main keeps the directory while the worktree's symlink stays ignored. Without that negation, main's copy reads as ignored and `git add` of a tracked file under it is refused while `git status` still lists it as modified. Runtime-only paths keep the plain entry — many projects rely on it alone to hide the mirror in main, with no `.gitignore` rule behind it, and a negation there would fill main with untracked noise. The shape is re-evaluated on every `create`/`fix-links` against both indexes, main authoritative, so a path that gains or loses tracked content self-heals.

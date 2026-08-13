@@ -54,6 +54,7 @@ case "$cmd" in
         case "$format" in
             compact) date +%Y%m%d-%H%M%S ;;
             epoch) date +%s ;;
+            iso) date -u +%Y-%m-%dT%H:%M:%SZ ;;
             *) echo "Error: unknown timestamp format '$format'" >&2; exit 2 ;;
         esac
         ;;
@@ -67,7 +68,7 @@ Commands:
   issue-from-branch [worktree]    Print issue id matched from branch
   repo-root [worktree]            Print git worktree root
   common-root [worktree]          Print main checkout root for worktree sets
-  timestamp [compact|epoch]       Print workflow timestamp
+  timestamp [compact|epoch|iso]   Print workflow timestamp (iso is UTC RFC-3339)
 EOF
         ;;
     *)

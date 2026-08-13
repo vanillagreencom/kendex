@@ -77,7 +77,7 @@ run_safety_checks() {
     # 2. Check branch has commits ahead of the base the PR will actually
     #    target: the REMOTE base. Counting against local $base inflates the
     #    number when local $base is stale (behind origin/$base), reporting
-    #    already-merged commits as "ahead" (#537).
+    #    already-merged commits as "ahead".
     git fetch --quiet origin "$base" 2>/dev/null || true
     local base_ref="$base" base_label="local $base (origin unreachable; count may be stale)"
     if git rev-parse --verify --quiet "origin/$base" >/dev/null 2>&1; then
@@ -157,9 +157,14 @@ main() {
         title=$(git log -1 --format=%s)
     fi
 
-    # Default head to current branch
+    # Default head to current branch. A detached HEAD yields an empty name,
+    # which would otherwise reach `gh pr create --head ""` as an opaque failure.
     if [ -z "$head" ]; then
         head=$(git branch --show-current)
+        if [ -z "$head" ]; then
+            echo "Error: HEAD is detached; pass --head <branch> or check out a branch." >&2
+            exit 1
+        fi
     fi
 
     # Run safety checks unless --force
@@ -203,7 +208,9 @@ main() {
     elif [ "$body_set" = true ]; then
         cmd+=(--body "$body")
     fi
-    for label in "${labels[@]}"; do cmd+=(--label "$label"); done
+    # Guarded expansion: an empty array is an unbound variable under `set -u`
+    # in Bash 3.2, which is still the system shell on macOS.
+    for label in ${labels[@]+"${labels[@]}"}; do cmd+=(--label "$label"); done
     [ "$draft" = true ] && cmd+=(--draft)
 
     # Execute with bot token if available

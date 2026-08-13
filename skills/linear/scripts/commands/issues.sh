@@ -1176,29 +1176,31 @@ create_issue() {
     fi
 
     # Build input object - use jq for proper JSON escaping
+    # printf, not `echo -n`: `echo -n "-n"` prints nothing, so a title or
+    # description of exactly -n/-e/-E became an empty string server-side.
     local escaped_title
-    escaped_title=$(echo -n "$title" | jq -Rs '.')
+    escaped_title=$(printf '%s' "$title" | jq -Rs '.')
     local input_parts=("\"title\": $escaped_title")
 
-    # Get team ID
-    local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local team_result
-    team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
+    # Shared resolver: it passes a team UUID straight through and tells an API
+    # failure apart from a genuine miss, neither of which an inline copy did.
     local team_id
-    team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
-    if [ -z "$team_id" ]; then
-        echo "{\"error\": \"Team not found: $team\"}" >&2
-        return 1
-    fi
+    team_id=$(resolve_team_id "$team") || return 1
     input_parts+=("\"teamId\": \"$team_id\"")
 
     if [ -n "$description" ]; then
         local escaped_desc
-        escaped_desc=$(echo -n "$description" | jq -Rs '.')
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
     fi
-    [ -n "$priority" ] && input_parts+=("\"priority\": $priority")
-    [ -n "$estimate" ] && input_parts+=("\"estimate\": $estimate")
+    if [ -n "$priority" ]; then
+        linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
+        input_parts+=("\"priority\": $priority")
+    fi
+    if [ -n "$estimate" ]; then
+        linear_require_pattern --estimate "$estimate" '^[0-9]+$' "a non-negative integer" || return 1
+        input_parts+=("\"estimate\": $estimate")
+    fi
 
     # Handle labels (warn + skip on miss per label — EXCEPT agent:* labels:
     # the routing guard's promise is routed-or-refused, so an agent label
@@ -1209,9 +1211,16 @@ create_issue() {
         IFS=',' read -ra label_names <<<"$labels"
         local label_ids=()
         for label_name in "${label_names[@]}"; do
-            local label_id
+            local label_id label_rc=0
             if label_id=$(resolve_label_id "$label_name"); then
                 label_ids+=("\"$label_id\"")
+            elif label_rc=$?; [ "$label_rc" = "2" ]; then
+                # The lookup failed, so whether the label exists is unknown.
+                # Skipping it here is the warn-and-skip path for a label proved
+                # absent, which this is not.
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Label lookup failed for " + $label + " - refusing the create rather than dropping a label that may well exist")}' >&2
+                return 1
             elif [[ "$label_name" == agent:* ]] && [ -n "${LINEAR_AGENT_LABELS:-}" ]; then
                 # Hard-fail only under a declared taxonomy — undeclared repos
                 # keep the historical warn-and-skip for every label.
@@ -1250,23 +1259,27 @@ create_issue() {
         input_parts+=("\"stateId\": \"$state_id\"")
     fi
 
-    # Handle assignee
+    # Handle assignee. Every other resolver here fails closed; dropping the
+    # field on an unresolvable name reported success with the issue unassigned.
     if [ -n "$assignee" ]; then
+        local assignee_id
         if [ "$assignee" = "me" ]; then
             local me_query='query { viewer { id } }'
             local me_result
             me_result=$(graphql_query "$me_query" "{}")
-            local me_id
-            me_id=$(echo "$me_result" | jq -r '.viewer.id // empty')
-            [ -n "$me_id" ] && input_parts+=("\"assigneeId\": \"$me_id\"")
+            assignee_id=$(echo "$me_result" | jq -r '.viewer.id // empty')
         else
             local user_query='query GetUser($name: String!) { users(filter: {name: {containsIgnoreCase: $name}}) { nodes { id } } }'
-            local user_result
-            user_result=$(graphql_query "$user_query" "{\"name\": \"$assignee\"}")
-            local user_id
-            user_id=$(echo "$user_result" | jq -r '.users.nodes[0].id // empty')
-            [ -n "$user_id" ] && input_parts+=("\"assigneeId\": \"$user_id\"")
+            local user_vars user_result
+            user_vars=$(jq -cn --arg name "$assignee" '{name: $name}')
+            user_result=$(graphql_query "$user_query" "$user_vars")
+            assignee_id=$(echo "$user_result" | jq -r '.users.nodes[0].id // empty')
         fi
+        if [ -z "$assignee_id" ]; then
+            jq -cn --arg who "$assignee" '{error: ("Assignee not found: " + $who)}' >&2
+            return 1
+        fi
+        input_parts+=("\"assigneeId\": \"$assignee_id\"")
     fi
 
     # Handle parent (for sub-issues) - resolve identifier to UUID
@@ -1292,6 +1305,7 @@ create_issue() {
 
     # Handle cycle (sprint)
     if [ -n "$cycle" ]; then
+        linear_require_pattern --cycle "$cycle" "$LINEAR_UUID_PATTERN" "a cycle UUID" || return 1
         input_parts+=("\"cycleId\": \"$cycle\"")
     fi
 
@@ -1439,6 +1453,7 @@ update_issue() {
     local clear_cycle="false"
     local estimate=""
     local clear_estimate="false"
+    local clear_labels="false"
     local sort_order=""
     local output_format=""
     local attach_paths=()
@@ -1554,6 +1569,10 @@ update_issue() {
             clear_estimate="true"
             shift
             ;;
+        --clear-labels)
+            clear_labels="true"
+            shift
+            ;;
         --assignee)
             assignee="$2"
             shift 2
@@ -1636,15 +1655,18 @@ update_issue() {
 
     if [ -n "$title" ]; then
         local escaped_title
-        escaped_title=$(echo -n "$title" | jq -Rs '.')
+        escaped_title=$(printf '%s' "$title" | jq -Rs '.')
         input_parts+=("\"title\": $escaped_title")
     fi
     if [ -n "$description" ]; then
         local escaped_desc
-        escaped_desc=$(echo -n "$description" | jq -Rs '.')
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
     fi
-    [ -n "$priority" ] && input_parts+=("\"priority\": $priority")
+    if [ -n "$priority" ]; then
+        linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
+        input_parts+=("\"priority\": $priority")
+    fi
 
     # Handle estimate. Real estimates are 1-5; Linear represents "no estimate" as
     # null. Clear the estimate via --clear-estimate or the --estimate 0 alias
@@ -1670,6 +1692,7 @@ update_issue() {
         if [ -n "$parent_id" ]; then
             echo "WARN: $issue_id is a sub-issue of $parent_id — sort order has no effect on sub-issues" >&2
         fi
+        linear_require_pattern --sort-order "$sort_order" '^-?[0-9]+(\.[0-9]+)?$' "a number" || return 1
         input_parts+=("\"sortOrder\": $sort_order")
     fi
 
@@ -1683,14 +1706,33 @@ update_issue() {
         input_parts+=("\"stateId\": \"$state_id\"")
     fi
 
-    # Handle labels (warn + skip on miss per label)
-    if [ -n "$labels" ]; then
+    # --labels REPLACES the issue's label set, so a name that does not become an
+    # id is not a skipped label — it is a label removed from the issue. A failed
+    # lookup (rc 2) leaves that unknowable, and resolving nothing at all would
+    # send an empty array, stripping every label while reporting success.
+    # --clear-labels is the only way to ask for that.
+    if [ "$clear_labels" = "true" ] && [ -n "$labels" ]; then
+        echo '{"error": "Use either --labels <names> or --clear-labels, not both"}' >&2
+        return 1
+    elif [ "$clear_labels" = "true" ]; then
+        input_parts+=("\"labelIds\": []")
+    elif [ -n "$labels" ]; then
         IFS=',' read -ra label_names <<<"$labels"
-        local label_ids=()
+        local label_ids=() label_rc=0
         for label_name in "${label_names[@]}"; do
             local label_id
-            label_id=$(resolve_label_id "$label_name") && label_ids+=("\"$label_id\"")
+            label_id=$(resolve_label_id "$label_name") && label_ids+=("\"$label_id\"") || label_rc=$?
+            if [ "$label_rc" = "2" ]; then
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Label lookup failed for " + $label + " - refusing the update: --labels replaces the label set, so proceeding would strip labels this lookup could not confirm")}' >&2
+                return 1
+            fi
         done
+        if [ ${#label_ids[@]} -eq 0 ]; then
+            jq -cn --arg labels "$labels" \
+                '{error: ("No requested label resolved (" + $labels + ") - refusing to send an empty label set, which would clear every label on the issue. Use --clear-labels to do that deliberately.")}' >&2
+            return 1
+        fi
         local label_json
         label_json=$(
             IFS=,
@@ -1709,23 +1751,27 @@ update_issue() {
         input_parts+=("\"projectId\": \"$project_id\"")
     fi
 
-    # Handle assignee
+    # Handle assignee. Every other resolver here fails closed; dropping the
+    # field on an unresolvable name reported success with the issue unassigned.
     if [ -n "$assignee" ]; then
+        local assignee_id
         if [ "$assignee" = "me" ]; then
             local me_query='query { viewer { id } }'
             local me_result
             me_result=$(graphql_query "$me_query" "{}")
-            local me_id
-            me_id=$(echo "$me_result" | jq -r '.viewer.id // empty')
-            [ -n "$me_id" ] && input_parts+=("\"assigneeId\": \"$me_id\"")
+            assignee_id=$(echo "$me_result" | jq -r '.viewer.id // empty')
         else
             local user_query='query GetUser($name: String!) { users(filter: {name: {containsIgnoreCase: $name}}) { nodes { id } } }'
-            local user_result
-            user_result=$(graphql_query "$user_query" "{\"name\": \"$assignee\"}")
-            local user_id
-            user_id=$(echo "$user_result" | jq -r '.users.nodes[0].id // empty')
-            [ -n "$user_id" ] && input_parts+=("\"assigneeId\": \"$user_id\"")
+            local user_vars user_result
+            user_vars=$(jq -cn --arg name "$assignee" '{name: $name}')
+            user_result=$(graphql_query "$user_query" "$user_vars")
+            assignee_id=$(echo "$user_result" | jq -r '.users.nodes[0].id // empty')
         fi
+        if [ -z "$assignee_id" ]; then
+            jq -cn --arg who "$assignee" '{error: ("Assignee not found: " + $who)}' >&2
+            return 1
+        fi
+        input_parts+=("\"assigneeId\": \"$assignee_id\"")
     fi
 
     # Handle parent (set or remove) - resolve identifier to UUID
@@ -1758,6 +1804,7 @@ update_issue() {
     elif [ "$clear_cycle" = "true" ]; then
         input_parts+=("\"cycleId\": null")
     elif [ -n "$cycle" ]; then
+        linear_require_pattern --cycle "$cycle" "$LINEAR_UUID_PATTERN" "a cycle UUID" || return 1
         input_parts+=("\"cycleId\": \"$cycle\"")
     fi
 
@@ -2422,6 +2469,19 @@ add_relation() {
     local input="{\"issueId\": \"$issue_id\", \"relatedIssueId\": \"$related_issue_uuid\", \"type\": \"$relation_type\"}"
     local result
     result=$(graphql_query "$mutation" "{\"input\": $input}")
+    # Linear already holding this relation is idempotent success, not a
+    # rejection — graphql_query reports it as already_exists.
+    if [ "$(echo "$result" | jq -r '.already_exists // false')" = "true" ]; then
+        echo '{"success": true, "already_exists": true}'
+        return 0
+    fi
+    # A payload-level rejection must fail here. Printing the normalized
+    # {success: false} object and returning 0 let callers — block_issue among
+    # them — report a blocked issue that carries no blocking relation.
+    if [ "$(echo "$result" | jq -r '.issueRelationCreate.success // false')" != "true" ]; then
+        echo "$result" | jq -c '{error: "issueRelationCreate was rejected (success != true) - no relation was created", data: (.issueRelationCreate // {})}' >&2
+        return 1
+    fi
     # Write-through: re-fetch both issues to get updated relations
     cache_refresh_issues "$issue_id" "$related_issue_uuid" 2>/dev/null || true
     local normalized
@@ -2519,7 +2579,7 @@ remove_relation() {
 
     # Resolve the other issue identifier
     local other_identifier
-    other_identifier=$(echo "$other_ref" | tr a-z A-Z)
+    other_identifier=$(echo "$other_ref" | tr '[:lower:]' '[:upper:]')
 
     # Query relations to find the matching one
     local query='
@@ -2686,8 +2746,15 @@ block_issue() {
     local current_labels
     current_labels=$(echo "$issue_result" | jq -r '[.issue.labels.nodes[].name] | join(",")')
 
-    # Add blocked if not present
-    if [[ ! "$current_labels" =~ blocked ]]; then
+    # Exact membership: a substring test skipped the label whenever the issue
+    # already carried an unrelated name containing it (`unblocked`,
+    # `blocked-by-design`), and `block` then reported success having applied none.
+    local has_blocked_label="false" existing_label
+    IFS=',' read -ra _existing_labels <<<"$current_labels"
+    for existing_label in ${_existing_labels[@]+"${_existing_labels[@]}"}; do
+        [ "$existing_label" = "blocked" ] && has_blocked_label="true"
+    done
+    if [ "$has_blocked_label" != "true" ]; then
         if [ -n "$current_labels" ]; then
             current_labels="${current_labels},blocked"
         else
@@ -2706,9 +2773,19 @@ block_issue() {
         return 1
     fi
 
-    # Add blocked-by relation
+    # Add blocked-by relation. The label and comment are cosmetic; this is the
+    # relation that actually blocks, so its rejection cannot be reported as a
+    # successful block.
     local relation_result
-    relation_result=$(add_relation "$issue_id" --blocked-by "$blocker")
+    if ! relation_result=$(add_relation "$issue_id" --blocked-by "$blocker"); then
+        jq -cn --arg id "$issue_id" --arg blocker "$blocker" \
+            '{error: ("Blocking relation could not be created between " + $id + " and " + $blocker + " - the blocked label was applied but the issue is NOT blocked")}' >&2
+        return 1
+    fi
+    if [ "$(echo "$relation_result" | jq -r '.success // .already_exists // false')" != "true" ]; then
+        echo "$relation_result" | jq -c '{error: "Blocking relation was rejected - the blocked label was applied but the issue is NOT blocked", data: .}' >&2
+        return 1
+    fi
 
     # Post blocking comment
     local comment_body="BLOCKED: Waiting for $blocker."
@@ -2753,9 +2830,8 @@ unblock_issue() {
     if [ -n "$current_labels" ]; then
         update_result=$(update_issue "$issue_id" --labels "$current_labels")
     else
-        # No labels left - need to clear all labels
-        # Linear requires at least empty array, but we use the original minus blocked
-        update_result=$(update_issue "$issue_id" --labels "")
+        # `blocked` was the only label: ask for the set to be emptied outright.
+        update_result=$(update_issue "$issue_id" --clear-labels)
     fi
 
     local update_success
@@ -3063,6 +3139,25 @@ validate_completion() {
     echo "$results" | jq --argjson all_ok "$all_ok" '{results: ., all_ok: $all_ok}'
 }
 
+# `<action> --help` prints usage and exits 0. A MISSING identifier is a caller
+# bug, not a help request: printing usage and exiting 0 for it reported success
+# for a write that never ran, so an unset shell variable in a caller's
+# `issues complete "$ID"` read as a completed issue.
+require_issue_ref() {
+    local action="$1" first="${2:-}"
+    case "$first" in
+    --help | -h)
+        show_help
+        exit 0
+        ;;
+    esac
+    if [ -z "$first" ]; then
+        jq -cn --arg action "$action" \
+            '{error: ("issues " + $action + " requires an issue identifier (e.g. PROJ-42)")}' >&2
+        exit 1
+    fi
+}
+
 main() {
     # Main routing
     action="${1:-help}"
@@ -3075,123 +3170,84 @@ main() {
 
     case "$action" in
     list)
-        if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+        case "${1:-}" in --help | -h)
             show_help
             exit 0
-        fi
+            ;;
+        esac
         list_issues "$@"
         ;;
     get)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref get "${1:-}"
         get_issue "$@"
         ;;
     bulk-get)
-        if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+        case "${1:-}" in --help | -h)
             show_help
             exit 0
-        fi
+            ;;
+        esac
         bulk_get_issues "$@"
         ;;
     bulk-update)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref bulk-update "${1:-}"
         bulk_update_issues "$@"
         ;;
     create)
-        if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+        case "${1:-}" in --help | -h)
             show_help
             exit 0
-        fi
+            ;;
+        esac
         create_issue "$@"
         ;;
     update)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref update "${1:-}"
         update_issue "$@"
         ;;
     archive)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref archive "${1:-}"
         archive_issue "$@"
         ;;
     trash | delete)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref trash "${1:-}"
         trash_issue "$@"
         ;;
     children)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref children "${1:-}"
         list_children "$@"
         ;;
     list-relations | relations)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref list-relations "${1:-}"
         list_relations "$@"
         ;;
     add-relation)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref add-relation "${1:-}"
         add_relation "$@"
         ;;
     remove-relation)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref remove-relation "${1:-}"
         remove_relation "$@"
         ;;
     # Composite workflow actions
     activate)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref activate "${1:-}"
         activate_issue "$@"
         ;;
     block)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref block "${1:-}"
         block_issue "$@"
         ;;
     unblock)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref unblock "${1:-}"
         unblock_issue "$@"
         ;;
     complete)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref complete "${1:-}"
         complete_issue "$@"
         ;;
     validate-completion)
-        if [ -z "${1:-}" ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-            show_help
-            exit 0
-        fi
+        require_issue_ref validate-completion "${1:-}"
         validate_completion "$@"
         ;;
     move)

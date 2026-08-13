@@ -1,30 +1,19 @@
-# deep-research skill
+# deep-research
 
-Portable Exa Deep Search skill for producing evidence-backed findings reports in any harness.
+Portable Exa Deep Search for evidence-backed findings reports, usable from any AI coding harness. Give it a research question and it writes a `findings.md` — executive summary, key findings, cited evidence, tradeoffs, recommendation, risks, revisit conditions — keeping the raw provider payload in a sidecar JSON beside it.
 
-Run `scripts/deep-research doctor` to verify Node/fetch availability and whether `EXA_API_KEY` is configured.
+## How it works
 
-Report mode defaults (within Exa `/search` limits: `numResults` 1-100, `text.maxCharacters` 1-10000):
+`report` sends the question to Exa's deep search and renders the response into a fixed set of sections, so every findings document in a project reads the same way. Three modes trade cost against depth: `lite` (15 sources, no synthesis — an evidence brief), `standard` (50 sources, synthesized), and `full` (100 sources, one request per query angle with URLs deduped).
 
-| Mode | Exa type | Results | Text cap | Timeout | Synthesis |
-|---|---|---:|---:|---:|---|
-| `lite` | `deep-lite` | 15 | 10k chars/result | 5 min | No (evidence brief) |
-| `standard` | `deep-reasoning` | 50 | 10k chars/result | 10 min | Yes (`outputSchema`) |
-| `full` | `deep-reasoning` | 100 | 10k chars/result | 30 min | Yes, per fanned-out query |
+`validate` re-checks a finished report against its sidecar for the structural problems that are easy to miss: a missing section, query-expansion metadata that contradicts itself, or a report meant to carry a recommendation that came back without a synthesized answer.
 
-`report --output findings.md` writes clean Markdown and defaults raw metadata to `findings.raw.json`.
+## Setup
 
-Repeated `--additional-query` values are sent as Exa `additionalQueries` in one request (`lite`/`standard`) or fanned out as separate requests with URL dedupe (`full`). The sidecar metadata records the queries and how they were applied.
+Needs Node 18+ and an Exa API key in `EXA_API_KEY` — a 1Password `op://vault/item/field` reference works when the `op` CLI is signed in. Check both:
 
-After generating a report, run `scripts/deep-research validate findings.md findings.raw.json` for deterministic post-run checks (required sections, query-expansion metadata consistency, synthesis presence, duplicated sections). It prints `{ok, errors, warnings}` and exits non-zero on errors.
+```bash
+scripts/deep-research doctor
+```
 
-The findings format is mode-adaptive: `lite`, `standard`, and `full` use the same required sections, while mode/source/query counts are recorded in `## Research Metadata`.
-
-Format references:
-
-- `templates/findings.md` — Markdown findings template.
-- `templates/findings-report-format.md` — section checklist/format guide (not a JSON schema).
-
-Raw Exa/provider payloads belong in the sidecar JSON only. Do not embed raw JSON or fenced raw metadata blocks in `findings.md`.
-
-Pi `web_research` uses Exa highlights and, for `standard`/`full`, structured output (`outputSchema`) plus source summaries when available; `lite` does not request the structured output schema. Evidence excerpts are sanitized before rendering so Markdown headings from source pages do not render as quoted headings in reports.
+`scripts/deep-research help` lists every command and flag.

@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Regression tests for the worktree session guard (vstack#877).
-#
-# Ported alongside the guard from hyprtrade, where it was written after the
-# CC-1000 incident of cleanup passes destroying live issue worktrees.
+# Regression tests for the worktree session guard, which exists because cleanup
+# passes were destroying live issue worktrees out from under working sessions.
 #
 # Every case runs against throwaway repositories under a temporary directory:
 # no repository worktree is claimed, locked, or removed by this suite.
@@ -357,8 +355,8 @@ assert_contains "$branch_err" "cannot delete branch"
 run_guard claim "$wt" --owner CC-999
 assert_eq "$RUN_RC" "75" "claiming a worktree held by another owner"
 assert_contains "$run_err" "is claimed by owner=CC-1000"
-# The recovery command must name the guard's own resolved path — the ported
-# text pointed at hyprtrade's tools/ location, which consumers do not have.
+# The recovery command must name the guard's own resolved path: a hardcoded
+# tools/ location does not exist in a consumer install.
 assert_contains "$run_err" "release $wt --stale"
 assert_not_contains "$run_err" "tools/worktree-session-guard"
 lock_reason_of "$repo" "$wt" | grep -Fq "owner=CC-1000" \

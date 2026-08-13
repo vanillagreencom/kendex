@@ -102,18 +102,29 @@ if [[ -z "$PR_NUM" ]]; then
   exit 1
 fi
 
-# Fetch comments with error handling
-RESPONSE=$(gh api "repos/{owner}/{repo}/issues/$PR_NUM/comments" 2>&1) || {
-  ERROR_MSG=$(echo "$RESPONSE" | tr '\n' ' ' | head -c 100)
-  jq -n --arg msg "API failed: $ERROR_MSG" '{error: $msg}' >&2
-  exit 1
+fetch_comments() {
+  gh api "repos/{owner}/{repo}/issues/$PR_NUM/comments" 2>&1
 }
 
-# Check for API error response (has "message" field but no array)
-if echo "$RESPONSE" | jq -e '.message' >/dev/null 2>&1; then
-  echo "{\"error\": \"$(echo "$RESPONSE" | jq -r '.message')\"}" >&2
+# Reject anything that is not a comments array before selection runs, so an
+# error payload can never be searched and reported as "no sticky comment".
+validate_comments_response() {
+  local response="$1"
+  if jq -e 'type == "array"' >/dev/null 2>&1 <<<"$response"; then
+    return 0
+  fi
+  local message
+  message=$(jq -r '.message // empty' <<<"$response" 2>/dev/null || true)
+  [ -n "$message" ] || message=$(printf '%s' "$response" | tr '\n' ' ' | head -c 200)
+  jq -nc --arg msg "$message" '{error: $msg}' >&2
+  return 1
+}
+
+RESPONSE=$(fetch_comments) || {
+  jq -nc --arg msg "API failed: $(printf '%s' "$RESPONSE" | tr '\n' ' ' | head -c 200)" '{error: $msg}' >&2
   exit 1
-fi
+}
+validate_comments_response "$RESPONSE" || exit 1
 
 find_sticky_comment() {
   local response="$1"
@@ -133,7 +144,12 @@ STICKY=$(find_sticky_comment "$RESPONSE")
 # Retry once after brief delay if not found (handles API sync delay)
 if [[ -z "$STICKY" || "$STICKY" == "null" ]] || ! echo "$STICKY" | jq -e '.id and .body' >/dev/null 2>&1; then
   sleep 2
-  RESPONSE=$(gh api "repos/{owner}/{repo}/issues/$PR_NUM/comments" 2>&1) || true
+  # A failed or non-array retry is an API failure, not an absent comment.
+  RESPONSE=$(fetch_comments) || {
+    jq -nc --arg msg "API failed on retry: $(printf '%s' "$RESPONSE" | tr '\n' ' ' | head -c 200)" '{error: $msg}' >&2
+    exit 1
+  }
+  validate_comments_response "$RESPONSE" || exit 1
   STICKY=$(find_sticky_comment "$RESPONSE")
 
   if [[ -z "$STICKY" || "$STICKY" == "null" ]] || ! echo "$STICKY" | jq -e '.id and .body' >/dev/null 2>&1; then

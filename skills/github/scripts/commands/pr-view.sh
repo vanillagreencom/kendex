@@ -5,8 +5,6 @@
 set -euo pipefail
 
 COMMAND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../lib/pr-branch.sh
-source "$COMMAND_DIR/../lib/pr-branch.sh"
 # shellcheck source=../lib/gh-auth.sh
 source "$COMMAND_DIR/../lib/gh-auth.sh"
 
@@ -190,10 +188,6 @@ main() {
     if [ -n "$output" ]; then
         printf '%s\n' "$output"
     fi
-    emit_checks_activity "$json_fields" "$pr_num" "$output"
 }
-
-# Dashboard activity emission was removed.
-emit_checks_activity() { return 0; }
 
 main "$@"

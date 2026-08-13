@@ -15,53 +15,17 @@ metadata:
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-Stack-agnostic. Does not define specific tokens, colors, or pixel values — those belong in your design system.
+Stack-agnostic. Defines the rules, not the tokens — specific colors and pixel values belong in your design system.
 
-## Skill Guidelines
+## Identity
 
-### Design Philosophy
+Sierra Chart / Bloomberg data density, Vercel / Linear dark refinement, ShadCN component composition compressed to trading density. Dark is the design target; other themes are adaptations built on established community palettes (Tokyo Night, Catppuccin, Dracula, Nord, Solarized, Rosé Pine, Gruvbox, One Dark), never invented color schemes.
 
-#### Design Identity and Anti-Patterns
+Explicitly rejected: Robinhood whitespace and gamification, TradingView social chrome, crypto-exchange neon (multiple bright hues make directional color meaningless), generic-dashboard rounded corners and gradients, and any rendering that feels sluggish under input.
 
-The intersection of three qualities:
+## Density
 
-- **Sierra Chart / Bloomberg Terminal density** — every pixel carries data, multi-panel layouts, no wasted space
-- **Vercel / Linear dark refinement** — near-black canvas, restrained palette, typographic precision
-- **ShadCN component clarity** — composable, consistent components with clear visual hierarchy, compressed to trading density
-
-The default theme is dark. The system must support user-customizable themes built on established community palettes — not invented color schemes.
-
-**Reference Platforms:**
-
-| Platform | What to Learn |
-|----------|--------------|
-| Sierra Chart | Extreme data density, configurability, tiling efficiency |
-| Bloomberg Terminal | Information architecture at scale, keyboard-driven workflows |
-| Trading Technologies (TT) | Order management UX, ladder precision |
-| CQG | Clean professional layout, efficient use of screen real estate |
-| Vercel Dashboard | Dark aesthetic, typographic hierarchy, restrained color |
-| Linear | Dark, dense, keyboard-first |
-| ShadCN/ui | Component composition model, consistent design tokens |
-
-**Anti-Patterns:**
-
-| Anti-Pattern | Problem |
-|-------------|---------|
-| Robinhood aesthetic | Hides complexity behind whitespace, gamifies trading, wastes density |
-| TradingView chrome | Too much social chrome dilutes focus |
-| Crypto exchange neon | Multiple bright hues make directional color meaningless |
-| Generic dashboard look | Rounded corners, large padding, gradients — wastes 40%+ of screen |
-| Electron bloat feel | Sluggish rendering, input lag — must feel instant |
-
-#### Density First
-
-Default compact, scale up only for readability. Every element must earn its screen space.
-
-- **Pixel accountability** — decorative elements (gradients, shadows, rounded corners, excessive padding) must justify themselves against the data they displace
-- **Simultaneous visibility** — a panel that requires scrolling to show its core content has failed
-- **Compact ≠ cramped** — 4px base unit with consistent multiples creates rhythm even at tight spacing
-
-**Benchmarks:**
+Default compact; scale up only for readability. Decorative elements must justify themselves against the data they displace, and a panel that requires scrolling to show its core content has failed. Compact is not cramped — a 4px base unit with consistent multiples creates rhythm at tight spacing.
 
 | Element | Target |
 |---------|--------|
@@ -72,51 +36,15 @@ Default compact, scale up only for readability. Every element must earn its scre
 | Font size (labels) | 10-12px |
 | Icon size | 12-16px |
 
-**Hierarchy through density:**
+Hierarchy comes from density, not decoration: primary data (price, P&L) slightly larger at full opacity in a prominent position, secondary data (labels, quantities, timestamps) at standard density and reduced opacity, tertiary data (metadata, IDs) smallest and dimmest.
 
-- **Primary data** (price, P&L) — slightly larger, full opacity, prominent position
-- **Secondary data** (labels, quantities, timestamps) — standard density, reduced opacity
-- **Tertiary data** (metadata, IDs) — smallest size, lowest opacity
+The signal is price action, position state, and order status; everything else is noise. Spend attention on directional color, stale-data indicators, error and disconnect states, and direction icons alongside color. Minimize decorative borders, box shadows, and color-coded categories that are not directional. Animate only when the animation carries information otherwise missed — a brief flash on price tick, yes; panel slide-in, no — and keep transitions under 100ms.
 
-#### Signal Through Noise
+## Color
 
-The signal is price action, position state, and order status. Everything else is noise.
+**Exactly two chromatic hues**: one positive direction (buy/bid/profit/long), one negative (sell/ask/loss/short). Everything else is a single neutral at graduated opacity. No blue, orange, yellow, or purple in the base palette.
 
-**High-value attention spend:**
-- Directional color on P&L and price changes
-- Stale data indicators
-- Error and disconnect states
-- Direction icons alongside color (redundant encoding)
-
-**Minimize or eliminate:**
-- Decorative borders (1px at low opacity is enough)
-- Box shadows (near-black elevation handles depth)
-- Animated transitions (instant state changes are faster to process)
-- Color-coded categories that aren't directional
-
-**State communication — must be obvious without searching:**
-
-| State | Why |
-|-------|-----|
-| Connected / disconnected | Trading on stale data causes losses |
-| Position direction and P&L | Core awareness at all times |
-| Order status | Working, filled, or rejected |
-| Data freshness | Stale prices look identical to live without indication |
-| Error conditions | Hidden errors lead to missed trades |
-
-**Animation:** Use only when it communicates information otherwise missed. Brief flash on price tick — acceptable. Panel slide-in transitions — not acceptable. Transitions under 100ms.
-
----
-
-### Visual Language
-
-#### Two-Hue Directional Color
-
-Exactly two chromatic hues: one for positive direction (buy/bid/profit/long), one for negative (sell/ask/loss/short). All other visual variation from a single neutral at graduated opacities. No blue, orange, yellow, purple in the base palette.
-
-**Neutral variation:**
-
-| Opacity | Role |
+| Neutral opacity | Role |
 |---------|------|
 | 100% | Primary text, most important non-directional data |
 | 70-80% | Secondary text, labels, headers |
@@ -125,28 +53,7 @@ Exactly two chromatic hues: one for positive direction (buy/bid/profit/long), on
 | 8-15% | Borders, dividers, row hover tints |
 | 3-6% | Subtle background differentiation |
 
-**When you need a third color:**
-1. Prefer neutral treatment first — opacity, icons, or position instead of a new hue
-2. If truly needed — low saturation, never confused with directional color
-3. One additional hue total, not one per semantic
-
-#### Opacity as Primary Visual Variable
-
-Opacity is the primary tool for hierarchy, state, and depth. Not new colors.
-
-| Role | Opacity Approach |
-|------|-----------------|
-| Background tinting | Directional hue at 5-10% |
-| Borders | Neutral at 8-15% |
-| Hover states | Current color + 5-10% neutral overlay |
-| Active/selected | Current color + 10-15% neutral overlay |
-| Disabled elements | Reduce to 30-40% |
-| Text hierarchy | Same neutral at 100%, 70%, 45%, 25% |
-| Directional backgrounds | Positive/negative hue at 8% for position rows |
-
-**Directional hue variants:**
-
-| Variant | Opacity | Use |
+| Directional variant | Opacity | Use |
 |---------|---------|-----|
 | Full | 100% | Text, icons — primary directional signal |
 | Medium | 60-70% | Secondary directional elements |
@@ -154,197 +61,63 @@ Opacity is the primary tool for hierarchy, state, and depth. Not new colors.
 | Tint | 8-12% | Row/cell background tinting |
 | Ghost | 3-5% | Hover backgrounds on directional elements |
 
-If reaching for a new color value — stop. Can this be achieved with an opacity variant? If yes, use opacity. A new color in the palette is an architectural change.
+Opacity — not new color — carries hierarchy, state, and depth: hover is the current color plus a 5-10% neutral overlay, active/selected 10-15%, disabled drops to 30-40%. A new hue in the palette is an architectural change, so reach for an opacity variant first; if a third color is genuinely needed, it is low-saturation, never confusable with directional color, and there is exactly one — not one per semantic.
 
-#### Surface and Elevation
+## Surface and elevation
 
-The default canvas is near-black (3-6% brightness, not pure #000000). Data is the brightest thing on screen. Depth comes from a structured elevation system — not shadows, not gradients.
+The canvas is near-black (3-6% brightness, not pure `#000000`); data is the brightest thing on screen. Depth comes from a five-level ladder — no shadows, no gradients, and every background maps to one of the five.
 
-**Elevation ladder (5 levels):**
+| Level | Name | Where |
+|-------|------|-------|
+| 0 | Base | App background, gaps between panels |
+| 1 | Panel | Panel content areas, header bar, status bar |
+| 2 | Raised | Dropdowns, context menus, tooltips, popovers, dialog content |
+| 3 | Hover | Row hover, interactive feedback on any surface |
+| 4 | Active | Selected row, active tab, pressed button |
 
-| Level | Name | Purpose |
-|-------|------|---------|
-| 0 | Base | App background — deepest layer, visible between panels |
-| 1 | Panel | Primary content containers — where data lives |
-| 2 | Raised | Cards, menus, dropdowns, popovers |
-| 3 | Hover | Interactive feedback — hover state on any surface |
-| 4 | Active | Selected/pressed state — highest emphasis background |
+Modal backdrops are a semi-transparent black overlay rather than a ladder level. Borders use the neutral at 8-15% where brightness alone is not enough to define a boundary.
 
-**Elevation in context:**
+Light mode is a supported variant with the elevation principles reversed. Every rule above still applies under any palette, and theme switching changes token values only — never layout, density, or information architecture.
 
-| UI Element | Level |
-|-----------|-------|
-| App background (gaps between panels) | 0 (Base) |
-| Panel content area | 1 (Panel) |
-| Header bar, status bar | 1 (Panel) |
-| Dropdown menus, context menus | 2 (Raised) |
-| Tooltips, popovers | 2 (Raised) |
-| Dialog/modal backdrop | Overlay (semi-transparent black) |
-| Dialog/modal content | 2 (Raised) |
-| Row on hover | 3 (Hover) |
-| Selected row, active tab | 4 (Active) |
-| Pressed button | 4 (Active) |
+## Typography
 
-**Principles:**
-- Every background maps to one of these five levels — no custom backgrounds
-- No shadows — elevation through brightness
-- No gradients on surfaces
-- Borders at low-opacity neutral (8-15%) where brightness alone isn't enough
+Two font categories, no third. **Monospace** for headings, labels, navigation, buttons, status, panel titles, badges, and all numeric data. **Sans-serif** for body paragraphs, tooltips, help text, and long-form explanation.
 
-**Borders:** Use the neutral at very low opacity rather than a distinct border color. Borders define panel boundaries without drawing attention.
+The rule at the boundary: **if it contains a number the user needs to compare or scan, it is monospace.** A "Positions" panel title and a "Cancel" button are sans; an order quantity, a `Buy 5 ES @ 4,512.25` button, and a `14:32:05` timestamp are mono.
 
-**Theming beyond dark:**
-- Use established community palettes only — Tokyo Night, Catppuccin, Dracula, Nord, Solarized, Rosé Pine, Gruvbox, One Dark
-- Light mode is a supported variant — elevation principles apply in reverse
-- All rules still apply regardless of palette: two directional hues, opacity-based variation, density-first
-- Dark is the design target — design and test dark first, other themes are adaptations
-- Theme switching changes only token values, never layout, density, or information architecture
+The monospace face must support tabular figures (all digits same width), lining figures (baseline-aligned), and a clear zero/O distinction at 11px — JetBrains Mono, IBM Plex Mono, Iosevka, Berkeley Mono, and Cascadia Code all qualify.
 
----
+**Decimal alignment is the single most important typographic rule for trading data.** In any numeric column the decimal points align vertically: right-align with consistent decimal places, use tabular figures, pad with non-breaking spaces where needed. Text data (symbols, names, labels) left-aligns, header alignment matches its data, and column widths are fixed so columns never resize when data changes.
 
-### Typography & Density
-
-#### Dual-Font System
-
-Two font categories. No exceptions. No third font.
-
-| Category | Font Type | Used For |
-|----------|-----------|----------|
-| **Structural / Identity** | Monospace | Headings, labels, navigation, buttons, status, panel titles, badges, all numeric data |
-| **Prose / Description** | Sans-serif | Body paragraphs, tooltips, help text, long-form explanations |
-
-The monospace font must support **tabular figures** (all digits same width), **lining figures** (baseline-aligned), and **clear zero/O distinction at 11px**. Recommended: JetBrains Mono, IBM Plex Mono, Iosevka, Berkeley Mono, Cascadia Code.
-
-**The boundary — where sans meets mono:**
-
-| Element | Font | Reasoning |
-|---------|------|-----------|
-| "Positions" panel title | Sans | UI label, no numeric content |
-| Order quantity "100" | Mono | Numeric, users compare quantities |
-| "Cancel" button | Sans | Text action, no numeric content |
-| "Buy 5 ES @ 4,512.25" button | Mono | Contains numbers users must verify |
-| Timestamp "14:32:05" | Mono | Numeric sequence users scan |
-
-Rule: **if it contains a number the user needs to compare or scan, it's monospace.**
-
-#### Data Alignment and Size Hierarchy
-
-**Decimal alignment** — the single most important typographic rule for trading data. In any numeric column, decimal points must align vertically.
-
-Implementation: right-align numeric columns with consistent decimal places, use tabular figures, pad with non-breaking spaces if needed.
-
-**Size hierarchy:**
-
-| Level | Relative Size | Use |
+| Size level | Relative | Use |
 |-------|--------------|-----|
 | Primary | Base + 1-2px | Current price, total P&L, key metric |
-| Standard | Base (11-13px) | Most data: quantities, prices, order details |
+| Standard | Base (11-13px) | Quantities, prices, order details |
 | Secondary | Base - 1px | Labels, column headers, timestamps |
 | Tertiary | Base - 2px | Metadata, IDs, supplementary info |
 
-**Column layout:**
-- Right-align all numeric data
-- Left-align text data (symbols, names, labels)
-- Fixed column widths — columns must not resize when data changes
-- Header alignment matches data alignment
+## Tokens
 
-#### Semantic Token Architecture
+No component contains a raw color value, pixel measurement, or font specification — in code review, any of those in component code is a defect. Raw values exist only in the design system's token definitions.
 
-No component should contain a raw color value, pixel measurement, or font specification. All visual properties reference semantic tokens.
+Token categories: directional colors (positive, negative), surface levels (surface-base, surface-panel, surface-raised, surface-hover, surface-active), text hierarchy (text-primary through text-disabled), borders (border-default, border-subtle), spacing (space-xs … space-xl), typography (font-ui, font-data, size-primary, size-standard, size-secondary).
 
-| Category | Examples |
-|----------|----------|
-| Directional colors | positive, negative (bid/ask, buy/sell, profit/loss) |
-| Surface levels | surface-base, surface-panel, surface-raised, surface-hover, surface-active |
-| Text hierarchy | text-primary, text-secondary, text-tertiary, text-disabled |
-| Borders | border-default, border-subtle |
-| Spacing | space-xs, space-sm, space-md, space-lg, space-xl |
-| Typography | font-ui, font-data, size-primary, size-standard, size-secondary |
+Names describe semantic role, not appearance: `color-positive` not `green-500`, `surface-base` not `dark-bg`, `text-secondary` not `small-text`, `border-default` not `gray-border`.
 
-**Naming — by semantic role, not appearance:**
+## Layout and panels
 
-| Wrong | Right |
-|-------|-------|
-| `green-500` | `color-positive` |
-| `dark-bg` | `surface-base` |
-| `small-text` | `text-secondary` |
-| `gray-border` | `border-default` |
+A trading interface is a modular panel system, not a page layout. Panels tile to fill available space with no gaps — never float. The chart takes the space remaining after other panels claim their minimums; every panel has a minimum useful size and collapses below it; layout state is saved and restored reliably.
 
-In code review, any hardcoded color value, pixel measurement, or font name in component code is a defect. The only place raw values should exist is in the design system's token definition file.
+| Priority | Panels |
+|----------|--------|
+| Never collapse | Chart, order entry |
+| Last to collapse | Positions, active orders |
+| Early collapse | Watchlist, account info, alerts |
+| First to collapse | Settings, logs, analytics |
 
----
+Collapsed panels show compact indicators carrying key counts ("Orders (3)"). The shell is a fixed header bar (24-32px: symbol, account, connection status, global controls), a flexible dockable panel grid, and a fixed status bar (24-32px: system status, latency, clock). Each panel is a header (20-28px: title, actions, collapse/close), its content, and an optional footer for summary data.
 
-### Layout & Panels
-
-#### Panel Architecture and Docking
-
-Professional trading interfaces are modular panel systems, not page layouts.
-
-- **Tiling, not floating** — panels tile to fill available space with no gaps
-- **Priority-based space allocation** — the chart gets remaining space after other panels claim minimums
-- **Defined minimums** — every panel has a minimum useful size; below it, the panel collapses
-- **User-controlled layout** — layout state is saved and restored reliably
-
-**Panel priority ordering:**
-
-| Priority | Panels | Collapse Behavior |
-|----------|--------|-------------------|
-| Never collapse | Chart, order entry | Core function |
-| Last to collapse | Positions, active orders | Active-state awareness |
-| Early collapse | Watchlist, account info, alerts | Important but not moment-to-moment |
-| First to collapse | Settings, logs, analytics | Reference panels checked periodically |
-
-Collapsed panels show compact indicators with key counts (e.g., "Orders (3)").
-
-**Shell structure:**
-1. **Header bar** (fixed, 24-32px) — symbol, account, connection status, global controls
-2. **Content area** (flexible) — dockable panel grid
-3. **Status bar** (fixed, 24-32px) — system status, latency, clock
-
-**Panel internal structure:**
-1. Panel header (20-28px) — title, actions, collapse/close
-2. Panel content — primary function
-3. Panel footer (optional) — summary data
-
-#### Required Panel States
-
-Every panel must implement all five states:
-
-| State | Visual Pattern |
-|-------|---------------|
-| **Loading (known layout)** | Skeleton shimmer matching expected content shape |
-| **Loading (unknown)** | Centered spinner with context text |
-| **Empty** | Centered icon + helpful text + how to change |
-| **Error** | Inline banner with actionable message and retry |
-| **Disconnected** | Last data grayed/dimmed with stale warning and timestamp |
-
-**Disconnected state requires special attention:**
-- All data visible but at reduced opacity
-- Stale data warning visible without scrolling — timestamp of last update, reconnection status
-- **Order entry disabled** — cannot submit on stale data
-- Order modification/cancellation remains enabled
-- Transition from live to disconnected must be instant and obvious
-
-State transitions are immediate. No fade animations between states.
-
-#### Responsive Collapse Strategy
-
-When viewport shrinks below combined minimums:
-
-1. Collapse lowest-priority panels first into compact indicators
-2. Stack remaining panels vertically
-3. At smallest viable size, tabbed view — one panel at a time
-
-**Rules:**
-- Chart and order entry never collapse
-- Breakpoints defined in design system, not hardcoded
-- Collapsed panels show data counts
-- Transitions are instant
-- User can override collapse priorities
-
-**Minimum panel sizes (reference):**
-
-| Panel Type | Min Width | Min Height |
+| Panel type | Min width | Min height |
 |-----------|----------|-----------|
 | Chart | 400px | 300px |
 | Order entry | 250px | 200px |
@@ -352,200 +125,72 @@ When viewport shrinks below combined minimums:
 | Order book | 200px | 200px |
 | Watchlist | 200px | 100px |
 
----
+Below the combined minimums, collapse lowest-priority panels first into compact indicators, then stack remaining panels vertically, then fall back to a tabbed one-panel-at-a-time view. Breakpoints live in the design system, not in component code, and the user can override collapse priorities.
 
-### Data Display
+Every panel implements all five states:
 
-#### Trading Data Display Conventions
+| State | Visual pattern |
+|-------|---------------|
+| Loading, known layout | Skeleton shimmer matching expected content shape |
+| Loading, unknown | Centered spinner with context text |
+| Empty | Centered icon, helpful text, how to change it |
+| Error | Inline banner with actionable message and retry |
+| Disconnected | Last data dimmed, stale warning, timestamp |
 
-**Price:**
-- Always monospace, decimal-aligned in columns
-- Direction indicator: icon + color (never color alone)
-- Show both absolute and percentage change
-- Consistent decimal places per instrument
+State transitions are immediate — no fades. The disconnected state carries extra weight: all data stays visible at reduced opacity, the stale-data warning and last-update timestamp are visible without scrolling, **order entry is disabled** while modification and cancellation stay enabled, and the transition from live must be instant and obvious.
 
-**Position:**
-- Direction badge ("Long"/"Short" in directional color)
-- Quantity in monospace, right-aligned
-- Entry price in secondary text
-- P&L with directional color + icon — most important number in the row
-- Row tint at 5-10% opacity of directional color
+## Data display
 
-**Order:**
-- Side indicator with directional color
-- All prices and quantities in monospace, right-aligned, decimal-aligned
-- Status: pending (neutral), filled (positive flash → neutral), rejected (negative), cancelled (dimmed)
-- Cancel action always visible on working orders — no hover required
-- Time priority visible in secondary text
+- **Price** — monospace, decimal-aligned, direction shown by icon *and* color, absolute and percentage change both present, decimal places consistent per instrument.
+- **Position** — "Long"/"Short" badge in directional color, quantity right-aligned, entry price in secondary text, P&L the most prominent number in the row, row tinted at 5-10% of the directional color.
+- **Order** — side in directional color; status as pending (neutral), filled (positive flash settling to neutral), rejected (negative), cancelled (dimmed); time priority in secondary text; the cancel action always visible on working orders, never hover-gated.
+- **P&L** — directional color plus icon, right-aligned, currency symbol included (`$+1,234.56`), realized and unrealized clearly labelled, daily/total toggle.
+- **Stale data** — dimmed with a `Last update: HH:MM:SS` timestamp.
+- **Empty cells** — `—`, never blank; blank is ambiguous.
 
-**P&L:**
-- Directional color + icon
-- Monospace, right-aligned
-- Include currency symbol ("$+1,234.56")
-- Clearly label realized vs unrealized
-- Daily/total toggle
-
-**Alerts:**
-
-| Severity | Behavior | Dismissal |
+| Alert severity | Behavior | Dismissal |
 |----------|----------|-----------|
-| Info/fills | Transient toast | Auto-dismiss 3-5s |
+| Info / fills | Transient toast | Auto-dismiss 3-5s |
 | Warning | Non-blocking toast | Timed 10s or manual |
-| Error | Prominent | Manual required |
-| Persistent | Inline banner | Until condition resolves |
+| Error | Prominent | Manual required — errors never auto-dismiss |
+| Persistent | Inline banner | Until the condition resolves |
 
-Errors must never auto-dismiss.
+## Interaction
 
-**General:**
-- Stale data — gray out with "Last update: HH:MM:SS" timestamp
-- Empty columns — show "—" not blank (blank is ambiguous)
-- Loading — skeleton for known layouts, spinner for unknown
-- Confirmation dialogs for orders above configurable threshold — show side, quantity, symbol, price, estimated cost
+Every critical action is reachable by keyboard; the mouse is the fallback. Every action has a shortcut, discoverable through tooltips and a `?` help overlay. Focus is visible as a high-contrast ring at least 2px wide against every surface level — restyle it if it clashes, never remove it — and panels themselves show a focused state. Icon-only buttons get a tooltip naming the action and its shortcut, appearing after 300-500ms and disappearing immediately on leave.
 
----
+Shortcuts to provide: place order, cancel all orders (panic shortcut plus one confirmation keystroke), cancel last order (single shortcut, no confirmation), flatten position, switch symbol (type-ahead from any context), directional panel navigation.
 
-### Interaction Design
-
-#### Keyboard-First Interaction
-
-Every critical action must be reachable by keyboard. The mouse is a fallback.
-
-- Every action has a shortcut
-- Shortcuts discoverable via tooltips and help overlay (`?`)
-- Focus always visible — high-contrast ring on every interactive element
-- Focus order follows visual layout
-- Escape always cancels
-
-**Trading-specific shortcuts:**
-
-| Action | Pattern |
-|--------|---------|
-| Place order | Submit current order entry form |
-| Cancel all orders | Panic shortcut + one confirmation keystroke |
-| Cancel last order | Single shortcut, no confirmation |
-| Flatten position | Close all positions in current symbol |
-| Switch symbol | Type-ahead from any context |
-| Navigate panels | Directional shortcuts between panels |
-
-**Focus management:**
-- Focus trap in modals
-- Return focus on close to triggering element
-- Panels have visible "focused" state (subtle border highlight)
-
-**Tooltips on every icon-only button:** action name + keyboard shortcut. Appear after 300-500ms hover, disappear immediately on leave.
-
-#### Error Prevention and Confirmation
-
-**Confirmation requirements:**
-
-| Action | Required | Details Shown |
+| Action | Confirmation | Details shown |
 |--------|----------|---------------|
-| Order placement (above threshold) | Yes | Side, quantity, symbol, price, type, estimated cost |
-| Position close/flatten | Yes | Symbol, P&L, quantity |
-| Cancel all orders | Yes | Count, symbols affected |
-| Modify working order | Context-dependent | Original vs new highlighted |
+| Order placement above threshold | Required | Side, quantity, symbol, price, type, estimated cost |
+| Position close / flatten | Required | Symbol, P&L, quantity |
+| Cancel all orders | Required | Count, symbols affected |
+| Modify working order | Context-dependent | Original vs new, highlighted |
 
-**Confirmation dialog design:**
-- Show full details — "Are you sure?" with no context is useless
-- Primary button uses directional color (buy = positive, sell = negative)
-- Cancel always available and keyboard-accessible
-- No nested confirmations
-- Configurable size thresholds
+A confirmation shows full details — "Are you sure?" with no context is useless. Its primary button carries the directional color of the action, cancel stays keyboard-accessible, thresholds are configurable, and confirmations never nest.
 
-**Prevention over confirmation:**
-- Quantity validation — reject obviously wrong quantities
-- Price validation — warn on limit price far from market
-- Symbol verification — highlight mismatch with current chart
-- Side verification — emphasize buy vs sell throughout order entry
+Prevention beats confirmation: reject obviously wrong quantities, warn when a limit price is far from market, highlight a symbol that does not match the current chart, and emphasize buy vs sell throughout order entry. Cancel stays one action away on every working order, orders can be undone before exchange submission, and rejection messages name the rejected order's details.
 
-**Recovery:**
-- Cancel always one action away on every working order
-- Undo before exchange submission
-- Clear error messages with rejected order details
+## Components
 
----
+Compose from existing primitives (text, row, column, button, input) for PriceDisplay, PositionBadge, PnlDisplay, AlertBanner, NumericStepper, SymbolSearch, StatusIndicator, and OrderTicket. Reserve custom rendering (canvas, WebGL, GPU primitives) for performance-critical visualization: charts, high-frequency DOM/order book, heatmaps, volume profiles. The threshold is concrete — if composition holds 60fps at your data volume, compose.
 
-### Component Philosophy
+Widget specifics not implied by the display conventions above: NumericStepper's step size is the instrument tick, accepting keyboard and scroll input within min/max; SymbolSearch is type-ahead with fuzzy matching and recent history; OrderTicket composes a side toggle, quantity stepper, price input, type selector, and directionally-colored submit.
 
-#### Component Design Approach
+Compressing the ShadCN model for trading: minimal padding (`px-2 py-1` or less) instead of `px-4 py-2`, line-height 1.2-1.3, 11-13px data text instead of 14-16px body, edge-to-edge panels instead of gapped cards, **zero border radius everywhere, no exceptions**, and subtle hover (an opacity shift, not a color change).
 
-**Two approaches:**
+## Accessibility and cross-platform
 
-**Composed** — from existing primitives (text, row, column, button, input). Use for most widgets: PriceDisplay, PositionBadge, PnlDisplay, AlertBanner, NumericStepper, SymbolSearch, StatusIndicator.
-
-**Custom-rendered** — canvas, WebGL, GPU primitives. Use only for performance-critical visualization: charts, DOM/order book with high-frequency updates, heatmaps, volume profiles.
-
-Threshold: if composed maintains 60fps with your data volume, use composition.
-
-**ShadCN model compressed for trading:**
-
-| ShadCN Pattern | Trading Adaptation |
-|---------------|-------------------|
-| Generous padding (px-4 py-2) | Minimal padding (px-2 py-1 or less) |
-| Comfortable line-height | Tight line-height (1.2-1.3) |
-| 14-16px body text | 11-13px data text |
-| Card-based with gaps | Edge-to-edge panels, minimal gaps |
-| Rounded corners | Zero radius on everything — no exceptions |
-| Prominent hover states | Subtle hover (opacity shift, not color change) |
-
-**Standard trading widgets:**
-
-| Widget | Key Requirements |
-|--------|-----------------|
-| PriceDisplay | Monospace, directional color + icon, absolute + percentage change |
-| PositionBadge | Direction, quantity, P&L — one dense row |
-| PnlDisplay | Monospace, directional color + icon, realized/unrealized |
-| NumericStepper | Step size = instrument tick, keyboard + scroll, min/max |
-| SymbolSearch | Type-ahead, fuzzy match, recent history |
-| StatusIndicator | Color-coded dot + label from tokens |
-| AlertBanner | Severity levels, inline or toast, dismiss per severity |
-| OrderTicket | Side toggle, quantity stepper, price input, type selector, directional submit |
-
-**Component checklist:**
-- All visual values from semantic tokens
-- Numeric data in monospace with tabular figures
-- Directional data has both color and icon/text indicator
-- All five panel states handled
-- Keyboard accessible with visible focus
-- Tooltips on all icon-only elements
-- Tested at target density
-
----
-
-### Accessibility
-
-#### Accessibility and Cross-Platform
-
-**Contrast requirements:**
-
-| Element | Minimum Ratio | Standard |
+| Element | Minimum ratio | Standard |
 |---------|--------------|----------|
 | Body text (< 18px) | 4.5:1 | WCAG AA |
 | Large text (>= 18px) | 3:1 | WCAG AA |
 | Interactive boundaries | 3:1 | WCAG 2.1 |
 | Focus indicators | 3:1 | WCAG 2.1 |
 
-Test every text opacity level. Tertiary/disabled text most likely to fail.
+Test every text opacity level; tertiary and disabled text fail most often. Focus rings use a high-contrast non-directional accent.
 
-**Never color alone — every directional color needs reinforcement:**
+**Never color alone.** A green price change needs an up arrow, a red P&L a down arrow, buy/sell buttons their "Buy"/"Sell" labels, position direction its "Long"/"Short" badge, a status indicator its text label.
 
-| Color Indicator | Required Reinforcement |
-|----------------|----------------------|
-| Green price change | Up arrow/triangle icon |
-| Red P&L | Down arrow/triangle icon |
-| Buy/sell button colors | "Buy"/"Sell" text label |
-| Position direction | "Long"/"Short" text badge |
-| Status indicator | Status text label |
-
-**Focus indicators:**
-- Every interactive element, visible against dark background and any surface level
-- High-contrast color (accent/brand since it's not directional)
-- 2px minimum width
-- Never remove for aesthetics — restyle if needed
-
-**Cross-platform rendering:**
-- Design at 1x (96 DPI) baseline
-- Test at 100%, 125%, 150%, 200% scaling
-- Use vector assets — raster blurs at non-integer scales
-- Font rendering varies across FreeType/DirectWrite/Core Text — test at 11-13px on all targets
-- Custom window chrome must support native window management (snap, resize, minimize)
+Design at 1x (96 DPI) and test at 100%, 125%, 150%, and 200% scaling. Use vector assets — raster blurs at non-integer scales. Font rendering differs across FreeType, DirectWrite, and Core Text, so test at 11-13px on every target. Custom window chrome must still support native window management (snap, resize, minimize).

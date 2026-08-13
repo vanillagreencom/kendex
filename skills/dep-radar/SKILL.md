@@ -20,17 +20,15 @@ metadata:
 
 The refresh loop that keeps deliberate version pinning current: **inventory →
 detect → research → classify → upgrade-with-fixes → report the narrow owner
-tier**. The bias is toward upgrading — apply the bump and fix its fallout in
-the same per-surface PR, deferring only on a strong concrete blocker.
+tier**.
 
-The skill is the generic engine; everything repo-specific lives in a per-repo
-inventory that the skill itself generates and maintains (Phase 0). Nothing here
-may be edited per-project — project differences (concrete package names, pinned
-binaries, fork lists) belong only in the inventory file.
+This skill is the generic engine. Everything repo-specific — concrete package
+names, pinned binaries, fork lists — lives in the per-repo inventory the skill
+generates and maintains, never here.
 
-Load `github` before Phase 4 — all PR creation, CI status, and merge operations
-go through it. Load `worktree` when applying more than one surface in a run, so
-each surface's branch gets an isolated working copy.
+Load `github` before Phase 4: PR creation, CI status, and merges all go through
+it. Load `worktree` when a run applies more than one surface, so each surface's
+branch gets an isolated working copy.
 
 ## Operating policy (the contract with the product owner)
 
@@ -50,129 +48,84 @@ each surface's branch gets an isolated working copy.
 >
 > Inventory owner-rules may demote auto→report, never promote report→auto.
 
-Fixability is the deciding test for a breaking major: investigate what it
-breaks (Phase 2), then the question is only *can the fallout be fixed in this
-PR?* Defer only on a specific, named obstacle you actually hit — an upstream
-that dropped a capability the repo depends on with no migration path, a
-required transitive that does not yet support the new version — never generic
-"it's a major, might break" caution.
+A blocker is something you actually hit — an upstream that dropped a capability
+the repo depends on with no migration path, a required transitive that does not
+support the new version — never a generic risk you anticipate.
 
 ## Phase 0 — inventory (self-maintaining)
 
-The per-repo inventory lives at `docs/dep-radar/inventory.md`: a table of every
-pinned surface with — pin location, upstream check command, refresh procedure,
-verify command, risk tier (auto / report), applicable playbook, and any
-repo-specific owner rules. **Every row must carry a wired upstream check
-command** — a surface with a blank or missing check is an inventory defect (Phase
-1 skips it silently), so wire one before the run proceeds.
+`docs/dep-radar/inventory.md` carries one row per pinned surface: pin location,
+upstream check command, refresh procedure, verify command, risk tier, applicable
+playbook, and any repo-specific owner rules.
 
-- **First run** (no inventory): discover pins by sweeping the repo — package
-  manifests + lockfiles, `vendor/` dirs, SHA-256 constants near download/pin
-  code, model manifest scripts, version constants referencing upstream
-  releases — then WRITE the inventory, wiring an upstream check for each
-  surface, and have the owner glance at the tiers.
-- **Every run**: diff discovered pins against the inventory; add new surfaces
-  (each with an upstream check), drop removed ones, and note the change in the
-  run report.
+**First run** (no inventory): discover pins by sweeping the repo — package
+manifests and lockfiles, `vendor/` dirs, SHA-256 constants near download or pin
+code, model manifest scripts, version constants referencing upstream releases —
+then write the inventory, wire an upstream check for each surface, and have the
+owner glance at the tiers.
 
-## Phase 1 — detect (cheap; makes scheduled runs nearly free)
+**Every run**: diff discovered pins against the inventory, add new surfaces
+(each with a check), drop removed ones, and note the change in the run report.
 
-Read `docs/dep-radar/last-seen.json` (create if absent). Query upstream latest
-for each surface via its inventory upstream check command. If a surface has no
-check command, that is an inventory defect — wire it (per Phase 0) rather than
-silently skipping the pin. If nothing changed since last-seen, update
-`checked_at`, write a one-line report, and stop — an idle run should cost a few
+## Phase 1 — detect
+
+Read `docs/dep-radar/last-seen.json` (create if absent) and query each surface's
+upstream check for the latest version. If nothing moved since last-seen, update
+`checked_at`, write a one-line report, and stop: an idle run should cost a few
 registry calls, not a build.
 
 ## Phase 2 — research
 
-For each changed surface, read the actual changelog/release notes online —
-never guess from version numbers. Extract: breaking changes, deprecations,
-security fixes, new capabilities, and anything touching contracts the repo
-depends on (the inventory names these per surface — e.g. an OAuth flow, an
-RPC protocol, a model catalog).
+For each changed surface, read the actual changelog or release notes online —
+never infer from version numbers. Extract breaking changes, deprecations,
+security fixes, new capabilities, and anything touching a contract the repo
+depends on (the inventory names those per surface — an OAuth flow, an RPC
+protocol, a model catalog).
 
 ## Phase 3 — classify
 
-Sort every finding into **auto** / **report** per the operating policy plus the
-inventory's per-surface tier and owner rules. When uncertain, classify auto and
-attempt it; a failed attempt becomes a report item carrying its error output.
+Sort every finding per the operating policy plus the inventory's per-surface
+tier and owner rules.
 
 ## Phase 4 — apply the auto tier
 
-One branch + PR **per surface** (never batch surfaces — keeps reverts
-surgical). Apply the inventory's refresh procedure, then fix the bump's fallout
-in the SAME per-surface PR: migrate changed APIs, re-vendor bundled-extension
-bridges, and repair the tests and CI the bump breaks. Run the verify command,
-and only open the PR when verification passes locally. "Same workstream" scopes
-the fallout to this surface's PR — it never means folding another surface in.
-PR body: old→new version, changelog summary with links, the fallout fixed, and
-what was verified. Use the `github` skill for PR creation, CI waits, and merge;
-respect the repo's review/merge-queue conventions.
+Apply the inventory's refresh procedure, then fix the bump's fallout in that
+surface's PR: migrate changed APIs, re-vendor bundled-extension bridges, repair
+the tests and CI it breaks. Run the verify command, and open the PR only once
+verification passes locally, respecting the repo's review and merge-queue
+conventions. The PR body gives old→new version, a changelog summary with links,
+the fallout fixed, and what was verified.
 
-If a bump hits a strong concrete blocker mid-apply (an unmigratable API break, a
-transitive that does not support the new version) or its verification fails,
-stop and make it a report item with the exact error output — do not ship a
-partial bump.
+A blocker hit mid-apply, or a failed verification, stops the surface and makes
+it a report item with the exact error output — never ship a partial bump.
 
 ## Phase 5 — report
 
-Write `docs/dep-radar/report-<YYYY-MM-DD>.md` (committed with the last-seen
-update): what was auto-applied (PR links); any bump that hit a strong concrete
-blocker, with its exact error output; the narrow owner-decision tier
-(model-weight swaps, data-scope changes, owner-rule demotions); and
-new-capability opportunities a bump unlocked. Each awaiting-decision item lists
-the capability, what it would unlock, estimated effort/risk, and a
-recommendation. Surface the report to the owner (PR description / handoff doc),
-not just the file.
+Write `docs/dep-radar/report-<YYYY-MM-DD>.md`, committed with the last-seen
+update: what was auto-applied, with PR links; any bump that hit a blocker, with
+its exact error output; the owner-decision tier; and new capabilities a bump
+unlocked. Each awaiting-decision item names the capability, what it would
+unlock, estimated effort and risk, and a recommendation. Surface the report to
+the owner — a PR description or handoff doc — not just the file.
 
 ## Technology playbooks
 
-Applied per surface by what the repo actually has (the inventory records which
-apply). Concrete package, binary, and fork names live in the inventory, never
-here.
+Applied by what the repo actually has; the inventory records which apply, and
+every concrete package, binary, and fork name.
 
-- **Pinned AI/agent SDK** (a coding-agent or LLM SDK pinned by exact version):
-  registry `latest` + release notes. Auto-with-fixes including majors: do the
-  bump and migrate the changed APIs (auth/runtime/tooling) in the same
-  per-surface PR. New provider models a bump exposes are logged as report-tier
-  opportunities, but the bump itself ships. Verify: build + test suites; confirm
-  expected models/features appear.
-- **Pinned runtime binary with SHA constants** (an app-managed runtime binary
-  pinned by version plus per-platform SHA-256/size constants): version + SHAs
-  refreshed **only from the official release manifest** for the exact version —
-  never a third party, never hand-computed from a local download alone.
-  Auto-with-fixes: when a changelog carries auth/protocol/contract changes,
-  migrate the repo's use of them in the same PR rather than deferring. Verify:
-  pin unit tests + a live download smoke on the host platform.
-- **Routine npm/pnpm deps**: `pnpm -r outdated` and `pnpm audit`. Auto:
-  patch/minor + all security. Majors are auto-with-fixes — do the bump and fix
-  the mechanical fallout (renamed APIs, config, broken tests) in the same PR;
-  defer only on a strong concrete blocker. Verify: typecheck + tests.
-- **Routine cargo deps**: `cargo update --dry-run` and `cargo audit` (if
-  installed). Same tiers — majors auto-with-fixes. Verify: workspace tests with
-  the repo's CI feature parity.
-- **Bundled-extension forks** (a small upstream synced into the repo by script,
-  with tracked provenance and local patches on top — e.g. a bridge extension):
-  auto-with-fixes when the consuming repo's **full test suite gates the sync**.
-  Take the upstream-tracking update, rebase the local patches, and fix any
-  fallout in the same per-surface PR; the gating suite is what makes this safe
-  to automate. Verify: the repo's full test suite plus the sync script's own
-  checks.
-- **True patched vendor forks of large upstreams** (a large third-party project
-  vendored with local patches, no script-gated sync): report-only — rebasing
-  local patches onto a big upstream is owner-decided, never automatic.
-- **Model weights / artifact SHA pins**: report-only; verify scripts exist in
-  the repo, use them for integrity checks, never swap weights automatically.
-- **Pinned GitHub Actions SHAs**: auto for patch/minor tag moves of the same
-  action (refresh the SHA comment too); majors are auto-with-fixes — migrate the
-  workflow to the new major in the same PR, deferring only on a concrete
-  blocker.
+| Surface | Upstream check | Tier and handling | Verify |
+|---|---|---|---|
+| Pinned AI/agent SDK | Registry `latest` + release notes | Auto-with-fixes, majors included: migrate the changed auth, runtime, and tooling APIs in the same PR. New provider models a bump exposes are report-tier opportunities, but the bump itself ships. | Build + test suites; confirm expected models and features appear |
+| Pinned runtime binary with SHA constants | Official release manifest for the exact version — never a third party, never hand-computed from a local download alone | Auto-with-fixes: migrate auth, protocol, and contract changes rather than deferring them | Pin unit tests + a live download smoke on the host platform |
+| npm/pnpm deps | `pnpm -r outdated`, `pnpm audit` | Auto-with-fixes, including majors: fix the mechanical fallout (renamed APIs, config, broken tests) in the same PR | Typecheck + tests |
+| cargo deps | `cargo update --dry-run`, `cargo audit` when installed | Auto-with-fixes, including majors | Workspace tests at the repo's CI feature parity |
+| Bundled-extension forks — a small upstream synced in by script, provenance tracked, local patches on top | The sync script's upstream ref | Auto-with-fixes **only when the consuming repo's full test suite gates the sync**: take the update, rebase the local patches, fix fallout in the same PR. The gating suite is what makes this safe to automate. | That full test suite plus the sync script's own checks |
+| Patched vendor forks of large upstreams, with no script-gated sync | Upstream releases | Report — rebasing local patches onto a big upstream is owner-decided | — |
+| Model weights and artifact SHA pins | Upstream manifest | Report — never swap weights automatically | The repo's own integrity-verify scripts |
+| Pinned GitHub Actions SHAs | Tag → SHA for the same action | Auto for patch/minor tag moves, refreshing the SHA comment too; majors auto-with-fixes, migrating the workflow in the same PR | Workflow run |
 
 ## Guardrails
 
-- Migration-bearing dep bumps (DB/storage tooling): check the repo's
-  merge-order/version-gap hazards before merging.
-- Harness-safe shell: run upstream checks and verify commands as single simple
-  commands — no loops, no command substitution, no composition — so runs
-  survive restrictive harness approval policies.
+- Migration-bearing dep bumps (DB or storage tooling) carry merge-order and
+  version-gap hazards; check the repo's before merging.
+- Shell commands follow orch SKILL.md § Harness-Safe Shell.

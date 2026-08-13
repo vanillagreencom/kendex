@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Architecture-invariant lint: the dep-radar skill is the GENERIC engine.
-# All repo-specific content (concrete package, binary, fork, and project
-# names) lives in each repo's generated docs/dep-radar/inventory.md — never
-# in the skill. The maintainer-approved draft originally named real packages
-# and projects; this lint keeps them (and their kin) from creeping back in.
+# Concrete package, binary, fork, and project names belong in each repo's
+# generated docs/dep-radar/inventory.md, never in the skill docs. This lint is a
+# tripwire for the names that have appeared in drafts; a newly introduced
+# concrete name is still a review responsibility.
 #
 # Teeth: an offender injected into a copy of the doc must be flagged.
 set -euo pipefail

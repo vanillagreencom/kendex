@@ -656,11 +656,10 @@ main() {
                 summary_parts+=("$archived_delta_count archived removed")
             fi
             # Strip problematic control chars from text fields (Linear
-            # descriptions can contain them) — same normalization the full
-            # sync path applies on line 538. Without this on the delta
-            # path, incremental syncs merged unescaped control chars into
-            # issues.json and downstream `jq` consumers (cache-query,
-            # orch/parallel-check) failed to parse.
+            # descriptions can contain them) — the same normalization the full
+            # sync path applies. Without it here, an incremental sync merged
+            # unescaped control chars into issues.json and every `jq` reader of
+            # the cache then failed to parse it.
             jq '[.[]
                   | select(.trashed != true and .archivedAt == null)
                   | .description = ((.description // "") | gsub("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]"; ""))
@@ -735,11 +734,15 @@ main() {
     local elapsed=$(( end_time - start_time ))
 
     # Update metadata
+    # These counts are written into meta.json as the record of what the cache
+    # holds. Defaulting a failed read to 0 would stamp "0 issues" over a cache
+    # that is merely unreadable, and every freshness check downstream would
+    # trust it.
     local issue_count project_count cycle_count initiative_count
-    issue_count=$(jq 'length' "$CACHE_DIR/issues.json" 2>/dev/null || echo 0)
-    project_count=$(jq 'length' "$CACHE_DIR/projects.json" 2>/dev/null || echo 0)
-    cycle_count=$(jq 'length' "$CACHE_DIR/cycles.json" 2>/dev/null || echo 0)
-    initiative_count=$(jq 'length' "$CACHE_DIR/initiatives.json" 2>/dev/null || echo 0)
+    issue_count=$(cache_jq_file "$CACHE_DIR/issues.json" 0 'length') || return 1
+    project_count=$(cache_jq_file "$CACHE_DIR/projects.json" 0 'length') || return 1
+    cycle_count=$(cache_jq_file "$CACHE_DIR/cycles.json" 0 'length') || return 1
+    initiative_count=$(cache_jq_file "$CACHE_DIR/initiatives.json" 0 'length') || return 1
 
     # Track reconciliation timestamp
     local reconciled_at

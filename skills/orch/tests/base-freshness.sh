@@ -155,7 +155,7 @@ START_WT="$REPO_ROOT/skills/orch/workflows/start-worktree.md"
 wiring="$(cat "$START_WT")"
 assert_contains "$wiring" '.agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]' "start-worktree § 1 runs the base-freshness gate"
 assert_contains "$wiring" 'worktree create [ISSUE_ID] --reuse' "start-worktree routes stale bases through the supported reuse rebase"
-assert_contains "$wiring" 'Never enter § 2 or § 3 on an unverified base' "start-worktree forbids reviewing an unverified base"
+assert_contains "$wiring" 'Never review on an unverified base' "start-worktree forbids reviewing an unverified base"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -5,8 +5,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../lib/label-activity.sh
-source "$SCRIPT_DIR/../lib/label-activity.sh"
 # shellcheck source=../lib/gh-auth.sh
 source "$SCRIPT_DIR/../lib/gh-auth.sh"
 
@@ -14,7 +12,7 @@ show_help() {
     cat <<'EOF'
 Remove a label from a PR or issue.
 
-Usage: label-remove.sh <pr-or-issue-ref> <label> [--reason TEXT] [--issue]
+Usage: label-remove.sh <pr-or-issue-ref> <label> [--issue]
 
 Arguments:
   pr-or-issue-ref   PR number, branch ref, or issue number. Empty
@@ -22,25 +20,22 @@ Arguments:
   label             Label name to remove (single label per call).
 
 Options:
-  --reason TEXT     Human-readable reason recorded in activity details.
   --issue           Treat the ref as an issue (default: PR).
   --pr              Treat the ref as a PR (default).
   --help, -h        Show this help.
 
 Examples:
-  label-remove.sh 44 needs-qa --reason "QA review complete"
+  label-remove.sh 44 needs-qa
   label-remove.sh 123 needs-triage --issue
 EOF
 }
 
 main() {
-    local ref="" label="" reason="" kind="pr"
+    local ref="" label="" kind="pr"
     local positional=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --help|-h) show_help; exit 0 ;;
-            --reason) reason="${2:-}"; shift 2 ;;
-            --reason=*) reason="${1#--reason=}"; shift ;;
             --issue) kind="issue"; shift ;;
             --pr) kind="pr"; shift ;;
             --) shift; break ;;
@@ -81,7 +76,6 @@ main() {
         exit "$rc"
     fi
 
-    emit_label_activity remove "$kind" "$ref" "$label" "$reason" || true
     exit 0
 }
 

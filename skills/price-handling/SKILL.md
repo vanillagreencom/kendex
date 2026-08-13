@@ -15,70 +15,39 @@ metadata:
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-f64 price handling rules for trading systems -- epsilon comparison, tick-size rounding, feed normalization, and display formatting.
+## The price type is `f64`
 
-## Resources
+IEEE 754 double precision. No fixed-point, no decimal types — it is what the platforms interoperate on (MT5, NinjaTrader, MultiCharts), carries 15-17 significant digits, is SIMD-friendly, and allows zero-overhead newtypes.
 
-### ctx7 CLI
+Migrate to `i64` fixed-point **only** for a matching engine (bit-exact required), a regulatory audit trail mandating reproducibility, or a settlement system with legal precision requirements. The hybrid is `i64` on the execution hot path, `f64` for display and analytics.
 
-| Library | ctx7 ID | Use For |
-|---------|---------|---------|
-| Rust std | `/websites/doc_rust-lang_stable_std` | f64 methods, parse, formatting |
+## Never `==` on prices
 
-## Skill Rules
-
-### Core Rules
-
-Non-negotiable f64 price handling constraints.
-
-#### f64 for All Prices
-
-IEEE 754 double-precision (`f64`) is the standard price type. No fixed-point, no decimal types.
-
-Rationale: Industry standard (MT5, NinjaTrader, MultiCharts), 15-17 significant digits, SIMD-friendly, zero-overhead newtypes possible.
-
-Migrate to `i64` fixed-point **only if**:
-- Building a matching engine (bit-exact required)
-- Regulatory audit trail mandates reproducibility
-- Settlement system with legal precision requirements
-
-Hybrid approach: `i64` for execution hot path, `f64` for display/analytics.
-
-#### Epsilon Comparison
-
-f64 comparison bugs are the #1 source of price-related issues. Never use `==` on prices.
-
-**Incorrect (direct equality):**
-
-```rust
-if price == target {
-    execute_order();
-}
-```
-
-**Correct (epsilon comparison):**
+Direct equality is the largest single source of price bugs.
 
 ```rust
 use float_cmp::{approx_eq, F64Margin};
 
-pub const PRICE_EPSILON: f64 = 1e-10;  // Sub-pipette tolerance
+pub const PRICE_EPSILON: f64 = 1e-10;  // sub-pipette tolerance
 
 pub fn prices_equal(a: f64, b: f64) -> bool {
     approx_eq!(f64, a, b, epsilon = PRICE_EPSILON, ulps = 4)
 }
 
-pub fn price_gte(a: f64, b: f64) -> bool {
-    a > b || prices_equal(a, b)
-}
-
-pub fn price_lte(a: f64, b: f64) -> bool {
-    a < b || prices_equal(a, b)
-}
+pub fn price_gte(a: f64, b: f64) -> bool { a > b || prices_equal(a, b) }
+pub fn price_lte(a: f64, b: f64) -> bool { a < b || prices_equal(a, b) }
 ```
 
-#### Tick-Size Rounding
+## Round only at the boundaries
 
-Round prices to valid tick increments. Validate alignment after rounding.
+Rounding at the wrong boundary silently destroys feed precision or submits invalid orders.
+
+| Boundary | Rounding |
+|---|---|
+| Order submission (OrderRequest → broker API) | Round to tick, then validate alignment |
+| Display formatting | Round to the symbol's `display_decimals` |
+| Market data ingestion (ticks, bars, quotes) | **Never** — preserve full feed precision |
+| P&L calculation | **Never** — use raw values |
 
 ```rust
 pub fn round_to_tick(price: f64, tick_size: f64) -> f64 {
@@ -86,104 +55,29 @@ pub fn round_to_tick(price: f64, tick_size: f64) -> f64 {
 }
 
 pub fn validate_tick_alignment(price: f64, tick_size: f64) -> bool {
-    let rounded = round_to_tick(price, tick_size);
-    prices_equal(price, rounded)
+    prices_equal(price, round_to_tick(price, tick_size))
 }
 ```
 
-Where rounding applies is governed by the boundary rules below.
+Order submission runs in this order: round to tick, validate alignment (a no-op after rounding — a failure here means the tick size is wrong, so return an error rather than re-rounding), then format for the broker API if it takes a string.
 
-### Boundaries
-
-Where and when to round, validate, or format prices. Rounding at the wrong boundary silently destroys feed precision or submits invalid orders.
-
-#### Round at Order Submission
-
-All price rounding and validation converges at the order submission boundary (OrderRequest to broker API).
-
-```rust
-pub fn prepare_order(
-    request: &OrderRequest,
-    symbol: &SymbolSpec,
-) -> Result<ValidatedOrder, OrderError> {
-    // 1. Round price to tick
-    let price = symbol.round_price(request.limit_price);
-
-    // 2. Validate alignment (should be no-op after rounding)
-    if !validate_tick_alignment(price, symbol.tick_size) {
-        return Err(OrderError::InvalidTickSize);
-    }
-
-    // 3. Format for broker API (if string required)
-    let price_str = symbol.format_price(price);
-
-    Ok(ValidatedOrder { price, price_str, /* ... */ })
-}
-```
-
-#### Never Round Market Data
-
-Market data prices must preserve full feed precision. Do not round ticks, bars, or quotes at ingestion. Rounding belongs at the order submission boundary and display formatting only.
-
-**Incorrect (rounding at ingest):**
-
-```rust
-tick.price = round_to_tick(raw, tick_size);
-```
-
-**Correct (preserve raw precision):**
-
-```rust
-tick.price = raw;  // Preserve feed precision
-```
-
-**Where to round:**
-- Order submission (OrderRequest to broker API)
-- Display formatting
-
-**Where NOT to round:**
-- Market data ingestion (preserve feed precision)
-- P&L calculations (use raw values)
-
-#### Display Formatting via Symbol Metadata
-
-Format prices using the symbol's `display_decimals`, never hardcoded decimal places. Different instruments have different display precision (e.g., EURUSD: 5, AAPL: 2, BTC: 8).
-
-**Incorrect (hardcoded decimals):**
-
-```rust
-format!("{:.2}", price)
-```
-
-**Correct (symbol-driven precision):**
+Format with the symbol's precision, never hardcoded decimals — EURUSD is 5, AAPL is 2, BTC is 8:
 
 ```rust
 format!("{:.1$}", price, symbol.display_decimals as usize)
 ```
 
-### Type Design
+## Symbol metadata owns precision
 
-How to structure price-related types -- newtypes, symbol metadata, display precision.
-
-#### Symbol Metadata Owns Precision
-
-Tick size and display precision belong in a per-symbol metadata struct, not in the price value itself.
-
-**Incorrect (precision embedded in price):**
-
-```rust
-struct Price { value: f64, decimals: u8 }
-```
-
-**Correct (precision in symbol spec):**
+Tick size and display precision belong to the symbol, not to the price value. A `Price { value, decimals }` struct is the wrong shape.
 
 ```rust
 #[derive(Clone, Copy)]
 pub struct SymbolSpec {
     pub symbol_id: u32,
-    pub tick_size: f64,         // Minimum price increment
-    pub display_decimals: u8,   // Decimal places for UI
-    pub lot_size: f64,          // Minimum quantity
+    pub tick_size: f64,         // minimum price increment
+    pub display_decimals: u8,   // decimal places for UI
+    pub lot_size: f64,          // minimum quantity
 }
 
 impl SymbolSpec {
@@ -197,61 +91,25 @@ impl SymbolSpec {
 }
 ```
 
-Symbol table characteristics:
-- Loaded at subscription setup (cold path)
-- Keyed by symbol ID for O(1) lookup
-- Re-synced on reconnect or symbol list change
+The symbol table loads at subscription setup (cold path), is keyed by symbol ID for O(1) lookup, and re-syncs on reconnect or symbol list change.
 
-#### Price Newtype Pattern
+## Price newtype
 
-For additional type safety, wrap f64 in a zero-overhead newtype. Intentionally omit `PartialEq` to force explicit epsilon comparison.
+Optional extra type safety: wrap `f64` in a `#[repr(transparent)]` newtype with `PartialOrd` but **no `PartialEq`**, so equality cannot be written without going through `prices_equal`. Constructor `debug_assert!`s `is_finite()`. Worth the friction for order types; skip it on the market-data hot path, where wrapping and unwrapping is noise.
 
-```rust
-#[derive(Clone, Copy, Debug, PartialOrd)]
-#[repr(transparent)]  // Zero-overhead newtype
-pub struct Price(f64);
+## Normalize feeds to `f64` at ingest
 
-impl Price {
-    pub const ZERO: Price = Price(0.0);
-
-    pub fn new(value: f64) -> Self {
-        debug_assert!(value.is_finite(), "Price must be finite");
-        Price(value)
-    }
-
-    pub fn raw(self) -> f64 { self.0 }
-
-    pub fn approx_eq(self, other: Price) -> bool {
-        prices_equal(self.0, other.0)
-    }
-}
-
-// Intentionally NO PartialEq impl -- forces explicit comparison
-```
-
-**Trade-off**: Adds friction but prevents accidental `==` usage. Consider for order types; skip for market data hot path where the overhead of wrapping/unwrapping adds noise.
-
-### Feed Ingestion
-
-Patterns for normalizing price data from different feed formats (doubles, strings, scaled integers) to f64 at ingest without precision loss.
-
-#### Normalize to f64 at Ingest
-
-Convert all feed data to f64 at the ingest boundary. Different feeds use different wire formats; normalize once at entry.
+Convert at the entry boundary so all downstream code sees plain `f64` regardless of feed source.
 
 ```rust
-// Feeds sending doubles (IB, dxFeed, Rithmic): pass through
+// doubles (IB, dxFeed, Rithmic): pass through
 fn ingest_double(value: f64) -> f64 { value }
 
-// Feeds sending strings (Binance, Coinbase): parse
-fn ingest_string(s: &str) -> Result<f64, ParseFloatError> {
-    s.parse()
-}
+// strings (Binance, Coinbase): parse
+fn ingest_string(s: &str) -> Result<f64, ParseFloatError> { s.parse() }
 
-// Feeds sending scaled integers (CME MDP): unscale
+// scaled integers (CME MDP): unscale
 fn ingest_scaled(mantissa: i64, exponent: i8) -> f64 {
     mantissa as f64 * 10f64.powi(exponent as i32)
 }
 ```
-
-After normalization, all downstream code works with plain `f64` regardless of feed source.

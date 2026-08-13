@@ -33,6 +33,16 @@
 #                    has expired. OFF by default — see "Why refresh is opt-in".
 #   --json           Machine-readable output
 #
+# The lane INVENTORY is always discovered, never hand-maintained: config is an
+# overlay on top of it, so adding an account needs no edit anywhere.
+#   ORCH_LANE_ALIASES  Comma-separated `<config-dir-name>=<alias>` pairs giving
+#                      lanes meaningful names (`eclaude=work,mclaude=overflow`).
+#                      A directory with no mapping keeps its discovered name.
+#   ORCH_LANE_DIRS     Colon-separated config dirs, for a layout discovery does
+#                      not reach. Replaces claude discovery entirely.
+# Both read through the vstack settings ladder (process env > .env.local >
+# vstack.settings.toml [env] > .env).
+#
 # Headroom is `100 - max(session_5h, weekly, model_weekly)`: the BINDING
 # constraint, not an average. An account at 5% session but 95% weekly has 5%
 # headroom, and averaging would have called it 50% and sent the fleet into it.
@@ -56,6 +66,11 @@
 set -uo pipefail
 
 PROG="lanes"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/vstack-env.sh
+source "$SCRIPT_DIR/lib/vstack-env.sh"
+vstack_load_project_env "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 CLAUDE_USAGE_URL="${ORCH_LANES_CLAUDE_USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
 CLAUDE_TOKEN_URL="${ORCH_LANES_CLAUDE_TOKEN_URL:-https://platform.claude.com/v1/oauth/token}"
@@ -112,14 +127,32 @@ codex_lane_dirs() {
 	return 0
 }
 
-# The alias is the config dir's own name, which is also the command name a shell
-# wrapper would conventionally use for it (`~/.eclaude` -> `eclaude`). It is
-# purely a label: launching emits the config-dir env var, which works whether or
-# not such a wrapper exists, so nothing probes PATH to decide it.
+# The discovered alias is the config dir's own name, which is also the command
+# name a shell wrapper would conventionally use for it (`~/.eclaude` ->
+# `eclaude`). It is purely a label: launching emits the config-dir env var,
+# which works whether or not such a wrapper exists, so nothing probes PATH.
+#
+# ORCH_LANE_ALIASES overlays user-chosen names onto that discovery, keyed by
+# the discovered name, so the inventory stays automatic while the labels stay
+# the operator's. An entry naming a directory that does not exist is inert.
 lane_alias_for() {
-	local base
+	local base discovered pair key
 	base="$(basename "$1")"
-	printf '%s' "${base#.}"
+	discovered="${base#.}"
+	local IFS=','
+	for pair in ${ORCH_LANE_ALIASES:-}; do
+		key="${pair%%=*}"
+		[[ "$key" == "$pair" ]] && continue
+		# Trim the surrounding whitespace a comma-separated list invites.
+		key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
+		[[ "$key" == "$discovered" || "$key" == "$base" ]] || continue
+		local val="${pair#*=}"
+		val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+		[[ -n "$val" ]] || continue
+		printf '%s' "$val"
+		return
+	done
+	printf '%s' "$discovered"
 }
 
 # ── Usage fetch (the only impure layer) ──────────────────────────────────────

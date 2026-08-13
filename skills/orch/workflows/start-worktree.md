@@ -1,200 +1,140 @@
 # Start Session Workflow (Worktree)
 
-Expedited session start for worktree contexts. Skips issue selection, preparation, and worktree creation — completed in the prior main-repo session.
-
-## Inputs
+The full session from inside a worktree: implement → review → submit → finalize.
 
 | Command | Flow |
 |---------|------|
-| `start` (from worktree) | § 1 → § 2 → § 3 → § 4 → § 5 |
-| `start [ISSUE_ID]` (from worktree) | § 1 → § 2 → § 3 → § 4 → § 5 |
-| `start github OWNER/REPO#N` (from worktree) | normalize to `ISSUE_ID=issue-N`, then § 1 → § 2 → § 3 → § 4 → § 5 |
+| `start` / `start [ISSUE_ID]` (from a worktree) | § 1 → § 5 |
+| `start github OWNER/REPO#N` (from a worktree) | normalize to `ISSUE_ID=issue-N`, then § 1 → § 5 |
 
----
+## 1. Open The Session
 
-## 1. Initialize Worktree Session
+1. **Resolve identity.** Take `[ISSUE_ID]` from the argument, or from the branch:
 
-If invoked as `start github OWNER/REPO#N`, parse it before initialization:
-- `TRACKER=github`
-- `ISSUE_ID=issue-N`
-- `GITHUB_REPO=OWNER/REPO`
+   ```bash
+   .agents/skills/orch/scripts/git-context issue-from-branch .
+   ```
 
-1. **Refuse containers** — Linear only, and BEFORE initialization: the next step claims the session-guard lease and creates workflow state, and containers never hold state. Resolve `[ISSUE_ID]` from the argument (or the worktree branch name when none was given), then resolve the tracker BEFORE any Linear command — when `TRACKER` was not passed in caller context, run `.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]` and use its output. `TRACKER` = `github` → skip this whole step (a GitHub-only project must not abort on Linear auth/sync in a guard that cannot apply to it). For Linear items, reconcile the cache (children added since the last sync must not slip a container through a stale read), then check the marker:
+   Resolve `TRACKER` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). Set `WORKTREE_PATH` to the current directory.
+
+2. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)) to:
+
    ```bash
    .agents/skills/linear/scripts/linear.sh sync --reconcile
    .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
    ```
-   Check the title FIRST: a `(one PR)` marker always wins and opts the bundle into single-PR delegation, even when it carries the `agent:multi` label. Without the marker, the issue is a CONTAINER when it has children or carries the `agent:multi` label. A container is never orchestrated directly and never gets a PR — each child is the PR unit and the container closes last.
 
-   The guard covers BOTH directions, exactly like `start.md` § 3 — this route bypasses that section, so a leaf with a `parent_id` gets the Ancestor gate (SKILL.md → Coordination) HERE: walk the FULL `parent_id` chain (`.agents/skills/linear/scripts/linear.sh cache issues get [ANCESTOR_ID]` per hop — a child's bundle carries neither titles nor labels of its ancestors), classifying each. Any ancestor WITH the `(one PR)` marker → that bundle is the work item unless the user explicitly chose the child — and a PROMOTION here is terminal for this worktree: this tree is named for the child, the bundle's single session belongs in the parent's own worktree, and continuing would initialize the child and split the bundle. STOP without leasing or initializing anything, and point the operator at the parent (`/orch start [PARENT_ID]` — it resolves or creates the parent-named worktree); do NOT fall through to step 2 with the child's ID. All ancestors containers → gate the child on the union of its own `blocked_by` and EVERY container ancestor's (states via `.agents/skills/linear/scripts/linear.sh issues bulk-get [BLOCKER_IDS]`, only non-terminal `state_type` blocks — a top-container blocker stops a directly selected grandchild). Blocked → stop here — no lease, no workflow state — and name the live blockers.
+   A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion is terminal for this worktree: this tree is named for the child, the bundle belongs in the parent's own worktree, and continuing would split the bundle — point the operator at `/orch start [PARENT_ID]`. For a container, list its unblocked children and say this worktree should not exist for it. For a blocked child, name the live blockers.
 
-   If the work item is a container: stop here — no lease, no workflow state — list its unblocked children (non-terminal `state_type`; every blocker from the child's own `blocked_by` plus the container's `blocked_by` resolved — the bundle carries blocker IDs only, so fetch their states (`issues bulk-get [BLOCKER_IDS]`, or `cache issues get` per id) and treat only a NON-terminal `state_type` as blocking), and tell the operator to start a child instead (`/orch start [CHILD_ID]`); this worktree should not exist for the container.
+3. **Claim the worktree.** A lease means "a live session is working here", and this session is it. **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
 
-2. **Invoke workflow**: `⤵ workflows/initialize.md § 1-2 → § 1 step 3` with context:
-   - `lifecycle`: `"managed"`
-   - `issue_id`: normalized issue ID from argument or branch (never a child superseded by a `(one PR)` promotion — step 1 already stopped that case)
-   - `tracker`: `[TRACKER]` when parsed
-   - `github_repo`: `[GITHUB_REPO]` when parsed
+   ```bash
+   .agents/skills/worktree/scripts/worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]
+   ```
 
-3. **Gate on base freshness.** Every § 5 route out of `start.md` — continue-here, handoff, manual — lands here, so this one gate covers both a worktree just created in `start.md` § 4 and one reused from an earlier session. Prove the base is current before any agent spends budget on it:
+   Do **not** pass `--repo`: `claim` and `refresh` reject it, and a swallowed failure leaves the guard looking installed while it silently never claims. Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. Exit 1 with a `flock` message means the host has no `flock`, so the session runs unguarded; continue, but do not assume the tree is protected.
+
+4. **Initialize state**:
+
+   ```bash
+   .agents/skills/orch/scripts/git-context branch [WORKTREE_PATH]
+   .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WORKTREE_PATH] --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
+   ```
+
+5. **Gate on base freshness.** Every route into a worktree lands here, so this one gate covers both a freshly created worktree and one reused from an earlier session. Prove the base is current before any agent spends budget on it:
+
    ```bash
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
    ```
-   - Exit 0 (`behind = 0`) → § 2.
-   - Exit 4 (`behind > 0`) → rebase through the supported reuse path, then re-run the gate; it must exit 0 before § 2:
+
+   - Exit 0 → § 2.
+   - Exit 4 → rebase through the supported reuse path, then re-run the gate; it must exit 0 before § 2:
+
      ```bash
      .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --reuse
      ```
-   - Exit 1, or a reuse that cannot complete → report the divergence (`behind` count, base branch) and stop for the operator. Never enter § 2 or § 3 on an unverified base.
 
----
+   - Exit 1, or a reuse that cannot complete → report the divergence and stop. Never review on an unverified base.
 
-## 2. Delegate to Specialist Agent(s)
+## 2. Implement
 
-1. **Invoke workflow**: `⤵ workflows/dev-start.md § 1-4 → § 2 step 2` with context:
-   - `worktree`: [WORKTREE_PATH]
-   - `lifecycle`: `"managed"`
-   - `issue_id`: [ISSUE_ID]
+1. **Run Workflow**: `⤵ workflows/dev-start.md § 1-4 → § 2 step 2` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
+2. Parse the return: Branch, Commit, QA Labels, Summary.
+3. § 3 requires committed clean work: `HEAD` advanced from the pre-dev SHA, the returned commit in `HEAD` history, and `git status --porcelain` empty. Any failure re-delegates to the same dev agent with the exact missing step. Never review or submit a dirty worktree.
+4. **Do not shut the dev agent down** — it persists for § 3 fix cycles. Only § 5.4 retires it.
 
-2. **Parse return**: Branch, Commit, QA Labels, Summary.
+## 3. Review
 
-3. **Require committed clean work before review.** Do not proceed to § 3 unless § 2 validation confirms:
-   - `HEAD` advanced from the pre-dev SHA captured by `dev-start.md`.
-   - The returned commit exists in `HEAD` history.
-   - `git status --porcelain` is empty.
+**Run Workflow**: `⤵ workflows/review-pr.md § 1-9 → § 4` with context `worktree`, `lifecycle: "managed"`, `dev_agent` from § 2, `issue_id`.
 
-   If any check fails, re-delegate to the same dev agent with the exact missing step: commit the implemented changes, report the commit SHA, and leave the worktree clean. Never review or submit a dirty worktree.
+## 4. Submit
 
-4. **Do NOT shutdown dev agent.** Persists for § 3 fix cycles and re-delegation. Only § 5.5 shuts it down.
+**Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
 
-→ § 3
+## 5. Finalize
 
----
+### 5.1 Post Summary
 
-## 3. Run Review Cycle
+**Run Workflow**: `⤵ workflows/post-summary.md § 1-3 → § 5.2` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `pr_number` from § 4.
 
-**Invoke workflow**: `⤵ workflows/review-pr.md § 1-11 → § 4` with context:
-- `worktree`: [WORKTREE_PATH]
-- `lifecycle`: `"managed"`
-- `dev_agent`: `[DOMAIN_AGENT]` from § 2
-- `issue_id`: `[ISSUE_ID]`
+### 5.2 Move The Issue To In Review
 
----
+Issues stay In Review until merge marks them Done. **Skip if** `TRACKER=github` — those close via PR merge keywords.
 
-## 4. Submit PR
+```bash
+.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "In Review"
+```
 
-1. **Invoke workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context:
-   - `worktree`: [WORKTREE_PATH]
-   - `lifecycle`: `"managed"`
-   - `issue_id`: `[ISSUE_ID]`
+### 5.3 Session Summary
 
----
+```bash
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length)}'
+```
 
-## 5. Finalization
+<output_format>
 
-### 5.1 Reconcile Fixes Against Existing Issues
+### ✅ SESSION COMPLETE — [ISSUE_ID]: [TITLE]
 
-**Invoke workflow**: `⤵ workflows/fix-reconcile.md § 1-9 → § 5.2` with context:
-- `issue_id`: [ISSUE_ID]
-- `pr_number`: from § 4
+Sub-issues (tree):
+↳ [SUB_ISSUE_1]: [TITLE] | blocks: [SUB_ISSUE_2]
+↳ [SUB_ISSUE_2]: [TITLE] | blocked by: [SUB_ISSUE_1]
 
-### 5.2 Post Summary & Handoff Comments
+| Metric | Value |
+|--------|-------|
+| PR | #N |
+| Commits | N (sha1, sha2, ...) |
+| Files | N |
+| Review cycles | [CYCLES] |
+| Fixes applied | [FIXED_COUNT] |
+| Escalated | [ESCALATED_COUNT] |
+| Audit issues created | [AUDIT_ISSUES] |
+| PR comment iterations | [PR_ITERATIONS] |
+| PR comment fixes | [PR_FIXES] |
+| PR comment issues | [PR_ISSUES] |
+| CI | ✅ passing |
+| Review gate | ✅ approved / ✅ reviewed / ⏳ pending / forced / off (no reviewer policy) |
+| Unresolved threads | 0 |
 
-**Invoke workflow**: `⤵ workflows/post-summary.md § 1-3 → § 5.3` with context:
-- `worktree`: [WORKTREE_PATH]
-- `lifecycle`: `"managed"`
-- `issue_id`: [ISSUE_ID]
-- `pr_number`: from § 4
+### Issues Created
 
-### 5.3 Move Linear Issue To In Review
+| ID | Title | Project | Relations |
+|----|-------|---------|-----------|
+| [ISSUE_ID] | [TITLE] | [PROJECT] | blk [ISSUE_X], rel [ISSUE_Y] |
 
-**Do NOT mark issues Done.** Issues stay "In Review" until merge triggers Done.
+</output_format>
 
-1. **Resolve tracker**:
-   ```bash
-   .agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]"
-   ```
-   Use the output as `TRACKER`.
+Omit sections with no data; include the sub-issue tree only for a bundle.
 
-2. **Skip if** `TRACKER=github` (GitHub issues close via PR merge keywords). → § 5.4
+### 5.4 Retire Agents
 
-3. **Move to review**. After PR submission, CI, comment triage, fix reconciliation, and final comments are complete, move the managed Linear issue into review ownership:
-   ```bash
-   .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "In Review"
-   ```
+Terminate every still-active agent in `child_sessions`, then retire the records so reviewer slot accounting stops counting them:
 
-→ § 5.4
+```bash
+.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions = ((.child_sessions // {}) | with_entries(.value.status = "closed"))'
+```
 
-### 5.4 Output Session Summary
+### 5.5 Offer Merge
 
-1. **Read final state**:
-   ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length)}'
-   ```
-   Read `cycles` as `CYCLES`, `fixed_count` as `FIXED_COUNT`, `escalated_count` as `ESCALATED_COUNT`, `pr_iterations` as `PR_ITERATIONS`, `pr_fixes` as `PR_FIXES`, `pr_issues` as `PR_ISSUES`, and `audit_issues` as `AUDIT_ISSUES` from the JSON object.
+**Skip if** no PR was created, CI is not passing, or `submit-pr.md` § 6.1 reported `MERGE_READY = false`.
 
-2. **Output session summary**:
-
-   <output_format>
-
-   ### ✅ SESSION COMPLETE — [ISSUE_ID]: [TITLE]
-
-   Sub-issues (tree):
-   ↳ [SUB_ISSUE_1]: [TITLE] | blocks: [SUB_ISSUE_2]
-   ↳ [SUB_ISSUE_2]: [TITLE] | blocked by: [SUB_ISSUE_1]
-      ↳ [SUB_ISSUE_3]: [TITLE]  ← nested
-
-   | Metric | Value |
-   |--------|-------|
-   | PR | #N |
-   | Commits | N (sha1, sha2, ...) |
-   | Files | N |
-   | Review cycles (§ 3) | [CYCLES] |
-   | Fixes applied (§ 3) | [FIXED_COUNT] |
-   | Escalated | [ESCALATED_COUNT] |
-   | Audit issues created (§ 3) | [AUDIT_ISSUES] |
-   | PR comment iterations (§ 4) | [PR_ITERATIONS] |
-   | PR comment fixes | [PR_FIXES] |
-   | PR comment issues | [PR_ISSUES] |
-   | CI | ✅ passing |
-   | Review gate | ✅ approved / ✅ reviewed / ⏳ pending / forced / off (no reviewer policy) |
-   | Unresolved threads | 0 |
-
-   ### Issues Created
-
-   | ID | Title | Project | Relations |
-   |----|-------|---------|-----------|
-   | [ISSUE_ID] | [TITLE] | [PROJECT] | blk [ISSUE_X], rel [ISSUE_Y] |
-
-   ### Issues Updated
-
-   | ID | Title | Changes |
-   |----|-------|---------|
-   | [ISSUE_ID] | [TITLE] | state: [PREVIOUS]→In Review, +rel [ISSUE_X] |
-
-   Omit sections with no data. Include sub-issues tree if bundled.
-
-
-   </output_format>
-
-### 5.5 Shutdown Team
-
-1. Terminate all still-active agents from `child_sessions` in workflow state.
-2. Retire the terminated records so reviewer slot accounting (`review-pr.md` § 2) stops counting them:
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions = ((.child_sessions // {}) | with_entries(.value.status = "closed"))'
-   ```
-
-### 5.6 Offer Merge
-
-**Skip if** no PR created (§ 4), CI not passing, or the § 4 submit-pr merge gates (`submit-pr.md` § 6.1) report `MERGE_READY = false` (unresolved review comments or an unmet reviewer-gate verdict).
-
-→ Ask user: `orch merge-pr [PR_NUMBER]` | `Skip`
-
-| Choice | Action |
-|--------|--------|
-| Merge | `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-8 → end` |
-| Skip | → end |
-
-→ end
+Ask: `orch merge-pr [PR_NUMBER]` | `Skip`. On merge, `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`.

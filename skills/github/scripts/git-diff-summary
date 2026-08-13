@@ -28,7 +28,7 @@ EOF
 }
 
 # Default base for review scope. A stale local main must not widen scope to
-# unrelated commits (vstack#718), so prefer the already-fetched remote-tracking
+# unrelated commits, so prefer the already-fetched remote-tracking
 # ref of the repo's default branch. No network: never fetches, so offline/CI
 # calls keep working. Falls back to local main when the repo has no remote.
 resolve_default_base() {
@@ -48,7 +48,7 @@ resolve_default_base() {
     echo "main"
 }
 
-# --- declaration-site test scoping (vstack#1217) ----------------------------
+# --- declaration-site test scoping ----------------------------
 # A .rs file with no file-local test markers is still test-only when its gate
 # lives at the declaration site in the declaring module:
 #     #[cfg(test)]
@@ -694,9 +694,16 @@ main() {
         diff_ref="${base}...HEAD"
     fi
 
-    # Get file list with status (A/M/D/R)
-    local files
-    files=$(git diff --name-status $diff_ref 2>/dev/null || echo "")
+    # Get file list with status (A/M/D/R). An unreadable diff — a base ref that
+    # does not exist, a broken repository — must not be reported as the empty
+    # summary below: that reads downstream as "nothing changed, no risk".
+    local files diff_rc=0
+    files=$(git diff --name-status "$diff_ref" 2>&1) || diff_rc=$?
+    if [ "$diff_rc" -ne 0 ]; then
+        printf 'git-diff-summary: git diff %s failed: %s\n' \
+            "$diff_ref" "$(printf '%s' "$files" | tr '\n' ' ' | head -c 300)" >&2
+        exit 1
+    fi
 
     if [ -z "$files" ]; then
         echo '{"files_changed": 0, "scope": "support", "domains": {}, "risk_flags": []}'
@@ -705,13 +712,13 @@ main() {
 
     # Get stats
     local stats
-    stats=$(git diff --stat --stat-count=999 $diff_ref 2>/dev/null | tail -1 || echo "0 files changed")
+    stats=$(git diff --stat --stat-count=999 "$diff_ref" 2>/dev/null | tail -1 || echo "0 files changed")
 
     # Detect risk flags via grep (avoids passing huge diffs through jq)
     local risk_flags="[]"
     local flags=()
     local rust_diff_added
-    rust_diff_added=$(git diff $diff_ref -- '*.rs' 2>/dev/null | grep -E '^\+' || true)
+    rust_diff_added=$(git diff "$diff_ref" -- '*.rs' 2>/dev/null | grep -E '^\+' || true)
 
     if echo "$rust_diff_added" | grep -qE '^\+.*unsafe '; then flags+=("unsafe_code_added"); fi
     if echo "$rust_diff_added" | grep -qE '^\+.*#\[repr\(C\)\]'; then flags+=("repr_c_struct_changed"); fi
@@ -722,9 +729,9 @@ main() {
     # The same patterns whose enclosing context is a test surface — tests/
     # dirs, *_tests.rs files, or #[cfg(test)] modules inside production files —
     # are the distinct informational `test_panic_path_added` flag instead: a
-    # test assertion is not a production panic path (vstack#944).
+    # test assertion is not a production panic path.
     # Changed .rs files that carry no file-local test markers but are reached
-    # only through #[cfg(test)]-gated declarations are test scope (vstack#1217).
+    # only through #[cfg(test)]-gated declarations are test scope.
     local cfg_test_declared="" rs_candidate
     while IFS= read -r rs_candidate; do
         [ -n "$rs_candidate" ] || continue
@@ -754,7 +761,7 @@ main() {
         # path<TAB>new-side line number of each added panic-pattern line
         local panic_lines
         # shellcheck disable=SC2086
-        panic_lines=$(git diff $diff_ref -- "${prod_path_args[@]}" 2>/dev/null | awk '
+        panic_lines=$(git diff "$diff_ref" -- "${prod_path_args[@]}" 2>/dev/null | awk '
             /^diff --git / { path = ""; inhunk = 0 }
             /^\+\+\+ b\//  { path = substr($0, 7); next }
             /^@@/ {
@@ -831,7 +838,7 @@ main() {
     if [ ${#test_path_args[@]} -gt 0 ]; then
         local test_diff
         # shellcheck disable=SC2086
-        test_diff=$(git diff $diff_ref -- "${test_path_args[@]}" 2>/dev/null | grep -E '^\+' || true)
+        test_diff=$(git diff "$diff_ref" -- "${test_path_args[@]}" 2>/dev/null | grep -E '^\+' || true)
         if echo "$test_diff" | grep -qE '^\+.*(panic!|unwrap\(\))'; then test_panic=1; fi
     fi
     if [ "$test_panic" -eq 1 ]; then flags+=("test_panic_path_added"); fi

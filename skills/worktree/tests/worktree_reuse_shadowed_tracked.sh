@@ -57,8 +57,8 @@ git init -q --bare "$ROOT/origin.git"
 git -C "$ROOT/main" remote add origin "$ROOT/origin.git"
 git -C "$ROOT/main" push -q -u origin main
 
-# A harness dir that mixes runtime content with a TRACKED file — the shape that
-# CC-1144's `.agents` relocation produced in hyprtrade.
+# A harness dir that mixes runtime content with a TRACKED file — the shape a
+# consumer produces by relocating part of `.agents` into the repo.
 mkdir -p "$ROOT/main/harness/skills"
 printf 'harness/**\n!harness/skills/\n!harness/skills/*.md\n' >"$ROOT/main/.gitignore"
 printf 'runtime\n' >"$ROOT/main/harness/state.json"

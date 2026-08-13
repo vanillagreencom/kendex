@@ -5,8 +5,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../lib/label-activity.sh
-source "$SCRIPT_DIR/../lib/label-activity.sh"
 # shellcheck source=../lib/gh-auth.sh
 source "$SCRIPT_DIR/../lib/gh-auth.sh"
 
@@ -14,7 +12,7 @@ show_help() {
     cat <<'EOF'
 Add a label to a PR or issue.
 
-Usage: label-add.sh <pr-or-issue-ref> <label> [--reason TEXT] [--issue] [--required|--optional]
+Usage: label-add.sh <pr-or-issue-ref> <label> [--issue] [--required|--optional]
 
 Arguments:
   pr-or-issue-ref   PR number, branch ref, or issue number. Empty
@@ -22,7 +20,6 @@ Arguments:
   label             Label name to add (single label per call).
 
 Options:
-  --reason TEXT     Human-readable reason recorded in activity details.
   --issue           Treat the ref as an issue (default: PR).
   --pr              Treat the ref as a PR (default).
   --required        Treat a missing label or write capability as an error
@@ -32,7 +29,7 @@ Options:
   --help, -h        Show this help.
 
 Examples:
-  label-add.sh 44 needs-qa --reason "ready for QA review"
+  label-add.sh 44 needs-qa
   label-add.sh 123 needs-triage --issue
   label-add.sh 44 informational --optional
 EOF
@@ -184,13 +181,11 @@ apply_label() {
 }
 
 main() {
-    local ref="" label="" reason="" kind="pr" policy="required" policy_set=""
+    local ref="" label="" kind="pr" policy="required" policy_set=""
     local positional=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --help|-h) show_help; exit 0 ;;
-            --reason) reason="${2:-}"; shift 2 ;;
-            --reason=*) reason="${1#--reason=}"; shift ;;
             --issue) kind="issue"; shift ;;
             --pr) kind="pr"; shift ;;
             --required|--optional)
@@ -254,7 +249,6 @@ main() {
         exit "$mutation_rc"
     fi
 
-    emit_label_activity add "$kind" "$ref" "$label" "$reason" || true
     exit 0
 }
 

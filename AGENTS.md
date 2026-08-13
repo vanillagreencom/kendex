@@ -139,7 +139,7 @@ extras = ["extras"]
 
 [agent-skills]
 rust = ["github", "worktree", ...]
-iced = ["iced-rs", "iced-shadcn", ...]
+iced = ["iced-rs", "trading-design", ...]
 
 [role-skills]
 analyst = ["linear", "github"]

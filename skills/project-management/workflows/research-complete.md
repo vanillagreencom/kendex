@@ -1,414 +1,192 @@
 # Research Complete Workflow
 
-Link completed research to blocked issues, analyze impact, create follow-up work.
+Link completed research to the issues it unblocks, analyze its impact, record the decision, and create only the follow-up work that clears the creation bar.
 
-## Inputs
+`research-complete [ISSUE_ID]` → §§ 1-6.
 
-| Command | Flow |
-|---------|------|
-| `research-complete [ISSUE_ID]` | § 1 → § 2 → § 3 → § 4 → § 5 → § 6 |
+## 1. Read the Research
 
-## 1. Get Research Details
+Commit any uncommitted files under `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/` — the researcher wrote them and they are part of the record:
 
-### 1.1 Ensure Researcher Findings Committed
+```bash
+git add [RESEARCH_DOCS_PATH]/[ISSUE_ID]/ && git commit -m "chore([ISSUE_ID]): Add research findings"
+```
 
-1. **Check for uncommitted files** in project research docs for `[ISSUE_ID]/`.
+```bash
+.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
+```
 
-2. **If uncommitted**: The findings may have been written by `agent:researcher`. Ask user whether to commit now, then run `git add [RESEARCH_DOCS_PATH]/[ISSUE_ID]/ && git commit -m "chore([ISSUE_ID]): Add research findings"`.
+Read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and summarize the key findings. If it is missing, route back to `research-issue.md § 4` to run the research — never ask the user to execute it externally.
 
-### 1.2 Fetch Issue Details
+Capture the researcher metadata from `raw-exa.json` (`.metadata`: `researchMode`, `type`, `queryCount`, `sourceCount`, `uniqueSourceCount`, `elapsedMs`, `rawOutputPath`). Treat `agent:researcher` as the producer unless the issue history says otherwise.
 
-1. **Fetch issue**:
-   ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
-   ```
-
-2. **Read findings**: project research docs `[ISSUE_ID]/findings.md`. Briefly summarize key findings. If missing, route back to `research-issue.md § 4 Delegate to Researcher` instead of asking the user to execute research externally.
-
-3. **Capture researcher metadata**: Prefer `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/raw-exa.json`; fallback to `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.raw.json`. Parse JSON `.metadata` for `researchMode`, `type`, `queryCount`, `sourceCount`, `uniqueSourceCount`, `elapsedMs`, and `rawOutputPath`. Treat `agent:researcher` as the producer unless issue history says otherwise. `findings.md` should only contain a compact `Research Metadata` section, never raw JSON.
-
-## 2. Ensure Domain Labels
-
-Load issue-label inventory and project taxonomy before inspecting or updating labels:
+## 2. Domain Labels
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
 ```
 
-Use issue labels only. Domain/stack labels, `agent:*`, and workflow/classification labels must be validated against [labels.md](../references/labels.md) before any update.
+Domain labels drive routing and type detection; the `## Affected Domains` description section is documentation only. Issue labels only, validated per [labels.md](../references/labels.md) — unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
 
-Unknown labels, parent/group labels, missing required categories, or exclusivity violations halt before mutation.
+**Skip if** the issue already carries domain labels (common except for spikes). Otherwise infer them from `findings.md` by matching component paths, compute `FINAL_LABELS = EXISTING + INFERRED` preserving unrelated labels, preflight, then `issues update [ISSUE_ID] --labels "[FINAL_LABELS]"`. When the domain is unclear or spans several, add every likely one — routing handles the escalation.
 
-**Two distinct concepts**:
+## 3. Type
 
-| Concept | Purpose | Example |
-|---------|---------|---------|
-| **Domain labels** (issue tracker) | Agent routing, type detection (1 = Targeted, 2+ = Pervasive) | domain-specific labels |
-| **`## Affected Domains` section** (description) | Documents *why* each domain is affected | `- [domain]: [REASON]` |
+`## Creates Roadmap` in the description → Strategic (§ 5.3); 2+ domain labels → Pervasive (§ 5.2); 1 domain label → Targeted (§ 5.1). Routing uses the label count, not the description section.
 
-Domain labels are always required and determine routing. The description section is documentation only (appears for Pervasive/Strategic).
+## 4. Link to Blocked Issues
 
-From § 1 response, check `.labels` array for domain/stack labels.
+**Skip if** the `.blocks` array is empty (self-initiated spike).
 
-**If no domain labels present** (common for research spikes):
+For each blocked issue and, recursively, its children (`cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description, skip when the findings path is already present, and otherwise put the research reference at the top.
 
-1. **Analyze `findings.md`** content for domain indicators -- infer from component paths (project-configurable).
-
-2. **Update labels** (must include existing + new): compute `FINAL_LABELS = EXISTING_LABELS + INFERRED_LABELS`, preserve unrelated labels, preflight final labels, then update.
-   ```bash
-   .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"
-   ```
-
-3. **If unclear or multi-domain** → add all likely domains; routing handles escalation
-
-## 3. Determine Research Type
-
-From § 1 response, count domain labels and check description for Strategic indicator:
-
-| Condition | Type | Flow |
-|-----------|------|------|
-| Has `## Creates Roadmap` | Strategic | § 5.3 |
-| 2+ domain labels | Pervasive | § 5.2 |
-| 1 domain label | Targeted | § 5.1 |
-
-**Note**: `## Affected Domains` section in description is documentation only; routing uses label count.
-
-## 4. Link Research to Blocked Issues
-
-**Skip if** no blocking relations (self-initiated spike).
-
-From § 1 response, check the `.blocks` array for blocked issue identifiers.
-
-For each blocked issue:
-
-1. **Get current description**: `.agents/skills/linear/scripts/linear.sh cache issues get [BLOCKED_ISSUE_ID]`
-
-2. **Check existing**: If path to findings already exists in description (single-line OR list format) -- skip if present.
-
-3. **Update description** with research reference at top (see format below).
-
-4. **Propagate to children**: Get sub-issues and apply same update:
-   ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'
-   ```
-   For each child: repeat steps 1-3 (skip if reference already present)
-
-**Format** (always at top of description):
-```
+```markdown
 **Research**: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
-
-[rest of description...]
 ```
 
-**Multiple references** (convert to list, keep at top):
-```
-**Research**:
-- [RESEARCH_DOCS_PATH]/[issue-1]/findings.md (brief topic)
-- [RESEARCH_DOCS_PATH]/[issue-2]/findings.md (brief topic)
+With several references, convert to a bulleted list under one `**Research**:` header, still at the top, each line noting its topic.
 
-[rest of description...]
-```
+## 5. Analyze Impact
 
-## 5. Route to Workflow
+Run exactly one flow, unless it escalates.
 
-Execute ONE flow based on § 3 unless meets escalation criteria as defined.
+### 5.1 Targeted
 
-### 5.1 Targeted Flow
+Delegate to the domain agent:
 
-1. **Identify domain agent** -- infer from component paths (project-configurable).
+<delegation_format>
+Analyze the impact of these research findings on your domain.
 
-2. **Delegate to domain agent** from step 1. Follow exactly, fill placeholders, add nothing else. Omit lines/sections with empty placeholders.
+Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
-   <delegation_format>
-   Analyze impact of research findings on your domain.
+Report with tables:
+- Decision content: summary, rationale, revisit conditions
+- Technical changes: | Type | Description | Est | Paths | QA triggers |
+- Supersedes: topics or patterns this replaces
+- Refactors (existing code referencing superseded patterns, independent of the new implementation): | Path | Old → New |
+- Doc/config updates: | Path | Change |
+- Cross-domain impact: yes/no and which domains
+- Scope: refactor-level or initiative-level?
 
-   Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
+List a technical change only when it changes what a user or operator experiences, or blocks work that does. Say so plainly when the finding needs no work.
+</delegation_format>
 
-   Analyze:
-   1. Existing code/patterns that must change (paths, components)
-   2. Breaking changes to APIs or contracts you own
-   3. Cross-domain impact (does this affect OTHER domains? yes/no + which)
+**Cross-domain impact reported** → add the new domain labels (compute the final set, preflight, update), append `## Affected Domains` to the description, and switch to § 5.2. Do not assess severity yourself; let each domain analyze its own impact.
 
-   Report with tables:
-   - Decision content: summary, rationale, revisit conditions
-   - Technical changes: | Type | Description | Est | Paths | QA Triggers |
-   - Supersedes: topics/patterns this replaces
-   - Refactors: existing code referencing superseded patterns, independent of new implementation | Path | Old → New |
-   - Doc/config updates: | Path | Change |
-   - Cross-domain impact: yes/no + which domains
-   - Scope: refactor-level or initiative-level?
-   </delegation_format>
+**Initiative-level scope** (10+ issues, needs phasing) → ask the user "Research scope suggests a new initiative. Escalate to a roadmap?" On yes, append `## Creates Roadmap` and switch to § 5.3.
 
-3. **Check for escalation**
-   - If cross-domain impact reported:
-     - Add domain labels from agent report: compute `FINAL_LABELS = EXISTING_LABELS + NEW_DOMAINS`, preflight against § 2 inventory/taxonomy, then `.agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --labels "[FINAL_LABELS]"`
-     - Update issue description -- append `## Affected Domains` section with domains from agent report
-     - **Switch to § 5.2**. Do not assess severity--let each affected domain analyze its own impact.
-   - If initiative-level scope (10+ issues, needs phasing):
-     - Ask user: "Research scope suggests a new initiative. Escalate to /roadmap create?"
-     - If yes:
-       - Update issue description -- append `## Creates Roadmap` section
-       - **Switch to § 5.3**
+### 5.2 Pervasive
 
-4. **→ Jump to § 6**
+Delegate the same analysis to every affected domain agent in parallel, minus the cross-domain and scope questions. Then delegate the synthesis to the architecture review agent:
 
-### 5.2 Pervasive Flow
+<delegation_format>
+Synthesize the domain reports into a cross-cutting impact analysis.
 
-1. **Delegate to each affected domain agent** from issue labels (parallel sub-agent calls). Follow exactly, fill placeholders, add nothing else. Omit lines/sections with empty placeholders.
+Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
 
-   <delegation_format>
-   Analyze impact of research findings on your domain.
+Domain reports:
+[summaries]
 
-   Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
+Report with tables:
+1. Unified decision content: summary, rationale, revisit conditions
+2. Documentation drift: | File | Issue | Severity |
+3. Conflicting issues: | Issue | Conflict | Resolution |
+4. Cross-module dependencies
+5. Breaking changes at module boundaries
+6. Prioritized issues: | # | Description | Est | Dependencies | Domain |
+7. Scope: refactor-level or initiative-level?
+</delegation_format>
 
-   Analyze:
-   1. Existing code/patterns in your domain that must change
-   2. Breaking changes to APIs or contracts you own
+Initiative-level scope escalates to § 5.3 the same way as § 5.1.
 
-   Report with tables:
-   - Decision content: summary, rationale, revisit conditions
-   - Technical changes: | Type | Description | Est | Paths | QA Triggers |
-   - Supersedes: topics/patterns this replaces
-   - Refactors: existing code referencing superseded patterns, independent of new implementation | Path | Old → New |
-   - Doc/config updates: | Path | Change |
-   </delegation_format>
+### 5.3 Strategic
 
-2. **Delegate to architecture review agent** for cross-cutting synthesis. Follow exactly, fill placeholders, add nothing else. Omit lines/sections with empty placeholders.
+`$FEATURE_NAME` is the issue title without the `Research:` prefix. `$ORIGIN_ISSUE` is the single entry in `.blocks` (fetch its id, title, and project); with zero or several blocked issues it is null.
 
-   <delegation_format>
-   Synthesize domain agent reports into cross-cutting impact analysis.
+Run `⤵ workflows/roadmap-plan.md $FEATURE_NAME @[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md --origin-issue $ORIGIN_ISSUE`, then `⤵ workflows/roadmap-create.md @[PLAN_PATH]`. Issue creation happens there — § 6 then handles only the decision record and the doc updates.
 
-   Read: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
+## 6. Complete
 
-   Domain reports:
-   [summaries from step 1]
+### 6.1 Record the Decision
 
-   Report with tables:
-   1. Unified decision content: summary, rationale, revisit conditions
-   2. Documentation drift: | File | Issue | Severity |
-   3. Conflicting issues: | Issue | Conflict | Resolution |
-   4. Cross-module dependencies (diagram or bullets)
-   5. Breaking changes at module boundaries
-   6. Prioritized issues: | # | Description | Est | Dependencies | Domain |
-   7. Scope: refactor-level or initiative-level?
-   </delegation_format>
+Follow the decider skill's create-decision workflow: `decisions next-id`, pick the template scale from `templates/decision-entry.md` (minimal for a single clear choice, standard for several alternatives, comprehensive for architecture-level work), and write `[project decision documents]/[DECISION_ID]-[DESCRIPTOR].md` per `schemas/decision-format.md`.
 
-3. **Check for escalation to Strategic**
-   - If architecture review agent reports initiative-level scope (10+ issues, needs phasing):
-     - Ask user: "Research scope suggests a new initiative. Escalate to /roadmap create?"
-     - If yes:
-       - Update issue description -- append `## Creates Roadmap` section
-       - **Switch to § 5.3**
+Keep it tight — the research holds the detail. Carry the research path, a 1-2 sentence summary, the rationale as bullets, the impact on existing and future work, and the revisit conditions. Add the INDEX.md row per `templates/index-row.md`.
 
-4. **→ Jump to § 6**
+When the new decision replaces specific components of an active decision without superseding it wholesale, update that decision's status to `Active ([COMPONENTS] → [NEW_DECISION_ID])` in both its file and its INDEX row.
 
-### 5.3 Strategic Flow
+### 6.2 Append the Decision to Blocked Issues
 
-1. **Determine feature name and origin context**
+**Skip if** `.blocks` is empty. For each blocked issue and its recursive children, skip when `**Decision**: [DECISION_ID]` is already present; otherwise add `**Decision [DECISION_ID]**: [project decision documents]/[DECISION_ID]-[DESCRIPTOR].md` directly after the § 4 Research block.
 
-   Extract `$FEATURE_NAME` from research topic (issue title without "Research:" prefix).
+### 6.3 Apply Doc and Config Updates
 
-   **Identify origin issue**: From § 1 `.blocks` array, if there is a single blocked issue, it is the origin issue for hierarchy analysis. Fetch its details:
-   ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues get [BLOCKED_ISSUE_ID]
-   ```
-   Store as `$ORIGIN_ISSUE` (id, title, project). If multiple blocked issues or none, set `$ORIGIN_ISSUE` = null.
+Implement the doc changes the agents reported: update the architecture docs, add decision references to affected files, and combine every domain's updates for a Pervasive flow. Reusable rules and project-specific insights go into the managing project's vstack config — `[skill-instructions]` for skill-level context, `[agent-additional-instructions]` for persistent agent rules, `[agent-launch-instructions]` for launch instructions — followed by `vstack refresh`.
 
-2. **Run roadmap planning**
+### 6.4 Decompose the Blocked Work
 
-   Run Workflow: `⤵ workflows/roadmap-plan.md $FEATURE_NAME @[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md --origin-issue $ORIGIN_ISSUE § 1-8 → § 5.3`
+**Skip if** Strategic — roadmap-create already created the issues.
 
-   The `--origin-issue` flag passes blocked issue context so the TPM can determine whether created issues should be children of the origin issue or standalone. Creates plan file at project roadmap docs path. User approves plan.
+For each blocked issue, merge its existing `## Requirements`, the new requirements from the decision and agent reports, and drop the requirements the decision explicitly replaces. Each requirement is one bullet with a description, a domain, and an estimate. Apply the creation bar to every one: a requirement that changes nothing a user or operator experiences is dropped with a one-line note, not carried into a sub-issue.
 
-3. **Run roadmap creation**
+Agent-reported refactors are independent cleanup of superseded patterns, not blocked-issue requirements — they go into the audit input as standalone items in step 7 below.
 
-   Run Workflow: `⤵ workflows/roadmap-create.md @[PLAN_PATH] § 1-9 → § 6`
+**Single domain** → write the requirements into the issue description (§ 6.5) and skip the rest of this section.
 
-   Creates initiative/project/issues in issue tracker. Uses TPM's `hierarchy_recommendation` to set parent/child structure.
+**2+ domains** → decompose every requirement, existing and new, into one sub-issue per domain, leaving the parent coordination-only:
 
-4. **→ Jump to § 6**
+1. One sub-issue per domain, in the parent's project, titled `[Domain verb]: [scope] for [DECISION_ID]`.
+2. Full validated `labels[]` per sub-issue — `agent:[TYPE]` for the domain plus the required domain, stack, workflow, and classification labels, validated against the § 2 inventory before the file is written.
+3. Blocking order between the sub-issues, recorded as `blocks_items`/`blocked_by_items`.
+4. Supplementary findings fold into the sub-issue for their domain — never a separate issue for a small item in the same domain.
+5. Build the audit input per [audit-issues-input.md](../schemas/audit-issues-input.md) with `source: "research-complete"`, `parent_issue` (the single blocked issue, else null), `worktree`, `blocked_issues`, `research_issue`, `research_ref`, `decision_ref`, and:
 
-   Note: For Strategic, issue creation happens in `workflows/roadmap-create.md`. § 6 handles DXXX recording and doc/config updates only.
+   `hierarchy_contract` (required when `parent_issue` is non-null): `mode: "decompose-under-parent"`, `parent_issue` = the blocked implementation issue, `child_indexes` = the `index` of every domain sub-issue from step 1 (exclude step 7 `origin: "discovered"` refactor items), `sequencing` = the order from step 3. This makes the decomposition binding: the TPM MUST create every listed item as a same-project child of `parent_issue` and MUST NOT fold any domain back into the parent as its implementation leaf or spin it off standalone. Omit only when `parent_issue` is null — then `blocked_issues` acts as a hint.
 
-## 6. Complete (Common Steps)
+6. Every `items[]` entry carries its full validated `labels[]`.
+7. Add the agent-reported refactors as extra items with `origin: "discovered"`, no `blocks_items`/`blocked_by_items`, and NOT listed in `hierarchy_contract.child_indexes` — the TPM routes them to the right project.
+8. Write `tmp/audit-research-YYYYMMDD-HHMMSS.json`, then run `⤵ workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.5`.
 
-All flows converge here. Orchestrator executes these steps using agent reports.
+### 6.5 Update the Blocked Issues
 
-### 6.1 Record Decision
+For each blocked issue, keeping the Research and Decision references, the effort rollup, and the dependency lines:
 
-Follow the decider skill's create-decision workflow:
+- **Children were created** → apply [parent-issue-template.md](../templates/parent-issue-template.md): replace `## Requirements` with `## Sub-Issues` and `## Context`, and remove every implementation-level requirement — they live in the children now. Set the parent's agent label to the project's multi-agent label when the children span 2+ agent domains (compute the final set, replace only the agent category, preflight, update), and clear the parent's estimate.
+- **No children** → replace the vague summary with the concrete scope from the decision (1-2 sentences), add `## Requirements` with one bullet per deliverable, and add `## Context` with the key constraints and cross-references.
 
-1. **Get next ID**: `.agents/skills/decider/scripts/decisions next-id`
+Adjust the estimate when the research materially changed the size of the work, and add domain labels for any cross-domain work it revealed.
 
-2. **Select template** from the decider skill's `templates/decision-entry.md` based on scope:
-   - Minimal (15-30 lines): single technology choice, clear winner
-   - Standard (80-200 lines): multiple alternatives, patterns to document
-   - Comprehensive (200-600 lines): architecture-level, multi-concern
+### 6.6 Close Out
 
-3. **Create file** `[project decision documents]/[DECISION_ID]-[DESCRIPTOR].md` per selected template.
+Comment on the research issue, omitting empty sections:
 
-   Keep tight — reference research for details.
-   - **Research**: `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`
-   - **Summary**: 1-2 sentences
-   - **Rationale**: Key reasons, bullets preferred
-   - **Impact**: Key impacts from this research on existing/future work
-   - **Revisit**: When to reconsider
-
-   See the decider skill's `schemas/decision-format.md` for required elements and formatting rules.
-
-4. **Add row** to project decision documents INDEX.md table per the decider skill's `templates/index-row.md`.
-
-5. **Update partially superseded decisions** per the decider skill's update-decision workflow: If the new decision's Context references other active decisions as partially affected (e.g., "D011 specified ThreadBound..."):
-   - Read referenced decision file
-   - If new decision replaces specific components but not the whole: update status to `Active ([COMPONENTS] → [NEW_DECISION_ID])` in both the decision file and INDEX.md row
-
-### 6.2 Append Decision to Blocked Issues
-
-**Skip if** no blocking relations.
-
-Update blocked issues (from § 1 `.blocks` array) to append DXXX to existing Research lines added in § 4.
-
-For each blocked issue:
-
-1. **Get current description**: `.agents/skills/linear/scripts/linear.sh cache issues get [BLOCKED_ISSUE_ID] | jq -r '.description'`
-
-2. **Check if** `**Decision**: [DECISION_ID]` already exists -- skip if present
-
-3. **Find research path** in description (single-line OR list format)
-
-4. **Add decision reference** `**Decision [DECISION_ID]**: [project decision documents]/[DECISION_ID]-[DESCRIPTOR].md` after the Research block (after list if multiple refs)
-
-5. **Update**: `.agents/skills/linear/scripts/linear.sh issues update [BLOCKED_ISSUE_ID] --description "..."`
-
-6. **Propagate to children**:
-   ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'
-   ```
-   For each child: repeat steps 1-5
-
-### 6.3 Apply Doc/Config Updates
-
-**Implement changes** from agent reports:
-- Update architecture docs as described
-- Add DXXX references to affected files
-- If agents reported reusable rules or project-specific insights, add to the managing project's vstack config (`vstack.toml` at the vstack project root; `vstack-local.toml` in a source-catalog checkout) (`[skill-instructions]` for skill-level context, `[agent-additional-instructions]` for persistent agent rules, `[agent-launch-instructions]` for launch/startup instructions)
-- Run `vstack refresh` to apply config
-- For Pervasive: combine updates from all domain agents
-
-### 6.4 Extract Requirements
-
-**Skip if** Strategic type (roadmap creation handles issues).
-
-For each blocked issue (from § 1 `.blocks` array), build complete requirements list by merging:
-- **Existing**: Parse blocked issue's current `## Requirements` section
-- **Research**: New/refined requirements from decision (§ 6.1) + agent reports (§ 5.1/5.2)
-- **Superseded**: Drop existing requirements that the decision explicitly replaces
-
-Each requirement = one bullet with: description, domain, and estimate.
-
-**Separate refactors**: Agent-reported refactors (independent cleanup of superseded patterns) are NOT merged into blocked issue requirements. These go to the audit input as standalone items in § 6.5.
-
-### 6.5 Decompose into Sub-Issues
-
-**Skip if** single domain -- write requirements into issue description (§ 6.6) instead.
-
-Count distinct domains across merged requirements from § 6.4. If 2+ domains, decompose ALL requirements (existing + research-derived) into sub-issues -- parent becomes coordination-only:
-
-1. **Group ALL requirements by domain** → one sub-issue per domain (including domains from original scope). Sub-issues must be in parent's project.
-2. **Title format**: `[Domain verb]: [scope] for [DECISION_ID]` (e.g., "Implement GBM tick generator for D012", "Add order panel view for D012")
-3. **Set labels**: full validated `labels[]` per sub-issue (`agent:[TYPE]` per domain plus required domain/stack/workflow/classification labels). Validate with § 2 inventory/taxonomy before writing the audit-input file.
-4. **Determine blocking order**: Read [agent-sequencing.md](../../orch/workflows/agent-sequencing.md). Record as `blocks_items`/`blocked_by_items` for step 6.
-5. **Include supplementary findings** from agent reports as requirements in the appropriate domain sub-issue -- don't create separate issues for small supplementary items that belong to the same domain
-6. **Build audit-input file** with formatted titles:
-   - Schema: [audit-issues-input.md](../schemas/audit-issues-input.md)
-   - `source`: "research-complete"
-   - `parent_issue`: first entry from `blocked_issues` (if single), else null
-   - `worktree`: current directory
-   - `blocked_issues`: from § 1 `.blocks` array (for hierarchy hints)
-   - `research_issue`: `[ISSUE_ID]` (the research issue being completed)
-   - `research_ref`: `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`
-   - `decision_ref`: `[DECISION_ID]`
-   - `hierarchy_contract` (required when `parent_issue` is non-null): binding decomposition directive per schema § Hierarchy Contract — `mode: "decompose-under-parent"`, `parent_issue` = the blocked implementation issue, `child_indexes` = the `index` values of every domain sub-issue from step 1 (exclude step 7 `origin: "discovered"` refactor items), `sequencing` = the blocking order from step 4. This makes the decomposition binding: the TPM MUST create every listed item as a same-project child of `parent_issue` and MUST NOT fold any domain back into the parent as its leaf or spin it off standalone. Omit only when `parent_issue` is null (multiple blocked issues) — then `blocked_issues` hints apply.
-   - Each `items[]` entry includes `labels[]` with the full validated issue-label set.
-7. **Include refactors**: Add agent-reported refactors as additional items with `origin: "discovered"`, no `blocks_items`/`blocked_by_items`, and NOT listed in `hierarchy_contract.child_indexes`. TPM routes to appropriate project (typically Tech Debt) via § 6.3.
-8. **Write file**: `tmp/audit-research-YYYYMMDD-HHMMSS.json`
-9. **Run Workflow**: `⤵ workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.6`
-
-### 6.6 Update Blocked Issues
-
-Update each blocked issue (from § 1 `.blocks` array) to reflect research outcomes:
-
-1. **Get current description**: `.agents/skills/linear/scripts/linear.sh cache issues get [BLOCKED_ISSUE_ID] | jq -r '.description'`
-
-2. **If children created (§ 6.5)** -- apply project-level templates parent-issue-template:
-   - **Keep**: Research/Decision refs, Effort (rollup), Dependencies
-   - **Replace `## Requirements`** with `## Sub-Issues` and `## Context` per template
-   - **Remove** all implementation-level requirements (those now live in children)
-
-3. **If no children (single issue)** -- write full requirements into description:
-   - **Keep**: Research/Decision refs, Effort, Dependencies lines
-   - **Replace**: vague summary with concrete scope from decision (1-2 sentences)
-   - **Add `## Requirements`**: One bullet per deliverable from decision
-   - **Add `## Context`**: Key constraints, cross-references
-
-4. **Set parent label** to the project-configured multi-agent label (for example `agent:multi` when present) if children span 2+ distinct taxonomy `agent` domains. Compute final parent labels from current labels, replace only the `agent` category, preserve unrelated labels, preflight, then update.
-
-5. **Update metadata** if research changed scope:
-   - **Labels**: Add domain labels if cross-domain work discovered. Compute final labels from current labels + additions, preserve unrelated labels, preflight, then update.
-   - **Estimate**: Adjust if research revealed significantly more/less work
-
-6. **Invalidate parallel groups**: Description rewrites change issue scope, invalidating cached parallel-check results.
-   ```bash
-   for BLOCKED_ISSUE in [BLOCKED_ISSUES]; do
-     .agents/skills/orch/scripts/parallel-groups lookup $BLOCKED_ISSUE
-   done
-   ```
-   For each group found, clear it: `.agents/skills/orch/scripts/parallel-groups clear --group [GROUP_ID]`
-
-### 6.7 Post Research Summary Comment
-
-Post a comment on the research issue documenting completion:
-
-```bash
-.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body "## Research Complete
+```markdown
+## Research Complete
 
 ### Decision
-[DECISION_ID] - [SUMMARY]
+[DECISION_ID] — [SUMMARY]
 - **Researcher**: agent:researcher
-- **Deep Research Metadata**: mode=[researchMode], type=[type], queries=[queryCount], sources=[uniqueSourceCount/sourceCount], raw=[raw metadata path]
+- **Deep Research Metadata**: mode=[researchMode], type=[type], queries=[queryCount], sources=[uniqueSourceCount/sourceCount], raw=[path]
 - **Rationale**: [BRIEF_RATIONALE]
 - **Revisit**: [CONDITIONS]
 
 ### Created Issues
-- [CREATED_ISSUE_ID]: [TITLE] (Pn) — [parent: [ISSUE_ID] | project if different]
+- [CREATED_ISSUE_ID]: [TITLE] (P[N]) — [parent, or project when different]
 
 ### Doc Updates
 - [PATH]: [CHANGE]
 
-### Skipped
-- [ITEM]: [REASON]"
+### Declined
+- [ITEM]: [which creation-bar test it failed]
 ```
 
-**Omit empty sections.** If no decision recorded (informational research), replace Decision section with:
-```
-### Key Findings
-- [2-3 bullet summary]
-
-### Outcome
-[what was learned/decided/no action needed]
-```
-
-### 6.8 Mark Research Done
+For informational research that produced no decision, replace the Decision section with `### Key Findings` (2-3 bullets) and `### Outcome` (what was learned or why no action is needed).
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues update [ISSUE_ID] --state "Done"
 ```
 
----
-
 ## 7. Return State
 
-**If managed**: Return to the parent workflow's next section.
-
-**If standalone**: Session complete — research completion processed.
+**If managed**: return to the parent workflow's next section. **If standalone**: session complete.

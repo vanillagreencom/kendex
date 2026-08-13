@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 # Doc-contract lint for the dep-radar operating policy.
 #
-# The skill's value rests on a maintainer-approved contract. Per owner
-# directive (vstack #765) the tiers now bias toward upgrading: SDKs, agent
-# tooling, runtime binaries, npm/cargo majors, and bundled-extension fork syncs
-# are auto-with-fixes; the report tier narrows to exactly three things
-# (model-weight swaps, durable/recorded data-scope changes, owner-rule
-# demotions); uncertain means attempt-the-upgrade-and-report-failures, not
-# defer. The orthogonal safety rails are unchanged: one PR per surface, never
-# batch, every surface has a wired upstream check, the demote-only owner-rule,
-# and a dated report every run. A future edit that re-broadens the report tier,
-# reverts uncertain to defer-by-default, promotes report→auto, or batches
-# surfaces would drift the contract off the owner's intent. This lint pins each
-# contract clause in SKILL.md, and proves its own teeth by mutating a copy of
-# the doc to violate each rule and asserting the check catches it.
+# The skill's value rests on an owner-approved contract: the tiers bias toward
+# upgrading (SDKs, agent tooling, runtime binaries, npm/cargo majors, and
+# bundled-extension fork syncs are auto-with-fixes), the report tier holds
+# exactly three things, and uncertain means attempt-and-report-failures rather
+# than defer. Its safety rails are orthogonal to that bias: one PR per surface,
+# never batch, every surface carries a wired upstream check, owner rules demote
+# only, and every run ends with a dated report. An edit that re-broadens the
+# report tier, reverts uncertain to defer-by-default, promotes report→auto, or
+# batches surfaces drifts the skill off that contract, so each clause is pinned
+# here as a fixed string.
+#
+# Teeth: every check is re-run against a copy of the doc mutated to violate it.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

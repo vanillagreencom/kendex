@@ -130,11 +130,7 @@ dev = ""
 
 github = ""
 
-html-artifact = ""
-
 iced-rs = ""
-
-iced-shadcn = ""
 
 linear = ""
 

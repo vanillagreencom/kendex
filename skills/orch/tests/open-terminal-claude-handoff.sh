@@ -6,10 +6,9 @@
 # 1. The claude arms rendered no permission-mode argument, so handoff sessions
 #    booted in default (prompting) mode and stalled on their FIRST tool call
 #    with nobody attached — launch-only autonomy was structurally impossible.
-#    The command must now carry $ORCH_LANE_CLAUDE_PERMISSION_ARG (default
-#    --dangerously-skip-permissions, the claude-path peer of the codex
-#    generalist's danger-full-access sandbox), and a prompting override must
-#    produce a loud warning that handoff autonomy is void.
+#    Model, effort, and permission posture now arrive as --launch-flags, chosen
+#    per task at launch time rather than stored anywhere, and a lane whose
+#    flags carry no permission bypass must warn that handoff autonomy is void.
 #
 # 2. The brief (initial '/orch start …' prompt) rides as a CLI arg; first-run
 #    dialogs (theme/trust/browser-integration) consume it, leaving a healthy
@@ -173,7 +172,7 @@ OT="$(make_ot_repo "$REPO")"
 # Pane screen where the brief appears ONLY inside the echoed launch command —
 # exactly what a first-run dialog leaves behind. The delivery check must treat
 # this as UNDELIVERED (the filter's failing input).
-ECHO_SCREEN="\$ claude -n CC-737 --model 'opus[1m]' --effort max --dangerously-skip-permissions '/orch start CC-737'
+ECHO_SCREEN="\$ claude -n CC-737 --dangerously-skip-permissions '/orch start CC-737'
 ╭─ Enable browser integration? ─╮
 > "
 # Pane screen after the brief reached the TUI: the brief is visible on its own
@@ -196,80 +195,97 @@ READY_SCREEN="╭─────────────────────
 ╰──────────────────────────────────────────╯
   ? for shortcuts"
 
-echo "=== open-terminal claude handoff: permission mode ==="
+echo "=== open-terminal claude handoff: per-task launch flags ==="
 
 # Case 1: linear:claude renders the autonomy flag by default.
 CAP1="$TMP_ROOT/cap1"
 set +e
-c1_out=$(OT_CAPTURE="$CAP1" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c1.err")
+c1_out=$(OT_CAPTURE="$CAP1" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model opus[1m] --effort max --dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c1.err")
 c1_code=$?
 set -e
 assert_eq "$c1_code" "0" "linear:claude launch succeeds"
 if wait_capture "$CAP1"; then
   c1_cmd="$(cat "$CAP1")"
-  assert_contains "$c1_cmd" "--effort max --dangerously-skip-permissions '/orch start CC-737'" \
-    "linear:claude renders --dangerously-skip-permissions before the brief"
+  assert_contains "$c1_cmd" "--model opus[1m] --effort max --dangerously-skip-permissions '/orch start CC-737'" \
+    "linear:claude renders the caller's launch flags before the brief"
 else
   FAIL=$((FAIL + 1))
   printf '  FAIL  linear:claude never invoked the terminal stub\n'
 fi
 assert_not_contains "$(cat "$TMP_ROOT/c1.err")" "WARNING" \
-  "default autonomous mode emits no warning"
+  "flags carrying a permission bypass emit no warning"
 
 # Case 2: github:claude renders the same flag.
 CAP2="$TMP_ROOT/cap2"
 set +e
-c2_out=$(OT_CAPTURE="$CAP2" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness claude 42 2>"$TMP_ROOT/c2.err")
+c2_out=$(OT_CAPTURE="$CAP2" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness claude --launch-flags "--effort max --dangerously-skip-permissions" 42 2>"$TMP_ROOT/c2.err")
 c2_code=$?
 set -e
 assert_eq "$c2_code" "0" "github:claude launch succeeds"
 if wait_capture "$CAP2"; then
   c2_cmd="$(cat "$CAP2")"
   assert_contains "$c2_cmd" "--effort max --dangerously-skip-permissions '/orch start github acme/widgets#42'" \
-    "github:claude renders --dangerously-skip-permissions before the brief"
+    "github:claude renders the caller's launch flags before the brief"
 else
   FAIL=$((FAIL + 1))
   printf '  FAIL  github:claude never invoked the terminal stub\n'
 fi
 
-# Case 3: an autonomous override from project settings replaces the default,
-# no warning.
-REPO_B="$TMP_ROOT/repo-b"
-OT_B="$(make_ot_repo "$REPO_B" '[env]
-ORCH_LANE_CLAUDE_PERMISSION_ARG = "--permission-mode bypassPermissions"')"
+# Case 3: a different task gets different flags on the same machine — the
+# decision is per launch, so nothing is carried over from case 1 and no
+# settings file participates.
 CAP3="$TMP_ROOT/cap3"
 set +e
-c3_out=$(OT_CAPTURE="$CAP3" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c3.err")
+c3_out=$(OT_CAPTURE="$CAP3" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model sonnet --permission-mode bypassPermissions" cc-737 2>"$TMP_ROOT/c3.err")
 c3_code=$?
 set -e
-assert_eq "$c3_code" "0" "settings override launch succeeds"
+assert_eq "$c3_code" "0" "a second launch with different flags succeeds"
 if wait_capture "$CAP3"; then
   c3_cmd="$(cat "$CAP3")"
-  assert_contains "$c3_cmd" "--effort max --permission-mode bypassPermissions '/orch start CC-737'" \
-    "settings ORCH_LANE_CLAUDE_PERMISSION_ARG replaces the default"
-  assert_not_contains "$c3_cmd" "--dangerously-skip-permissions" \
-    "override removes the default flag"
+  assert_contains "$c3_cmd" "--model sonnet --permission-mode bypassPermissions '/orch start CC-737'" \
+    "the flags this launch passed are the flags rendered"
+  assert_not_contains "$c3_cmd" "--effort max" \
+    "no flag leaks in from another launch or a stored default"
 else
   FAIL=$((FAIL + 1))
-  printf '  FAIL  settings-override case never invoked the terminal stub\n'
+  printf '  FAIL  per-task flags case never invoked the terminal stub\n'
 fi
 assert_not_contains "$(cat "$TMP_ROOT/c3.err")" "WARNING" \
-  "autonomous override emits no warning"
+  "a bypassing permission mode emits no warning"
+
+# Case 3b: with no --launch-flags at all the command is exactly what a human
+# would type — no stored model, effort, or permission default appears.
+CAP3B="$TMP_ROOT/cap3b"
+set +e
+OT_CAPTURE="$CAP3B" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c3b.err"
+set -e
+if wait_capture "$CAP3B"; then
+  c3b_cmd="$(cat "$CAP3B")"
+  # The launch command must end exactly at the brief: no model, effort, or
+  # permission flag may appear from anywhere but --launch-flags.
+  assert_eq "${c3b_cmd##*&& }" "claude -n CC-737 '/orch start CC-737'" \
+    "an unflagged launch renders no model, effort, or permission default"
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  unflagged case never invoked the terminal stub\n'
+fi
+assert_contains "$(cat "$TMP_ROOT/c3b.err")" "handoff autonomy is void" \
+  "an unflagged claude lane warns that it will stall unattended"
 
 # Case 4: a prompting override still launches but warns loudly that handoff
 # autonomy is void.
 CAP4="$TMP_ROOT/cap4"
 set +e
-c4_out=$(ORCH_LANE_CLAUDE_PERMISSION_ARG='--permission-mode plan' OT_CAPTURE="$CAP4" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c4.err")
+c4_out=$(OT_CAPTURE="$CAP4" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--permission-mode plan" cc-737 2>"$TMP_ROOT/c4.err")
 c4_code=$?
 set -e
-assert_eq "$c4_code" "0" "prompting override still launches"
+assert_eq "$c4_code" "0" "prompting flags still launch"
 if wait_capture "$CAP4"; then
-  assert_contains "$(cat "$CAP4")" "--effort max --permission-mode plan '/orch start CC-737'" \
-    "prompting override is rendered as given"
+  assert_contains "$(cat "$CAP4")" "--permission-mode plan '/orch start CC-737'" \
+    "prompting flags are rendered as given"
 fi
 c4_err="$(cat "$TMP_ROOT/c4.err")"
-assert_contains "$c4_err" "WARNING" "prompting override warns"
+assert_contains "$c4_err" "WARNING" "prompting flags warn"
 assert_contains "$c4_err" "handoff autonomy is void" "warning names the voided contract"
 
 echo
@@ -280,15 +296,15 @@ echo "=== open-terminal claude handoff: tmux brief delivery ==="
 new_tmux_state c5
 printf '%s\n' "$DELIVERED_SCREEN" > "$OT_TMUX_CAPTURES/1"
 set +e
-c5_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude cc-737 2>"$TMP_ROOT/c5.err")
+c5_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tmux --harness claude --launch-flags "--dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c5.err")
 c5_code=$?
 set -e
 assert_eq "$c5_code" "0" "tmux delivered-first-pass exits 0"
 assert_contains "$c5_out" "Opened tmux window 'CC-737'" "tmux window opened"
 assert_not_contains "$c5_out" "Re-delivered" "no re-send when the brief is visible"
 c5_log="$(cat "$OT_TMUX_LOG")"
-assert_contains "$c5_log" "--effort max --dangerously-skip-permissions '/orch start CC-737'" \
-  "tmux-sent launch command carries the autonomy flag"
+assert_contains "$c5_log" "--dangerously-skip-permissions '/orch start CC-737'" \
+  "tmux-sent launch command carries the flags the caller chose"
 assert_contains "$c5_log" "capture-pane" "delivery was verified via capture-pane"
 assert_contains "$c5_log" "capture-pane -pJ -S - -t %7" \
   "capture includes scrollback (-S -): a fast response scrolling the prompt out of the viewport must not read as undelivered"
@@ -417,28 +433,32 @@ assert_not_contains "$c10_out" "Done: launched 1" \
 echo
 echo "=== open-terminal claude handoff: config validation ==="
 
-# Case 11: a permission arg carrying shell metacharacters is rejected before
-# anything launches — the value comes from project [env] settings and is
-# interpolated into a shell-executed launch command, so it must never pass
-# through unvalidated.
-REPO_C="$TMP_ROOT/repo-c"
-OT_C="$(make_ot_repo "$REPO_C" "[env]
-ORCH_LANE_CLAUDE_PERMISSION_ARG = \"--flag; touch $TMP_ROOT/pwned\"")"
+# Case 11: launch flags carrying shell metacharacters are rejected before
+# anything launches — the string is interpolated into a shell-executed launch
+# command, so it must never pass through unvalidated.
 CAP11="$TMP_ROOT/cap11"
 set +e
-c11_out=$(OT_CAPTURE="$CAP11" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_C" --ghostty --harness claude cc-737 2>"$TMP_ROOT/c11.err")
+c11_out=$(OT_CAPTURE="$CAP11" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--flag; touch $TMP_ROOT/pwned" cc-737 2>"$TMP_ROOT/c11.err")
 c11_code=$?
 set -e
-assert_eq "$c11_code" "1" "metacharacter permission arg refuses to launch"
-assert_contains "$(cat "$TMP_ROOT/c11.err")" "ORCH_LANE_CLAUDE_PERMISSION_ARG" \
-  "rejection names the offending setting"
+assert_eq "$c11_code" "1" "metacharacter launch flags refuse to launch"
+assert_contains "$(cat "$TMP_ROOT/c11.err")" "--launch-flags" \
+  "rejection names the offending option"
 if [[ -e "$TMP_ROOT/pwned" || -s "$CAP11" ]]; then
   FAIL=$((FAIL + 1))
-  printf '  FAIL  rejected permission arg still reached a shell or terminal launch\n'
+  printf '  FAIL  rejected launch flags still reached a shell or terminal launch\n'
 else
   PASS=$((PASS + 1))
   printf '  ok    nothing was launched with the rejected value\n'
 fi
+
+# Case 11b: a bracketed model id is an ordinary flag value, not a shell hazard.
+CAP11B="$TMP_ROOT/cap11b"
+set +e
+OT_CAPTURE="$CAP11B" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness claude --launch-flags "--model opus[1m] --dangerously-skip-permissions" cc-737 2>"$TMP_ROOT/c11b.err"
+c11b_code=$?
+set -e
+assert_eq "$c11b_code" "0" "a bracketed model id is accepted"
 
 # Case 12: non-integer ORCH_TMUX_VERIFY_SECS is a clear config error, not a
 # zero-pass verify loop misreported as a delivery failure.

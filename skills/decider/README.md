@@ -1,10 +1,14 @@
 # Decider
 
-Architectural decision document management — templates, creation workflows, search CLI, and supersession tracking.
+Architectural decision records for a project: numbered decision documents indexed in one `INDEX.md`, plus a `decisions` CLI that searches them. Agents use it to check whether an active decision already governs an area before proposing or implementing a change, and to record new decisions in a consistent format.
+
+## How it works
+
+Decisions live as `D001-descriptor.md` files beside an `INDEX.md` whose table carries one row per decision — date, ID, research link, one-line summary, rationale, revisit trigger, status, and a link to the document. The CLI parses that table, and keyword search also reads the linked documents, so a term that never made it into a one-line summary still finds the decision that governs it.
 
 ## Setup
 
-1. Create a decisions directory with an `INDEX.md`:
+Create the directory and an index:
 
 ```bash
 mkdir -p docs/decisions
@@ -16,24 +20,12 @@ cat > docs/decisions/INDEX.md <<'EOF'
 EOF
 ```
 
-2. Verify: `decisions list && decisions next-id`
+Verify with `decisions list && decisions next-id`.
 
-Optionally set `DECISIONS_DIR` in committed `vstack.settings.toml` under `[env]` to override auto-discovery (searches `docs/decisions/`, `decisions/`, `doc/decisions/`, `adr/`). Existing `.env.local` overrides still work.
+## Customize
 
-`decisions next-id` derives the active ID scheme from the last populated `INDEX.md` ID-column value, preserving schemes such as `D001` or `ADR-0001` and ignoring ID-looking text in prose cells. If that value has no numeric suffix, `next-id` fails with a configuration hint instead of guessing. For an empty index or an intentional scheme switch, set `DECISION_ID_PREFIX` and `DECISION_ID_WIDTH` under `[env]`.
+`decisions` looks upward from the working directory for `docs/decisions/`, `decisions/`, `doc/decisions/`, or `adr/` containing an `INDEX.md`; set `DECISIONS_DIR` in `vstack.settings.toml` under `[env]` to point somewhere else.
 
-Before the directory is initialized, `search` and `list` return an empty result (`[]`, exit 0) with a note on stderr; `next-id` and `get` error until it exists.
+`next-id` follows whatever scheme the last index row uses, so `D001` and `ADR-0001` both carry forward. Set `DECISION_ID_PREFIX` and `DECISION_ID_WIDTH` to start an empty index on a specific scheme, or to switch schemes deliberately; without them, an ID with no numeric suffix is an error rather than a guess.
 
-## Decision Templates
-
-| Template | Lines | When to Use |
-|----------|-------|-------------|
-| Minimal | 15-30 | Single choice, clear winner |
-| Standard | 80-200 | Multiple alternatives, comparison tables |
-| Comprehensive | 200-600 | Architecture-level, multi-concern |
-
-## Dependencies
-
-- `bash` 4+
-- `jq`
-- GNU `grep` with `-P` (PCRE): available as `grep`, `ggrep`, or Homebrew `gnubin/grep`
+Requires `jq`.

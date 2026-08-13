@@ -1,10 +1,10 @@
 # Recovery reference
 
-Deep failure-mode specs behind the recovery routing in [../SKILL.md](../SKILL.md).
+Failure-mode specs behind the recovery routing in [../SKILL.md](../SKILL.md).
 
 ## `remove` failure semantics
 
-`remove` deletes the worktree before deleting the local branch. Git removes the intact worktree; configured symlinks are never pre-stripped, so a refusal issued before deletion starts (a lock, for example) leaves the worktree, its symlinks, and its branch untouched, and Git's message is reported. Git's deletion is not atomic — a failure partway through can leave the worktree partially removed, so treat a removal failure as "inspect what remains" (`fix-links` restores configured symlinks) rather than "nothing happened"; the branch is never deleted on that path. A worktree carrying a native `git worktree lock` cannot be removed at all, so `remove` also checks the lock up front and exits non-zero with a diagnostic naming the lock reason (sessions record their owner there) and the `git worktree unlock` command — Git's own refusal names neither. Branch deletion uses safe `git branch -d`; if that fails after worktree removal, the script exits non-zero with a diagnostic naming the remaining branch and manual `git branch -D` recovery command.
+`remove` deletes the worktree before deleting the local branch. Git removes the intact worktree; configured symlinks are never pre-stripped, so a refusal issued before deletion starts leaves the worktree, its symlinks, and its branch untouched, and Git's message is reported. Git's deletion is not atomic — a failure partway through can leave the worktree partially removed, so treat a removal failure as "inspect what remains" (`fix-links` restores configured symlinks) rather than "nothing happened"; the branch is never deleted on that path. A worktree carrying a native `git worktree lock` cannot be removed at all, so `remove` checks the lock up front and exits non-zero with a diagnostic naming the lock reason (sessions record their owner there) and the `git worktree unlock` command — Git's own refusal names neither. Branch deletion uses safe `git branch -d`; if that fails after worktree removal, the script exits non-zero with a diagnostic naming the remaining branch and the manual `git branch -D` recovery command.
 
 ## `cleanup` failure semantics
 
@@ -21,14 +21,3 @@ The exact local branch tip is snapshotted before any fetch-capable step. Recover
 ## Guarded restack internals
 
 The guarded actions accept only a registered worktree whose worktree-local restack authorization, tool-created state token, and Git sequencer metadata agree on the exact remote, branch, observed remote OID, original head, and target base. `continue` and `skip` re-check the remote before and after replay, finalize the exact rewritten-head lease when complete, and fail closed on missing, stale, or unrelated state. `abort` requires the same matching local state, restores the recorded original head, and clears only the pending authorization; remote movement does not make that restorative action unsafe. Published paused states created by the pre-token tool remain recoverable when all legacy authorization and sequencer fields match exactly.
-
-## A worktree with a broken `.agents` link
-
-Run `fix-links` from the main checkout:
-
-```bash
-cd /path/to/main/checkout
-.agents/skills/worktree/scripts/worktree fix-links <ID|WORKTREE_PATH>
-```
-
-**A worktree whose `.agents` is not a symlink cannot be trusted for local verification.** Project tooling resolving paths through it is reading either nothing or the wrong checkout's copy. Fix the link before believing any result from that tree — and prefer tooling that fails closed with a diagnostic naming the missing file over tooling that silently degrades.

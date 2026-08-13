@@ -1,159 +1,62 @@
 # Dev Implementation Workflow
 
-Delegate development work to specialist agent(s). Handles single issues and bundled multi-agent work.
-
-## Inputs
+Delegate implementation to specialist agent(s). Handles a single issue and a bundled multi-agent work item.
 
 | Command | Behavior |
 |---------|----------|
-| `dev-start` | Implement current branch's issue |
-| `dev-start [ISSUE_ID]` | Implement specific issue (or sub-issue from start-new session) |
-| (from start-worktree / review-pr workflows) | Managed lifecycle with caller context |
+| `dev-start` | Implement the current branch's issue |
+| `dev-start [ISSUE_ID]` | Implement a specific issue |
+| (from start-worktree / review-pr) | Managed lifecycle with caller context |
 
-**Caller context parameters** (via `⤵`):
-- `worktree`: worktree path
-- `lifecycle` (optional): `"managed"` (return to caller at § 4) | `"self"` (default, standalone).
-- `issue_id` (optional): workflow-state key — the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number. If absent, extracted from branch.
-- `audit_bundle` (optional): `true` only from review-pr's post-audit path — the mechanical single-PR opt-in for children the calling session's audit just created (see the container preflight; carried into the delegation as `Audit Bundle: yes`).
+**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 4) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number; `audit_bundle` — `true` only from review-pr's post-audit path.
 
-**Standalone init** (`lifecycle: "self"` only):
+**Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else:
+
 ```bash
-# If ARG was provided, use it as ISSUE_ID. Otherwise:
 .agents/skills/orch/scripts/git-context issue-from-branch .
 ```
-Use the output as `ISSUE_ID`.
 
-Resolve the tracker FIRST — before any Linear command can run:
+Resolve `TRACKER` first — `github` skips the Linear-only container preflight entirely, which would otherwise abort on missing Linear credentials.
 
-```bash
-.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
-```
-Use the output as `TRACKER`. `TRACKER` = `github` → skip the container
-preflight below entirely (it is Linear-only; running its commands on a
-GitHub-only project without Linear credentials would abort the workflow
-before this skip could apply).
-
-**Container preflight** (`TRACKER` = `linear` only, before any
-workflow-state initialization): fetch the issue and its children — the default single-issue
-output omits children entirely, so the bundle read is mandatory:
+**Container preflight** (Linear only, before any workflow state exists). Fetch the bundle — the single-issue output omits children, and the plain children listing lacks the `blocked_by` and `depth` fields the gate needs:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
 ```
 
-(The bundle read carries each child's `blocked_by` and `depth` — the plain
-children listing lacks the blocker fields the unblocked test needs.)
+Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)). A container is refused before anything is initialized, with its unblocked children surfaced as the startable items. A `(one PR)` ancestor promotion is TERMINAL for this invocation: stop and route to `/orch start [PARENT_ID]` rather than continuing with the child's id. A blocked child stops with its live blockers named. Caller context `audit_bundle: true` is a mechanical single-PR opt-in equivalent to the `(one PR)` marker — the children were created by the calling session's audit to be worked inside this PR's session — so skip the refusal for that parent and carry `Audit Bundle: yes` in the delegation. Managed callers already ran this gate.
 
-(The sync precedes the children read: the cache can predate children added
-since the last reconcile, and a stale empty read would wave a container
-through.)
+Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH`: inside a worktree use the current directory; from the main repo use `worktree path [ISSUE_ID]` when it exists, and ask the user before creating one when it does not.
 
-Caller context `audit_bundle: true` (review-pr's post-audit path) is a
-mechanical single-PR opt-in equivalent to the `(one PR)` marker: the
-children were created by the calling session's audit to be worked inside
-the PR's own session — skip the container refusal for that parent and
-carry `Audit Bundle: yes` in the bundled delegation prompt (dev-implement
-accepts it as the same sanctioned exception). Otherwise: check the title
-FIRST — `(one PR)` always wins, even over `agent:multi`. Otherwise, an
-issue with the `agent:multi` label or with children is a CONTAINER —
-refuse before initializing anything (containers never hold
-workflow state) and surface its unblocked children as the startable work
-items. Unblocked is a mechanical test, not a guess: the bundle emits
-`blocked_by` as bare IDs, so fetch those blockers' states
-(`issues bulk-get [BLOCKER_IDS]`, or `cache issues get` per id — the
-child's own `blocked_by` plus the container's, which applies to every
-child) and treat only a NON-terminal `state_type` as blocking — a Done or
-canceled blocker never hides a startable child. The guard covers BOTH
-directions via the Ancestor gate (SKILL.md → Coordination): when the
-target is a LEAF whose `parent_id` is set (explicit argument or
-branch-derived), walk the FULL chain
-(`.agents/skills/linear/scripts/linear.sh cache issues get
-[ANCESTOR_ID]` per hop) and classify each ancestor. Any ancestor WITH
-the `(one PR)` marker → that bundle is the work item, and the promotion
-is TERMINAL for this invocation (unless the user explicitly chose the
-child): STOP before any workflow state exists — do not continue the
-remaining steps with the child's `ISSUE_ID` — and route to the parent
-(`/orch start [PARENT_ID]`, which resolves the parent-named worktree
-and delegates the bundle as one session), exactly as `start-worktree.md`
-stops. A branch-derived child under a single-PR parent is never
-delegated alone. All ancestors containers → gate the
-child on the union of its own and every container ancestor's blockers
-before any workflow state exists; blocked → stop and name the live
-blockers. Managed
-callers already ran this check in start/start-worktree.
-
-Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_ID` ≠ the current branch's issue, ask the user before proceeding. Resolve `WT_PATH`:
-- Inside a worktree → use current directory as `WT_PATH`
-- Main repo, worktree exists → run `.agents/skills/worktree/scripts/worktree path [ISSUE_ID]` and use the output as `WT_PATH`
-- Main repo, worktree missing → ask the user before creating
-
-If workflow state already exists, skip initialization:
+Initialize state unless it exists:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state exists --json "$ISSUE_ID"
-```
-
-If `.exists` is `false`, initialize workflow state. Linear only: first check for parent context from a start-new sub-issue:
-
-```bash
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --format=compact
-```
-Read `.parent.identifier // empty` from the JSON output and use it as `PARENT_ID`.
-
-If `PARENT_ID` is non-empty, check whether the parent workflow state exists:
-
-```bash
-.agents/skills/orch/scripts/workflow-state exists --json "$PARENT_ID"
-```
-
-If `.exists` is `true`, read the parent team and worktree:
-
-```bash
-.agents/skills/orch/scripts/workflow-state get [PARENT_ID] '.team_name // empty'
+.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
 ```
 ```bash
-.agents/skills/orch/scripts/workflow-state get [PARENT_ID] '.worktree // empty'
+.agents/skills/orch/scripts/git-context branch [WT_PATH]
 ```
-Run each block as its own tool call (a `// empty` default can't be folded into a combined object without collapsing it). Use the outputs as `TEAM` and `WT_PATH`.
-
-Then initialize child state with the inherited context:
-
 ```bash
-.agents/skills/orch/scripts/git-context branch "$WT_PATH"
-.agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "[BRANCH_FROM_PREVIOUS_COMMAND]" --team "$TEAM"
-```
-
-Otherwise, initialize state with the current worktree:
-
-```bash
-.agents/skills/orch/scripts/git-context branch "$WT_PATH"
-.agents/skills/orch/scripts/workflow-state init $ISSUE_ID --worktree "$WT_PATH" --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
+.agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
 ```
 
 ## 1. Determine Agent
 
-`agent:X` label → X | No label → infer from component paths.
+An `agent:X` label selects X; with no label, infer from the component paths the issue touches.
 
 ```bash
 # Linear
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --format=compact
-# Read `.labels[]` from the JSON output.
-
 # GitHub
-gh issue view ${ISSUE_ID#issue-} --json labels --jq '.labels[].name'
+gh issue view [N] --json labels --jq '.labels[].name'
 ```
 
----
+## 2. Delegate
 
-## 2. Delegate to Specialist Agent(s)
+Dev agents persist for the whole session — never shut one down here; only the caller's finalization step does.
 
-**Dev agents persist for the entire session.** Never shutdown dev agents — they stay alive for fix cycles, pending children, and PR review fixes. Only the caller's finalization step shuts them down.
-
-**Codex runtime agent type rule**: The selected `[AGENT_TYPE]` is the Codex `agent_type` for the first harness spawn call. The Codex `task_name` schema accepts only `[a-z0-9_]` and rejects hyphenated names before launch (vstack#751): a hyphenated `[AGENT_TYPE]` spawns with hyphens translated to underscores in the runtime `task_name` only (`agent_type` unchanged), attempted before any `worker` fallback; `child_sessions` keys, reports, and delegation records keep the canonical hyphenated name. Do not launch `worker` and simulate the selected dev identity in the prompt unless the generated-agent spawn was attempted and the spawn API rejects or does not expose that generated `agent_type`. In that fallback, spawn `agent_type=worker` but keep the logical selected agent name in bootstrap/delegation text, reports, and workflow-state keys. Use `worker` only when no matching custom agent exists, when the selected agent is intentionally generic, or after the generated-agent spawn is rejected/unavailable; record the runtime `agent_type` and fallback reason in status and workflow state.
-
-Before each implementation delegation — the single delegation, and **every group's delegation in bundled mode** — capture the current `HEAD`, record the delegation timestamp, and mint a fresh per-delegation round id. `dev_round_id` binds § 3 `dev-artifact-check` acceptance to exactly THIS delegation's receipt — deterministic identity, immune to a stale or cross-round receipt at a shared path (vstack#776); `dev_delegated_at` is the watchdog deadline (SKILL § Wait for Agent Return) — immediately after stamping it, **arm the single-shot wall-clock watchdog** for `dev_delegated_at + 10min` per that section. This is mandatory on every implementation delegation, not a recovery step: an agent that backgrounds a long validation and ends its turn is behaving correctly and may emit no further wake, so the watchdog is the only thing that runs the § 3 A/B check and escalation ladder (vstack#803, vstack#818). Run each as its own tool call:
+Before EVERY implementation delegation, including each group's delegation in bundled mode, run these three as separate tool calls:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
@@ -164,20 +67,16 @@ Before each implementation delegation — the single delegation, and **every gro
 ```bash
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
-Use the printed token as `[DEV_ROUND_ID]` and embed it in the delegation prompt (`Round ID:` line) so the agent passes `--round-id [DEV_ROUND_ID]` to `dev-return-write`. In bundled mode, re-mint it per group (§ 2.d).
 
-**After each spawn**, persist the agent session:
+Embed the printed token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line, and arm the watchdog for `dev_delegated_at + 10 min` per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
+
+After each spawn, persist the session — `"status": "active"` is what reviewer slot accounting counts, and omitting it frees a phantom slot:
+
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions["[AGENT_TYPE]"] = {"status": "active", "agent_id": "[AGENT_OR_TASK_ID]", "runtime_agent_type": "[RUNTIME_AGENT_TYPE]", "agent_type_fallback": [FALLBACK_REASON_JSON_OR_NULL]}'
 ```
 
-`"status": "active"` marks the session live for reviewer slot accounting (`review-pr.md` § 2 counts active child sessions when computing wave sizes) — omitting it makes a live dev agent free a phantom reviewer slot (vstack#698). Only the caller's finalization step retires the record (`start-worktree.md` § 5.5 sets `status` to `"closed"`).
-
-### If Single Issue
-
-Delegate to a `[AGENT_TYPE]` agent. Wait for completion. Parse: Branch, Commit, QA Labels, Summary.
-
-**Single issue delegation prompt:**
+### Single issue
 
 <delegation_format>
 Ultrathink.
@@ -192,26 +91,13 @@ Labels: [LABELS]
 Blocks: [BLOCKED_ISSUE_IDS or "none"]
 </delegation_format>
 
-**GitHub items**: replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. Leave `Artifact Key:` as `[ISSUE_ID]` — the normalized workflow-state key (`issue-N`), which is what orch's `dev-artifact-check --issue [ISSUE_ID]` resolves; the agent must key the artifact to it, never to the tracker-native `OWNER/REPO#N`.
+**GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]` — the normalized workflow-state key is what `dev-artifact-check --issue` resolves, so the artifact must be keyed to it, never to `OWNER/REPO#N`.
 
-### If Bundled Issue
+### Bundled issue
 
-**Agent grouping**: Group pending sub-issues by `agent:[TYPE]` label. See [agent-sequencing.md](agent-sequencing.md) for ordering. Process sequentially: first group → wait for completion → validate (§ 3) → collect handoff notes → next group.
+Group pending sub-issues by `agent:[TYPE]` label and order them per [SKILL.md § Coordination](../SKILL.md#coordination) sequencing. Process groups sequentially: delegate → wait → validate (§ 3) → collect handoff notes → next group.
 
-**Handoff collection** (between agent groups): After each group returns and passes § 3 validation, before delegating the next group:
-
-a. For each sub-issue completed by any prior agent group (cumulative):
-   ```bash
-   .agents/skills/linear/scripts/linear.sh cache comments list [COMPLETED_ISSUE_ID]
-   ```
-   Read bodies containing `Handoff Notes` from the JSON output.
-b. Extract "Handoff Notes" sections. Combine into a single block.
-c. Include in next delegation as `Handoff from prior agents:` (see below). Omit if none found.
-d. Re-run the § 2 pre-delegation stamps for this group — **all three**: `set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]`, `set-now [ISSUE_ID] dev_delegated_at`, AND `new-round-id [ISSUE_ID] dev_round_id` — immediately before delegating it, and embed the freshly printed `[DEV_ROUND_ID]` in this group's delegation. Each group's round id scopes its own artifact path (`tmp/dev-return-[PARENT_ID]-[DEV_ROUND_ID].json`), so a prior group's receipt can never be mis-accepted for this group (vstack#776).
-
-Delegate to a `[AGENT_TYPE]` agent. Wait for completion. Parse: Branch, Commit, QA Labels, Summary.
-
-**Bundled issue delegation prompt:**
+Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all three § 2 stamps for each group immediately before delegating it, so every group's round id scopes its own artifact path and a prior group's receipt can never satisfy this group's check.
 
 <delegation_format>
 Ultrathink.
@@ -220,41 +106,35 @@ Follow workflow: .agents/skills/dev/workflows/dev-implement.md
 
 Parent: [ISSUE_ID]
 Sub-Issues:
-[For completed sub-issues:]
 ↳ [SUB_ISSUE_1] (completed): [TITLE]
-[For pending sub-issues assigned to this agent:]
 ↳ [SUB_ISSUE_2]: [TITLE] | blocks: [SUB_ISSUE_3]
 ↳ [SUB_ISSUE_3]: [TITLE] | blocked by: [SUB_ISSUE_2]
-   ↳ [SUB_ISSUE_4]: [TITLE]  ← nested child of [SUB_ISSUE_3]
 
 Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [parent labels]
 Audit Bundle: [yes — only when caller context `audit_bundle: true`; omit otherwise]
-Parent Title: [PARENT_TITLE — the `.title` field from the preflight's
-`cache issues get [ISSUE_ID] --with-bundle` read of this parent,
-verbatim, so the dev agent can apply the container guard itself: the
-`(one PR)` marker in this title is the decisive single-PR override]
+Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim, so the dev agent can apply the container guard itself]
 Blocks: [blocked-issue-ids or "none"]
 
-**Work pending issues only** (completed listed for context). Respect blocking order: complete blockers before blocked issues.
+**Work pending issues only** (completed ones are listed for context). Complete blockers before blocked issues.
 
-**Scope**: Implement YOUR assigned sub-issues only. You may fix/connect prior agents' code if needed, but do not implement work belonging to other agents' pending sub-issues.
+**Scope**: implement YOUR assigned sub-issues only. You may fix or connect prior agents' code, but do not implement work belonging to another agent's pending sub-issues.
 
-Current status of issue bundle: [Brief summary of what was already done from other agents.]
+Current status of the bundle: [what other agents already did]
 
-[If handoff notes collected from prior agent groups:]
 Handoff from prior agents:
 [[ISSUE_ID] (agent:[TYPE])]:
+
 - [extracted handoff notes]
 </delegation_format>
 
-## 3. Validate Agent Return
+## 3. Accept The Round
 
-Acceptance is a deterministic function of two checks — **A** (the on-disk completion artifact) and **B** (git/tracker completion) — never of the return message, which is informational for display only. Expect no return message in the normal case for a long-validation round: the agent may have backgrounded the run and ended its turn (vstack#770, vstack#818), so run A/B on the § 2 watchdog deadline rather than waiting for one.
+Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and tracker completion). The return message is display-only, and a long-validation round routinely produces none — run A/B on the § 2 watchdog deadline rather than waiting for one.
 
-**Check A — completion artifact.** Read `dev_round_id`, then validate the round-scoped receipt (run each as its own tool call):
+**Check A** — two tool calls:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
@@ -262,66 +142,37 @@ Acceptance is a deterministic function of two checks — **A** (the on-disk comp
 ```bash
 .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]
 ```
-`A` = the `ok` field (`ok == true` / `ok == false`). The check resolves `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` and confirms its internal `round_id` matches, so ONLY this delegation's receipt can satisfy A — a stale, same-second, or cross-group receipt cannot (vstack#776).
 
-**Check B — git/tracker completion.** Run ALL checks; `B = pass` only when every one passes:
+`A` is the `ok` field. The check resolves `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` and matches its internal `round_id`, so only this delegation's receipt can satisfy A.
+
+**Check B** — `B = pass` only when every check passes:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pre_delegate_sha // empty'
 .agents/skills/orch/scripts/git-context head [WORKTREE_PATH]
-
-# Check the implementation produced committed work.
-git -C "[WORKTREE_PATH]" log -1 --oneline
-# The previous two SHA outputs must differ unless pre_delegate_sha was empty.
-
-# Check no implemented files were left outside the commit.
 git -C "[WORKTREE_PATH]" status --porcelain
-# The status output must be empty.
-
-# Linear only: check state + summary (auto-includes pending children from bundle)
 .agents/skills/linear/scripts/linear.sh issues validate-completion [ISSUE_ID] --include-children-of [ISSUE_ID]
 ```
 
-The `--include-children-of` expansion is for explicit single-PR bundles (`(one PR)` title marker) and audit-created sub-issues worked inside this session. A session whose work item is the child of a CONTAINER parent validates alone — the flag expands `[ISSUE_ID]`'s own children (it has none as a leaf), and sibling or parent state never gates this session's completion; the container closes later, via `merge-pr.md`, when its final child merges.
-
-**GitHub/ad-hoc**: no tracker validation — `B` requires a new commit (`HEAD` advanced from `pre_delegate_sha`) and a clean worktree.
-
-Per-field B failures and the targeted re-delegation each one implies (used by the decision table's re-delegate action):
-
-| Field | Expected | Missing-step re-delegation |
-|-------|----------|----------------------------|
-| commit | `HEAD` advanced from `pre_delegate_sha` | Re-delegate § 2: commit the work |
-| worktree | `git status --porcelain` empty | Re-delegate § 2: commit or revert leftover files |
-| `.all_ok` | `true` | Check `.results[]` below |
-| `.results[].state_ok` | `true` | Re-delegate § 2 |
-| `.results[].has_summary` | `true` | Re-delegate § 2: post the summary |
-
-`state_ok` checks the per-role managed state: bundle-expanded sub-issues (from `--include-children-of`) must be `Done`, while the primary target — the managed session-root issue, **whether or not it has a parent** — must be in a pre-merge state (`In Progress` or `In Review`, per `start-worktree.md` § 5.3). Do not expect `Done` for the session root before merge.
-
-**Decision table** — the acceptance action is a pure function of A and B (never the return message):
+`HEAD` must differ from `pre_delegate_sha`, `status --porcelain` must be empty, and the Linear validation (Linear only) must report `.all_ok`. `--include-children-of` expands explicit single-PR bundles and audit-created sub-issues worked in this session; a container child has no children of its own and validates alone. `state_ok` expects bundle-expanded sub-issues `Done` and the session-root issue in a pre-merge state (`In Progress` or `In Review`) — never `Done` before merge. GitHub and ad-hoc rounds skip tracker validation: B is the new commit plus the clean worktree.
 
 | A (artifact) | B (git/tracker) | Action |
 |---|---|---|
-| `ok==true` | pass | **Accept** — completion confirmed even if no return message arrived (recovery, vstack#770). First confirm **exact-commit binding**: the artifact's `.commit` must equal current `git -C [WORKTREE_PATH] rev-parse HEAD` — reject/flag a mismatch so a later unrelated commit is never attributed to this round. → Store QA state. |
-| `ok==true` | fail | Artifact claims done but git/tracker disagree. **Re-read git/tracker ONCE after a brief pause** before classifying B failed (a transient tracker/API lag must not trigger a duplicate-summary/label re-delegation). If still failing → re-delegate only the specific missing step(s) from the table above (uncommitted / leftover work). Do NOT proceed. |
-| `ok==false` | pass | Code appears landed but the round did **not** finish — B proves code landed, not that the tail ran (validate, labels, a summary belonging to THIS round, and this agent's authorship are unproven; an unrelated commit advances HEAD and Linear `validate-completion` matches any prior "Completion Summary"). Do NOT declare complete and do NOT re-run the implementation. Send ONE **report-only tail-reconciliation** nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status / QA labels / summary; do NOT re-run the implementation."* Accept only once a valid artifact for THIS `dev_round_id` appears (→ the `ok==true` row). |
-| `ok==false` | fail | **Not done** — no completion evidence. Do NOT proceed; wait to the per-delegation deadline, then escalate (ping → respawn) per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting). |
+| `ok==true` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD` — so a later unrelated commit is never attributed to this round. → Store QA state. |
+| `ok==true` | fail | The artifact claims done, git or the tracker disagree. Re-read ONCE after a brief pause (a transient tracker lag must not trigger a duplicate-summary re-delegation); if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
+| `ok==false` | pass | Code landed but the round did not finish — B proves a commit exists, not that the tail ran. Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
+| `ok==false` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
 
-**Analysis round (read-only delegation).** When THIS round was explicitly delegated as investigate-and-recommend — no implementation — the honest receipt is `kind: analysis` (schema: [`../schemas/dev-return.md`](../schemas/dev-return.md) § Analysis rounds): it carries **no** `commit` and **no** `validate` (their presence makes A `invalid`), and the recommendation/evidence rides in `summary`. The table above still applies as a pure function of A and B, with B redefined for the round: expect **no** new commit (`HEAD` still equals `pre_delegate_sha`) and a clean worktree; there is no exact-commit binding and no validate/CI gate for the round. On A `ok==true` (artifact `kind` is `analysis`) + B pass: **accept the round**, read the artifact's `summary` (the recommendation), and decide the next step yourself — delegate implementation as a fresh round, close with reasoning, or re-scope. The recommendation is input to your decision, never landed work. A receipt whose `kind` does not match what was delegated (implement/fix for an analysis delegation, or analysis for an implementation delegation) is a mis-filed round — do not accept it; treat as the `ok==false` row.
+**Analysis rounds.** When THIS round was delegated as investigate-and-recommend, the honest receipt is `kind: analysis`: no `commit`, no `validate`, the recommendation in `summary`. B is redefined for the round — expect NO new commit and a clean worktree, with no exact-commit binding and no validate gate. On A `ok==true` + B pass, accept, read the recommendation, and decide the next step yourself: delegate implementation as a fresh round, close with reasoning, or re-scope. A `kind` that does not match what was delegated is a mis-filed round — treat it as the `ok==false` row.
 
-Never proceed on a fail with "may have a different format" or similar excuses, and do not import the reviewer's re-delegate-on-`ok==false` rule here — the asymmetry is intentional ([SKILL § Wait for Agent Return Before Acting](../SKILL.md#wait-for-agent-return-before-acting)).
+Do not import the reviewer's re-delegate-on-`ok==false` rule; the asymmetry is intentional ([references/artifact-checks.md](../references/artifact-checks.md)).
 
-**Store QA state** (on Accept):
+**Store QA state** on accept:
+
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.qa_labels = [QA_LABELS_ARRAY] | .sub_issues = [SUB_ISSUE_IDS_ARRAY]'
 ```
 
-**If validate failures reported**: Investigate, suggest sub-issue (summary, steps, agent). Ask user before creating.
+## 4. Return
 
----
-
-## 4. Return State
-
-**If managed**: Return to the parent workflow's next section.
-
-**If standalone**: Session complete — dev implementation complete.
+**Managed**: return to the parent workflow's next section. **Standalone**: session complete.

@@ -236,11 +236,32 @@ cache_unlock() {
 # READ OPERATIONS
 # =============================================================================
 
+# Read one cache file through jq.
+# Usage: cache_jq_file <path> <default-when-absent> [jq args...] <filter>
+# An absent file is a cold cache, and the default is the truthful answer for it —
+# `cache_exists` / `cache_missing_error` gate the commands that need a warm one.
+# A file that is present but unparseable is a corrupt cache: it fails loudly,
+# because returning the same empty default would report a broken cache as "no
+# results" and every caller downstream would treat that as a real answer.
+cache_jq_file() {
+    local path="$1" absent_default="$2"
+    shift 2
+    if [[ ! -f "$path" ]]; then
+        printf '%s\n' "$absent_default"
+        return 0
+    fi
+    local out
+    if ! out=$(jq "$@" "$path"); then
+        jq -cn --arg path "$path" \
+            '{error: ("Cache file is not readable as JSON: " + $path + " — the cache is corrupt, not empty. Re-run: linear.sh sync")}' >&2
+        return 1
+    fi
+    printf '%s\n' "$out"
+}
+
 cache_read() {
     local file="$1" filter="${2:-.}"
-    local path="$CACHE_DIR/$file"
-    [[ -f "$path" ]] || { echo "[]"; return; }
-    jq "$filter" "$path" 2>/dev/null || echo "[]"
+    cache_jq_file "$CACHE_DIR/$file" "[]" "$filter"
 }
 
 cache_read_issues() { cache_read "issues.json" "${1:-.}"; }
@@ -251,14 +272,14 @@ cache_read_labels() { cache_read "labels.json" "${1:-.}"; }
 
 cache_get_issue() {
     local id="$1"
-    jq --arg id "$id" '[.[] | select(.id == $id or .identifier == $id)] | first // empty' \
-        "$CACHE_DIR/issues.json" 2>/dev/null
+    cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$id" \
+        '[.[] | select(.id == $id or .identifier == $id)] | first // empty'
 }
 
 cache_get_children() {
     local parent="$1"
-    jq --arg p "$parent" '[.[] | select(.parent.identifier == $p)]' \
-        "$CACHE_DIR/issues.json" 2>/dev/null || echo "[]"
+    cache_jq_file "$CACHE_DIR/issues.json" "[]" --arg p "$parent" \
+        '[.[] | select(.parent.identifier == $p)]'
 }
 
 cache_get_children_recursive() {
@@ -266,7 +287,7 @@ cache_get_children_recursive() {
     # Returns flat array with depth field. Emits both `id` and `identifier`
     # so consumers reading either field (raw cache vs formatted output)
     # work consistently.
-    jq --arg p "$parent" --argjson max "$max_depth" '
+    cache_jq_file "$CACHE_DIR/issues.json" "[]" --arg p "$parent" --argjson max "$max_depth" '
         . as $all |
         def descendants($pid; depth):
             if depth >= $max then [] else
@@ -294,13 +315,13 @@ cache_get_children_recursive() {
                 . + (map(.id) | map(. as $cid | $all | descendants($cid; depth + 1)) | flatten)
             end;
         descendants($p; 0)
-    ' "$CACHE_DIR/issues.json" 2>/dev/null || echo "[]"
+    '
 }
 
 cache_get_project() {
     local id="$1"
-    jq --arg id "$id" '[.[] | select(.id == $id or .name == $id)] | first // empty' \
-        "$CACHE_DIR/projects.json" 2>/dev/null
+    cache_jq_file "$CACHE_DIR/projects.json" "" --arg id "$id" \
+        '[.[] | select(.id == $id or .name == $id)] | first // empty'
 }
 
 cache_get_comments() {
@@ -470,9 +491,9 @@ cache_remove_issue() {
 
     # Look up identifier before removal (for comment cleanup)
     local identifier
-    identifier=$(jq -r --arg id "$issue_id" '
+    identifier=$(cache_jq_file "$cache_file" "" -r --arg id "$issue_id" '
         [.[] | select(.id == $id or .identifier == $id)] | first | .identifier // empty
-    ' "$cache_file" 2>/dev/null)
+    ')
 
     (
         flock 201
@@ -574,9 +595,17 @@ cache_refresh_issues() {
         }
     }"
 
-    source "$_CACHE_LIB_DIR/common.sh" 2>/dev/null || true
-    local result
-    result=$(graphql_query "$query" "{\"filter\": {\"id\": {\"in\": $id_list}}, \"includeArchived\": true}")
+    # Command scripts have already sourced common.sh; re-sourcing it would
+    # re-run the API-key precedence block against an environment it has itself
+    # rewritten. Load it only when the wire helper is genuinely absent, and let
+    # a failure there abort — a swallowed source leaves graphql_query undefined.
+    if ! declare -F graphql_query >/dev/null; then
+        # shellcheck source=common.sh
+        source "$_CACHE_LIB_DIR/common.sh"
+    fi
+    local vars result
+    vars=$(jq -cn --argjson ids "$id_list" '{filter: {id: {in: $ids}}, includeArchived: true}')
+    result=$(graphql_query "$query" "$vars")
     local nodes
     nodes=$(echo "$result" | jq '.issues.nodes // []')
     local count

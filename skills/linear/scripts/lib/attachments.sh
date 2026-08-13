@@ -101,7 +101,7 @@ attach_extract_all_urls() {
 
 # Get short hash for URL (first 12 chars of sha256)
 attach_url_hash() {
-    echo -n "$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12
+    printf '%s' "$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12
 }
 
 # Download a single file from uploads.linear.app

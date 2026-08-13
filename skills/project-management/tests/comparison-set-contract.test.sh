@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Regression test for harness-safe comparison-set loading (#676).
-# Under restricted harness approval policies (Codex AskForApproval=Never) a
-# per-project shell loop over `cache issues list --project` is rejected on
-# command shape alone, so the cross-project comparison-set loads in tpm-audit
-# and tpm-roadmap-plan must stay ONE simple `--all-projects` command. These
-# workflows are markdown contracts, so this test statically pins that shape.
+# Under restricted harness approval policies a per-project shell loop is
+# rejected on command shape alone, so the cross-project comparison-set loads
+# must stay ONE `--all-projects` command. These workflows are markdown
+# contracts, so this test statically pins that shape and the absence of every
+# loop form it replaced.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,62 +17,45 @@ fail() {
   exit 1
 }
 
-require_pattern() {
-  local file="$1" pattern="$2" desc="$3"
-  if ! grep -Eq -- "$pattern" "$file"; then
-    fail "$desc missing in ${file#$SKILL_DIR/}"
-  fi
-}
-
-require_fixed() {
-  local file="$1" needle="$2" desc="$3"
-  if ! grep -Fq -- "$needle" "$file"; then
-    fail "$desc missing in ${file#$SKILL_DIR/}"
-  fi
-}
-
-forbid_fixed() {
-  local file="$1" needle="$2" desc="$3"
-  if grep -Fq -- "$needle" "$file"; then
-    fail "$desc present in ${file#$SKILL_DIR/}"
-  fi
-}
-
 batch_cmd='.agents/skills/linear/scripts/linear.sh cache issues list --all-projects --state "Backlog,Todo,In Progress,In Review,Done" --max'
 
-# --- tpm-audit 1.5: comparison set is one --all-projects command ---
+# check_section <file> <start> <end> <label> — the region holds exactly the
+# batch command and none of the loop shapes it replaced.
+check_section() {
+  local file="$1" start="$2" end="$3" label="$4"
+  [[ -f "$file" ]] || fail "workflow not found: ${file#"$SKILL_DIR"/}"
 
-tpm_audit="$SKILL_DIR/workflows/tpm-audit.md"
-[[ -f "$tpm_audit" ]] || fail "workflow not found: workflows/tpm-audit.md"
+  local section="$tmp/$label.md"
+  sed -n "/$start/,/$end/p" "$file" >"$section"
+  [[ -s "$section" ]] || fail "$label section could not be extracted"
 
-section="$tmp/tpm-audit-1.5.md"
-sed -n '/^### 1\.5 /,/^### 1\.6 /p' "$tpm_audit" > "$section"
-[[ -s "$section" ]] || fail 'tpm-audit section 1.5 could not be extracted'
+  grep -Fq -- "$batch_cmd" "$section" \
+    || fail "$label lost the single --all-projects comparison-set command"
 
-require_fixed "$section" "$batch_cmd" 'single --all-projects comparison-set command'
-require_pattern "$section" 'Never loop `--project`' 'no-loop instruction'
-forbid_fixed "$section" 'Run for each project' 'per-project loop instruction'
-forbid_fixed "$section" '--project "[PROJECT_NAME]"' 'per-project fetch command'
-forbid_fixed "$section" 'for p in' 'shell loop shape'
+  local shape
+  for shape in 'for each project' 'Run for each project' '--project "[PROJECT_NAME]"' 'for p in'; do
+    if grep -Fqi -- "$shape" "$section"; then
+      fail "$label reintroduced a per-project loop shape: $shape"
+    fi
+  done
+}
 
-# --- tpm-roadmap-plan 1.5: same single-command contract ---
+check_section "$SKILL_DIR/workflows/tpm-audit.md" \
+  '^### 1\.5 ' '^### 1\.6 ' tpm-audit
 
-roadmap_plan="$SKILL_DIR/workflows/tpm-roadmap-plan.md"
-[[ -f "$roadmap_plan" ]] || fail "workflow not found: workflows/tpm-roadmap-plan.md"
+check_section "$SKILL_DIR/workflows/tpm-roadmap-plan.md" \
+  '^### 1\.5 ' '^### 1\.6 ' tpm-roadmap-plan
 
-section="$tmp/tpm-roadmap-plan-1.5.md"
-sed -n '/^### 1\.5 /,/^### 1\.6 /p' "$roadmap_plan" > "$section"
-[[ -s "$section" ]] || fail 'tpm-roadmap-plan section 1.5 could not be extracted'
+# Each workflow states why, so an editor does not "helpfully" restore the loop.
+for rel in workflows/tpm-audit.md workflows/tpm-roadmap-plan.md; do
+  grep -Eq -- 'never loop `--project`|Never loop `--project`' "$SKILL_DIR/$rel" \
+    || fail "${rel} lost the no-loop instruction"
+done
 
-require_fixed "$section" "$batch_cmd" 'single --all-projects all-issues command'
-forbid_fixed "$section" 'for each project' 'per-project fetch instruction'
-forbid_fixed "$section" '--project "[PROJECT_NAME]"' 'per-project fetch command'
-forbid_fixed "$section" 'for p in' 'shell loop shape'
-
-# --- linear skill: the batch flag the workflows depend on is documented ---
-
+# The flag the workflows depend on is documented by the skill that provides it.
 linear_skill="$SKILL_DIR/../linear/SKILL.md"
 [[ -f "$linear_skill" ]] || fail "linear SKILL.md not found next to project-management"
-require_fixed "$linear_skill" '--all-projects' 'batch enumeration flag documentation'
+grep -Fq -- '--all-projects' "$linear_skill" \
+  || fail 'the linear skill no longer documents --all-projects'
 
 echo "PASS: comparison-set contract"

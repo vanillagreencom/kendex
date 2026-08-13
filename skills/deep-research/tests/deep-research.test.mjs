@@ -42,14 +42,42 @@ test("out-of-range num-results and text-max-characters fail with Exa limits", ()
   assert.match(tooLong.stderr, /Invalid --text-max-characters 16000.*1-10000/);
 });
 
-test("findings template and format guide forbid embedded raw metadata", () => {
+// The template and the validator's required-section list must not drift apart:
+// a report written from the template has to pass validate unmodified.
+test("findings template carries every section validate requires", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-template-"));
   const template = readFileSync(new URL("../templates/findings.md", import.meta.url), "utf8");
-  const guide = readFileSync(new URL("../templates/findings-report-format.md", import.meta.url), "utf8");
-  assert.match(template, /## Research Metadata/);
-  assert.match(template, /Recommendation \/ Decision Criteria/);
   assert.doesNotMatch(template, /## Raw Exa Metadata|\{\{raw_json\}\}|```json/);
-  assert.match(guide, /not a machine-readable JSON schema/);
-  assert.match(guide, /Do not embed raw Exa JSON/);
+  const filled = template.replace(/\{\{[a-z_]+\}\}/g, "placeholder");
+  const raw = join(dir, "findings.raw.json");
+  writeFileSync(raw, JSON.stringify({
+    metadata: { researchMode: "standard", queryCount: 1, additionalQueries: [], additionalQueriesApplied: "none", synthesis: true },
+    raw: { answer: "Answer", results: [{ url: "https://example.com" }] },
+  }));
+
+  const report = join(dir, "findings.md");
+  writeFileSync(report, filled);
+  const ok = spawnSync(process.execPath, [script, "validate", report, raw], { encoding: "utf8" });
+  assert.deepEqual(JSON.parse(ok.stdout).errors, []);
+
+  // Teeth: dropping a section the template supplies must be reported.
+  const gutted = join(dir, "gutted.md");
+  writeFileSync(gutted, filled.replace("## Risks / Unknowns", "## Unrelated Heading"));
+  const caught = spawnSync(process.execPath, [script, "validate", gutted, raw], { encoding: "utf8" });
+  assert.notEqual(caught.status, 0);
+  assert.ok(JSON.parse(caught.stdout).errors.some((e) => /Risks \/ Unknowns/.test(e)));
+});
+
+test("invalid --timeout names the flag rather than aborting the request", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deep-research-timeout-"));
+  const mock = join(dir, "mock.json");
+  writeFileSync(mock, JSON.stringify({ answer: "Answer", results: [] }));
+  const env = { ...process.env, EXA_MOCK_RESPONSE_FILE: mock };
+  for (const bad of ["abc", "0", "1.5"]) {
+    const result = spawnSync(process.execPath, [script, "report", "q", "--timeout", bad], { encoding: "utf8", env });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Invalid --timeout/);
+  }
 });
 
 test("missing key fails with setup instructions", () => {

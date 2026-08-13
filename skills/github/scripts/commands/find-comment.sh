@@ -135,18 +135,17 @@ find_comment() {
         return
     fi
 
-    # Build jq filter
-    local jq_filter='[.[]'
-
-    if [ -n "$author" ]; then
-        jq_filter+=" | select(.user.login == \"$author\")"
-    fi
-
-    jq_filter+=" | select(.body | test(\"$pattern\"))"
-    jq_filter+='] | last'
-    jq_filter+=' | if . then {id: .id, author: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at, url: .html_url} else {} end'
-
-    echo "$comments" | jq -c "$jq_filter"
+    # Author and pattern cross the boundary as jq values, never as program text:
+    # interpolating them builds a new program, so a `"` or a regex escape such as
+    # `5\.00` is a jq syntax error rather than a match.
+    jq -c --arg author "$author" --arg pattern "$pattern" '
+        [ .[]
+          | select($author == "" or (.user.login // "") == $author)
+          | select((.body // "") | test($pattern))
+        ]
+        | last
+        | if . then {id, author: .user.login, body, created_at, updated_at, url: .html_url} else {} end
+    ' <<<"$comments"
 }
 
 # Main

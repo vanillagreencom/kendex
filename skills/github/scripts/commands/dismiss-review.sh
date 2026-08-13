@@ -128,37 +128,38 @@ dismiss_reviews() {
     # Dismiss each review — collect results as JSON lines
     local results_file
     results_file=$(mktemp)
-    trap "rm -f '$results_file'" EXIT
+    trap 'rm -f "$results_file"' EXIT
 
     local review_ids
     review_ids=$(echo "$blocking_reviews" | jq -r '.[].id')
 
-    for review_id in $review_ids; do
+    local review_id
+    while IFS= read -r review_id; do
+        [ -n "$review_id" ] || continue
         local user_login
         user_login=$(echo "$blocking_reviews" | jq -r --argjson id "$review_id" '.[] | select(.id == $id) | .user.login')
 
-        local exit_code=0
-        gh api "repos/$owner/$repo/pulls/$pr_number/reviews/$review_id/dismissals" \
-            -X PUT -f message="$message" -f event="DISMISS" >/dev/null 2>&1 || exit_code=$?
+        local dismiss_output dismiss_rc=0
+        dismiss_output=$(gh api "repos/$owner/$repo/pulls/$pr_number/reviews/$review_id/dismissals" \
+            -X PUT -f message="$message" -f event="DISMISS" 2>&1) || dismiss_rc=$?
 
-        if [ $exit_code -eq 0 ]; then
-            echo "{\"review_id\":$review_id,\"user\":\"$user_login\",\"state\":\"DISMISSED\",\"ok\":true}" >> "$results_file"
+        if [ "$dismiss_rc" -eq 0 ]; then
+            jq -nc --argjson id "$review_id" --arg user "$user_login" \
+                '{review_id: $id, user: $user, state: "DISMISSED", ok: true}' >> "$results_file"
         else
-            echo "{\"review_id\":$review_id,\"user\":\"$user_login\",\"error\":\"dismiss failed\",\"ok\":false}" >> "$results_file"
+            jq -nc --argjson id "$review_id" --arg user "$user_login" \
+                --arg detail "$(printf '%s' "$dismiss_output" | tr '\n' ' ' | head -c 200)" \
+                '{review_id: $id, user: $user, error: $detail, ok: false}' >> "$results_file"
         fi
-    done
+    done <<<"$review_ids"
 
-    # Build output from results file
-    local dismissed_json failed_json
-    dismissed_json=$(jq -s '[.[] | select(.ok == true) | del(.ok)]' "$results_file" 2>/dev/null || echo '[]')
-    failed_json=$(jq -s '[.[] | select(.ok == false) | del(.ok)]' "$results_file" 2>/dev/null || echo '[]')
-
-    local has_failures
-    has_failures=$(echo "$failed_json" | jq 'length > 0')
-    local success="true"
-    [ "$has_failures" = "true" ] && success="false"
-
-    echo "{\"success\": $success, \"dismissed\": $dismissed_json, \"failed\": $failed_json}"
+    # Build output from results file. A parse failure here would otherwise be
+    # indistinguishable from "nothing was dismissed", so it is not caught.
+    jq -s '{
+        success: ([.[] | select(.ok == false)] | length) == 0,
+        dismissed: [.[] | select(.ok == true) | del(.ok)],
+        failed: [.[] | select(.ok == false) | del(.ok)]
+    }' "$results_file"
 }
 
 # Main

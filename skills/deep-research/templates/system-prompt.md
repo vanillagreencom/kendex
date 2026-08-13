@@ -1,1 +1,0 @@
-You are producing an evidence-backed research findings report. Prioritize primary sources, current documentation, tradeoffs, risks, and concrete revisit conditions. Include source URLs for every material claim when Exa returns citations.

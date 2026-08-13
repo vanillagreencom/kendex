@@ -1,39 +1,19 @@
 # Project Management Skill
 
-TPM methodology for roadmap planning, cycle planning, issue auditing, prioritization, and progress tracking. Workflows analyze issue tracker state and return structured JSON recommendations — the orchestrator or user handles execution.
+Turns planning conversations into tracked work: cycle plans, backlog audits, roadmaps, and research-driven decomposition. It exists to keep the backlog small and true — every audit is expected to close more issues than it opens, and an observation only becomes an issue when it changes what someone experiences and someone could finish it as-is.
 
-The methodology lives in reference documents, workflows, and schemas (see the tables in `SKILL.md`). A small portable helper (`scripts/verification-scope`) resolves repository-aware verification paths for audits.
+## How it works
 
-## Skill Dependencies
+Each command is a **wrapper** that runs in your main session. The wrapper asks you the product questions (what to build, what to cancel, what to activate) and performs every tracker mutation itself. It delegates the analysis — reading the backlog, comparing scope against the codebase, computing dependency order — to a one-shot **TPM workflow** that returns JSON and touches nothing.
 
-This skill requires an issue tracker CLI for all read/write operations. Issue-mode audits resolve the tracker per work item: Linear-tracked items use the `linear` skill CLI; GitHub-tracked items use `gh` plus the `github` skill and never require Linear to be installed or authenticated. Project-level workflows (cycle-plan, roadmap, project/project-order audits) are Linear-only.
+Metadata corrections (labels, priorities, relations, hierarchy, sort order, project moves) are applied without asking. Creations and cancellations always go through an in-session approval gate.
 
-| Dependency | Purpose | Variable |
-|------------|---------|----------|
-| Issue tracker CLI (e.g., `linear` skill) | Linear issue CRUD, cache, comments, labels, relations | `.agents/skills/linear/scripts/linear.sh` |
-| GitHub CLI + `github` skill | GitHub issue CRUD, comments, labels for GitHub-tracked audits | `gh` on `PATH`; `.agents/skills/github/scripts/github.sh` |
-| Git | Resolve branch changes and tracked source roots for audit verification | `git` on `PATH` |
-| jq | Emit the verification-scope JSON contract | `jq` on `PATH` |
+Issues live in Linear or in GitHub. Issue-level audits work with either — GitHub-tracked audits never need Linear installed. Project-level work (cycle planning, roadmaps, project audits) is Linear-only, since GitHub has no project, bundle, or typed-relation model.
 
-## Issue Tracker Setup Expectations
+## Setup
 
-Before using roadmap, audit, research, or cycle-planning workflows, configure the companion issue-tracker skill and sync its cache so issues, projects, relations, and issue labels are readable. The workflows depend on current issue-label inventory from the issue-tracker skill; they should not infer labels from stale docs alone. GitHub-tracked issue audits load their label and issue inventory live via `gh` (no cache/sync step) and represent hierarchy/relations as documented body links, since GitHub has no Linear project, bundle, or typed-relation model in these workflows.
+1. Install and authenticate the `linear` skill (and `github` for GitHub-tracked audits). `git` and `jq` must be on `PATH`.
+2. Sync the Linear cache so issues, projects, relations, and labels are readable.
+3. Give the project a **label taxonomy**: which label categories new issues require, which are exclusive, and the label names themselves. Put it in `vstack.toml` `[skill-instructions]` or a project doc. The upstream contract is [`references/labels.md`](references/labels.md); this file defines the mechanism, your project defines the names.
 
-- **Issue labels vs project labels**: Issue creation uses issue labels. Project labels are separate issue-tracker resources and do not satisfy issue-label requirements. See [Label management](references/labels.md) and [Issue creation](references/issues.md).
-- **Agent routing**: If a project routes work by agent, define one exclusive Agent label group/category and document the allowed agent labels in the project's taxonomy. Multi-agent bundle or coordination parents may need a documented multi-agent routing convention, but the exact label/value is project-defined.
-- **Platform routing**: If a project tracks OS/platform-specific work, define an optional exclusive Platform category. Omit it when platform is irrelevant.
-- **Domain/stack coverage**: Define project-specific domain or stack labels used for implementation ownership, research routing, and audit coverage. These labels are project-defined and may be additive.
-- **Workflow/classification gates**: Treat workflow and classification labels as additive descriptors or gates, not exclusive ownership labels.
-- **Label creation**: Missing labels require explicit user authorization before creation. Workflows must not create labels automatically. See [When to create labels](references/labels.md#when-to-create-labels).
-- **Hierarchy and relations**: Preserve the expected hierarchy (`Initiative → Project → Milestone → Issue → Sub-Issue`), same-project parent/child relations, and bundle-parent blocking conventions. See [Issue creation](references/issues.md), [Initiatives & Projects](references/initiatives-projects.md), and [Dependency management](references/dependencies.md).
-- **Templates**: Use the issue templates for consistent descriptions and parent/bundle coordination: [issue-description-template](templates/issue-description-template.md) and [parent-issue-template](templates/parent-issue-template.md).
-
-## Key Concepts
-
-- **Hierarchy**: Initiative → Project → Milestone → Issue → Sub-Issue
-- **Prioritization**: Weighted scoring formula (Critical Path x3, Dependencies x2, Risk x2, Value x1, Estimate x-0.5)
-- **Same-project rule**: Parent-child relations must be within the same project
-- **Blocking level rule**: Cross-bundle blocking relations go on bundle parents; intra-bundle sequencing uses sibling child-blocks-child relations (containers dispatch only unblocked children)
-- **Label preflight**: Issue creates/label updates load live issue-label inventory + project taxonomy, validate full final `labels[]`, and preserve unrelated labels on updates
-- **Repository-aware verification**: Audits retain a separate PR/branch/path context per issue, discover tracked source roots across monorepos, halt on Git producer failures, and skip code-path checks for documentation-only scope
-- **Workflows return JSON only**: No direct modifications to the issue tracker — recommendations are executed by the caller
+Labels are never created automatically — a missing label stops the workflow and asks you first.

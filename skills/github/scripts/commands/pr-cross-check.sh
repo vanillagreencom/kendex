@@ -44,11 +44,6 @@ Examples:
 EOF
 }
 
-# Get repo info
-get_repo_info() {
-    gh repo view --json owner,name --jq '"\(.owner.login)/\(.name)"'
-}
-
 # Fetch PR data with files
 fetch_pr_data() {
     local pr_num="$1"
@@ -85,30 +80,11 @@ analyze_overlaps() {
     '
 }
 
-# Detect sequential dependencies via merge base
-check_dependencies() {
-    local prs_json="$1"
-    local repo="$2"
-    local deps="[]"
-
-    # Get PR numbers and branches
-    local pr_info
-    pr_info=$(echo "$prs_json" | jq -r '.[] | "\(.number):\(.branch):\(.base)"')
-
-    # For each pair, check if one depends on another
-    # This is a simplified check - just looks for base branch relationships
-    # A more complete check would use the compare API
-
-    echo "[]" # Simplified - full dependency detection would need compare API
-}
-
-# Compute merge order via topological sort
+# Order PRs by how few other PRs they collide with, then by number.
 compute_merge_order() {
     local prs_json="$1"
     local overlaps_json="$2"
 
-    # Simple heuristic: PRs with fewer overlapping files go first
-    # More sophisticated: topological sort based on dependencies
     echo "$prs_json" | jq --argjson overlaps "$overlaps_json" '
         # Count overlaps per PR
         map(. as $pr | . + {
@@ -245,9 +221,6 @@ main() {
         }'
         exit 0
     fi
-
-    local repo
-    repo=$(get_repo_info)
 
     # Fetch data for each PR
     local prs_data="[]"

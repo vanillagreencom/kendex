@@ -56,34 +56,56 @@ EOF
 }
 
 get_pr_data() {
-    local pr_ref="${1:-}"
+    local pr_ref=""
+    local pr_ref_set=false
     local actionable="false"
     FORMAT="${DEFAULT_FORMAT}"
 
-    # Parse arguments
-    local args=()
-    for arg in "$@"; do
-        case "$arg" in
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
             --help|-h)
                 show_help
                 exit 0
                 ;;
             --actionable)
                 actionable="true"
+                shift
                 ;;
             --format=*)
-                FORMAT="${arg#--format=}"
+                FORMAT="${1#--format=}"
+                shift
                 ;;
             --format)
-                # Will be handled by next iteration
+                if [ -z "${2:-}" ]; then
+                    echo '{"error": "--format requires an argument (safe or raw)"}' >&2
+                    exit 1
+                fi
+                FORMAT="$2"
+                shift 2
+                ;;
+            -*)
+                echo "{\"error\": \"Unknown option: $1\"}" >&2
+                exit 1
                 ;;
             *)
-                if [ -z "$pr_ref" ] || [ "$pr_ref" = "--format" ]; then
-                    pr_ref="$arg"
+                if [ "$pr_ref_set" = false ]; then
+                    pr_ref="$1"; pr_ref_set=true
+                else
+                    echo "{\"error\": \"Unexpected argument: $1\"}" >&2
+                    exit 1
                 fi
+                shift
                 ;;
         esac
     done
+
+    case "$FORMAT" in
+        safe|raw) ;;
+        *)
+            echo "{\"error\": \"Invalid format: $FORMAT. Use: safe, raw\"}" >&2
+            exit 1
+            ;;
+    esac
 
     # Resolve PR number
     local pr_num
@@ -152,9 +174,9 @@ query($owner: String!, $repo: String!, $pr: Int!) {
     local output
     case "$FORMAT" in
         raw)
-            output=$(echo "$result")
+            output="$result"
             ;;
-        safe|*)
+        safe)
             output=$(echo "$result" | jq '
                 def reaction_norm(c):
                     if   c == "THUMBS_UP"   then "+1"

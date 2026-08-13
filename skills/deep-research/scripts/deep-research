@@ -164,6 +164,7 @@ function applyMode(options) {
   if (!formats.has(options.format)) fail(`Invalid --format ${options.format}`);
   if (!Number.isInteger(options.numResults) || options.numResults < 1 || options.numResults > EXA_MAX_NUM_RESULTS) fail(`Invalid --num-results ${options.numResults}. Exa /search accepts 1-${EXA_MAX_NUM_RESULTS} (INVALID_NUM_RESULTS).`);
   if (!Number.isInteger(options.textMaxCharacters) || options.textMaxCharacters < 1 || options.textMaxCharacters > EXA_MAX_TEXT_CHARACTERS) fail(`Invalid --text-max-characters ${options.textMaxCharacters}. Exa text.maxCharacters accepts 1-${EXA_MAX_TEXT_CHARACTERS}.`);
+  if (!Number.isInteger(options.timeout) || options.timeout < 1) fail(`Invalid --timeout ${options.timeout}. Expected a positive whole number of seconds.`);
   if (options.additionalQuery.length > EXA_MAX_ADDITIONAL_QUERIES) fail(`Too many --additional-query values (${options.additionalQuery.length}). Exa additionalQueries accepts at most ${EXA_MAX_ADDITIONAL_QUERIES}.`);
   return options;
 }
@@ -378,7 +379,7 @@ async function callExa(query, options) {
   options.mockIndex = 0;
   const startedAt = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(1, options.timeout) * 1000);
+  const timer = setTimeout(() => controller.abort(), options.timeout * 1000);
   const body = {
     query,
     type: options.type,

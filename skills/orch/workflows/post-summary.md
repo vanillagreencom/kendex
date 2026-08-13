@@ -1,118 +1,78 @@
 # Post Summary Workflow
 
-Post summary comments to git host and issue tracker, and selective handoff comments to downstream issues.
-
-## Inputs
+Post the session summary to the git host and issue tracker, plus selective handoff comments to downstream issues.
 
 | Command | Behavior |
 |---------|----------|
-| `post-summary` | Post summary for current branch's issue |
-| `post-summary [ISSUE_ID]` | Post summary for specific issue |
+| `post-summary` | Post for the current branch's issue |
+| `post-summary [ISSUE_ID]` | Post for a specific issue |
 | (from start-worktree) | Managed lifecycle with caller context |
 
-**Caller context parameters** (via `⤵`):
-- `worktree`: worktree path
-- `lifecycle` (optional): `"managed"` (return to caller at § 3) | `"self"` (default, standalone).
-- `issue_id` (optional): workflow-state key — the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number. If absent, extracted from branch.
-- `pr_number` (optional): PR number for git host comment. If absent, detected from branch.
+**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 3) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number; `pr_number`.
 
-**Standalone init** (`lifecycle: "self"` only):
+**Standalone init** (`lifecycle: "self"`): `git-context issue-from-branch .` gives `ISSUE_ID`; resolve `TRACKER` per [Tracker Resolution](../SKILL.md#tracker-resolution); `WT_PATH` is the current directory unless `worktree exists`/`worktree path` says otherwise; `pr-view-json [WT_PATH] --json number` gives `PR_NUMBER`. When `workflow-state exists --json [ISSUE_ID]` reports false, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
+
+## 1. Post The Summary
+
 ```bash
-# Extract issue from branch if not provided
-.agents/skills/orch/scripts/git-context issue-from-branch .
-.agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
-.agents/skills/worktree/scripts/worktree exists [ISSUE_ID]
-.agents/skills/worktree/scripts/worktree path [ISSUE_ID]
-.agents/skills/orch/scripts/pr-view-json [WT_PATH] --json number
-# Init workflow state if not exists
-.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles}'
 ```
-Use the first output as `ISSUE_ID` and the tracker output as `TRACKER`. Use current directory as `WT_PATH` unless `worktree exists` confirms a different path. Read `PR_NUMBER` from the PR JSON output. If `.exists` is `false`, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
 
----
+**Skip if** every count is zero → § 2.
 
-## 1. Post Summary Comments
+Write the summary to a file first — inline bodies with backticks or fenced blocks corrupt under shell command substitution — using the harness file-write tool at `[WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP].md` (`git-context timestamp compact`), then post it:
 
-1. **Read state**:
-   ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles}'
-   ```
-   Read `fixed_count` as `FIXED_COUNT`, `escalated_count` as `ESCALATED_COUNT`, `audit_issues` as `AUDIT_ISSUES`, `pr_issues` as `PR_ISSUES`, and `cycles` as `CYCLES` from the JSON object.
+```bash
+.agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
+```
 
-2. **Skip if** `FIXED_COUNT == 0` AND `AUDIT_ISSUES == 0` AND `PR_ISSUES == 0` AND `ESCALATED_COUNT == 0`. → § 2
+**Linear only** — GitHub items get their linkage from `Closes #N` in the PR body:
 
-3. **Post to git host and issue tracker** — consolidate all review cycle results from state. Write to a file first (same backtick hazard as submit-pr PR body):
-   ```bash
-   mkdir -p [WORKTREE_PATH]/tmp
-   .agents/skills/orch/scripts/git-context timestamp compact
-   # Write SUMMARY_CONTENT to [WORKTREE_PATH]/tmp/post-summary-[ISSUE_ID]-[TIMESTAMP_FROM_PREVIOUS_COMMAND].md
-   .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file "$SUMMARY_FILE"
-   ```
-   Use the summary file path as `SUMMARY_FILE`.
+```bash
+.agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
+```
 
-   Linear only — GitHub items get linkage via `Closes #N` in the PR body:
+```markdown
+## Completed Issues
+- Closes [ISSUE_ID] - [TITLE]
+  - Closes [SUB_ISSUE_ID] - [SUB_TITLE]
 
-   ```bash
-   .agents/skills/linear/scripts/linear.sh comments create [ISSUE_ID] --body-file "$SUMMARY_FILE"
-   ```
+## Created Issues
+- [ISSUE_ID] - [TITLE] — [PROJECT]
 
-   **Summary content template** (omit empty sections):
+## QA Metrics
+[Results from the QA agents that ran — project-configurable.]
 
-   ```markdown
-   ## Completed Issues
-   - Closes [ISSUE_ID] - [TITLE]
-     - Closes [ISSUE_ID] - [SUB_TITLE]
-     - Closes [ISSUE_ID] - [SUB_TITLE]
+## Recommendations Processed
 
-   ## Created Issues
-   - [ISSUE_ID] - [TITLE] — [PROJECT]
-   - [ISSUE_ID] - [TITLE] — [PROJECT]
+### Fixed in PR
+- [SOURCE]: [ITEM] — [SHA]
 
-   ## QA Metrics
-   (project-specific metrics summary)
+### Skipped
+- [SOURCE]: [ITEM] — [REASON]
 
-   ## Recommendations Processed
+**Cycles**: [N] | [STATUS_SUMMARY]
+```
 
-   ### Fixed in PR
-   - [SOURCE]: [ITEM] — [SHA]
+Omit empty sections. Created Issues comes from `audit_issues_created` plus `pr_comment_review.issues_created`, with project names. Deduplicate Recommendations Processed by description across cycles.
 
-   ### Skipped
-   - [SOURCE]: [ITEM] — [REASON]
+**Commit SHAs.** When workflow state carries a `.rebase_map` — recorded by `submit-pr.md` § 2 after a `worktree push` auto-rebase rewrote the branch — resolve every published SHA through it, following the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden. Fix SHAs stored in state were already rewritten at push time, so the map matters for artifact-sourced references such as a perf QA `benchmark_commit`.
 
-   **Cycles**: [N] | [STATUS_SUMMARY]
-   ```
+## 2. Post Handoff Comments
 
-   - **Completed Issues**: Use `Closes` keyword for issue tracker linkage. Indent sub-issues.
-   - **Created Issues**: From `audit_issues_created` + `pr_comment_review.issues_created`. Include project name.
-   - **QA Metrics**: Include if QA agents ran (project-configurable).
-   - **Recommendations Processed**: Dedupe by description across cycles.
-   - **Commit SHAs**: when workflow state carries a `.rebase_map` (recorded by `submit-pr.md` § 2 step 1 after a `worktree push` auto-rebase rewrote the branch), resolve every published SHA through it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden (vstack#728); fix SHAs stored in state were already rewritten at push time, so the map matters for artifact-sourced references like a perf QA `benchmark_commit`.
+**Skip if** `TRACKER=github` — dependencies there live in issue bodies, not tracked relations. → § 3
 
----
+```bash
+.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
+```
 
-## 2. Post Handoff Comments (selective)
+Read `.blocks`. Post a handoff comment to a downstream issue only when it earns one: its description references files this PR touched, a decision was created that it should know about, or an API or interface it depends on changed. Simply being unblocked by completion — the common case — earns nothing.
 
-**Skip if** `TRACKER=github` (dependencies live in issue bodies, not tracked relations). → § 3
+```bash
+.agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body "Handoff from [ISSUE_ID]:
+- [RELEVANT_CONTEXT]"
+```
 
-1. **Check unblocked issues**: run `.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]`, then read `.blocks` from the JSON output.
+## 3. Return
 
-2. **Evaluate conditions** — post handoff only if:
-   - Downstream description references files touched in this PR
-   - Decision created that downstream should know
-   - API/interface change that downstream depends on
-
-3. **Skip if** just unblocking by completion (most common case). → § 3
-
-4. **Post handoff** (if conditions met):
-   ```bash
-   .agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body "Handoff from [ISSUE_ID]:
-   - [RELEVANT_CONTEXT]"
-   ```
-
----
-
-## 3. Return State
-
-**If managed**: Return to the parent workflow's next section.
-
-**If standalone**: Session complete — summary posted.
+**Managed**: return to the parent workflow's next section. **Standalone**: session complete.

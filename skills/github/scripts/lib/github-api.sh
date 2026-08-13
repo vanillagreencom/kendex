@@ -36,7 +36,10 @@ json_or_default() {
 
 # Internal lib directory (underscore prefix avoids overwriting caller's SCRIPT_DIR)
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+# Empty outside a repository. Sourcing must not abort under `set -e`: commands
+# that need repo context fail with their own named error, and the project-env
+# loader treats an empty root as "no project files".
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 # shellcheck source=gh-auth.sh
 source "$_LIB_DIR/gh-auth.sh"
 
@@ -129,7 +132,6 @@ gh_graphql() {
 
     while [ $attempt -le $max_retries ]; do
         local response
-        local stderr_output
         local exit_code=0
 
         # Execute query - capture stdout and stderr separately
@@ -150,7 +152,7 @@ gh_graphql() {
                     echo '{"error": "Not found"}' >&2
                     ;;
                 *)
-                    echo "{\"error\": \"GraphQL: $error_msg\"}" >&2
+                    jq -nc --arg msg "GraphQL: $error_msg" '{error: $msg}' >&2
                     ;;
                 esac
                 return 1
@@ -174,7 +176,7 @@ gh_graphql() {
                     echo '{"error": "Not found"}' >&2
                     ;;
                 *)
-                    echo "{\"error\": \"$error_msg\"}" >&2
+                    jq -nc --arg msg "$error_msg" '{error: $msg}' >&2
                     ;;
                 esac
                 return 1
@@ -245,7 +247,7 @@ gh_rest() {
             fi
             local clean_error
             clean_error=$(echo "$response" | head -c 200 | tr '\n' ' ')
-            echo "{\"error\": \"$clean_error\"}" >&2
+            jq -nc --arg msg "$clean_error" '{error: $msg}' >&2
             return 1
             ;;
         esac
@@ -647,7 +649,7 @@ bot_review_status_compute() {
     fi
 
     # --- unresolved review threads authored by this reviewer ---
-    # Match the thread author to the configured reviewer robustly (vstack#518).
+    # Match the thread author to the configured reviewer robustly.
     # The reviewer login is discovered from REST (reviews/comments/reactions) and
     # carries the "[bot]" suffix (e.g. "chatgpt-codex-connector[bot]"), while the
     # GraphQL review-thread author login for the SAME GitHub App bot is the bare

@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
-# Regression lint for vstack#687. A focused Linear issue audit's read-only
-# post-mutation verification produced `linear.sh issues view` — an action the
-# Linear CLI does not have; the supported lookups are `issues get`,
-# `issues bulk-get`, and `cache issues get`. No canonical doc carried the bad
-# form — the audit workflow stated no post-mutation verification command at
-# all, so the auditing agent improvised one (same class as vstack#641).
-# audit-issues § 7.5 now names the exact tracker-routed verification commands,
-# and the linear SKILL.md states there is no `view`/`show` action.
+# The Linear CLI has no `view`/`show` issue action — the supported lookups are
+# `issues get`, `issues bulk-get`, and `cache issues get`. A doc that states a
+# verification obligation without naming a command invites an agent to
+# improvise the missing one, so this lint keeps the invented form out of the
+# docs AND keeps the supported commands in the doc that states the obligation.
 #
-# This lint scans the project-management and linear doc trees (every line —
-# prose, inline code, and fenced blocks alike, since guidance text is what
-# agents relay; linear is a required project-management dependency, so both
-# are present wherever project-management is installed) and FAILS if any line
+# It scans the project-management and linear doc trees (every line — prose,
+# inline code, and fenced blocks alike, since guidance text is what agents
+# relay; linear is a required project-management dependency, so both are
+# present wherever project-management is installed) and FAILS if any line
 # invokes a `view`/`show` issue lookup:
 #   - `linear.sh issues view ...` (the reported miss) / `linear.sh issue view`
 #   - `linear.sh cache issues view ...`

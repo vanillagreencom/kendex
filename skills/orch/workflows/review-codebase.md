@@ -1,71 +1,43 @@
 # Codebase Review Workflow
 
-Ad-hoc full-codebase reviewer fanout. No PR, no issue, no diff, no fix delegation. Use for whole-codebase reviews.
-
-## Inputs
+Ad-hoc whole-codebase reviewer fanout. No PR, no issue, no diff, no fix delegation. Always standalone — no managed lifecycle and no workflow-state file.
 
 | Command | Behavior |
 |---------|----------|
-| `review-codebase` | Review current repository root |
-| `review-codebase [PATH]` | Review repository/worktree at path |
+| `review-codebase` | Review the current repository root |
+| `review-codebase [PATH]` | Review the repository or worktree at `[PATH]` |
 
-**Always standalone** — no managed lifecycle and no workflow-state file.
-
----
-
-## 1. Resolve Worktree
-
-If `[PATH]` is provided, use it. Otherwise use current directory.
+## 1. Resolve The Worktree
 
 ```bash
 .agents/skills/orch/scripts/git-context repo-root [PATH_OR_PWD]
 ```
-Use the output as `WT_PATH`.
 
-**If not a git worktree**: report `review-codebase requires a git worktree` and **END**.
+Not a git worktree → report `review-codebase requires a git worktree` and **END**. Otherwise use the output as `WT_PATH` and `mkdir -p "$WT_PATH/tmp"`.
 
-Create output dir:
+## 2. Delegate
 
-```bash
-mkdir -p "$WT_PATH/tmp"
-```
+`[AGENTS]` is every `reviewer-*` agent this harness exposes; use the full list and do not path-filter. None available → report `No reviewer agents installed; cannot run codebase review` and **END**.
 
----
-
-## 2. Select Reviewers
-
-Enumerate every installed `reviewer-*` agent from active harness registries:
+Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-lifecycle):
 
 ```bash
-.agents/skills/orch/scripts/list-review-agents
+.agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
 ```
-Use the output as `AGENTS`.
 
-If no agents are found, report `No reviewer-* agents installed; cannot run codebase review` and **END**. Use the full list — do not path-filter.
-
-## 3. Delegate Reviewers
-
-Delegate to each reviewer in `[AGENTS]` in parallel with the prompt below.
-
-**Slot-capped runtimes**: read the budget with `.agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0`. When the value is greater than zero and the `[AGENTS]` count exceeds the available slots (the budget minus this session minus live persistent agent sessions), delegate in sequential waves per `review-pr.md` § 2 — launch up to the available slots, collect each reviewer's return, shut the completed session down, continue with the next wave. When the value is `0` but the runtime still rejects a spawn with its thread-limit error, recover per `review-pr.md` § 2.2 persistent-mode thread-limit recovery: continue in waves sized by the reviewers that did spawn and recommend the observed budget. There are no re-review cycles here, so waves change scheduling only.
+`0` delegates to every reviewer in one parallel batch; a positive value smaller than the reviewer count runs bounded sequential waves, retiring each completed session before launching the next. A thread-limit spawn failure under an unlimited budget continues in waves sized by the reviewers that did spawn. There are no re-review cycles here, so waves change scheduling only. On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`.
 
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/codebase-review.md
 
 Worktree: [WT_PATH]
-Scope: Whole codebase. Inspect tracked, non-generated project code files, plus tests, configs, and docs relevant to your review domain. Do not sample or restrict to changed files. No PR, no issue, no diff.
-Exclusions: generated artifacts, dependency/vendor dirs, build outputs, binary assets, harness mirrors, and lockfiles unless your review domain specifically requires them.
+Scope: Whole codebase. Inspect tracked, non-generated project code, plus the tests, configs, and docs relevant to your review domain. Do not sample or restrict to changed files. No PR, no issue, no diff.
+Exclusions: generated artifacts, dependency and vendor directories, build outputs, binary assets, harness mirrors, and lockfiles unless your domain specifically requires them.
 </delegation_format>
 
-## 4. Collect Results
+## 3. Present Findings
 
-Wait for all review agents to complete. Extract `Verdict:` and `File:` from each return. If an agent fails to return the expected format, include it as `unresponsive` and continue. Do not synthesize findings.
-
-## 5. Present Findings
-
-Read all returned JSON files. Overall verdict: `action_required` if any reviewer returned blockers, `pass` otherwise.
-
-Present one concise report:
+Wait for every reviewer and read the returned JSONs. A reviewer that does not return the expected format is listed `unresponsive` and the run continues. Do not synthesize findings. Overall verdict is `action_required` when any reviewer returned blockers, else `pass`.
 
 <output_format>
 
@@ -73,8 +45,8 @@ Present one concise report:
 
 | Agent | Verdict | Path |
 |-------|---------|------|
-| **Overall** | `[pass|action_required]` | |
-| [AGENT] | `[pass|action_required|unresponsive]` | `[path or —]` |
+| **Overall** | `[pass\|action_required]` | |
+| [AGENT] | `[pass\|action_required\|unresponsive]` | `[path or —]` |
 
 ## Blockers
 
@@ -86,8 +58,8 @@ Present one concise report:
 
 | # | Agent | Location | Description | Pri | Est | Category |
 |---|-------|----------|-------------|-----|-----|----------|
-| 1 | [agent] | [location] | [description] | [priority] | [estimate] | [fix|issue] |
+| 1 | [agent] | [location] | [description] | [priority] | [estimate] | [fix\|issue] |
 
 </output_format>
 
-Omit empty `Blockers` or `Suggestions` sections. Do not offer to fix items automatically.
+Omit an empty Blockers or Suggestions section. Do not offer to fix items automatically.

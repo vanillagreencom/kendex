@@ -9,8 +9,7 @@
 #     but an explicit `remove` releases), so a lease-aware `cleanup` would stop
 #     collecting merged worktrees entirely unless `--stale` were passed. The
 #     alternative — releasing on a provably merged branch — guts the guarantee,
-#     because uncommitted work in a merged tree is exactly what the CC-1000
-#     incident lost.
+#     because uncommitted work in a merged tree is exactly what gets lost.
 #   * The destructive side is where the incident actually was, so that is what
 #     is wired: `cleanup` never collects a claimed tree, `remove` releases only
 #     its OWN lease, `create --reuse` refuses a foreign one and refreshes its
@@ -176,9 +175,9 @@ fi
 
 echo "=== issue-addressed calls derive the owner (default install) ==="
 
-# orch's initialize.md claims with `--owner ISSUE_ID`, and a default install sets no
-# session-owner env var — so `remove <ID>` must derive that same identity from
-# its own argument, or claim and release never agree (#907).
+# The orchestrating workflow claims with `--owner ISSUE_ID`, and a default
+# install sets no session-owner env var — so `remove <ID>` must derive that same
+# identity from its own argument, or claim and release never agree.
 DERIVE_ROOT="$TMP_ROOT/derive"
 make_repo "$DERIVE_ROOT"
 export GH_STATE="$DERIVE_ROOT/gh-state"
@@ -211,7 +210,7 @@ assert_contains "$(cat "$DERIVE_ROOT/derive2.err")" "(owner=SESSION-X)" \
 assert_path_absent "$D2" "the env-claimed worktree is gone"
 
 # `create <ID> --reuse` derives the same identity, so the session that claimed
-# per orch's initialize.md can re-enter its own worktree without env plumbing.
+# under the orchestrating workflow can re-enter its own worktree without env plumbing.
 env -u VSTACK_SESSION_OWNER -u HT_SESSION_OWNER bash -c \
   "cd '$DERIVE_ROOT/main' && '$WORKTREE_SCRIPT' create issue-d3" >/dev/null 2>&1
 D3="$DERIVE_ROOT/trees/issue-d3"

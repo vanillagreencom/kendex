@@ -69,9 +69,10 @@ resolve_threads() {
         esac
     done
 
-    # Read from stdin if requested
+    # Read from stdin if requested. The `|| [ -n "$line" ]` guard keeps a final
+    # id that arrives without a trailing newline.
     if [ "$from_stdin" = "true" ]; then
-        while IFS= read -r line; do
+        while IFS= read -r line || [ -n "$line" ]; do
             [[ "$line" == PRRT_* ]] && thread_ids+=("$line")
         done
     fi
@@ -98,35 +99,39 @@ mutation($threadId: ID!) {
 }'
         local result
         result=$(gh_graphql "$query" -F threadId="${thread_ids[0]}") || {
-            echo "{\"success\": false, \"resolved\": [], \"failed\": [\"${thread_ids[0]}\"]}"
+            jq -nc --arg id "${thread_ids[0]}" '{success: false, resolved: [], failed: [$id]}'
             exit 1
         }
 
         local resolved
         resolved=$(echo "$result" | jq -r '.resolveReviewThread.thread.isResolved // false')
         if [ "$resolved" = "true" ]; then
-            echo "{\"success\": true, \"resolved\": [\"${thread_ids[0]}\"], \"failed\": []}"
+            jq -nc --arg id "${thread_ids[0]}" '{success: true, resolved: [$id], failed: []}'
         else
-            echo "{\"success\": false, \"resolved\": [], \"failed\": [\"${thread_ids[0]}\"]}"
+            jq -nc --arg id "${thread_ids[0]}" '{success: false, resolved: [], failed: [$id]}'
             exit 1
         fi
         return
     fi
 
-    # Multiple threads - batch mutation with aliases
-    local mutation_parts=()
+    # Multiple threads - batch mutation with aliases. Thread ids are bound as
+    # GraphQL variables rather than pasted into the query text, so an id can
+    # never terminate the string literal and extend the mutation.
+    local var_decls=() mutation_parts=() gh_args=()
     local idx=0
     for tid in "${thread_ids[@]}"; do
-        mutation_parts+=("t${idx}: resolveReviewThread(input: {threadId: \"$tid\"}) { thread { id isResolved } }")
+        var_decls+=("\$t${idx}: ID!")
+        mutation_parts+=("t${idx}: resolveReviewThread(input: {threadId: \$t${idx}}) { thread { id isResolved } }")
+        gh_args+=(-F "t${idx}=$tid")
         idx=$((idx + 1))
     done
 
     local batch_query
-    batch_query="mutation { $(printf '%s\n' "${mutation_parts[@]}" | tr '\n' ' ') }"
+    batch_query="mutation($(IFS=,; echo "${var_decls[*]}")) { $(printf '%s ' "${mutation_parts[@]}") }"
 
     local result
-    result=$(gh_graphql "$batch_query") || {
-        echo "{\"success\": false, \"resolved\": [], \"failed\": $(printf '%s\n' "${thread_ids[@]}" | jq -R . | jq -s .)}"
+    result=$(gh_graphql "$batch_query" "${gh_args[@]}") || {
+        printf '%s\n' "${thread_ids[@]}" | jq -R . | jq -sc '{success: false, resolved: [], failed: .}'
         exit 1
     }
 
@@ -145,15 +150,16 @@ mutation($threadId: ID!) {
         idx=$((idx + 1))
     done
 
-    # Output result
+    # Output result. A jq failure here must not read as "nothing resolved":
+    # the encoding is allowed to fail loudly instead of degrading to [].
     local resolved_json failed_json
-    resolved_json=$(printf '%s\n' "${resolved[@]:-}" | jq -R 'select(length > 0)' | jq -s . 2>/dev/null || echo '[]')
-    failed_json=$(printf '%s\n' "${failed[@]:-}" | jq -R 'select(length > 0)' | jq -s . 2>/dev/null || echo '[]')
+    resolved_json=$(printf '%s\n' "${resolved[@]:-}" | jq -R . | jq -sc 'map(select(length > 0))')
+    failed_json=$(printf '%s\n' "${failed[@]:-}" | jq -R . | jq -sc 'map(select(length > 0))')
 
-    local success="true"
-    [ ${#failed[@]} -gt 0 ] && success="false"
-
-    echo "{\"success\": $success, \"resolved\": $resolved_json, \"failed\": $failed_json}"
+    jq -nc \
+        --argjson resolved "$resolved_json" \
+        --argjson failed "$failed_json" \
+        '{success: ($failed | length) == 0, resolved: $resolved, failed: $failed}'
 }
 
 # Main

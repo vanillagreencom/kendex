@@ -51,7 +51,7 @@ done
 # so pre-#970 state files keep their original meaning.
 for wf in review-pr review; do
   doc="$SKILL_DIR/workflows/$wf.md"
-  if grep -q 'no `outcome` field (legacy state)' "$doc"; then
+  if grep -q 'no `outcome` field' "$doc"; then
     pass "$wf.md keeps legacy no-outcome entries mapped to escalated"
   else
     fail "$wf.md lost the legacy no-outcome → escalated rule"

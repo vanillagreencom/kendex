@@ -1,160 +1,56 @@
 # Research Spike Workflow
 
-Human-initiated research with full agent consultation and asset preparation.
+User-initiated research: scope the question, gather prior work, then hand off to `research-issue`.
 
-## Inputs
+## 1. Scope the Question
 
-| Context | Source | Required |
-|---------|--------|----------|
-| `topic` | User input (standalone) or caller context | Yes |
-| `issue_id` | Caller context | No (standalone creates new) |
-| `type` | Caller context | No (standalone discovers) |
-| `project` | Caller context | No (standalone discovers) |
+Ask in plain text: **"What research are you conducting?"** Expect a 1-2 sentence description.
 
-## 1. Discover Topic
+Then ask the 2-3 most relevant clarifying questions, worded for this topic — what prompted it (bug, feature, vendor change, curiosity), whether it is a "should we?" or a "how do we?", the current baseline (version, pattern, existing approach), and what would make it a no-go. Ask follow-ups only when the answers leave the scope ambiguous.
 
-### 1.1 Get Topic
+Infer the research type from the description and answers.
 
-Prompt user (plain text): **"What research are you conducting?"**
+## 2. Domains and Prior Work
 
-User provides 1-2 sentence description directly.
+Infer the affected domains from the topic and answers by matching component paths (project-configurable). Domain inference is routing, not a product decision — do not ask the user to confirm it. State the domains and the reason for each in the § 4 report.
 
-### 1.2 Ask Clarifying Questions
-
-Ask user with relevant questions from:
-
-| Category | Questions |
-|----------|-----------|
-| **Motivation** | What prompted this? (bug, feature, vendor update, curiosity) |
-| **Scope** | "Should we?" vs "How do we?" |
-| **Baseline** | Current state? (version, pattern, existing approach) |
-| **Blockers** | What would make this a no-go? |
-
-Select 2-3 most relevant questions. Adapt wording to topic. Infer research type from description.
-
-### 1.3 Ask Topic-Specific Follow-ups
-
-**Skip if** initial answers are sufficient.
-
-Ask any additional clarifying questions needed before proceeding, based on topic and initial answers.
-
-## 2. Check Stack & Prior Research
-
-### 2.1 Identify Affected Domains
-
-1. **Identify domains** from topic + answers -- infer from component paths (project-configurable).
-
-2. **Present identified domains** with reasoning:
-   ```
-   Affected domains:
-   * [DOMAIN] - [REASON]
-   * [DOMAIN] - [REASON]
-
-   Confirm? (Y/n/adjust)
-   ```
-
-3. **If user adjusts**, update list accordingly.
-
-### 2.2 Check Related Research
-
-1. **Resolve research issue label**:
-   - Load issue-label inventory: `.agents/skills/linear/scripts/linear.sh cache labels list --format=safe`.
-   - Load project taxonomy/application rules.
-   - Resolve `RESEARCH_WORKFLOW_LABEL` to the project-configured issue label for completed research artifacts.
-   - If no unambiguous assignable issue label exists, skip related-research lookup and continue to § 3 (do not query a hard-coded fallback label).
-
-2. **Search for related research**:
-   ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --max --search "[TOPIC_KEYWORDS]"
-   ```
-
-3. **If matches found**:
-   1. **Read the findings file** - project research docs `[ISSUE_ID]/findings.md`
-   2. **Extract ALL key findings** - summary paragraph, bullet lists, Go/No-Go sections
-   3. **Set [PRIOR_RESEARCH]** - extracted findings for handoff in § 3.3
-
-4. **Notify user**:
-   ```
-   Prior Research: [ISSUE_ID] - [TITLE]
-   ```
-
-## 3. Create Issue & Prepare Assets
-
-Hand off to full research-issue workflow with context gathered above.
-
-### 3.1 Query Active Project
+Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then search it. Without an unambiguous assignable label, skip the lookup and continue — do not query a hard-coded fallback label.
 
 ```bash
-PROJECT=$(.agents/skills/linear/scripts/linear.sh cache projects list --state started --first)
+.agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --max --search "[TOPIC_KEYWORDS]"
 ```
 
-### 3.2 Determine Type from Domain Count
+On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and extract its full findings — summary, bullets, go/no-go — as `PRIOR_RESEARCH` for the handoff.
 
-| Domain Count | Type |
-|--------------|------|
-| 1 | Targeted |
-| 2+ | Pervasive |
+## 3. Hand Off
 
-User can override if scope warrants Strategic (initiative-level, 10+ issues).
+```bash
+.agents/skills/linear/scripts/linear.sh cache projects list --state started --first
+```
 
-### 3.3 Run Research-Issue Workflow
+Type follows domain count: one domain is Targeted, two or more Pervasive. Strategic (initiative-level, 10+ issues) requires the user to say so.
 
-Run Workflow: `⤵ workflows/research-issue.md § 1-5 → § 4` with context:
-- `topic`: from § 1.1
-- `questions`: merged from § 1.2-1.3
-- `domains`: confirmed labels from § 2.1
-- `project`: from § 3.1
-- `blocked_issue`: (none -- spike has no blocker)
-- `type`: from § 3.2
-- `prior_research`: extracted findings from § 2.2, or empty
+Run `⤵ workflows/research-issue.md § 1-5 → § 4` with `topic` (§ 1), `questions` (§ 1), `domains` (§ 2), `project` (above), `type`, `prior_research` (§ 2, or empty), and no `blocked_issue` — a spike has no blocker.
 
-## 4. Present to User
+## 4. Report
 
 <output_format>
 
-### 📚 RESEARCH SPIKE DELEGATED
+### RESEARCH SPIKE DELEGATED
 
 | Field | Value |
 |-------|-------|
-| Issue | [RESEARCH_ISSUE_ID] - Research: [TOPIC] |
+| Issue | [RESEARCH_ISSUE_ID] — Research: [TOPIC] |
 | Type | [TYPE] |
 | Project | [PROJECT] |
-
-### 🎯 AFFECTED DOMAINS
-
-| Domain | Reason |
-|--------|--------|
-| ☑ [DOMAIN] | [REASON] |
-
-### 📖 PRIOR RESEARCH REFERENCED
-
-| Reference |
-|-----------|
-| → [prior issue]: [TITLE] |
-
-### ✅ ASSETS CREATED
-
-| Asset |
-|-------|
-| ✓ [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt |
-| ✓ [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/context-[TOPIC].md |
-| ✓ [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh |
-
-### 🤖 RESEARCHER EXECUTION
-
-| Field | Value |
-|-------|-------|
 | Owner | agent:researcher |
-| Status | Delegated when auto_execute=true; otherwise ready for researcher |
 | Output | [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md |
 
-### 📋 NEXT STEPS
+**Domains**: [DOMAIN] — [REASON] (one line each)
 
-| # | Step |
-|---|------|
-| 1 | Review generated findings |
-| 2 | Run or continue `research-complete [RESEARCH_ISSUE_ID]` if not already invoked |
-| 3 | Approve follow-up work/decisions |
+**Prior research**: [ISSUE_ID] — [TITLE], or omit the line
+
+**Assets**: prompt.txt, context-[TOPIC].md, run.sh under [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/
+
+**Next**: review the findings, then `research-complete [RESEARCH_ISSUE_ID]` if the managed flow did not already invoke it.
 </output_format>
-
-**END**: Research spike complete. Research is owned by `agent:researcher`; user reviews findings and continues `research-complete` if the managed workflow did not already invoke it.

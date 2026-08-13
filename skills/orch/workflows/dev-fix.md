@@ -1,132 +1,80 @@
 # Dev Fix Workflow
 
-Delegate fix items to a specialist dev agent. Works standalone (user-initiated) or managed (from review-pr).
-
-## Inputs
+Delegate fix items to a specialist dev agent. Standalone (user-initiated) or managed (from a review workflow).
 
 | Command | Behavior |
 |---------|----------|
 | `dev-fix` | Fix items from conversation context |
-| `dev-fix [ISSUE_ID]` | Fix items for specific issue |
-| (from review-pr workflow) | Managed lifecycle with caller context |
+| `dev-fix [ISSUE_ID]` | Fix items for a specific issue |
+| (from a review workflow) | Managed lifecycle with caller context |
 
-**Caller context parameters** (via `⤵`):
-- `worktree`: worktree path
-- `lifecycle` (optional): `"managed"` (return to caller at § 3) | `"self"` (default, standalone).
-- `dev_agent` (optional): name of alive dev agent for fix delegation. If absent, determine from state/labels.
-- `issue_id` (optional): workflow-state key — the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number. If absent, extracted from branch.
-- `items` (optional): formatted review items. If absent, build from conversation context.
-- `source` (optional): `pr-review` | `qa-review` | `review` | `local-review`. Default: `conversation`.
-- `qa_agent` (optional): QA agent name (for qa-review source).
+**Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 3) or `"self"` (default); `dev_agent` — a live dev agent; `issue_id` — the workflow-state key, the normalized issue ID (`issue-N` for GitHub, `PROJ-123` for Linear), never the bare GitHub issue number; `items` — formatted review items; `source` — `pr-review` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`.
 
-**Standalone init** (`lifecycle: "self"` only):
-```bash
-# If ARG was provided, use it as ISSUE_ID. Otherwise:
-.agents/skills/orch/scripts/git-context issue-from-branch .
-```
-Use the output as `ISSUE_ID`.
-
-Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_ID` ≠ the current branch's issue, ask the user before proceeding. Resolve `WT_PATH`:
-- Inside a worktree → use current directory as `WT_PATH`
-- Main repo, worktree exists → run `.agents/skills/worktree/scripts/worktree path [ISSUE_ID]` and use the output as `WT_PATH`
-- Main repo, worktree missing → ask the user before creating
+**Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else `git-context issue-from-branch .`. Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` (inside a worktree, the current directory; from the main repo, `worktree path [ISSUE_ID]`, asking before creating).
 
 ## 1. Build Fix Items
 
-**If `items` provided** (managed): Use directly → § 2.
+`items` provided (managed) → use them directly, → § 2.
 
-**If standalone**: Synthesize from conversation context.
+Standalone: synthesize from conversation context, reading the relevant files first. Format each as:
 
-1. **Gather context**: Identify what needs fixing. Read relevant files if needed.
+```text
+---
+#[N] | [conversation] | [location or "TBD"]
+Description: "[WHAT IS WRONG]"
+Recommendation: "[HOW TO FIX]"
+---
+```
 
-2. **Format each fix item**:
-   ```
-   ---
-   #[N] | [conversation] | [location or "TBD"]
-   Description: "[WHAT IS WRONG]"
-   Recommendation: "[HOW TO FIX]"
-   ---
-   ```
+<output_format>
 
-3. **Present to user**:
+### Fix Items — [ISSUE_ID]
 
-   <output_format>
+| # | Location | Description | Recommendation |
+|---|----------|-------------|----------------|
+| 1 | [location] | [description] | [recommendation] |
 
-   ### Fix Items — [ISSUE_ID]
+</output_format>
 
-   | # | Location | Description | Recommendation |
-   |---|----------|-------------|----------------|
-   | 1 | [location] | [description] | [recommendation] |
+Then resolve the decision mode:
 
-   </output_format>
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
+```
 
-4. **Resolve the decision mode**, then ask:
+`auto-recommended` takes the recommended option (`Fix all`) without asking and logs it; anything else asks `Fix all` | multi-select `#N: [TITLE]` | `Cancel`. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) applies in every mode.
 
-   ```bash
-   .agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
-   ```
+```bash
+.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] auto_decisions '"auto-selected: Fix all — [REASON]"'
+```
 
-   **If the output is `auto-recommended`**: do not present the ask — take the recommended option (`Fix all`), log it in the round record, and → § 2. Decision-record revisits, scope expansion beyond the issue, anything touching benchmark-host protocol, and merge ALWAYS ask, in every mode.
-
-   ```bash
-   .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] auto_decisions '"auto-selected: Fix all — [REASON]"'
-   ```
-
-   Otherwise **ask user**: `Fix all` | Multi-select: `#N: [TITLE]` | `Cancel`
-
-   | Choice | Action |
-   |--------|--------|
-   | Cancel | → END |
-   | Items selected | → § 2 |
+Cancel ends the workflow; a selection goes to § 2.
 
 ## 2. Delegate
 
-1. **Determine agent**:
-   - If `dev_agent` provided → use it (already alive)
-   - Otherwise: from workflow state or issue labels
-     ```bash
-     .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
-     ```
-     ```bash
-     .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
-     ```
-     ```bash
-     .agents/skills/orch/scripts/tracker-for-issue [ISSUE_ID]
-     ```
-     Run each block as its own tool call. If state exists, use the second output as `AGENT`; otherwise leave `AGENT` empty. Use the tracker output as `TRACKER`.
+1. **Determine the agent.** `dev_agent` wins. Otherwise read state, falling back to the issue's `agent:*` label or the component paths:
 
-     If `AGENT` is empty and `TRACKER` is `linear`, look up the Linear agent label:
-
-     ```bash
-     .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --format=compact
-     ```
-     Read the first `agent:*` label from the JSON output and use the suffix as `AGENT`.
-
-     GitHub items: use `gh issue view ${ISSUE_ID#issue-} --json labels`, or infer from component paths.
-
-2. **Group items by agent domain** if multi-domain. Order per [agent-sequencing.md](agent-sequencing.md). Prefer 2 scoped rounds over 1 broad round when the item count exceeds ~8 — absorbing more into a single round injects new blockers instead of clearing them (an observed 24-item round introduced 8 new blockers, 2 of them P1 — vstack#944).
-
-3. **Detect team context**:
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.team_name // empty'
+   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
    ```
-   Use the output as `TEAM`.
 
-4. **Gather decision context** (decider skill):
+2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items — a round large enough to lose focus injects new blockers instead of clearing them.
+
+3. **Gather decision context**:
+
    ```bash
    .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
    ```
-   Collect decision IDs, summaries, and file paths from the JSON output for the `Decisions:` section below. Issue-linked lookup is exactly `decisions search --issue [ISSUE_ID]` — the decisions CLI has no bare `issue` action; never shorten the command in delegation guidance.
 
-   The `path` fields in this JSON output are the ONLY authorized source for decision file paths in delegation guidance — the CLI resolves them from the decision index; never compose or recall a decision path from memory, however plausible the `DXXX-slug` looks (vstack#696). Verify every collected path before injecting it (belt-and-suspenders against index drift) — one simple command per path:
+   The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory, however plausible the slug looks. Verify each before injecting it, one command per path:
 
    ```bash
    test -f [DECISION_FILE_PATH]
    ```
 
-   **If the check fails**: omit that path and carry the one-line note `- decision index lookup failed for [DECISION_ID]` in the `Decisions:` block instead — a broken path must never reach a specialist.
+   A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead. A broken path must never reach a specialist.
 
-5. **Stamp the round, then delegate** to `[AGENT_TYPE]` agent (reuse existing dev agent if available). `dev_round_id` binds step 6 `dev-artifact-check` acceptance to THIS cycle's receipt (deterministic identity — vstack#776); `dev_delegated_at` is the watchdog deadline — immediately after stamping it, **arm the single-shot wall-clock watchdog** for `dev_delegated_at + 10min` (SKILL § Wait for Agent Return), so the A/B check + escalation ladder runs even if the agent goes silent with no further wake (vstack#803). Run each as its own tool call, immediately before the delegation:
+4. **Stamp the round**, as separate tool calls immediately before delegating, then arm the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
    ```bash
    .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
@@ -134,23 +82,18 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
-   Use the printed token as `[DEV_ROUND_ID]`. Then **persist the delegated item set on disk**. Default route ([Harness-Safe Shell](../SKILL.md#harness-safe-shell)): write the item set to `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array with one `{"n": [N], "text": "[ITEM_TEXT]"}` per delegated review item, `[N]` the item's `#[N]` number and `[ITEM_TEXT]` that item's formatted block from `[FORMATTED_ITEMS]` verbatim — then run:
+
+   Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item, `[ITEM_TEXT]` being that item's formatted block verbatim — then:
 
    ```bash
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
    ```
-   `--issue` takes the SAME normalized workflow-state key every command in this workflow uses (`issue-N` / `PROJ-123`; the Parent ID for a bundled round) — the value the delegation message's `Artifact Key:` line carries, which the dev-side workflow names `[ARTIFACT_KEY]` when it reads this record back. One key, two placeholder names; a mismatch strands the record where no reader looks.
-   Real review blocks routinely carry backticks and quotes; the file route keeps them out of the command line entirely (a literal backtick in a command is rejected by strict harness classifiers even quoted). Only when EVERY item's text is plain — no backticks, no quotes, no `$` — may you pass the items inline instead, one `--item [N] '[ITEM_TEXT]'` per item in the same single command.
 
-   This writes the round record `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json` (schema: [`../schemas/dev-round.md`](../schemas/dev-round.md)) — the on-disk source of truth step 6's exact item-set check reads, and what a respawned agent reads to recover its items when the delegation survives in no one's context. Without it, the delegated set exists only in this session's context and a mid-round agent loss leaves the round's receipt unrecoverable. The record is immutable per round — an identical retry is idempotent, but changing the set means a NEW delegation: re-run `new-round-id` and persist the new set under the fresh token.
+   `--issue` takes the same normalized workflow-state key everything else here uses — the value the delegation's `Artifact Key:` line carries. A mismatch strands the record where no reader looks. The file route keeps backticks and quotes out of the command line; only when every item's text is plain may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead. The record is what a respawned agent reads to recover its items and what step 6's exact-set check reads.
 
-   **Analysis (read-only) delegation**: an investigate-and-recommend round has NO delegated item set — skip `dev-round-write` entirely (the writer rejects an empty set, and an empty record would misrepresent the round); step 6 runs Check A without an expected-set flag per its analysis rule.
+   **An analysis (read-only) round has no delegated item set** — skip `dev-round-write` entirely and run step 6's Check A without an expected-set flag.
 
-   **In Claude Code**, when the target agent is already alive: send the delegation message before creating and assigning its task — task assignment wakes a live agent immediately, and an agent woken by the bare `task_assignment` payload starts the round without the delegation.
-
-   ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` = technical fix, not procedure steps. The agent owns validate/commit/return per `dev/workflows/dev-fix.md`.
-   - ✅ `"Read X from parent state and forward to child — fix in parent so descendants inherit."`
-   - ❌ `"1. Apply fix. 2. Run validate. 3. Commit. 4. Let orchestrator handle linkage."`
+   ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix, never procedure steps — the agent owns validate, commit, and return.
 
    <delegation_format>
    Ultrathink.
@@ -162,7 +105,7 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    Worktree: [WORKTREE_PATH]
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
-   [If qa_agent:] QA: [QA_AGENT]
+   QA: [QA_AGENT]
 
    Decisions:
    [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
@@ -173,9 +116,9 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    [FORMATTED_ITEMS]
    </delegation_format>
 
-6. **Wait for completion, then accept deterministically.** Acceptance is a function of two checks — **A** (the round-scoped on-disk artifact) and **B** (git completion for this fix round) — never the return message, which is informational for display (a return is routinely absent when a long validation outlasts the agent's turn, vstack#770/#818).
+5. **Accept the round.** Acceptance is a pure function of **A** (the round-scoped artifact) and **B** (git completion), never the return message — a return is routinely absent when a long validation outlasts the agent's turn.
 
-   **Check A** — read `dev_round_id`, then run `dev-artifact-check` in round mode against the persisted round record (run each as its own tool call):
+   **Check A** — two tool calls:
 
    ```bash
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
@@ -183,67 +126,56 @@ Apply [Worktree Scope](../SKILL.md#worktree-scope): if in a worktree and `ISSUE_
    ```bash
    .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```
-   `--expect-items-from-round` reads the delegated set from the step 5 round record (`tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and requires the artifact's `items[]` to cover EXACTLY that set (each item present once, no unknown/duplicate, decisions valid, reasoning non-empty) — a 1-item artifact cannot satisfy a 10-item group. The round id guarantees only THIS cycle's receipt and record are read (vstack#776). If the check exits 2 reporting the round record missing, step 5's persistence never ran — write the record now from the delegated items (still in this session's context) and re-run; only if that context is also gone fall back to `--expect-items [ITEM_NUMBERS]` with numbers you can still prove.
 
-   **Check B** — the fix commit landed and nothing was left behind:
+   `--expect-items-from-round` reads the step-4 record and requires the artifact's `items[]` to cover EXACTLY that set — each item once, no unknowns or duplicates, valid decisions, non-empty reasoning — so a 1-item artifact cannot satisfy a 10-item group. On exit 2 (record missing) the step-4 persistence never ran: write the record now from the delegated items still in context and re-run; only if that context is also gone, fall back to `--expect-items [ITEM_NUMBERS]` with numbers you can still prove.
+
+   **Check B**:
 
    ```bash
    git -C "[WORKTREE_PATH]" status --porcelain
-   # Must be empty (clean worktree).
    git -C "[WORKTREE_PATH]" log -1 --oneline
-   # Shows the fix commit reported by the artifact/return.
    ```
-   `B = pass` when the worktree is clean and the reported fix commit resolves in the log — or the round applied nothing and correctly made no new commit (an all-items-skipped fix legitimately leaves HEAD unchanged; B passes on a clean worktree).
 
-   **Decision table** (pure function of A and B):
+   `B = pass` when the worktree is clean and the reported fix commit resolves in the log — or when the round applied nothing and correctly made no commit, which legitimately leaves `HEAD` unchanged.
 
    | A (artifact) | B (git) | Action |
    |---|---|---|
-   | `ok==true` | pass | **Accept** — first confirm exact-commit binding (artifact `.commit` == `git -C [WORKTREE_PATH] rev-parse HEAD`; an all-items-skipped round's `.commit` is the unchanged HEAD), then parse item decisions (Applied/Skipped/Blocked), commits, and validate from the return when present, else from the artifact's `items[]`/`commit`/`validate` (recovery, vstack#770). → step 7. |
-   | `ok==true` | fail | Artifact claims done but the worktree is dirty / the commit is missing. **Re-read git ONCE after a brief pause** (transient lag) before classifying B failed; if still failing → re-delegate only the specific missing step (commit or revert leftover work). |
-   | `ok==false` | pass | Fix code appears landed but the round did **not** finish (its per-item decisions are unproven — B shows a clean tree, not that THIS round's tail ran). Do NOT re-run the fix and do NOT accept on git alone. Send ONE **report-only tail-reconciliation** nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if you no longer have the delegation, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* The round record makes this nudge self-sufficient even for an agent respawned mid-round. Accept only once a valid artifact for THIS `dev_round_id` appears (→ the `ok==true` row). |
-   | `ok==false` | fail | **Not done** — no completion evidence. Wait to the per-delegation deadline, then escalate (ping → respawn) per [SKILL escalation](../SKILL.md#wait-for-agent-return-before-acting). |
+   | `ok==true` | pass | **Accept.** First confirm exact-commit binding: the artifact's `.commit` equals `git -C [WORKTREE_PATH] rev-parse HEAD` (an all-skipped round's `.commit` is the unchanged HEAD). Then read the item decisions, commits, and validate status from the return when present, else from the artifact. → step 6. |
+   | `ok==true` | fail | The artifact claims done but the worktree is dirty or the commit is missing. Re-read git ONCE after a brief pause, then re-delegate only the missing step: commit, or revert leftover work. |
+   | `ok==false` | pass | Fix code appears landed but the round did not finish — its per-item decisions are unproven. Do NOT re-run the fix and do NOT accept on git alone. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write --kind fix … --round-id [DEV_ROUND_ID]` with one `--item` per review item; if you no longer have the delegation, your item set is on disk at `tmp/dev-round-[ISSUE_ID]-[DEV_ROUND_ID].json`) and re-report your item decisions; do NOT re-run the fix."* Accept only when a valid artifact for THIS round appears. |
+   | `ok==false` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
 
-   **Analysis round (read-only delegation).** If this cycle was explicitly delegated as investigate-and-recommend instead of applying items (e.g. the items' premise needed re-deriving first), the honest receipt is `kind: analysis` — no `commit`, no `validate`, no `items`, recommendation in `summary` (schema: [`../schemas/dev-return.md`](../schemas/dev-return.md) § Analysis rounds). Run Check A **without** `--expect-items` (there is no delegated item set), and B expects no new commit and a clean worktree; there is no exact-commit binding and no validate gate for the round. On A `ok==true` (artifact `kind` is `analysis`) + B pass: accept the round, read the `summary` recommendation, and decide — delegate the actual fixes as a fresh round, or close/re-scope the items with reasoning. A `kind` that does not match what was delegated is a mis-filed round: treat as the `ok==false` row.
+   **Analysis rounds** run Check A without an expected-set flag, and B expects no new commit and a clean worktree. On accept, read the `summary` recommendation and decide the next step: delegate the actual fixes as a fresh round, or close and re-scope with reasoning.
 
-   Do not import the reviewer's re-delegate-on-`ok==false` rule here — the asymmetry is intentional ([SKILL § Wait for Agent Return Before Acting](../SKILL.md#wait-for-agent-return-before-acting)).
+6. **Record the outcome** — one tool call per block; the appends run per item and cannot fold into one expression:
 
-7. **Update state** — run each block as its own tool call; the appends run once per item, so they can't be folded into a single expression:
    ```bash
-   # For each applied item:
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] fixed_items '{"description":"[DESC]","location":"[LOC]","commit":"[SHA]","source":"[SOURCE]"}'
    ```
    ```bash
-   # For each Blocked or Skipped item — [OUTCOME] carries the item's accepted decision
-   # from step 6 (return table / artifact items[].decision): Blocked → "blocked",
-   # Skipped → "skipped". Downstream audit maps it to origin (review-pr.md § 9).
    .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] escalated_items '{"description":"[DESC]","location":"[LOC]","reason":"[REASON]","outcome":"[OUTCOME]","source":"[SOURCE]"}'
    ```
    ```bash
    .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
    ```
 
----
+   `[OUTCOME]` carries the item's accepted decision: Blocked → `"blocked"`, Skipped → `"skipped"`. The audit builder maps it to distinct origins, so a deliberately skipped item is never filed as an unfixable blocker.
 
 ## 3. Return
 
-**If standalone**:
+**Standalone**:
 
-1. **Present results**:
+<output_format>
 
-   <output_format>
+### Fix Results — [ISSUE_ID]
 
-   ### Fix Results — [ISSUE_ID]
+| # | Decision | Reasoning |
+|---|----------|-----------|
+| N | Applied/Skipped/Blocked | [explanation] |
 
-   | # | Decision | Reasoning |
-   |---|----------|-----------|
-   | N | Applied/Skipped/Blocked | [explanation] |
+Commits: [SHAs or "none"]
+Validate: [status]
 
-   Commits: [SHAs or "none"]
-   Validate: [status]
+</output_format>
 
-   </output_format>
-
-2. **END**
-
-**If managed**: Return parsed results to caller (item decisions, commits, validation status), then return to parent workflow.
+**Managed**: return the parsed item decisions, commits, and validation status to the caller.

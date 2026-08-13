@@ -11,124 +11,61 @@ metadata:
   source: vstack
   repository: "https://github.com/vanillagreencom/vstack"
   bugs: "https://github.com/vanillagreencom/vstack/issues"
-  version: "2.0.0"
+  version: "3.0.0"
 ---
 
 # Project Management
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-User-facing wrappers and TPM-execution workflows for project-level planning, audit, roadmap, and research-driven decomposition.
+Wrappers run in the primary session: they own the user dialog and every tracker mutation. TPM workflows analyze and return JSON inline; they never mutate the tracker and never write the artifact.
+
+## Disposition
+
+The backlog is a queue of work someone will do, not a record of everything anyone noticed.
+
+- **Creation bar.** File an issue only when all three hold: it changes what a user or operator experiences, or blocks work that does; no open issue, active branch, or one-line fix already covers it; and someone could pick it up and finish it without a new investigation. Everything else is declined with one line in the report — no issue, no placeholder, no tracking artifact. A severe-sounding edge case that no real input reaches fails the first test.
+- **Burn down more than you create.** Any audit that proposes creations also sweeps its comparison set for issues the codebase has already satisfied, duplicated, or superseded, and proposes those for cancellation in the same pass. Report `created N / closed M`; an audit reporting only creations has not finished its sweep.
+- **Ask about work, never about mechanics.** The user decides what gets created, cancelled, and activated. Labels, priorities, relations, hierarchy, sort order, and project moves are corrections the workflow applies on its own authority.
 
 ## Commands
 
 | Command | Arguments | Workflow |
 |---------|-----------|----------|
-| `cycle-plan` | — | `workflows/cycle-plan.md` |
-| `audit-issues` | `project` \| `project "Name"` \| `issue [IDs]` \| `--issues [file]` \| `project-order` | `workflows/audit-issues.md` |
-| `roadmap plan` | `[feature]` \| `[feature] @[research-path]` | `workflows/roadmap-plan.md` |
-| `roadmap create` | `@[plan-file]` | `workflows/roadmap-create.md` |
-| `research-spike` | — | `workflows/research-spike.md` |
-| `research-complete` | `[ISSUE_ID]` | `workflows/research-complete.md` |
-| `research-issue` | — | `workflows/research-issue.md` (internal — invoked by `research-spike`) |
+| `cycle-plan` | — | [cycle-plan](workflows/cycle-plan.md) |
+| `audit-issues` | `project` \| `project "Name"` \| `issue [IDs]` \| `--issues [file]` \| `--analyzed [file]` \| `project-order` | [audit-issues](workflows/audit-issues.md) |
+| `roadmap plan` | `[feature]` \| `[feature] @[research-path]` | [roadmap-plan](workflows/roadmap-plan.md) |
+| `roadmap create` | `@[plan-file]` | [roadmap-create](workflows/roadmap-create.md) |
+| `research-spike` | — | [research-spike](workflows/research-spike.md) |
+| `research-complete` | `[ISSUE_ID]` | [research-complete](workflows/research-complete.md) |
+| `research-issue` | — | [research-issue](workflows/research-issue.md) — internal, invoked by `research-spike` |
 
-## Workflows
+`audit-issues` is **primary-session only**: its § 6 approval gate needs the session's interactive question tool, and § 7 mutates only against approvals collected there. Delegate the `tpm-audit.md` analysis it spawns, never the wrapper.
 
-### User-facing wrappers
-
-Wrappers run in the primary session — they own the user dialog and approval gates, which require the interactive question tool. Delegate only the TPM analysis steps a wrapper itself spawns, never the wrapper end-to-end.
-
-| Workflow | Purpose |
-|----------|---------|
-| [cycle-plan](workflows/cycle-plan.md) | User dialog + Linear actions for cycle planning; delegates analysis to `tpm-cycle-plan` |
-| [audit-issues](workflows/audit-issues.md) | User dialog + tracker actions (Linear or GitHub) for issue audits; project/project-order audits are Linear-only; primary-session only — delegates only the `tpm-audit` / `tpm-audit-project-order` analysis, never the wrapper itself (its § 6 approval gate must run in-session) |
-| [roadmap-plan](workflows/roadmap-plan.md) | Specialist consultation + research gating; delegates to `tpm-roadmap-plan` |
-| [roadmap-create](workflows/roadmap-create.md) | Execute a roadmap plan: project + issue creation via audit |
-| [research-spike](workflows/research-spike.md) | User-initiated research with consultation, asset prep, and researcher delegation |
-| [research-complete](workflows/research-complete.md) | Route a researcher-completed research issue (Targeted / Pervasive / Strategic) |
-| [research-issue](workflows/research-issue.md) | Create research issue + assets, then delegate to `agent:researcher` (called by `research-spike`) |
-
-### TPM-execution (called by the wrappers)
-
-TPM workflows return JSON recommendations only.
-
-| Workflow | Purpose |
-|----------|---------|
-| [tpm-cycle-plan](workflows/tpm-cycle-plan.md) | Analyze backlog, compute architecture order |
-| [tpm-roadmap-plan](workflows/tpm-roadmap-plan.md) | Cross-project analysis, architecture gaps |
-| [tpm-audit](workflows/tpm-audit.md) | Audit issues/projects for relations, hierarchy |
-| [tpm-audit-project-order](workflows/tpm-audit-project-order.md) | Analyze project dependencies and ordering |
-
-## Templates
-
-| Template | Purpose |
-|----------|---------|
-| [issue-description-template](templates/issue-description-template.md) | Standard markdown for issue descriptions |
-| [parent-issue-template](templates/parent-issue-template.md) | Parent/bundle issues with sub-issue coordination |
-
-## Schemas
-
-| Schema | Purpose |
-|--------|---------|
-| [audit-issues-input](schemas/audit-issues-input.md) | Input for issue audit workflows |
-| [roadmap-plan-input](schemas/roadmap-plan-input.md) | Input for roadmap planning |
-| [cycle-plan-output](schemas/cycle-plan-output.md) | TPM cycle plan output |
-| [roadmap-plan-output](schemas/roadmap-plan-output.md) | TPM roadmap analysis output |
-| [audit-output](schemas/audit-output.md) | TPM audit output |
-| [audit-project-order-output](schemas/audit-project-order-output.md) | TPM project-order audit output |
-
-## References
-
-| Topic | Location |
-|-------|----------|
-| Issue creation | [references/issues.md](references/issues.md) |
-| Initiatives & Projects | [references/initiatives-projects.md](references/initiatives-projects.md) |
-| Dependencies | [references/dependencies.md](references/dependencies.md) |
-| Prioritization factors | [references/prioritization.md](references/prioritization.md) |
-| Label management | [references/labels.md](references/labels.md) |
-| Issue tracker CLI | Companion tracker skills — Linear: `.agents/skills/linear/scripts/linear.sh`; GitHub: `gh` + `.agents/skills/github/scripts/github.sh` |
+TPM analysis workflows, each returning JSON per its schema: [tpm-cycle-plan](workflows/tpm-cycle-plan.md), [tpm-audit](workflows/tpm-audit.md) (project / issue / project-order modes), [tpm-roadmap-plan](workflows/tpm-roadmap-plan.md).
 
 ## Execution Rules
 
-- Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment.
-- `<delegation_format>` and `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
-- When a user-visible `<output_format>` report is followed by an `Ask user`, `AskUserQuestion`, or question-tool step, send the filled report as a normal assistant message first. Then invoke the question tool separately with only a concise question and concise options; do not paste the report into the question text, option labels, or option descriptions unless a short summary is explicitly requested. This keeps Pi question popups focused on the choice instead of the preceding report.
-- Before any issue create or label update, load the live issue-label inventory and project taxonomy, build the full final `labels[]` set, and run the label preflight in `references/labels.md`. Unknown labels, parent/group labels, missing required categories, or exclusivity violations stop the workflow before mutation.
-- In multi-issue audits, resolve and retain repository verification context per issue/contract. A PR, branch, or resolved path set associated with one issue must not scope another issue's checks.
-- Issue-mode audits resolve tracker context once (audit-issues § 1.2.1) and route every preflight, TPM fetch, and mutation through that tracker. GitHub-tracked audits must not require Linear installation, sync, or authentication; where GitHub lacks a Linear concept, the workflow degrades explicitly (documented note in the audit summary), never silently.
+- Run workflow sections in order. Skip only on an explicit **Skip if** condition, never on your own scope assessment.
+- `<delegation_format>` and `<output_format>` are literal templates: fill `[PLACEHOLDERS]`, drop lines whose placeholders are empty, add nothing.
+- Send a user-visible `<output_format>` report as a normal assistant message first, then invoke the question tool separately with only the question and short option labels. Pasting the report into question text or options buries the choice in the Pi popup.
+- Resolve tracker context once per run (audit-issues § 1.2) and route every preflight, fetch, and mutation through it. A GitHub-tracked run must not require Linear installation, sync, or authentication; where GitHub lacks a Linear concept the workflow degrades in a documented note, never silently.
+- Before any issue create or label update, run the label preflight in [references/labels.md](references/labels.md) against the live inventory and project taxonomy. Unknown labels, parent/group labels, missing required categories, and exclusivity violations halt before mutation.
+- In multi-issue analysis, keep verification context per issue. One issue's PR, branch, or resolved path set never scopes another's checks.
 
 ## Hierarchy
 
-```
-Initiative → Project → Milestone → Issue → Sub-Issue
-```
+`Initiative → Project → Milestone → Issue → Sub-Issue`. Parent and child must share a project; blocking relations may cross projects freely. See [references/dependencies.md](references/dependencies.md).
 
-| Level | Duration | Example |
-|-------|----------|---------|
-| Initiative | Months | "Platform MVP" |
-| Project | 2-6 weeks | "Phase 1: Foundation" |
-| Milestone | Key checkpoint | "Data Pipeline Complete", "Alpha" |
-| Issue | 1-5 days | "Implement message queue" |
-| Sub-Issue | Breakdown | Child issue for parallel work |
+## Contracts
 
-## Prioritization
-
-```
-Score = (Critical Path x 3) + (Dependencies x 2) + (Risk x 2) + (Value x 1) - (Estimate x 0.5)
-```
-
-**Thresholds**: 8+ P1 | 5-7 P2 | 3-4 P3 | 0-2 P4
-
-## Health Indicators
-
-| Indicator | Green | Yellow | Red |
-|-----------|-------|--------|-----|
-| Blocked issues | 0 | 1-2 | 3+ |
-| In Progress age | <3 days | 3-7 days | >7 days |
-| Completion ratio (7d) | >0.8 | 0.5-0.8 | <0.5 |
+| Kind | Files |
+|------|-------|
+| Schemas | [audit-issues-input](schemas/audit-issues-input.md), [audit-output](schemas/audit-output.md), [roadmap-plan-input](schemas/roadmap-plan-input.md), [roadmap-plan-output](schemas/roadmap-plan-output.md), [cycle-plan-output](schemas/cycle-plan-output.md) |
+| Templates | [issue-description-template](templates/issue-description-template.md), [parent-issue-template](templates/parent-issue-template.md) |
+| References | [labels](references/labels.md), [dependencies](references/dependencies.md) |
+| Tracker CLI | Linear: `.agents/skills/linear/scripts/linear.sh`; GitHub: `gh` + `.agents/skills/github/scripts/github.sh` |
 
 ## Dependencies
 
-- Issue tracker CLI — `linear` skill for Linear-tracked work; `github` skill + `gh` for GitHub-tracked issue audits
-- `git` (repository/change-aware audit verification scope)
-- `jq`
+`linear` skill (Linear-tracked work), `github` skill + `gh` (GitHub-tracked issue audits), `git` and `jq` (audit verification scope).

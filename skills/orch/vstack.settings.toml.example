@@ -1,6 +1,6 @@
 [env]
 
-# ORCH — PR review gate, CI waits, and reviewer fan-out.
+# ORCH — PR review gate, CI waits, reviewer fan-out, and handoff lanes.
 # Project-scope `vstack add` / `vstack refresh` merge these defaults into
 # <project>/vstack.settings.toml (never overwriting existing keys). Full key
 # reference: orch README.md / DEVELOPMENT.md.
@@ -69,54 +69,34 @@ CI_WAIT_NO_CHECKS_GRACE = "180"
 # to the user.
 CI_FIX_MAX_CYCLES = "6"
 
-# Used by: orch (`review-pr`, via `refix-route`). Total changed lines
-# (insertions + deletions) a support-scope fix round may reach before it is
-# re-reviewed anyway. A round that cleared blockers is always re-reviewed
-# regardless of this value; this is the backstop for large rounds that no
-# blocker prompted.
-PR_REVIEW_REFIX_MAX_LINES = "200"
-
 # Used by: orch (`review-pr` / `review` / `review-codebase`). Total concurrent
 # agent-session budget of the harness runtime, counting the primary session.
 # "0" = unlimited: every reviewer launches up front and persists through
 # fix/re-review cycles. When the reviewer set exceeds the available slots,
 # review workflows run reviewers in bounded sequential waves, retiring each
-# completed session to release its slot. Codex collaboration runtime: four
-# total threads -> set "4".
+# completed session to release its slot. On the Codex collaboration runtime,
+# set the cap that `spawn-adapter slots` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
-# Used by: orch (`review-pr` § 4/§ 7, `dev-fix` § 1). How workflow decision
-# points behave. "ask" (default) presents every decision to the user.
-# "auto-recommended" executes the workflow's recommended option and logs
+# Used by: orch (`review-pr`, `dev-fix`). How workflow decision points behave.
+# "ask" (default) presents every decision to the user. "auto-recommended"
+# executes the workflow's recommended option and logs
 # "auto-selected: [option] — [reason]" in the round record (workflow-state
 # auto_decisions) — for fleet launchers whose workers would otherwise
 # serialize on one supervisor. Decision-record revisits, scope expansion
-# beyond the issue, anything touching benchmark-host protocol, and merge
-# ALWAYS ask, in every mode.
+# beyond the issue, and merge ALWAYS ask, in every mode.
 ORCH_DECISION_MODE = "ask"
-
-# Used by: orch (`open-terminal`). Claude permission argument rendered into
-# claude handoff-lane launch commands. Handoff is launch-only autonomy — no
-# one is attached to answer a permission prompt — so the default bypasses
-# permission checks, the claude-path peer of the codex generalist's
-# danger-full-access sandbox. Overriding it with a prompting mode (e.g.
-# "--permission-mode manual") voids handoff autonomy; open-terminal warns
-# loudly at launch but still launches.
-ORCH_LANE_CLAUDE_PERMISSION_ARG = "--dangerously-skip-permissions"
 
 # Used by: orch (`open-terminal`). Bounded seconds per brief-delivery
 # verification pass on tmux claude handoff lanes (one initial pass plus one
 # after the single re-send). Positive integer; values over 120 are clamped.
 ORCH_TMUX_VERIFY_SECS = "15"
 
-# Used by: orch (`review-pr`). OPT-IN change-risk classifier: a repo-relative
-# EXECUTABLE path plus optional plain arguments (a file, not a shell string;
-# resolved from the trusted invoking checkout, run with the reviewed worktree
-# as cwd) against the change set before the review cycle. Contract:
-# prints `high`, `medium`, or `low` on stdout, exit 0. The reviewer fan-out
-# is sized from the answer (low -> small panel, first-clean-round
-# convergence; medium -> default; high -> full fleet + adversarial-test
-# expectation). Any failure or unset key = full fleet: fail-open to depth,
-# never to shallowness. The path->risk table is the repo's own knowledge —
-# keep the classifier local to the repo.
-# REVIEW_RISK_COMMAND = "tools/review-risk"
+# Used by: orch (`lanes`, `open-terminal --lane`). Optional alias overlay for
+# multi-account machines: comma-separated `<config-dir-name>=<alias>` pairs
+# giving discovered lanes meaningful names, usable as `--lane <alias>`. The
+# lane INVENTORY is always discovered (~/.claude plus any ~/.*claude* dir, and
+# ~/.codex), so adding an account needs no edit here — this only renames what
+# discovery already found. ORCH_LANE_DIRS (colon-separated) covers a layout
+# discovery cannot reach.
+# ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"

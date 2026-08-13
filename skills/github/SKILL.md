@@ -15,7 +15,8 @@ metadata:
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-CLI wrapper for GitHub API operations used in PR workflows. Provides structured JSON output, bot account support, and configurable issue ID extraction.
+CLI wrapper for GitHub API operations used in PR workflows. Structured JSON
+output, bot account support, configurable issue ID extraction.
 
 ```bash
 .agents/skills/github/scripts/github.sh <command> [options]
@@ -36,8 +37,8 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 | `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check`: JSON readiness only. `--auto`: queue for auto-merge if blocked now, but never bypass actionable review threads. `--force`: deliberate override of all safety checks. Three exit codes — see below. |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
 | `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
-| `label-add <PR-or-issue> <label> [--reason TEXT] [--issue] [--required\|--optional]` | Check the live label inventory, then add a label through an authoritative REST capability boundary; direct script execution also loads current-project env. |
-| `label-remove <PR-or-issue> <label> [--reason TEXT] [--issue]` | Remove a label through the sanitized router; direct script execution also loads current-project env. |
+| `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Check the live label inventory, then add a label through an authoritative REST capability boundary; direct script execution also loads current-project env. |
+| `label-remove <PR-or-issue> <label> [--issue]` | Remove a label through the sanitized router; direct script execution also loads current-project env. |
 | `await-mergeable <N> [--interval S] [--max-iter N] [--quiet]` | Block until GitHub resolves a PR's merge state. Polls `state` + `mergeStateStatus`. Exit 0 + JSON on resolve, 124 on timeout. |
 | `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
 | `bot-token [--format=safe\|text]` | Check if bot token is configured |
@@ -54,43 +55,39 @@ Most commands accept no PR number to auto-detect from the current branch.
 Exception: `post-reply` with a numeric comment ID never auto-detects — it
 requires an explicit `--pr <N>` (thread `PRRT_...` IDs need no PR number).
 
-There is no CI wait command here: blocking until CI completes on a PR is the
-orch skill's `.agents/skills/orch/scripts/ci-wait <PR_NUMBER> [interval]
-[max_wait] [--json]`. `ci-logs` only fetches failure logs, and
-`await-mergeable` waits for merge-state resolution, not check completion.
+There is no CI wait command here. Blocking until CI completes is the orch
+skill's `.agents/skills/orch/scripts/ci-wait <PR_NUMBER> [interval] [max_wait]
+[--json]`. `ci-logs` only fetches failure logs, and `await-mergeable` waits for
+merge-state resolution, not check completion.
+
+Unknown flags and extra positionals are rejected rather than absorbed as a PR
+reference, so a typo fails naming itself instead of as a missing PR.
 
 ### Label application contract
 
-`label-add` checks that the named label exists in the live repository inventory,
-resolves the target, and then uses GitHub's shared issue/PR label REST endpoint.
-The endpoint response is authoritative for the selected token's effective
-`issues=write` or `pull_requests=write` grant; repository roles are not used as
-a proxy because GitHub App and fine-grained token grants can differ from them.
-Label names are sent as literal strings, including names beginning with `@` or
-resembling booleans, integers, nulls, and repository placeholders.
+`label-add` verifies the label exists in the live repository inventory, then
+writes through GitHub's shared issue/PR label REST endpoint. That endpoint's
+response is authoritative for the token's effective `issues=write` /
+`pull_requests=write` grant — repository role is not a proxy for it, because App
+and fine-grained grants diverge. Label names are sent literally, including names
+starting with `@` or resembling booleans, integers, nulls, and placeholders.
 
-- `--required` is the default. A missing label is a repository configuration
-  error (exit 78); a known GitHub label-write denial is a capability error
-  (exit 77). Neither failure successfully mutates the PR or issue.
-- `--optional` is only for labels the calling project policy explicitly marks
-  non-gating. A missing label or insufficient permission emits a structured
-  `optional_unsupported` result, exits zero, and does not mutate the target.
-- Authentication, repository/target lookup, rate limits, server errors, and
-  unexpected API failures are operational errors in both modes; they never
-  become optional skips.
-
-Workflow-required QA labels must use `--required`. Do not downgrade a required
-label to `--optional` merely because a consuming repository is misconfigured.
+- `--required` (default): a missing label is a configuration error (exit 78); a
+  label-write denial is a capability error (exit 77). Neither mutates anything.
+  Workflow-required QA labels use this, even against a misconfigured repo.
+- `--optional`: a missing label or denied permission emits a structured
+  `optional_unsupported` result and exits zero without mutating. Use only where
+  project policy marks the label non-gating.
+- Auth, lookup, rate-limit, and server errors are operational errors in both
+  modes — never optional skips.
 
 ### Git HTTPS Auth Helper
 
 `git-https-auth [-C path] <git args...>` runs `git` normally, but when the
-target repo or explicit URL uses a GitHub SSH remote and `gh` auth is valid, it
-adds per-command config for `gh auth git-credential` and rewrites GitHub SSH
-URLs to HTTPS. This covers Codex and other harnesses where GitHub CLI auth is
-valid but an SSH key or agent is unavailable. It never persists git config.
-
-Use it for workflow network operations that only need `origin`, for example:
+target repo or an explicit URL uses a GitHub SSH remote and `gh` auth is valid,
+it adds per-command config for `gh auth git-credential` and rewrites GitHub SSH
+URLs to HTTPS. This covers harnesses where GitHub CLI auth works but no SSH key
+or agent is available. It never persists git config.
 
 ```bash
 .agents/skills/github/scripts/git-https-auth -C . fetch --prune origin
@@ -98,23 +95,23 @@ Use it for workflow network operations that only need `origin`, for example:
 ```
 
 Set `VSTACK_GITHUB_GIT_HTTPS_FALLBACK=never` to disable the fallback, or
-`always` to force the temporary config for a GitHub operation.
+`always` to force it.
 
 ### Diff Summary Helper
 
-`git-diff-summary [-C path] [base-branch|--staged|--head]` is a standalone
-review-routing helper that emits JSON with changed-file domains, scope,
-insert/delete stats, and `risk_flags`. Rust-specific flags
-(`unsafe_code_added`, `repr_c_struct_changed`, `extern_c_changed`,
-`atomics_modified`) scan added lines from `.rs` diffs only, so scripts,
-docs, and other non-Rust files can discuss those tokens without triggering a
-Rust risk route. Panic patterns (`panic!`/`unwrap()`) added in production
-source emit `panic_path_added`; the same patterns whose enclosing context is
-a test surface (`#[cfg(test)]` modules, `tests/` dirs, `*_tests.rs`, or
-files reachable only through a `#[cfg(test)]`-gated `mod` declaration in
-their declaring module, including `#[path]` siblings) emit the distinct
-informational `test_panic_path_added` flag instead, which `refix-route`
-treats as non-risk.
+`git-diff-summary [-C path] [base-branch|--staged|--head]` emits JSON with
+changed-file domains, scope, insert/delete stats, and `risk_flags` for review
+routing. The Rust-specific flags (`unsafe_code_added`, `repr_c_struct_changed`,
+`extern_c_changed`, `atomics_modified`) scan added lines in `.rs` diffs only,
+so scripts and docs can discuss those tokens without triggering a Rust route.
+
+Panic patterns (`panic!`/`unwrap()`) added to production source emit
+`panic_path_added`. The same patterns in a test surface — `#[cfg(test)]`
+modules, `tests/` dirs, `*_tests.rs`, or files reachable only through a
+`#[cfg(test)]`-gated `mod` declaration in their declaring module, `#[path]`
+siblings included — emit the distinct informational `test_panic_path_added`
+instead. That flag marks a test assertion rather than a production panic path,
+so downstream re-review scoping treats it as non-risk.
 
 ### PR Merge Outcomes
 
@@ -128,56 +125,53 @@ parsing stderr:
 | `75` | MERGE PENDING | `AUTO-MERGE ENABLED PR #N` | Classic auto-merge is armed until protection clears |
 | `1`  | BLOCKED | `BLOCKED PR #N` | Nothing merged, queued, or armed |
 
-Before mutating merge state, `pr-merge` resolves the exact PR head and passes
-it through `--match-head-commit`. After a successful `gh` call it reads queue
-membership with GraphQL because `gh pr view --json` does not expose
-`mergeQueueEntry`. An `OPEN` PR with no `autoMergeRequest` is therefore still a
-successful exit `75` when its required merge-queue entry is active; an `OPEN`
-PR with neither queue nor auto-merge proof fails closed.
+Merge state is mutated only against the exact resolved head, via
+`--match-head-commit`. Queue membership is then read with GraphQL, because
+`gh pr view --json` does not expose `mergeQueueEntry`: an `OPEN` PR with no
+`autoMergeRequest` is still a successful exit `75` when its required queue
+entry is active, and an `OPEN` PR with neither queue nor auto-merge proof fails
+closed.
 
-Actionable review threads (unresolved and not outdated) are a hard local gate.
-They make `can_merge` false and block both immediate merge and `--auto` before
-any merge or queue mutation. A failed or malformed thread lookup also blocks,
-because an unknown review state cannot be treated as clean.
-
-Two bounds on that gate:
+Actionable review threads — unresolved and not outdated — are a hard local
+gate. They make `can_merge` false and block both immediate merge and `--auto`
+before any mutation. A failed or malformed thread lookup blocks too, since an
+unknown review state cannot be treated as clean. Two bounds on that gate:
 
 - **Narrower than branch protection.** GitHub's
   `required_conversation_resolution` requires *all* conversations resolved and
-  draws no outdated/active distinction. `pr-merge` deliberately counts only
-  threads that are unresolved *and* not outdated, because a thread pinned to a
-  diff that no longer exists cannot be acted on. A repo relying on `pr-merge`
-  alone therefore has a narrower guarantee than one relying on branch
-  protection.
-- **Policy, not mechanism.** `pr-merge` is the enforcement point only for
-  merges that go through it. A raw `gh pr merge` or the GitHub UI Merge button
-  bypasses the skill entirely, so a repo whose CI does not independently gate
-  threads has no thread enforcement on those paths.
+  draws no outdated/active distinction. `pr-merge` counts only threads that are
+  unresolved *and* not outdated, because a thread pinned to a diff that no
+  longer exists cannot be acted on. Relying on `pr-merge` alone is therefore a
+  narrower guarantee than branch protection.
+- **Policy, not mechanism.** `pr-merge` gates only merges routed through it. A
+  raw `gh pr merge` or the GitHub UI Merge button bypasses the skill entirely.
 
-The documented `--force` flag is the only deliberate override of that gate and
-skips every safety check. It has immediate-only semantics and cannot be
-combined with `--auto`; the conflicting flags fail before any GitHub lookup or
-mutation. If its guarded `gh pr merge` mutation fails and the exact-head
-post-state is not `MERGED`, `pr-merge` returns BLOCKED even when classic
-auto-merge or a merge-queue entry was already active.
-Pre-existing deferred state is not proof that the forced immediate attempt
-succeeded. An authoritative exact-head `MERGED` post-state remains success;
-non-force and `--auto` idempotent pending outcomes retain exit `75`.
+`--force` is the only deliberate override and skips every check. It is
+immediate-only, cannot be combined with `--auto` (the pair fails before any
+GitHub lookup), and stays BLOCKED when its mutation fails and the exact-head
+post-state is not `MERGED` — deferred state predating the call is not proof
+that a forced immediate attempt succeeded.
 
-A BLOCKED outcome is further classified on stderr as **transient** (mergeable
-UNKNOWN, `ci_pending`, CI fetch uncertainty — caller should
-`await-mergeable` and retry) or **permanent** (conflicts, `ci_failed`,
-`changes_requested` — caller must fix and re-push). Programmatic callers can
-check the `transient` field in the `--check` JSON output before deciding to
-retry.
+BLOCKED is classified on stderr as **transient** (mergeable UNKNOWN,
+`ci_pending`, CI fetch uncertainty — `await-mergeable` then retry) or
+**permanent** (conflicts, `ci_failed`, `changes_requested` — fix and re-push).
+Callers read the `transient` field from `--check`:
+
+```json
+{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false}
+```
+
+`transient: true` means every blocking issue is recoverable by waiting
+(prefixes `unknown:`, `ci_pending:`, `ci_unconfigured:`, `ci_fetch_failed:`).
+Still-running checks report as `ci_pending:`; terminal failing or cancelled
+checks remain `ci_failed:`.
 
 ### PR blocked with no visible conversations
 
 Under `required_conversation_resolution`, an outdated thread can become
 unreachable in the UI while still blocking the merge: after a rebase or
-force-push the commented commits are gone, clicking the unresolved
-conversation 404s, and the PR shows zero visible conversations yet refuses to
-merge. GraphQL
+force-push the commented commits are gone, clicking the unresolved conversation
+404s, and the PR shows zero visible conversations yet refuses to merge. GraphQL
 `resolveReviewThread` still acts on threads the UI cannot render, so this skill
 is the escape hatch:
 
@@ -190,71 +184,33 @@ github.sh resolve-thread PRRT_kwDO...    # resolve by thread id
 so a thread id absent from its output is genuinely absent. Repeat
 `resolve-thread` per blocking id until the merge clears.
 
-### PR Merge Check Output
-
-```json
-{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false}
-```
-
-`transient: true` means every blocking issue is recoverable by waiting
-(prefixes `unknown:`, `ci_pending:`, `ci_unconfigured:`,
-`ci_fetch_failed:`). Still-running checks are reported as `ci_pending: ...`;
-terminal failing or cancelled checks remain `ci_failed: ...`.
-
-### Waiting for merge state (gotcha)
+### Waiting for merge state
 
 **Never gate termination on `gh pr view --json mergeable`.** That field stays
-`UNKNOWN` permanently after a PR is merged — it is only meaningful while the
-PR is open, where it transitions through `MERGEABLE` / `CONFLICTING` /
-`UNKNOWN`. An inline `until [ "$(...mergeable...)" != "UNKNOWN" ]` loop will
-never terminate post-merge.
-
-To wait for resolution, use `await-mergeable`, which polls `state` and
-`mergeStateStatus` correctly:
+`UNKNOWN` permanently after a merge — it is meaningful only while the PR is
+open. An inline `until [ "$(...mergeable...)" != "UNKNOWN" ]` loop never
+terminates post-merge. Use `await-mergeable`, which polls `state` and
+`mergeStateStatus`:
 
 ```bash
 github.sh await-mergeable 42                    # block until resolved
 STATE=$(github.sh await-mergeable 42 | jq -r '.state')   # capture for branching
 ```
 
-Resolution rules:
-- `state in {MERGED, CLOSED}` → resolved.
-- `mergeStateStatus != UNKNOWN` (any of `CLEAN`, `BLOCKED`, `BEHIND`, `DIRTY`,
-  `UNSTABLE`, `HAS_HOOKS`) → resolved.
-- `mergeable` alone is never used for termination.
+It resolves when `state` is `MERGED`/`CLOSED`, or `mergeStateStatus` is
+anything but `UNKNOWN`.
 
-### Watching many PRs (optional review-gate reference)
-
-`await-mergeable` is a single-PR foreground wait. For watching MANY PRs
-across a long horizon — open threads, standing objections, gate staleness,
-disarmed auto-merge, silent reviewers — do not hand-roll a poll loop keyed
-on state transitions (steady states transition nothing and the watcher
-sleeps through them). When the review-gate skill is installed (existence
-check on `.agents/skills/review-gate/scripts/pr-watch.sh`), run it as the
-needs-attention reducer:
-
-```bash
-GH_REPO=OWNER/REPO .agents/skills/review-gate/scripts/pr-watch.sh [PR_NUMBER...]
-```
-
-(`GH_REPO` is required — the watcher exits 2 immediately without it.)
-Exit 0 = nothing needs you. Exit 1 = tab-separated
-`<pr> <head8> <kind> <detail>` attention lines on stdout — act on those.
-Exit 2 = a read failed, in two shapes: per-PR failures emit `error` rows ON
-STDOUT alongside any other PRs' attention rows (act on the healthy rows;
-retry the errored PR), while GLOBAL failures (missing GH_REPO, broken PR
-listing) report on stderr only with no rows — so surface BOTH streams,
-never just stdout. `--heal` adds one bounded writer dispatch for
-gate-stale findings. Without the skill installed there is NO shipped
-multi-PR watcher: fall back to per-PR polling (`await-mergeable` for
-merge-state; thread and review state need direct reads), knowing that
-fallback cannot detect a stale gate (a missed writer run) — a PR that
-reads clean but sits unmerged then warrants a manual gate-status check.
+To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions —
+steady states transition nothing and the watcher sleeps through them. Use the
+review-gate skill's reducer when installed
+(`.agents/skills/review-gate/scripts/pr-watch.sh`); its contract is documented
+there. Without it, per-PR polling cannot detect a stale gate.
 
 ## Output Formats
 
-`--format` is command-specific, not a global flag. Only the commands listed
-below accept it; others (e.g. `pr-view`, which takes only `--json FIELDS`) do not.
+`--format` is command-specific, not a global flag. Commands not listed below
+(e.g. `pr-view`, which takes only `--json FIELDS`) reject it. An unrecognized
+format value is an error rather than a silent fallback to `safe`.
 
 | Format | Description | Commands |
 |--------|-------------|----------|
@@ -263,24 +219,34 @@ below accept it; others (e.g. `pr-view`, which takes only `--json FIELDS`) do no
 | `text` | Plain text extraction | pr-issue, ci-logs, bot-token |
 | `table` | Human-readable table | pr-list-ready, pr-list-failing |
 
-`--json` is accepted as alias for `--format=safe` on the commands above.
+`--json` is accepted as an alias for `--format=safe` on the commands above.
 
 ## Configuration
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved GitHub token from the parent process | Falls back to `gh` auth |
-| `GH_BOT_TOKEN` | Bot account GitHub token (in `.env.local` or parent env) | Falls back to `GH_TOKEN` / `GITHUB_TOKEN` for helper auth, then `gh` auth |
+| `GH_BOT_TOKEN` | Bot account GitHub token (in `.env.local` or parent env) | Falls back to `GH_TOKEN` / `GITHUB_TOKEN`, then `gh` auth |
 | `GH_BOT_USERNAME` | Bot username for review/comment filtering | `review-bot[bot]` |
 | `GH_ISSUE_PATTERN` | Regex for issue ID extraction from branches | `[A-Z]+-[0-9]+` |
-| `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` when resolving GitHub token references | `10` |
+| `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` when resolving token references | `10` |
 | `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds to wait for GitHub auth preflight in `pr-view` | `10` |
 | `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds to wait for `gh pr view` in `pr-view` | `30` |
 | `VSTACK_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never`, or `always` for `git-https-auth` SSH→HTTPS fallback | `auto` |
 
-Bot token supports direct tokens (`ghp_*`, `gho_*`, `ghu_*`, `ghs_*`, `ghr_*`, `github_pat_*`) and 1Password references (`op://vault/item/field`).
+Tokens may be literal (`ghp_*`, `gho_*`, `ghu_*`, `ghs_*`, `ghr_*`,
+`github_pat_*`) or 1Password references (`op://vault/item/field`). Keep them in
+`.env.local`; non-secret defaults belong in committed `vstack.settings.toml`
+under `[env]`.
 
-Non-secret GitHub defaults can live in committed `vstack.settings.toml` under `[env]`. Keep tokens in `.env.local` unless the parent process injects already-resolved values. GitHub helpers preserve parent-process values over project files for the same variable. `github.sh` then selects one effective router token before resolving 1Password references: first resolved `GH_TOKEN`, then resolved `GH_BOT_TOKEN`, then resolved `GITHUB_TOKEN`; only if no resolved token exists does it consider unresolved `op://` references in that same order. `op read` runs only for that final selected reference. If the selected `op://` reference cannot resolve, `github.sh` drops `GH_TOKEN`/`GITHUB_TOKEN` so `gh` can use keyring auth. Once a resolved `GH_BOT_TOKEN` is selected, helpers preserve that bot identity instead of replacing it with ambient keyring auth. Auth preflight validates selected env tokens with `gh api user`; `gh auth status` is only authoritative for keyring auth when no env token is selected. Bot-token operations still prefer an explicit `GH_BOT_TOKEN` over user-token variables.
+Parent-process values win over project files. `github.sh` then selects ONE
+router token before resolving any `op://` reference — resolved `GH_TOKEN`, then
+`GH_BOT_TOKEN`, then `GITHUB_TOKEN`, falling back to `op://` references in that
+same order — and runs `op read` for that single selection only. An unresolvable
+selection drops `GH_TOKEN`/`GITHUB_TOKEN` so `gh` uses keyring auth; a selected
+`GH_BOT_TOKEN` keeps its bot identity instead. Auth preflight validates env
+tokens with `gh api user`, and `gh auth status` is authoritative only when no
+env token is selected.
 
 ### `pr-view` failure contract
 
@@ -291,44 +257,37 @@ prints structured JSON to stdout and exits nonzero:
 {"status":"no_pr","error":"No pull request found for the current branch","detail":"...","exit_code":1,"number":null}
 ```
 
-Known `status` values are `no_pr`, `auth_error`, `token_resolution_failed`,
+`status` is one of `no_pr`, `auth_error`, `token_resolution_failed`,
 `token_resolution_timeout`, `token_resolution_unavailable`, `auth_timeout`,
-`gh_timeout`, and `gh_error`. Raw `gh`/`op` detail is also echoed to stderr so
-callers can distinguish no-PR, authentication, token resolution, and timeout
-cases without hanging.
+`gh_timeout`, `gh_error`. Raw `gh`/`op` detail also goes to stderr, so callers
+can separate no-PR, auth, token-resolution, and timeout cases without hanging.
 
 ## Error Handling
 
-- Most commands return `{"error": "message"}` on stderr with exit code 1
-- `pr-view --json ...` returns structured failure JSON on stdout so callers can
-  branch on `status` without losing raw stderr detail
-- Automatic retry on rate limiting (3 attempts with backoff)
-- NOT_FOUND errors return clean `{"error": "Not found"}`
+- Most commands emit `{"error": "message"}` on stderr and exit 1.
+- `pr-view --json ...` emits structured failure JSON on stdout so callers can
+  branch on `status` without losing raw stderr detail.
+- Rate limits retry automatically (3 attempts, exponential backoff).
+- A dependency failure never degrades into an empty-but-successful result: an
+  unreadable thread list, comment list, or CI log is reported as a failure, not
+  as "none found".
 
 ## Troubleshooting
 
-**`Expected VAR_SIGN, actual: UNKNOWN_CHAR`**: Use multi-line GraphQL + `-F` for variables (shell escaping issue with `$` in single-line queries).
+**`Expected VAR_SIGN, actual: UNKNOWN_CHAR`**: use a multi-line GraphQL query
+with `-F` variables — `$` in a single-line query hits shell escaping.
 
-**`gh` says `bad credentials` / `HTTP 401` even though `gh auth status` is healthy**: A stale or wrong-account `GH_TOKEN` / `GITHUB_TOKEN` in the environment masks the keyring/`gh auth login` credentials — `gh` prefers the env var. This happens often when a bot token was exported for one command in a parent shell and is still active. Verify:
-
-```bash
-# Are env tokens leaking into this shell?
-env | grep -E '^(GH_TOKEN|GITHUB_TOKEN)='
-
-# Inspect what gh resolves:
-gh auth status
-```
-
-If an unwanted token is set, prefer scoping both variables down for a single call (`gh` honours `GH_TOKEN` then `GITHUB_TOKEN` in order, so clearing only one is not enough):
+**`bad credentials` / `HTTP 401` while `gh auth status` looks healthy**: a
+stale `GH_TOKEN`/`GITHUB_TOKEN` masks keyring credentials, since `gh` prefers
+the env var. Check `env | grep -E '^(GH_TOKEN|GITHUB_TOKEN)='`, then clear
+BOTH for the call — clearing one is not enough:
 
 ```bash
-# Single-call scoping — clears both for this one invocation only.
 env -u GH_TOKEN -u GITHUB_TOKEN gh pr list
-# Or, equivalently:
-GH_TOKEN= GITHUB_TOKEN= gh pr list
 ```
 
-For the rest of the shell: `unset GH_TOKEN GITHUB_TOKEN`. `github.sh` performs this fallback automatically when the selected env token fails but keyring auth succeeds, and it also drops unresolved `op://` env tokens after a failed bounded `op read`. The `pr-create` wrapper above intentionally sets `GH_TOKEN="$token"` only for its one subprocess; it does not export it into the parent shell.
+`github.sh` does this automatically when the selected env token fails and
+keyring auth succeeds.
 
 ## Dependencies
 

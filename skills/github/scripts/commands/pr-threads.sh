@@ -70,15 +70,38 @@ get_pr_threads() {
                 shift
                 ;;
             --format)
+                if [ -z "${2:-}" ]; then
+                    echo '{"error": "--format requires an argument (safe or raw)"}' >&2
+                    exit 1
+                fi
                 FORMAT="$2"
                 shift 2
                 ;;
+            -*)
+                # Unknown flags used to fall through to the positional branch and
+                # be resolved as a PR ref, turning a typo into a confusing
+                # "No PR found for: --typo".
+                echo "{\"error\": \"Unknown option: $1\"}" >&2
+                exit 1
+                ;;
             *)
+                if [ -n "$pr_ref" ]; then
+                    echo "{\"error\": \"Unexpected argument: $1\"}" >&2
+                    exit 1
+                fi
                 pr_ref="$1"
                 shift
                 ;;
         esac
     done
+
+    case "$FORMAT" in
+        safe|raw) ;;
+        *)
+            echo "{\"error\": \"Invalid format: $FORMAT. Use: safe, raw\"}" >&2
+            exit 1
+            ;;
+    esac
 
     # Resolve PR number
     local pr_num
@@ -213,7 +236,7 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
         raw)
             echo "$result"
             ;;
-        safe|*)
+        safe)
             local jq_filter
             if [ "$filter_unresolved" = "true" ]; then
                 jq_filter='select(.isResolved == false)'

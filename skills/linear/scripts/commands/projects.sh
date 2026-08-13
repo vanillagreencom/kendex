@@ -129,14 +129,17 @@ list_projects() {
         case "$1" in
         --state)
             # Use status.type filter (state filter is broken in Linear API)
-            filter_parts+=("\"status\": {\"type\": {\"eq\": \"$2\"}}")
+            filter_parts+=("$(jq -cn --arg v "$2" '{status: {type: {eq: $v}}}')")
             shift 2
             ;;
         --team)
-            filter_parts+=("\"accessibleTeams\": {\"some\": {\"name\": {\"eq\": \"$2\"}}}")
+            filter_parts+=("$(jq -cn --arg v "$2" '{accessibleTeams: {some: {name: {eq: $v}}}}')")
             shift 2
             ;;
         --limit)
+            # Reaches shell arithmetic below, where bash evaluates the VALUE as
+            # an expression — a crafted one runs command substitution.
+            linear_require_pattern --limit "$2" '^[0-9]+$' "a non-negative integer" || return 1
             limit="$2"
             shift 2
             ;;
@@ -173,12 +176,11 @@ list_projects() {
         esac
     done
 
+    # Each part is a complete JSON object built through jq --arg, so a project
+    # or team name holding a quote cannot reshape the filter.
     local filter_json
     if [ ${#filter_parts[@]} -gt 0 ]; then
-        filter_json=$(
-            IFS=,
-            echo "{${filter_parts[*]}}"
-        )
+        filter_json=$(printf '%s\n' "${filter_parts[@]}" | jq -cs 'add')
     else
         filter_json="{}"
     fi
@@ -254,8 +256,15 @@ list_projects() {
 
     # Handle --first: output just the name of first project
     if [ "$first_only" = "true" ]; then
+        # No fabricated default: callers feed this straight back into a
+        # --project filter, and "Backlog" is indistinguishable from a real
+        # project of that name when the query in fact matched nothing.
         local name
-        name=$(echo "$result" | jq -r '.projects.nodes[0].name // "Backlog"')
+        name=$(echo "$result" | jq -r '.projects.nodes[0].name // empty')
+        if [ -z "$name" ]; then
+            echo '{"error": "No project matched --first"}' >&2
+            return 1
+        fi
         echo "$name"
         return
     fi
@@ -439,40 +448,40 @@ create_project() {
 
     # Build input object with proper escaping
     local escaped_name
-    escaped_name=$(echo -n "$name" | jq -Rs '.')
+    escaped_name=$(printf '%s' "$name" | jq -Rs '.')
     local input_parts=("\"name\": $escaped_name")
 
-    # Get team ID
-    local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local team_result
-    team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
+    # Shared resolver: passes a team UUID through and separates an API failure
+    # from a genuine miss, neither of which this inline copy did.
     local team_id
-    team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
-    if [ -z "$team_id" ]; then
-        echo "{\"error\": \"Team not found: $team\"}" >&2
-        return 1
-    fi
+    team_id=$(resolve_team_id "$team") || return 1
     input_parts+=("\"teamIds\": [\"$team_id\"]")
 
     if [ -n "$description" ]; then
         local escaped_desc
-        escaped_desc=$(echo -n "$description" | jq -Rs '.')
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
     fi
     if [ -n "$content" ]; then
         local escaped_content
-        escaped_content=$(echo -n "$content" | jq -Rs '.')
+        escaped_content=$(printf '%s' "$content" | jq -Rs '.')
         input_parts+=("\"content\": $escaped_content")
     fi
     [ -n "$state" ] && input_parts+=("\"state\": \"$state\"")
-    [ -n "$priority" ] && input_parts+=("\"priority\": $priority")
+    if [ -n "$priority" ]; then
+        linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
+        input_parts+=("\"priority\": $priority")
+    fi
 
     # Resolve project label names to IDs
     if [ -n "$labels" ]; then
         local label_ids=()
         IFS=',' read -ra label_names <<<"$labels"
         for label_name in "${label_names[@]}"; do
-            label_name=$(echo "$label_name" | xargs) # trim whitespace
+            # Parameter expansion, not xargs: xargs parses quotes, so a label
+            # named won't-fix aborted the command with an unmatched-quote error.
+            label_name="${label_name#"${label_name%%[![:space:]]*}"}"
+            label_name="${label_name%"${label_name##*[![:space:]]}"}"
             local label_query='query GetProjectLabel($name: String!) { projectLabels(filter: {name: {eq: $name}}) { nodes { id } } }'
             local label_result
             label_result=$(graphql_query "$label_query" "{\"name\": \"$label_name\"}")
@@ -575,28 +584,34 @@ update_project() {
 
     if [ -n "$name" ]; then
         local escaped_name
-        escaped_name=$(echo -n "$name" | jq -Rs '.')
+        escaped_name=$(printf '%s' "$name" | jq -Rs '.')
         input_parts+=("\"name\": $escaped_name")
     fi
     if [ -n "$description" ]; then
         local escaped_desc
-        escaped_desc=$(echo -n "$description" | jq -Rs '.')
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
     fi
     if [ -n "$content" ]; then
         local escaped_content
-        escaped_content=$(echo -n "$content" | jq -Rs '.')
+        escaped_content=$(printf '%s' "$content" | jq -Rs '.')
         input_parts+=("\"content\": $escaped_content")
     fi
     [ -n "$state" ] && input_parts+=("\"state\": \"$state\"")
-    [ -n "$priority" ] && input_parts+=("\"priority\": $priority")
+    if [ -n "$priority" ]; then
+        linear_require_pattern --priority "$priority" '^[0-4]$' "an integer 0-4" || return 1
+        input_parts+=("\"priority\": $priority")
+    fi
 
     # Resolve project label names to IDs
     if [ -n "$labels" ]; then
         local label_ids=()
         IFS=',' read -ra label_names <<<"$labels"
         for label_name in "${label_names[@]}"; do
-            label_name=$(echo "$label_name" | xargs) # trim whitespace
+            # Parameter expansion, not xargs: xargs parses quotes, so a label
+            # named won't-fix aborted the command with an unmatched-quote error.
+            label_name="${label_name#"${label_name%%[![:space:]]*}"}"
+            label_name="${label_name%"${label_name##*[![:space:]]}"}"
             local label_query='query GetProjectLabel($name: String!) { projectLabels(filter: {name: {eq: $name}}) { nodes { id } } }'
             local label_result
             label_result=$(graphql_query "$label_query" "{\"name\": \"$label_name\"}")
@@ -877,7 +892,7 @@ post_update() {
     local input_parts=("\"projectId\": \"$project_id\"" "\"health\": \"$health_enum\"")
     if [ -n "$body" ]; then
         local escaped_body
-        escaped_body=$(echo -n "$body" | jq -Rs '.')
+        escaped_body=$(printf '%s' \"$body\" | jq -Rs '.')
         input_parts+=("\"body\": $escaped_body")
     fi
 
@@ -1209,7 +1224,9 @@ set_sort_order() {
     local new_sort_order=""
 
     if [ -n "$position" ]; then
-        # Direct position value
+        # Spliced unquoted into the mutation input; a non-number makes the
+        # payload invalid JSON and the failure names the payload, not the flag.
+        linear_require_pattern --position "$position" '^-?[0-9]+(\.[0-9]+)?$' "a number" || return 1
         new_sort_order="$position"
     elif [ -n "$after_id" ]; then
         # Get sortOrder of target project and place after it
@@ -1220,7 +1237,7 @@ set_sort_order() {
             return 1
         fi
         # Place slightly after (higher sortOrder = later in list for negative values)
-        new_sort_order=$(echo "$target_sort + 500" | bc)
+        new_sort_order=$(jq -n --argjson s "$target_sort" '$s + 500')
     elif [ -n "$before_id" ]; then
         # Get sortOrder of target project and place before it
         local target_sort
@@ -1230,7 +1247,7 @@ set_sort_order() {
             return 1
         fi
         # Place slightly before (lower sortOrder = earlier)
-        new_sort_order=$(echo "$target_sort - 500" | bc)
+        new_sort_order=$(jq -n --argjson s "$target_sort" '$s - 500')
     else
         echo '{"error": "Required: --after, --before, or --position"}' >&2
         return 1

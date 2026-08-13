@@ -15,103 +15,50 @@ metadata:
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-Manages Architecture Decision Records (ADRs) — represented in this skill as numbered decision documents indexed in `INDEX.md` (by default under `docs/decisions/`) — with canonical templates, creation/update workflows, and a search CLI. Provides the single source of truth for decision entry format and lifecycle.
+Architectural decision records: numbered decision documents indexed in one `INDEX.md` (by default under `docs/decisions/`), with a search CLI, a canonical format, and creation/supersession workflows.
 
 ```bash
 .agents/skills/decider/scripts/decisions <command> [options]
 ```
 
-## Commands
-
 | Command | Purpose | Output |
 |---------|---------|--------|
-| `search --issue [ID]` | Find decisions linked to an issue | JSON `[{id, decision, path}]` |
-| `search "[KEYWORDS]"` | Ranked keyword search (AND, scored) over INDEX summaries **and** decision bodies | JSON `[{id, decision, path, score}]` |
-| `search "a\|b"` | Regex OR search | JSON `[{id, decision, path}]` |
-| `list` | List all active decisions | JSON `[{id, decision, path}]` |
-| `next-id` | Get next available decision ID from the INDEX ID column | Single decision ID line |
-| `get [DECISION_ID]` | Get decision details | JSON `{id, decision, status, date, path}` |
+| `search --issue [ID]` | Decisions linked to an issue — exact match on the INDEX Research column | JSON `[{id, decision, path}]` |
+| `search "[KEYWORDS]"` | Ranked keyword search (AND, scored) | JSON `[{id, decision, path, score}]` |
+| `search "a\|b"` | Regex mode — a query containing `\|`, `()`, or `\` | JSON `[{id, decision, path}]` |
+| `list` | Decisions whose status starts with `Active` | JSON `[{id, decision, path}]` |
+| `next-id` | Next ID, scheme inferred from the INDEX ID column | One ID line |
+| `get [DECISION_ID]` | Decision details | JSON `{id, decision, status, date, path}` |
 
-Options: `--limit N` (default: 5) for search results.
+`--limit N` (default 5) caps search results. Issue lookup is exactly `search --issue` — there is no bare `issue` action.
 
-Keyword and regex search cover both the `INDEX.md` summary columns (decision, rationale, id) and the prose of each linked decision document, so a content keyword that never appears in a one-line summary still finds the decision that governs it. Summary matches score above body-only matches, which surface below them. `search --issue ID` is an explicit linkage lookup and deliberately does not scan bodies.
+Keyword and regex search cover the `INDEX.md` summary columns (decision, rationale, id) **and** the prose of each linked decision document, so a keyword that never reached a one-line summary still finds the decision governing it. Summary matches outrank body-only matches. `search --issue` is an explicit linkage lookup and does not scan bodies.
 
-## Workflows
+Read the full decision file before acting on a hit — index summaries omit scope and rejected alternatives. A suggestion contradicting an active decision is invalid unless the decision itself is flawed.
 
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| `workflows/create-decision.md` | Research complete, significant path choice | Assign ID, write file, add INDEX row, update superseded |
-| `workflows/update-decision.md` | New decision affects existing | Supersede, partial supersede, or revisit existing entries |
-| `workflows/search-decisions.md` | Before implementing, reviewing, auditing | Search by issue, keywords, or ID |
-
-## Templates
-
-| Template | Purpose |
-|----------|---------|
-| `templates/decision-entry.md` | Decision file format (minimal, standard, comprehensive) |
-| `templates/index-row.md` | INDEX.md table row format |
-
-## Schemas
-
-| Schema | Purpose |
-|--------|---------|
-| `schemas/decision-format.md` | Canonical format constraints for decision documents and INDEX |
-
-Project-level configuration:
+## Configuration
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `$DECISIONS_DIR` | Path to decision documents directory | Auto-discovers `docs/decisions/`, `decisions/`, `doc/decisions/`, or `adr/` with `INDEX.md` |
-| `$DECISION_ID_PREFIX` | Optional prefix used by `next-id` | Inferred from the last populated ID-column value, or `D` |
-| `$DECISION_ID_WIDTH` | Optional zero-padding width used by `next-id` | Inferred from the selected ID-column scheme, or `3` |
+| `DECISIONS_DIR` | Decision documents directory | Nearest ancestor holding `docs/decisions/`, `decisions/`, `doc/decisions/`, or `adr/` with an `INDEX.md` |
+| `DECISION_ID_PREFIX` | ID prefix for `next-id` | Inferred from the last populated ID-column value, else `D` |
+| `DECISION_ID_WIDTH` | Zero-padding width for `next-id` | Inferred from that same value, else `3` |
 
-Set `DECISIONS_DIR` in committed `vstack.settings.toml` under `[env]` when it is shared project policy. `.env.local` remains supported for local overrides.
+Set these in committed `vstack.settings.toml` under `[env]` when they are shared project policy; `.env.local` overrides locally.
 
-If the decisions directory does not exist (never initialized), read-only lookups (`search`, `list`) emit an empty JSON array with a stderr note and exit 0 — no decisions recorded is not an error. `next-id` and `get` still require an initialized directory, and a configured path that exists but is not a directory is always a hard error.
+Where no decisions directory exists, `search` and `list` emit `[]` with a stderr note and exit 0 — nothing recorded is not an error. `next-id` and `get` require an initialized directory. A configured path that exists but is not a directory is always a hard error.
 
-## Quick Reference
+## Workflows
 
-### Creating Decisions
+| Workflow | Trigger |
+|----------|---------|
+| `workflows/create-decision.md` | A significant path choice is settled |
+| `workflows/update-decision.md` | A new decision supersedes, partially supersedes, or revisits an existing one |
 
-1. Get next ID: `decisions next-id`
-2. Select template size (minimal/standard/comprehensive) from `templates/decision-entry.md`
-3. Write decision file to `[project decision documents]/[DECISION_ID]-[DESCRIPTOR].md`
-4. Add row to `[project decision documents]/INDEX.md`
-5. Update any partially superseded decisions
+Format: `schemas/decision-format.md` (constraints), `templates/decision-entry.md` (document skeleton), `templates/index-row.md` (INDEX row).
 
-### Searching Decisions
+## Approval
 
-1. By issue: `decisions search --issue [ISSUE_ID]`
-2. By keywords: `decisions search "[RELEVANT_KEYWORDS]"`
-3. Read full decision files — index summaries are insufficient for understanding scope and rejected alternatives
-4. Suggestions contradicting active decisions are invalid unless decision is flawed
+Never create a decision document without explicit user approval. When work settles an architectural choice, technology selection, or trade-off worth recording, say so on completion — "this introduced a decision worth recording: [summary]. Want me to create a decision entry?" — and let the user confirm.
 
-### Decision Entry Format
-
-All entries require: title (`# [DECISION_ID]: Title`), date, status, research ref (or `—`), decision statement, rationale, revisit conditions. The default examples use `DXXX`; projects with an existing numeric-suffix scheme such as `ADR-0001` should preserve that scheme consistently. See `schemas/decision-format.md` for full constraints.
-
-## Decision Approval
-
-Do not create decision documents without explicit user approval. If your work involves a significant architectural choice, technology selection, or trade-off that warrants a decision record, surface this in your response upon task completion — e.g., "This introduced a decision worth recording: [brief summary]. Want me to create a decision entry?" Let the user confirm before running the create workflow.
-
-## Content Guidelines
-
-### What to Log
-
-- Technology selections with alternatives considered
-- Performance trade-offs (chose X over Y for reason Z)
-- Significant path choices where conditions might change
-- Research-informed decisions
-
-### What NOT to Log
-
-- Variable names, small refactors, bug fixes
-- Obvious choices with no realistic alternatives
-- Standard pattern applications
-
-## System Dependencies
-
-- `bash` 4+
-- `jq`
-- GNU `grep` with `-P` (PCRE) support (`grep`, `ggrep`, or Homebrew `gnubin/grep`)
-- `sed`, `find`
+Record technology selections with alternatives considered, performance trade-offs, and path choices whose conditions may change. Do not record variable names, small refactors, bug fixes, obvious choices with no realistic alternative, or standard pattern applications.

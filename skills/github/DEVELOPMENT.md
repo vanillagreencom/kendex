@@ -3,12 +3,16 @@
 ## Structure
 
 - `scripts/github.sh` — Entry point (command router)
+- `scripts/commands/` — One script per subcommand
 - `scripts/git-https-auth` — Git wrapper for per-command GitHub SSH→HTTPS fallback through `gh` auth
 - `scripts/git-diff-summary` — Standalone changed-file domain/scope and risk-flag summary helper
-- `scripts/commands/` — Individual command scripts
-- `scripts/lib/gh-auth.sh` — Shared GitHub token resolution and keyring fallback helpers
-- `scripts/lib/github-api.sh` — Shared library (auth, GraphQL, REST, error handling)
+- `scripts/lib/github-api.sh` — Shared auth, GraphQL, REST, and error handling
+- `scripts/lib/gh-auth.sh` — Token resolution and keyring fallback
+- `scripts/lib/vstack-env.sh` — Project `.env` / settings loader
+- `scripts/lib/ci-run-correlation.sh` — Check-rollup run scoping, shared with orch `ci-wait`
+- `scripts/lib/verify-lib.sh` — Merge simulation and build/test detection for `pr-cross-check --verify`
 - `SKILL.md` — Agent-facing skill definition
+- `tests/` — Run any file directly; each is self-contained
 
 ## Adding a Command
 
@@ -17,6 +21,12 @@
 3. Add a `show_help()` function
 4. Add the command to the case statement in `scripts/github.sh`
 5. Update the Commands table in `SKILL.md`
+
+Parse arguments with an explicit `while`/`shift` loop that rejects unknown
+flags and surplus positionals. Emit JSON with `jq -n`, never string
+interpolation — API error text routinely contains quotes. A failed dependency
+must exit nonzero rather than returning an empty result that reads as "none
+found".
 
 ## Declaration-site test scoping (`git-diff-summary`)
 

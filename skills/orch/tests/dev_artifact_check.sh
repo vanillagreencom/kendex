@@ -471,7 +471,11 @@ assert_file_contains "$review_pr_comments" "$ARTIFACT_KEY_LINE" "review-pr-comme
 ci_fix="$REPO_ROOT/skills/orch/workflows/ci-fix.md"
 assert_file_contains "$ci_fix" "$WATCHDOG_STAMP" "ci-fix § 3.2 re-stamps dev_delegated_at (watchdog deadline)"
 assert_file_contains "$ci_fix" "$ROUND_STAMP" "ci-fix § 3.2 mints a fresh dev_round_id before delegating (round-id invariant)"
-assert_file_contains "$ci_fix" "$ROUND_CHECK" "ci-fix § 3.2 accepts via dev-artifact-check round mode"
+# ci-fix's agent pushes its fix directly and writes NO artifact, so the fresh
+# token alone is the fail-closed guarantee: a prior round's leftover receipt
+# carries the previous token and can never be mistaken for this round's.
+assert_file_contains "$ci_fix" "writes **no** dev-return artifact" "ci-fix states its agent writes no completion artifact"
+assert_file_contains "$ci_fix" "can never be mis-accepted here" "ci-fix states the fresh token is what makes a stale receipt unmatchable"
 assert_file_not_contains "$ci_fix" "$LEGACY_CHECK" "ci-fix § 3.2 no longer uses the legacy positional dev-artifact-check call"
 
 # The removed legacy positional call must not survive in any orch workflow.
@@ -487,12 +491,15 @@ done
 # the numbered "orchestrator owns round closure" list (same requirements, new
 # wording) and made that list the primary path rather than a recovery fallback.
 orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
-assert_file_contains "$orch_skill" "Run A/B on every wake and at the deadline, and classify mechanically" "SKILL mandates mechanical per-wake A/B classification (vstack#803)"
+assert_file_contains "$orch_skill" "Run A/B on every wake and at the deadline" "SKILL mandates the per-wake and deadline A/B check"
+assert_file_contains "$orch_skill" "classifying mechanically rather than from wording or elapsed time" "SKILL forbids classifying a round from wording or elapsed time"
 assert_file_contains "$orch_skill" "Arm a single-shot wall-clock watchdog" "SKILL mandates a wall-clock watchdog independent of sub-agent wakes (vstack#803)"
-assert_file_contains "$orch_skill" "primary path, not a recovery fallback" "SKILL states orchestrator-side closure as the primary path (vstack#818)"
-WATCHDOG_ARM="arm the single-shot wall-clock watchdog"
+assert_file_contains "$orch_skill" "The orchestrator owns round closure" "SKILL puts round closure on the orchestrator, not on a return arriving"
+assert_file_contains "$orch_skill" "the return message is display-only" "SKILL keeps the return message out of the acceptance decision"
 for wf in dev-start dev-fix review-pr-comments ci-fix; do
-  assert_file_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "$WATCHDOG_ARM" "$wf.md arms the single-shot watchdog at delegation (vstack#803)"
+  wf_doc="$REPO_ROOT/skills/orch/workflows/$wf.md"
+  assert_file_contains "$wf_doc" "watchdog" "$wf.md arms a watchdog at delegation"
+  assert_file_contains "$wf_doc" "SKILL.md#round-closure" "$wf.md routes the watchdog contract to the canonical section"
 done
 
 # --- doc wiring: dev workflows write the completion artifact via dev-return-write with --round-id ---
@@ -515,15 +522,20 @@ assert_file_contains "$dev_fix" "dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json" "
 # recommendation and decide; no commit/validate gate for the round).
 assert_file_contains "$dev_implement" "--kind analysis" "dev-implement § 10 offers --kind analysis for read-only rounds"
 assert_file_contains "$dev_fix" "--kind analysis" "dev-fix § 6 offers --kind analysis for read-only rounds"
-assert_file_contains "$dev_start" "Analysis round (read-only delegation)" "dev-start § 3 carries the analysis acceptance rule"
-assert_file_contains "$orch_dev_fix" "Analysis round (read-only delegation)" "orch dev-fix § 2 carries the analysis acceptance rule"
+assert_file_contains "$dev_start" "Analysis round" "dev-start § 3 carries the analysis acceptance rule"
+assert_file_contains "$orch_dev_fix" "Analysis round" "orch dev-fix § 2 carries the analysis acceptance rule"
 
 # --- schema docs carry the round-id / dev_round_id contract ---
 dev_return_schema="$REPO_ROOT/skills/orch/schemas/dev-return.md"
 assert_file_contains "$dev_return_schema" "dev-return-write" "dev-return schema references the writer"
 assert_file_contains "$dev_return_schema" "round_id" "dev-return schema documents round_id identity"
 assert_file_contains "$dev_return_schema" "schema_version" "dev-return schema documents schema_version"
-assert_file_contains "$dev_return_schema" "incomplete" "dev-return schema documents the incomplete reason"
+# Validation gates have ONE canonical home — the artifact-checks reference —
+# so the schema documents the shape and the reference documents the verdicts.
+artifact_checks_ref="$REPO_ROOT/skills/orch/references/artifact-checks.md"
+assert_file_contains "$artifact_checks_ref" "incomplete" "artifact-checks reference documents the incomplete reason"
+assert_file_contains "$artifact_checks_ref" "missing → invalid → incomplete → valid" "artifact-checks reference documents the gate ordering"
+assert_file_not_contains "$dev_return_schema" "reason \`incomplete\`" "dev-return schema does not duplicate the verdict vocabulary"
 assert_file_contains "$dev_return_schema" "--expect-items" "dev-return schema documents the exact item-set rule"
 
 state_schema="$REPO_ROOT/skills/orch/schemas/workflow-state.md"

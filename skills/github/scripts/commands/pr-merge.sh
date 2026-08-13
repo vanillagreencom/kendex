@@ -14,11 +14,11 @@
 # `--auto` is idempotent for merge-queue repositories: a re-invocation on a PR
 # that is already enrolled reports QUEUED (75) from the authoritative post-call
 # snapshot, not BLOCKED, even though `gh pr merge --auto` exits nonzero when the
-# PR is already queued (vstack#616).
+# PR is already queued.
 # `--force` is deliberately different: it promises an immediate attempt, so a
 # nonzero merge mutation stays BLOCKED unless the exact head is now MERGED.
 # Auto-merge or a queue entry already active before the call is not success
-# proof for this mode (vstack#782).
+# proof for this mode.
 #
 # When BLOCKED, stderr distinguishes TRANSIENT issues (mergeable UNKNOWN,
 # ci pending — caller should `await-mergeable` and retry) from PERMANENT
@@ -32,16 +32,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source shared library for load_bot_token (also sets PROJECT_ROOT)
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/../lib/github-api.sh"
-# shellcheck source=../lib/pr-branch.sh
-source "$SCRIPT_DIR/../lib/pr-branch.sh"
-
 # Issue prefixes that resolve on their own once GitHub finishes computing or
 # CI completes. Callers should `await-mergeable` and retry rather than fix.
 TRANSIENT_PREFIXES='unknown:|ci_pending:|ci_unconfigured:|ci_fetch_failed:'
 
 # Scope a `gh pr checks` array to the current authoritative substantive run per
 # workflow. Shared with orch `ci-wait` so the merge gate and the waiter cannot
-# disagree about which run is current (vstack#876) — see the library for the
+# disagree about which run is current — see the library for the
 # full rationale.
 # shellcheck source=../lib/ci-run-correlation.sh
 source "$SCRIPT_DIR/../lib/ci-run-correlation.sh"
@@ -131,7 +128,7 @@ run_checks() {
     else
         # Drop checks belonging to superseded workflow runs before classifying,
         # so a prior canceled run can't be reported as a current merge blocker
-        # (vstack#492). Mirrors orch ci-wait's pre-classification scoping.
+        #. Mirrors orch ci-wait's pre-classification scoping.
         local scoped_ci_json ci_classification pending failed
         scoped_ci_json=$(echo "$ci_json" | scope_current_run)
         ci_classification=$(echo "$scoped_ci_json" | jq -c '
@@ -234,17 +231,6 @@ run_checks() {
 }
 
 # Print BLOCKED breakdown to stderr, distinguishing transient vs permanent.
-merge_blocked_severity() {
-    local check_result="$1"
-    local transient
-    transient=$(echo "$check_result" | jq -r '.transient // false' 2>/dev/null || echo false)
-    if [ "$transient" = "true" ]; then
-        echo warning
-    else
-        echo error
-    fi
-}
-
 print_blocked() {
     local check_result="$1"
     local pr_num="$2"
@@ -408,12 +394,6 @@ main() {
         exit 0
     fi
 
-    # vstack#101: resolve PR head branch once. Empty when gh fails;
-    # `--branch` is conditionally appended below so empty silently omits
-    # refs.branch from the activity row.
-    local pr_branch
-    pr_branch=$(pr_branch_name "$pr_num")
-
     local token
     token=$(load_bot_token)
 
@@ -434,17 +414,6 @@ main() {
             # If --auto, fall through to enable auto-merge below.
             # Otherwise, exit BLOCKED with breakdown.
             if [ "$auto" != true ] || [ "$has_review_thread_gate" = "true" ]; then
-                local blocked_severity
-                blocked_severity=$(merge_blocked_severity "$check_result")
-                local block_args=(
-                    --severity "$blocked_severity"
-                    --importance important
-                    --summary "PR #$pr_num merge blocked"
-                    --pr-number "$pr_num"
-                    --details-json "$check_result"
-                )
-                [ -n "$pr_branch" ] && block_args+=(--branch "$pr_branch")
-                bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_blocked "${block_args[@]}" || true
                 print_blocked "$check_result" "$pr_num"
                 exit 1
             fi
@@ -496,10 +465,10 @@ main() {
     # REGARDLESS of gh's exit code. gh's exit status is not authoritative for
     # merge-queue repositories:
     #   - a required queue can return SUCCESS while the PR stays OPEN with a
-    #     null autoMergeRequest (vstack#608), and
+    #     null autoMergeRequest, and
     #   - a re-invocation of `--auto` on an ALREADY-QUEUED PR returns NONZERO
     #     even though GitHub still reports it queued, isInMergeQueue: true
-    #     (vstack#616).
+    #    .
     # Only the GraphQL snapshot (state + mergeQueueEntry) is authoritative, so
     # take it first and classify from it. This deliberately does not gate on
     # gh's "already queued" stderr wording — that text is a version- and
@@ -525,14 +494,14 @@ main() {
 
     # A NONZERO `gh pr merge` exit is only benign outside `--force` when the
     # authoritative snapshot proves a real success state: an already-enrolled
-    # merge queue entry (vstack#616), classic auto-merge already enabled, or an
+    # merge queue entry, classic auto-merge already enabled, or an
     # already merged PR. Anything else — conflicts, auth failure, CI, no
     # enrollment — leaves no such proof and stays BLOCKED with the raw gh
     # output. When the snapshot does prove success, fall through to the shared
     # classification below so the outcome (MERGED / QUEUED / AUTO-MERGE) is
     # reported once.
     # `--force` promises an immediate mutation, so pre-existing pending state
-    # must never convert its failed mutation into success (vstack#782). An
+    # must never convert its failed mutation into success. An
     # exact-head MERGED snapshot remains authoritative even if the CLI returned
     # nonzero after the server completed the merge.
     if [ "$merge_exit" -ne 0 ] \
@@ -541,15 +510,6 @@ main() {
             || { [ "$post_in_queue" != "true" ] \
                 && [ "$post_queue_entry" != "true" ] \
                 && [ "$post_auto" != "true" ]; }; }; then
-        local fail_args=(
-            --severity error
-            --importance important
-            --summary "PR #$pr_num merge blocked"
-            --pr-number "$pr_num"
-            --details-json "$(jq -cn --arg output "$merge_output" '{merge_output: $output, transient: false}')"
-        )
-        [ -n "$pr_branch" ] && fail_args+=(--branch "$pr_branch")
-        bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_blocked "${fail_args[@]}" || true
         echo "BLOCKED PR #$pr_num — gh pr merge failed" >&2
         printf '%s\n' "$merge_output" | sed 's/^/  /' >&2
         exit 1
@@ -557,17 +517,6 @@ main() {
 
     if [ "$post_state" = "MERGED" ]; then
         echo "MERGED PR #$pr_num" >&2
-        local merge_commit
-        merge_commit=$(jq -r '.merge_commit' <<<"$post_snapshot")
-        local merged_args=(
-            --severity success
-            --importance important
-            --summary "PR #$pr_num merged"
-            --pr-number "$pr_num"
-            --commit "$merge_commit"
-        )
-        [ -n "$pr_branch" ] && merged_args+=(--branch "$pr_branch")
-        bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merged "${merged_args[@]}" || true
         # Delete remote branch via API (avoids gh's local git checkout, which
         # fails inside worktrees). Best-effort — branch may already be gone.
         if [ "$delete_branch" = true ]; then
@@ -581,28 +530,12 @@ main() {
     fi
 
     if [ "$post_in_queue" = "true" ] || [ "$post_queue_entry" = "true" ]; then
-        local queued_args=(
-            --severity info
-            --importance normal
-            --summary "PR #$pr_num queued in merge queue"
-            --pr-number "$pr_num"
-        )
-        [ -n "$pr_branch" ] && queued_args+=(--branch "$pr_branch")
-        bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_queued "${queued_args[@]}" || true
         echo "QUEUED IN MERGE QUEUE PR #$pr_num — queueState=${post_queue_state:-active}" >&2
         echo "  Track with: github.sh await-mergeable $pr_num" >&2
         exit 75
     fi
 
     if [ "$post_auto" = "true" ]; then
-        local auto_args=(
-            --severity info
-            --importance normal
-            --summary "PR #$pr_num auto-merge enabled"
-            --pr-number "$pr_num"
-        )
-        [ -n "$pr_branch" ] && auto_args+=(--branch "$pr_branch")
-        bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_queued "${auto_args[@]}" || true
         echo "AUTO-MERGE ENABLED PR #$pr_num — will fire when CI + branch protection clear" >&2
         echo "  Track with: github.sh await-mergeable $pr_num" >&2
         exit 75
@@ -610,15 +543,6 @@ main() {
 
     # gh exited 0 but PR isn't merged and isn't queued. Treat as BLOCKED so
     # callers don't assume success based on exit code alone.
-    local blocked_args=(
-        --severity error
-        --importance important
-        --summary "PR #$pr_num merge blocked"
-        --pr-number "$pr_num"
-        --details-json "$(jq -cn --arg state "$post_state" --arg auto "$post_auto" --arg output "$merge_output" '{state: $state, auto_merge: $auto, merge_output: $output, transient: false}')"
-    )
-    [ -n "$pr_branch" ] && blocked_args+=(--branch "$pr_branch")
-    bash "$SCRIPT_DIR/../_activity-emit.sh" pr.merge_blocked "${blocked_args[@]}" || true
     echo "BLOCKED PR #$pr_num — gh reported success but state=$post_state, autoMerge=$post_auto, mergeQueue=false" >&2
     printf '%s\n' "$merge_output" | sed 's/^/  /' >&2
     exit 1

@@ -1,6 +1,6 @@
 ---
 name: orch
-description: "PRIMARY AGENT ONLY — single work-item orchestration for Linear or GitHub issues: prepare, delegate implementation, review, submit, merge, and handoff."
+description: "PRIMARY AGENT ONLY — single work-item orchestration for Linear or GitHub issues: prepare, delegate implementation, review, submit, merge, and hand off."
 license: MIT
 user-invocable: true
 dependencies:
@@ -11,66 +11,52 @@ metadata:
   source: vstack
   repository: "https://github.com/vanillagreencom/vstack"
   bugs: "https://github.com/vanillagreencom/vstack/issues"
-  version: "2.0.0"
+  version: "3.0.0"
 ---
 
 # Orchestration
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-## STOP — Required Setup
+Load `github` and `worktree` before anything else; a Linear work item also needs `linear`. orch is both the coordinator and the shared runtime library — the dev and reviewer skills call its scripts (`dev-return-write`, `resolve-base-branch`, `review-artifact-check`) and do not run standalone.
 
-Load IN ORDER before anything else; do not proceed if any fails: 1. `github`. 2. `worktree`. 3. Tracker — Linear issue → load `linear`; GitHub issue → use `github` only.
+> **MODE SWITCH**: loading this skill puts you in orchestrator mode. Delegate every implementation, review, and QA task to a specialist sub-agent. Read-only commands and script invocations are yours; editing code is not, unless the user explicitly asks.
 
-orch is both the coordinator and the shared runtime library: the dev and reviewer skills require orch's scripts (`dev-return-write`, `resolve-base-branch`) and do not run standalone.
+## The Cycle
 
-> **MODE SWITCH**: Loading this skill puts you in **orchestrator mode**. Do not write code yourself. Delegate all implementation, review, and QA work to specialist sub-agents using the workflows in this skill.
+Get the issue → dev implements → review → dev fixes blockers → re-review → push PR → review gate → shepherd to merge.
 
-> If you are running in **Claude Code**: Always create a team before launching agents; spawn and delegate within the team context so agents share state and can be messaged for re-delegation. Task creation and assignment notifications wake a live agent immediately — assignment is a wake, not only spawn-time creation. Fresh spawn: create tasks before spawning, so they exist before the agent does. Re-delegation to a live agent: send the delegation message before creating and assigning the task — an agent woken by the assignment alone starts from the bare `task_assignment` payload without the delegation. Ask questions with the `AskUserQuestion` tool. `SendMessage` accepts exactly `to`, `summary`, `message` — extra fields have caused duplicate delivery on idle wake-up.
+Four rules bound it:
 
-> If you are running in **Codex**: Under `approval_policy = never` the CLI rejects shell CONTROL SYNTAX shapes (loops, multi-command blocks, env prefixes, substitution — a literal backtick counts — redirection) with `approval required by policy, but AskForApproval is set to Never`. The *shape* was flagged, not access: never retry it or wait — rewrite as one simple command per tool call. Directives:
->
-> - Replace polling loops with the orch waiters `.agents/skills/orch/scripts/ci-wait` (CI status), `.agents/skills/orch/scripts/approval-wait` (review approval), and `.agents/skills/orch/scripts/queue-wait` (merge-queue / auto-merge outcome) — orch scripts, never `github.sh` subcommands.
-> - Rejected top-level `git rebase` → the worktree skill's guarded `create <ID> --reuse --replay` path with `worktree restack continue|skip|abort` controls (worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback)); never an improvised force-push.
-> - Spawn generated agents with `fork_context: false`; resolve parameters with `scripts/spawn-adapter spawn <canonical-agent-name>`. The canonical hyphenated name is the identity everywhere orch records anything; the adapter confines the runtime spelling to `record.runtime_metadata`. `--fallback-reason` only for a deliberate generic-worker fallback — a name-schema rejection is never one. Two steps: spawn with `<bootstrap_format>`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>` message.
-> - Thread cap (a spawn beyond it fails with `collab spawn failed: agent thread limit reached`): `scripts/spawn-adapter slots` prints the effective cap and the `REVIEWER_SLOT_BUDGET` it implies — it reads the authoritative config key, warns when only the legacy one is set (silently ignored, so raising it alone changes nothing), and notes that a running session keeps its old cap until restarted. Set the reported budget in `vstack.settings.toml` `[env]`; if a spawn hits the limit anyway, review workflows demote the cycle to bounded waves automatically (`review-pr.md` § 2.2).
-> - Codex Desktop app handoff: `workflows/handoff.md` with `harness=codex-app` (default for multi-issue handoff when app thread tools exist); the CLI does not expose those tools — never emulate from the terminal.
->
-> Authoring rules: [§ Harness-Safe Shell](#harness-safe-shell). Full shape catalogue, rewrite patterns, and the app-handoff contract: [references/codex-runtime.md](references/codex-runtime.md).
-
-> If you are running in **OpenCode**: The persistent identity of a spawned sub-agent is the `task_id` returned by `functions.task`. On first spawn, store it in workflow state (`child_sessions[agent].agent_id` for dev/QA, `review_agent_ids[reviewer-name]` for reviewers). On re-delegation, call `functions.task(task_id=<stored_id>)` — never spawn a fresh task when a stored ID exists. Fresh spawn only if: no stored ID, one resume attempt fails, or the prior task is confirmed dead.
-
-> If you are running in **Pi** with `pi-agents-tmux`: delegation is **one `subagent` tool call** — the bootstrap is auto-injected as the child's compiled system prompt, and the `task` argument is the filled `<delegation_format>` content alone; never prepend the bootstrap block (it double-injects the role boundaries). Pane agents (`pane: true`) live in a persistent tmux pane reused on every redelegation; bg agents are one-shot unless a `sessionKey` pins a resumable session. Store the returned `taskId` in workflow state (`child_sessions[agent].agent_id` / `review_agent_ids[...]`). Steering, completion recovery, and notification dedupe: [references/pi-runtime.md](references/pi-runtime.md). Persistent `researcher` panes follow the same rules as other project agents.
-
-> Research issues (`research` label) are executed by `agent:researcher`, not by external human sessions. The researcher may run Exa deep research and write findings docs, but must not modify production code; require exactly one completion message after `findings.md` exists.
+- **Bounded loops.** A fix round addresses blockers. Minor suggestions never trigger another cycle; re-review narrows to the fix diff and the domains it touched; two consecutive rounds that surface no new blocker end the review.
+- **No edge-case churn.** A finding that cannot affect real usage is declined with one line of rationale — not fixed in-PR, not filed. Issue creation is for critical follow-ups only, never the default disposal path for review output.
+- **Ask the user only about product or experience.** Every technical choice is settled by rule here or by the specialist who owns it. Merge, scope expansion beyond the issue, and revisiting a recorded decision always ask, whatever `ORCH_DECISION_MODE` says.
+- **Acceptance is artifact-based, never prose-based.** A round closes on a validated on-disk artifact plus git/tracker state. A return message is display material.
 
 ## Commands
 
-When invoked with `<command> [args]`, route to the corresponding workflow. Follow ALL [Workflow Execution](#workflow-execution) rules for every command.
+Route `<command> [args]` to its workflow and follow [Workflow Execution](#workflow-execution).
 
 | Command | Arguments | Workflow | Purpose |
 |---------|-----------|----------|---------|
-| `start` | `[ISSUE_ID]` \| `github OWNER/REPO#N` | `workflows/start.md` / `workflows/start-worktree.md` | Select/prepare one work item; from a worktree, the full session: dev → review → submit → finalize |
-| `start new` | `linear|github ...` | `workflows/start-new.md` | Create one issue then start it |
-| `handoff` | `linear|github ...` | `workflows/handoff.md` | Launch-only handoff; no monitoring; Codex Desktop creates one app thread per issue |
-| `plan-issues` | `PLAN_PATH linear|github` | `workflows/plan-issues.md` | Convert plan items into issues |
-| `parallel-check` | `[ISSUE_IDS]` | `workflows/parallel-check.md` | Safe parallel handoff analysis |
-| `initialize` | `[ISSUE_ID]` | `workflows/initialize.md` | Team setup, auth, cache, state (standalone) |
-| `dev-start` | `[ISSUE_ID]` | `workflows/dev-start.md` | Delegate implementation to specialist agents |
-| `dev-fix` | `[ISSUE_ID]` | `workflows/dev-fix.md` | Delegate review fix items to dev agents |
+| `start` | `[ISSUE_ID]` \| `github OWNER/REPO#N` | `workflows/start.md` / `workflows/start-worktree.md` | Select and prepare one work item; from a worktree, run the full session |
+| `start new` | `linear\|github ...` | `workflows/start-new.md` | Create one issue, then start it |
+| `handoff` | `linear\|github ...` | `workflows/handoff.md` | Launch independent sessions; no monitoring |
+| `plan-issues` | `PLAN_PATH linear\|github` | `workflows/plan-issues.md` | Convert plan items into issues |
+| `dev-start` | `[ISSUE_ID]` | `workflows/dev-start.md` | Delegate implementation |
+| `dev-fix` | `[ISSUE_ID]` | `workflows/dev-fix.md` | Delegate fix items |
 | `ci-fix` | `PR_NUMBER` \| `queue` | `workflows/ci-fix.md` | Analyze and fix CI failures |
-| `review` | `[all]` \| `[last N]` \| `[HASH]` | `workflows/review.md` | On-demand review with fix handling (standalone) |
-| `review-codebase` | `[PATH]` | `workflows/review-codebase.md` | Whole-codebase reviewer fanout, findings only |
-| `review-pr` | `[PR_NUMBER]` | `workflows/review-pr.md` | Pre-submission review with fix handling and QA |
-| `review-pr-comments` | `PR_NUMBER` \| `BRANCH` | `workflows/review-pr-comments.md` | Triage PR review comments via domain agents |
-| `submit-pr` | `[PR_NUMBER]` | `workflows/submit-pr.md` | Local review, push, create PR, async triage, review gate before CI verify, merge gates |
-| `merge-pr` | `PR_NUMBER` \| `all` | `workflows/merge-pr.md` | Verify conditions and merge PR(s) |
-| `fix-reconcile` | — | `workflows/fix-reconcile.md` | Check fixes against open issues (internal; not user-invocable) |
+| `review` | `[all]` \| `[last N]` \| `[HASH]` | `workflows/review.md` | On-demand review of local changes |
+| `review-codebase` | `[PATH]` | `workflows/review-codebase.md` | Whole-codebase fanout, findings only |
+| `review-pr` | `[PR_NUMBER]` | `workflows/review-pr.md` | Pre-submission review cycle with fixes and QA |
+| `review-pr-comments` | `PR_NUMBER` \| `BRANCH` | `workflows/review-pr-comments.md` | Triage PR review comments |
+| `submit-pr` | `[PR_NUMBER]` | `workflows/submit-pr.md` | Push, create PR, triage, review gate, CI, merge gates |
+| `merge-pr` | `PR_NUMBER` \| `all` | `workflows/merge-pr.md` | Verify conditions and merge |
 | `post-summary` | `[ISSUE_ID]` | `workflows/post-summary.md` | Post summary and handoff comments |
 
-**`start` routing:** parse explicit args first — `github OWNER/REPO#N` → `TRACKER=github`, `ISSUE_ID=issue-N`, `OWNER/REPO` retained for GitHub API calls; otherwise Linear unless the ID already starts with `issue-`. Current directory a worktree (git common dir differs from `.git`) → `workflows/start-worktree.md` with the parsed issue context; otherwise → `workflows/start.md`.
+**`start` routing.** Parse explicit args first: `github OWNER/REPO#N` → `TRACKER=github`, `ISSUE_ID=issue-N`, keep `OWNER/REPO` for the API; otherwise Linear unless the id already starts with `issue-`. A cwd whose git common dir differs from `.git` is a worktree → `workflows/start-worktree.md`; otherwise `workflows/start.md`.
 
-Reference workflows (no command): `workflows/agent-sequencing.md` — cross-domain blocking relations and delegation order; `workflows/recommendation-bias.md` — review finding categorization (fix vs issue).
+Finding disposition (fix vs issue vs decline) lives in [references/finding-disposition.md](references/finding-disposition.md).
 
 ## Scripts
 
@@ -80,95 +66,105 @@ Reference workflows (no command): `workflows/agent-sequencing.md` — cross-doma
 
 | Script | Intent |
 |--------|--------|
-| `workflow-state` | Persistent state read/write/append, survives compaction — see below |
-| `git-context` | Git-derived workflow values (branch, head SHA, issue id, repo root, timestamps) without inline shell plumbing |
-| `pr-view-json` | PR view JSON; expected `status=no_pr` exits 0 so workflows route to PR creation without shell fallbacks |
-| `resolve-base-branch` | Print the worktree base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, or `main`); fails closed (exit 1) on a missing path (both arms) and, without the override, on any path git resolution cannot answer for (bare repo, non-work-tree) |
-| `base-freshness` | Gate the review cycle on a current base — exit 0 fresh, 4 stale (rebase via `worktree create <ID> --reuse` first), 1 unverifiable (treat as stale); the `start-worktree.md` § 1 gate. Contract: `--help` |
-| `review-init` | Initialize standalone review context; prints branch/worktree/issue/state JSON |
-| `review-artifact-check` | Validate a reviewer's on-disk JSON artifact; prints `{ok, path, reason}` — the sole review-pr completion condition. Contract: `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
-| `dev-return-write` | Write a dev agent's round-scoped completion artifact deterministically; never hand-author the JSON. Flags: `--help`; schema: `schemas/dev-return.md` |
-| `dev-round-write` | Persist a fix round's delegated item set to the round-scoped record at stamp time — the on-disk source for `--expect-items-from-round` and for a respawned agent's items. Flags: `--help`; schema: `schemas/dev-round.md` |
-| `dev-artifact-check` | Validate a dev round's completion artifact by round-id identity; prints `{ok, path, reason}`. Contract: `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
-| `tracker-for-issue` | Print `github` for `issue-*` ids and `linear` otherwise |
+| `workflow-state` | Persistent state read/write/append; survives compaction — see below |
+| `git-context` | Git-derived values (branch, head, issue id, repo root, common root, timestamps) without inline shell plumbing |
+| `pr-view-json` | PR view JSON; the expected `status=no_pr` exits 0 so workflows route to PR creation without a shell fallback |
+| `resolve-base-branch` | Print a worktree's base branch (`WORKTREE_DEFAULT_BRANCH`, remote HEAD, then `main`); exits 1 rather than guessing for a missing path or a non-work-tree |
+| `base-freshness` | Gate the review cycle on a current base: exit 0 fresh, 4 stale (rebase with `worktree create <ID> --reuse`), 1 unverifiable — treat as stale. Contract: `--help` |
+| `review-artifact-check` | Validate a reviewer's on-disk JSON artifact; prints `{ok, path, reason}`. The sole reviewer completion condition. Contract: `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
+| `dev-return-write` | Write a dev agent's round-scoped completion artifact deterministically; never hand-author the JSON. `--help`; schema `schemas/dev-return.md` |
+| `dev-round-write` | Persist a fix round's delegated item set at stamp time — the on-disk source for `--expect-items-from-round` and for a respawned agent. `--help`; schema `schemas/dev-round.md` |
+| `dev-artifact-check` | Validate a dev round's completion artifact by round-id identity; prints `{ok, path, reason}`. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `approval-wait` | Poll the reviewer gate (verdict + unresolved threads); `--resolve-mode` prints the effective gate mode. Contract: [references/gates.md](references/gates.md) |
-| `ci-wait` | Block until CI completes on a PR — runs after the review gate. Contract: [references/gates.md](references/gates.md) |
-| `queue-wait` | Block until a PR's merge-queue / auto-merge outcome is decided — the merge-pr § 3.2 queue watch. Contract: [references/gates.md](references/gates.md) |
-| `orch-env` | Effective value of a vstack `[env]` setting (process env > `vstack.settings.toml` > supplied default) |
-| `refix-route` | Decide whether a fix round needs re-review; prints `{decision, class, reason, …}`. Route on `class`, never on `scope` alone (`review-pr` § 4 / § 7 / § 10) |
-| `local-review-budget` | Effective local pre-PR review pass count for the worktree's current head; prints `{passes, max_passes, exhausted, head, reviewed_head, reset}` and atomically restarts the counter when the head moved — the budget is per pushed head, never per submission (`submit-pr` § 1.2). Contract: `--help` |
-| `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
-| `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) — see the Codex runtime notes above |
-| `open-terminal` | Launch-only terminal handoff for Linear/GitHub worktrees; `--lane auto[:<harness>]` picks the account with the most headroom via `lanes` and resolves the lane before any worktree is created. Flags: `--help` |
-| `lanes` | Enumerate harness auth lanes and their live usage; `pick` prints the launch env prefix for the lane with the most headroom, exit 3 when none qualifies. Headroom is the binding window, never an average; per-project policy belongs in each consumer's wrapper |
-| `parallel-groups` | Local cache for safe parallel handoff analysis |
+| `ci-wait` | Block until CI completes on a PR. Contract: [references/gates.md](references/gates.md) |
+| `queue-wait` | Block until a merge-queue / auto-merge outcome is decided. Contract: [references/gates.md](references/gates.md) |
+| `orch-env` | Effective value of a vstack `[env]` setting (process env > `vstack.settings.toml` > default) |
+| `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
+| `open-terminal` | Launch-only terminal handoff. Model, effort, and permission flags come from `--launch-flags`, chosen per task at launch. `--help` |
+| `lanes` | Enumerate harness auth lanes and their live usage; `pick` prints the launch env prefix for the lane with the most headroom, exit 3 when none qualifies. Headroom is the binding window, never an average |
 
 The three waiters share a bounded env-first GitHub auth ladder and exit `3` on hard auth failure — [references/gates.md](references/gates.md).
 
-**Multi-PR watching (optional review-gate consumption).** The waiters are single-PR *foreground* waits. For watching MANY PRs across a long horizon, never hand-roll a monitor keyed on gate-state transitions — steady states (pending with open threads) transition nothing and the session sleeps through them. When the review-gate skill is installed (existence check on `.agents/skills/review-gate/scripts/pr-watch.sh`, the second-opinion pattern), run it as the single state reducer; without it, fall back to per-PR `approval-wait`/`queue-wait` polling. Contract, fallback limitations, and the wrap-in-anything loop: [references/gates.md § Multi-PR watching](references/gates.md).
+**Multi-PR watching.** The waiters are single-PR foreground waits. To watch many PRs, never hand-roll a monitor keyed on gate-state transitions — steady states transition nothing and the session sleeps through them. When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer; otherwise fall back to per-PR `approval-wait`/`queue-wait`. Contract and fallback limits: [references/gates.md](references/gates.md).
 
-**`workflow-state`**: run it with no arguments for the full action reference (init/get/set/update/append/increment/set-git-head/set-now/new-round-id/path/exists). From a worktree, pass the global `--state-dir <path>` flag before the subcommand — a plain flag is classifier-safe under Codex `approval=never` where the `ORCH_STATE_DIR=…` env prefix is a rejected shape. State keys are the normalized issue IDs — `issue-N` for GitHub issues (per `start` routing), `PROJ-123` for Linear — never the bare GitHub issue number; every action except `init` aliases a bare numeric key to the `issue-N` state file when only that file exists, and errors (exit 2) instead of guessing when files exist under both keys.
+**`workflow-state`.** Run it with no arguments for the full action reference. From a worktree, pass the global `--state-dir <path>` flag before the subcommand. State keys are normalized issue IDs — `issue-N` for GitHub, `PROJ-123` for Linear — never the bare GitHub number; every action except `init` aliases a bare numeric key to the `issue-N` file when only that file exists, and exits 2 rather than guessing when both exist.
 
-### Review-gate modes
-
-`approval-wait --resolve-mode` prints the project's effective gate mode; workflows read the mode only through it. The engine's `REVIEW_GATE_MODE=off` (the one-switch per-repo gate disable — consumed by orch even where the review-gate skill is not installed; seeded in the settings example) resolves first and prints `off`; otherwise `PR_REVIEW_GATE` selects `approval` (GitHub-native approval verdict), `review` (non-author review of the current head + zero unresolved threads, for commenting-only review bots), or `off` (reviewer-less repo: wait skipped, gate recorded not-applicable). Default `approval`. Full setting semantics — the legacy `PR_APPROVAL_GATE` mapping, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS` — and the waiters' JSON contracts: [references/gates.md](references/gates.md).
+**Review-gate modes.** `approval-wait --resolve-mode` prints the project's effective mode; workflows read it only through that. The engine's `REVIEW_GATE_MODE=off` resolves first; otherwise `PR_REVIEW_GATE` selects `approval` (GitHub-native approval verdict), `review` (non-author review of the current head plus zero unresolved threads — for commenting-only bots), or `off` (reviewer-less repo). Default `approval`. Full setting semantics and waiter JSON contracts: [references/gates.md](references/gates.md).
 
 ## Schemas
 
 | Schema | Purpose |
 |--------|---------|
-| `schemas/workflow-state.md` | Persistent state file schema (issue/agent/worktree identity, `child_sessions`, `review_agents`/`review_agent_ids`, cycle counters, fixed/escalated items, PR comment review tracking) |
-| `schemas/dev-return.md` | Dev completion-artifact schema (round-id identity, fields, kind rules, `items[]` shape) |
-| [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md) | Review/QA finding JSON format |
+| `schemas/workflow-state.md` | State file: identity, `child_sessions`, reviewer records, cycle counters, fixed/escalated items, PR comment tracking |
+| `schemas/dev-return.md` | Dev completion artifact: round-id identity, fields, kind rules, `items[]` |
+| `schemas/dev-round.md` | Delegated fix-round item set |
+| [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md) | Review/QA finding JSON |
 
-Audit input and roadmap-plan schemas live in `project-management/schemas/` — cross-skill path.
+Audit-input and roadmap-plan schemas live in `project-management/schemas/`.
 
 ## Configuration
 
-Put non-secret workflow settings in committed `vstack.settings.toml` under `[env]`; `.env.local` remains supported for secrets and personal overrides.
+Non-secret settings go in committed `vstack.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `ORCH_STATE_DIR` | State-file directory (env fallback for the `--state-dir` flag, which wins when both are set) | `tmp` |
-| `ORCH_CACHE_DIR` | Parallel-group safety cache directory | `.cache/orch` |
-| `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names (case-insensitive match, then canonical key case: `issue-N` lowercase, Linear-style uppercase) | — |
-| `REVIEW_RISK_COMMAND` | Opt-in change-risk classifier: repo-relative executable + plain args (a file, not a shell string; resolved from the trusted checkout). `review-pr` sizes the reviewer fan-out from its `high`/`medium`/`low` stdout (failure/unset = full fleet, fail-open to depth) | — |
-| `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission / merge recovery (read via `orch-env CI_FIX_MAX_CYCLES 6`) | `6` |
-| `PR_REVIEW_REFIX_MAX_LINES` | Changed-line ceiling a support-scope fix round may reach before `review-pr` re-reviews it anyway; a round that cleared blockers is re-reviewed regardless (read via `refix-route`) | `200` |
-| `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session (read via `orch-env REVIEWER_SLOT_BUDGET 0`; `0` = unlimited). On the Codex collaboration runtime, set it to the config-declared cap (`features.multi_agent_v2.max_concurrent_threads_per_session`) reported by `spawn-adapter slots` | `0` |
-| `ORCH_DECISION_MODE` | Workflow decision-point behavior (read via `orch-env ORCH_DECISION_MODE ask`). `ask` presents every decision to the user; `auto-recommended` executes the workflow's recommended option at the `review-pr` § 4/§ 7 and `dev-fix` § 1 ask-user steps and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. Decision-record revisits, scope expansion beyond the issue, benchmark-host protocol changes, and merge ALWAYS ask, in every mode | `ask` |
-| Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*` — [references/gates.md](references/gates.md) | — |
+| `ORCH_STATE_DIR` | State-file directory (the `--state-dir` flag wins when both are set) | `tmp` |
+| `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names (matched case-insensitively, then canonicalized: `issue-N` lowercase, Linear-style uppercase) | `[A-Z]+-[0-9]+` |
+| `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission or merge recovery | `6` |
+| `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session; `0` = unlimited. On Codex, set it to the cap `spawn-adapter slots` reports | `0` |
+| `ORCH_DECISION_MODE` | `ask` presents every workflow decision; `auto-recommended` executes the recommended option and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. The always-ask set in [The Cycle](#the-cycle) applies in every mode | `ask` |
+| Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS` — [references/gates.md](references/gates.md) | — |
+| Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_MAX_PCT`, `ORCH_TMUX_VERIFY_SECS` — `lanes --help`, `open-terminal --help` | — |
 
-System dependencies: `jq`; `bash` 4+; `flock` (util-linux) for atomic state updates.
+System dependencies: `jq`; `bash` 4+; `flock` (util-linux).
 
 ## Tests
 
 `bash skills/orch/tests/run-all.sh` (append a name fragment to filter). Each `tests/*.sh` is self-contained; the runner discovers files at execution time.
 
+---
+
+## Runtime Notes
+
+> If you are running in **Claude Code**: create a team before launching agents so agents share state and can be re-delegated. Task creation *and* assignment both wake a live agent — for a fresh spawn create tasks first, and for re-delegation send the delegation message BEFORE creating and assigning the task, or the agent starts from the bare `task_assignment` payload without it. Ask questions with `AskUserQuestion`. `SendMessage` accepts exactly `to`, `summary`, `message`; extra fields have caused duplicate delivery.
+
+> If you are running in **Codex**: under `approval_policy = never` the CLI rejects shell CONTROL SYNTAX — loops, multi-command blocks, env prefixes, substitution (a literal backtick counts), redirection — with `approval required by policy, but AskForApproval is set to Never`. The *shape* was flagged, not access: never retry it and never wait for approval; rewrite as one simple command per tool call.
+>
+> - Polling loops → the orch waiters `.agents/skills/orch/scripts/ci-wait` (CI status), `.agents/skills/orch/scripts/approval-wait` (review approval), `.agents/skills/orch/scripts/queue-wait` (merge-queue / auto-merge outcome) — orch scripts, never `github.sh` subcommands.
+> - Rejected top-level `git rebase` → the worktree skill's guarded `create <ID> --reuse --replay` with `worktree restack continue|skip|abort` (worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback)); never an improvised force-push.
+> - Spawn generated agents with `fork_context: false`; resolve parameters with `scripts/spawn-adapter spawn <canonical-agent-name>`. Pass the canonical hyphenated name — it is the identity everywhere orch records anything, and the adapter confines the runtime spelling to `record.runtime_metadata`. `--fallback-reason` is for a deliberate generic-worker fallback, never one a name-schema rejection caused. Spawn with `<bootstrap_format>`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
+> - Thread cap: `scripts/spawn-adapter slots` prints the effective cap and the `REVIEWER_SLOT_BUDGET` it implies, warning when only the legacy key is set (silently ignored, so raising it alone changes nothing) and noting that a running session keeps its old cap until restarted. Set the reported budget in `vstack.settings.toml` `[env]`.
+>
+> Full shape catalogue, rewrite patterns, and the Codex Desktop app-handoff contract: [references/codex-runtime.md](references/codex-runtime.md).
+
+> If you are running in **OpenCode**: a spawned sub-agent's persistent identity is the `task_id` returned by `functions.task`. Store it in workflow state (`child_sessions[agent].agent_id`, `review_agent_ids[reviewer-name]`) and re-delegate with `functions.task(task_id=<stored_id>)`. Spawn fresh only when no ID is stored, one resume attempt failed, or the task is confirmed dead.
+
+> If you are running in **Pi** with `pi-agents-tmux`: delegation is one `subagent` call — the bootstrap is auto-injected as the child's system prompt and the `task` argument is the filled `<delegation_format>` alone; prepending the bootstrap double-injects the role boundaries. Store the returned `taskId` in workflow state. Pane, steering, and completion-recovery details: [references/pi-runtime.md](references/pi-runtime.md).
+
+---
+
 ## Skill Rules
 
 ### Workflow Execution
 
-- **Sequential sections.** Process sections in order: mark in-progress, execute all sub-sections, mark completed, proceed. Never create tasks for sub-sections; never mark a parent complete before its sub-sections finish. Never skip steps based on predicted outcome or change scope — the workflow text decides, not the agent.
-- **Skip-if.** Evaluate "Skip if [condition]" literally; if true, append "(SKIPPED)" and mark completed.
-- **Nested workflows.** `⤵`-marked workflows must be invoked through the harness mechanism — never inlined. Record the return point (`→ § X`) before invoking.
-
-#### Worktree Scope
-
-In a worktree, never create, switch to, or act on a different worktree or branch. If the resolved `ISSUE_ID` differs from the current branch, stop and ask: reuse, abort, or switch explicitly.
+- **Sequential sections.** Mark in-progress, execute every sub-section, mark completed, proceed. Never create tasks for sub-sections, never complete a parent before its children, never skip a step on a predicted outcome — the workflow text decides.
+- **Skip-if.** Evaluate "Skip if [condition]" literally; when true, append "(SKIPPED)" and mark completed.
+- **Nested workflows.** Invoke `⤵`-marked workflows through the harness mechanism, never inlined. Record the return point (`→ § X`) first.
+- **Worktree scope.** Inside a worktree, never create, switch to, or act on another worktree or branch. If the resolved `ISSUE_ID` differs from the current branch, stop and ask: reuse, abort, or switch explicitly.
 
 #### Harness-Safe Shell
 
-Generated workflow commands must be safe for strict harness command policies. **Run exactly one simple command per tool call with explicit arguments.** Avoid inline `$(...)`, shell `for`/`while` loops, array-building snippets, heredocs, value-plumbing pipelines, redirected writes, and multi-command blocks — all rejected shapes. Fold related `workflow-state` reads into one `get '{...}'` and writes into one `update '... | ...'`; use `git-context` for derived values and harness file tools or `apply_patch` for file bodies. Four rules that reach every generated command list (dev validation steps, delegated audit searches, fix recommendations):
+Generated commands must survive strict harness command policies. **Run exactly one simple command per tool call with explicit arguments.** Inline `$(...)`, `for`/`while` loops, array building, heredocs, value-plumbing pipelines, redirected writes, and multi-command blocks are all rejected shapes. Fold related `workflow-state` reads into one `get '{...}'` and writes into one `update '... | ...'`; use `git-context` for derived values and harness file tools or `apply_patch` for file bodies. Three rules reach every generated command list — dev validation steps, delegated audit searches, fix recommendations:
 
-- **Env-assignment prefixes are normalized at acceptance, not at run time**: confirm the ambient environment satisfies the precondition (`printenv VAR`; for locale variables use `locale`, whose effective values reflect LANG/defaults an empty `printenv LC_ALL` would miss), then run the bare `cmd args` unchanged; `env VAR=value cmd args` is not the documented substitute, and an unsatisfied precondition is a blocker, never a run under the wrong environment.
-- **A literal backtick is command substitution to the classifier**, even quoted: author search patterns with the regex hex escape `\x60` (canonical worked example: [references/codex-runtime.md](references/codex-runtime.md)).
-- **Never author a workflow step that assumes top-level `git rebase` will run**: the porcelain verb itself is rejected — a harness-side classification that no user authorization or delegation can lift — use the worktree skill's guarded replay path; a dirty tree or merge commits in range: report a blocker instead of improvising.
-- Full shape catalogue, rewrite patterns, and split rules: [references/codex-runtime.md](references/codex-runtime.md).
+- **Env-assignment prefixes are normalized at acceptance, not at run time**: confirm the ambient environment satisfies the precondition (`printenv VAR`; `locale` for locale variables, whose effective values an empty `printenv LC_ALL` would miss), then run the bare `cmd args` unchanged. `env VAR=value cmd args` is not the documented substitute, and an unsatisfied precondition is a blocker, never a run under the wrong environment.
+- **A literal backtick is command substitution to the classifier**, even quoted: author search patterns with the regex hex escape `\x60` (worked example in [references/codex-runtime.md](references/codex-runtime.md)).
+- **Never author a step that assumes top-level `git rebase` will run**: the porcelain verb itself is rejected by a harness-side classification no authorization can lift. Use the worktree skill's guarded replay path; on a dirty tree or merge commits in range, report a blocker instead of improvising.
+
+Full shape catalogue and rewrite patterns: [references/codex-runtime.md](references/codex-runtime.md).
 
 #### Tracker Resolution
 
-Resolve once per workflow with `.agents/skills/orch/scripts/tracker-for-issue "[ISSUE_ID]"`, store as `TRACKER`; a caller `tracker` param wins. `issue-*` → `github` (issue number = `${ISSUE_ID#issue-}`; repo from caller context, else `gh repo view --json nameWithOwner`); otherwise `linear`. Steps marked **Linear only** / **GitHub only** run only for that tracker. Never run `linear.sh` against a GitHub item — GitHub state lives in `gh issue`/PR linkage (`Closes #N`).
+An `ISSUE_ID` starting with `issue-` is a GitHub work item (`TRACKER=github`, issue number `${ISSUE_ID#issue-}`, repo from caller context else `gh repo view --json nameWithOwner`); anything else is Linear. Resolve once per workflow and store as `TRACKER`; a caller-supplied `tracker` wins. Steps marked **Linear only** / **GitHub only** run only for that tracker. Never run `linear.sh` against a GitHub item — its state lives in `gh issue` and PR linkage (`Closes #N`).
 
 ---
 
@@ -176,116 +172,94 @@ Resolve once per workflow with `.agents/skills/orch/scripts/tracker-for-issue "[
 
 | Pattern | When | Flow |
 |---------|------|------|
-| Spawn + message | Fresh agents (dev, QA, review) | Spawn with bootstrap → send delegation |
-| Message only | Re-delegation to existing agents | Send delegation to running agent |
-| Self-create | Agent without team context | Full instructions in prompt |
-| Consultation | One-off sub-agent | Full instructions in prompt, no task machinery |
+| Spawn + message | Fresh dev, QA, or review agents | Spawn with bootstrap → send delegation |
+| Message only | Re-delegation to a live agent | Send delegation to the running agent |
+| Self-create | No team context | Full instructions in the prompt |
 
-Delegated command lists — verification steps from issue specs, fix recommendations, QA commands — are normalized per [Harness-Safe Shell](#harness-safe-shell) before they enter a delegation prompt: an env-assignment prefix never survives delegation; it becomes an ambient-environment precondition check plus the bare command.
+Delegated command lists are normalized per [Harness-Safe Shell](#harness-safe-shell) before entering a prompt: an env-assignment prefix never survives delegation; it becomes a precondition check plus the bare command.
 
-**Task layers.** Orchestrator steps, sub-workflows, and agent tasks are distinct layers; agents only act on their own assigned work.
-
-**No duplicate spawns.** Never spawn a fresh agent when the same role/name is alive. Read workflow state, reuse by stored ID, respawn only after one recovery attempt or confirmed stuck/closed status. A prior completion message does not justify a duplicate.
+**No duplicate spawns.** Never spawn a fresh agent while the same role is alive. Read workflow state, reuse by stored ID, and respawn only after one recovery attempt or a confirmed stuck/closed status. A prior completion message does not justify a duplicate.
 
 #### Bootstrap Message
 
-Send bootstrap **first** before any delegation. Fill `[PLACEHOLDERS]`, send verbatim:
+Send bootstrap **first**. Fill `[PLACEHOLDERS]`, send verbatim:
 
 <bootstrap_format>
 You are a [ROLE] sub-agent ([AGENT_NAME]). You report to the orchestrator.
 
 Rules:
+
 - Execute all assigned work yourself. Do not spawn sub-agents for implementation, review, or fix work.
-- You may use read-only search sub-agents for codebase search/research only, where your harness provides them.
-- Only act on delegation messages from the orchestrator. If no delegation is pending, stay idle. If you have an accepted delegation whose checklist is unfinished, resume and complete it before idling — except while a long validation you backgrounded is still running, where ending the turn is correct and the orchestrator will nudge you (dev SKILL.md § Long-Running Validation).
-- Before sending your single return message, write your workflow's on-disk completion artifact — the orchestrator treats it as the durable completion record. Dev agents run `dev-return-write` (dev-implement § 10 / dev-fix § 6; a read-only analysis round uses `--kind analysis` with `--summary TEXT` or `--summary-file PATH` and no commit/validate, so there is always a truthful kind — never force one that asserts work you did not do; never hand-author the JSON); reviewer/QA agents author their review JSON per the reviewer skill. After completing assigned work, send a single return message and go idle. Wait for further delegation.
-- Do not manage tasks for other agents. Do not act as a coordinator.
+- You may use read-only search sub-agents for codebase search where your harness provides them.
+- Only act on delegation messages from the orchestrator. With no delegation pending, stay idle. With an unfinished accepted delegation, resume and complete it before idling — except while a validation you backgrounded is still running, where ending the turn is correct and the orchestrator will nudge you (dev SKILL.md § Long-Running Validation).
+- Before your single return message, write your workflow's on-disk completion artifact — the orchestrator treats it as the durable completion record. Dev agents run `dev-return-write`; a read-only analysis round uses `--kind analysis` with `--summary`/`--summary-file` and no commit or validate, so the kind is always truthful. Reviewer and QA agents author their review JSON per the reviewer skill.
+- After completing assigned work, send a single return message and go idle. Do not manage tasks for other agents or act as a coordinator.
 </bootstrap_format>
 
-The `<delegation_format>` message follows as a separate message after bootstrap. **Pi exception** (`pi-agents-tmux`): one tool call per delegation — bootstrap is auto-injected; the `task` argument is the filled `<delegation_format>` content alone (see the Pi runtime note).
+The `<delegation_format>` message follows as a separate message. **Pi exception**: one tool call, bootstrap auto-injected.
 
 #### Format Tags Are Literal
 
-`<bootstrap_format>`, `<delegation_format>`, and `<output_format>` tags define exact content: fill `[PLACEHOLDERS]`, omit lines whose placeholder is empty or not applicable, add nothing else, and do not paraphrase — exact structure, headings, and field names. Placeholders hold schema fields only; never embed workflow steps or process prose inside item records (duplication triggers a second return on idle wake-up). When a tagged output block is followed by an `Ask user` step (in Claude Code, the `AskUserQuestion` tool), present the filled block as a normal message first, then ask only a concise question with options.
+`<bootstrap_format>`, `<delegation_format>`, and `<output_format>` define exact content: fill `[PLACEHOLDERS]`, omit lines whose placeholder is empty or not applicable, add nothing else, and keep structure, headings, and field names verbatim. Placeholders hold schema fields only — process prose inside an item record triggers a second return on idle wake-up. When a tagged block is followed by an ask-user step, present the filled block as a normal message first, then ask a concise question with options.
 
 #### Single Return Message
 
-An agent sends exactly one completion message. If a second return arrives, treat it as a violation: diff against the first, flag unrequested commits. Root cause is usually process leakage in `[FORMATTED_ITEMS]` or extra delegation fields.
+An agent sends exactly one completion message. A second return is a violation: diff it against the first and flag unrequested commits. The usual root cause is process leakage in `[FORMATTED_ITEMS]` or extra delegation fields.
 
-**Codex dual-channel completion.** On Codex collaboration agents, one completion can arrive over two channels: a `send_input` `MESSAGE` immediately followed by a `FINAL_ANSWER` that echoes the same result. This is the Codex runtime delivering a single completion twice — treat the pair as **one completion** and deduplicate them on the same delegation; do not flag it as a violation. Still diff the `FINAL_ANSWER` against the `MESSAGE`: if it carries a new commit, extra changes, or a different scope, that is a genuine second return and must be flagged per the rule above.
+**Codex dual-channel completion.** On Codex collaboration agents one completion can arrive twice — a `send_input` `MESSAGE` immediately followed by a `FINAL_ANSWER` echoing the same result. That is the Codex runtime delivering one completion over two channels: treat the pair as **one completion** and deduplicate it, not a violation. Still diff the `FINAL_ANSWER` against the `MESSAGE`; a new commit, extra changes, or a different scope is a genuine second return and is flagged.
 
 ---
 
 ### Agent Lifecycle
 
-Stages: `SPAWN (bootstrap) → DELEGATE → WORK (agent executes itself, no sub-delegation) → RETURN (single completion message) → IDLE / RE-DELEGATE`.
+`SPAWN (bootstrap) → DELEGATE → WORK → RETURN (single message) → IDLE / RE-DELEGATE`.
 
-#### Dev Agent Persistence
+**Dev agents persist** for the whole session and are re-delegated for review-fix, QA-fix, comment-fix, and CI-fix rounds. Shut them down only on explicit user request or a confirmed stall — quiet is not stalled, idle is not stuck.
 
-Dev agents persist for the entire session; re-delegate them for review-fix, QA-fix, comment-fix, and CI-fix cycles (each re-delegation: send delegation → create and assign new tasks — task assignment wakes a live agent, so the delegation goes first). Shut down only on explicit user request or a stall confirmed via the [escalation sequence](#wait-for-agent-return-before-acting) — quiet ≠ stalled; idle ≠ stuck.
+**Reviewer persistence is budget-conditional.** `orch-env REVIEWER_SLOT_BUDGET 0` prints the runtime's budget counting the primary session (`0` = unlimited). Available reviewer slots = budget − 1 − live `child_sessions` entries whose `status` is `active` (a record with no `status` counts as active), minimum 1; recompute at every review-cycle start. Within budget, reviewers persist across fix and re-review cycles: reuse by exact name and spawn only the missing subset. Over budget — or when a spawn fails with the runtime's thread-limit error — run bounded waves: launch up to the available slots, wait for each validated artifact, retire the completed session to release its slot, launch the next wave, and persist the observed wave size as `reviewer_slots_observed` so later cycles start in wave mode. **Invariant:** review state lives in on-disk artifacts and workflow state, never in reviewer session memory, so retiring a completed reviewer loses nothing and a recreated one is pointed at the current diff plus its prior report.
 
-#### Review Agent Lifecycle Management
+QA agents spawn and shut down per agent.
 
-Reviewer persistence is budget-conditional: persistent when the budget allows, waves when it does not. `orch-env REVIEWER_SLOT_BUDGET 0` prints the runtime's budget counting the primary session (`0` = unlimited). Available reviewer slots = budget − 1 (primary) − live persistent sessions (`child_sessions` entries with status `active`; a record with no `status` field counts as active — legacy records predate the status stamp), minimum 1. Recompute at every review-cycle start.
+#### Round Closure
 
-**Persistent mode** (unlimited budget, or the reviewer set fits): reviewers persist across fix → re-review cycles. Read `review_agents`/`review_agent_ids` before spawning; reuse by exact name; spawn only the missing/stuck subset; full shutdown when review passes. A thread-limit spawn failure during a persistent launch demotes the cycle to wave mode automatically: the spawned reviewers become the first wave, the observed spawn count is persisted as `reviewer_slots_observed` so re-review cycles stay in waves, and the user gets a one-line `REVIEWER_SLOT_BUDGET` recommendation (`review-pr.md` § 2.2). The configured budget is advisory; the runtime cap is authoritative.
+The orchestrator owns round closure. A correct dev or QA agent may background a long validation and end its turn with no further wake, so every dev/QA delegation carries three mechanics:
 
-**Wave mode** (the set exceeds the slots): launch up to the available slots, wait for each validated report artifact, retire the completed session to release its slot, launch the next wave. Re-review recreates retired reviewers fresh, pointed at the current diff and their prior report artifact. **Invariant**: review state lives in on-disk report artifacts and workflow state, never in reviewer session memory — retiring a completed reviewer loses nothing, and `review_delegated_at` freshness gating is re-stamped per wave.
+1. **Mint and embed a round token** immediately before delegating (`workflow-state new-round-id [ISSUE_ID] dev_round_id` → the delegation's `Round ID:` line) and re-stamp `dev_delegated_at`. A fix round also persists its delegated item set at that moment (`dev-round-write`), so a respawned agent reads its items from disk instead of guessing.
+2. **Arm a single-shot wall-clock watchdog** for `dev_delegated_at + 10 min` at the same moment, so the check runs even if no wake ever arrives. It fires once, runs A/B if the round is still outstanding, and re-arms only on entering a new escalation step — never a busy poll. Harness mechanisms: [references/artifact-checks.md](references/artifact-checks.md).
+3. **Run A/B on every wake and at the deadline**, classifying mechanically rather than from wording or elapsed time. **A** = `dev-artifact-check --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]` (fix rounds add `--expect-items-from-round`); **B** = the round's git and tracker completion checks. A `finished` or `idle` wake is not evidence.
 
-QA agents spawn and shut down per-agent.
+The acceptance decision table lives in the delegating workflow (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1) and is a pure function of A and B; the return message is display-only. The round token binds A to exactly this delegation's receipt. A path whose agent writes no dev-return artifact (`ci-fix.md`) is accepted by its return message plus the escalation ladder, never by a stale artifact. Dev-vs-reviewer asymmetry and invalid stall signals: [references/artifact-checks.md](references/artifact-checks.md).
 
-#### Wait for Agent Return Before Acting
-
-After delegation, wait for the agent's return — but never let the round's closure *depend* on a return message or on any wake arriving.
-
-> If you are running in **Claude Code**: on each idle notification, check the task list — any in-progress → go idle (task status changes also generate trailing notifications; on completed tasks go idle immediately); all completed → proceed; all pending (none claimed) → re-send delegation ONCE, wait one full agent turn, respawn if still all pending. Never re-send or intervene while any task is in-progress.
-
-**The orchestrator owns round closure — primary path, not a recovery fallback.** A correct dev/QA agent may background a long validation and end its turn without any further wake (dev SKILL.md § Long-Running Validation), so every dev/QA delegation closes on three mandatory orchestrator-side mechanics:
-
-1. **Mint and embed a round token** immediately before delegating (`workflow-state new-round-id [ISSUE_ID] dev_round_id` → the delegation's `Round ID:` line) and re-stamp `dev_delegated_at` (now solely the watchdog deadline). Fix rounds also **persist the delegated item set** at that moment (`dev-round-write` → `tmp/dev-round-[ISSUE_ID]-[dev_round_id].json`), so the set survives this session's context — a respawned agent reads its items from the record instead of guessing. Any new dev/QA fix path must do the same.
-2. **Arm a single-shot wall-clock watchdog** for `dev_delegated_at + quiet_window` at that same moment, so the check runs even if NO wake ever arrives; it fires once at the deadline, runs A/B if the round is still outstanding, and re-arms only on entering a new escalation step — never a busy poll. Harness mechanisms: [references/artifact-checks.md](references/artifact-checks.md).
-3. **Run A/B on every wake and at the deadline, and classify mechanically — never from wording or elapsed time.** **A** = `dev-artifact-check --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]` (read `dev_round_id` via `workflow-state get`; fix rounds add `--expect-items-from-round`, which reads the persisted round record); **B** = the round's git/tracker completion checks. A `finished`/`idle` wake is not evidence the round completed.
-
-The acceptance decision table lives in the delegating workflow — `dev-start.md` § 3 (implement), `dev-fix.md` § 2 and `review-pr-comments.md` § 6.1 (fixes); read-only analysis rounds close by the analysis rule alongside those tables (`kind: analysis` artifact, no commit/validate gate) — and is a pure function of A and B; the return message is display-only, never an acceptance input. The round token binds A to exactly this delegation's receipt, and a path whose agent writes no dev-return artifact (`ci-fix.md` § 3.2) is accepted by its own return message plus the escalation ladder, never by a stale artifact — details: [references/artifact-checks.md](references/artifact-checks.md).
-
-**Dev-vs-reviewer asymmetry (intentional — do not "align")** and the **invalid stall signals** (never sufficient without the round-scoped artifact): [references/artifact-checks.md](references/artifact-checks.md).
-
-**Escalation** — **quiet ≠ stalled**: only after the 10-minute quiet window from delegation AND a confirmed stall (task status unchanged across multiple idle cycles; no new session-log entries for 10+ minutes; or agent process exited / zero CPU). Then: (1) re-message once specifying the missing step; (2) wait 5 min, re-check — new activity → go idle; (3) still inactive → shut down → re-create tasks → respawn → re-delegate.
-
-#### Orchestrator Never Fixes Code
-
-Never edit or write code unless the user explicitly asks. Delegate to the domain agent; if an agent appears stuck, follow the [escalation sequence](#wait-for-agent-return-before-acting). Read-only commands and script invocations are permitted.
+**Escalation.** Only after the 10-minute quiet window AND a confirmed stall (task status unchanged across idle cycles, no session-log entries for 10+ minutes, or the agent process exited): re-message once naming the missing step → wait 5 minutes → new activity means go idle, still inactive means shut down, re-create tasks, respawn, re-delegate.
 
 ---
 
 ### State Management
 
-**Durable state.** Use workflow state files — through the `workflow-state` CLI only, including `set-git-head`/`set-now` instead of inline command substitution — for data that must survive compaction: issue tracking, agent persistence, cycle counts, fix/escalation tracking, audit trails. Location: `<state-dir>/workflow-state-[ID].json`, where `[ID]` is the normalized state key and `<state-dir>` resolves to the `--state-dir` flag, then `$ORCH_STATE_DIR`, then `tmp/`.
+Durable data — issue tracking, agent persistence, cycle counts, fix and escalation records, audit trails — lives in workflow state through the `workflow-state` CLI only, including `set-git-head` and `set-now` instead of inline command substitution. Location: `<state-dir>/workflow-state-[ID].json`, where `<state-dir>` is the `--state-dir` flag, then `$ORCH_STATE_DIR`, then `tmp/`.
 
-**Compaction recovery.** External state persists: check the task list and resume from the step after the last completed one; read workflow state for persistent data (team name, cycles, agent IDs); re-read team config from disk if team-based; re-send delegation using stored IDs; respawn only the missing/stuck agent if there is no response after one idle cycle. Never repeat completed actions. On an explicit session restart, teammates are lost: respawn and re-delegate pending tasks.
+After compaction, resume from the step after the last completed one: read workflow state for team name, cycles, and agent IDs, re-send delegations using stored IDs, and respawn only an agent that stays silent through one idle cycle. Never repeat completed actions.
 
 ---
 
 ### Coordination
 
-**Container parents.** A parent with children is a CONTAINER by default: no `(one PR)` title marker, and children present or `agent:multi` label. The `(one PR)` marker always takes precedence — it opts even an `agent:multi`-labeled bundle into single-PR delegation. A container is never orchestrated directly and never gets a PR — each child is the PR unit, selection operates on the container's unblocked children, and the container closes LAST (`merge-pr.md` completes it when the final child merges). Containers hold no implementation state: no worktree, no branch, no workflow-state beyond bookkeeping. The single-PR bundle is the explicit opt-in exception, not the default.
+**Containers.** A parent with children is a CONTAINER by default: no `(one PR)` title marker, and children present or an `agent:multi` label. The `(one PR)` marker always wins and opts even an `agent:multi` bundle into single-PR delegation. A container is never orchestrated and never gets a PR — each child is the PR unit, selection operates on unblocked children, and the container closes LAST when its final child merges. Containers hold no implementation state: no worktree, no branch, no workflow-state beyond bookkeeping.
 
-**Ancestor gate (direct selection).** Every directly selected issue walks its FULL `parent_id` chain: classify each ancestor (`(one PR)` always wins), and an enclosing `(one PR)` bundle becomes the work item (the child only on explicit user choice) — promotion picks identity only, never skips gating. The selected/promoted item dispatches only when its OWN `state_type` is non-terminal AND the union of its `blocked_by` with every container ancestor's ABOVE it resolves terminal — blocker states fetched in chunks of at most 50 ids (`issues bulk-get` caps at 50 rows; verify every requested id came back, and a missing lookup KEEPS the item blocked — never fail open on a truncated read). One hop is never enough. A terminal or blocked item is never dispatched, leased, or marked safe. Promotion REPLACES the selection: a workflow either continues AS the promoted bundle or stops and routes to its worktree — the superseded child id never proceeds through the remaining steps. Mechanics live in the entry workflows (start, start-worktree, handoff, dev-start, parallel-check, initialize).
+**Ancestor gate.** Every directly selected issue walks its full `parent_id` chain and classifies each ancestor. An enclosing `(one PR)` bundle becomes the work item — the child only on explicit user choice — and promotion REPLACES the selection: continue as the bundle or stop and route to its worktree; the superseded child id never proceeds. The selected item dispatches only when its own `state_type` is non-terminal AND the union of its `blocked_by` with every container ancestor's resolves terminal. Fetch blocker states in chunks of at most 50 ids (`issues bulk-get` caps at 50 rows), verify every requested id came back, and keep an item blocked on a missing lookup — never fail open on a truncated read. One hop is never enough. Entry workflows (start, start-worktree, handoff, dev-start) carry the mechanics.
 
-**Sequencing by data dependency.** Infer the agent from label or component path, identify candidate pairs, and confirm with Creates ↔ Consumes analysis — no data flow = no blocking. Defaults: Backend → Frontend; `*` → Generalist (runs last). Cross-bundle blocking relations go on parent issues; dependent children of one container are sequenced with sibling child-blocks-child relations. Full relations: `workflows/agent-sequencing.md`.
+**Sequencing.** Infer the agent from the label or component path, then confirm with Creates ↔ Consumes: no data flow, no blocking relation, whatever the agent ordering suggests. Existing blocking relations on the issues outrank inference. Cross-bundle relations go on the parent issues; dependent children of one container get sibling child-blocks-child relations, which ARE the execution order since selection dispatches only unblocked children. Only an explicit `(one PR)` bundle leaves intra-bundle ordering to the delegated session.
 
-**Single-PR bundles (explicit opt-in).** Only a parent marked `(one PR)` in its title — or a leaf issue with an internal checklist — is delegated as one session covering all children. One composite task per sub-issue, not one task per section: agents execute all referenced sections for their sub-issue, then mark the single task complete; setup, activation, and return steps stay one task each. Multi-domain bundles: process groups sequentially per agent-sequencing, collect handoff notes between groups, persist dev agents per [Dev Agent Persistence](#dev-agent-persistence).
+**Single-PR bundles.** Only a parent marked `(one PR)`, or a leaf issue with an internal checklist, is delegated as one session covering all children. One composite task per sub-issue, not one per section. Multi-domain bundles process groups sequentially, collecting handoff notes between groups.
 
-**Parallel work safety.** Before running issues in parallel, verify all five dimensions — dependency resolution, agent overlap, code scope, build config (manifest changes are hard separations), and active work (worktrees, open PRs) — and apply the grouping constraints. Mechanics: `workflows/parallel-check.md`.
-
-**Tracked issue creation.** Never create a tracked issue directly (`linear.sh issues create` / `gh issue create`) from an orchestration session — route it through TPM (project-management), which owns labels, project, priority, estimate, and relations. A direct create prints a URL and looks like success while the issue lands with none of those; without an `agent:*` label it is invisible to agent routing. The only direct creates are the ones a workflow step explicitly specifies with its label set (`plan-issues`, `start-new`, the `merge-pr` rebundle).
+**Tracked issue creation.** Never create a tracked issue directly from an orchestration session — route it through TPM (project-management), which owns labels, project, priority, estimate, and relations. A direct create prints a URL and looks like success while the issue lands with none of those, and without an `agent:*` label it is invisible to agent routing. The only direct creates are the ones a workflow step specifies with its label set (`plan-issues`, `start-new`, the `merge-pr` rebundle).
 
 ---
 
 ### Review Pipeline
 
-**Finding schema.** Full schema: [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md). `verdict` is `action_required` when blockers exist, else `pass`; `location` is a file path plus function/struct name — never line numbers; each item carries `id`, `title`, `location`, `description`, `recommendation`, `priority` (1-4), `estimate` (1-5); suggestions also require `category`: `fix` or `issue`.
+**Finding schema.** [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md). `verdict` is `action_required` when blockers exist, else `pass`; `location` is a file path plus a symbol name, never line numbers; every item carries `id`, `title`, `location`, `description`, `recommendation`, `priority` (1-4), `estimate` (1-5), and suggestions also `category` ∈ {`fix`, `issue`}.
 
-**Recommendation categorization.** Evaluate each suggestion in order: actionable (vague → omit) → related (doc updates for changed code are always `fix`; unrelated → `issue`) → size (small → `fix`; needs tracking or delegation → `issue`). Security vulnerabilities: `fix` if quick, else `issue` — never skip. Filing bar: file an `issue` only for out-of-scope behavioral defects, est≥2 refactors, decision revisits, or evidenced anomalies; P4 polish is absorbed in-PR when est-1 and related, else dropped with a one-line note. Residue attaches to an existing same-surface bundle by default. Full decision flow and signal table: `workflows/recommendation-bias.md`.
+**Disposition.** Classify each suggestion per [references/finding-disposition.md](references/finding-disposition.md): apply in-PR, file as a tracked issue, or decline with one line. Filing is the exception — see the filing bar there.
 
-**Issue audit pipeline.** Every follow-up that needs a tracked issue goes through this pipeline, however it was discovered — not only review JSON. In scope: `category=issue` suggestions, escalated blockers, dev-agent "deliberately left out"/skipped lists, planned items, and gaps noticed while reading reports, return messages, or code. Collect them → transform into audit input (schema in `project-management/schemas/`) → delegate to TPM for tracked issue creation; populate dependency fields when order is known. Never file these directly with `issues create` (see [Coordination](#coordination) — tracked issue creation).
+**Issue audit pipeline.** Every follow-up that clears the filing bar goes through this pipeline however it was discovered — `category=issue` suggestions, escalated blockers, dev "deliberately left out" lists, and gaps noticed while reading reports or code. Collect them, transform into audit input (schema in `project-management/schemas/`), and delegate to TPM for creation, populating dependency fields when order is known. Never file them directly.

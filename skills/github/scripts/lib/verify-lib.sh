@@ -7,7 +7,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
 
 # Colors for progress output (stderr)
@@ -109,14 +108,9 @@ detect_stacks() {
     local dir="$1"
     local stacks=()
 
-    # Rust: Cargo workspace or single crate
+    # Rust: workspace and single crate build and test identically from the root.
     if [ -f "$dir/Cargo.toml" ]; then
-        # Check if it's a workspace
-        if grep -q '\[workspace\]' "$dir/Cargo.toml" 2>/dev/null; then
-            stacks+=("rust|cargo build --release|cargo test --release|.")
-        else
-            stacks+=("rust|cargo build --release|cargo test --release|.")
-        fi
+        stacks+=("rust|cargo build --release|cargo test --release|.")
     else
         # Check for Cargo.toml in immediate subdirs (monorepo without workspace)
         for sub in "$dir"/*/Cargo.toml; do

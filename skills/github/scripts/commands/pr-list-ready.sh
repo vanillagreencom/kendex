@@ -72,7 +72,9 @@ main() {
     # Include latestReviews as fallback when reviewDecision is empty (no branch protection).
     prs=$(gh pr list --json number,title,headRefName,reviewDecision,latestReviews,statusCheckRollup,mergeable)
 
-    if [ "$all_prs" != true ] && [ -n "$gh_user" ]; then
+    # An unresolvable login narrows the scope to local branches only; it must
+    # not silently widen the default listing to every open PR in the repo.
+    if [ "$all_prs" != true ]; then
         local_branches=$(get_local_branch_names_json)
         prs=$(filter_prs_to_default_scope "$prs" "$gh_user" "$local_branches")
     fi

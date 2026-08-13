@@ -75,10 +75,6 @@ Persistent state file for orch workflows. Survives context compaction.
     "skipped": [],
     "replied": []
   },
-  "pr_local_review": {
-    "passes": 0,
-    "reviewed_head": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
-  },
   "pr_approval": {
     "forced": false,
     "gate": "on"
@@ -97,31 +93,30 @@ Persistent state file for orch workflows. Survives context compaction.
 | `branch` | string | Git branch name |
 | `team_name` | string | Agent team name (optional, for recovery) |
 | `qa_labels` | string[] | QA trigger labels from dev return |
-| `child_sessions` | object | Per-agent lifecycle keyed by logical agent name: `{agent: {status, agent_id, runtime_agent_type, agent_type_fallback, spawned_at}}`. `status` is `"active"` while the session is live (`dev-start.md` § 2 stamps it at spawn) and `"closed"` once the caller's shutdown step retires it (`start-worktree.md` § 5.5). Reviewer slot accounting treats a record with a missing `status` field as active — legacy records predate the field (vstack#698) |
+| `child_sessions` | object | Per-agent lifecycle keyed by logical agent name: `{agent: {status, agent_id, runtime_agent_type, agent_type_fallback, spawned_at}}`. `status` is `"active"` while the session is live (`dev-start.md` § 2 stamps it at spawn) and `"closed"` once the caller's shutdown step retires it (`start-worktree.md` § 5.5). Reviewer slot accounting treats a record with a missing `status` field as active |
 | `review_agents` | string[] | Reviewer names currently expected to stay alive across fix/re-review cycles; in wave mode (`REVIEWER_SLOT_BUDGET` exceeded) only the currently launched wave |
 | `review_agent_ids` | object | Reviewer session IDs keyed by name — reuse before spawning `{"name":"id",...}` |
-| `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, task_name?, fallback}}`; records Codex `worker` fallback and, when the Codex `task_name` schema (`[a-z0-9_]` only) forced a hyphens→underscores runtime task name (vstack#751), the translated `task_name` — without changing logical keys |
-| `review_wave_done` | string[] | Wave mode only: reviewers whose report artifact validated (or who went unresponsive) in the current review cycle. Reset at each new cycle's first wave (`review-pr.md` § 2.2); the next wave launches the first budget-sized batch of `[AGENTS]` not listed here |
-| `reviewer_slots_observed` | number | Effective wave size proven by the runtime when a persistent (unlimited-budget) launch hit the thread limit (`review-pr.md` § 2.2 persistent-mode thread-limit recovery, vstack#715). While set, § 2 enters wave mode at this size even though `REVIEWER_SLOT_BUDGET` is `0` |
+| `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, task_name?, fallback}}`; records a Codex `worker` fallback and, when the runtime `task_name` schema forced a hyphens-to-underscores spelling, the translated `task_name` — without changing the logical keys |
+| `review_wave_done` | string[] | Wave mode only: reviewers whose report artifact validated (or who went unresponsive) in the current review cycle. Reset at each new cycle's first wave; the next wave launches the first budget-sized batch of `[AGENTS]` not listed here |
+| `reviewer_slots_observed` | number | Effective wave size proven by the runtime when a persistent (unlimited-budget) launch hit the thread limit While set, § 2 enters wave mode at this size even though `REVIEWER_SLOT_BUDGET` is `0` |
 | `pre_delegate_sha` | string | HEAD before delegation — scopes re-review diffs |
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | Review/fix cycle count |
 | `submit_cycles` | number | Submit-PR iteration count (created-issue re-submit loops) |
 | `review_delegated_at` | number | Epoch seconds of last review delegation — gates § 3 `review-artifact-check` artifact acceptance |
-| `dev_delegated_at` | number | Epoch seconds of last dev/QA delegation (implement, fix, or analysis) — the watchdog deadline for stall escalation (SKILL § Wait for Agent Return). No longer gates artifact acceptance (round id does — vstack#776) |
-| `dev_round_id` | string | Unique per-delegation round token (`date +%s%N`-`$RANDOM` — a nanosecond timestamp plus random suffix, distinct even across rapid same-second re-stamps), minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation (implement, fix, or analysis) and embedded in it. `dev-artifact-check` resolves `tmp/dev-return-[ISSUE_ID]-[dev_round_id].json` and requires its internal `round_id` to match — deterministic completion-artifact identity (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1). Fix rounds also persist the delegated item set alongside the token at `tmp/dev-round-[ISSUE_ID]-[dev_round_id].json` (`dev-round-write`, schema: [`dev-round.md`](dev-round.md)) — the on-disk source for `dev-artifact-check --expect-items-from-round` and for a respawned agent's items (vstack#1230) |
-| `review_skipped` | string | Set to `tiny-docs` when the user takes the tiny/docs-only review skip path |
-| `rereview_skipped` | string | `refix-route`'s `reason` when a fix round routed to submit WITHOUT re-review (class `small`). Present only when the skip happened — its absence means the round was re-reviewed or nothing changed. Recorded so a by-policy skip is visible after the fact instead of silent (vstack#875) |
-| `rereview_panel` | object | Targeted-panel composition when a fix round of class `blockers`/`size` re-reviewed with a scoped panel instead of the full set (`review-pr.md` § 4 step 3, vstack#944): `{agents: string[], reason}`. Recorded so panel scoping is visible after the fact, mirroring `rereview_skipped` |
-| `auto_decisions` | string[] | Audit trail of decisions taken without a user prompt under `ORCH_DECISION_MODE=auto-recommended` (vstack#944): one `auto-selected: [option] — [reason]` line per auto-executed ask-user step (`review-pr.md` § 4/§ 7, `dev-fix.md` § 1). Absent under the default `ask` mode |
+| `dev_delegated_at` | number | Epoch seconds of last dev/QA delegation (implement, fix, or analysis) — the watchdog deadline for stall escalation. It does not gate artifact acceptance; the round id does |
+| `dev_round_id` | string | Unique per-delegation round token (`date +%s%N`-`$RANDOM` — a nanosecond timestamp plus random suffix, distinct even across rapid same-second re-stamps), minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation (implement, fix, or analysis) and embedded in it. `dev-artifact-check` resolves `tmp/dev-return-[ISSUE_ID]-[dev_round_id].json` and requires its internal `round_id` to match — deterministic completion-artifact identity. Fix rounds also persist the delegated item set alongside the token at `tmp/dev-round-[ISSUE_ID]-[dev_round_id].json` (`dev-round-write`, schema: [`dev-round.md`](dev-round.md)) — the on-disk source for `dev-artifact-check --expect-items-from-round` and for a respawned agent's items |
+| `review_skipped` | string | Set to `tiny-docs` when a trivial diff skipped review by rule |
+| `rereview_skipped` | string | Why a fix round routed to submit WITHOUT re-review. Present only when the skip happened, so a by-policy skip is visible after the fact instead of silent |
+| `rereview_panel` | object | `{agents: string[], reason}` for a fix round re-reviewed by a scoped panel instead of the full set, so the scoping is visible after the fact |
+| `auto_decisions` | string[] | Audit trail of decisions taken without a user prompt under `ORCH_DECISION_MODE=auto-recommended`: one `auto-selected: [option] — [reason]` line per auto-executed ask-user step. Absent under the default `ask` mode |
 | `json_paths` | string[] | Accumulated review JSON file paths |
 | `fixed_items` | object[] | Blockers successfully fixed |
-| `escalated_items` | object[] | Items dev did not apply. `outcome` records the dev round's per-item decision: `"blocked"` (couldn't fix) or `"skipped"` (deliberately skipped); legacy entries without `outcome` are treated as blocked (`review-pr.md` § 9 maps outcome → audit `origin`) |
+| `escalated_items` | object[] | Items dev did not apply. `outcome` records the dev round's per-item decision — `"blocked"` (could not fix) or `"skipped"` (deliberately skipped); an entry without `outcome` is treated as blocked. The audit builder maps it to a distinct `origin` |
 | `audit_issues_created` | string[] | Issue IDs created by audit |
-| `rebase_map` | object | Old→new commit SHA map accumulated from `worktree push` auto-rebase output (`rebase-map:` lines — vstack#728). Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. SHAs stored elsewhere in state are rewritten at push time (`submit-pr.md` § 2 step 1); the map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches, since a later rebase maps new → newer |
+| `rebase_map` | object | Old→new commit SHA map accumulated from `worktree push` auto-rebase output (`rebase-map:` lines). Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. SHAs stored elsewhere in state are rewritten at push time; the map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches, since a later rebase maps new → newer |
 | `pr_review_baseline` | object | Baseline for PR comment loop detection |
 | `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered) |
-| `pr_local_review` | object | Local pre-PR review tracking, budgeted per pushed head (VST-153): `passes` (local review passes counted against `reviewed_head`; max 2 per head) and `reviewed_head` (the head commit those passes reviewed — stamped by `local-review-budget` when the worktree head moves, then overwritten with the artifact's `qa_metadata.reviewed_head` after each counted pass). GitHub bots re-review every push, so a new head is a new round: `local-review-budget` resets `passes` to 0 when the worktree HEAD no longer matches `reviewed_head`; the cap binds only within a single head (`submit-pr.md` § 1.2) |
 | `pr_approval` | object | Approval merge-gate tracking: `forced` (user explicitly chose Force merge past a missing gate verdict), `reviewer_down` (the `PR_REVIEW_ON_TIMEOUT=proceed` degrade auto-proceeded past the deadline because every reviewer was silent — zero reviewer evidence and zero unresolved threads; kept distinct from `forced` so an automated reviewer-down proceed is never confused with a deliberate user override), `gate` (legacy field, still recorded: "off" when the reviewer gate is disabled for a reviewer-less repo) |
 | `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode` from `PR_REVIEW_GATE`, or derived from legacy `PR_APPROVAL_GATE`) |
 
@@ -131,7 +126,7 @@ All operations use `.agents/skills/orch/scripts/workflow-state` (run with `help`
 
 To target a state directory from a worktree, pass the global `--state-dir <path>` flag before the subcommand — it takes precedence over `ORCH_STATE_DIR`. Prefer it over an `ORCH_STATE_DIR=… workflow-state …` env prefix, which is rejected under Codex `approval=never` as a flagged command shape; a plain flag is classifier-safe. `ORCH_STATE_DIR` stays supported as an environment fallback.
 
-`set` values are JSON only when they look like it — a `{`/`[` prefix, exactly `null`/`true`/`false`, or all digits. `append` is narrower: only a `{`/`[` prefix is spliced as JSON (a bare `null`/`true`/`123` appends as a string). Every other value is stored as a raw string, so pass plain strings bare: `set PROJ-123 pr_review.mode review`, never `'"review"'` (the quotes would be stored literally — vstack#705). `update` always takes a jq expression.
+`set` values are JSON only when they look like it — a `{`/`[` prefix, exactly `null`/`true`/`false`, or all digits. `append` is narrower: only a `{`/`[` prefix is spliced as JSON (a bare `null`/`true`/`123` appends as a string). Every other value is stored as a raw string, so pass plain strings bare: `set PROJ-123 pr_review.mode review`, never `'"review"'` (the quotes would be stored literally). `update` always takes a jq expression.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state init PROJ-123 --agent backend --worktree /tmp/wt

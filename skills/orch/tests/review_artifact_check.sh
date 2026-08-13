@@ -503,19 +503,23 @@ set -e
 review_pr="$REPO_ROOT/skills/orch/workflows/review-pr.md"
 assert_file_contains "$review_pr" ".agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT]" "review-pr acceptance runs review-artifact-check"
 assert_file_not_contains "$review_pr" 'A return message arrives with `Verdict:` and `File:` lines, *or*' "review-pr no longer accepts return-message-only completion"
-assert_file_contains "$review_pr" "a return message with \`Verdict:\`/\`File:\` lines is never sufficient by itself" "review-pr states artifact is the only acceptance condition"
+assert_file_contains "$review_pr" "never sufficient" "review-pr states a return message alone cannot complete a reviewer"
 assert_file_contains "$review_pr" "exactly one" "review-pr limits incomplete returns to one re-delegation"
 assert_file_contains "$review_pr" "using your harness file-write tool" "review-pr re-delegation instructs harness file-write tool"
 assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT"' "review-pr validates external output via --file mode"
 assert_file_not_contains "$review_pr" "if jq -e '.verdict'" "review-pr no longer prescribes inline if/redirection for external verdict check"
 assert_file_contains "$review_pr" 'review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]' "review-pr passes review_delegated_at as the --file freshness boundary"
-assert_file_contains "$review_pr" 'reason `incomplete`' "review-pr documents the incomplete-artifact rejection (vstack#678)"
+# The reason vocabulary belongs to the script (behaviourally covered above);
+# the workflow's obligation is to surface whatever reason it reports, with the
+# detail field that pinpoints the offending item, instead of silently passing.
+assert_file_contains "$review_pr" 'report the `reason` (and `detail` when present)' "review-pr surfaces the rejection reason and detail"
 
 # --- submit-pr.md wires the --file freshness boundary for the local review ---
 submit_pr="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 assert_file_contains "$submit_pr" 'review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]' "submit-pr passes a delegated-at boundary to the --file freshness check"
 assert_file_contains "$submit_pr" "git-context timestamp epoch" "submit-pr captures an epoch boundary before running the local review"
-assert_file_contains "$submit_pr" 'reason `incomplete`' "submit-pr documents the incomplete-artifact rejection (vstack#678)"
+assert_file_contains "$submit_pr" 'report the `reason`' "submit-pr surfaces the rejection reason"
+assert_file_contains "$submit_pr" "none of those outcomes is a pass" "submit-pr states a rejected local review is not a pass"
 
 # --- vstack#885: the rejection has to teach the schema, not just flag it ---
 # Four artifacts were rejected in one session by agents that followed the
@@ -592,7 +596,10 @@ for wf in review codebase-review qa-review; do
 done
 
 review_pr_recovery="$REPO_ROOT/skills/orch/workflows/review-pr.md"
-assert_file_contains "$review_pr_recovery" "integer 1-4" "review-pr's rejection text states the priority range"
+# The required-field list lives in the schema, so the re-delegation points the
+# reviewer there rather than restating a field list that would drift from it.
+assert_file_contains "$review_pr_recovery" "every required field of \`review-finding.md\`" \
+  "review-pr's re-delegation routes the reviewer to the schema's required fields"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

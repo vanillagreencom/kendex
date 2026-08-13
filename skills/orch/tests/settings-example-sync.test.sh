@@ -14,12 +14,13 @@ ROOT_TEMPLATE="$SCRIPT_DIR/../../../vstack.settings.toml.example"
 # REVIEW_GATE_MODE's owning skill is review-gate (its settings-example-sync
 # test pins the same key); orch lists it too because orch consumes the
 # one-switch gate disable even where the review-gate engine is not installed.
-ORCH_KEYS="PR_REVIEW_GATE REVIEW_GATE_MODE PR_REVIEW_WAIT_SECS PR_REVIEW_NUDGE_SECS PR_REVIEW_NUDGE PR_REVIEW_CHECK PR_REVIEW_ON_TIMEOUT CI_WAIT_NO_CHECKS_GRACE CI_FIX_MAX_CYCLES REVIEWER_SLOT_BUDGET PR_REVIEW_REFIX_MAX_LINES ORCH_DECISION_MODE ORCH_LANE_CLAUDE_PERMISSION_ARG ORCH_TMUX_VERIFY_SECS"
+ORCH_KEYS="PR_REVIEW_GATE REVIEW_GATE_MODE PR_REVIEW_WAIT_SECS PR_REVIEW_NUDGE_SECS PR_REVIEW_NUDGE PR_REVIEW_CHECK PR_REVIEW_ON_TIMEOUT CI_WAIT_NO_CHECKS_GRACE CI_FIX_MAX_CYCLES REVIEWER_SLOT_BUDGET ORCH_DECISION_MODE ORCH_TMUX_VERIFY_SECS"
 
-# Opt-in keys with no shipped default: templates carry a COMMENTED example
-# (nothing to merge, so no uncommented assignment), but both templates must
-# still document them so the two places users learn the options agree.
-ORCH_OPTIN_KEYS="REVIEW_RISK_COMMAND"
+# Opt-in keys with no shipped default: the skill template carries a COMMENTED
+# example (nothing to merge, so no uncommented assignment) so the option is
+# still discoverable where its skill is installed.
+ORCH_OPTIN_KEYS=""
+SKILL_ONLY_OPTIN_KEYS="ORCH_LANE_ALIASES"
 
 fail=0
 
@@ -54,6 +55,10 @@ done
 for key in $ORCH_OPTIN_KEYS; do
   check "$key commented example present in skill template" "grep -Eq \"^#[[:space:]]*$key[[:space:]]*=\" \"\$SKILL_TEMPLATE\""
   check "$key commented example present in root template" "grep -Eq \"^#[[:space:]]*$key[[:space:]]*=\" \"\$ROOT_TEMPLATE\""
+done
+
+for key in $SKILL_ONLY_OPTIN_KEYS; do
+  check "$key commented example present in skill template" "grep -Eq \"^#[[:space:]]*$key[[:space:]]*=\" \"\$SKILL_TEMPLATE\""
 done
 
 # The security caveat for name-matched evidence must travel with the key.

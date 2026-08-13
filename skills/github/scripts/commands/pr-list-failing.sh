@@ -55,23 +55,37 @@ main() {
     # Get PRs with status info
     prs=$(gh pr list --json number,title,headRefName,statusCheckRollup)
 
-    if [ "$all_prs" != true ] && [ -n "$gh_user" ]; then
+    # An unresolvable login narrows the scope to local branches only; it must
+    # not silently widen the default listing to every open PR in the repo.
+    if [ "$all_prs" != true ]; then
         local_branches=$(get_local_branch_names_json)
         prs=$(filter_prs_to_default_scope "$prs" "$gh_user" "$local_branches")
     fi
 
-    # Filter for failing PRs and enrich with failure details
+    # Filter for failing PRs and enrich with failure details.
+    # statusCheckRollup mixes two node shapes: CheckRun nodes report through
+    # .conclusion, while StatusContext nodes (classic commit statuses) have no
+    # conclusion at all and report through .state. A conclusion-only predicate
+    # therefore never sees a failing classic status. Judge each node by its own
+    # shape, and name StatusContext nodes by .context, which is where they
+    # carry their name.
     local enriched
     enriched=$(echo "$prs" | jq '
+        def is_status_context: .__typename == "StatusContext" or (has("state") and .state != null);
+        def node_failing:
+            if is_status_context then .state == "ERROR" or .state == "FAILURE"
+            else .conclusion == "FAILURE" or .conclusion == "STARTUP_FAILURE"
+            end;
+        def node_name: .name // .context // "";
         map(
-            select((.statusCheckRollup // []) | any(.conclusion == "FAILURE" or .conclusion == "STARTUP_FAILURE"))
+            select((.statusCheckRollup // []) | any(node_failing))
         ) | map({
             number,
             title,
             branch: .headRefName,
-            failed_checks: [(.statusCheckRollup // [])[] | select(.conclusion == "FAILURE" or .conclusion == "STARTUP_FAILURE") | .name],
+            failed_checks: [(.statusCheckRollup // [])[] | select(node_failing) | node_name],
             check_summary: (
-                ([(.statusCheckRollup // [])[] | select(.conclusion == "FAILURE" or .conclusion == "STARTUP_FAILURE")] | length | tostring) +
+                ([(.statusCheckRollup // [])[] | select(node_failing)] | length | tostring) +
                 "/" +
                 ((.statusCheckRollup // []) | length | tostring) +
                 " failed"

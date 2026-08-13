@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Regression: project-management scripts must stay Bash 3.2-compatible
-# (macOS system bash). Guards against Bash 4+ constructs reappearing
-# (vstack#582 follow-up — verification-scope shipped with declare -A).
+# These scripts run under macOS system bash, which is 3.2. Bash 4+ constructs
+# fail there at runtime rather than at review time, so they are linted out.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

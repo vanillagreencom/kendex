@@ -18,15 +18,14 @@ vstack_load_project_env "$PROJECT_ROOT"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
-# Permission posture rendered into claude handoff-lane launch commands
-# (vstack#1173). Handoff is launch-only autonomy — nobody is attached to
-# answer a permission prompt — so the default bypasses permission checks, the
-# claude-path peer of the codex generalist's danger-full-access sandbox. The
-# `-` (not `:-`) expansion keeps an explicitly-empty override observable so
-# the prompting-mode warning below still fires on it.
-CLAUDE_PERMISSION_ARG="${ORCH_LANE_CLAUDE_PERMISSION_ARG-"--dangerously-skip-permissions"}"
 # Bounded seconds per brief-delivery verification pass on tmux lanes.
 TMUX_VERIFY_SECS="${ORCH_TMUX_VERIFY_SECS:-15}"
+# Model, effort, and permission posture are decided per task by the caller at
+# launch time and arrive here as --launch-flags. Nothing in this script, the
+# settings file, or a handoff template pins them: a docs fix and a systems
+# rewrite do not want the same model, and a stored default silently applies
+# yesterday's answer to today's work item.
+LAUNCH_FLAGS=""
 
 TRACKER="linear"
 REPO=""
@@ -49,17 +48,22 @@ Options:
   --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
                     account with the most headroom for --harness; `auto:<h>`
-                    picks for harness <h>; any other value is used as a literal
-                    config dir. Refuses to launch when no lane is under the
-                    usage threshold, rather than launching into a wall.
+                    picks for harness <h>; a config dir is used literally; any
+                    other value is looked up as a lane alias. Refuses to launch
+                    when no lane is under the usage threshold, rather than
+                    launching into a wall.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
+  --launch-flags S  Flags for the launched harness command, chosen per task by
+                    the caller (model, effort, permission posture). Plain flag
+                    words only — the string is interpolated into a
+                    shell-executed launch command. Nothing is hardcoded here or
+                    in settings; a claude lane whose flags carry no
+                    permission-bypass warns, because handoff is unattended and
+                    a prompting mode stalls the lane at its first tool call.
 
-Claude handoff lanes launch with the permission argument from
-$ORCH_LANE_CLAUDE_PERMISSION_ARG (default: --dangerously-skip-permissions —
-handoff is launch-only autonomy, nobody is attached to answer prompts). On
-tmux lanes the brief's delivery is verified against the pane and re-sent once
-if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass, default 15,
-positive integer clamped to 120).
+On tmux lanes the brief's delivery is verified against the pane and re-sent
+once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
+default 15, positive integer clamped to 120).
 USAGE
 }
 
@@ -79,6 +83,8 @@ while [[ $# -gt 0 ]]; do
     --lane=*) LANE="${1#--lane=}"; shift ;;
     --lane-max-pct) LANE_MAX_PCT="$2"; shift 2 ;;
     --lane-max-pct=*) LANE_MAX_PCT="${1#--lane-max-pct=}"; shift ;;
+    --launch-flags) LAUNCH_FLAGS="$2"; shift 2 ;;
+    --launch-flags=*) LAUNCH_FLAGS="${1#--launch-flags=}"; shift ;;
     --help|-h) usage; exit 0 ;;
     *) ITEMS+=("$1"); shift ;;
   esac
@@ -130,24 +136,30 @@ if (( TMUX_VERIFY_SECS > 120 )); then
   TMUX_VERIFY_SECS=120
 fi
 
-if [[ "$HARNESS" == "claude" && -z "$CMD_TEMPLATE" ]]; then
-  # $CLAUDE_PERMISSION_ARG is interpolated verbatim into a shell-executed
-  # launch command (bash -lc on GUI lanes, keystrokes into the pane shell on
-  # tmux lanes) and its value comes from project [env] settings — a shell
-  # metacharacter here is arbitrary command execution at launch. Only plain
-  # flag words may pass; anything else is a config error, not a launch.
-  perm_arg_pattern='^[A-Za-z0-9._=/-]+( [A-Za-z0-9._=/-]+)*$'
-  if [[ -n "$CLAUDE_PERMISSION_ARG" && ! "$CLAUDE_PERMISSION_ARG" =~ $perm_arg_pattern ]]; then
-    echo "Error: ORCH_LANE_CLAUDE_PERMISSION_ARG='$CLAUDE_PERMISSION_ARG' contains characters outside [A-Za-z0-9._=/-] words separated by single spaces — refusing to interpolate it into a shell command." >&2
+# $LAUNCH_FLAGS is interpolated verbatim into a shell-executed launch command
+# (bash -lc on GUI lanes, keystrokes into the pane shell on tmux lanes), so a
+# shell metacharacter here is arbitrary command execution at launch. Only plain
+# flag words may pass; anything else is a caller error, not a launch. Bracketed
+# model ids (`opus[1m]`) are ordinary flag values, so brackets are allowed and
+# every shell-active character is not.
+if [[ -n "$LAUNCH_FLAGS" ]]; then
+  # `]` leads and `-` trails inside the bracket expression, the only positions
+  # where they are literal rather than range/close syntax.
+  launch_flags_pattern='^[]A-Za-z0-9._=/[-]+( []A-Za-z0-9._=/[-]+)*$'
+  if [[ ! "$LAUNCH_FLAGS" =~ $launch_flags_pattern ]]; then
+    echo "Error: --launch-flags '$LAUNCH_FLAGS' contains characters outside letters, digits, and . _ = / - [ ] words separated by single spaces — refusing to interpolate it into a shell command." >&2
     exit 1
   fi
-  # A prompting permission mode makes every launched lane stall at its first
-  # tool call with nobody attached — warn loudly, but launch: the override is
-  # the operator's explicit call (vstack#1173).
-  case "$CLAUDE_PERMISSION_ARG" in
+fi
+
+# Handoff is unattended: a claude lane whose flags carry no permission bypass
+# stalls at its first tool call with nobody there to answer. Warn loudly, but
+# launch — the flags are the caller's explicit per-task decision.
+if [[ "$HARNESS" == "claude" && -z "$CMD_TEMPLATE" ]]; then
+  case "$LAUNCH_FLAGS" in
     *dangerously-skip-permissions*|*bypassPermissions*|*dontAsk*) ;;
     *)
-      echo "WARNING: ORCH_LANE_CLAUDE_PERMISSION_ARG='$CLAUDE_PERMISSION_ARG' is a prompting permission mode — every lane will stall at its first tool call with nobody attached to answer; handoff autonomy is void." >&2
+      echo "WARNING: --launch-flags '$LAUNCH_FLAGS' carries no permission-bypass flag — every lane will stall at its first tool call with nobody attached to answer; handoff autonomy is void." >&2
       ;;
   esac
 fi
@@ -181,10 +193,21 @@ if [[ -n "$LANE" ]]; then
       fi
       ;;
     *)
-      [[ -d "$LANE" ]] || { echo "Error: --lane '$LANE' is not a directory (expected 'auto', 'auto:<harness>', or a config dir)" >&2; exit 1; }
+      lane_dir="$LANE"
+      # A value carrying a `/` is meant as a path, so a miss there is a typo,
+      # not an alias. A bare word is resolved as a lane alias — the discovered
+      # name, or whatever ORCH_LANE_ALIASES renamed it to — through the same
+      # inventory `pick` measures, so aliases need no second source of truth.
+      if [[ "$lane_dir" == */* ]]; then
+        [[ -d "$lane_dir" ]] || { echo "Error: --lane '$LANE' is not a directory (expected 'auto', 'auto:<harness>', a config dir, or a lane alias)" >&2; exit 1; }
+      elif [[ ! -d "$lane_dir" ]]; then
+        [[ -x "$LANES_CLI" ]] || { echo "Error: lanes helper not found at $LANES_CLI" >&2; exit 1; }
+        lane_dir="$("$LANES_CLI" list --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')"
+        [[ -n "$lane_dir" ]] || { echo "Error: --lane '$LANE' is neither a directory nor a known lane alias (see: lanes list)" >&2; exit 1; }
+      fi
       case "$HARNESS" in
-        codex) LANE_ENV="CODEX_HOME=$LANE" ;;
-        *)     LANE_ENV="CLAUDE_CONFIG_DIR=$LANE" ;;
+        codex) LANE_ENV="CODEX_HOME=$lane_dir" ;;
+        *)     LANE_ENV="CLAUDE_CONFIG_DIR=$lane_dir" ;;
       esac
       ;;
   esac
@@ -213,15 +236,18 @@ start_cmd() {
   # wrapper) before the spawned window's shell runs it, so a `$` that has lost
   # its single quotes gets expanded there and codex launches with no prompt at
   # all (vstack#976).
+  # Trailing space only when flags are present, so an unflagged launch renders
+  # the exact command a human would type rather than a double-spaced one.
+  local flags="${LAUNCH_FLAGS:+$LAUNCH_FLAGS }"
   case "$TRACKER:$HARNESS" in
-    linear:claude)   printf "claude -n %q --model 'opus[1m]' --effort max %s '/orch start %s'\n" "$item" "$CLAUDE_PERMISSION_ARG" "$item" ;;
-    linear:codex)    printf "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$item" ;;
-    linear:opencode) printf "opencode --prompt '/orch start %s'\n" "$item" ;;
-    linear:pi)       printf "pi '/skill:orch start %s'\n" "$item" ;;
-    github:claude)   printf "claude -n github-%q --model 'opus[1m]' --effort max %s '/orch start github %s#%s'\n" "$item" "$CLAUDE_PERMISSION_ARG" "$repo" "$item" ;;
-    github:codex)    printf "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$repo" "$item" ;;
-    github:opencode) printf "opencode --prompt '/orch start github %s#%s'\n" "$repo" "$item" ;;
-    github:pi)       printf "pi '/skill:orch start github %s#%s'\n" "$repo" "$item" ;;
+    linear:claude)   printf "claude -n %q %s'/orch start %s'\n" "$item" "$flags" "$item" ;;
+    linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
+    linear:opencode) printf "opencode %s--prompt '/orch start %s'\n" "$flags" "$item" ;;
+    linear:pi)       printf "pi %s'/skill:orch start %s'\n" "$flags" "$item" ;;
+    github:claude)   printf "claude -n github-%q %s'/orch start github %s#%s'\n" "$item" "$flags" "$repo" "$item" ;;
+    github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
+    github:opencode) printf "opencode %s--prompt '/orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
+    github:pi)       printf "pi %s'/skill:orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
     *) echo "Error: unsupported harness: $HARNESS" >&2; exit 1 ;;
   esac
 }

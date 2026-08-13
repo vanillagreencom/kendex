@@ -1,10 +1,6 @@
 # Audit Issues Input Schema
 
-Input file for issue audit workflows — transforms review agent findings into tracked issues.
-
-**Location**: `[worktree-path]/tmp/audit-{source}-YYYYMMDD-HHMMSS.json`
-
-## Schema
+Input file for `audit-issues --issues`, written by the caller at `[worktree-path]/tmp/audit-{source}-YYYYMMDD-HHMMSS.json`.
 
 ```json
 {
@@ -19,9 +15,7 @@ Input file for issue audit workflows — transforms review agent findings into t
     "mode": "decompose-under-parent",
     "parent_issue": "PROJ-456",
     "child_indexes": [1, 2],
-    "sequencing": [
-      {"blocker": 1, "blocked": 2, "reason": "core types before consumers"}
-    ]
+    "sequencing": [{"blocker": 1, "blocked": 2, "reason": "core types before consumers"}]
   },
   "items": [
     {
@@ -45,111 +39,75 @@ Input file for issue audit workflows — transforms review agent findings into t
 }
 ```
 
-## Field Definitions
+## Fields
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `source` | Yes | Caller workflow name |
-| `parent_issue` | Yes | Issue being worked on (hierarchy hint) |
+| `source` | Yes | Calling workflow name |
+| `parent_issue` | Yes | The issue being worked on — a hierarchy hint |
 | `tracker` | No | Execution tracker context — see § Tracker |
-| `worktree` | Yes | Path to worktree for code analysis |
-| `blocked_issues` | No | Issue IDs blocked by research |
-| `research_ref` | No | Path to research findings |
-| `decision_ref` | No | Decision document reference |
-| `hierarchy_contract` | No | Binding decomposition directive — see § Hierarchy Contract. Required when research-complete decomposes a single blocked issue into per-domain sub-issues (research-complete § 6.5). |
-| `items[]` | Yes | Array of items to audit |
+| `worktree` | Yes | Worktree path for code analysis |
+| `blocked_issues` | No | Issue IDs the research unblocks |
+| `research_ref`, `decision_ref` | No | Findings path and decision reference |
+| `hierarchy_contract` | No | Binding decomposition directive — see § Hierarchy Contract |
+| `items[]` | Yes | Items to audit |
 
 ### Item Fields
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `index` | Yes | Sequential number (1-based) |
-| `title` | Yes | Concise issue title from review agent |
-| `location` | Yes | File path — no line numbers (use function/struct names) |
-| `description` | Yes | 2-3 sentences: what, why, impact. Becomes issue body. |
-| `recommendation` | Yes | Bullet-list requirements. Becomes requirements section. |
+| `index` | Yes | Sequential, 1-based |
+| `title` | Yes | Concise title |
+| `location` | Yes | File path — **never line numbers**; name the function or struct |
+| `description` | Yes | 2-3 sentences: what, why, impact. Becomes the issue body |
+| `recommendation` | Yes | Bullet-list requirements. Becomes the requirements section |
 | `priority` | Yes | 1-4 |
 | `estimate` | Yes | 1-5 points |
-| `labels` | No for legacy callers; required before create | Full issue-label set. Callers/workflows must complete and validate this against live issue-label inventory + project taxonomy before issue creation. |
-| `category` | Yes | Always `issue` (fix items don't reach audit) |
-| `found_by` | Yes | Agent that identified the item |
-| `origin` | Yes | `suggestion`, `escalated` (blockers dev couldn't fix), `skipped` (items dev deliberately skipped, e.g. low-priority residue), `planned`, or `discovered` |
-| `blocks_items` | No | Indexes of items in this batch that this item blocks |
-| `blocked_by_items` | No | Indexes of items that block this item |
-| `blocks_issues` | No | Existing issue IDs this item blocks |
-| `blocked_by_issues` | No | Existing issue IDs that block this item |
+| `labels` | Before create | Full issue-label set, validated against live inventory and project taxonomy before creation |
+| `category` | Yes | Always `issue` — fix items never reach the audit |
+| `found_by` | Yes | Agent that identified it |
+| `origin` | Yes | `suggestion`, `escalated` (blockers dev could not fix), `skipped` (items dev deliberately skipped), `planned`, or `discovered` |
+| `blocks_items` / `blocked_by_items` | No | Indexes of other items in this batch |
+| `blocks_issues` / `blocked_by_issues` | No | Existing issue IDs |
 
 ## Tracker
 
-`tracker` fixes the execution tracker for the whole audit: every inventory preflight, TPM context fetch, and approved mutation routes through it (audit-issues § 1.2, § 7). Callers that already resolved a tracker (e.g. orch `TRACKER`) must set it.
+`tracker` fixes the execution tracker for the whole audit: every inventory preflight, TPM fetch, and approved mutation routes through it. A caller that already resolved one must set it.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `type` | Yes (when block present) | `linear` or `github`. |
-| `repository` | github only | `owner/repo` the issues live in. |
+| `type` | Yes when the block is present | `linear` or `github` |
+| `repository` | github only | `owner/repo` |
 
-When the block is absent, audit-issues infers the tracker from `parent_issue`: an `issue-N` form ID → `github` (repository resolved via `gh repo view` in the worktree); otherwise `linear`. GitHub mode must not require Linear sync, session status, project inventory, or Linear mutation commands.
+Without the block, audit-issues infers the tracker from `parent_issue`: an `issue-N` form ID means `github` (repository resolved with `gh repo view` in the worktree), otherwise `linear`. GitHub mode must not require Linear sync, session status, project inventory, or Linear mutation commands.
 
 ## Hierarchy Contract
 
-`hierarchy_contract` is a **binding directive, not a hint**. In
-`decompose-under-parent` mode, `parent_issue` is normally the blocked
-implementation issue itself — the same identifier appears in `blocked_issues`,
-as in the example above — because research-complete § 6.5 converts that blocked
-issue into the coordination-only parent of the new domain children. `parent_issue` and `blocked_issues` alone are hints the TPM may override with per-item analysis; when `hierarchy_contract` is present, placement for the covered items is fixed by the producer, and the TPM's ordinary duplicate/hierarchy inference is bypassed for those items (tpm-audit.md § 7.0 and § 10.2).
+`hierarchy_contract` is a **binding directive, not a hint**. `parent_issue` and `blocked_issues` alone are hints the TPM may override with per-item analysis; when this block is present, placement for the covered items is fixed by the producer and the TPM's duplicate and hierarchy inference is bypassed for them.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `mode` | Yes | Only `"decompose-under-parent"` is defined. |
-| `parent_issue` | Yes | The blocked implementation issue that becomes the coordination-only parent. Never a research issue. |
-| `child_indexes` | Yes | `items[].index` values covered by the contract — one per domain sub-issue. Items not listed (e.g. `origin: "discovered"` refactors) are audited normally. |
-| `sequencing` | No | `{blocker, blocked, reason}` entries between covered items (by `index`). Emitted as `blocks` relations between the created children. |
+| `mode` | Yes | Only `"decompose-under-parent"` is defined |
+| `parent_issue` | Yes | The blocked implementation issue that becomes the coordination-only parent. Never a research issue |
+| `child_indexes` | Yes | The `items[].index` values covered — one per domain sub-issue. Unlisted items (`origin: "discovered"` refactors) are audited normally |
+| `sequencing` | No | `{blocker, blocked, reason}` between covered items, by index. Emitted as `blocks` relations between the created children |
 
-**`decompose-under-parent` semantics** — for every item whose `index` is in `child_indexes`:
+In `decompose-under-parent` mode, `parent_issue` is normally the blocked implementation issue itself — the same identifier appears in `blocked_issues` — because the producer converts it into the coordination-only parent of the new domain children. For every item in `child_indexes`:
 
 - MUST be created as a sub-issue of `hierarchy_contract.parent_issue`, in the parent's project: `action: "create"` with `hierarchy: {"action": "make_child", "parent": [hierarchy_contract.parent_issue]}`.
-- MUST NOT be resolved to `skip`, `update`, `expand`, or `combine` by duplicate/overlap analysis. If an existing issue (including `parent_issue` itself) already carries scope belonging to a covered item, that scope moves into the new domain child — record it via the child's `supersedes[]` (full coverage) or a `related` relation (partial overlap), never by updating the existing issue in place of the child create.
-- `parent_issue` is converted to a coordination-only parent by the producer (research-complete § 6.6) — it must not be treated as one domain's implementation leaf nor recommended as an `update`/`expand` target for covered-item scope.
+- MUST NOT be resolved to `skip`, `update`, `expand`, or `combine` by duplicate or overlap analysis. When an existing issue — including `parent_issue` — already carries scope belonging to a covered item, that scope moves into the new domain child via the child's `supersedes[]` (full coverage) or a `related` relation (partial overlap), never by updating the existing issue in place of the child create.
+- `parent_issue` is coordination-only. It is never one domain's implementation leaf, and never an `update`/`expand` target for covered scope.
 
-## Building from Review Agent JSONs
+## Building from Review Findings
 
-Set top-level `tracker` from the caller's resolved `TRACKER` (plus `repository` for GitHub items) so the audit executes through the correct tracker — review-pr § 9 and review-pr-comments § 6.2 pass it through.
+Set top-level `tracker` from the caller's resolved tracker (plus `repository` for GitHub) so the audit executes through the right one.
 
-### Suggestions (category=issue)
+**Suggestions** (`category=issue`) map field for field: `title`, `location`, `description`, `recommendation`, `priority`, `estimate`, and `labels` when provided (otherwise completed through the taxonomy before create). `found_by` is the reporting agent; `origin` is `"suggestion"`.
 
-```
-suggestions[].title → title
-suggestions[].location → location
-suggestions[].description → description
-suggestions[].recommendation → recommendation
-suggestions[].priority → priority
-suggestions[].estimate → estimate
-suggestions[].labels → labels[] when provided; otherwise complete through project taxonomy before create
-category: "issue"
-found_by: agent (from parent JSON)
-origin: "suggestion"
-```
+**Escalated and skipped items** from the orchestrator's workflow state use the same mapping, with the entry's `outcome` field deciding the origin: outcome "blocked" (or no outcome field — legacy state) → origin: "escalated"; outcome "skipped" → origin: "skipped".
 
-### Escalated and Skipped Items
+**Discovered work** from dev completion summaries maps the bullet text to `title` and `description`, `estimate: N` to `estimate` (default 2), and infers `priority` from the type (bug 2, tech-debt 3, enhancement 4) and `labels` from the taxonomy and source context. Set `origin: "discovered"`.
 
-From orch workflow-state `escalated_items` — the entry's `outcome` field decides the origin:
+**Drop handoff markers first.** A Discovered Work bullet matching `^-\s+(handoff_to_submit_pr|handoff_to_merge_pr|current_workflow_action):\s` belongs to a later step of the current PR workflow, not to the backlog. The orchestrator filters these before building the audit input; never map one into an item.
 
-```
-Same field mapping as suggestions
-outcome "blocked" (or no outcome field — legacy state) → origin: "escalated"   # blockers dev couldn't fix
-outcome "skipped" → origin: "skipped"                                          # items dev deliberately skipped (e.g. low-priority residue)
-```
-
-### Discovered Work
-
-From dev agent completion summaries:
-
-```
-bullet text → title + description
-estimate: N → estimate (default 2 if absent)
-priority: infer from type (bug=2, tech-debt=3, enhancement=4)
-labels: infer from project taxonomy + source context before create
-origin: "discovered"
-```
-
-**Skip handoff markers first.** Before mapping a Discovered Work bullet into an audit item, drop any bullet whose text matches `^-\s+(handoff_to_submit_pr|handoff_to_merge_pr|current_workflow_action):\s` — those bullets are owned by a later step of the current PR workflow (submit-pr / merge-pr / review-pr), not by the backlog. The canonical marker-first bullet form is documented in `dev/workflows/dev-implement.md` § 9, and the filter itself runs in `orch/workflows/review-pr.md` § 9 step 2.
+Every item still faces the creation bar in `tpm-audit.md` § 10.1 — an entry in this file is a candidate, not a decision to file.

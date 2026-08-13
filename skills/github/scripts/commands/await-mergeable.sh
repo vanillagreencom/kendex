@@ -57,10 +57,18 @@ main() {
     while [ $# -gt 0 ]; do
         case "$1" in
         --interval)
+            if ! [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+                echo "Error: --interval requires a non-negative integer" >&2
+                exit 1
+            fi
             interval="$2"
             shift 2
             ;;
         --max-iter)
+            if ! [[ "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Error: --max-iter requires a positive integer" >&2
+                exit 1
+            fi
             max_iter="$2"
             shift 2
             ;;
@@ -96,10 +104,15 @@ main() {
 
     local i=0
     local view state msstatus mergeable
+    local fetch_failures=0 last_fetch_error=""
     while [ "$i" -lt "$max_iter" ]; do
         i=$((i + 1))
 
-        view=$(gh pr view "$pr_num" --json state,mergeStateStatus,mergeable 2>/dev/null || echo '{}')
+        if ! view=$(gh pr view "$pr_num" --json state,mergeStateStatus,mergeable 2>&1); then
+            fetch_failures=$((fetch_failures + 1))
+            last_fetch_error=$(printf '%s' "$view" | tr '\n' ' ' | head -c 200)
+            view='{}'
+        fi
         state=$(echo "$view" | jq -r '.state // "UNKNOWN"')
         msstatus=$(echo "$view" | jq -r '.mergeStateStatus // "UNKNOWN"')
         mergeable=$(echo "$view" | jq -r '.mergeable // "UNKNOWN"')
@@ -136,6 +149,11 @@ main() {
 
     echo "Error: timed out after $max_iter iterations × ${interval}s waiting for PR #$pr_num to resolve" >&2
     echo "  last seen: state=$state mergeStateStatus=$msstatus mergeable=$mergeable" >&2
+    # A timeout spent entirely on failed reads is an API problem, not a slow
+    # merge-state computation; say which one the operator is looking at.
+    if [ "$fetch_failures" -gt 0 ]; then
+        echo "  $fetch_failures of $max_iter polls failed to read the PR; last error: $last_fetch_error" >&2
+    fi
     exit 124
 }
 

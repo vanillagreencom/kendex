@@ -1,136 +1,34 @@
-# Dependency Management Reference
+# Dependencies Reference
 
-## Core Rules
+## Blocking Relations
 
-### Issue Blocking
+A `blocks`/`blocked-by` relation records a real dependency between two issues. Record it directly whatever projects the two issues sit in — a dependency is a property of the work, not of how the work is filed. Use `related` only for an informational link with no dependency.
 
-**Issue blocking relations (`blocks`/`blocked-by`) record a real dependency between two issues, whatever projects they sit in.**
+**Never derive a project relation from issue relations.** Project `blocked-by` comes from project-order scope analysis (`tpm-audit` project-order mode), not bottom-up from one or two issue crossings.
 
-| Scenario | Correct Approach |
-|----------|------------------|
-| Issue A blocks Issue B | Issue relation: `--blocked-by` |
-| Whole project must finish before another starts | **Project** relation: Project 2 blocked-by Project 1 |
+| Scenario | Record as |
+|----------|-----------|
+| Issue A must finish before issue B | Issue relation `A blocks B` |
+| A whole project must finish before another starts | Project relation `B blocked-by A` |
+| Blocked by something outside the tracker (vendor, license, approval) | `blocked` label + a comment naming the blocker |
 
-1. Use `related` only for informational links where no blocking dependency exists.
-2. **Never infer project-level dependencies from individual issue relations.** Project deps come from project-order scope analysis (TPM audit), not bottom-up — which can create misleading or circular project dependencies.
+### Level
 
-### Same-Project Parent-Child
+A parent with children is a **container**: cross-bundle dependencies go on the parents, and dependent children are sequenced by sibling child-blocks-child relations within one parent. A relation between an ancestor and its own descendant is never valid — a child blocking its parent is meaningless (the container closes last anyway) and a parent blocking its child deadlocks every child in the bundle.
 
-**Sub-issues must be in the same project as their parent.**
+When an audit finds a relation at the wrong level, **lift it, never delete it**: add the parent-level relation, remove the child-level one, and add `related` between the original children so the reasoning survives. A blocking relation is evidence about the work; fix the structure it hangs on.
 
-| Scenario | Correct Approach |
-|----------|------------------|
-| Child belongs in parent's project | Normal: `--parent [ISSUE_ID]` |
-| Child belongs in a different project | Detach (`--remove-parent`), move to correct project as standalone or re-parent in that project |
-
-**Why**: Children in different projects break project-level tracking and make parents appear incomplete.
-
-**When audit finds a cross-project parent-child**: Detach child, then either move it to parent's project or keep standalone with `related` link.
-
-### Blocking Level Rule
-
-**Blocking relations go on bundle parents, not children.** A child issue must not block (or be blocked by) any issue outside its own parent bundle.
-
-| Scenario | Correct Approach |
-|----------|------------------|
-| Child A (parent P1) should block Child B (parent P2) | P1 blocks P2; A `related` B |
-| Child A (parent P1) should block Standalone B | P1 blocks B; A `related` B |
-| Standalone A should block Child B (parent P2) | A blocks P2; A `related` B |
-| Child A blocks sibling Child B (same parent) | Valid — intra-bundle dependency |
-
-### Remediation During Audit
-
-Blocking relations are valuable — always preserve them by fixing the structural issue, not removing the relation.
-
-| Violation | Fix |
-|-----------|-----|
-| Cross-bundle child A→B | Remove child relation, add parent-level blocking, `related` on children. |
-| Child→standalone A→B | Remove child relation, add parent blocks standalone, `related` on children. |
-
-## Issue Dependencies vs Blocked Label
-
-| Scenario | Use |
-|----------|-----|
-| Issue A blocked by Issue B | Issue relation: `--blocked-by` |
-| Blocked by external factor (vendor, license, approval) | `blocked` label + comment |
-
-## Issue Relations
-
-See issue tracker CLI skill for commands (`issues add-relation`, `issues list-relations`).
-
-### Relation Types
-
-| Type | Meaning |
-|------|---------|
-| `blocks` | This issue blocks another from proceeding |
-| `blocked-by` | Cannot proceed until another completes |
-| `related` | Informational link, no blocking |
-| `duplicate` | Issues are duplicates (for merging) |
+The Linear CLI rejects malformed relations at mutation time (peers of one bundle only, no ancestor/descendant edges), so a workflow states the design rule and lets the CLI enforce the shape.
 
 ### Completed Blockers Are Satisfied History
 
-A blocking relation pointing at a **Done or Canceled** issue is auto-satisfied — the tracker itself treats the dependent issue as unblocked the moment the blocker completes. The relation is satisfied history, not stale metadata:
+A blocking relation pointing at a Done or Canceled issue is **auto-satisfied**: the tracker already treats the dependent issue as unblocked, and the relation stays as provenance for why the work was sequenced.
 
-- **Keep the relation.** It stays for provenance and traceability of why work was sequenced. Never remove or "fix" a relation because its blocker is Done/Canceled.
-- **Audits must never classify completed-blocker relations as stale metadata.** The only legitimate audit output for them is a scheduling signal: "gates cleared, ready to schedule."
+- Never remove or "fix" a relation because its blocker is Done/Canceled, and never list one under a stale-metadata heading. That framing invites destructive cleanup of valid history.
+- The only legitimate finding for an active issue whose blockers have all completed is a scheduling signal: `ready_to_schedule[]` (project mode) or "gates cleared, ready to schedule" in the issue's `reason` (issue mode).
 
-**Why**: during a backlog staleness audit, an audit agent produced a "STALE blocked_by METADATA" section listing issues whose blockers were Done, framing the relations themselves as defects needing cleanup. That framing invites destructive removal of valid history; the correct read was that those issues were simply ready to schedule.
+## Parent-Child Placement
 
-### Quick Reference
+**A sub-issue must be in the same project as its parent.** Children in another project break project-level progress tracking and leave the parent permanently incomplete.
 
-```bash
-# This issue blocks another
-.agents/skills/linear/scripts/linear.sh issues add-relation [ISSUE_ID] --blocks [OTHER_ISSUE_ID]
-
-# This issue is blocked by another
-.agents/skills/linear/scripts/linear.sh issues add-relation [ISSUE_ID] --blocked-by [BLOCKER_ID]
-
-# View all relations
-.agents/skills/linear/scripts/linear.sh cache issues list-relations [ISSUE_ID]
-```
-
-## Project Dependencies
-
-Use when one project must complete before another can start.
-
-```bash
-# This project depends on another
-.agents/skills/linear/scripts/linear.sh projects add-dependency [PROJECT_ID] --blocked-by [OTHER_PROJECT_ID]
-
-# View dependencies
-.agents/skills/linear/scripts/linear.sh cache projects list-dependencies [PROJECT_ID]
-```
-
-**Visualization**: In issue tracker timeline view:
-- **Blue line**: Dependency satisfied (blocker finishes before blocked starts)
-- **Red line**: Dependency violated (blocked starts before blocker ends)
-
-## Integration with Workflows
-
-### Cycle Planning
-
-When pulling issues:
-1. Query blocked issues: `.agents/skills/linear/scripts/linear.sh cache issues list --label "blocked" --max`
-2. Check issue relations: `.agents/skills/linear/scripts/linear.sh cache issues list-relations [ISSUE_ID]`
-3. Score higher on Dependencies factor for issues that block many others
-
-### Roadmap Review
-
-1. Check project dependencies: `.agents/skills/linear/scripts/linear.sh cache projects list-dependencies [PROJECT_ID]`
-2. Look for violated dependencies (red lines in timeline)
-3. Adjust project dates or priorities accordingly
-
-## Workflow Checklist
-
-### Adding a Blocker
-
-1. Identify what's blocking
-2. **If tracked issue**: `.agents/skills/linear/scripts/linear.sh issues add-relation [ISSUE_ID] --blocked-by [BLOCKER_ID]`
-3. **If external**: Add `blocked` label + comment explaining blocker
-4. Update issue state if needed
-
-### Resolving a Blocker
-
-1. Complete the blocking issue (the block auto-clears; the relation itself stays as satisfied history — do not remove it)
-2. **If external**: Remove `blocked` label + add resolution comment
-3. Move blocked issue back to active state
+When an audit finds a cross-project parent-child: detach the child (`--remove-parent`), then either move it into the parent's project or leave it standalone with a `blocks`/`related` relation. Do not relocate an issue merely to record a dependency — dependencies cross projects freely.

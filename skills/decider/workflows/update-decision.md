@@ -1,83 +1,32 @@
-# Update Decision Workflow
+# Update Decision
 
-Update the status or content of existing decision entries — supersession, partial supersession, or revisitation.
+Change an existing decision's standing when a newer one displaces it or conditions force a re-assessment.
 
-## Inputs
+| Update | When | Status becomes |
+|--------|------|----------------|
+| Supersede | The new decision fully replaces this one | `Superseded by [NEW_DECISION_ID]` |
+| Partially supersede | The new decision replaces specific components | `Active ([COMPONENTS] → [NEW_DECISION_ID])` |
+| Revisit | Conditions changed and the decision was re-assessed | `Revisited` |
 
-| Input | Source | Required |
-|-------|--------|----------|
-| `decision_id` | Caller (decision ID to update) | Yes |
-| `update_type` | Caller | Yes |
-| `new_decision_id` | Caller (for supersession) | Conditional |
-| `components` | Caller (for partial supersession) | Conditional |
-| `revisit_outcome` | Caller (for revisitation) | Conditional |
+## 1. Decision file
 
----
+Set `**Status**:` to the value above. For a revisit, append the outcome:
 
-## 1. Determine Update Type
+```markdown
+## Revisit Outcome ([DATE])
 
-| Type | When | Status Change |
-|------|------|---------------|
-| `supersede` | New decision fully replaces this one | `Superseded by [NEW_DECISION_ID]` |
-| `partial_supersede` | New decision replaces specific components | `Active ([COMPONENTS] → [NEW_DECISION_ID])` |
-| `revisit` | Conditions changed, decision re-assessed | `Revisited` (append outcome) |
+[REVISIT_OUTCOME]
+```
 
----
+## 2. INDEX row
 
-## 2. Update Decision File
+Set the Status column of that decision's row to the same value — the file and the index must not disagree.
 
-1. **Read** `[project decision documents]/[DECISION_ID]-[DESCRIPTOR].md`
+## 3. Code markers
 
-2. **Update status line**:
+Skip for a revisit that leaves the decision valid. Otherwise repoint `REVISIT([DECISION_ID])` comments at the new ID; for a partial supersession, only those covering the superseded components.
 
-   **Full supersession:**
-   ```markdown
-   **Status**: Superseded by [NEW_DECISION_ID]
-   ```
-
-   **Partial supersession:**
-   ```markdown
-   **Status**: Active ([COMPONENTS] → [NEW_DECISION_ID])
-   ```
-
-   **Revisitation:**
-   ```markdown
-   **Status**: Revisited
-   ```
-   Append revisit outcome to end of file:
-   ```markdown
-   ## Revisit Outcome ([DATE])
-   [REVISIT_OUTCOME]
-   ```
-
----
-
-## 3. Update INDEX.md
-
-1. **Read** `[project decision documents]/INDEX.md`
-
-2. **Find row** for `[DECISION_ID]`
-
-3. **Update Status column** with same value as § 2
-
----
-
-## 4. Update Code References
-
-**Skip if** `update_type` is `revisit` and decision remains valid.
-
-For `supersede` or `partial_supersede`:
-
-1. **Search** codebase for `REVISIT([DECISION_ID])` comments
-2. **Update** to reference new decision ID:
-   ```
-   // REVISIT([NEW_DECISION_ID]): [updated reason]
-   ```
-3. **For partial supersession**: Only update comments related to the superseded components
-
----
-
-## 5. Return
+## 4. Return
 
 ```
 Updated: [DECISION_ID] → [STATUS]
