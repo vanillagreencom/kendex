@@ -14,6 +14,8 @@
 #   CC-801 (non-object issue; fail-closed fixture)
 #   CC-802 (empty parent ID; fail-closed fixture)
 #   CC-830, CC-831 (same-parent P-A-P-A-P cycle; fail-closed fixture)
+#   CC-870..CC-873 (top-level pairs spanning two projects, and a project
+#                   paired with none)
 
 set -euo pipefail
 
@@ -24,6 +26,11 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
+
+# Project identities for the CC-870..CC-873 fixtures. Exported so the curl
+# stub reads the same values the control below asserts on.
+export FIXTURE_PROJECT_A="proj-alpha"
+export FIXTURE_PROJECT_B="proj-beta"
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -52,6 +59,10 @@ issue_node() {
   uuid-801) printf '[]' ;;
   uuid-802) printf '%s' '{"id":"uuid-802","identifier":"CC-802","parent":{"id":"","identifier":"CC-761","parent":null}}' ;;
   uuid-830 | uuid-831) printf '{"id":"%s","identifier":"CC-%s","parent":%s}' "$1" "${1#uuid-}" "$cycle_parent" ;;
+  uuid-870) printf '{"id":"uuid-870","identifier":"CC-870","project":{"id":"%s","name":"Alpha"},"parent":null}' "${FIXTURE_PROJECT_A:?}" ;;
+  uuid-871) printf '{"id":"uuid-871","identifier":"CC-871","project":{"id":"%s","name":"Beta"},"parent":null}' "${FIXTURE_PROJECT_B:?}" ;;
+  uuid-872) printf '{"id":"uuid-872","identifier":"CC-872","project":{"id":"%s","name":"Alpha"},"parent":null}' "${FIXTURE_PROJECT_A:?}" ;;
+  uuid-873) printf '%s' '{"id":"uuid-873","identifier":"CC-873","project":null,"parent":null}' ;;
   *) printf 'null' ;;
   esac
 }
@@ -260,5 +271,21 @@ accept "siblings (CC-763 --blocks CC-764)" CC-763 --blocks CC-764
 accept "leaf siblings (CC-766 --blocks CC-768)" CC-766 --blocks CC-768
 accept "top-level (CC-761 --blocks CC-780)" CC-761 --blocks CC-780
 accept "blocked-by siblings (CC-764 --blocked-by CC-763)" CC-764 --blocked-by CC-763
+
+# --- (e) a bundle peer pair may span projects ---
+# Control first: the cases below only exercise a project boundary if the
+# fixtures sit on opposite sides of one. Assert that before trusting them —
+# if the fixtures ever collapse onto one project, fail here rather than
+# reporting a vacuous pass.
+if [ -z "${FIXTURE_PROJECT_A:-}" ] || [ "$FIXTURE_PROJECT_A" = "${FIXTURE_PROJECT_B:-}" ]; then
+  echo "FAIL project-spanning control: CC-870 and CC-871 must carry distinct projects"
+  printf 'A=%s B=%s\n' "${FIXTURE_PROJECT_A:-}" "${FIXTURE_PROJECT_B:-}"
+  exit 1
+fi
+
+accept "top-level across two projects" CC-870 --blocks CC-871
+accept "top-level across two projects (blocked-by)" CC-871 --blocked-by CC-870
+accept "top-level, one project and one without" CC-872 --blocks CC-873
+accept "top-level, one project and one without (blocked-by)" CC-873 --blocked-by CC-872
 
 echo "all pass"
