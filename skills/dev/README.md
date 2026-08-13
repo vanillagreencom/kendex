@@ -1,15 +1,21 @@
 # Dev Workflows
 
-Agent workflows for issue implementation and review fix processing, for specialist agents receiving delegations from an orchestrator.
-
-## Workflows
+The implementer's half of an orchestrated cycle. A specialist agent loads this skill when the orchestrator hands it a work item and follows one of two lifecycles from delegation to return.
 
 | Workflow | Purpose |
 |----------|---------|
-| `workflows/dev-implement.md` | Full implementation lifecycle: sync/activate → plan → implement → validate → commit → QA labels → summary → finalize (§ 1-11) |
-| `workflows/dev-fix.md` | Process review fix items: evaluate → apply/skip → validate → commit → return |
+| `workflows/dev-implement.md` | Implementation: activate → plan → implement → validate → commit → QA labels → summary → artifact → return |
+| `workflows/dev-fix.md` | Review fixes: evaluate → apply or skip → validate → commit → artifact → return |
 
-Code-review and QA-review workflows live in the reviewer skill: `skills/reviewer/workflows/review.md` and `skills/reviewer/workflows/qa-review.md`.
+## How it works
+
+The orchestrator owns the cycle; this skill owns one round of it. Both lifecycles end the same way — a completion artifact on disk, then a single message back. The artifact is what the orchestrator accepts on, so a round survives a lost return message or a test suite that outlives the agent's turn. Code review and QA review are a different role and live in the `reviewer` skill.
+
+## Setup
+
+Install with `vstack add dev`; `vstack refresh` picks up updates. It needs `orch` (the shared runtime, and the caller), `github`, and `decider` alongside it, plus `linear` for Linear-tracked work. A benchmarking skill is optional: when one is installed, `baseline`-labelled issues capture a pre-implementation baseline for the performance QA agent.
+
+Agent-type names, the commit prefix, and QA-label triggers are project-configurable — see SKILL.md § Configuration and the project's label application guide.
 
 ## Tests
 
@@ -17,17 +23,7 @@ Code-review and QA-review workflows live in the reviewer skill: `skills/reviewer
 find skills/dev/tests -type f -name '*.test.sh' -exec bash {} \;
 ```
 
-## Dependencies
-
-| Dependency | Purpose |
-|------------|---------|
-| Issue tracker CLI | Linear (`linear.sh`) or GitHub (`gh issue`) for tracker updates |
-| Reviewer skill | Code-review and QA-review ethos, workflows, and finding schema |
-| orch skill | Recommendation-bias patterns |
-| Decider skill | Decision search, templates, and creation workflow |
-| Benchmarking skill | Baseline capture (optional) |
-
-The benchmarking skill is an interface by convention; consumers implement it. The QA-review workflow (`skills/reviewer/workflows/qa-review.md` § 2.4–2.5) scripts around three things: a regression check invocable as a documented standalone command whose exit code is the signal — 1 when regressions are detected, 0 clean — and direct runner/recorder commands usable without shell pipelines, redirection, or env-prefix plumbing (manual entry, where supported, passes the component name and JSON data only via a documented direct argument or body-file option). The recorder must produce a verifiable artifact: a run that records zero results, or a recorder that fails closed on all-zero counters, is reported as a benchmark tooling failure with `benchmark_commit: "none"` — never counted as coverage.
+These are documentation lints. They pin contracts the agent relies on finding in the workflow text: the Linear cache preflight and its ordering, the required-mode QA label gate, the supported decider issue lookup, and the tmp-file route for multiline tracker comments.
 
 ## License
 

@@ -11,59 +11,50 @@ metadata:
   source: vstack
   repository: "https://github.com/vanillagreencom/vstack"
   bugs: "https://github.com/vanillagreencom/vstack/issues"
-  version: "1.2.0"
+  version: "2.0.0"
 ---
 
 # Dev Workflows
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-Dev-agent workflows for specialist agents receiving delegations from an orchestrator.
+The implementer's side of an orchestrated round: what a specialist agent does between receiving a delegation and returning. orch is both the caller and the runtime — it owns delegation format, round acceptance, and every shell-shape rule.
 
-## Workflows
+| Workflow | Purpose |
+|----------|---------|
+| `workflows/dev-implement.md` | Implementation: activate → plan → implement → validate → commit → QA labels → summary → artifact → return (§ 1-11) |
+| `workflows/dev-fix.md` | Review fixes: evaluate → apply or skip → validate → commit → artifact → return |
 
-| Workflow | Agent Type | Purpose |
-|----------|------------|---------|
-| `workflows/dev-implement.md` | Dev agents | Full implementation lifecycle: activate → plan → implement → validate → commit → QA labels → summary → finalize (§ 1-11) |
-| `workflows/dev-fix.md` | Dev agents | Process review fix items: evaluate → apply/skip → validate → commit → return |
+Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md), [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md). Command shapes, literal format tags, and round mechanics are orch's: [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell, § Format Tags Are Literal, § Round Closure.
 
-Review and QA-review workflows live in the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md) and [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md).
+## Round Contract
 
-## References
+Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR — the orchestrator does that after review passes.
 
-| Topic | Source |
-|-------|--------|
-| Review finding schema | Reviewer skill (`schemas/review-finding.md`) |
-| Review / QA-review ethos, scope boundaries, and workflows | Reviewer skill (`SKILL.md`, `workflows/review.md`, `workflows/qa-review.md`) |
-| Recommendation bias | orch skill (`workflows/recommendation-bias.md`) |
-| Label application | Project label application guide |
-| Benchmark baselines | Project benchmarking skill if installed |
-| Regression classification | Project benchmarking skill if available |
+**The completion artifact is the round.** `dev-return-write` writes it after the commit, so every field is final; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
-## Execution Rules
+- `--issue` is the delegation's `Artifact Key:` line — the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), never the tracker-native `OWNER/REPO#N` or a bare number — and `--round-id` its `Round ID:` line. The orchestrator resolves the receipt by exactly those two values; any substitute strands it.
+- `--validate` is strictly `pass` or `FAILING: check1,check2`, matching your commit message and return. A pass that needed a re-run is still `pass`: put the caveat in `--validate-note` so it lands in the durable record instead of only in a message.
+- `--kind` always matches what was delegated. An investigate-and-recommend round is `--kind analysis` — it rejects `--commit`, `--validate`, and `--item`, and carries the recommendation in `--summary` or `--summary-file`. Forcing `implement` or `fix` onto such a round asserts a validation that never ran; skipping the artifact reads as an unfinished round.
 
-- Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment.
-- `<delegation_format>` and `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
-- Keep required workflow shell commands harness-safe: use simple explicit commands, avoid shell loops, command substitution, heredocs, array-building snippets, and redirected writes to `tmp/`. Use file-write/edit tools or `apply_patch` for generated Markdown/JSON files.
-- If Codex rejects a command with `approval required by policy, but AskForApproval is set to Never`, the classifier flagged the command shape — a loop, multi-command block, `VAR=x` env prefix, `$(...)`, or redirection — not the inner commands. Do not retry that shape or wait for approval; rerun as one simple command per tool call (canonical guidance: orch skill Codex runtime notes and § Harness-Safe Shell).
-- Required commands accepted from issue specs or delegated verification lists are normalized before running: an env-assignment prefix (`VAR=value cmd args`, e.g. `LC_ALL=C tools/test-ci-changes`) becomes an ambient-environment precondition check (`printenv VAR`, or `locale` for locale variables) followed by the bare `cmd args` unchanged. `env VAR=value cmd` is not an acceptable substitute; a failed precondition is a blocker to report, not a license to run under the wrong environment. Canonical rule: orch SKILL.md § Harness-Safe Shell.
-- Never put a literal backtick in a generated search command: command-shape guards classify any backtick as command substitution and reject the command before it runs, even for a read-only audit over Markdown inline code. Write the pattern with the regex hex escape `\x60` in single quotes as one simple command — e.g. `rg -n '\x60vstack refresh\x60' skills/`, with `[\x60]` inside a bracket expression — and use regex mode, since `rg -F` has no escapes. Canonical rule: orch SKILL.md § Harness-Safe Shell.
-- If a required branch update is rejected as a policy-blocked `git rebase`, the rejection is a harness-side classification of the porcelain verb that no user authorization can lift: do not retry it, delegate it, or improvise a force-push. Use the worktree skill's guarded `create <ID> --reuse`/`--restack` path, or the single-simple-command replay in worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback); a dirty tree or merge commits in the range are blockers to report, not cases to improvise.
-- **Return requires an agent-to-agent message.** Every `**Return exactly**` step must be delivered through the harness return channel (Claude Code: `SendMessage`; Codex: `send_input`; OpenCode: resume via stored `task_id`; Pi bg: final assistant message captured by `subagent`). Disk writes do not reach the orchestrator. In Pi persistent panes, after printing the exact return body once, call `complete_subagent` with the final status/summary/files/validation; bg agents must not call `complete_subagent`. On Codex, the `send_input` `MESSAGE` is the durable return; the Codex runtime may additionally echo it as a `FINAL_ANSWER`. That echo is expected and is not a separate return — send the return exactly once via `send_input`, then go idle; do not author or expand a different final payload.
+**Acceptance is that artifact plus git state, never your message.** The orchestrator polls neither disk nor tracker, so both are required: write the artifact, then return exactly once over the harness's agent-to-agent channel — Claude Code `SendMessage`, Codex `send_input`, OpenCode a resume on the stored `task_id`, Pi background the final assistant message. A disk write is not a return. Send the `**Return exactly**` body once and go idle: in a Pi persistent pane follow it with `complete_subagent` (background agents must not call it); on Codex the `send_input` MESSAGE is the durable return and the runtime's `FINAL_ANSWER` echo of it is expected, not a separate return to author or expand.
 
-## Long-Running Validation
+## Validation
 
-A `tools/validate`-class command or full hermetic suite can outlast a single turn. **Invariant, every harness:** never let it end your turn mid-checklist silently. The completion tail — commit → QA labels → summary → `dev-return-write` artifact → return — is what the orchestrator accepts on, and the round-scoped artifact is the durable record (orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)). If a long run is cut short, re-check its real outcome (still running? exit code? log tail?) and resume the tail; never read an interruption as success, and never treat it as license to drop the round. How you wait is harness-specific — use only your own:
+Deterministic gate findings are fixed here, never carried into review. Fix what is simple and related and re-run; when a failure is complex or unrelated, commit anyway and report it; after the same failure three times, stop looping. Every unresolved failure is reported three times over — in the commit message, in `--validate`, and in your return.
 
-- **Claude Code** — the Bash tool caps at ~10 min and a turn has no wall-clock primitive, so background the BARE command with its output redirected to a log — `[VALIDATE_CMD] > [LOG] 2>&1` via `run_in_background`, never piped or chained: unpiped, the completion wake's exit code IS the command's; through any pipe it becomes the last stage's. The log's `END OF OUTPUT — exit status: N` block is the authoritative verdict either way. **End your turn** and wait for the completion wake or the orchestrator's report-only tail nudge. The wake is not reliably delivered to in-process teammate sub-agents, so it may never arrive: **idling after backgrounding is normal, not a stall** — the orchestrator's wall-clock watchdog closes the round (orch SKILL.md § Wait for Agent Return Before Acting). Do not poll for status or exit code; a poll is an instant no-op turn that advances no wall clock.
-- **Codex** — run it in the **foreground and block**: there is no ~10-min tool cap, and under `approval_policy = never` the classifier rejects poll-loop shapes anyway.
+### Long-Running Validation
+
+A full suite can outlast a turn. **Invariant, every harness:** the completion tail (commit → QA labels → summary → artifact → return) is never dropped, and an interrupted run is never success — re-check its real outcome and resume the tail. How you wait is your harness's:
+
+- **Claude Code** — the Bash tool caps at ~10 min and a turn has no wall-clock primitive, so background the BARE command with output redirected to a log via `run_in_background`, never piped or chained: unpiped, the completion wake's exit code IS the command's, and the log's `END OF OUTPUT — exit status: N` block is the authoritative verdict. Then end your turn. That wake is not reliably delivered to in-process teammate sub-agents, so **idling after backgrounding is normal, not a stall** — the orchestrator's watchdog closes the round. Never poll: a poll is an instant no-op turn that advances no wall clock.
+- **Codex** — foreground and block. There is no ~10-min tool cap, and under `approval_policy = never` the classifier rejects poll-loop shapes anyway.
 - **Pi** — pane agents block naturally in their tmux shell; run it in the foreground.
+
+## Reflect
+
+**Skip if** nothing recurred and nothing surprised you. Otherwise put the lesson where it will be read again — architecture docs when patterns, APIs, or documented behavior changed, or the managing project's vstack config (`vstack.toml` at the vstack project root, `vstack-local.toml` in a source-catalog checkout) under `[skill-instructions]`, `[agent-additional-instructions]`, or `[agent-launch-instructions]`, followed by `vstack refresh`. Bar: would this save 5+ minutes in a future session? One surgical addition per lesson, no verbose examples. What you cannot update yourself goes in your return as `[process]` discovered work.
 
 ## Configuration
 
-Agent types referenced in workflows (names are project-configurable):
-- **Dev agents**: `[AGENT_TYPE]` — specialist agents receiving implementation delegations
-- **Review agents**: `[REVIEW_AGENT]` — agents that review specific aspects (correctness, quality, security, testing, docs, errors, structure)
-- **QA agents**: `[QA_AGENT]` — agents for safety, performance, and architecture review
-
-Commit format: `[PREFIX]([ISSUE_ID]): [DESCRIPTION]` — configurable per project conventions.
+Agent-type placeholders are project-configurable: `[AGENT_TYPE]` (dev agents receiving implementation delegations), `[REVIEW_AGENT]`, `[QA_AGENT]`. Commit format: `[PREFIX]([ISSUE_ID]): [DESCRIPTION]`.
