@@ -45,11 +45,11 @@ Examples:
   github.sh pr-create --title "feat: Add feature" --body "Simple summary line"
 
   # Body from file (safe for full Markdown with backticks/code fences)
-  cat > tmp/pr-body.md <<'EOF'
+  cat > tmp/pr-body.md <<'MD'
   ## Summary
   - Added `WindowKind` enum.
   - Validation: \`cargo test\` + \`./tools/validate\`.
-  EOF
+MD
   github.sh pr-create --title "feat: Add feature" --body-file tmp/pr-body.md
 
   github.sh pr-create --draft --label needs-qa  # Draft PR with a triage label

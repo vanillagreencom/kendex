@@ -33,10 +33,10 @@ Examples:
   post-comment.sh 23 "Addressed all feedback"
 
   # Markdown with backticks/code — use --body-file
-  cat > tmp/comment.md <<'EOF'
+  cat > tmp/comment.md <<'MD'
   ## Summary
   - Fixed `WindowKind` enum.
-  EOF
+MD
   post-comment.sh 23 --body-file tmp/comment.md
 
   # Current branch's PR

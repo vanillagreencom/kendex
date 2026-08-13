@@ -349,7 +349,7 @@ Previous review cycle context (cycle [CYCLES]):
 - Do NOT re-report fixed or escalated items. Report only new issues or regressions the fixes introduced.
 </delegation_format>
 
-Omit `[OWNER/REPO]` for Linear. On return, append the artifact path to `json_paths`; when the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`. A performance QA agent's `qa_metadata.perf_qa` block is posted as an issue comment — Linear via `linear.sh comments create [ISSUE_ID] --body-file`, GitHub via `gh issue comment ${ISSUE_ID#issue-} --body-file` — written to a file first, since benchmark tables carry backticks.
+Omit `[OWNER/REPO]` when `TRACKER=linear`. On return, append the artifact path to `json_paths`; when the agent reports a `benchmark_commit` other than `none`, confirm it resolves with `git -C [WORKTREE_PATH] log -1 --oneline [SHA]`. A performance QA agent's `qa_metadata.perf_qa` block is posted as an issue comment — Linear via `linear.sh comments create [ISSUE_ID] --body-file`, GitHub via `gh issue comment ${ISSUE_ID#issue-} --body-file` — written to a file first, since benchmark tables carry backticks.
 
 A `pass` verdict continues to the next QA agent; `action_required` goes to § 7. After all QA agents complete, remaining `category == "fix"` items not already in `fixed_items` or `escalated_items` also go to § 7; otherwise → § 8.
 

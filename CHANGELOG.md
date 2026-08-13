@@ -2,6 +2,181 @@
 
 ## Unreleased
 
+- **Catalog-wide cleanup: every skill and agent reduced to contracts, commands,
+  and non-derivable domain knowledge; orch and project-management rewritten
+  from scratch.** Markdown across the touched assets drops from ~19,000 to
+  ~8,900 lines, with scripts preserved and their test coverage strengthened.
+  The principle throughout: frontier agents need contracts and deterministic
+  tooling, not technique tutorials; ordered workflow steps stay (the sequence
+  is the contract) while the padding inside them goes; a rule lives in exactly
+  one file and everything else points at it. The branch closed with a
+  five-lens review fleet (correctness, error-handling, docs, architecture,
+  tests) plus one bounded fix round; every finding below marked "found in
+  review" comes from that pass.
+
+- **orch: ground-up rewrite (v3).** The cycle — get issue → dev implements →
+  review → fix blockers → re-review → PR → review gate → merge — is stated
+  once at the top of SKILL.md and bounded by four rules: bounded review loops
+  (minor suggestions never trigger another cycle; re-review narrows to the fix
+  diff and its domains; two consecutive clean rounds end review), no edge-case
+  churn (a finding that cannot affect real usage is declined with one line —
+  neither fixed in-PR nor filed), user questions only for product or
+  experience decisions, and artifact-based acceptance. Finding disposition
+  (fix vs issue vs decline, with the filing bar) lives in
+  `references/finding-disposition.md`; project-management's creation bar is
+  the final authority for anything the audit pipeline files, and the two bars
+  were reconciled in review (a reproducible anomaly with evidence files as an
+  investigation issue whose deliverable is the diagnosis). Trivial diffs
+  (docs-only or under ten lines with no logic change) skip review by rule
+  instead of asking. md 6320 → 3589 lines.
+  - **Breaking — session-kickstart layer removed:** `session-init`,
+    `parallel-groups`, `workflows/initialize.md`, `workflows/parallel-check.md`.
+    A session picks up the issue and goes. The worktree session-guard lease
+    claim moved intact into `start-worktree.md` § 1. Consumers lose
+    session-init's Linear writes preflight and its Codex-worktree branch
+    normalization step (normalization still runs inside the orch flow).
+  - **Breaking — scripts removed:** `review-init`, `review-risk`,
+    `refix-route`, `local-review-budget`, `list-review-agents`,
+    `tracker-for-issue`, `codex-app-agent-preflight`. Settings
+    `REVIEW_RISK_COMMAND`, `PR_REVIEW_REFIX_MAX_LINES`, `ORCH_CACHE_DIR`, and
+    `ORCH_LANE_CLAUDE_PERMISSION_ARG` are retired with them.
+  - **Breaking — workflows removed:** `fix-reconcile.md` (tracker
+    reconciliation belongs to the TPM audit pipeline and `Closes` linkage),
+    `agent-sequencing.md` (→ SKILL.md § Coordination), `recommendation-bias.md`
+    (→ `references/finding-disposition.md`).
+  - **Breaking — `open-terminal` launch flags are chosen at launch time.** The
+    hardcoded `--model 'opus[1m]' --effort max` and the
+    `ORCH_LANE_CLAUDE_PERMISSION_ARG` default are gone; model, effort, and
+    permission flags arrive via `--launch-flags`, sized to the task by the
+    launching workflow, and nothing in scripts, settings, or templates
+    supplies a default. Lanes auto-populate from discovery; `ORCH_LANE_ALIASES`
+    names them and `--lane <alias>` resolves against the discovered inventory
+    (found in review: a cwd directory sharing an alias's name no longer
+    shadows it, and rendered launch tokens are quoted so a bracketed model id
+    survives the launch shell).
+  - The orch test suite is reshaped from prose pinning to contract testing:
+    a 55-assertion helper contract, a reference-integrity scan (every cited
+    orch asset must exist — its own control now runs through the real
+    extraction pipeline), a retired-asset scan (no deleted script or workflow
+    has a surviving caller), and re-pinned structural assertions for the
+    post-merge base-sync ownership contract. The lanes suite now stubs tmux
+    and proves hermeticity — a test run can no longer create real terminal
+    windows or sessions (found in review after test runs inside a live tmux
+    session launched real `CC-1` windows).
+
+- **project-management: ground-up rewrite (v3); the TPM files less and closes
+  more.** The job description changes from "decompose and file" to "file only
+  what is critical and actionable, and burn down more than you create." A
+  creation bar gates every issue: it must change what a user or operator
+  experiences (or block work that does), not already be covered, and be
+  finishable without a new investigation — a reproducible anomaly with
+  evidence in hand passes as an investigation issue whose deliverable is the
+  diagnosis. Anything else is declined with one line instead of becoming a
+  tracked placeholder. Every audit proposing creations completes its
+  cancellation sweep and reports `created N / closed M` as its headline. The
+  approval gate went from eleven multi-selects to two questions (what to
+  create, what to cancel); labels, priorities, relations, hierarchy, sort
+  order, and project moves are applied on the workflow's own authority and
+  reported. The velocity-adjustment, domain-confirmation, manual
+  project-placement, and commit-the-findings prompts are gone. md 6452 → 2700
+  lines.
+  - **Breaking:** `workflows/tpm-audit-project-order.md` merged into
+    `workflows/tpm-audit.md` as a mode; `schemas/audit-project-order-output.md`
+    merged into `schemas/audit-output.md`; `references/issues.md`,
+    `references/initiatives-projects.md`, and `references/prioritization.md`
+    removed (their few real constraints relocated to the templates and
+    roadmap-create); roadmap-create's legacy markdown-parsing fallback removed
+    — the plan JSON is the contract. A new `disposition-contract` test fails
+    if any parallelism-ceremony reference returns.
+
+- **dev: reduced to the implementer's contract (v2).** The skill carried four
+  copies of orch's harness-shell rules and two copies each of the
+  completion-artifact semantics, validation-failure ladder, and reflect rule;
+  each now has one home (harness rules point at orch; the artifact,
+  validation, and reflect contracts live in dev SKILL.md, each workflow
+  keeping only its kind-specific commands). The container-classification
+  essay collapsed to the three single-PR opt-in markers and the
+  stop-and-report rule. 825 → 500 lines; all four dev contract tests pass
+  byte-identical to the previous revision.
+
+- **linear: fourteen defect fixes, no functional loss (v1.1).** Led by three
+  that silently corrupted state: a transient label-lookup failure no longer
+  wipes an issue's entire label set; a corrupt cache file now fails loudly
+  naming the file instead of answering "no issues" to every query; and
+  `projects list --limit` no longer feeds unvalidated input to shell
+  arithmetic (a command-execution vector). Also fixed: `--with-relations`
+  eating the next flag, multi `--label` filters matching nothing,
+  `--cycle current` returning empty on resolver failure, empty titles from
+  `echo -n` values, unknown `--assignee` silently dropped, write actions with
+  an empty identifier exiting 0, `add-relation` rejections exiting 0,
+  block/unblock label-set logic, and `create --labels` dropping labels on
+  lookup failure. GraphQL payloads are jq-bound throughout; the undeclared
+  `bc` dependency is gone. Found in review and fixed in the same pass: an
+  `echo -n`→`printf` conversion slip that would have wrapped every
+  label/milestone/project-label name in literal quotes (13 sites, caught
+  before merge), `cache issues relations` reading stdin instead of the cache
+  file, `bulk-update` folding warnings into the JSON it parses (a committed
+  update reported as failed), unknown `--format` values silently served as
+  safe output, and fractional `--estimate` values refused on create. Parity:
+  zero subcommand diffs against the previous revision; 42 test files.
+
+- **github: fail-open elimination and hardening (v2).** `git-diff-summary` on
+  a bad base ref no longer reports a trivial no-risk change with exit 0;
+  `ci-logs` no longer returns a fetch failure as the log text; the PR list
+  commands no longer widen to every open PR when the GitHub login cannot be
+  resolved, and now see failing classic commit statuses; `sticky-comment` and
+  the thread/dismiss commands distinguish API failure from genuine absence.
+  `find-comment` and the batch thread mutations bind values as variables
+  instead of splicing them into jq/GraphQL programs; all JSON is emitted via
+  jq so API error text containing quotes cannot produce malformed output.
+  - **Breaking:** `label-add`/`label-remove` drop the `--reason` flag — its
+    only sink was a committed no-op. `_activity-emit.sh`,
+    `lib/label-activity.sh`, and `lib/pr-branch.sh` (no-op compatibility
+    stubs) are removed.
+
+- **decider: `decisions` CLI hardened (v1.1).** The GNU-grep/PCRE dependency
+  is gone (works on stock macOS); index parsing is a single jq pass (~30x
+  faster on a 200-row index); INDEX link cells written as backticked or bare
+  filenames now resolve instead of silently hiding the decision from `get`
+  and body search; malformed index rows are named on stderr instead of
+  vanishing. The `search-decisions` workflow file is removed — SKILL.md's
+  command table is the single home.
+
+- **deep-research (v1.1):** `--timeout` rejects non-positive and non-integer
+  values with a message naming the flag, instead of aborting the request and
+  blaming the network. Duplicate and orphan templates removed; a new test
+  locks the findings template to the validator so they cannot drift.
+
+- **Agents: the seven non-reviewer agents (`rust`, `scout`, `tpm`, `planner`,
+  `researcher`, `iced`, `generalist`) reduced to the reviewer shape** —
+  identity, house blockquotes, domain scope, specialist probes, output
+  expectations. Capability lists restating frontmatter, process narration,
+  output-format templates, and rust's curated ctx7 table are gone. 455 → 237
+  lines; no frontmatter, name, or contract changes.
+
+- **Skills reduced:** worktree (README rewritten for humans; CLI contracts
+  frozen and proven diff-identical), iced-rs (SKILL.md prose only —
+  `examples/`, `references/`, and `iced_wgpu/` untouched), price-handling,
+  trading-design, dep-radar.
+
+- **Breaking — removed: the `iced-shadcn` and `html-artifact` skills, and the
+  shipped `vanillagreen-themes` extras pack.** Before your next
+  `vstack refresh`, delete any `iced-shadcn` or `html-artifact` entries from
+  your project's `vstack.toml` (`[skill-instructions]`, `[agent-skills]`,
+  `[role-skills]`). If you applied the theme pack, run
+  `vstack apply vanillagreen-themes --revert` **before** upgrading, while the
+  pack is still resolvable; afterwards the managed blocks in Ghostty/tmux
+  configs must be removed by hand and the VS Code extension uninstalled
+  manually. The `extras` catalog kind and `vstack apply` are unaffected —
+  vstack simply no longer ships a pack of its own.
+
+- Consumer adoption notes: `vstack refresh` picks everything up after the
+  config edits above. Delete retired settings keys (`REVIEW_RISK_COMMAND`,
+  `PR_REVIEW_REFIX_MAX_LINES`, `ORCH_CACHE_DIR`,
+  `ORCH_LANE_CLAUDE_PERMISSION_ARG`) from `vstack.settings.toml`; add
+  `ORCH_LANE_ALIASES` if you alias lanes. Automation calling any removed orch
+  script or passing `github.sh label-add --reason` must update.
+
 - **linear: blocking relations no longer require both issues to sit in the
   same project.** `issues add-relation --blocks`/`--blocked-by` rejected any
   pair whose projects differed — including a pair where one issue had a

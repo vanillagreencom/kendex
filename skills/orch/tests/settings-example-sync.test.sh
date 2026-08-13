@@ -53,12 +53,12 @@ for key in $ORCH_KEYS; do
 done
 
 for key in $ORCH_OPTIN_KEYS; do
-  check "$key commented example present in skill template" "grep -Eq \"^#[[:space:]]*$key[[:space:]]*=\" \"\$SKILL_TEMPLATE\""
-  check "$key commented example present in root template" "grep -Eq \"^#[[:space:]]*$key[[:space:]]*=\" \"\$ROOT_TEMPLATE\""
+  check "$key commented example present in skill template" "grep -Eq \"^#[[:space:]]*${key}[[:space:]]*=\" \"\$SKILL_TEMPLATE\""
+  check "$key commented example present in root template" "grep -Eq \"^#[[:space:]]*${key}[[:space:]]*=\" \"\$ROOT_TEMPLATE\""
 done
 
 for key in $SKILL_ONLY_OPTIN_KEYS; do
-  check "$key commented example present in skill template" "grep -Eq \"^#[[:space:]]*$key[[:space:]]*=\" \"\$SKILL_TEMPLATE\""
+  check "$key commented example present in skill template" "grep -Eq \"^#[[:space:]]*${key}[[:space:]]*=\" \"\$SKILL_TEMPLATE\""
 done
 
 # The security caveat for name-matched evidence must travel with the key.
