@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **linear: blocking relations no longer require both issues to sit in the
+  same project.** `issues add-relation --blocks`/`--blocked-by` rejected any
+  pair whose projects differed — including a pair where one issue had a
+  project and the other had none — forcing real dependencies to be downgraded
+  to `--related` or the issues relocated. A dependency between two issues is a
+  property of the work, not of how the work is filed, and cross-project
+  sequencing is ordinary in roadmaps that span projects. The project-equality
+  check is gone, along with the `project { id name }` selection in the
+  `ValidateBlocking` query and `issue-validation.sh`'s
+  `validate_issue_project_shape` helper, which existed only to prove the shape
+  that check consumed. The other blocking guards are
+  untouched: a relation still must connect peers of one bundle (same direct
+  parent, or both top-level), an issue still cannot block its own ancestor or
+  descendant, and each parent chain is still proved to reach an explicit null
+  root through well-formed unique-ID edges before any mutation, with
+  incomplete, cyclic, or malformed hierarchy responses rejected. The
+  project-management, orch, and linear guidance that told agents to relocate
+  issues or fall back to `related` for cross-project dependencies now says to
+  record the dependency directly; the same-project rule for parent/child
+  hierarchy placement is a separate constraint and is unchanged.
+
 - **New `block-repo-copy` hook: a recursive copy of a repository or build tree
   into a temp/scratch destination is refused before the command runs.** An agent
   told to sanity-check behavior against a real consumer repo "read-only, under
@@ -51,6 +72,7 @@
   rule (AGENTS.md § Repository conventions), the same predicate ships for Pi in
   `pi-extensions/pi-hooks` as the `blockRepoCopy` setting (default on), with
   its own 30-case suite; the package goes to 0.3.0.
+
 
 - **orch: the post-merge main sync proves which checkout owns the base branch
   before advancing it, and reports a stale base as a warning.** `merge-pr.md`

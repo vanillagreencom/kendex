@@ -123,7 +123,7 @@ Read relevant codebase to understand implementation order. For each issue, deter
 
 #### 1.4.3 Identify Missing Blocking Relations
 
-For issues in the same project with architecture dependencies but no blocking relation:
+For issues with architecture dependencies but no blocking relation:
 
 1. **Creates-Consumes check**: If issue A creates a module/type and issue B consumes it (from 1.4.2 analysis), A should block B.
 

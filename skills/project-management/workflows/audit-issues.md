@@ -374,8 +374,7 @@ TPM reads JSON file directly -- schema: [audit-issues-input.md](../schemas/audit
 
 | # | Issue | Current | Fix | Reason |
 |---|-------|---------|-----|--------|
-| 1 | [ISSUE_ID] 🚫 [ISSUE_ID] | cross-project block | Relocate + preserve | Phase 2.5 vs Phase 2.6 |
-| 2 | [ISSUE_ID] 🙅 [ISSUE_ID] | cross-bundle child block | Lift to parent level | Children of different parents |
+| 1 | [ISSUE_ID] 🙅 [ISSUE_ID] | cross-bundle child block | Lift to parent level | Children of different parents |
 
 ---
 
@@ -644,7 +643,7 @@ Action semantics are tracker-agnostic; the mutation route is selected by `TRACKE
 | supersede, combine | Comment then close -- see **Superseded issues -- GitHub** below |
 | cancel | `gh issue comment [N] --repo [OWNER/REPO] --body "[CANCEL_REASON]"`, then `gh issue close [N] --repo [OWNER/REPO] --reason "not planned"` |
 
-**GitHub hierarchy & relations (explicit degradation)**: GitHub items in this workflow have no Linear parent/child bundle or typed relation objects. Represent structure in issue bodies instead: `hierarchy.action: make_child` → a `Parent: #[PARENT_NUMBER]` line at the top of the child body plus a `gh issue comment` on the parent noting the new sub-item; `blocks`/`blocked_by`/`related` → `Blocks: #N` / `Blocked by: #N` / `Related: #N` body lines (added to existing issues via the body-edit route above). These are documented representations, not enforced tracker semantics -- cascade-cancel, cross-project constraints, and bundle queries do not apply. Do not silently drop an approved hierarchy or relation action: either record its body representation or report it as not executed and why.
+**GitHub hierarchy & relations (explicit degradation)**: GitHub items in this workflow have no Linear parent/child bundle or typed relation objects. Represent structure in issue bodies instead: `hierarchy.action: make_child` → a `Parent: #[PARENT_NUMBER]` line at the top of the child body plus a `gh issue comment` on the parent noting the new sub-item; `blocks`/`blocked_by`/`related` → `Blocks: #N` / `Blocked by: #N` / `Related: #N` body lines (added to existing issues via the body-edit route above). These are documented representations, not enforced tracker semantics -- cascade-cancel and bundle queries do not apply. Do not silently drop an approved hierarchy or relation action: either record its body representation or report it as not executed and why.
 
 **Create template**: Use project-level templates issue-description-template for the description. For parent/bundle issues, use project-level templates parent-issue-template. Write the description body to a file and pass it by file (Linear: `--description-file`; GitHub: `--body-file`) -- never inline strings or a heredoc. Every create command must include the validated final labels from § 7.0 (Linear: `--labels "[VALIDATED_FINAL_LABELS]"`; GitHub: `--label "[VALIDATED_FINAL_LABELS]"`).
 
@@ -702,7 +701,7 @@ After each `create` action, determine whether the new issue should be moved to T
    .agents/skills/linear/scripts/linear.sh issues update [NEW_ID] --state "Todo" --sort-order [CALCULATED]
    ```
 
-**Adding relations**: Use workflow-actions § Relations. CLI enforces same-project constraint for `blocks`/`blocked_by` -- use `related` for cross-project links.
+**Adding relations**: Use workflow-actions § Relations.
 
 ### 7.3 Add Research References
 

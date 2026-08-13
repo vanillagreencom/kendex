@@ -109,8 +109,6 @@ Blocking relations are managed via the issue tracker's relation system -- never 
 .agents/skills/linear/scripts/linear.sh issues add-relation [RESEARCH_ISSUE_ID] --blocks [BLOCKED_ISSUE_ID]
 ```
 
-CLI enforces same-project constraint for blocking relations.
-
 Asset paths added in § 3 after preparation.
 
 ---

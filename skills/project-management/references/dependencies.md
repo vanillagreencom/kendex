@@ -2,23 +2,17 @@
 
 ## Core Rules
 
-### Same-Project Issue Blocking
+### Issue Blocking
 
-**Issue blocking relations (`blocks`/`blocked-by`) must be within the same project.**
+**Issue blocking relations (`blocks`/`blocked-by`) record a real dependency between two issues, whatever projects they sit in.**
 
 | Scenario | Correct Approach |
 |----------|------------------|
-| Issue A blocks Issue B, same project | Issue relation: `--blocked-by` |
-| Issue in Project 1 blocks Issue in Project 2 | **Project** relation: Project 2 blocked-by Project 1 |
-| Cross-project dependency needed | Move issue to same project OR use project-level blocking |
+| Issue A blocks Issue B | Issue relation: `--blocked-by` |
+| Whole project must finish before another starts | **Project** relation: Project 2 blocked-by Project 1 |
 
-**Why**: Projects are the unit of planning and delivery. Cross-project issue blocking creates invisible dependencies that break project-level tracking.
-
-**When you find cross-project issue blocking**:
-1. **Check project ordering** — if Issue_A (Project_A) blocks Issue_B (Project_B) and Project_A already blocks Project_B at project level, the issue-level block aligns. Leave as redundant specificity.
-2. **Relocate** — if the block contradicts project ordering or no project-level dep exists, move one issue to the correct project.
-3. Use `related` only for informational links where no blocking dependency exists.
-4. **Never infer project-level dependencies from individual issue relations.** Project deps come from project-order scope analysis (TPM audit), not bottom-up — which can create misleading or circular project dependencies.
+1. Use `related` only for informational links where no blocking dependency exists.
+2. **Never infer project-level dependencies from individual issue relations.** Project deps come from project-order scope analysis (TPM audit), not bottom-up — which can create misleading or circular project dependencies.
 
 ### Same-Project Parent-Child
 
@@ -50,16 +44,14 @@ Blocking relations are valuable — always preserve them by fixing the structura
 
 | Violation | Fix |
 |-----------|-----|
-| Cross-project A blocks B | Move one issue to the other's project. Blocking relation stays valid. |
-| Cross-bundle child A→B (same project) | Remove child relation, add parent-level blocking, `related` on children. |
-| Cross-bundle child A→B (cross-project) | Move one bundle's parent to correct project, then lift to parent level. |
-| Child→standalone A→B (same project) | Remove child relation, add parent blocks standalone, `related` on children. |
+| Cross-bundle child A→B | Remove child relation, add parent-level blocking, `related` on children. |
+| Child→standalone A→B | Remove child relation, add parent blocks standalone, `related` on children. |
 
 ## Issue Dependencies vs Blocked Label
 
 | Scenario | Use |
 |----------|-----|
-| Issue A blocked by Issue B (same project) | Issue relation: `--blocked-by` |
+| Issue A blocked by Issue B | Issue relation: `--blocked-by` |
 | Blocked by external factor (vendor, license, approval) | `blocked` label + comment |
 
 ## Issue Relations

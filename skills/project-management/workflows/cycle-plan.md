@@ -192,7 +192,7 @@ For each relation:
 .agents/skills/linear/scripts/linear.sh issues add-relation [FROM_ID] --blocks [TO_ID]
 ```
 
-TPM populates this when § 1.4 architecture ordering reveals dependencies not yet recorded in issue tracker (e.g., one domain issue should block another domain issue in same project, but no relation exists).
+TPM populates this when § 1.4 architecture ordering reveals dependencies not yet recorded in issue tracker (e.g., one domain issue should block another domain issue, but no relation exists).
 
 **Note**: Skip comments for priority updates -- rationale already shown in plan presentation.
 

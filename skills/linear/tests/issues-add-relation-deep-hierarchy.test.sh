@@ -6,7 +6,7 @@
 # ancestor pair beyond the cap, deep-but-valid siblings, deep cousins whose
 # LCA sits beyond the cap, and the fail-closed chunk bound.
 #
-# Fixture (project "Test"):
+# Fixture:
 #   CC-701 (root) <- CC-702 <- ... <- CC-707 <- CC-708, CC-709   (8 levels)
 #   CC-701 <- CC-751 <- CC-752 <- ... <- CC-757                  (second branch)
 #   CC-9000 (root) <- CC-9001 <- ... <- CC-9120                  (121 levels)
@@ -81,7 +81,7 @@ nested_issue() {
 }
 
 top_issue() {
-  nested_issue "$(to_identifier "$1")" 5 | jq -c '. + {project: {id: "proj-1", name: "Test"}}'
+  nested_issue "$(to_identifier "$1")" 5
 }
 
 case "$query" in

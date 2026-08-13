@@ -2354,7 +2354,7 @@ add_relation() {
         related_issue_uuid="$temp"
     fi
 
-    # Validation for blocking relations: same-project + blocking-level rule
+    # Validation for blocking relations: the blocking-level rule
     # (blocking relations connect peers of one bundle — see issue-validation.sh)
     if [ "$relation_type" = "blocks" ]; then
         # The parent chain is fetched ANCESTOR_FETCH_DEPTH levels per query and
@@ -2363,8 +2363,8 @@ add_relation() {
         ancestor_selection=$(build_parent_selection "$ANCESTOR_FETCH_DEPTH")
         local validation_query="
         query ValidateBlocking(\$id1: String!, \$id2: String!) {
-            issue1: issue(id: \$id1) { id identifier project { id name } $ancestor_selection }
-            issue2: issue(id: \$id2) { id identifier project { id name } $ancestor_selection }
+            issue1: issue(id: \$id1) { id identifier $ancestor_selection }
+            issue2: issue(id: \$id2) { id identifier $ancestor_selection }
         }"
         local validation_result
         validation_result=$(graphql_query "$validation_query" "{\"id1\": \"$issue_id\", \"id2\": \"$related_issue_uuid\"}")
@@ -2374,24 +2374,12 @@ add_relation() {
         issue2_json=$(echo "$validation_result" | jq -c '.issue2')
         validate_parent_chain_shape "$issue1_json" "$ANCESTOR_FETCH_DEPTH" "$issue_id" || return 1
         validate_parent_chain_shape "$issue2_json" "$ANCESTOR_FETCH_DEPTH" "$related_issue_uuid" || return 1
-        validate_issue_project_shape "$issue1_json" "$issue_id" || return 1
-        validate_issue_project_shape "$issue2_json" "$related_issue_uuid" || return 1
 
-        local project1_id project2_id project1_name project2_name issue1_id issue2_id
-        project1_id=$(echo "$validation_result" | jq -r 'if .issue1.project == null then "__NO_PROJECT__" else .issue1.project.id end')
-        project2_id=$(echo "$validation_result" | jq -r 'if .issue2.project == null then "__NO_PROJECT__" else .issue2.project.id end')
-        project1_name=$(echo "$validation_result" | jq -r 'if .issue1.project == null then "none" else .issue1.project.name end')
-        project2_name=$(echo "$validation_result" | jq -r 'if .issue2.project == null then "none" else .issue2.project.name end')
+        local issue1_id issue2_id
         issue1_id=$(echo "$validation_result" | jq -r '.issue1.identifier')
         issue2_id=$(echo "$validation_result" | jq -r '.issue2.identifier')
 
-        # Check 1: Same-project
-        if [ "$project1_id" != "$project2_id" ]; then
-            echo "{\"error\": \"Cross-project blocking not allowed. $issue1_id is in '$project1_name', $issue2_id is in '$project2_name'. Use --related for cross-project links, or move issues to same project.\"}" >&2
-            return 1
-        fi
-
-        # Check 2: Blocking-level rule — a blocking relation connects peers of
+        # Blocking-level rule — a blocking relation connects peers of
         # one bundle: same direct parent, or both top-level. The rejection
         # message derives its remediation from the same predicate
         # (blocking_level_ok), so a prescribed command is never itself rejected.

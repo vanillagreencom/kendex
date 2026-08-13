@@ -194,29 +194,6 @@ validate_parent_chain_shape() {
 	fi
 }
 
-# validate_issue_project_shape ISSUE_JSON CONTEXT
-# The top-level validation query selects project explicitly. Literal null is a
-# supported no-project value; otherwise the project must carry the fields used
-# by the same-project check and its diagnostic.
-validate_issue_project_shape() {
-	local issue_json="$1" context="$2"
-	if ! jq -e '
-		(type == "object")
-		and has("project")
-		and (
-			.project == null
-			or (
-				(.project | type) == "object"
-				and ((.project.id | type) == "string" and (.project.id | length) > 0)
-				and ((.project.name | type) == "string" and (.project.name | length) > 0)
-			)
-		)
-	' <<<"$issue_json" >/dev/null; then
-		echo "{\"error\": \"Hierarchy validation failed closed: Linear returned missing or malformed project data for '$context'.\"}" >&2
-		return 1
-	fi
-}
-
 # hoist_to_lca_child CHAIN OTHER_CHAIN
 # Print two lines: the entry of CHAIN whose parent is the lowest common
 # ancestor of both chains (the subtree root where the chains separate), then

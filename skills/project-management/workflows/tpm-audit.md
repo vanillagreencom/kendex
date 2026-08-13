@@ -323,28 +323,18 @@ For input issues with existing relations, add to candidate pairs for verificatio
 
 | Violation | Detection |
 |-----------|-----------|
-| Cross-project blocking | A.project != B.project |
 | Cross-bundle child blocking | A.parent != B.parent (both have parents) |
 | Child blocks standalone | A has parent, B has no parent (or vice versa) |
 
-**Remediation principle**: Blocking relations are valuable — always preserve them by relocating issues to the same project. Never remove a valid blocking relation.
+**Remediation principle**: Blocking relations are valuable — always preserve them by fixing the structure they hang on. Never remove a valid blocking relation.
 
 **Decision tree**:
 
-1. **Cross-project blocking**:
-   - If issue-level blocking aligns with project ordering (3.2) → skip (redundant specificity)
-   - Otherwise → move one issue to the other's project
-   - **Check** 1.6 scope definitions to determine which issue to move
-   - If issue is a child, it must move with its parent (or be detached first)
-   - **Add** to `wrong_project[]` with target project and reason referencing the blocking relation
-   - **Do NOT create project-level dependencies from individual issue relations** — project deps come from project-order audit scope analysis, not bottom-up from 1-2 issue crossings
-
-2. **Cross-bundle child blocking** (same project): Lift to parent level.
+1. **Cross-bundle child blocking**: Lift to parent level.
    - **Add** child relation to `remove_relations[]`
    - **Add** parent-level relation to `add_relations[]`
    - **Add** `related` between original children for traceability
-
-3. **Cross-bundle child blocking** (different projects): Relocate first (step 1), then lift to parent level (step 2).
+   - **Do NOT create project-level dependencies from individual issue relations** — project deps come from project-order audit scope analysis, not bottom-up from 1-2 issue crossings
 
 For each violation, record: `remove_relations[]` reason: `"Violation: [TYPE] — [FROM] [REL] [TO]"`
 
@@ -362,19 +352,16 @@ For each candidate pair (A, B):
 
 2. **Caller hints**: If input items have `blocks_items`/`blocked_by_items`/`blocks_issues`/`blocked_by_issues` fields, validate them against contracts. Carry forward valid hints; drop contradictions.
 
-3. **Agent-sequencing**: Apply cross-domain blocking rules to same-project sibling issues with different agent domains.
+3. **Agent-sequencing**: Apply cross-domain blocking rules to sibling issues with different agent domains.
 
-**Same-project constraint**: `blocks`/`blocked_by` relations must be within the same project. See [dependencies.md](../references/dependencies.md).
+| Dependency Found | Recommendation |
+|------------------|----------------|
+| A creates → B consumes | `blocks` relation |
+| Agent-sequencing candidate + data flow confirmed | `blocks` relation |
+| Agent-sequencing candidate, no data flow | No relation |
+| No dependency | `related` only if informational link useful |
 
-| Dependency Found | Same Project? | Recommendation |
-|------------------|---------------|----------------|
-| A creates → B consumes | Yes | `blocks` relation |
-| A creates → B consumes | No | `related` only |
-| Agent-sequencing candidate + data flow confirmed | Yes | `blocks` relation |
-| Agent-sequencing candidate, no data flow | Either | No relation |
-| No dependency | Either | `related` only if informational link useful |
-
-**Default to `blocks` when dependency exists AND same project.**
+**Default to `blocks` when a dependency exists.**
 
 **Blocking level rule**: Blocking relations go on bundle parents, not children. A child issue must not block an issue under a different parent. If A is bundled under parent P1 and B is under parent P2 (or standalone), then P1 blocks P2 — never A blocks B.
 
@@ -531,7 +518,7 @@ For each input issue, compare against ALL project definitions from 1.6:
 |-------|--------|
 | Issue scope matches different project better | Add to `wrong_project[]` with target project |
 | Issue is child but in different project than parent | Add to `wrong_project[]` — detach from parent, move or re-parent |
-| Issue depends on work tracked in different project | Add cross-project `related` to `add_relations[]` |
+| Issue depends on work tracked in different project | Add the relation to `add_relations[]` — `blocks`/`blocked_by` for a real dependency, `related` when informational |
 | Issue duplicates work in different project | Add to `duplicates[]` |
 
 **Evaluate objectively** — do not assume current project assignment is correct.
@@ -788,7 +775,7 @@ For each input issue, assign action based on analysis:
 - [ ] 1.7/2.1: Verification evidence collected and a distinct `VERIFICATION_CONTEXTS[ISSUE_KEY]` entry resolved for every input issue/contract; no linked PR, branch, or scope reused across issues; docs-only handled explicitly
 - [ ] 2: Contract extracted (target, creates, consumes, problem)
 - [ ] 4.4: Completed-blocker relations preserved (surfaced only as ready-to-schedule signals, never flagged as stale or removed)
-- [ ] 4.5: Relation violations scanned (cross-project, cross-bundle, child→standalone)
+- [ ] 4.5: Relation violations scanned (cross-bundle, child→standalone)
 - [ ] 5.1-5.2: Relations analyzed against the resolved code or documentation paths
 - [ ] 5.3: Priority alignment checked (skip if proposed without priority)
 - [ ] 5.4: Agent label verified

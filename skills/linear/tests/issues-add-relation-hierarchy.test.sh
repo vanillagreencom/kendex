@@ -4,7 +4,7 @@
 # guard, and ancestor/descendant pairs get a single explanation instead of a
 # prescription (there is no valid replacement pair for them).
 #
-# Fixture hierarchy (all in project "Test"):
+# Fixture hierarchy:
 #   CC-761 (root)
 #     ├── CC-763 ── CC-766, CC-768
 #     └── CC-764 ── CC-767
@@ -14,8 +14,6 @@
 #   CC-801 (non-object issue; fail-closed fixture)
 #   CC-802 (empty parent ID; fail-closed fixture)
 #   CC-830, CC-831 (same-parent P-A-P-A-P cycle; fail-closed fixture)
-#   CC-840..CC-845 (malformed project shapes; fail-closed fixtures)
-#   CC-846, CC-847 (explicit null projects; supported fixture)
 
 set -euo pipefail
 
@@ -38,27 +36,22 @@ printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
 # identifier -> uuid used by the resolve query; validate/mutation see uuids
 uuid_for() { printf 'uuid-%s' "${1#CC-}"; }
 
-# Issue node with project + 5-level parent chain, as ValidateBlocking selects
+# Issue node with a 5-level parent chain, as ValidateBlocking selects
 issue_node() {
-  local prj='"project":{"id":"proj-1","name":"Test"}'
   local cycle_parent='{"id":"uuid-p","identifier":"CC-P","parent":{"id":"uuid-a","identifier":"CC-A","parent":{"id":"uuid-p","identifier":"CC-P","parent":{"id":"uuid-a","identifier":"CC-A","parent":{"id":"uuid-p","identifier":"CC-P"}}}}}'
   case "$1" in
-  uuid-761) printf '{"id":"uuid-761","identifier":"CC-761",%s,"parent":null}' "$prj" ;;
-  uuid-763) printf '{"id":"uuid-763","identifier":"CC-763",%s,"parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}' "$prj" ;;
-  uuid-764) printf '{"id":"uuid-764","identifier":"CC-764",%s,"parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}' "$prj" ;;
-  uuid-766) printf '{"id":"uuid-766","identifier":"CC-766",%s,"parent":{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' "$prj" ;;
-  uuid-767) printf '{"id":"uuid-767","identifier":"CC-767",%s,"parent":{"id":"uuid-764","identifier":"CC-764","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' "$prj" ;;
-  uuid-768) printf '{"id":"uuid-768","identifier":"CC-768",%s,"parent":{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' "$prj" ;;
-  uuid-780) printf '{"id":"uuid-780","identifier":"CC-780",%s,"parent":null}' "$prj" ;;
-  uuid-799) printf '{"id":"uuid-799","identifier":"CC-799",%s}' "$prj" ;;
-  uuid-800) printf '{"id":"uuid-800","identifier":"CC-800",%s,"parent":"uuid-761"}' "$prj" ;;
+  uuid-761) printf '%s' '{"id":"uuid-761","identifier":"CC-761","parent":null}' ;;
+  uuid-763) printf '%s' '{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}' ;;
+  uuid-764) printf '%s' '{"id":"uuid-764","identifier":"CC-764","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}' ;;
+  uuid-766) printf '%s' '{"id":"uuid-766","identifier":"CC-766","parent":{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' ;;
+  uuid-767) printf '%s' '{"id":"uuid-767","identifier":"CC-767","parent":{"id":"uuid-764","identifier":"CC-764","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' ;;
+  uuid-768) printf '%s' '{"id":"uuid-768","identifier":"CC-768","parent":{"id":"uuid-763","identifier":"CC-763","parent":{"id":"uuid-761","identifier":"CC-761","parent":null}}}' ;;
+  uuid-780) printf '%s' '{"id":"uuid-780","identifier":"CC-780","parent":null}' ;;
+  uuid-799) printf '%s' '{"id":"uuid-799","identifier":"CC-799"}' ;;
+  uuid-800) printf '%s' '{"id":"uuid-800","identifier":"CC-800","parent":"uuid-761"}' ;;
   uuid-801) printf '[]' ;;
-  uuid-802) printf '{"id":"uuid-802","identifier":"CC-802",%s,"parent":{"id":"","identifier":"CC-761","parent":null}}' "$prj" ;;
-  uuid-830 | uuid-831) printf '{"id":"%s","identifier":"CC-%s",%s,"parent":%s}' "$1" "${1#uuid-}" "$prj" "$cycle_parent" ;;
-  uuid-840 | uuid-841) printf '{"id":"%s","identifier":"CC-%s","parent":null}' "$1" "${1#uuid-}" ;;
-  uuid-842 | uuid-843) printf '{"id":"%s","identifier":"CC-%s","project":"proj-1","parent":null}' "$1" "${1#uuid-}" ;;
-  uuid-844 | uuid-845) printf '{"id":"%s","identifier":"CC-%s","project":{"id":"","name":"Test"},"parent":null}' "$1" "${1#uuid-}" ;;
-  uuid-846 | uuid-847) printf '{"id":"%s","identifier":"CC-%s","project":null,"parent":null}' "$1" "${1#uuid-}" ;;
+  uuid-802) printf '%s' '{"id":"uuid-802","identifier":"CC-802","parent":{"id":"","identifier":"CC-761","parent":null}}' ;;
+  uuid-830 | uuid-831) printf '{"id":"%s","identifier":"CC-%s","parent":%s}' "$1" "${1#uuid-}" "$cycle_parent" ;;
   *) printf 'null' ;;
   esac
 }
@@ -262,29 +255,10 @@ grep -q "parent cycle detected" "$TMP_ROOT/err" || {
   exit 1
 }
 
-reject "missing project" CC-840 --blocks CC-841
-grep -q "missing or malformed project data" "$TMP_ROOT/err" || {
-  echo "FAIL missing project: missing fail-closed diagnostic"
-  exit 1
-}
-
-reject "wrong-typed project" CC-842 --blocks CC-843
-grep -q "missing or malformed project data" "$TMP_ROOT/err" || {
-  echo "FAIL wrong-typed project: missing fail-closed diagnostic"
-  exit 1
-}
-
-reject "empty project ID" CC-844 --blocks CC-845
-grep -q "missing or malformed project data" "$TMP_ROOT/err" || {
-  echo "FAIL empty project ID: missing fail-closed diagnostic"
-  exit 1
-}
-
 # --- (d) relations the rule blesses still pass ---
 accept "siblings (CC-763 --blocks CC-764)" CC-763 --blocks CC-764
 accept "leaf siblings (CC-766 --blocks CC-768)" CC-766 --blocks CC-768
 accept "top-level (CC-761 --blocks CC-780)" CC-761 --blocks CC-780
 accept "blocked-by siblings (CC-764 --blocked-by CC-763)" CC-764 --blocked-by CC-763
-accept "explicit null projects" CC-846 --blocks CC-847
 
 echo "all pass"

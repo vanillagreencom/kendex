@@ -7,8 +7,7 @@ Determines blocking relations and delegation order for cross-domain issues. Exis
 1. **Infer agent** from label or component location. Each project defines its own agent-to-path mappings (e.g., `backend/` → backend agent, `frontend/` → frontend agent, `docs/` → docs agent).
 2. **Identify candidate pairs** from the sequential requirements table below.
 3. **Confirm with Creates ↔ Consumes**: Only set blocking if agent A creates types, APIs, or modules that agent B consumes. No data flow = no blocking, regardless of agent ordering.
-4. **Same-project only**: Use `blocks`/`blocked_by` within a project. Use `related` cross-project.
-5. **Relations at the right level**: cross-bundle dependencies go on the parents (peers at the level where the subtrees separate), never on a child against an outside issue. WITHIN a container — a bundle parent whose children are each their own PR unit, the default reading — sequence dependent children with sibling blocking relations (child blocks child): selection dispatches only unblocked children, so these relations ARE the execution order. Only an explicit single-PR bundle (`(one PR)` title marker) leaves intra-bundle ordering to the delegated session's own plan.
+4. **Relations at the right level**: cross-bundle dependencies go on the parents (peers at the level where the subtrees separate), never on a child against an outside issue. WITHIN a container — a bundle parent whose children are each their own PR unit, the default reading — sequence dependent children with sibling blocking relations (child blocks child): selection dispatches only unblocked children, so these relations ARE the execution order. Only an explicit single-PR bundle (`(one PR)` title marker) leaves intra-bundle ordering to the delegated session's own plan.
 
 ## Default Sequential Requirements
 

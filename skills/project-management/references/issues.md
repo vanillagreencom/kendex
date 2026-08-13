@@ -99,9 +99,9 @@ Use `--parent [ISSUE_ID]` when:
 ## References
 - **Research**: docs/research/[ISSUE_ID]/findings.md (if applicable)
 - **Decision**: docs/decisions/[DECISION_ID]-[DESCRIPTOR].md (if applicable)
-- Blocked by: [ISSUE_ID] (same project only)
-- Blocks: [OTHER_ISSUE_ID] (same project only)
-- Related: [ISSUE_ID] (cross-project OK)
+- Blocked by: [ISSUE_ID]
+- Blocks: [OTHER_ISSUE_ID]
+- Related: [ISSUE_ID]
 ```
 
 **For performance issues**, include:
