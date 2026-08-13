@@ -117,6 +117,55 @@ else
   fail "index parse contract broken:$broken"
 fi
 
+echo "=== malformed rows are named, not silently dropped ==="
+
+# A row that opens like a decision but misses the eight-cell contract is skipped
+# by the parser. Skipped silently, a mistyped row reads downstream as a decision
+# that was never recorded — the index says one thing, every consumer says
+# another, and nothing points at the row to fix.
+BADREPO="$TMP_ROOT/badrepo"
+mkdir -p "$BADREPO/docs/decisions"
+cat >"$BADREPO/docs/decisions/INDEX.md" <<'EOF'
+# Architectural Decision Log
+
+| Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |
+|------|----|----------|----------|-----------|--------------|--------|------|
+| 2026-02-01 | D101 | PROJ-1 | Well-formed row | Reason one | Never | Active | [Full](D101.md) |
+| 2026-02-02 | D102 | PROJ-2 | Truncated row | Active |
+| 2026-02-03 | D103 | PROJ-3 | Second well-formed | Reason three | Never | Active | [Full](D103.md) |
+EOF
+
+run_bad() { (cd "$BADREPO" && DECISIONS_DIR="$BADREPO/docs/decisions" "$DECISIONS" "$@"); }
+
+bad_stdout="$(run_bad list 2>/dev/null)"
+bad_stderr="$(run_bad list 2>&1 >/dev/null)"
+
+# stdout contract is unchanged: the parseable rows, and only those.
+if [[ "$(jq -r '[.[].id] | join(",")' <<<"$bad_stdout")" == "D101,D103" ]]; then
+  pass "stdout still carries exactly the rows that parse"
+else
+  fail "stdout contract changed (got: $bad_stdout)"
+fi
+
+if grep -q 'D102\|:6:' <<<"$bad_stderr"; then
+  pass "the malformed row is named on stderr"
+else
+  fail "the malformed row was dropped without a diagnostic (stderr: $bad_stderr)"
+fi
+
+if grep -q ':6:' <<<"$bad_stderr"; then
+  pass "the diagnostic cites the row's line in the index"
+else
+  fail "the diagnostic does not cite the index line (stderr: $bad_stderr)"
+fi
+
+# The diagnostic must not fire for a healthy index, or it is just noise.
+if [[ -z "$( (cd "$REPO" && DECISIONS_DIR="$REPO/docs/decisions" "$DECISIONS" list 2>&1 >/dev/null) )" ]]; then
+  pass "a well-formed index emits no warning"
+else
+  fail "a well-formed index emitted a spurious warning"
+fi
+
 echo "=== teeth ==="
 
 # Drop the non-markdown-link fallbacks: only [text](path) cells resolve.
@@ -132,6 +181,14 @@ expect_caught bare-body \
 expect_caught date-enrichment \
   "$(mutate no-date 's/date="\$parsed"/date="mutated"/')" \
   "losing get's date enrichment is caught"
+
+# Drop the malformed-row diagnostic: the rows still vanish, but nothing says so.
+silent="$(mutate no-warn 's/| select((.value | split("|") | length) < 9)/| select(false)/')"
+if [[ -z "$( (cd "$BADREPO" && DECISIONS_DIR="$BADREPO/docs/decisions" "$silent" list 2>&1 >/dev/null) )" ]]; then
+  pass "losing the malformed-row diagnostic is caught"
+else
+  fail "the no-warn mutant still emitted a diagnostic"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -200,10 +200,17 @@ if [[ -n "$LANE" ]]; then
       # inventory `pick` measures, so aliases need no second source of truth.
       if [[ "$lane_dir" == */* ]]; then
         [[ -d "$lane_dir" ]] || { echo "Error: --lane '$LANE' is not a directory (expected 'auto', 'auto:<harness>', a config dir, or a lane alias)" >&2; exit 1; }
-      elif [[ ! -d "$lane_dir" ]]; then
+      else
+        # A bare word is resolved as an alias BEFORE the filesystem. Testing
+        # `-d` first meant any same-named directory in the caller's cwd shadowed
+        # a real lane and launched the fleet against the wrong account without
+        # saying so. A bare directory name still works when no alias claims it.
         [[ -x "$LANES_CLI" ]] || { echo "Error: lanes helper not found at $LANES_CLI" >&2; exit 1; }
         lane_dir="$("$LANES_CLI" list --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')"
-        [[ -n "$lane_dir" ]] || { echo "Error: --lane '$LANE' is neither a directory nor a known lane alias (see: lanes list)" >&2; exit 1; }
+        if [[ -z "$lane_dir" ]]; then
+          lane_dir="$LANE"
+          [[ -d "$lane_dir" ]] || { echo "Error: --lane '$LANE' is neither a known lane alias nor a directory (see: lanes list)" >&2; exit 1; }
+        fi
       fi
       case "$HARNESS" in
         codex) LANE_ENV="CODEX_HOME=$lane_dir" ;;
@@ -236,9 +243,24 @@ start_cmd() {
   # wrapper) before the spawned window's shell runs it, so a `$` that has lost
   # its single quotes gets expanded there and codex launches with no prompt at
   # all (vstack#976).
+  # Each flag token is single-quoted in the rendered line. The validator bars
+  # quotes and every shell-active character except `[`/`]`, which bracketed
+  # model ids (`opus[1m]`) legitimately carry — and those are glob syntax to the
+  # shell that finally runs this command, so an unquoted token expands against
+  # the launch directory and the lane starts on a different model, or none.
   # Trailing space only when flags are present, so an unflagged launch renders
   # the exact command a human would type rather than a double-spaced one.
-  local flags="${LAUNCH_FLAGS:+$LAUNCH_FLAGS }"
+  local flags=""
+  if [[ -n "$LAUNCH_FLAGS" ]]; then
+    local -a flag_tokens=()
+    # read -a splits on IFS without globbing; a bare `for tok in $LAUNCH_FLAGS`
+    # would expand the very brackets this quoting exists to protect.
+    read -r -a flag_tokens <<<"$LAUNCH_FLAGS"
+    local tok
+    for tok in "${flag_tokens[@]}"; do
+      flags+="'$tok' "
+    done
+  fi
   case "$TRACKER:$HARNESS" in
     linear:claude)   printf "claude -n %q %s'/orch start %s'\n" "$item" "$flags" "$item" ;;
     linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;

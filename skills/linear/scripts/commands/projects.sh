@@ -892,7 +892,7 @@ post_update() {
     local input_parts=("\"projectId\": \"$project_id\"" "\"health\": \"$health_enum\"")
     if [ -n "$body" ]; then
         local escaped_body
-        escaped_body=$(printf '%s' \"$body\" | jq -Rs '.')
+        escaped_body=$(printf '%s' "$body" | jq -Rs '.')
         input_parts+=("\"body\": $escaped_body")
     fi
 

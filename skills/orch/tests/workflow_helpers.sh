@@ -128,6 +128,29 @@ else
   fail "ci-fix must re-confirm the review gate before ci-wait (got gate=$ci_fix_gate wait=$ci_fix_wait)"
 fi
 
+# Post-merge base sync: `merge --ff-only` advances whatever branch the target
+# checkout has on HEAD, so a main checkout sitting on a foreign branch
+# fast-forwards THAT branch, exits 0, and leaves the base where it was. The
+# routing that makes ownership explicit is the whole fix, and it is prose — it
+# has no script to fail loudly when it is dropped.
+merge_workflow="$SKILL_DIR/workflows/merge-pr.md"
+assert_file_contains "$merge_workflow" 'rev-parse --abbrev-ref HEAD' \
+  "merge-pr resolves which checkout owns the base branch before advancing it"
+assert_file_contains "$merge_workflow" 'refs/remotes/origin/[BASE_BRANCH]:refs/heads/[BASE_BRANCH]' \
+  "merge-pr keeps the by-name fetch refspec route for a foreign-HEAD checkout"
+assert_file_contains "$merge_workflow" 'The `Base sync` row is never omitted' \
+  "merge-pr never omits the Base sync row, so a stale base cannot pass unreported"
+
+# A push that rebases rewrites every stored fix SHA. Without reconciliation the
+# PR body cites commits that no longer exist.
+assert_file_contains "$submit_workflow" 'Rebase-map reconciliation (required)' \
+  "submit-pr keeps the rebase-map reconciliation step"
+
+# The lease is what stops two sessions working the same tree.
+assert_file_contains "$SKILL_DIR/workflows/start-worktree.md" \
+  'worktree-session-guard claim [WORKTREE_PATH] --owner [ISSUE_ID]' \
+  "start-worktree keeps the session-guard claim step"
+
 echo
 echo "=== round-closure contract ==="
 
@@ -180,6 +203,10 @@ reviewer_skill="$REPO_ROOT/skills/reviewer/SKILL.md"
 if [[ -f "$reviewer_skill" ]]; then
   assert_file_contains "$reviewer_skill" '.agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] 0' \
     "reviewer skill calls the frozen review-artifact-check positional contract"
+else
+  # Skipping on absence would retire the only check on this frozen signature the
+  # moment the file is renamed or moved — exactly when it needs asserting.
+  fail "reviewer skill not found at $reviewer_skill — the frozen review-artifact-check pin cannot be checked"
 fi
 for script in review-artifact-check dev-return-write resolve-base-branch ci-wait; do
   if [[ -x "$SKILL_DIR/scripts/$script" ]]; then
@@ -213,13 +240,28 @@ resolve_ref() {
 
 REF_RE='\.agents/skills/[A-Za-z0-9._-]+/(scripts|workflows|references|schemas|templates)/[A-Za-z0-9._-]+|(\.\./)?([A-Za-z0-9._-]+/)?(workflows|references|schemas)/[A-Za-z0-9._-]+\.md'
 
-broken=""
-while IFS= read -r ref; do
-  [[ -n "$ref" ]] || continue
-  target="$(resolve_ref "$ref")"
-  [[ -n "$target" ]] || continue
-  [[ -e "$target" ]] || broken+="$ref"$'\n'
-done < <(orch_docs | tr '\n' '\0' | xargs -0 grep -ohE "$REF_RE" | sort -u)
+# Extraction and resolution are separate steps so the teeth check below can run
+# the SAME pipeline over a planted document. Checking resolve_ref on its own
+# proved nothing about the regex feeding it.
+# grep exits 1 on zero matches, which under `pipefail` would abort the suite
+# before the floor assertion below could name the cause.
+scan_refs() { printf '%s\0' "$@" | { xargs -0 grep -ohE "$REF_RE" || true; } | sort -u; }
+
+collect_broken() {
+  local ref target out=""
+  while IFS= read -r ref; do
+    [[ -n "$ref" ]] || continue
+    target="$(resolve_ref "$ref")"
+    [[ -n "$target" ]] || continue
+    [[ -e "$target" ]] || out+="$ref"$'\n'
+  done
+  printf '%s' "$out"
+}
+
+mapfile -t ORCH_DOCS < <(orch_docs)
+refs="$(scan_refs "${ORCH_DOCS[@]}")"
+ref_count="$(grep -c . <<<"$refs" || true)"
+broken="$(collect_broken <<<"$refs")"
 
 if [[ -z "$broken" ]]; then
   pass "every orch script/workflow/reference/schema named in orch docs exists"
@@ -228,18 +270,32 @@ else
   printf '%s' "$broken" | sed 's/^/          /'
 fi
 
-# Teeth: a reference to a nonexistent asset must be reported.
+# A pattern that stops matching turns the check above into an unconditional
+# pass. The floor is deliberately far below the current count (62) so ordinary
+# doc edits never trip it, while a broken pattern — which drops to near zero —
+# does.
+if (( ref_count >= 40 )); then
+  pass "the reference scan extracted $ref_count cited assets (floor 40)"
+else
+  fail "the reference scan extracted only $ref_count cited assets (floor 40) — the extraction pattern matches almost nothing, so the integrity check above is vacuous"
+fi
+
+# Teeth: plant a document citing an asset that does not exist, append it to the
+# scanned set, and require the pipeline to surface it. This exercises the
+# extraction regex, resolve_ref, and the existence test together.
 control_ref="workflows/definitely-not-a-real-workflow.md"
+control_doc="$TMP_ROOT/control-ref-doc.md"
+printf 'Run `%s` to continue.\n' "$control_ref" >"$control_doc"
 if [[ ! -e "$SKILL_DIR/$control_ref" ]]; then
   pass "planted control: the nonexistent asset used by the teeth check is absent"
 else
   fail "planted control asset unexpectedly exists"
 fi
-control_target="$(resolve_ref "$control_ref")"
-if [[ ! -e "$control_target" ]]; then
-  pass "reference check flags a nonexistent asset (teeth)"
+control_broken="$(scan_refs "${ORCH_DOCS[@]}" "$control_doc" | collect_broken)"
+if grep -Fqx "$control_ref" <<<"$control_broken"; then
+  pass "the reference pipeline reports a planted broken reference (teeth)"
 else
-  fail "reference check would MISS a nonexistent asset (no teeth)"
+  fail "the reference pipeline MISSED a planted broken reference (no teeth)"
 fi
 
 echo

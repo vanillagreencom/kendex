@@ -109,6 +109,17 @@ parse_index() {
     echo '[]'
     return
   fi
+  # A row that opens `| YYYY-` but misses the eight-cell contract is dropped
+  # from the results. Dropped silently it reads downstream as a decision nobody
+  # ever recorded, so every such row is named on stderr. stdout still carries
+  # exactly the rows that parse.
+  jq -R -s -r --arg f "$INDEX_FILE" '
+    split("\n")
+    | to_entries[]
+    | select(.value | test("^\\| [0-9]{4}-"))
+    | select((.value | split("|") | length) < 9)
+    | "WARNING: \($f):\(.key + 1): INDEX row has \(.value | split("|") | length) cells, need at least 9 — row skipped: \(.value)"
+  ' "$INDEX_FILE" >&2
   jq -R -s -c --arg dir "$DECISIONS_DIR" '
     def cell_path:
       . as $cell

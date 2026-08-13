@@ -31,9 +31,11 @@ Uncertain about category, prefer `fix` (if related); uncertain about relevance, 
 An `issue` signal is necessary but not sufficient. File only for:
 
 - **Behavioral defects outside this PR's scope** — wrong behavior a user or caller can hit.
-- **est≥2 refactors** — restructuring too large to absorb here.
+- **est≥2 refactors** — restructuring too large to absorb here that unblocks or protects user-visible work.
 - **Decision revisits** — a recorded decision the finding argues should change.
-- **Unexplained anomalies with evidence** — observed and reproducible, cause unknown.
+- **Unexplained anomalies with evidence** — observed and reproducible, cause unknown; filed as an investigation issue whose deliverable is the diagnosis.
+
+The audit pipeline applies project-management's creation bar (its SKILL.md § Disposition) as the final authority; these classes describe what clears it.
 
 Everything else is absorbed or declined. P4 polish never files: absorb it when it is est-1 and related, otherwise drop it with a one-line note in the review summary. A finding that cannot affect real usage is declined with one line of rationale — neither fixed nor filed. Vague items are noise, not visibility.
 

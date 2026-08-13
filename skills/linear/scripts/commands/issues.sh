@@ -680,32 +680,53 @@ bulk_update_issues() {
     local success_count=0
     local fail_count=0
 
+    # update_issue writes advisory warnings to stderr on its success path (the
+    # sub-issue sort-order note, a skipped label). Merging those into the
+    # captured stdout would break the .success parse and report a committed
+    # update as a failure, so stderr is captured aside: relayed as a warning
+    # when the update succeeded, folded into the error report when it did not.
+    local stderr_file
+    stderr_file=$(mktemp)
+
     for id in "${identifiers[@]}"; do
         local result
         local update_rc=0
-        if result=$(update_issue "$id" "${update_args[@]}" 2>&1); then
+        : >"$stderr_file"
+        if result=$(update_issue "$id" "${update_args[@]}" 2>"$stderr_file"); then
             update_rc=0
         else
             update_rc=$?
         fi
+
+        local stderr_text
+        stderr_text=$(cat "$stderr_file")
 
         local success
         success=$(echo "$result" | jq -r '.success // false' 2>/dev/null || echo "false")
 
         if [ "$update_rc" -eq 0 ] && [ "$success" = "true" ]; then
             ((++success_count))
+            [ -n "$stderr_text" ] && printf '%s\n' "$stderr_text" >&2
             results+=("$(echo "$result" | jq -c '{identifier, success: true}')")
         else
             ((++fail_count))
-            if [ -z "$result" ]; then
-                result="update_issue exited with status $update_rc without output"
+            local detail="$result"
+            if [ -n "$stderr_text" ]; then
+                detail="${detail:+$detail
+}$stderr_text"
             fi
-            results+=("$(jq -cn --arg identifier "$id" --arg error "$result" --argjson exit_code "$update_rc" \
+            if [ -z "$detail" ]; then
+                detail="update_issue exited with status $update_rc without output"
+            fi
+            results+=("$(jq -cn --arg identifier "$id" --arg error "$detail" --argjson exit_code "$update_rc" \
                 '{identifier: $identifier, success: false, exit_code: $exit_code, error: $error}')")
         fi
     done
+    rm -f "$stderr_file"
 
     # Output summary
+    rm -f "$stderr_file"
+
     local results_json
     results_json=$(printf '%s\n' "${results[@]}" | jq -s '.')
     jq -n \
@@ -757,6 +778,8 @@ get_issue() {
         echo '{"error": "Issue ID required"}' >&2
         return 1
     fi
+
+    linear_require_format "$FORMAT" safe raw compact || return 1
 
     # Warn about extra arguments (common mistake: use bulk-get for multiple)
     if [ ${#extra_args[@]} -gt 0 ]; then
@@ -879,7 +902,7 @@ get_issue() {
             format_issue_compact "$result"
         fi
         ;;
-    safe | *)
+    safe)
         if [ "$with_bundle" = "true" ]; then
             format_issue_with_bundle "$result"
         else
@@ -1198,7 +1221,7 @@ create_issue() {
         input_parts+=("\"priority\": $priority")
     fi
     if [ -n "$estimate" ]; then
-        linear_require_pattern --estimate "$estimate" '^[0-9]+$' "a non-negative integer" || return 1
+        linear_require_pattern --estimate "$estimate" '^[0-9]+(\.[0-9]+)?$' "a non-negative number" || return 1
         input_parts+=("\"estimate\": $estimate")
     fi
 
@@ -2048,6 +2071,8 @@ list_children() {
         return 1
     fi
 
+    linear_require_format "$FORMAT" safe raw || return 1
+
     local query
     if [ "$recursive" = "true" ]; then
         # Fetch 3 levels deep (covers nearly all real-world nesting)
@@ -2157,7 +2182,7 @@ list_children() {
     raw)
         echo "$result"
         ;;
-    safe | *)
+    safe)
         if [ "$recursive" = "true" ]; then
             format_children_recursive "$result"
         else
@@ -2193,6 +2218,8 @@ list_relations() {
         echo '{"error": "Issue ID required"}' >&2
         return 1
     fi
+
+    linear_require_format "$FORMAT" safe raw || return 1
 
     local query='
     query GetRelations($id: String!) {
@@ -2235,7 +2262,7 @@ list_relations() {
     raw)
         echo "$result"
         ;;
-    safe | *)
+    safe)
         format_relations_list "$result"
         ;;
     esac
@@ -2468,18 +2495,30 @@ add_relation() {
 
     local input="{\"issueId\": \"$issue_id\", \"relatedIssueId\": \"$related_issue_uuid\", \"type\": \"$relation_type\"}"
     local result
-    result=$(graphql_query "$mutation" "{\"input\": $input}")
+    local query_rc=0
+    result=$(graphql_query "$mutation" "{\"input\": $input}") || query_rc=$?
     # Linear already holding this relation is idempotent success, not a
     # rejection — graphql_query reports it as already_exists.
-    if [ "$(echo "$result" | jq -r '.already_exists // false')" = "true" ]; then
+    if [ "$(echo "$result" | jq -r '.already_exists // false' 2>/dev/null)" = "true" ]; then
         echo '{"success": true, "already_exists": true}'
         return 0
     fi
     # A payload-level rejection must fail here. Printing the normalized
     # {success: false} object and returning 0 let callers — block_issue among
     # them — report a blocked issue that carries no blocking relation.
-    if [ "$(echo "$result" | jq -r '.issueRelationCreate.success // false')" != "true" ]; then
-        echo "$result" | jq -c '{error: "issueRelationCreate was rejected (success != true) - no relation was created", data: (.issueRelationCreate // {})}' >&2
+    if [ "$(echo "$result" | jq -r '.issueRelationCreate.success // false' 2>/dev/null)" != "true" ]; then
+        # Every graphql_query failure path reports on stderr and leaves stdout
+        # empty. Piping that into jq would emit a parse error and no rejection
+        # message at all, so the two causes are reported separately.
+        local payload
+        payload=$(echo "$result" | jq -c '.issueRelationCreate // {}' 2>/dev/null) || payload=""
+        if [ -z "$result" ] || [ -z "$payload" ]; then
+            jq -cn --arg type "$relation_type" --argjson rc "$query_rc" --arg raw "$result" \
+                '{error: ("issueRelationCreate returned no usable response (graphql_query exit " + ($rc | tostring) + ") - no " + $type + " relation was created; see the preceding error"), raw: $raw}' >&2
+            return 1
+        fi
+        jq -cn --argjson data "$payload" \
+            '{error: "issueRelationCreate was rejected (success != true) - no relation was created", data: $data}' >&2
         return 1
     fi
     # Write-through: re-fetch both issues to get updated relations

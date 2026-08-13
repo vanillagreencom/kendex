@@ -206,7 +206,7 @@ set -e
 assert_eq "$c1_code" "0" "linear:claude launch succeeds"
 if wait_capture "$CAP1"; then
   c1_cmd="$(cat "$CAP1")"
-  assert_contains "$c1_cmd" "--model opus[1m] --effort max --dangerously-skip-permissions '/orch start CC-737'" \
+  assert_contains "$c1_cmd" "'--model' 'opus[1m]' '--effort' 'max' '--dangerously-skip-permissions' '/orch start CC-737'" \
     "linear:claude renders the caller's launch flags before the brief"
 else
   FAIL=$((FAIL + 1))
@@ -224,7 +224,7 @@ set -e
 assert_eq "$c2_code" "0" "github:claude launch succeeds"
 if wait_capture "$CAP2"; then
   c2_cmd="$(cat "$CAP2")"
-  assert_contains "$c2_cmd" "--effort max --dangerously-skip-permissions '/orch start github acme/widgets#42'" \
+  assert_contains "$c2_cmd" "'--effort' 'max' '--dangerously-skip-permissions' '/orch start github acme/widgets#42'" \
     "github:claude renders the caller's launch flags before the brief"
 else
   FAIL=$((FAIL + 1))
@@ -242,9 +242,9 @@ set -e
 assert_eq "$c3_code" "0" "a second launch with different flags succeeds"
 if wait_capture "$CAP3"; then
   c3_cmd="$(cat "$CAP3")"
-  assert_contains "$c3_cmd" "--model sonnet --permission-mode bypassPermissions '/orch start CC-737'" \
+  assert_contains "$c3_cmd" "'--model' 'sonnet' '--permission-mode' 'bypassPermissions' '/orch start CC-737'" \
     "the flags this launch passed are the flags rendered"
-  assert_not_contains "$c3_cmd" "--effort max" \
+  assert_not_contains "$c3_cmd" "'--effort' 'max'" \
     "no flag leaks in from another launch or a stored default"
 else
   FAIL=$((FAIL + 1))
@@ -281,7 +281,7 @@ c4_code=$?
 set -e
 assert_eq "$c4_code" "0" "prompting flags still launch"
 if wait_capture "$CAP4"; then
-  assert_contains "$(cat "$CAP4")" "--permission-mode plan '/orch start CC-737'" \
+  assert_contains "$(cat "$CAP4")" "'--permission-mode' 'plan' '/orch start CC-737'" \
     "prompting flags are rendered as given"
 fi
 c4_err="$(cat "$TMP_ROOT/c4.err")"
@@ -303,7 +303,7 @@ assert_eq "$c5_code" "0" "tmux delivered-first-pass exits 0"
 assert_contains "$c5_out" "Opened tmux window 'CC-737'" "tmux window opened"
 assert_not_contains "$c5_out" "Re-delivered" "no re-send when the brief is visible"
 c5_log="$(cat "$OT_TMUX_LOG")"
-assert_contains "$c5_log" "--dangerously-skip-permissions '/orch start CC-737'" \
+assert_contains "$c5_log" "'--dangerously-skip-permissions' '/orch start CC-737'" \
   "tmux-sent launch command carries the flags the caller chose"
 assert_contains "$c5_log" "capture-pane" "delivery was verified via capture-pane"
 assert_contains "$c5_log" "capture-pane -pJ -S - -t %7" \
@@ -459,6 +459,33 @@ OT_CAPTURE="$CAP11B" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --ha
 c11b_code=$?
 set -e
 assert_eq "$c11b_code" "0" "a bracketed model id is accepted"
+
+# Case 11c: the rendered line is executed by a shell in the launch directory,
+# so a bracketed model id is glob syntax there. With the tokens unquoted, a
+# single same-named file in the worktree rewrote `opus[1m]` to `opus1` and the
+# lane started on a model nobody chose. Run the captured command for real, with
+# the decoy planted, and read back the argv claude actually receives.
+if wait_capture "$CAP11B"; then
+  c11c_cmd="$(cat "$CAP11B")"
+  c11c_dir="$TMP_ROOT/globbait"
+  mkdir -p "$c11c_dir"
+  : > "$c11c_dir/opus1"
+  cat > "$BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$OT_ARGV_CAPTURE"
+EOF
+  chmod +x "$BIN/claude"
+  c11c_argv="$TMP_ROOT/c11c.argv"
+  (cd "$c11c_dir" && OT_ARGV_CAPTURE="$c11c_argv" PATH="$BIN:$PATH" bash -lc "${c11c_cmd##*&& }") >/dev/null 2>&1 || true
+  assert_contains "$(cat "$c11c_argv" 2>/dev/null || true)" "opus[1m]" \
+    "the bracketed model id survives the shell that runs the launch command"
+  assert_not_contains "$(cat "$c11c_argv" 2>/dev/null || true)" "opus1" \
+    "a same-named file in the launch directory cannot rewrite the model id"
+  rm -f "$BIN/claude"
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  bracketed model id case never invoked the terminal stub\n'
+fi
 
 # Case 12: non-integer ORCH_TMUX_VERIFY_SECS is a clear config error, not a
 # zero-pass verify loop misreported as a delivery failure.

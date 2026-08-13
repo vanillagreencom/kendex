@@ -118,13 +118,13 @@ create_project_label() {
 
     # Build input object with proper escaping
     local escaped_name
-    escaped_name=$(printf '%s' \"$name\" | jq -Rs '.')
+    escaped_name=$(printf '%s' "$name" | jq -Rs '.')
     local input_parts=("\"name\": $escaped_name")
 
     [ -n "$color" ] && input_parts+=("\"color\": \"$color\"")
     if [ -n "$description" ]; then
         local escaped_desc
-        escaped_desc=$(printf '%s' \"$description\" | jq -Rs '.')
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
     fi
     [ "$is_group" = "true" ] && input_parts+=("\"isGroup\": true")
@@ -188,13 +188,13 @@ update_project_label() {
 
     if [ -n "$name" ]; then
         local escaped_name
-        escaped_name=$(printf '%s' \"$name\" | jq -Rs '.')
+        escaped_name=$(printf '%s' "$name" | jq -Rs '.')
         input_parts+=("\"name\": $escaped_name")
     fi
     [ -n "$color" ] && input_parts+=("\"color\": \"$color\"")
     if [ -n "$description" ]; then
         local escaped_desc
-        escaped_desc=$(printf '%s' \"$description\" | jq -Rs '.')
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
     fi
 

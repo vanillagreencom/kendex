@@ -32,7 +32,7 @@ Cancelling and rescoping existing issues is a work decision. Present them, then 
 |---|-----------|----------------|------------|
 </output_format>
 
-`Review each` asks per action (`Execute` | `Skip` | `Modify` with free text). Execute cancellations per the Linear CLI's workflow-actions § Cancel / Merge / Combine using the "Superseded" pattern with the plan's reason, and modifications per § Scope Changes.
+`Review each` asks per action (`Execute` | `Skip` | `Modify` with free text). Execute cancellations per the Linear CLI's workflow-actions § State Transitions (cancel/absorb) with the plan's reason named in the comment, and modifications per § Descriptions.
 
 For each conflict, ask `Proceed as planned` | `Modify approach` (free text, carried into issue creation) | `Skip this issue` (removed from creation).
 
@@ -105,7 +105,7 @@ Deterministic mapping only — do NOT re-analyze. Convert `TPM_OUTPUT` to the is
 | `obsolete` | `organized_issues[i].obsolete` |
 | `priority_misalignment`, `agent_mismatch` | null — already correct |
 
-Each entry's `create_fields` carries `description` (synthesized from title, feature context, and breaking changes), `recommendation` (requirement bullets, plus doc updates and migration steps), `location`, `estimate`, `priority`, `labels[]` (authoritative, validated in § 4.1), `agent_label`, `is_bundle_parent`, and `source_path` = the plan markdown path. A bundle parent sets `is_bundle_parent: true` with no description or recommendation — [parent-issue-template.md](../templates/parent-issue-template.md) content is generated after the children exist, via workflow-actions § Sync Parent Description.
+Each entry's `create_fields` carries `description` (synthesized from title, feature context, and breaking changes), `recommendation` (requirement bullets, plus doc updates and migration steps), `location`, `estimate`, `priority`, `labels[]` (authoritative, validated in § 4.1), `agent_label`, `is_bundle_parent`, and `source_path` = the plan markdown path. A bundle parent sets `is_bundle_parent: true` with no description or recommendation — [parent-issue-template.md](../templates/parent-issue-template.md) content is generated after the children exist, via workflow-actions § Descriptions (parent rebuild).
 
 Top-level: `{"mode": "issue", "source": "roadmap-create", "parent_issue": [from hierarchy_recommendation.origin_issue or null], "research_ref": [context.research_path], "plan_path": [context.plan_path]}`.
 

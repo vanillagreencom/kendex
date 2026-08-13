@@ -105,7 +105,7 @@ In this order — `sortOrder` is per-state-column, so setting it before the stat
 2. `actions.set_priorities[]`, `actions.set_estimates[]`, `actions.set_labels[]` — per the Linear CLI's workflow-actions patterns
 3. `actions.assign_to_cycle[]` — the state change
 4. `actions.set_sort_order[]` — `issues update [ID] --sort-order [VALUE]`, parents and standalone issues only
-5. `actions.update_initiative` / `actions.update_project` — per workflow-actions § Initiative & Project Status
+5. `actions.update_initiative` / `actions.update_project` — per workflow-actions § Projects and Initiatives
 
 Then sync bundle state, which is bookkeeping only: an assigned parent pulls its pending children into the same cycle and state; an assigned child whose parent sits in Backlog moves that parent to Todo in the same cycle. A parent with children stays a container — never orchestrated directly, never its own PR, closed last — unless its title carries `(one PR)`.
 

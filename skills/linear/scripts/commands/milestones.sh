@@ -233,11 +233,11 @@ create_milestone() {
 
     # Build input object with proper escaping
     local escaped_name
-    escaped_name=$(printf '%s' \"$name\" | jq -Rs '.')
+    escaped_name=$(printf '%s' "$name" | jq -Rs '.')
     local input_parts=("\"projectId\": \"$project_id\"" "\"name\": $escaped_name")
     if [ -n "$description" ]; then
         local escaped_desc
-        escaped_desc=$(printf '%s' \"$description\" | jq -Rs '.')
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
     fi
     [ -n "$target_date" ] && input_parts+=("\"targetDate\": \"$target_date\"")
@@ -290,12 +290,12 @@ update_milestone() {
     local input_parts=()
     if [ -n "$name" ]; then
         local escaped_name
-        escaped_name=$(printf '%s' \"$name\" | jq -Rs '.')
+        escaped_name=$(printf '%s' "$name" | jq -Rs '.')
         input_parts+=("\"name\": $escaped_name")
     fi
     if [ -n "$description" ]; then
         local escaped_desc
-        escaped_desc=$(printf '%s' \"$description\" | jq -Rs '.')
+        escaped_desc=$(printf '%s' "$description" | jq -Rs '.')
         input_parts+=("\"description\": $escaped_desc")
     fi
     [ -n "$target_date" ] && input_parts+=("\"targetDate\": \"$target_date\"")

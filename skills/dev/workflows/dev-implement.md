@@ -5,7 +5,7 @@ The workflow for a dev or QA agent receiving a work-item delegation. Skip every 
 | Delegation | Detection | Flow |
 |------|-----------|------|
 | Single | `Issue: [ISSUE_ID]`, `GitHub Issue: OWNER/REPO#N`, or ad-hoc | § 1 → § 2 → § 4-10 → return |
-| Bundled | `Parent: [ISSUE_ID]` + `Sub-Issues (tree): [...]` | § 1 → § 2 → [§ 4-10]×N → § 11 |
+| Bundled | `Parent: [ISSUE_ID]` + `Sub-Issues: [...]` | § 1 → § 2 → [§ 4-10]×N → § 11 |
 
 **A bundle needs an explicit single-PR marker.** By default a parent with children is a CONTAINER: the orchestrator delegates each child separately with its own PR, and the container closes last. Exactly three things opt a parent into one bundled delegation — `(one PR)` in its title, `Audit Bundle: yes` in the delegation (review-pr's post-audit children, created by the delegating session to be worked inside this PR's session), or a leaf issue carrying an internal checklist. The title marker outranks an `agent:multi` label. With none of them present, stop and report the mis-delegation instead of working the bundle. Check the marker against the delegation's `Parent Title:` line, which dev-start passes verbatim; when a bundled delegation omits that line, read the title first — never classify from labels and children alone, and never reject a bundle without having seen the title:
 

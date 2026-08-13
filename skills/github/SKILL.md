@@ -219,7 +219,7 @@ format value is an error rather than a silent fallback to `safe`.
 | `text` | Plain text extraction | pr-issue, ci-logs, bot-token |
 | `table` | Human-readable table | pr-list-ready, pr-list-failing |
 
-`--json` is accepted as an alias for `--format=safe` on the commands above.
+`--json` is accepted as an alias for `--format=safe` on pr-list-ready, pr-list-failing, pr-issue, ci-logs, and bot-token; pr-data and pr-threads take `--format=safe|raw` only and reject unknown flags.
 
 ## Configuration
 

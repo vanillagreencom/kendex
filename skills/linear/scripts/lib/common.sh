@@ -371,6 +371,25 @@ linear_require_pattern() {
     return 1
 }
 
+# Reject an unsupported --format before any API or cache work, rather than
+# letting a `safe | *` catch-all silently serve safe output under the name the
+# caller asked for. The supported set differs per action (only the list actions
+# emit ids), so each caller passes its own.
+# Usage: linear_require_format "$FORMAT" safe raw compact
+linear_require_format() {
+    local value="$1"
+    shift
+    local candidate
+    for candidate in "$@"; do
+        [ "$value" = "$candidate" ] && return 0
+    done
+    local list
+    list=$(printf '%s, ' "$@")
+    jq -cn --arg v "$value" --arg list "${list%, }" \
+        '{error: ("Invalid format: " + $v + ". Use: " + $list)}' >&2
+    return 1
+}
+
 LINEAR_UUID_PATTERN='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
 # An option that takes a value must have one. Without this a trailing `--label`

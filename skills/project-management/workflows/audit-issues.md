@@ -230,12 +230,12 @@ Execute every § 5 correction. Linear routes follow the Linear CLI's workflow-ac
 
 | Finding | Pattern |
 |---------|---------|
-| `priority_misalignment` | § Priority Updates |
-| `agent_mismatch`, `label_cooccurrence` | § Agent Label Updates / § Label Co-occurrence Fixes (run § 7.0 first) |
-| `add_relations`, `remove_relations`, `relation_violations` | § Relations / § Fix Relation Violations |
-| `hierarchy` | § Hierarchy Changes, then § Sync Parent Description |
-| `wrong_project` | § Scope Changes |
-| `project_dependency_issues`, `project_recommendations` | § Project Relations / § Project State Changes (project mode) |
+| `priority_misalignment` | `issues update [ID] --priority [P]` + reason comment |
+| `agent_mismatch`, `label_cooccurrence` | § Labels (run § 7.0 first) |
+| `add_relations`, `remove_relations`, `relation_violations` | § Hierarchy and Relations |
+| `hierarchy` | § Hierarchy and Relations, then § Descriptions (parent rebuild) |
+| `wrong_project` | `issues update [ID] --project "[PROJECT]"` + reason comment |
+| `project_dependency_issues`, `project_recommendations` | § Projects and Initiatives (project mode) |
 
 GitHub routes carry their commands inline in § 7.2.
 
@@ -250,9 +250,9 @@ Process `create` first — created IDs resolve the `#N` references the other act
 | Action | Execution |
 |--------|-----------|
 | create | `issues create` with the Create template below and `--parent` per `hierarchy`. A `hierarchy.parent` of null with `make_child` resolves to the input's `parent_issue`. A child must share the parent's project; if it cannot, create it standalone with `related` — except for `hierarchy_contract` items, where the standalone fallback is not permitted: create the child in the contract parent's project and never downgrade to standalone. |
-| expand, update | workflow-actions § Scope Changes |
-| supersede, combine | workflow-actions § Cancel / Merge / Combine, then Superseded issues below |
-| cancel | workflow-actions § Cancel Obsolete Issues |
+| expand, update | workflow-actions § Descriptions + reason comment |
+| supersede, combine | workflow-actions § State Transitions (cancel/absorb), then Superseded issues below |
+| cancel | workflow-actions § State Transitions |
 | skip, valid | No action |
 
 **GitHub route (TRACKER=github)** — `gh issue` against `[OWNER/REPO]`; label mutations on existing issues go through the github skill's `label-add`/`label-remove` (its bot-token conventions apply):

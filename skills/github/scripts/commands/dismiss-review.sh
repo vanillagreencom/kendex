@@ -125,10 +125,12 @@ dismiss_reviews() {
         return
     fi
 
-    # Dismiss each review — collect results as JSON lines
-    local results_file
-    results_file=$(mktemp)
-    trap 'rm -f "$results_file"' EXIT
+    # Dismiss each review — collect results as JSON lines.
+    # The name must not be `local`: an EXIT trap fires after the function has
+    # returned, so a function-scoped name expands to nothing there and the temp
+    # file survives the run.
+    DISMISS_RESULTS_FILE=$(mktemp)
+    trap 'rm -f "$DISMISS_RESULTS_FILE"' EXIT
 
     local review_ids
     review_ids=$(echo "$blocking_reviews" | jq -r '.[].id')
@@ -145,11 +147,11 @@ dismiss_reviews() {
 
         if [ "$dismiss_rc" -eq 0 ]; then
             jq -nc --argjson id "$review_id" --arg user "$user_login" \
-                '{review_id: $id, user: $user, state: "DISMISSED", ok: true}' >> "$results_file"
+                '{review_id: $id, user: $user, state: "DISMISSED", ok: true}' >> "$DISMISS_RESULTS_FILE"
         else
             jq -nc --argjson id "$review_id" --arg user "$user_login" \
                 --arg detail "$(printf '%s' "$dismiss_output" | tr '\n' ' ' | head -c 200)" \
-                '{review_id: $id, user: $user, error: $detail, ok: false}' >> "$results_file"
+                '{review_id: $id, user: $user, error: $detail, ok: false}' >> "$DISMISS_RESULTS_FILE"
         fi
     done <<<"$review_ids"
 
@@ -159,7 +161,7 @@ dismiss_reviews() {
         success: ([.[] | select(.ok == false)] | length) == 0,
         dismissed: [.[] | select(.ok == true) | del(.ok)],
         failed: [.[] | select(.ok == false) | del(.ok)]
-    }' "$results_file"
+    }' "$DISMISS_RESULTS_FILE"
 }
 
 # Main

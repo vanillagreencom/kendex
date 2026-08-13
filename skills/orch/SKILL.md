@@ -250,7 +250,7 @@ After compaction, resume from the step after the last completed one: read workfl
 
 **Sequencing.** Infer the agent from the label or component path, then confirm with Creates ↔ Consumes: no data flow, no blocking relation, whatever the agent ordering suggests. Existing blocking relations on the issues outrank inference. Cross-bundle relations go on the parent issues; dependent children of one container get sibling child-blocks-child relations, which ARE the execution order since selection dispatches only unblocked children. Only an explicit `(one PR)` bundle leaves intra-bundle ordering to the delegated session.
 
-**Single-PR bundles.** Only a parent marked `(one PR)`, or a leaf issue with an internal checklist, is delegated as one session covering all children. One composite task per sub-issue, not one per section. Multi-domain bundles process groups sequentially, collecting handoff notes between groups.
+**Single-PR bundles.** Only a parent marked `(one PR)`, a delegation carrying `Audit Bundle: yes` (review-pr's post-audit children, worked inside this PR's session), or a leaf issue with an internal checklist, is delegated as one session covering all children. One composite task per sub-issue, not one per section. Multi-domain bundles process groups sequentially, collecting handoff notes between groups.
 
 **Tracked issue creation.** Never create a tracked issue directly from an orchestration session — route it through TPM (project-management), which owns labels, project, priority, estimate, and relations. A direct create prints a URL and looks like success while the issue lands with none of those, and without an `agent:*` label it is invisible to agent routing. The only direct creates are the ones a workflow step specifies with its label set (`plan-issues`, `start-new`, the `merge-pr` rebundle).
 
@@ -258,7 +258,7 @@ After compaction, resume from the step after the last completed one: read workfl
 
 ### Review Pipeline
 
-**Finding schema.** [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md). `verdict` is `action_required` when blockers exist, else `pass`; `location` is a file path plus a symbol name, never line numbers; every item carries `id`, `title`, `location`, `description`, `recommendation`, `priority` (1-4), `estimate` (1-5), and suggestions also `category` ∈ {`fix`, `issue`}.
+**Finding schema.** [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md) is the contract; `review-artifact-check` enforces it. Routing reads `verdict` (`action_required` when blockers exist, else `pass`) and each suggestion's `category` ∈ {`fix`, `issue`}.
 
 **Disposition.** Classify each suggestion per [references/finding-disposition.md](references/finding-disposition.md): apply in-PR, file as a tracked issue, or decline with one line. Filing is the exception — see the filing bar there.
 

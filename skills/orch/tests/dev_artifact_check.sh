@@ -38,6 +38,17 @@ assert_file_contains() {
   fi
 }
 
+assert_file_matches() {
+  local file="$1" pattern="$2" name="$3"
+  if grep -Eq -- "$pattern" "$file"; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        missing pattern: %s\n        file: %s\n' "$name" "$pattern" "$file"
+  fi
+}
+
 # Run the check and print just the reason (swallowing exit code).
 reason() {
   "$CHECK" "$@" 2>/dev/null | jq -r '.reason' || true
@@ -498,7 +509,9 @@ assert_file_contains "$orch_skill" "The orchestrator owns round closure" "SKILL 
 assert_file_contains "$orch_skill" "the return message is display-only" "SKILL keeps the return message out of the acceptance decision"
 for wf in dev-start dev-fix review-pr-comments ci-fix; do
   wf_doc="$REPO_ROOT/skills/orch/workflows/$wf.md"
-  assert_file_contains "$wf_doc" "watchdog" "$wf.md arms a watchdog at delegation"
+  # The bare word "watchdog" is satisfied by any mention, including a sentence
+  # saying none is armed. Require the arming instruction itself.
+  assert_file_matches "$wf_doc" 'arm(ing)? the watchdog' "$wf.md arms a watchdog at delegation"
   assert_file_contains "$wf_doc" "SKILL.md#round-closure" "$wf.md routes the watchdog contract to the canonical section"
 done
 

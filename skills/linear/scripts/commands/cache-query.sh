@@ -535,7 +535,7 @@ cache_list_relations() {
     fi
 
     local result
-    result=$(jq --arg id "$issue_id" '
+    result=$(cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$issue_id" '
         .[] | select(.identifier == $id or .id == $id) | {
             blocks: [(.relations.nodes // [])[] | select(.type == "blocks") | {
                 id: .relatedIssue.identifier,
@@ -806,7 +806,15 @@ cache_list_projects() {
     projects=$(cache_jq_file "$CACHE_DIR/projects.json" "[]" "$jq_filter") || return 1
 
     if [[ "$first_only" == "true" ]]; then
-        echo "$projects" | jq -r '.[0].name // "Backlog"'
+        # Same fail-closed contract as the live path: no fabricated default,
+        # because callers feed this straight back into a --project filter.
+        local name
+        name=$(echo "$projects" | jq -r '.[0].name // empty')
+        if [[ -z "$name" ]]; then
+            echo '{"error": "No project matched --first"}' >&2
+            return 1
+        fi
+        echo "$name"
         return
     fi
 

@@ -286,7 +286,7 @@ Recommend a new project in `project_recommendations[]` only when 3+ related gaps
 
 ### 10.1 Apply the Creation Bar
 
-Each proposed item passes only if it clears all three tests in § Disposition and has clear scope, testable criteria, and defined deliverables. A failure is `skip` with a one-line reason naming the test it failed — `"no user-visible effect"`, `"covered by [ISSUE_ID]"`, `"needs investigation before it is actionable"`, `"too vague — [missing criterion]"`.
+Each proposed item passes only if it clears all three tests in [SKILL.md](../SKILL.md) § Disposition and has clear scope, testable criteria, and defined deliverables. A reproducible anomaly with evidence attached passes as an investigation issue whose deliverable is the diagnosis. A failure is `skip` with a one-line reason naming the test it failed — `"no user-visible effect"`, `"covered by [ISSUE_ID]"`, `"no evidence to start from"`, `"too vague — [missing criterion]"`.
 
 Hierarchy-contract items (§ 7.0) are never `skip`: keep `action: "create"` and flag any actionability gap in `reason` for the caller.
 
