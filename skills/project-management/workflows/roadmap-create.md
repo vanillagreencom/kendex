@@ -346,7 +346,7 @@ Source: `"roadmap-create"` | Parent issue: from `hierarchy_recommendation` in ma
 - `mixed` → split items per TPM grouping (some parented, some standalone)
 - `none` / absent → `parent_issue: null`
 
-**Dependency conversion**: Preserve TPM's parent-level relation assignments for bundled issues (per [agent-sequencing.md](../../orch/workflows/agent-sequencing.md) rule 5). For non-bundled issues, convert plan's `#N` references to `blocked_by_items: [N]` and existing refs to `blocked_by_issues: ["[ISSUE_ID]"]`.
+**Dependency conversion**: Preserve TPM's parent-level relation assignments for bundled issues (per [agent-sequencing.md](../../orch/workflows/agent-sequencing.md) § How to Apply, "Relations at the right level"). For non-bundled issues, convert plan's `#N` references to `blocked_by_items: [N]` and existing refs to `blocked_by_issues: ["[ISSUE_ID]"]`.
 
 **Source path**: Format as file path, not markdown link: `docs/roadmaps/roadmap-[FEATURE].md`
 
