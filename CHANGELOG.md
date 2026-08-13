@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- **New `block-repo-copy` hook: a recursive copy of a repository or build tree
+  into a temp/scratch destination is refused before the command runs.** An agent
+  told to sanity-check behavior against a real consumer repo "read-only, under
+  `~/dev`" reasoned that copying it somewhere safe first was how to make it
+  read-only, and ran a recursive copy of that repo — a ~29GB `target/` build
+  tree plus a large `.git` — into its scratchpad, twice. `/tmp` on that machine
+  is a tmpfs at the kernel default of half of RAM (63GB), so the copy consumed
+  roughly half of system memory, filled the filesystem to 100%, and every
+  process writing there began failing with ENOSPC, which broke tool output
+  across the whole session until it was cleaned up by hand. Prose instructions
+  did not prevent it and cannot be relied on to: the reasoning that produced it
+  was locally sensible, so the rule has to be enforced by the harness before the
+  command runs. `hooks/block-repo-copy.sh` is a `PreToolUse`/`Bash` hook that
+  refuses `cp -r`/`-R`/`-a`, recursive or archive `rsync`, `git clone` of a
+  local path, and `tar` create-to-extract pipes when BOTH halves hold: the
+  source is itself named `.git`/`target`/`node_modules` or carries one of
+  `.git`, `target`, `node_modules`, `vendor`, `.venv`, `venv`, `.next`,
+  `.cache`, `.gradle`, `Pods` one level down, AND the destination resolves under
+  `/tmp`, `/var/tmp`, `$TMPDIR`, `$CLAUDE_CODE_TMPDIR`, a `mktemp -d`, or any
+  path containing `scratchpad`. Requiring both halves is what keeps false
+  positives near zero — an expensive tree copied to an ordinary destination and
+  an ordinary directory copied into scratch both pass, as does a
+  non-recursive copy, `rsync -R` (which is `--relative`, not recursion), and a
+  repository subdirectory that carries no marker of its own (the source check
+  never walks upward). The refusal names the source, the marker that made it
+  expensive, the destination, and the two alternatives: read the source in
+  place, since reading does not mutate it, or build a minimal synthetic fixture
+  in `mktemp -d`. The hook fires on every Bash call, so a non-copy command
+  exits through a bash-builtin regex before any subprocess or filesystem work
+  and the source check uses `-e` existence tests only — never `du` or a
+  traversal; the suite pins the fast exit with a PATH shim log that must stay
+  empty for a non-copy command and must record tool use when a copy is actually
+  evaluated. Registration needed no config change: `[hook-events]`'s existing
+  `"PreToolUse:Bash" = "all"` is matched by the hook's frontmatter, so consuming
+  repos pick it up on the next `vstack refresh`.
+
 - **orch: the post-merge main sync proves which checkout owns the base branch
   before advancing it, and reports a stale base as a warning.** `merge-pr.md`
   § 5 step 4 ran `git -C [MAIN_REPO_ROOT] merge --ff-only origin/[BASE_BRANCH]`
