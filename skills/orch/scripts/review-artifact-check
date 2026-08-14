@@ -131,7 +131,14 @@ finding_item_detail() {
               | to_entries[] | {arr: "suggestions", i: .key, item: .value}) ]
           | map(
               .arr as $arr | .i as $i | .item as $item
-              | ($base + (if $arr == "suggestions" then ["category"] else [] end))
+              # category:issue items additionally require a non-empty `impact` —
+              # the one-line who-hits-this statement the filing bar adjudicates.
+              # An issue candidate without it is unroutable at the audit gate.
+              | ($base
+                 + (if $arr == "suggestions" then ["category"] else [] end)
+                 + (if $arr == "suggestions" and (($item | type) == "object")
+                       and ($item.category == "issue")
+                    then ["impact"] else [] end))
                 as $req
               | [ $req[] | select((($item | type) != "object") or ($item[.] == null)) ]
                 as $missing
@@ -166,7 +173,8 @@ finding_item_detail() {
                      + " — every blockers[]/suggestions[] item requires:"
                      + " id, title, location (path plus symbol, no line numbers),"
                      + " description, recommendation, priority (integer 1-4),"
-                     + " estimate (1-5); suggestions also category (fix|issue)"
+                     + " estimate (1-5); suggestions also category (fix|issue),"
+                     + " and category:issue also impact (who hits this, on what real path)"
                 else empty end
             )
           | (first(.[]) // "") ) )

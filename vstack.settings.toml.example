@@ -53,6 +53,10 @@ ORCH_OVERSEER_LANES = "3"
 # Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
 # flight.
 
+# Used by: orch (`review-pr` § 5). Space-separated path globs; a changed file
+# matching one adds the needs-perf-test QA signal to the review's QA routing.
+# QA_PERF_PATHS = "src/hot/* engine/src/*"
+
 ORCH_DECISION_MODE = "ask"
 # Used by: orch (`review-pr` § 4/§ 7, `dev-fix` § 1). How workflow decision
 # points behave. "ask" (default) presents every decision to the user.

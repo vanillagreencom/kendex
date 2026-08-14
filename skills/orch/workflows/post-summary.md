@@ -56,7 +56,7 @@ Write the summary to a file first — inline bodies with backticks or fenced blo
 
 Omit empty sections. Created Issues comes from `audit_issues_created` plus `pr_comment_review.issues_created`, with project names. Deduplicate Recommendations Processed by description across cycles.
 
-**Commit SHAs.** When workflow state carries a `.rebase_map` — recorded by `submit-pr.md` § 2 after a `worktree push` auto-rebase rewrote the branch — resolve every published SHA through it, following the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden. Fix SHAs stored in state were already rewritten at push time, so the map matters for artifact-sourced references such as a perf QA `benchmark_commit`.
+**Commit SHAs.** When workflow state carries a `.rebase_map`, resolve every published SHA through it before posting — following the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden. State-stored fix SHAs were already rewritten at push time, so the map matters for artifact-sourced references such as a perf QA `benchmark_commit` (`submit-pr.md` § 2).
 
 ## 2. Post Handoff Comments
 

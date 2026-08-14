@@ -116,21 +116,18 @@ most ONE consolidated comment per PR carrying every upstream-remedy finding
 together, anchored anywhere in the vendored tree.
 
 **Accepted residual — the bound is an instruction, not a mechanism.** A
-reviewer whose output schema binds one finding to one location cannot merge
-unrelated defects however the instruction is worded, and will still emit one
-thread per finding. Expect that: read the thread count as an observable, not as
-compliance, and answer and resolve those threads like any others. What this doc
-buys for that reviewer class does not come from thread count at all — it comes
-from remedy-locus routing, which states each upstream-remedy finding once as
-upstream's to fix, so it is not re-litigated in the next consumer or argued
-back into the upstream repo. **A location-bound reviewer exceeding one thread
-is not by itself a failed rollout.**
+reviewer whose output schema binds one finding to one location will still emit
+one thread per finding, however the instruction is worded. Read the thread
+count as an observable, not as compliance, and answer those threads like any
+others: **a location-bound reviewer exceeding one thread is not by itself a
+failed rollout.** What this doc buys for that class is remedy-locus routing —
+each upstream-remedy finding stated once as upstream's to fix, so it is not
+re-litigated in the next consumer or argued back into the upstream repo.
 
-Recorded so it is not re-opened: the rejected alternative is an adapter or
-post-processing transport that collects such findings and republishes them as a
-summary. That is new engine machinery — a second publisher on the review
-surface, carrying its own trust and ordering questions — and deliberately out
-of scope for a reviewer-instruction change.
+Do not solve this with an adapter that collects such findings and republishes
+them as a summary. That is a second publisher on the review surface, carrying
+its own trust and ordering questions, and out of scope for a
+reviewer-instruction change.
 
 Classify each of the repo's reviewers before wiring, by reading a review body
 it posted on a recent PR: a body identical across PRs is a template, and that

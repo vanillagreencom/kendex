@@ -88,7 +88,6 @@ Worktree: [WORKTREE_PATH]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [LABELS]
-Blocks: [BLOCKED_ISSUE_IDS or "none"]
 </delegation_format>
 
 **GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]` — the normalized workflow-state key is what `dev-artifact-check --issue` resolves, so the artifact must be keyed to it, never to `OWNER/REPO#N`.
@@ -116,7 +115,6 @@ Artifact Key: [ISSUE_ID]
 Labels: [parent labels]
 Audit Bundle: [yes — only when caller context `audit_bundle: true`; omit otherwise]
 Parent Title: [PARENT_TITLE — the `.title` from the preflight bundle read, verbatim, so the dev agent can apply the container guard itself]
-Blocks: [blocked-issue-ids or "none"]
 
 **Work pending issues only** (completed ones are listed for context). Complete blockers before blocked issues.
 

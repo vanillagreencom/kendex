@@ -9,6 +9,7 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
   "tracker": {"type": "linear|github", "repository": "owner/repo"},
   "worktree": "/path/to/worktree",
   "blocked_issues": ["PROJ-456"],
+  "research_issue": "PROJ-123",
   "research_ref": "docs/research/PROJ-123/findings.md",
   "decision_ref": "D017",
   "hierarchy_contract": {
@@ -48,6 +49,7 @@ Input file for `audit-issues --issues`, written by the caller at `[worktree-path
 | `tracker` | No | Execution tracker context — see § Tracker |
 | `worktree` | Yes | Worktree path for code analysis |
 | `blocked_issues` | No | Issue IDs the research unblocks |
+| `research_issue` | No | The research issue itself — every `create` gets a `related` relation back to it |
 | `research_ref`, `decision_ref` | No | Findings path and decision reference |
 | `hierarchy_contract` | No | Binding decomposition directive — see § Hierarchy Contract |
 | `items[]` | Yes | Items to audit |

@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+- **Issue candidates must argue reality: `category: issue` findings require an
+  `impact` line.** One sentence naming who hits the problem, on what real path
+  — enforced by `review-artifact-check` (a candidate without it is rejected
+  with the field named), stated in the finding schema, and adjudicated by the
+  filing bar: an impact that needs "could", "might", or "in theory" is a
+  decline, not an issue. Hypothetical edge-case candidates now die at the
+  artifact gate instead of becoming suggestion pressure and backlog residue.
+- **Review fix-selection is disposition-by-rule everywhere — the menus are
+  gone.** `review.md` § 4 and `review-pr.md` §§ 4/7 no longer ask which
+  findings to fix or whether to file: blockers and fix-category suggestions
+  delegate to the fix round in every decision mode, issue candidates flow to
+  the audit input (audit-issues' own approval gate remains the user's say on
+  creation), and declined items surface in a required DECLINED report section
+  — re-derived from on-disk artifacts, so compaction cannot silently drop
+  one. review-pr's `ORCH_DECISION_MODE` resolution step is deleted with the
+  menus. A 213-line lint pins both workflows' menu-free sections, the
+  every-mode binding, and the declined reporting (10 planted controls).
+- **Fresh-eyes sweep across all skill and agent markdown.** The verdict of
+  three independent passes: the corpus is tight — most surviving repetition
+  is deliberate, test-enforced redundancy. What the sweep did find: four
+  silent defects in orch/dev (a workflow-state schema example documenting the
+  wrong type for `pr_review_baseline.last_threads`, which would have looped
+  comment triage to its cap; `QA_PERF_PATHS` read by review-pr but documented
+  nowhere a repo owner could find it — now in § Configuration and both
+  settings templates, enrolled in the parity guard; a broken code fence in
+  the reviewer Output Contract swallowing the self-validation instruction; a
+  wrong section cross-reference in dev-implement § 8), two defects in
+  project-management (research issues created with a duplicated section and
+  placeholders used before definition; `audit-issues-input` omitting the
+  `research_issue` field two workflows exchange), and consolidation in
+  review-gate/second-opinion (triplicated adoption preconditions, a six-copy
+  mode caveat, a five-copy artifact-integrity contract — one canonical home
+  each) that surfaced a silently diverged Pi `deny-tools` example, corrected
+  against the CLI source. Bootstrap message trimmed (ships with every agent
+  spawn); stale model-version tables replaced with `--help` pointers; two
+  tracker-citation violations of the house rule removed from shipped md.
+
 - **orch: `oversee` fleet mode.** A standing session that burns down the
   unblocked queue: one orch session per item, shepherded to merge. The launch
   surface resolves once — tmux lanes via `open-terminal`; otherwise the

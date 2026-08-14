@@ -154,43 +154,7 @@ reviewer = ["reviewer"]
 
 ### Project customization (`vstack.toml` at project root)
 
-Per-agent customization survives `vstack add` — re-applied on every install/reconciliation.
-
-```toml
-# Skills loaded into each agent's context.
-[agent-skills]
-rust = ["github", "worktree"]
-
-# Launch instructions added near the top of generated agent files.
-# The reserved key `all` (alias `"*"`) applies to every agent; shared text
-# renders first, then the agent's own entry, blank-line separated.
-[agent-launch-instructions]
-all = "Run `just setup` before anything else."
-rust = "Read docs/architecture.md before coding."
-
-# Project guidance appended to generated agent files. `all` works here too.
-[agent-additional-instructions]
-rust = "Always run clippy before committing."
-
-# Generated frontmatter. vstack populates active defaults; edit and refresh.
-# Harness-specific values only affect that harness.
-[agent-frontmatter.claude]
-rust = { color = "orange", model = "inherit", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = false }
-
-[agent-frontmatter.opencode]
-rust = { color = "#f97316", model = "openai/gpt-5.6-sol", model-reasoning-effort = "xhigh", deny-tools = ["task", "question"], mode = "subagent" }
-
-[agent-frontmatter.codex]
-rust = { nickname-candidates = ["Rust-Atlas", "Rust-Delta"], model = "gpt-5.6-sol", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
-
-[agent-frontmatter.pi]
-rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
-
-# Project instructions prepended to a skill's SKILL.md.
-# `all` applies to every installed and project-owned skill.
-[skill-instructions]
-trading-design = "Dark theme, green/red accents."
-```
+Per-agent customization survives `vstack add` — re-applied on every install/reconciliation. The annotated example of every table (`[agent-skills]`, `[agent-launch-instructions]`, `[agent-additional-instructions]`, `[agent-frontmatter.<harness>]`, `[skill-instructions]`) lives in [README.md](README.md#customizing-with-vstacktoml) — don't duplicate it here.
 
 `vstack refresh` applies `[skill-instructions]` to locked installs and to canonical project-owned `.agents/skills/<name>/SKILL.md` files; only the vstack-marked block is managed — all other skill content and unrelated project files are preserved. Mutating project refresh and hook-removal paths load configuration strictly and validate the `.agents/skills` ownership boundary before changing locks, hooks, settings, or generated agents; global removal stays forgiving.
 

@@ -125,7 +125,7 @@ rust = { color = "#f97316", model = "openai/gpt-5.6-sol", model-reasoning-effort
 rust = { nickname-candidates = ["Rust-Atlas", "Rust-Delta"], model = "gpt-5.6-sol", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
 
 [agent-frontmatter.pi]
-rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "question"], allowed-subagents = ["scout"], pane = true }
+rust = { color = "orange", model = "inherit", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], allowed-subagents = ["scout"], pane = true }
 ```
 
 `vstack refresh` applies `[skill-instructions]` to both locked skills and

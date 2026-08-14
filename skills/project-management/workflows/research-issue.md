@@ -55,10 +55,9 @@ Write the description to a file, then:
 [TYPE_SECTION]
 ## Expected Decision
 Next available ID via `.agents/skills/decider/scripts/decisions next-id`
-
-## Researcher Execution
-Use the deep-research skill with Exa in mode `[RESEARCH_MODE]`. Write clean findings to `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md` and raw metadata to `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/raw-exa.json`.
 ```
+
+Execution and output sections are appended in § 3, once the assets they name exist.
 
 `[TYPE_SECTION]`: omitted for Targeted; `## Affected Domains` with each domain and its reason for Pervasive; `## Creates Roadmap` with scope and phases for Strategic.
 

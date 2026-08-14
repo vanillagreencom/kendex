@@ -46,7 +46,7 @@ The `path` fields in that JSON are the ONLY authorized source for decision file 
 test -f [DECISION_FILE_PATH]
 ```
 
-A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead. A broken path must never reach a reviewer.
+A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead.
 
 ### 1.2 Re-Review Context
 
@@ -263,21 +263,9 @@ Collect blockers and `category == "fix"` suggestions from the appended JSONs. No
 
 </output_format>
 
-Omit empty categories. Decline any item that cannot affect real usage with one line of rationale here, per [SKILL.md § The Cycle](../SKILL.md#the-cycle) — it is neither fixed nor filed.
+Omit empty categories. Decline any item that cannot affect real usage with one line of rationale here, per [SKILL.md § The Cycle](../SKILL.md#the-cycle) — it is neither fixed nor filed, and it is reported in § 8.
 
-Resolve the decision mode:
-
-```bash
-.agents/skills/orch/scripts/orch-env ORCH_DECISION_MODE ask
-```
-
-`auto-recommended` executes the recommended option (blockers: `Fix now`; fix suggestions: `All`) without asking, logs it, and reports the same line with the round output:
-
-```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] auto_decisions '"auto-selected: [OPTION] — [REASON]"'
-```
-
-Any other mode asks `Fix blockers?` (`Fix now` | `Ignore and proceed`) and `Apply fix suggestions?` (multi-select). The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) applies in every mode. Nothing selected → § 5.
+**Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every blocker and `category == "fix"` suggestion that survives declining goes to the fix round below, in EVERY decision mode: which findings to fix is a mechanics question the rule settles, so `ORCH_DECISION_MODE` does not gate it. The always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) is unaffected and still applies. Nothing left after declines → § 5.
 
 ### Fix Delegation
 
@@ -287,7 +275,7 @@ Never fix as the main agent.
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
 ```
 
-**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: pr-review`.
+**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion that survived declining, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: pr-review`.
 
 ### Bounded Re-Review
 
@@ -379,7 +367,7 @@ A `pass` verdict continues to the next QA agent; `action_required` goes to § 7.
 
 **Skip if** every QA verdict is `pass` and no fix suggestions remain → § 8.
 
-Follow the § 4 pattern — collect, present, resolve the decision mode, delegate through `workflows/dev-fix.md` — with these overrides: items come from the QA JSONs excluding anything already fixed or escalated; the table header is `QA Agent` and the title `QA Review Items — [ISSUE_ID]`; `source` is `qa-review` and `qa_agent` carries the agent name. After the fix round, apply the § 4 bounded re-review rule with § 6 as the target instead of § 2 — a focused QA re-check, not a full PR review — unless the round's diff reaches beyond QA's own surface, which returns to § 2.
+Follow the § 4 pattern — collect, present, delegate through `workflows/dev-fix.md`, by rule and with no selection prompt — with these overrides: items come from the QA JSONs excluding anything already fixed or escalated; the table header is `QA Agent` and the title `QA Review Items — [ISSUE_ID]`; `source` is `qa-review` and `qa_agent` carries the agent name. After the fix round, apply the § 4 bounded re-review rule with § 6 as the target instead of § 2 — a focused QA re-check, not a full PR review — unless the round's diff reaches beyond QA's own surface, which returns to § 2.
 
 ## 8. Summary And Issue Audit
 
@@ -390,6 +378,8 @@ Follow the § 4 pattern — collect, present, resolve the decision mode, delegat
 Empty `json_paths` → report "No review items" and → § 9.
 
 Read every JSON, collect the `category == "issue"` suggestions, and deduplicate by (location, description), keeping the first and noting all sources.
+
+**Declined items are re-derived, not remembered.** A blocker or `category == "fix"` suggestion that appears in a `json_paths` artifact but in neither `fixed_items` nor `escalated_items` was declined in § 4 or § 7. Deriving them from disk keeps the report honest across a compaction that dropped the § 4 conversation. Carry each one's recorded rationale; where a compaction lost it, report the item with `rationale: not recorded` rather than inventing one.
 
 <output_format>
 
@@ -411,6 +401,12 @@ Read every JSON, collect the `category == "issue"` suggestions, and deduplicate 
 | # | Source | Location | Description | Pri |
 |---|--------|----------|-------------|-----|
 | 1 | [agent] | [location] | [description] | 🟠 |
+
+### 🚫 DECLINED
+
+| # | Source | Location | Description | Rationale |
+|---|--------|----------|-------------|-----------|
+| 1 | [agent] | [location] | [description] | [one line] |
 
 ### 📊 QA METRICS
 

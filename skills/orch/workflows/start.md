@@ -81,10 +81,7 @@ Exit 75 means a branch or open PR already owns the issue even though the configu
 
 ## 5. Continue In Worktree
 
-The invocation already answered where the work runs: `start` runs it in this
-session; a separate session is launched with the `handoff` command instead.
-Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree
-context — no question.
+The invocation already answered where the work runs: `start` runs it in this session; a separate session is launched with the `handoff` command instead. Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
 
 <output_format>
 

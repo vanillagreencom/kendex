@@ -87,17 +87,11 @@ Non-null only when no cycles exist: `{"team": "TeamName", "start": "2026-01-27",
 
 ### velocity
 
-All values are estimation points summed from `completedScopeHistory`, never issue counts. `adjustment` is null unless a trigger fires:
+All values are estimation points summed from `completedScopeHistory`, never issue counts. `adjustment` is null unless a trigger in [tpm-cycle-plan](../workflows/tpm-cycle-plan.md) § 2 fires:
 
 ```json
 {"proposal": "increase_baseline|decrease_baseline|increase_capacity", "from": 10, "to": 15, "reason": "..."}
 ```
-
-| Trigger | Proposal |
-|---------|----------|
-| Current ≥150% of baseline for 2+ cycles | `increase_baseline` |
-| Current ≤50% of baseline for 2+ cycles | `decrease_baseline` |
-| Every cycle at 100% with days remaining | `increase_capacity` |
 
 ### health
 

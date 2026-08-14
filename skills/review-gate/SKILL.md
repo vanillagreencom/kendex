@@ -1,6 +1,6 @@
 ---
 name: review-gate
-description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override) — unless REVIEW_GATE_MODE is 'off', when it evaluates nothing and a green PR-head gate attests only that the repo disabled it (merge-group statuses always post green by construction, mode unread) — one writer posts the answer as a merge-blocking commit status, plus an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
+description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override) — or, under REVIEW_GATE_MODE 'off', evaluates nothing and attests only that the repo disabled the gate — and one writer posts the answer as a merge-blocking commit status, with an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
 license: MIT
 user-invocable: true
 metadata:
@@ -16,19 +16,14 @@ metadata:
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
 The gate answers ONE question: **has this exact PR head been reviewed?** It
-posts that answer as a commit status the repo's branch rules require. The
-one exception is `REVIEW_GATE_MODE = "off"`: the predicate then evaluates
-NO evidence and answers `approved` with a disabled-by-settings attestation,
-so a green PR-head gate on such a repo means only "gate disabled" — never
-that a review happened. This contract covers evaluated PR-head statuses
-only: the writer's merge-group path never reads the mode and always posts
-green as "merge-queue entry: post-approval by construction". Caveats:
-[references/settings.md](references/settings.md)
-§ `REVIEW_GATE_MODE`.
+posts that answer as a commit status the repo's branch rules require. It does
+not check CI, re-run anything, or reason about jobs.
 
-It does not check CI, re-run anything, or reason about jobs. Whether untested
-code can reach the default branch is branch protection's job — see the
-adoption precondition below.
+Two greens do NOT mean a review happened. Under `REVIEW_GATE_MODE = "off"`
+the predicate evaluates no evidence and attests only that the repo disabled
+the gate; and merge-group statuses never read the mode, posting green as
+"merge-queue entry: post-approval by construction". Both:
+[references/settings.md](references/settings.md) § `REVIEW_GATE_MODE`.
 
 ## Decision table
 
@@ -42,18 +37,12 @@ adoption precondition below.
 
 ## ADOPTION PRECONDITION — check this first
 
-A repo must satisfy one, or untested code can merge and this engine will not
-stop it:
-
-1. **A merge queue** whose required contexts include the repo's test
-   aggregate (recommended — the suite runs once, on the merged result).
-2. **No held-back jobs** — every required check runs on every push.
-
-The hazard: held-back jobs report as `skipped`, and GitHub counts skipped as
-satisfied. Hold jobs back with no queue and a reviewed PR merges untested.
-Proven live in the sandbox (`.agents/skills/review-gate/tests/e2e-sandbox.sh`
-scenario 11); that scenario is the safety claim and must pass on every
-adopting repo.
+Whether untested code can reach the default branch is branch protection's
+job, so a repo must satisfy one of these or a reviewed PR merges untested:
+**a merge queue** whose required contexts include the test aggregate
+(recommended), or **no held-back jobs**. Held-back jobs report `skipped`,
+and GitHub counts skipped as satisfied. Wiring and the sandbox proof:
+[references/adoption.md](references/adoption.md) § The precondition.
 
 ## Evidence sources (`.agents/skills/review-gate/scripts/review-predicate.sh`)
 
@@ -122,58 +111,24 @@ nothing else.
   observed in one sandbox replay, zero stranded).
 - **Relay / converge split.** PR-attached legs (`pull_request_target`,
   `pull_request_review`, `status`, an opted-in `check_run`) do NOT run the
-  engine: they run a group-less relay job that dispatches a converge pass
-  and exits — in seconds on the success path, up to about 4.2 minutes when
-  it has to back off (see Cost). Only `workflow_dispatch` and `schedule` hold the
-  single-writer group. Convergence is unchanged — what changes is WHERE an
-  eviction's `CANCELLED` check lands. Attached to a PR head it pinned that
-  PR at `mergeStateStatus UNSTABLE` until a manual rerun; on the
-  default-branch runs the relay dispatches into, nothing gates on it.
-  **Cost**: one *non-evictable* run per PR-attached event — seconds and a
-  billed minimum on the success path, up to about 4.2 minutes of runner hold
-  in the worst modeled failure (a 60s-bounded attempt, a wait capped at 120s
-  plus up to 14s of jitter, a second 60s-bounded attempt), inside the job's
-  5-minute budget — the relay coalesces nothing, so unlike the writer group
-  there is one per event, including every `status` transition from every CI
-  provider. Each run also spends one content-creating API request against the
-  repo's shared secondary-limit budget; exhausting that budget degrades events
-  to the cron floor rather than breaking convergence. Event-fast latency grows
-  by a whole extra run lifecycle (two queue + runner-allocation waits instead
-  of one): typically seconds, well inside the cron floor's period, and when
-  runner allocation exceeds that period the scheduled pass converges the head
-  first and the dispatched run is a redundant no-op — an overrun costs a run,
-  not convergence. Size that before adopting on a capacity-limited runner
-  pool.
-  **Residual**: this removes *eviction-driven* cancelled checks, not every
-  cancelled check — a relay that hangs to its `timeout-minutes` would still
-  be a cancelled check on the PR head, which is why every wait in the step is
-  bounded. Its dispatch failures exit green and warn (below) rather than
-  redden.
+  engine: they run a group-less relay job that dispatches a converge pass and
+  exits. Only `workflow_dispatch` and `schedule` hold the single-writer group.
+  Convergence is unchanged — what changes is WHERE an eviction's `CANCELLED`
+  check lands: attached to a PR head it pinned that PR at `mergeStateStatus
+  UNSTABLE` until a manual rerun, while nothing gates on the default-branch
+  runs the relay dispatches into. It costs one non-evictable run per
+  PR-attached event, coalescing nothing — size that before adopting on a
+  capacity-limited runner pool ([references/adoption.md](references/adoption.md)
+  § Updating an already-adopted copy).
 - **The relay never exits non-zero — a pinned invariant, not a per-branch
-  choice.** It holds no
-  `statuses` scope, so a failed dispatch cannot make the gate look
-  converged — only leave it stale, which the cron floor and `pr-watch
-  --heal` already own. Reddening would re-create the exact `UNSTABLE` pin
-  the split removes. Two dispatch attempts (the retry honors
-  a three-way rule. A **rate-limit** answer waits the window the server
-  named — `retry-after`, or `x-ratelimit-reset` *only when
-  `x-ratelimit-remaining` is 0* — floored at 60s; a secondary limit that
-  sends no header is recognized from its body or from an HTTP 429. Every wait
-  then carries bounded jitter, because the relay is group-less: without it, N
-  runs of one event burst read the same headers and re-POST in lockstep. A
-  plain **transient** waits
-  5s. A **permanent** answer is not retried at all: 400, 404 for a renamed
-  workflow file, 405, 422 for a bad ref, 401 for a revoked token, and 403
-  when it carries no rate-limit evidence — the `Resource not accessible by
-  integration` shape, which is the likeliest failure a hand-edited
-  permissions block produces. A named window beyond the 120s budget is not
-  waited out either; both defer to the cron floor. `x-ratelimit-reset` is on
-  *every* GitHub response, so treating it as a wait instruction on its own
-  silently disables the whole retry); on double failure it
-  warns and exits 0. It files no
-  rolling incident of its own — a sustained dispatch outage shows up as
-  **gate staleness**, which `pr-watch --heal` already reduces across
-  every open PR, rather than as N red PRs or a widened relay scope.
+  choice.** It holds no `statuses` scope, so a failed dispatch cannot make the
+  gate look converged — only leave it stale, which the cron floor and
+  `pr-watch --heal` already own. Reddening would re-create the exact
+  `UNSTABLE` pin the split removes. Every fault warns and exits 0, and every
+  wait is bounded, so a sustained dispatch outage surfaces as **gate
+  staleness** across every open PR rather than as N red PRs. The retry
+  taxonomy and the bounds are pinned in adoption.md § Updating an
+  already-adopted copy — read it before editing a consumer's copy.
 - **Write ordering.** Before any `success` post it re-reads the status and
   defers when any gate entry was created at/after this run's evaluation
   instant — a newer run's state AND description (which carries the audit

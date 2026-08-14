@@ -476,7 +476,7 @@ assert_substr "$(jq -r '.detail' <<<"$out")" "suggestions[0]" "glob malformed-it
 
 # ...and an older fresh well-formed sibling still wins over a newer malformed one
 glob_item_ok="$worktree/tmp/review-reviewer-item-20260810-000000.json"
-printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"issue"}],"qa_metadata":{}}' > "$glob_item_ok"
+printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"issue","impact":"nightly importers hit it on every run"}],"qa_metadata":{}}' > "$glob_item_ok"
 touch -d "@$after" "$glob_item_ok"
 touch -d "@$later" "$glob_item_bad"
 out="$("$CHECK" "$worktree" reviewer-item "$delegated_at")"
@@ -527,7 +527,20 @@ assert_file_contains "$submit_pr" "none of those outcomes is a pass" "submit-pr 
 # two used plausible-but-wrong field names (`detail`, `remediation`, `file`+
 # `line`). The rejection is relayed verbatim to the agent that must redo the
 # work, so it names the whole expected item shape.
-REQ_SPEC="every blockers[]/suggestions[] item requires: id, title, location (path plus symbol, no line numbers), description, recommendation, priority (integer 1-4), estimate (1-5); suggestions also category (fix|issue)"
+REQ_SPEC="every blockers[]/suggestions[] item requires: id, title, location (path plus symbol, no line numbers), description, recommendation, priority (integer 1-4), estimate (1-5); suggestions also category (fix|issue), and category:issue also impact (who hits this, on what real path)"
+
+# category:issue items require a non-empty impact line; fix items do not.
+impact_wt=$(mktemp -d); mkdir -p "$impact_wt/tmp"
+impact_art="$impact_wt/tmp/review-reviewer-impact-20260101-000000.json"
+printf '%s' '{"agent":"reviewer-impact","timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"s","qa_metadata":{"review_performed":true},"blockers":[],"suggestions":[{"id":1,"title":"t","location":"l (sym)","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"issue"}]}' > "$impact_art"
+r=$("$CHECK" "$impact_wt" reviewer-impact 0 || true)
+assert_eq "$(jq -r '.ok' <<<"$r")" "false" "category:issue without impact is rejected"
+assert_substr "$(jq -r '.detail // ""' <<<"$r")" "impact" "the rejection names the missing impact field"
+jq '.suggestions[0].impact = "operators running the nightly import hit it on every run"' "$impact_art" > "$impact_art.n" && mv "$impact_art.n" "$impact_art"
+assert_eq "$("$CHECK" "$impact_wt" reviewer-impact 0 | jq -r '.ok')" "true" "category:issue with impact passes"
+jq '.suggestions[0].category = "fix" | del(.suggestions[0].impact)' "$impact_art" > "$impact_art.n" && mv "$impact_art.n" "$impact_art"
+assert_eq "$("$CHECK" "$impact_wt" reviewer-impact 0 | jq -r '.ok')" "true" "category:fix needs no impact"
+rm -rf "$impact_wt"
 
 # The check exits 1 on a rejected artifact, which is the case under test here —
 # swallow it so `set -e`/`pipefail` do not abort the suite on an expected failure.
@@ -571,7 +584,8 @@ assert_eq "$("$CHECK" --file "$alias1" 2>/dev/null | jq -r '.reason' || true)" "
 good="$TMP_ROOT/good.json"
 jq -n '{agent:"reviewer-safety",timestamp:"t",verdict:"pass",summary:"s",blockers:[],
   suggestions:[{id:1,title:"t",location:"a.rs (`f`)",description:"d",recommendation:"r",
-  priority:4,estimate:2,category:"issue"}],qa_metadata:{safety:{}}}' > "$good"
+  priority:4,estimate:2,category:"issue",
+  impact:"anyone auditing unsafe blocks hits it on the next sweep"}],qa_metadata:{safety:{}}}' > "$good"
 assert_eq "$("$CHECK" --file "$good" | jq -r '.reason')" "valid" "a schema-correct artifact is still valid"
 assert_eq "$(detail_of "$good")" "" "a valid artifact carries no detail"
 

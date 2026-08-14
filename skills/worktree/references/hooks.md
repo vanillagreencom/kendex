@@ -1,15 +1,6 @@
 # App-created worktree hooks and git-hook auto-repair
 
-Installation-time wiring so app-created worktrees get the same env/config provisioning `create` applies. The everyday contract lives in [../SKILL.md](../SKILL.md).
-
-| Command | Description |
-|---------|-------------|
-| `codex-setup` | Apply env/config setup to a Codex Desktop app-created worktree |
-| `codex-branch` | Normalize a Codex Desktop app-created branch to an issue branch |
-| `codex-cleanup` | Non-destructive Codex Desktop cleanup hook; app owns deletion |
-| `claude-setup` | Apply env/config setup to a Claude Code-created worktree (`WorktreeCreate` hook) |
-| `claude-cleanup` | Non-destructive Claude Code cleanup hook; app owns deletion |
-| `repair-links` | Hook-driven symlink re-assertion; quiet no-op outside a managed worktree |
+Installation-time wiring so app-created worktrees get the same env/config provisioning `create` applies. The everyday contract, and the one-line index of these commands, live in [../SKILL.md](../SKILL.md).
 
 ## Git-hook auto-repair (`repair-links`)
 

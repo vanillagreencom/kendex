@@ -18,9 +18,9 @@ will not stop it:
 Held-back jobs report `skipped`, and GitHub counts skipped as satisfied;
 with no queue, a reviewed PR merges untested. The live replay
 (`.agents/skills/review-gate/tests/e2e-sandbox.sh` from a consumer root;
-`skills/review-gate/tests/e2e-sandbox.sh` in the catalog repo) exercises
-the queue-backstop scenario — run it against a repo-shaped sandbox before
-trusting an adoption.
+`skills/review-gate/tests/e2e-sandbox.sh` in the catalog repo) proves this
+in scenario 11, the queue backstop. That scenario IS the safety claim and
+must pass against a repo-shaped sandbox on every adopting repo.
 
 ## What an adoption PR contains
 
@@ -122,7 +122,7 @@ cases from the repo's actual trust values.
   relay), and a repo that required a writer job name would block on a
   context that leg never creates.
 
-## Updating an already-adopted copy (relay/converge split, VST-210)
+## Updating an already-adopted copy (relay/converge split)
 
 Consumer copies are repo-owned, so `vstack refresh` will NOT deliver this —
 each repo takes it as its own PR. What changed in the template:
@@ -142,8 +142,8 @@ each repo takes it as its own PR. What changed in the template:
   copy — a checkout added to this job is what turns the delta into an
   exposure. The `write` job still holds no `actions` scope, so the writer
   still never re-runs CI.
-- **The relay carries no VST-36 escalation, by decision.** The rolling
-  incident issue stays on the `write` job. Because the relay also does not
+- **The relay files no rolling incident issue, by decision.** That escalation
+  stays on the `write` job. Because the relay also does not
   redden the PR (below), a sustained dispatch outage is detected through
   **gate staleness** rather than through any individual relay run: every
   event falls back to the cron floor, gates sit unconverged past that
@@ -178,31 +178,29 @@ each repo takes it as its own PR. What changed in the template:
 - **The relay never exits non-zero.** Treat this as an invariant when you
   edit the copy: the job runs on PR-attached legs, so a red — or a hang long
   enough to be cancelled — is a failed check on the PR head and the defect
-  this change removes. Every fault warns and exits 0, and every wait is
-  bounded (`timeout` per dispatch attempt, a floored and capped backoff, and a
-  `timeout-minutes` proven to outlast the worst case). Two
-  dispatch attempts (the retry honors `retry-after`/`x-ratelimit-reset`,
-  floored at 60s and capped at 120s — a 5-second retry lands inside every
-  secondary-rate-limit window and could never succeed against the one
-  failure class it exists for, and the cap keeps the wait inside the job's
-  `timeout-minutes`. A window the server names beyond that cap is not waited
-  out at all: the event defers to the cron floor rather than pay for a retry
-  guaranteed to land inside the window. A plain transient retries in 5s — the
-  minute is for rate limits, not for blips. A permanent answer is not retried
-  at all: 400, 404 for a renamed workflow file, 405, 422 for a bad ref, 401
-  for a revoked token, and **403 with no rate-limit evidence**, which is the
-  `Resource not accessible by integration` shape a trimmed permissions block
-  or an org token policy produces — the likeliest permanent failure this job
-  has, since it is the only one needing `actions: write`. Note that
-  `x-ratelimit-reset` rides on every GitHub response, so it counts as a wait
-  instruction only when `x-ratelimit-remaining` is 0);
-  on double failure it warns and exits 0 instead of exiting non-zero. The
-  reasoning: it
-  holds no `statuses` scope, so a skipped dispatch cannot make the gate look
-  converged — only leave it stale, which the cron floor already owns —
-  whereas a red relay check pins the PR at `UNSTABLE`, the defect being
-  fixed. Do not "restore fail-loud" here without also moving the visibility
-  somewhere that is not a PR's mergeability.
+  this change removes. It holds no `statuses` scope, so a skipped dispatch
+  cannot make the gate look converged, only stale, which the cron floor
+  already owns. Every fault warns and exits 0, and every wait is bounded
+  (`timeout` per dispatch attempt, a floored and capped backoff, and a
+  `timeout-minutes` proven to outlast the worst case). Do not "restore
+  fail-loud" here without also moving the visibility somewhere that is not a
+  PR's mergeability.
+
+  It makes two dispatch attempts, classifying the server's answer:
+
+  | Answer | Wait | Recognized by |
+  |---|---|---|
+  | Rate limit | The named window, floored at 60s and capped at 120s, plus bounded jitter | `retry-after`; `x-ratelimit-reset` *only when `x-ratelimit-remaining` is 0*; a header-less secondary limit, from its body or an HTTP 429 |
+  | Transient | 5s | Anything else retryable — the minute is for rate limits, not blips |
+  | Permanent | Not retried | 400; 404 (renamed workflow file); 405; 422 (bad ref); 401 (revoked token); 403 carrying no rate-limit evidence — the `Resource not accessible by integration` shape a trimmed permissions block or an org token policy produces |
+
+  The floor keeps a retry from landing inside the secondary-limit window it
+  exists for; the cap keeps the wait inside `timeout-minutes`, and a named
+  window beyond it is not waited out at all — that event defers to the cron
+  floor. The jitter is needed because the relay is group-less: without it, N
+  runs of one event burst read the same headers and re-POST in lockstep.
+  `x-ratelimit-reset` rides on *every* GitHub response, so treating it as a
+  wait instruction on its own silently disables the whole retry.
 
 Why bother, per repo: without it, a burst of PR events leaves an evicted
 writer run as a `CANCELLED` check on the PR, and `mergeStateStatus` reads
@@ -213,14 +211,20 @@ What it costs, per repo: one extra Actions run per PR-attached event —
 seconds and a billed minimum on the success path, and up to about 4.2
 minutes of runner hold in the worst modeled failure (a 60s-bounded attempt,
 a wait capped at 120s plus up to 14s of jitter, a second 60s-bounded
-attempt), which still fits inside the job's 5-minute budget. The relay is unconditional and deliberately group-less,
-so unlike the writer group it coalesces nothing — that is one run per event,
-including every `status` transition every CI provider posts on every open
-head — and the event-fast path now waits on two runner allocations instead
-of one. Repos on a constrained or self-hosted runner pool should size that
-before adopting. The residual is honest: this removes *eviction-driven*
-cancelled checks, not every cancelled check — a relay hung to its
-`timeout-minutes` still leaves one.
+attempt), which still fits inside the job's 5-minute budget. The relay is
+unconditional and group-less, so unlike the writer group it coalesces nothing
+— that is one run per event, including every `status` transition every CI
+provider posts on every open head. Each run also spends one content-creating
+API request against the repo's shared secondary-limit budget; exhausting that
+budget degrades events to the cron floor rather than breaking convergence.
+Event-fast latency grows by a whole extra run lifecycle — two queue and
+runner-allocation waits instead of one, typically seconds and well inside the
+cron floor's period. When runner allocation exceeds that period the scheduled
+pass converges the head first and the dispatched run is a redundant no-op, so
+an overrun costs a run, not convergence. Repos on a constrained or self-hosted
+runner pool should size that before adopting. Residual: this removes
+*eviction-driven* cancelled checks, not every cancelled check — a relay hung
+to its `timeout-minutes` still leaves one.
 
 Verify after adopting — and note that the first check alone passes even when
 the relay is deferring every event, so run both:

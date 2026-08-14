@@ -42,7 +42,9 @@ Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-
 
 ```bash
 .agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]
-``` **Self-validate before returning** — run the same check the orchestrator will run, and fix until it prints `"ok": true`:
+```
+
+**Self-validate before returning** — run the same check the orchestrator will run, and fix until it prints `"ok": true`:
 
 ```bash
 .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] 0

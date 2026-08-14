@@ -38,7 +38,7 @@ No changes → report "No changes to review" and **END**.
 .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
 ```
 
-The `path` fields are the ONLY authorized source for decision file paths — never compose or recall one from memory. Verify each before injecting it, one command per path:
+The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory, however plausible the slug looks. Verify each before injecting it, one command per path:
 
 ```bash
 test -f [DECISION_FILE_PATH]
@@ -123,15 +123,15 @@ Est: 1 (hours) | 2 (half-day) | 3 (day) | 4 (2-3d) | 5 (week+)
 
 </output_format>
 
-Omit empty categories, then ask (omitting categories with no items): `Apply fixes?` as a multi-select over blockers and fix suggestions, and `Create issues for these?` as a multi-select over issue suggestions that clear the filing bar in [references/finding-disposition.md](../references/finding-disposition.md).
+Omit empty categories. **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Every surviving blocker and `category == "fix"` suggestion is fixed; the declines are already dropped with their one-line rationale and are reported in § 5. Which findings to fix is a mechanics question the rule settles, so `ORCH_DECISION_MODE` does not reintroduce the menu; the always-ask set in [SKILL.md § The Cycle](../SKILL.md#the-cycle) is unaffected and still applies.
 
-**Never fix as the main agent.** With fix items selected:
+**Never fix as the main agent.**
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WT_PATH]
 ```
 
-**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 tail` with context `worktree`, `lifecycle: "managed"`, `dev_agent` (from state or labels), `issue_id`, `items` (each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: review`. State writes for fixed and escalated items belong to dev-fix — do not re-append them here.
+**Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 tail` with context `worktree`, `lifecycle: "managed"`, `dev_agent` (from state or labels), `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: review`. State writes for fixed and escalated items belong to dev-fix — do not re-append them here.
 
 <output_format>
 
@@ -143,7 +143,7 @@ Omit empty categories, then ask (omitting categories with no items): `Apply fixe
 
 </output_format>
 
-With issue items selected, or escalated items from the fix round, build an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (or null), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
+`category == "issue"` suggestions that clear the filing bar in [references/finding-disposition.md](../references/finding-disposition.md), plus any escalated items from the fix round, build an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (or null), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
 
 audit-issues is a primary-session wrapper: run it in this session, because it holds the interactive approval gate and its mutations require approvals collected there. Do not delegate the wrapper to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
 
@@ -161,9 +161,16 @@ Shut the review agents down (wave runs already did).
 | Agents | [N] |
 | Blockers | [N] |
 | Fixes applied | [N] |
+| Declined | [N] |
 | Issues created | [N] |
 | Escalated | [N] |
 
+### Declined
+
+| # | Agent | Location | Description | Rationale |
+|---|-------|----------|-------------|-----------|
+| 1 | [agent] | [location] | [description] | [one line] |
+
 </output_format>
 
-Omit zero-value rows except Scope and Agents.
+Omit zero-value rows except Scope and Agents, and omit the Declined table when nothing was declined.

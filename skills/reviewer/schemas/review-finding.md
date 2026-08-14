@@ -32,7 +32,8 @@ Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) 
       "recommendation": "How to improve it (bullet-list for category:issue)",
       "priority": 3,
       "estimate": 2,
-      "category": "fix|issue"
+      "category": "fix|issue",
+      "impact": "category:issue only — who hits this, on what real path"
     }
   ],
   "questions": [
@@ -75,7 +76,7 @@ Every item requires all of these; one missing field rejects the whole artifact.
 | `estimate` | Yes | 1-5 points (1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+) |
 | `category` | Suggestions only | `fix` (apply in this PR) or `issue` (track separately) — the orchestrator routes on this field |
 
-`category: "issue"` items become tracked issues — write at issue quality: `description` 2-3 sentences (what, why, impact); `recommendation` as bullet-list requirements.
+`category: "issue"` items become tracked issue candidates — write at issue quality: `description` 2-3 sentences; `recommendation` as bullet-list requirements; `impact` (required) one line naming who hits this on what real path. An impact that needs "could", "might", or "in theory" is a decline, not an issue — say so in the review summary instead.
 
 ## Question Fields (PR comment triage only)
 

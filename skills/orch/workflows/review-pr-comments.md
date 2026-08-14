@@ -50,7 +50,7 @@ gh api user -q .login
 .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
 ```
 
-The `path` fields are the ONLY authorized source for decision file paths — never compose or recall one from memory. Verify each before injecting it, one command per path:
+The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory, however plausible the slug looks. Verify each before injecting it, one command per path:
 
 ```bash
 test -f [DECISION_FILE_PATH]

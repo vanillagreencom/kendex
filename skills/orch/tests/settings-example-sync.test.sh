@@ -19,7 +19,7 @@ ORCH_KEYS="PR_REVIEW_GATE REVIEW_GATE_MODE PR_REVIEW_WAIT_SECS PR_REVIEW_NUDGE_S
 # Opt-in keys with no shipped default: the skill template carries a COMMENTED
 # example (nothing to merge, so no uncommented assignment) so the option is
 # still discoverable where its skill is installed.
-ORCH_OPTIN_KEYS=""
+ORCH_OPTIN_KEYS="QA_PERF_PATHS"
 SKILL_ONLY_OPTIN_KEYS="ORCH_LANE_ALIASES"
 
 fail=0

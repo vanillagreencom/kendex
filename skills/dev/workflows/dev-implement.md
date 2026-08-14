@@ -177,10 +177,7 @@ The log read verifies the commit exists before you proceed. Use the CURRENT sub-
 
 ## 8. Record QA Signals
 
-Based on the FINAL validated code, decide which extra QA passes the change
-genuinely needs. You wrote the code — this is your call, recorded in the
-completion artifact (§ 9.1 `--qa-label`, one per signal), not a tracker
-mutation. No repository label configuration is involved.
+Based on the FINAL validated code, decide which extra QA passes the change genuinely needs. You wrote the code — this is your call, recorded in the completion artifact (§ 10 `--qa-label`, one per signal), not a tracker mutation. No repository label configuration is involved.
 
 | Trigger | Signal |
 |---------|--------|

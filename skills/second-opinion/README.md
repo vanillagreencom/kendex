@@ -61,26 +61,7 @@ SECOND_OPINION_CODEX_CMD="codex exec -m gpt-5.6-sol -s read-only -c model_reason
 
 Edit the full command string to change model, effort level, or tool access. No additional flags are appended.
 
-### Flag reference
-
-**Claude:**
-
-| Flag | Purpose |
-|------|---------|
-| `-p` | Non-interactive print mode |
-| `--no-session-persistence` | Ephemeral session |
-| `--model opus` | Opus 4.6 (change to `sonnet` or `haiku` for speed/cost) |
-| `--effort max` | Reasoning effort (`low`, `medium`, `high`, `max`) |
-| `--allowedTools` | Tool access — read-only bash, file reads, search (no writes) |
-
-**Codex:**
-
-| Flag | Purpose |
-|------|---------|
-| `-m gpt-5.6-sol` | Model (change to any supported model) |
-| `-s read-only` | Sandbox (`read-only`, `workspace-write`) |
-| `-c model_reasoning_effort=xhigh` | Reasoning effort (`low`, `medium`, `high`, `xhigh`) |
-| `--ephemeral` | Ephemeral session |
+Both defaults are shaped the same way: a non-interactive print mode, an ephemeral session, a model, a reasoning effort, and read-only tool access. Change the model and effort flags to trade cost against depth; keep the sandbox read-only so a second opinion can never write to your worktree. Each CLI's own `--help` is authoritative on its flags.
 
 ## orch Integration
 
@@ -90,4 +71,4 @@ The orch `submit-pr` workflow also runs `review` as a local pre-PR review of the
 
 Review artifacts stamp `qa_metadata.reviewed_head` (the reviewed worktree's HEAD commit) so callers can budget review passes **per pushed head** — GitHub bots re-review every push, and a new head is a new round, not a spend against a per-submission cap.
 
-The wrapper guarantees a "pass" artifact always corresponds to a complete review that actually happened: the artifact `timestamp` is wrapper-stamped (never model-supplied), the review scope is derived from the worktree and embedded in the prompt, incomplete or no-review responses are preserved beside the artifact (`.incomplete.json` / `.noreview.json`, exit 4) instead of becoming it, an empty diff fails with exit 3, and a CLI that never answers fails with exit 5 (`.failed.json`). See SKILL.md § Error Handling for the exit-code contract.
+The wrapper guarantees a "pass" artifact always corresponds to a complete review that actually happened: the `timestamp` is wrapper-stamped rather than model-supplied, the scope is derived from the worktree instead of being left to the model, and a response that is incomplete, self-reported as no-review, or never delivered is preserved beside the artifact rather than becoming it. See SKILL.md § Error Handling for the exit-code contract.

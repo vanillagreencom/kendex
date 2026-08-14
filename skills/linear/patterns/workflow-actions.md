@@ -13,8 +13,6 @@ scripts/linear.sh issues unblock [ISSUE_ID]
 scripts/linear.sh issues complete [ISSUE_ID] --summary-file [SUMMARY_PATH]
 ```
 
-`activate --agent` applies the exclusive `agent:*` label with the "In Progress" transition and fails without changing state when the label does not exist. `complete` posts the summary comment before transitioning to Done, so a failed post leaves the state unchanged.
-
 Cancel, duplicate, and absorb are all `comments create` + `issues update --state "Canceled"`; name the surviving issue in the comment on both sides of an absorb.
 
 ## Descriptions
@@ -34,20 +32,19 @@ scripts/linear.sh issues remove-relation [ISSUE_ID] --blocks|--blocked-by [OTHER
 
 A `make_parent` action carrying `retitle` applies the retitle alongside the reparenting; skipping it leaves the promoted parent reading as a container and splits a bundle the audit decided to keep whole.
 
-`--blocks`/`--blocked-by` are guarded: a blocking relation must connect peers of one bundle — same direct parent, or both top-level. The two issues need not share a project. An issue never blocks its own ancestor or descendant, since the hierarchy already encodes that dependency. A rejected cross-subtree pair comes back with the one valid replacement pair, at the level where the subtrees separate, already validated against the same rule.
+Blocking relations are guarded at mutation time — SKILL.md § Blocked Label vs Issue Relations states the shape, and a rejection names the valid replacement pair. Design to that rule rather than re-deriving it.
 
 Never drop a valid dependency because the current structure cannot express it cleanly. Lift child-level dependencies to the parent level when bundles are involved, and use `--related` when the dependency is informational rather than blocking.
 
 ## Labels
 
-`--labels` replaces the entire issue-label set, so every update passes the full intended final set — never just the changed label. An unresolvable name now fails the update rather than dropping that label, and `--clear-labels` is the only way to empty the set.
+`--labels` replaces the entire issue-label set, so every update passes the full intended final set — never just the changed label.
 
 Before any create or label update from a workflow:
 
 1. `scripts/linear.sh sync --reconcile` when the cache is missing or stale, then `scripts/linear.sh cache labels list --format=safe`.
-2. Build the full final set from the project's taxonomy.
-3. Reject unknown labels, parent/group labels (`is_group: true`), missing required categories, and exclusive-category conflicts. Agent labels are exclusive: replace the old `agent:*` rather than adding to it.
-4. Ask for explicit authorization before creating any missing label; never create labels automatically.
+2. Build the full final set from the project's taxonomy, rejecting unknown labels, parent/group labels (`is_group: true`), missing required categories, and exclusive-category conflicts.
+3. Ask for explicit authorization before creating any missing label; never create labels automatically.
 
 Project labels are a separate resource and must not be used for issue-label preflight.
 
@@ -57,7 +54,7 @@ Project labels are a separate resource and must not be used for issue-label pref
 scripts/linear.sh issues bulk-update [ID_1] [ID_2] --cycle [CYCLE_ID] --state "Todo"
 ```
 
-`bulk-update` is non-atomic. On a nonzero exit read its JSON before retrying: `partial: true` means some issues already changed, and `results` identifies which.
+On a nonzero `bulk-update` exit, read its JSON before retrying — `partial: true` means some issues already changed, and `results` identifies which.
 
 When a child's state or cycle changes, fetch the parent and promote it when a child advances into active work — never demote it.
 

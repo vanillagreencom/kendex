@@ -29,27 +29,32 @@ output, bot account support, configurable issue ID extraction.
 |---------|---------|
 | `pr-data <N> [--actionable]` | Get PR with threads, comments, files. `--actionable`: unresolved non-outdated only. |
 | `pr-view [N] [--json FIELDS]` | View PR details (wraps gh pr view with bounded auth/no-PR errors) |
-| `pr-threads <N> [--unresolved]` | Get the complete paginated thread list/count, outdated included; fails rather than returning a partial list. See *PR blocked with no visible conversations*. |
+| `pr-threads <N> [--unresolved]` | Complete paginated thread list/count, outdated included. See *PR blocked with no visible conversations*. |
 | `pr-list-ready [--all] [--format=safe\|table]` | List PRs ready for merge |
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
-| `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed. Prefer `--body-file` for Markdown with backticks/code fences; `--body` is safe only for plain strings. `--force` skips checks. |
+| `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed; `--force` skips them. |
 | `pr-edit-body <N> --body-file PATH` | Update an existing PR body through the sanitized router. |
-| `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check`: JSON readiness only. `--auto`: queue for auto-merge if blocked now, but never bypass actionable review threads. `--force`: deliberate override of all safety checks. Three exit codes — see below. |
+| `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check` reports readiness as JSON without merging; `--auto` queues a currently-blocked PR. Three exit codes, the review-thread gate, and `--force` — see *PR Merge Outcomes*. |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
 | `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
-| `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Check the live label inventory, then add a label through an authoritative REST capability boundary; direct script execution also loads current-project env. |
-| `label-remove <PR-or-issue> <label> [--issue]` | Remove a label through the sanitized router; direct script execution also loads current-project env. |
+| `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Add a label after checking the live inventory. Mode semantics and exit codes: *Label application contract*. |
+| `label-remove <PR-or-issue> <label> [--issue]` | Remove a label through the sanitized router. |
 | `await-mergeable <N> [--interval S] [--max-iter N] [--quiet]` | Block until GitHub resolves a PR's merge state. Polls `state` + `mergeStateStatus`. Exit 0 + JSON on resolve, 124 on timeout. |
 | `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
 | `bot-token [--format=safe\|text]` | Check if bot token is configured |
 | `dismiss-review <PR> [--bot\|--user NAME] [--message M]` | Dismiss blocking review |
 | `resolve-thread <PRRT_...>` | Mark thread(s) resolved. Works on threads the UI cannot render. See *PR blocked with no visible conversations*. |
 | `unresolve-thread <PRRT_...>` | Reopen thread(s) |
-| `post-reply <PRRT_...\|numeric-id> [body \| --body-file PATH] [--pr N]` | Reply to review comment. `--pr N` is REQUIRED for numeric comment IDs; thread `PRRT_...` IDs need no PR number. Prefer `--body-file` for Markdown with backticks; inline body is safe only for plain strings. |
-| `post-comment <PR> [body \| --body-file PATH]` | Post PR-level comment. Same body-file preference as `post-reply`. |
+| `post-reply <PRRT_...\|numeric-id> [body \| --body-file PATH] [--pr N]` | Reply to review comment. `--pr N` is REQUIRED for numeric comment IDs; thread `PRRT_...` IDs need no PR number. |
+| `post-comment <PR> [body \| --body-file PATH]` | Post PR-level comment. |
 | `find-comment <PR> --pattern <regex>` | Find comment by pattern/author |
-| `edit-comment <id> [body \| --body-file PATH]` | Edit existing comment. Same body-file preference as `post-reply`. |
+| `edit-comment <id> [body \| --body-file PATH]` | Edit existing comment. |
 | `sticky-comment <PR> [--verdict\|--analysis\|--body]` | Get bot sticky comment. `--verdict`: quick pass/fail. `--analysis`: deep recommendation. |
+
+Wherever a body is accepted, prefer `--body-file`: an inline `--body` is safe
+only for plain strings, and Markdown carrying backticks or code fences needs
+the file. `label-add`/`label-remove` also load current-project env when their
+command scripts are executed directly rather than through `github.sh`.
 
 Most commands accept no PR number to auto-detect from the current branch.
 Exception: `post-reply` with a numeric comment ID never auto-detects — it
@@ -229,6 +234,7 @@ format value is an error rather than a silent fallback to `safe`.
 | `GH_BOT_TOKEN` | Bot account GitHub token (in `.env.local` or parent env) | Falls back to `GH_TOKEN` / `GITHUB_TOKEN`, then `gh` auth |
 | `GH_BOT_USERNAME` | Bot username for review/comment filtering | `review-bot[bot]` |
 | `GH_ISSUE_PATTERN` | Regex for issue ID extraction from branches | `[A-Z]+-[0-9]+` |
+| `GH_VERIFY_CMD` | Overrides build/test detection in `pr-cross-check --verify` | auto-detect |
 | `VSTACK_GITHUB_OP_TIMEOUT` | Seconds to wait for `op read` when resolving token references | `10` |
 | `VSTACK_GITHUB_AUTH_TIMEOUT` | Seconds to wait for GitHub auth preflight in `pr-view` | `10` |
 | `VSTACK_GITHUB_PR_VIEW_TIMEOUT` | Seconds to wait for `gh pr view` in `pr-view` | `30` |

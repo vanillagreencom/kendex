@@ -65,8 +65,7 @@ Persistent state file for orch workflows. Survives context compaction.
     "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567": "76543210f9e8d7c6b5a49382716051423344abcd"
   },
   "pr_review_baseline": {
-    "last_ts": "2026-01-28T10:00:00Z",
-    "last_threads": 2
+    "last_threads": ["PRRT_kwDOABC123", "PRRT_kwDODEF456"]
   },
   "pr_comment_review": {
     "iterations": 0,
@@ -98,14 +97,14 @@ Persistent state file for orch workflows. Survives context compaction.
 | `review_agent_ids` | object | Reviewer session IDs keyed by name — reuse before spawning `{"name":"id",...}` |
 | `review_agent_runtime_types` | object | Reviewer runtime agent metadata keyed by logical reviewer name: `{name: {agent_type, task_name?, fallback}}`; records a Codex `worker` fallback and, when the runtime `task_name` schema forced a hyphens-to-underscores spelling, the translated `task_name` — without changing the logical keys |
 | `review_wave_done` | string[] | Wave mode only: reviewers whose report artifact validated (or who went unresponsive) in the current review cycle. Reset at each new cycle's first wave; the next wave launches the first budget-sized batch of `[AGENTS]` not listed here |
-| `reviewer_slots_observed` | number | Effective wave size proven by the runtime when a persistent (unlimited-budget) launch hit the thread limit While set, § 2 enters wave mode at this size even though `REVIEWER_SLOT_BUDGET` is `0` |
+| `reviewer_slots_observed` | number | Effective wave size proven by the runtime when a persistent (unlimited-budget) launch hit the thread limit. While set, `review-pr.md` § 2 enters wave mode at this size even though `REVIEWER_SLOT_BUDGET` is `0` |
 | `pre_delegate_sha` | string | HEAD before delegation — scopes re-review diffs |
 | `skip_qa` | boolean | Skip QA for re-cycle (cleared after routing) |
 | `cycles` | number | Review/fix cycle count |
 | `submit_cycles` | number | Submit-PR iteration count (created-issue re-submit loops) |
-| `review_delegated_at` | number | Epoch seconds of last review delegation — gates § 3 `review-artifact-check` artifact acceptance |
+| `review_delegated_at` | number | Epoch seconds of last review delegation — the freshness boundary `review-pr.md` § 3 passes to `review-artifact-check`, so an artifact from an earlier cycle cannot be accepted |
 | `dev_delegated_at` | number | Epoch seconds of last dev/QA delegation (implement, fix, or analysis) — the watchdog deadline for stall escalation. It does not gate artifact acceptance; the round id does |
-| `dev_round_id` | string | Unique per-delegation round token (`date +%s%N`-`$RANDOM` — a nanosecond timestamp plus random suffix, distinct even across rapid same-second re-stamps), minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation (implement, fix, or analysis) and embedded in it. `dev-artifact-check` resolves `tmp/dev-return-[ISSUE_ID]-[dev_round_id].json` and requires its internal `round_id` to match — deterministic completion-artifact identity. Fix rounds also persist the delegated item set alongside the token at `tmp/dev-round-[ISSUE_ID]-[dev_round_id].json` (`dev-round-write`, schema: [`dev-round.md`](dev-round.md)) — the on-disk source for `dev-artifact-check --expect-items-from-round` and for a respawned agent's items |
+| `dev_round_id` | string | Unique per-delegation round token, minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation (implement, fix, or analysis) and embedded in it. It is the completion artifact's identity ([`dev-return.md`](dev-return.md)) and, on a fix round, the delegated-item record's ([`dev-round.md`](dev-round.md)) |
 | `review_skipped` | string | Set to `tiny-docs` when a trivial diff skipped review by rule |
 | `rereview_skipped` | string | Why a fix round routed to submit WITHOUT re-review. Present only when the skip happened, so a by-policy skip is visible after the fact instead of silent |
 | `rereview_panel` | object | `{agents: string[], reason}` for a fix round re-reviewed by a scoped panel instead of the full set, so the scoping is visible after the fact |
@@ -115,9 +114,9 @@ Persistent state file for orch workflows. Survives context compaction.
 | `escalated_items` | object[] | Items dev did not apply. `outcome` records the dev round's per-item decision — `"blocked"` (could not fix) or `"skipped"` (deliberately skipped); an entry without `outcome` is treated as blocked. The audit builder maps it to a distinct `origin` |
 | `audit_issues_created` | string[] | Issue IDs created by audit |
 | `rebase_map` | object | Old→new commit SHA map accumulated from `worktree push` auto-rebase output (`rebase-map:` lines). Keys are pre-rebase SHAs; values are post-rebase SHAs, or the literal `"dropped"` when the replayed commit vanished. SHAs stored elsewhere in state are rewritten at push time; the map remains for artifact-sourced references (e.g. perf QA `benchmark_commit`) — resolve through it repeatedly until no key matches, since a later rebase maps new → newer |
-| `pr_review_baseline` | object | Baseline for PR comment loop detection |
+| `pr_review_baseline` | object | `last_threads[]` — the unresolved review-thread IDs present at the end of the last triage pass. `review-pr-comments.md` § 6.3 calls a thread new when its id is absent from this array, so storing a count here would read every thread as new and loop to the iteration cap |
 | `pr_comment_review` | object | PR comment review tracking: `iterations`, `fixes[]`, `issues_created[]`, `skipped[]`, `replied[]` (thread IDs answered) |
-| `pr_approval` | object | Approval merge-gate tracking: `forced` (user explicitly chose Force merge past a missing gate verdict), `reviewer_down` (the `PR_REVIEW_ON_TIMEOUT=proceed` degrade auto-proceeded past the deadline because every reviewer was silent — zero reviewer evidence and zero unresolved threads; kept distinct from `forced` so an automated reviewer-down proceed is never confused with a deliberate user override), `gate` (legacy field, still recorded: "off" when the reviewer gate is disabled for a reviewer-less repo) |
+| `pr_approval` | object | Reviewer-gate override tracking: `forced` (the user chose Force merge past a missing verdict), `reviewer_down` (`PR_REVIEW_ON_TIMEOUT=proceed` auto-proceeded past the deadline with every reviewer silent — kept distinct from `forced` so the two provenances never merge), `gate` (legacy: `off` for a reviewer-less repo, still written and still read as the gate-4 fallback) |
 | `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode` from `PR_REVIEW_GATE`, or derived from legacy `PR_APPROVAL_GATE`) |
 
 ## CLI

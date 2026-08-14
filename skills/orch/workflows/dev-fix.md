@@ -72,7 +72,7 @@ Cancel ends the workflow; a selection goes to § 2.
    test -f [DECISION_FILE_PATH]
    ```
 
-   A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead. A broken path must never reach a specialist.
+   A failed check omits the path and carries `- decision index lookup failed for [DECISION_ID]` instead.
 
 4. **Stamp the round**, as separate tool calls immediately before delegating, then arm the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 

@@ -28,7 +28,7 @@ Uncertain about category, prefer `fix` (if related); uncertain about relevance, 
 
 ## Filing bar
 
-An `issue` signal is necessary but not sufficient. File only for:
+An `issue` signal is necessary but not sufficient. Every candidate carries its schema `impact` line — who hits this, on what real path; an impact that needs "could", "might", or "in theory" is a decline. File only for:
 
 - **Behavioral defects outside this PR's scope** — wrong behavior a user or caller can hit.
 - **est≥2 refactors** — restructuring too large to absorb here that unblocks or protects user-visible work.

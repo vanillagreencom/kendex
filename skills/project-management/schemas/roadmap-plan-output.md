@@ -108,7 +108,7 @@ Present only when `origin_issue` was supplied; absent or `type: "none"` means `p
 }
 ```
 
-Sorted by `position = (layer x 100) + (enables_count x -10) + (estimate x 1)`; lower is earlier. `layer` runs L0 foundation → L1 infrastructure → L2 features → L3 integration → L4 testing and polish. Priority follows layer and impact: L0 on the critical path or L0/L1 enabling 2+ issues → P1, L1/L2 → P2, L3 → P3, L4 → P4, with P1 propagating transitively to anything blocking a P1. `critical_path: true` when the issue blocks 2+ others.
+Sorted by ascending `position`. `layer` and `priority` are assigned, and `position` computed, per [tpm-roadmap-plan](../workflows/tpm-roadmap-plan.md) § 4 — consumers read these fields, never recompute them. `critical_path: true` when the issue blocks 2+ others.
 
 `action` is `create`, `skip`, `expand`, `supersede`, or `cancel`, with `target` naming the existing issue for `expand`/`supersede` and `reason` explaining the choice. `obsolete` carries `{evidence: {completed_by[], files_verified[]}, confidence}` or null.
 

@@ -105,6 +105,10 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # ~/.codex), so adding an account needs no edit here — this only renames what
 # discovery already found. ORCH_LANE_DIRS (colon-separated) covers a layout
 # discovery cannot reach.
+# Used by: orch (`review-pr` § 5). Space-separated path globs; a changed file
+# matching one adds the needs-perf-test QA signal to the review's QA routing.
+# QA_PERF_PATHS = "src/hot/* engine/src/*"
+
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 
 # Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
