@@ -2471,6 +2471,76 @@ probe_session_lease() {
   return "$rc"
 }
 
+# A single field of the guard's status JSON. Guard-written values only: pid is
+# numeric and host comes from a sanitized charset, so neither can contain the
+# quote or backslash a general JSON parser would have to handle.
+session_lease_field() {
+  local json="$1" key="$2" rest
+  rest="${json#*\"$key\":\"}"
+  [[ "$rest" != "$json" ]] || return 1
+  printf '%s' "${rest%%\"*}"
+}
+
+# The spelling this host is recorded under in a lease — the guard's own
+# sanitize_host, mirrored so the comparison cannot fail on the sanitization.
+session_guard_host() {
+  local host="${HOSTNAME:-}"
+  [[ -n "$host" ]] || host="$(uname -n 2>/dev/null || true)"
+  [[ -n "$host" ]] || host="unknown-host"
+  printf '%s' "${host//[^A-Za-z0-9._:@+-]/-}"
+}
+
+# The guard's mkdir_lock_holder_gone, mirrored: ps(1) sees other users'
+# processes where `kill -0` gets EPERM and would call a live pid dead; with no
+# usable pid, or no ps at all, the pid is presumed alive.
+recorded_pid_gone() {
+  local pid="$1"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  command -v ps >/dev/null 2>&1 || return 1
+  ! ps -o pid= -p "$pid" >/dev/null 2>&1
+}
+
+# Whether PID is this process or one of its ancestors, walked up the PPID
+# chain via ps (portable where /proc is not). Bounded so a cyclic or lying ps
+# can never spin; past the bound the pid is treated as unrelated.
+pid_is_self_or_ancestor() {
+  local pid="$1" cur=$$ parent hops=0
+  while [[ "$hops" -lt 64 ]]; do
+    [[ "$cur" == "$pid" ]] && return 0
+    parent="$(ps -o ppid= -p "$cur" 2>/dev/null || true)"
+    parent="${parent//[^0-9]/}"
+    [[ -n "$parent" && "$parent" != "0" && "$parent" != "$cur" ]] || return 1
+    cur="$parent"
+    hops=$((hops + 1))
+  done
+  return 1
+}
+
+# An issue-derived identity proves the same ISSUE, not the same SESSION: any
+# session that names the issue passes the ownership probe (#907), so on that
+# identity alone `remove <ID>` would release a sibling session's live lease
+# and tear down the worktree it is still working in. The lease's recorded pid
+# decides: already dead, or this process or one of its ancestors (the claiming
+# invocation's shell), means the claim is this session's — proceed. Alive and
+# unrelated on this host is another session mid-flight — refuse. A pid
+# recorded on another host cannot be probed from here, so it proceeds as
+# before, exactly like a lease that records no usable pid.
+issue_release_permits_removal() {
+  local wt="$1" owner="$2" status pid host
+  status="$("$SESSION_GUARD" status "$wt" --owner "$owner" --repo "$PROJECT_ROOT" 2>/dev/null || true)"
+  pid="$(session_lease_field "$status" pid || true)"
+  host="$(session_lease_field "$status" host || true)"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+  [[ "$host" == "$(session_guard_host)" ]] || return 0
+  recorded_pid_gone "$pid" && return 0
+  pid_is_self_or_ancestor "$pid" && return 0
+  echo "Error: $wt is claimed by a live session (owner=$owner pid=$pid); refusing to remove it." >&2
+  echo "  Matching the issue ID does not prove the lease is this session's, and its claiming process is still running on this host." >&2
+  echo "  If that session is truly finished: $0 remove \"$owner\" --force" >&2
+  echo "  Or release its lease directly: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
+  return 1
+}
+
 # Release this session's OWN lease on a worktree it is about to remove. Without
 # this a session that claimed its worktree cannot tear it down — the lease is a
 # native git lock, so `refuse_locked_worktree` and git itself both refuse. It
@@ -2484,9 +2554,10 @@ probe_session_lease() {
 # and an unreadable state are all left exactly as they are and fall through to
 # the precheck, which names the owner and the way out.
 release_own_session_lease() {
-  local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc
+  local wt="$1" issue_owner="${2:-}" force="${3:-false}" env_owner ladder_owner owner="" candidate rc
   session_guard_available || return 0
   env_owner="$(session_guard_owner)"
+  ladder_owner="$env_owner"
   if [[ "$env_owner" == "$issue_owner" ]]; then
     env_owner=""
   fi
@@ -2504,6 +2575,12 @@ release_own_session_lease() {
     esac
   done
   [[ -n "$owner" ]] || return 0
+  # The env-ladder identity is this session asserting who IT is; the issue
+  # identity asserts only which issue was named, so it alone takes the
+  # liveness gate. `remove --force` skips exactly this refusal, nothing else.
+  if [[ "$owner" == "$issue_owner" && "$owner" != "$ladder_owner" && "$force" != true ]]; then
+    issue_release_permits_removal "$wt" "$owner" || return 1
+  fi
   if ! "$SESSION_GUARD" release "$wt" --owner "$owner" --repo "$PROJECT_ROOT" >/dev/null; then
     echo "Error: could not release this session's guard lease on $wt; refusing to remove it." >&2
     echo "  Release it, then retry: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
@@ -3367,22 +3444,46 @@ case "${1:-}" in
     ;;
 
   remove)
-    if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
-      echo "Usage: $0 remove [ID|/path]"
-      echo ""
-      echo "Remove a worktree and delete its local branch when it is safely merged."
-      echo "Accepts an issue ID (resolved under the configured worktree base dir, falling"
-      echo "back to the worktree registered for the issue branch) or a direct path."
-      exit 0
-    fi
-    ARG="${2:?Error: remove requires an issue ID or path}"
-    # Reject stray option-looking arguments before they are treated as an
-    # identifier and turned into a trees/<id> path. Otherwise `remove --help`
-    # (or any typo'd flag) would compute trees/--help and falsely report a
-    # removal, risking deletion of an oddly-named path/ref (#619).
-    if [[ "$ARG" == -* ]]; then
-      echo "Error: unknown option '$ARG' for remove" >&2
-      echo "Run: $0 remove --help" >&2
+    REMOVE_FORCE=false
+    ARG=""
+    shift || true
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --help|-h)
+          echo "Usage: $0 remove [ID|/path] [--force]"
+          echo ""
+          echo "Remove a worktree and delete its local branch when it is safely merged."
+          echo "Accepts an issue ID (resolved under the configured worktree base dir, falling"
+          echo "back to the worktree registered for the issue branch) or a direct path."
+          echo ""
+          echo "Options:"
+          echo "  --force   Release an issue-keyed session lease even while the session that"
+          echo "            claimed it is still running. Skips only that refusal; every other"
+          echo "            safeguard is unchanged."
+          exit 0
+          ;;
+        --force) REMOVE_FORCE=true; shift ;;
+        # Reject stray option-looking arguments before they are treated as an
+        # identifier and turned into a trees/<id> path. Otherwise any typo'd
+        # flag would compute trees/<flag> and falsely report a removal, risking
+        # deletion of an oddly-named path/ref (#619).
+        -*)
+          echo "Error: unknown option '$1' for remove" >&2
+          echo "Run: $0 remove --help" >&2
+          exit 1
+          ;;
+        *)
+          if [[ -n "$ARG" ]]; then
+            echo "Error: remove takes a single issue ID or path (got '$ARG' and '$1')" >&2
+            exit 1
+          fi
+          ARG="$1"
+          shift
+          ;;
+      esac
+    done
+    if [[ -z "$ARG" ]]; then
+      echo "Error: remove requires an issue ID or path" >&2
       exit 1
     fi
     # Accept either issue ID or direct path. An issue-addressed removal also
@@ -3420,7 +3521,7 @@ case "${1:-}" in
       # its lease IS a native git lock — so the release has to come before the
       # lock precheck below, not after it (#877). Only our own lease is
       # released; a foreign one falls through and the precheck names its owner.
-      if ! release_own_session_lease "$WT_PATH" "$REMOVE_ISSUE_OWNER"; then
+      if ! release_own_session_lease "$WT_PATH" "$REMOVE_ISSUE_OWNER" "$REMOVE_FORCE"; then
         exit 1
       fi
       # Diagnostic precheck: a locked worktree cannot be removed, and git's own

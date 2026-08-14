@@ -38,7 +38,7 @@ No changes → report "No changes to review" and **END**.
 .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
 ```
 
-The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory, however plausible the slug looks. Verify each before injecting it, one command per path:
+The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. Verify each before injecting it, one command per path:
 
 ```bash
 test -f [DECISION_FILE_PATH]
@@ -145,7 +145,7 @@ Omit empty categories. **Disposition is by rule, not by prompt** — never prese
 
 `category == "issue"` suggestions that clear the filing bar in [references/finding-disposition.md](../references/finding-disposition.md), plus any escalated items from the fix round, build an audit-input file at `tmp/audit-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "review"`, `parent_issue: [ISSUE_ID]` (or null), and `worktree: [WT_PATH]`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Then `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 5`.
 
-audit-issues is a primary-session wrapper: run it in this session, because it holds the interactive approval gate and its mutations require approvals collected there. Do not delegate the wrapper to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
+audit-issues is a primary-session wrapper — run it in this session, because it holds the interactive approval gate. Do not delegate the wrapper to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
 
 ## 5. Summary
 

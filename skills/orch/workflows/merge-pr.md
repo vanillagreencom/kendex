@@ -60,7 +60,7 @@ Two warnings are merge gates, not advice:
   - `review` — commenting-only reviewers never approve, so `not_approved` is expected. Poll `approval-wait [PR_NUMBER] 30 --json --mode review` and treat `reviewed` as the met gate.
   - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json` or ask the user.
 
-  With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report so the reviewer-down merge stays visible. It fires only when every reviewer is silent; an open thread or a `changes_requested` still blocks. merge-pr gates live and keeps no workflow-state, so the § 6 note is the provenance. The proceed is a LOCAL verdict — orch posts no status, so a repo whose CI gates on review evidence stays red unless its own override governs it.
+  With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report (merge-pr keeps no workflow-state; that note is the provenance). It fires only when every reviewer is silent; an open thread or a `changes_requested` still blocks. The proceed is a LOCAL verdict — orch posts no status, so a repo whose CI gates on review evidence stays red unless its own override governs it.
 
   Merge past a missing gate verdict only on an explicit user `Force merge`.
 
@@ -74,7 +74,7 @@ Bot-specific signals — emoji reactions, sticky-comment prose, checklist text �
 .agents/skills/github/scripts/github.sh bot-token
 ```
 
-A non-empty `ISSUE` with an existing worktree → ask whether to clean it up, and store the answer for § 5. `bot-token` reporting `.configured: false` → ask `Merge as current user` | `Abort`.
+Note whether a worktree exists for `ISSUE` — § 5 step 4 disposes of it by rule, no question. `bot-token` reporting `.configured: false` → ask `Merge as current user` | `Abort`.
 
 ### 4.1 Detach Orphaned Children
 
@@ -130,13 +130,13 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` = merged → step 2.
 
-   Exit `1` BLOCKED on pending required checks or a merge queue — the issues or stderr mention `ci_pending:`, checks that have not started, or a base branch requiring merges through a queue — re-runs with `--auto`. One flag covers both repo shapes with no detection: a merge-queue repo enqueues the PR, a plain repo arms auto-merge to fire when CI and branch protection clear. `--auto` never bypasses the § 3 gates. Any other BLOCKED cause (conflicts, `ci_failed:`, `changes_requested:`) is surfaced and returns to § 3.2 — do not queue it.
+   Exit `1` BLOCKED on pending required checks or a merge queue — the issues or stderr mention `ci_pending:`, checks that have not started, or a base branch requiring merges through a queue — re-runs with `--auto`: a merge-queue repo enqueues the PR, a plain repo arms auto-merge. `--auto` never bypasses the § 3 gates. Any other BLOCKED cause (conflicts, `ci_failed:`, `changes_requested:`) is surfaced and returns to § 3.2 — do not queue it.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --auto
    ```
 
-   Exit `75` = queued or armed. Watch it with one command, in every harness — it blocks until the outcome is decided and carries the cross-poll `WAS_QUEUED` memory that separate tool calls cannot:
+   Exit `75` = queued or armed. Watch it with queue-wait — it blocks until the outcome is decided and carries the cross-poll `WAS_QUEUED` memory separate tool calls cannot:
 
    ```bash
    .agents/skills/orch/scripts/queue-wait [PR_NUMBER] 30 600 --json
@@ -180,7 +180,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    a. Read `.parent_id` (`cache issues get [ISSUE]`). Empty → step 3.
    b. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR; without the marker, children or an `agent:multi` label make it a CONTAINER. Not a container → step 3.
-   c. **Serialize per parent before anything else** — two final siblings merging concurrently could each observe the other as pending and both return, leaving no later merge to close the container. Create `[MAIN_REPO_ROOT]/tmp` (git-ignored, absent on fresh checkouts), then take the lock with `mkdir [MAIN_REPO_ROOT]/tmp/container-close-[PARENT_ID].lock` — mkdir is atomic. A lock older than 60 minutes is a crashed run: remove it and take it fresh. A fresh lock is NOT a skip — retry the `mkdir` up to three times, because the current owner may be reading state that predates this merge's propagation — and only then defer with a § 6 note and continue to step 3. `touch` the lock dir after each command below, and release it (`rmdir`) on EVERY exit path.
+   c. **Serialize per parent before anything else** — concurrent final siblings can each observe the other as pending and both return, leaving no later merge to close the container. Create `[MAIN_REPO_ROOT]/tmp` (git-ignored, absent on fresh checkouts), then take the lock with `mkdir [MAIN_REPO_ROOT]/tmp/container-close-[PARENT_ID].lock` — mkdir is atomic. A lock older than 60 minutes is a crashed run: remove it and take it fresh. A fresh lock is NOT a skip — retry the `mkdir` up to three times (the owner may be reading state that predates this merge's propagation), and only then defer with a § 6 note and continue to step 3. `touch` the lock dir after each command below, and release it (`rmdir`) on EVERY exit path.
 
       Holding the lock, re-sync (state may have moved while waiting) and confirm nothing is still open:
 
@@ -240,7 +240,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | `MAIN_HEAD_BRANCH` | Action |
    |--------------------|--------|
    | `[BASE_BRANCH]` | Advance in place: `git -C [MAIN_REPO_ROOT] merge --ff-only "origin/[BASE_BRANCH]"` |
-   | Any other branch, or detached `HEAD` | Advance the local ref by name: `git -C [MAIN_REPO_ROOT] fetch . "refs/remotes/origin/[BASE_BRANCH]:refs/heads/[BASE_BRANCH]"`. Fetching from `.` re-uses the tracking ref the origin fetch already updated, so it needs no second round trip and no credential helper; the refspec form updates a branch no checkout has on `HEAD` and REFUSES a non-fast-forward |
+   | Any other branch, or detached `HEAD` | Advance the local ref by name: `git -C [MAIN_REPO_ROOT] fetch . "refs/remotes/origin/[BASE_BRANCH]:refs/heads/[BASE_BRANCH]"`. Fetching from `.` re-uses the tracking ref the origin fetch already updated; the refspec form updates a branch no checkout has on `HEAD` and REFUSES a non-fast-forward |
 
    The by-name update fails when `[BASE_BRANCH]` is checked out in another worktree (`refusing to fetch into branch ... checked out at ...`). That is not a stale outcome — locate that worktree with `git -C [MAIN_REPO_ROOT] worktree list` and run `git -C [BASE_WORKTREE] merge --ff-only "origin/[BASE_BRANCH]"` there. Then `git -C [MAIN_REPO_ROOT] worktree prune`.
 
@@ -252,7 +252,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | Any of the three updates — the in-place ff-merge, the by-name update, or the `[BASE_WORKTREE]` ff-merge — is rejected as non-fast-forward | **Blocking** — local `[BASE_BRANCH]` has diverged; name both shas |
    | `[BASE_BRANCH]` is checked out in no reachable worktree and the by-name update failed for any other reason | **Blocking** — name the sha `origin/[BASE_BRANCH]` points at and the git error |
 
-   Report the result in § 6 either way: the new sha when it advanced, a WARNING naming the stale local sha, the origin sha, and the cause when it did not. A stale main checkout is what later branch cuts start from and what any agent reading `[MAIN_REPO_ROOT]` for repo facts answers from.
+   Report the result in § 6 either way: the new sha when it advanced, a WARNING naming the stale local sha, the origin sha, and the cause when it did not.
 
 4. **Clean up branches and worktrees**, scoped to this PR by default — never enumerate unrelated branches or sibling worktrees.
 
@@ -260,7 +260,9 @@ Use the output as `MAIN_REPO_ROOT`.
    gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
    ```
 
-   Delete the local `[PR_BRANCH]` only when no worktree owns it. When § 4 captured a cleanup request, skip the standalone delete — the `worktree remove` below removes the worktree and safely deletes the merged branch. Otherwise confirm the branch is free first:
+   **Worktree disposal is by rule.** When the PR's worktree exists, its tree is clean (`git -C [WT_PATH] status --porcelain` empty), and its checked-out branch is `[PR_BRANCH]`, remove it in the removal step below — no question; `worktree remove` deletes the merged branch with the worktree and releases only this session's own lease. A dirty tree or a foreign-lease refusal from `worktree remove` keeps the worktree and its checked-out branch; a worktree sitting on a branch other than the merged one is kept as-is (the merged branch then falls to the standalone delete below). Report any kept worktree with its cause in the § 6 `Worktree` row.
+
+   With no qualifying worktree, delete the local `[PR_BRANCH]` only when no worktree owns it. Confirm first:
 
    ```bash
    git -C [MAIN_REPO_ROOT] worktree list --porcelain
@@ -268,9 +270,9 @@ Use the output as `MAIN_REPO_ROOT`.
 
    A `branch refs/heads/[PR_BRANCH]` line means a worktree still has it checked out: do not delete (`branch -D` would fail), and note it in § 6. No such line, and the branch exists locally and is not current → `git -C [MAIN_REPO_ROOT] branch -D "[PR_BRANCH]"`.
 
-   For `merge-pr all` or an explicit user request, also sweep the project: check each local branch with `gh pr list --head [BRANCH] --state all --json number,state`, auto-delete merged or closed branches with no worktree, leave open ones alone, and ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
+   For `merge-pr all` or an explicit user request, also sweep the project: check each local branch with `gh pr list --head [BRANCH] --state all --json number,state`, auto-delete merged or closed branches with no worktree, leave open ones alone, and ask before removing a stale worktree or a branch with no PR — the sweep touches other items' trees, so asking stays. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
 
-   Finally, if § 4 requested it, remove the current worktree — **last**, because it destroys the session cwd:
+   Finally, when the rule selected the worktree for removal, remove it — **last**, because it destroys the session cwd:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree remove "[ISSUE_ID]"
@@ -286,14 +288,14 @@ Use the output as `MAIN_REPO_ROOT`.
 
 | Field | Value |
 |-------|-------|
-| Branch | [BRANCH_NAME] (deleted) |
-| Worktree | cleaned up |
+| Branch | [BRANCH_NAME] (deleted / kept) |
+| Worktree | removed / kept — [cause] |
 | Issue Tracker | [ISSUE_ID] → Done (via magic words) |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
 </output_format>
 
-The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)` — so a non-organic gate is visible in the record.
+The `Base sync` row is never omitted. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The `Worktree` row reports `removed`, or `kept — [dirty tree | branch not merged | foreign lease]` when the § 5 step 4 rule declined removal (no worktree existed → omit the row). Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)` — so a non-organic gate is visible in the record.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 

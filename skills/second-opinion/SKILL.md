@@ -16,16 +16,7 @@ metadata:
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-Cross-model second opinion via external AI CLI. `review` mode runs **every available lane** in `SECOND_OPINION_REVIEW_TARGETS` (default: codex + claude) and unions the findings — model diversity has different blind spots. The other modes auto-detect the current harness and call the opposite:
-
-| Running in | Calls |
-|------------|-------|
-| Claude Code | Codex |
-| Codex | Claude |
-| Pi | Claude |
-| OpenCode / Cursor / unknown | Claude (prefers cross-model) |
-
-Force a single lane with `SECOND_OPINION_TARGET=claude|codex` in committed `vstack.settings.toml` for shared defaults, or `.env.local` for personal overrides (this also disables multi-lane review).
+Cross-model second opinion via external AI CLI. `review` mode is multi-lane: every available lane runs and the findings are unioned — model diversity has different blind spots (contract below). The other modes auto-detect the current harness and call the opposite model: Codex when running in Claude Code; Claude from everywhere else (Codex, Pi, OpenCode, Cursor, unknown — cross-model preferred).
 
 ```bash
 .agents/skills/second-opinion/scripts/second-opinion <mode> [options]

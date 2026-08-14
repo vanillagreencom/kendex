@@ -1,6 +1,6 @@
 # Review
 
-Code review of pending changes via external model. The script auto-generates the review prompt with an embedded schema — no custom prompt needed. The prompt reviews through holistic lenses (correctness, security/fail-open, adversarial inputs, portability, repo-rule adherence, docs-vs-code drift, test adequacy) and embeds the repo's own instruction files when present.
+Code review of pending changes via external model. The script auto-generates the review prompt — embedded schema, the review lenses, and the repo's own instruction files (both listed in SKILL.md) — so no custom prompt is needed.
 
 With no `--target` and no `SECOND_OPINION_TARGET`, the script runs **every available lane** in `SECOND_OPINION_REVIEW_TARGETS` (default: codex + claude) in parallel and writes one union artifact — do not pass `--target` unless the user asked for a specific model.
 

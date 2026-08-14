@@ -24,7 +24,7 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
    ```
 
-   A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion is terminal for this worktree: this tree is named for the child, the bundle belongs in the parent's own worktree, and continuing would split the bundle — point the operator at `/orch start [PARENT_ID]`. For a container, list its unblocked children and say this worktree should not exist for it. For a blocked child, name the live blockers.
+   A container, a blocked child, or a `(one PR)` promotion all STOP here without leasing or initializing anything. A promotion is terminal for this worktree: this tree is named for the child and the bundle belongs in the parent's own worktree — point the operator at `/orch start [PARENT_ID]`. For a container, list its unblocked children and say this worktree should not exist for it. For a blocked child, name the live blockers.
 
 3. **Claim the worktree.** A lease means "a live session is working here", and this session is it. **Skip if** `WORKTREE_PATH` is the main checkout — the guard refuses it.
 
@@ -41,7 +41,7 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WORKTREE_PATH] --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
    ```
 
-5. **Gate on base freshness.** Every route into a worktree lands here, so this one gate covers both a freshly created worktree and one reused from an earlier session. Prove the base is current before any agent spends budget on it:
+5. **Gate on base freshness.** Every route into a worktree lands here — fresh or reused. Prove the base is current before any agent spends budget on it:
 
    ```bash
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
@@ -59,7 +59,7 @@ The full session from inside a worktree: implement → review → submit → fin
 ## 2. Implement
 
 1. **Run Workflow**: `⤵ workflows/dev-start.md § 1-4 → § 2 step 2` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
-2. Parse the return: Branch, Commit, QA Labels, Summary.
+2. Parse the return: Branch, Commit, QA, Validate, Summary (the field names dev-implement emits).
 3. § 3 requires committed clean work: `HEAD` advanced from the pre-dev SHA, the returned commit in `HEAD` history, and `git status --porcelain` empty. Any failure re-delegates to the same dev agent with the exact missing step. Never review or submit a dirty worktree.
 4. **Do not shut the dev agent down** — it persists for § 3 fix cycles. Only § 5.4 retires it.
 

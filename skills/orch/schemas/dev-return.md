@@ -63,7 +63,7 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 
 ## `validate` and its note
 
-`validate` is a closed enumeration because orch gates on it. A real run is not always cleanly one or the other — a lane can fail once and pass on re-run over the identical diff, which is worth recording. `--validate-note` is where that goes, and it never relaxes `--validate`:
+`validate` is a closed enumeration because orch gates on it. `--validate-note` records what the enumeration cannot express — e.g. a lane that failed once and passed on re-run over the identical diff — and it never relaxes `--validate`:
 
 ```bash
 --validate pass --validate-note "80/80 on re-run; first run flaked on Rust Tests (release), same git_diff_hash"
@@ -73,8 +73,8 @@ Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[I
 
 ## Analysis rounds
 
-`--kind analysis` is the truthful spelling for a **read-only round**: the agent was delegated to investigate and recommend — re-derive a premise and propose implement, close-with-reasoning, or re-scope — explicitly not to implement. Such a round produces no commit and runs no validation, so `--commit`, `--validate`, `--validate-note`, `--item`, and `--bundled` are all rejected, and the artifact omits those keys entirely: a validation outcome that did not occur is unrepresentable, and `dev-artifact-check` treats their presence as `invalid`.
+`--kind analysis` is the truthful spelling for a **read-only round**: the agent was delegated to investigate and recommend, explicitly not to implement. Such a round produces no commit and runs no validation, so `--commit`, `--validate`, `--validate-note`, `--item`, and `--bundled` are all rejected and the artifact omits those keys entirely: a validation outcome that did not occur is unrepresentable, and `dev-artifact-check` treats their presence as `invalid`.
 
-Exactly one of `--summary TEXT` or `--summary-file PATH` is required — the recommendation and its evidence are the round's deliverable and must survive a lost return message. The inline form exists because a harness can refuse the file write, and a blocked write must not leave a false `fix` receipt as the only exit.
+Exactly one of `--summary TEXT` or `--summary-file PATH` is required — the recommendation is the round's deliverable and must survive a lost return message. The inline form exists because a harness can refuse the file write; a blocked write must not leave a false `fix` receipt as the only exit.
 
 Never force `implement` or `fix` onto an analysis round, and never skip the artifact to stay honest.

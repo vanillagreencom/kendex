@@ -31,8 +31,6 @@ Analyze CI failures and route them to the right agent.
 .agents/skills/github/scripts/github.sh ci-logs [PR_NUMBER]
 ```
 
-Returns the job name, an auto-classified error type (fmt/lint/test/build), the run id, and the last 100 lines of failure output.
-
 ## 3. Classify And Route
 
 Formatting, obvious lint, and a missing import are fixed directly; a test failure, a build error, or non-obvious lint is delegated.
@@ -61,7 +59,7 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
-This agent pushes its fix directly and writes **no** dev-return artifact, so the round-mode check for this fresh token is *expected* to report `ok == false`. Minting a fresh token anyway is exactly what guarantees a leftover artifact from an earlier round — still on disk under the previous token — can never be mis-accepted here. Accept this round on the agent's return message plus the pushed fix commit, and on a genuinely absent return follow the escalation ladder.
+This agent pushes its fix directly and writes **no** dev-return artifact, so the round-mode check for this fresh token is *expected* to report `ok == false`. The fresh token is still what guarantees a leftover artifact from an earlier round — on disk under the previous token — can never be mis-accepted here. Accept this round on the agent's return message plus the pushed fix commit, and on a genuinely absent return follow the escalation ladder.
 
 <delegation_format>
 CI failure on PR #[PR_NUMBER] ([BRANCH_NAME]).
@@ -118,7 +116,7 @@ Report findings for a user decision.
 
 ## 5. Verify
 
-A fix push moved the head, so the review gate is re-confirmed at the new head **before** CI is waited on — the same review-before-CI ordering as `submit-pr.md`, applied universally with no repo detection. On approval-gated repos CI for the new head starts only after exact-head review evidence exists, so waiting on CI first would deadlock or watch an intentionally red gate run; on always-on repos CI has been running since the push and the re-confirmation costs nothing.
+A fix push moved the head, so the review gate is re-confirmed at the new head **before** CI is waited on — the same review-before-CI ordering as `submit-pr.md`, applied universally with no repo detection. On approval-gated repos CI for the new head starts only after exact-head review evidence exists, so waiting on CI first would deadlock or watch an intentionally red gate run; on always-on repos the re-confirmation costs nothing.
 
 ```bash
 .agents/skills/orch/scripts/approval-wait --resolve-mode
@@ -130,7 +128,7 @@ A fix push moved the head, so the review gate is re-confirmed at the new head **
 .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
 ```
 
-- `approved` / `reviewed` / `proceeded` → wait for CI. `proceeded` is the reviewer-down degrade: this workflow returns it rather than persisting it, so the caller records it under its own gate bookkeeping and ci-fix stays correct when invoked standalone or from merge-pr, neither of which keeps workflow state. The proceed is a LOCAL verdict — orch posts no status, so on a repo whose CI gates on review evidence the CI wait below may sit against a gate that will not converge; that posture is the engine's to govern, not orch's.
+- `approved` / `reviewed` / `proceeded` → wait for CI. `proceeded` is the reviewer-down degrade: this workflow returns it rather than persisting it, so the caller records it under its own gate bookkeeping. The proceed is a LOCAL verdict — orch posts no status, so on a repo whose CI gates on review evidence the CI wait below may sit against a gate that will not converge; that posture is the engine's to govern, not orch's.
 - `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then re-run this step.
 - `timeout` → no exact-head evidence yet. On repos whose CI is gated on review evidence, CI cannot have started, so a missing or red run here is not a fix failure. Report the unconfirmed gate, then re-run this step once or hand back.
 

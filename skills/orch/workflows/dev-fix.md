@@ -58,7 +58,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
    ```
 
-2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items — a round large enough to lose focus injects new blockers instead of clearing them.
+2. **Group items by agent domain** when multi-domain, ordered per [SKILL.md § Coordination](../SKILL.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items.
 
 3. **Gather decision context**:
 
@@ -66,7 +66,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
    ```
 
-   The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory, however plausible the slug looks. Verify each before injecting it, one command per path:
+   The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. Verify each before injecting it, one command per path:
 
    ```bash
    test -f [DECISION_FILE_PATH]
@@ -89,7 +89,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
    ```
 
-   `--issue` takes the same normalized workflow-state key everything else here uses — the value the delegation's `Artifact Key:` line carries. A mismatch strands the record where no reader looks. The file route keeps backticks and quotes out of the command line; only when every item's text is plain may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead. The record is what a respawned agent reads to recover its items and what step 6's exact-set check reads.
+   `--issue` takes the same normalized workflow-state key everything else here uses — the value the delegation's `Artifact Key:` line carries; a mismatch strands the record where no reader looks. The file route keeps backticks and quotes out of the command line; only when every item's text is plain may you pass `--item [N] '[ITEM_TEXT]'` pairs inline in one command instead.
 
    **An analysis (read-only) round has no delegated item set** — skip `dev-round-write` entirely and run step 6's Check A without an expected-set flag.
 
@@ -127,7 +127,7 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
    ```
 
-   `--expect-items-from-round` reads the step-4 record and requires the artifact's `items[]` to cover EXACTLY that set — each item once, no unknowns or duplicates, valid decisions, non-empty reasoning — so a 1-item artifact cannot satisfy a 10-item group. On exit 2 (record missing) the step-4 persistence never ran: write the record now from the delegated items still in context and re-run; only if that context is also gone, fall back to `--expect-items [ITEM_NUMBERS]` with numbers you can still prove.
+   `--expect-items-from-round` reads the step-4 record and requires the artifact's `items[]` to cover EXACTLY that set — each item once, no unknowns or duplicates, valid decisions, non-empty reasoning. On exit 2 (record missing) the step-4 persistence never ran: write the record now from the delegated items still in context and re-run; only if that context is also gone, fall back to `--expect-items [ITEM_NUMBERS]` with numbers you can still prove.
 
    **Check B**:
 

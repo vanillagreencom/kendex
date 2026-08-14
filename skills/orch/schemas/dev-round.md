@@ -1,6 +1,6 @@
 # Dev Round (Delegated Item Set) Schema
 
-The durable on-disk record of a fix round's **delegated item set** — the input-side twin of the dev-return completion artifact. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation, so the set survives its context: a dev agent respawned mid-round recovers exactly what was delegated instead of reconstructing it from the raw review JSONs, and the acceptance check gains an on-disk expected set rather than a number list typed from memory.
+The durable on-disk record of a fix round's **delegated item set** — the input-side twin of the dev-return completion artifact. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation, so a dev agent respawned mid-round recovers exactly what was delegated and the acceptance check gains an on-disk expected set rather than a number list typed from memory.
 
 ## Identity: the round id
 
@@ -35,7 +35,7 @@ The record follows the same token discipline as the completion artifact: its fil
 ## Readers
 
 - **`dev-artifact-check --expect-items-from-round`** derives the exact expected item-number set from `items[].n`, validating the record's full schema first and refusing to run on a missing or unusable one rather than downgrading to the weaker fallback gate.
-- **A respawned dev agent** reads `items[]` to recover the item numbers and texts, instead of guessing a mapping that would put fabricated reasoning into the durable completion record.
-- **The tail-reconciliation nudge** points at the record, so it is self-sufficient even after the agent or the whole session was lost mid-round.
+- **A respawned dev agent** reads `items[]` to recover the item numbers and texts instead of guessing a mapping.
+- **The tail-reconciliation nudge** points at the record, so it survives even a whole session lost mid-round.
 
 The record is input, never receipt: it proves what was delegated, not that anything completed. Completion stays with [`dev-return.md`](dev-return.md) and the A/B acceptance tables.

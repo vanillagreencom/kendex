@@ -27,7 +27,7 @@ Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)) p
 Two handoff-specific rules follow from expanding items:
 
 - **The explicit-choice exception survives.** An enclosing `(one PR)` ancestor makes that bundle the launch item only for container-expanded entries; an item the USER supplied explicitly stays the launch item, still gated on the unioned blockers.
-- **Deduplicate, then collapse ancestry.** Expanding a parent beside an explicitly supplied child re-adds that child, and launching both races one worktree — the second `create` exits 75 after the first session already started, or the app opens two threads for one item. Keep one entry per issue id, marking it EXPLICIT whenever any duplicate was user-supplied. Then, when one final item is an ancestor bundle of another, keep only the bundle: two worktrees must never launch for work sharing one session and PR.
+- **Deduplicate, then collapse ancestry.** Expanding a parent beside an explicitly supplied child re-adds that child, and launching both races one worktree. Keep one entry per issue id, marking it EXPLICIT whenever any duplicate was user-supplied. Then, when one final item is an ancestor bundle of another, keep only the bundle: two worktrees must never launch for work sharing one session and PR.
 
 <output_format>
 
@@ -44,11 +44,13 @@ Two handoff-specific rules follow from expanding items:
 
 ## 2. Launch
 
+**Every launched brief states the terminal condition**: the item is complete only when its PR is MERGED and its worktree cleaned up — an opened PR is not done.
+
 ### Terminal harnesses
 
 **Skip if** `harness == codex-app`.
 
-Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, not a stored default, so nothing in the script, the settings file, or this template hardcodes them. Size the model and effort to the work item's difficulty, and remember that handoff is unattended autonomy: a claude lane launched without a permission-bypass flag stalls at its first tool call with nobody there to answer, and `open-terminal` warns when the flags omit one.
+Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, not a stored default; size them to the item's difficulty. Handoff is unattended autonomy: a claude lane launched without a permission-bypass flag stalls at its first tool call with nobody there to answer, and `open-terminal` warns when the flags omit one.
 
 ```bash
 .agents/skills/orch/scripts/open-terminal --tracker linear --harness [HARNESS] --launch-flags "[FLAGS]" [ISSUE_IDS]
@@ -68,7 +70,7 @@ Add `--lane auto` (or `auto:<harness>`) to launch under the account with the mos
 .agents/skills/orch/scripts/resolve-base-branch .
 ```
 
-For each item, create exactly one thread with `codex_app.create_thread`, targeting the current saved project with a separate worktree environment for that issue: never run all issues in the controller thread, never launch several in one child thread, and never pass several issue IDs to one thread. Set the worktree `startingState` to `{type: "branch", branchName: "[BASE_BRANCH]"}` — a `working-tree` state can start the child before generated Codex agents are visible and force a `worker` fallback, so use it only when the user explicitly asks for a dirty local snapshot. The prompt is exactly `$orch start [ISSUE_ID]`, or `$orch start github [OWNER/REPO]#[N]`. If the runtime creates the thread before accepting a prompt, call `codex_app.send_message_to_thread` once with that same prompt. Title the thread with the item identifier when `codex_app.set_thread_title` is exposed, and record the returned thread ID.
+For each item, create exactly one thread with `codex_app.create_thread`, targeting the current saved project with a separate worktree environment for that issue: never run all issues in the controller thread, never launch several in one child thread, and never pass several issue IDs to one thread. Set the worktree `startingState` to `{type: "branch", branchName: "[BASE_BRANCH]"}` — a `working-tree` state can start the child before generated Codex agents are visible and force a `worker` fallback, so use it only when the user explicitly asks for a dirty local snapshot. The prompt is `$orch start [ISSUE_ID]` (or `$orch start github [OWNER/REPO]#[N]`) followed by the terminal condition above. If the runtime creates the thread before accepting a prompt, call `codex_app.send_message_to_thread` once with that same prompt. Title the thread with the item identifier when `codex_app.set_thread_title` is exposed, and record the returned thread ID.
 
 Full contract: [references/codex-runtime.md](../references/codex-runtime.md).
 

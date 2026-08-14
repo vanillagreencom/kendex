@@ -57,8 +57,6 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 
 **`start` routing.** Parse explicit args first: `github OWNER/REPO#N` → `TRACKER=github`, `ISSUE_ID=issue-N`, keep `OWNER/REPO` for the API; otherwise Linear unless the id already starts with `issue-`. A cwd whose git common dir differs from `.git` is a worktree → `workflows/start-worktree.md`; otherwise `workflows/start.md`.
 
-Finding disposition (fix vs issue vs decline) lives in [references/finding-disposition.md](references/finding-disposition.md).
-
 ## Scripts
 
 ```bash
@@ -86,11 +84,11 @@ Finding disposition (fix vs issue vs decline) lives in [references/finding-dispo
 
 The three waiters share a bounded env-first GitHub auth ladder and exit `3` on hard auth failure — [references/gates.md](references/gates.md).
 
-**Multi-PR watching.** The waiters are single-PR foreground waits. To watch many PRs, never hand-roll a monitor keyed on gate-state transitions — steady states transition nothing and the session sleeps through them. When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer; otherwise fall back to per-PR `approval-wait`/`queue-wait`. Contract and fallback limits: [references/gates.md](references/gates.md).
+**Multi-PR watching.** Never hand-roll a monitor keyed on gate-state transitions — steady states transition nothing and the session sleeps through them. When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer; otherwise per-PR `approval-wait`/`queue-wait`. Contract and fallback limits: [references/gates.md](references/gates.md).
 
-**`workflow-state`.** Run it with no arguments for the full action reference. From a worktree, pass the global `--state-dir <path>` flag before the subcommand. State keys are normalized issue IDs — `issue-N` for GitHub, `PROJ-123` for Linear — never the bare GitHub number; full key rules in `schemas/workflow-state.md`.
+**`workflow-state`.** Run it with no arguments for the action reference. State keys are normalized issue IDs — `issue-N` for GitHub, `PROJ-123` for Linear — never the bare GitHub number; full key rules in `schemas/workflow-state.md`.
 
-**Review-gate modes.** `approval-wait --resolve-mode` prints the project's effective mode; workflows read it only through that. The engine's `REVIEW_GATE_MODE=off` resolves first; otherwise `PR_REVIEW_GATE` selects `approval` (GitHub-native approval verdict), `review` (non-author review of the current head plus zero unresolved threads — for commenting-only bots), or `off` (reviewer-less repo). Default `approval`. Full setting semantics and waiter JSON contracts: [references/gates.md](references/gates.md).
+**Review-gate modes.** Workflows read the effective gate mode (`approval`, `review`, or `off`) only through `approval-wait --resolve-mode`. Full setting semantics and waiter JSON contracts: [references/gates.md](references/gates.md).
 
 ## Schemas
 
@@ -105,20 +103,7 @@ Audit-input and roadmap-plan schemas live in `project-management/schemas/`.
 
 ## Configuration
 
-Non-secret settings go in committed `vstack.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides.
-
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `ORCH_STATE_DIR` | State-file directory (the `--state-dir` flag wins when both are set) | `tmp` |
-| `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names (matched case-insensitively, then canonicalized: `issue-N` lowercase, Linear-style uppercase) | `[A-Z]+-[0-9]+` |
-| `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission or merge recovery | `6` |
-| `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session; `0` = unlimited. On Codex, set it to the cap `spawn-adapter slots` reports | `0` |
-| `ORCH_DECISION_MODE` | `ask` presents every workflow decision; `auto-recommended` executes the recommended option and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. The always-ask set in [The Cycle](#the-cycle) applies in every mode | `ask` |
-| `ORCH_MERGE_AUTONOMY` | `auto` merges without asking once every merge gate is green; `ask` presents the merge decision. A `MERGE_READY = false` state never auto-merges | `ask` |
-| `ORCH_OVERSEER_LANES` | Max concurrent lanes `oversee` keeps in flight | `3` |
-| `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal in `review-pr.md` § 5. Empty means the diff scan never raises it | empty |
-| Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS` — [references/gates.md](references/gates.md) | — |
-| Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_MAX_PCT`, `ORCH_TMUX_VERIFY_SECS` — `lanes --help`, `open-terminal --help` | — |
+Non-secret settings go in committed `vstack.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides. Key reference: [README.md](README.md) § Configuration; review-gate keys in [references/gates.md](references/gates.md); lane keys in `lanes --help` and `open-terminal --help`.
 
 System dependencies: `jq`; `bash` 4+; `flock` (util-linux).
 
@@ -130,19 +115,11 @@ System dependencies: `jq`; `bash` 4+; `flock` (util-linux).
 
 ## Runtime Notes
 
-> If you are running in **Claude Code**: create a team before launching agents so agents share state and can be re-delegated. Task creation *and* assignment both wake a live agent — for a fresh spawn create tasks first, and for re-delegation send the delegation message BEFORE creating and assigning the task, or the agent starts from the bare `task_assignment` payload without it. Ask questions with `AskUserQuestion`. `SendMessage` accepts exactly `to`, `summary`, `message`; extra fields have caused duplicate delivery.
-
-> If you are running in **Codex**: under `approval_policy = never` the CLI rejects shell CONTROL SYNTAX with `approval required by policy, but AskForApproval is set to Never`. The *shape* was flagged, not access: never retry it and never wait for approval — rewrite it per [Harness-Safe Shell](#harness-safe-shell), which enumerates the rejected shapes and their substitutes.
->
-> - Polling loops → the orch waiters `.agents/skills/orch/scripts/ci-wait` (CI status), `.agents/skills/orch/scripts/approval-wait` (review approval), `.agents/skills/orch/scripts/queue-wait` (merge-queue / auto-merge outcome) — orch scripts, never `github.sh` subcommands.
-> - Spawn generated agents with `fork_context: false`; resolve parameters with `scripts/spawn-adapter spawn <canonical-agent-name>`. Pass the canonical hyphenated name — it is the identity everywhere orch records anything, and the adapter confines the runtime spelling to `record.runtime_metadata`. `--fallback-reason` is for a deliberate generic-worker fallback, never one a name-schema rejection caused. Spawn with `<bootstrap_format>`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
-> - Thread cap: `scripts/spawn-adapter slots` prints the effective cap and the `REVIEWER_SLOT_BUDGET` it implies, warning when only the legacy key is set (silently ignored, so raising it alone changes nothing) and noting that a running session keeps its old cap until restarted. Set the reported budget in `vstack.settings.toml` `[env]`.
->
-> Full shape catalogue, rewrite patterns, and the Codex Desktop app-handoff contract: [references/codex-runtime.md](references/codex-runtime.md).
+> If you are running in **Codex**: a rejection saying `approval required by policy, but AskForApproval is set to Never` flags the command's SHAPE, not access — never retry it and never wait for approval; rewrite it per [references/codex-runtime.md](references/codex-runtime.md) (rejected shapes, substitutes, env-prefix normalization, the no-`git rebase` rule). Polling loops → the orch waiters `.agents/skills/orch/scripts/ci-wait`, `approval-wait`, `queue-wait` — never `github.sh` subcommands. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>` — spawn, naming, and thread-cap contract in the same reference.
 
 > If you are running in **OpenCode**: a spawned sub-agent's persistent identity is the `task_id` returned by `functions.task`. Store it in workflow state (`child_sessions[agent].agent_id`, `review_agent_ids[reviewer-name]`) and re-delegate with `functions.task(task_id=<stored_id>)`. Spawn fresh only when no ID is stored, one resume attempt failed, or the task is confirmed dead.
 
-> If you are running in **Pi** with `pi-agents-tmux`: delegation is one `subagent` call — the bootstrap is auto-injected as the child's system prompt and the `task` argument is the filled `<delegation_format>` alone; prepending the bootstrap double-injects the role boundaries. Store the returned `taskId` in workflow state. Pane, steering, and completion-recovery details: [references/pi-runtime.md](references/pi-runtime.md).
+> If you are running in **Pi** with `pi-agents-tmux`: delegation is one `subagent` call — the child's role boundaries arrive auto-injected as its system prompt and the `task` argument is the filled `<delegation_format>` alone; prepending role text double-injects it. Store the returned `taskId` in workflow state. Pane, steering, and completion-recovery details: [references/pi-runtime.md](references/pi-runtime.md).
 
 ---
 
@@ -157,17 +134,11 @@ System dependencies: `jq`; `bash` 4+; `flock` (util-linux).
 
 #### Harness-Safe Shell
 
-Generated commands must survive strict harness command policies. **Run exactly one simple command per tool call with explicit arguments.** Inline `$(...)`, `for`/`while` loops, array building, heredocs, value-plumbing pipelines, redirected writes, and multi-command blocks are all rejected shapes. Fold related `workflow-state` reads into one `get '{...}'` and writes into one `update '... | ...'`; use `git-context` for derived values and harness file tools or `apply_patch` for file bodies. Three rules reach every generated command list — dev validation steps, delegated audit searches, fix recommendations:
-
-- **Env-assignment prefixes are normalized at acceptance, not at run time**: confirm the ambient environment satisfies the precondition (`printenv VAR`; `locale` for locale variables, whose effective values an empty `printenv LC_ALL` would miss), then run the bare `cmd args` unchanged. `env VAR=value cmd args` is not the documented substitute, and an unsatisfied precondition is a blocker, never a run under the wrong environment.
-- **A literal backtick is command substitution to the classifier**, even quoted: author search patterns with the regex hex escape `\x60` (worked example in [references/codex-runtime.md](references/codex-runtime.md)).
-- **Never author a step that assumes top-level `git rebase` will run**, or retry one the classifier rejected: the porcelain verb itself is rejected by a harness-side classification no authorization can lift. Use the worktree skill's guarded `create <ID> --reuse --replay` with `worktree restack continue|skip|abort`, never an improvised force-push; on a dirty tree or merge commits in range, report a blocker instead of improvising.
-
-Full shape catalogue and rewrite patterns: [references/codex-runtime.md](references/codex-runtime.md).
+**Run exactly one simple command per tool call with explicit arguments** — generated commands must survive strict harness command policies. Rejected shapes, their substitutes, env-prefix normalization, and the no-`git rebase` rule: [references/codex-runtime.md](references/codex-runtime.md).
 
 #### Tracker Resolution
 
-An `ISSUE_ID` starting with `issue-` is a GitHub work item (`TRACKER=github`, issue number `${ISSUE_ID#issue-}`, repo from caller context else `gh repo view --json nameWithOwner`); anything else is Linear. Resolve once per workflow and store as `TRACKER`; a caller-supplied `tracker` wins. Steps marked **Linear only** / **GitHub only** run only for that tracker. Never run `linear.sh` against a GitHub item — its state lives in `gh issue` and PR linkage (`Closes #N`).
+An `ISSUE_ID` starting with `issue-` is GitHub (`TRACKER=github`, issue number `${ISSUE_ID#issue-}`, repo from caller context else `gh repo view --json nameWithOwner`); anything else is Linear. A caller-supplied `tracker` wins; resolve once per workflow and store as `TRACKER`. Steps marked **Linear only** / **GitHub only** run only for that tracker; never run `linear.sh` against a GitHub item — its state lives in `gh issue` and PR linkage (`Closes #N`).
 
 ---
 
@@ -175,34 +146,17 @@ An `ISSUE_ID` starting with `issue-` is a GitHub work item (`TRACKER=github`, is
 
 | Pattern | When | Flow |
 |---------|------|------|
-| Spawn + message | Fresh dev, QA, or review agents | Spawn with bootstrap → send delegation |
+| Spawn + message | Fresh dev, QA, or review agents | Spawn → send delegation |
 | Message only | Re-delegation to a live agent | Send delegation to the running agent |
 | Self-create | No team context | Full instructions in the prompt |
 
-Delegated command lists are normalized per [Harness-Safe Shell](#harness-safe-shell) before entering a prompt: an env-assignment prefix never survives delegation; it becomes a precondition check plus the bare command.
+Delegated command lists are normalized per [Harness-Safe Shell](#harness-safe-shell) before entering a prompt: an env-assignment prefix never survives delegation — it becomes a precondition check plus the bare command.
 
 **No duplicate spawns.** Never spawn a fresh agent while the same role is alive. Read workflow state, reuse by stored ID, and respawn only after one recovery attempt or a confirmed stuck/closed status. A prior completion message does not justify a duplicate.
 
-#### Bootstrap Message
-
-Send bootstrap **first**. Fill `[PLACEHOLDERS]`, send verbatim:
-
-<bootstrap_format>
-You are a [ROLE] sub-agent ([AGENT_NAME]). You report to the orchestrator.
-
-Rules:
-
-- Execute all assigned work yourself: no sub-agents for implementation, review, or fix work, and no coordinating other agents. Read-only search sub-agents are fine where your harness provides them.
-- Only act on delegation messages from the orchestrator. With no delegation pending, stay idle. With an unfinished accepted delegation, resume and complete it before idling — except while a validation you backgrounded is still running, where ending the turn is correct and the orchestrator will nudge you (dev SKILL.md § Long-Running Validation).
-- Before your single return message, write your workflow's on-disk completion artifact — the orchestrator treats it as the durable completion record, so a round without one is unfinished. Dev agents run `dev-return-write`; reviewer and QA agents author their review JSON per the reviewer skill.
-- After completing assigned work, send a single return message and go idle.
-</bootstrap_format>
-
-The `<delegation_format>` message follows as a separate message. **Pi exception**: one tool call, bootstrap auto-injected.
-
 #### Format Tags Are Literal
 
-`<bootstrap_format>`, `<delegation_format>`, and `<output_format>` define exact content: fill `[PLACEHOLDERS]`, omit lines whose placeholder is empty or not applicable, add nothing else, and keep structure, headings, and field names verbatim. Placeholders hold schema fields only — process prose inside an item record triggers a second return on idle wake-up. When a tagged block is followed by an ask-user step, present the filled block as a normal message first, then ask a concise question with options.
+`<delegation_format>` and `<output_format>` define exact content: fill `[PLACEHOLDERS]`, omit lines whose placeholder is empty or not applicable, add nothing else, and keep structure, headings, and field names verbatim. Placeholders hold schema fields only — process prose inside an item record triggers a second return on idle wake-up. When a tagged block is followed by an ask-user step, present the filled block as a normal message first, then ask a concise question with options.
 
 #### Single Return Message
 
@@ -218,7 +172,7 @@ An agent sends exactly one completion message. A second return is a violation: d
 
 **Dev agents persist** for the whole session and are re-delegated for review-fix, QA-fix, comment-fix, and CI-fix rounds. Shut them down only on explicit user request or a confirmed stall — quiet is not stalled, idle is not stuck.
 
-**Reviewer persistence is budget-conditional.** `orch-env REVIEWER_SLOT_BUDGET 0` prints the runtime's budget counting the primary session (`0` = unlimited). Available reviewer slots = budget − 1 − live `child_sessions` entries whose `status` is `active` (a record with no `status` counts as active), minimum 1; recompute at every review-cycle start. Within budget, reviewers persist across fix and re-review cycles: reuse by exact name and spawn only the missing subset. Over budget — or when a spawn fails with the runtime's thread-limit error — run bounded waves: launch up to the available slots, wait for each validated artifact, retire the completed session to release its slot, launch the next wave, and persist the observed wave size as `reviewer_slots_observed` so later cycles start in wave mode. **Invariant:** review state lives in on-disk artifacts and workflow state, never in reviewer session memory, so retiring a completed reviewer loses nothing and a recreated one is pointed at the current diff plus its prior report.
+**Reviewer persistence is budget-conditional.** Available slots = budget (`orch-env REVIEWER_SLOT_BUDGET 0`, counting the primary session; `0` = unlimited) − 1 − live `child_sessions` entries whose `status` is `active` (a record with no `status` counts as active), minimum 1; recompute at every review-cycle start. Within budget, reviewers persist across fix and re-review cycles: reuse by exact name, spawn only the missing subset. Over budget — or on the runtime's thread-limit spawn error — run bounded waves: launch up to the available slots, retire each session on its validated artifact to release the slot, and persist the observed wave size as `reviewer_slots_observed` so later cycles start in wave mode. **Invariant:** review state lives in on-disk artifacts and workflow state, never in reviewer session memory, so retiring a completed reviewer loses nothing.
 
 QA agents spawn and shut down per agent.
 
@@ -226,13 +180,13 @@ QA agents spawn and shut down per agent.
 
 The orchestrator owns round closure. A correct dev or QA agent may background a long validation and end its turn with no further wake, so every dev/QA delegation carries three mechanics:
 
-1. **Mint and embed a round token** immediately before delegating (`workflow-state new-round-id [ISSUE_ID] dev_round_id` → the delegation's `Round ID:` line) and re-stamp `dev_delegated_at`. A fix round also persists its delegated item set at that moment (`dev-round-write`), so a respawned agent reads its items from disk instead of guessing.
-2. **Arm a single-shot wall-clock watchdog** for `dev_delegated_at + 10 min` at the same moment, so the check runs even if no wake ever arrives. It fires once, runs A/B if the round is still outstanding, and re-arms only on entering a new escalation step — never a busy poll. Harness mechanisms: [references/artifact-checks.md](references/artifact-checks.md).
-3. **Run the check on every wake and at the deadline** — never classify from wording or elapsed time. One command answers it: `dev-artifact-check --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]` (fix rounds add `--expect-items-from-round`) prints `verdict` — `accept` (valid artifact, validation passing, recorded commit resolves), `wait` (no artifact yet — the round is still running), or `retry` (an artifact exists but fails a gate). Act on the verdict; tracker corroboration (**B**) applies only where the delegating workflow's table names it. A `finished` or `idle` wake is not evidence — run the command.
+1. **Round token** — immediately before delegating: `workflow-state new-round-id [ISSUE_ID] dev_round_id` → the delegation's `Round ID:` line, re-stamp `dev_delegated_at`; a fix round also persists its delegated item set (`dev-round-write`) so a respawned agent reads its items from disk.
+2. **Arm a single-shot wall-clock watchdog** for `dev_delegated_at + 10 min` at the same moment; it fires once, runs A/B if the round is still outstanding, and re-arms only on entering a new escalation step — never a busy poll. Harness mechanisms: [references/artifact-checks.md](references/artifact-checks.md).
+3. **Run the check on every wake and at the deadline** — never classify from wording or elapsed time, and a `finished`/`idle` wake is not evidence. `dev-artifact-check --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]` (fix rounds add `--expect-items-from-round`) prints `verdict`; act on it.
 
-The acceptance decision table lives in the delegating workflow (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1) and is a pure function of A and B; the return message is display-only. The round token binds A to exactly this delegation's receipt. A path whose agent writes no dev-return artifact (`ci-fix.md`) is accepted by its return message plus the escalation ladder, never by a stale artifact. Dev-vs-reviewer asymmetry and invalid stall signals: [references/artifact-checks.md](references/artifact-checks.md).
+The acceptance decision table lives in the delegating workflow (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1); the return message is display-only, and tracker corroboration (**B**) applies only where that table names it. A path whose agent writes no dev-return artifact (`ci-fix.md`) is accepted by its return message plus the escalation ladder, never by a stale artifact. Dev-vs-reviewer asymmetry and invalid stall signals: [references/artifact-checks.md](references/artifact-checks.md).
 
-**Escalation.** Only after the 10-minute quiet window AND a confirmed stall (task status unchanged across idle cycles, no session-log entries for 10+ minutes, or the agent process exited): re-message once naming the missing step → wait 5 minutes → new activity means go idle, still inactive means shut down, re-create tasks, respawn, re-delegate.
+**Escalation.** Only after the 10-minute quiet window AND a confirmed stall (task status unchanged across idle cycles, no session-log entries for 10+ minutes, or the agent process exited): re-message once naming the missing step → wait 5 minutes → still inactive means shut down, re-create tasks, respawn, re-delegate.
 
 ---
 
@@ -246,22 +200,22 @@ After compaction, resume from the step after the last completed one: read workfl
 
 ### Coordination
 
-**Containers.** A parent with children is a CONTAINER by default: no `(one PR)` title marker, and children present or an `agent:multi` label. The `(one PR)` marker always wins and opts even an `agent:multi` bundle into single-PR delegation. A container is never orchestrated and never gets a PR — each child is the PR unit, selection operates on unblocked children, and the container closes LAST when its final child merges. Containers hold no implementation state: no worktree, no branch, no workflow-state beyond bookkeeping.
+**Containers.** An issue with children or an `agent:multi` label and no `(one PR)` title marker is a CONTAINER; the marker always wins. A container is never orchestrated and never gets a PR — each child is the PR unit, selection operates on unblocked children, and the container closes LAST when its final child merges. It holds no worktree, branch, or workflow state beyond bookkeeping.
 
-**Ancestor gate.** Every directly selected issue walks its full `parent_id` chain and classifies each ancestor. An enclosing `(one PR)` bundle becomes the work item — the child only on explicit user choice — and promotion REPLACES the selection: continue as the bundle or stop and route to its worktree; the superseded child id never proceeds. The selected item dispatches only when its own `state_type` is non-terminal AND the union of its `blocked_by` with every container ancestor's resolves terminal. Fetch blocker states in chunks of at most 50 ids (`issues bulk-get` caps at 50 rows), verify every requested id came back, and keep an item blocked on a missing lookup — never fail open on a truncated read. One hop is never enough. Entry workflows (start, start-worktree, handoff, dev-start) carry the mechanics.
+**Ancestor gate.** Every directly selected issue walks its full `parent_id` chain — one hop is never enough. An enclosing `(one PR)` bundle becomes the work item; promotion REPLACES the selection, and the superseded child id never proceeds. Dispatch requires the item's own `state_type` non-terminal AND the union of its `blocked_by` with every container ancestor's resolving terminal. Fetch blocker states in chunks of at most 50 ids, verify every requested id came back, and keep the item blocked on a missing lookup — never fail open on a truncated read. Entry workflows (start, start-worktree, handoff, dev-start) carry the per-workflow mechanics.
 
-**Sequencing.** Infer the agent from the label or component path, then confirm with Creates ↔ Consumes: no data flow, no blocking relation, whatever the agent ordering suggests. Existing blocking relations on the issues outrank inference. Cross-bundle relations go on the parent issues; dependent children of one container get sibling child-blocks-child relations, which ARE the execution order since selection dispatches only unblocked children. Only an explicit `(one PR)` bundle leaves intra-bundle ordering to the delegated session.
+**Sequencing.** Order by data flow (Creates ↔ Consumes), never by agent ordering; existing blocking relations on the issues outrank inference. Cross-bundle relations go on the parent issues; dependent children of one container get sibling child-blocks-child relations, which ARE the execution order.
 
-**Single-PR bundles.** Only a parent marked `(one PR)`, a delegation carrying `Audit Bundle: yes` (review-pr's post-audit children, worked inside this PR's session), or a leaf issue with an internal checklist, is delegated as one session covering all children. One composite task per sub-issue, not one per section. Multi-domain bundles process groups sequentially, collecting handoff notes between groups.
+**Single-PR bundles.** Exactly three opt-ins delegate all children as one session: a parent marked `(one PR)`, a delegation carrying `Audit Bundle: yes`, or a leaf issue with an internal checklist. One composite task per sub-issue, not one per section; multi-domain bundles process groups sequentially, collecting handoff notes between groups.
 
-**Tracked issue creation.** Never create a tracked issue directly from an orchestration session — route it through TPM (project-management), which owns labels, project, priority, estimate, and relations. A direct create prints a URL and looks like success while the issue lands with none of those, and without an `agent:*` label it is invisible to agent routing. The only direct creates are the ones a workflow step specifies with its label set (`plan-issues`, `start-new`, the `merge-pr` rebundle).
+**Tracked issue creation.** Route every tracked issue through TPM (project-management), which owns labels, project, priority, estimate, and relations — never create one directly from an orchestration session. A direct create prints a URL that looks like success while the issue lands with none of those, and without an `agent:*` label it is invisible to agent routing. The only direct creates are the ones a workflow step specifies with its label set (`plan-issues`, `start-new`, the `merge-pr` rebundle).
 
 ---
 
 ### Review Pipeline
 
-**Finding schema.** [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md) is the contract; `review-artifact-check` enforces it. Routing reads `verdict` (`action_required` when blockers exist, else `pass`) and each suggestion's `category` ∈ {`fix`, `issue`}.
+**Finding schema.** [`../reviewer/schemas/review-finding.md`](../reviewer/schemas/review-finding.md) is the contract, enforced by `review-artifact-check`. Routing reads `verdict` (`action_required` when blockers exist, else `pass`) and each suggestion's `category` ∈ {`fix`, `issue`}.
 
-**Disposition.** Classify each suggestion per [references/finding-disposition.md](references/finding-disposition.md): apply in-PR, file as a tracked issue, or decline with one line. Filing is the exception — see the filing bar there.
+**Disposition.** Classify each suggestion per [references/finding-disposition.md](references/finding-disposition.md): apply in-PR, file as a tracked issue, or decline with one line. Filing is the exception — the filing bar lives there.
 
-**Issue audit pipeline.** Every follow-up that clears the filing bar goes through this pipeline however it was discovered — `category=issue` suggestions, escalated blockers, dev "deliberately left out" lists, and gaps noticed while reading reports or code. Collect them, transform into audit input (schema in `project-management/schemas/`), and delegate to TPM for creation, populating dependency fields when order is known. Never file them directly.
+**Issue audit pipeline.** Every follow-up that clears the filing bar — `category=issue` suggestions, escalated blockers, dev "deliberately left out" lists, gaps noticed in reports or code — is collected, transformed into audit input (schema in `project-management/schemas/`), and delegated to TPM for creation, with dependency fields populated when order is known. Never file directly.

@@ -78,14 +78,15 @@ CI_FIX_MAX_CYCLES = "6"
 # set the cap that `spawn-adapter slots` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
-# Used by: orch (`review-pr`, `dev-fix`). How workflow decision points behave.
-# "ask" (default) presents every decision to the user. "auto-recommended"
-# executes the workflow's recommended option and logs
-# "auto-selected: [option] — [reason]" in the round record (workflow-state
-# auto_decisions) — for fleet launchers whose workers would otherwise
-# serialize on one supervisor. Decision-record revisits and scope expansion
-# beyond the issue ALWAYS ask, in every mode; merge is governed by
-# ORCH_MERGE_AUTONOMY.
+# Used by: orch (`dev-fix`). How workflow decision points behave. "ask"
+# (default) presents decision points to the user. Review findings disposition
+# (`review-pr` § 4/§ 7, `review` § 4) is by rule in EVERY mode — no mode
+# presents a selection menu over findings. "auto-recommended" executes the
+# workflow's recommended option and logs "auto-selected: [option] — [reason]"
+# in the round record (workflow-state auto_decisions) — for fleet launchers
+# whose workers would otherwise serialize on one supervisor. Decision-record
+# revisits and scope expansion beyond the issue ALWAYS ask, in every mode;
+# merge is governed by ORCH_MERGE_AUTONOMY.
 ORCH_DECISION_MODE = "ask"
 
 # Used by: orch (`start-worktree` § 5.5). "ask" (default) presents the merge

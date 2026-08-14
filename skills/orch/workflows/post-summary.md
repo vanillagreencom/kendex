@@ -56,7 +56,7 @@ Write the summary to a file first — inline bodies with backticks or fenced blo
 
 Omit empty sections. Created Issues comes from `audit_issues_created` plus `pr_comment_review.issues_created`, with project names. Deduplicate Recommendations Processed by description across cycles.
 
-**Commit SHAs.** When workflow state carries a `.rebase_map`, resolve every published SHA through it before posting — following the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden. State-stored fix SHAs were already rewritten at push time, so the map matters for artifact-sourced references such as a perf QA `benchmark_commit` (`submit-pr.md` § 2).
+**Commit SHAs.** When workflow state carries a `.rebase_map`, resolve every published SHA through it before posting — follow the chain until no key matches; publishing an unreconciled pre-rebase SHA is forbidden. State-stored fix SHAs were already rewritten at push time; the map matters for artifact-sourced references such as a perf QA `benchmark_commit` (`submit-pr.md` § 2).
 
 ## 2. Post Handoff Comments
 
@@ -66,7 +66,7 @@ Omit empty sections. Created Issues comes from `audit_issues_created` plus `pr_c
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 ```
 
-Read `.blocks`. Post a handoff comment to a downstream issue only when it earns one: its description references files this PR touched, a decision was created that it should know about, or an API or interface it depends on changed. Simply being unblocked by completion — the common case — earns nothing.
+Read `.blocks`. Post a handoff comment to a downstream issue only when it earns one: its description references files this PR touched, a decision it should know about was created, or an API it depends on changed. Simply being unblocked — the common case — earns nothing.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body "Handoff from [ISSUE_ID]:

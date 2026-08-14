@@ -40,7 +40,7 @@ No committed diff after that check → report "No committed changes to review" a
 .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
 ```
 
-The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory, however plausible the slug looks. Verify each before injecting it, one command per path:
+The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. Verify each before injecting it, one command per path:
 
 ```bash
 test -f [DECISION_FILE_PATH]
@@ -66,7 +66,7 @@ Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-li
 .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
 ```
 
-`0` means unlimited unless an earlier cycle already recorded a runtime demotion — check before choosing persistent mode, since the runtime already proved the unlimited configuration wrong:
+`0` means unlimited unless an earlier cycle already recorded a runtime demotion — check before choosing persistent mode:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{observed: (.reviewer_slots_observed // 0), live: (.child_sessions // {} | [to_entries[] | select((.value.status // "active") == "active")] | length)}'
@@ -82,13 +82,13 @@ Read existing reviewer state before any spawn:
 
 Classify each reviewer in `[AGENTS]` as reusable, missing, closed, or confirmed-stuck: reuse by exact name when its recorded id points to a live session, attempt one resume when only a name is recorded, and add only the rest to `REVIEWERS_TO_LAUNCH`. Carry a reusable reviewer's existing runtime-type entry forward rather than rebuilding it from newly spawned reviewers.
 
-On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first — state lives in artifacts, so nothing is lost.
+On a RE-REVIEW whose panel shrank (§ 4 scopes it), retire the out-of-panel sessions first.
 
 **Do not spawn yet** — resolve § 2.1 first.
 
 ### 2.1 External Review Availability
 
-External review runs automatically alongside the internal panel when the second-opinion skill is installed and a target is detected, treated identically to an internal reviewer. No user prompt.
+External review runs automatically alongside the internal panel when available, treated identically to an internal reviewer. No user prompt.
 
 **Skip if** `.agents/skills/second-opinion/scripts/second-opinion` does not exist → `EXTERNAL_REVIEW_REQUESTED=false`.
 
@@ -106,7 +106,7 @@ Spawn each reviewer in `REVIEWERS_TO_LAUNCH`, resolving Codex spawn parameters w
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_wave_done '[]'
 ```
 
-A retired reviewer has no session to reuse: recreate it fresh and write state with the live wave only. If a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that did spawn — continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record the demotion in one write so every later § 2 entry reuses it:
+A retired reviewer has no session to reuse: recreate it fresh and write state with the live wave only. If a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that did spawn — continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record the demotion in one write:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.reviewer_slots_observed = [OBSERVED_SPAWN_COUNT] | .review_wave_done = []'
@@ -120,13 +120,13 @@ Store the active set:
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [AGENT_LIST_JSON] | .review_agent_ids = [AGENT_ID_MAP_JSON] | .review_agent_runtime_types = [AGENT_RUNTIME_TYPE_MAP_JSON]'
 ```
 
-Stamp the freshness boundary immediately before the delegation batch — it gates § 3.1 acceptance against stale artifacts from earlier cycles and output produced during spawn. In wave mode, re-stamp before each wave's batch:
+Stamp the freshness boundary immediately before the delegation batch — it gates § 3.1 acceptance against stale artifacts. In wave mode, re-stamp before each wave's batch:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
 ```
 
-Delegate to every reviewer in the active set in parallel. When `EXTERNAL_REVIEW_REQUESTED=true`, launch the external review in the same batch — it is a shell command, not an agent session, so it consumes no slot and joins only the cycle's first wave.
+Delegate to every reviewer in the active set in parallel. When `EXTERNAL_REVIEW_REQUESTED=true`, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave.
 
 Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
 
@@ -165,7 +165,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 .agents/skills/second-opinion/scripts/second-opinion review --cwd [WORKTREE_PATH] --output [WORKTREE_PATH]/tmp/review-external-[TIMESTAMP_FROM_PREVIOUS_COMMAND].json
 ```
 
-Validate it the same way glob mode validates reviewer JSONs, passing `review_delegated_at` as the freshness boundary:
+Validate it like a reviewer JSON, with `review_delegated_at` as the freshness boundary:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
@@ -207,7 +207,7 @@ Still `ok == false` after that, or the § 3.2 deadline reached → mark the agen
 
 ### 3.2 Watchdog
 
-Sweep the filesystem on every event — that catches silent finishers without delay. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for everyone else including external.
+Sweep the filesystem on every event — it catches silent finishers. Per-agent deadline from `review_delegated_at`: 25 minutes for an agent whose name contains `perf`, 15 minutes for everyone else including external.
 
 | Event | Action |
 |-------|--------|
@@ -292,7 +292,7 @@ Re-review is scoped to what the fix round actually changed. Read the round's dif
 | Only minor suggestions applied, no blocker cleared, and the diff stays inside already-reviewed domains | Record the skip below → § 5 |
 | Anything else | → § 2 with caller context `agents` = the scoped panel below |
 
-The scoped panel is the union of the reviewers whose domains the round's diff touched, the reviewers who found the blockers it cleared, and external review when available. A full panel over unchanged domains converges toward zero yield on a narrowing diff. Record the scoping so it stays visible after the fact:
+The scoped panel is the union of the reviewers whose domains the round's diff touched, the reviewers who found the blockers it cleared, and external review when available. Record the scoping:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[DOMAINS_TOUCHED] + blocker finders + external"}'
@@ -318,10 +318,10 @@ Then decide the QA routing. The inputs, in precedence order:
 2. **Diff scan** — deterministic checks on the round's full diff:
 
 ```bash
-git -C [WORKTREE_PATH] diff [BASE]...HEAD --unified=0 | grep -clE 'unsafe |Ordering::|Atomic(U|I|Bool|Ptr)'
+git -C [WORKTREE_PATH] diff "origin/[BASE_BRANCH]"...HEAD --unified=0 | grep -cE 'unsafe |Ordering::|Atomic(U|I|Bool|Ptr)'
 ```
 
-   A nonzero count adds `needs-safety-audit`. When the repo sets `QA_PERF_PATHS` (space-separated path globs), any changed file matching one adds `needs-perf-test`:
+   `[BASE_BRANCH]` is the § 1 `resolve-base-branch` output. A nonzero count adds `needs-safety-audit` (`grep -c` exits non-zero on a zero count — the no-signal case, not an error). When the repo sets `QA_PERF_PATHS` (space-separated path globs), any changed file matching one adds `needs-perf-test`:
 
 ```bash
 .agents/skills/orch/scripts/orch-env QA_PERF_PATHS ""
@@ -333,7 +333,7 @@ git -C [WORKTREE_PATH] diff [BASE]...HEAD --unified=0 | grep -clE 'unsafe |Order
 .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] qa_decision '{"signals":[SIGNALS],"rationale":"[ONE_LINE]"}'
 ```
 
-QA passes are expensive — perf and safety audits especially. Drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with rationale "user skip", → § 8. Signals empty → § 8. Otherwise → § 6.
+QA passes are expensive: drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with rationale "user skip", → § 8. Signals empty → § 8. Otherwise → § 6.
 
 ## 6. QA Checks
 
@@ -372,14 +372,14 @@ Follow the § 4 pattern — collect, present, delegate through `workflows/dev-fi
 ## 8. Summary And Issue Audit
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{json_paths: (.json_paths // []), escalated: (.escalated_items // [])}'
+.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{json_paths: (.json_paths // []), fixed: (.fixed_items // []), escalated: (.escalated_items // [])}'
 ```
 
 Empty `json_paths` → report "No review items" and → § 9.
 
 Read every JSON, collect the `category == "issue"` suggestions, and deduplicate by (location, description), keeping the first and noting all sources.
 
-**Declined items are re-derived, not remembered.** A blocker or `category == "fix"` suggestion that appears in a `json_paths` artifact but in neither `fixed_items` nor `escalated_items` was declined in § 4 or § 7. Deriving them from disk keeps the report honest across a compaction that dropped the § 4 conversation. Carry each one's recorded rationale; where a compaction lost it, report the item with `rationale: not recorded` rather than inventing one.
+**Declined items are re-derived, not remembered.** A blocker or `category == "fix"` suggestion that appears in a `json_paths` artifact but in neither `fixed_items` nor `escalated_items` was declined in § 4 or § 7. Carry each one's recorded rationale; where a compaction lost it, report the item with `rationale: not recorded` rather than inventing one.
 
 <output_format>
 
@@ -420,13 +420,13 @@ Est: 1 (hours) | 2 (half-day) | 3 (day) | 4 (2-3d) | 5 (week+)
 
 Omit empty sections.
 
-**File only what clears the bar.** Apply [references/finding-disposition.md](../references/finding-disposition.md) § Filing bar to every candidate: `category: "issue"` suggestions, escalated items, and Discovered Work bullets from the dev return. Everything below the bar is absorbed or dropped with a one-line note — issue creation is not the default disposal path.
+**File only what clears the bar.** Apply [references/finding-disposition.md](../references/finding-disposition.md) § Filing bar to every candidate: `category: "issue"` suggestions, escalated items, and Discovered Work bullets from the dev return. Everything below the bar is absorbed or dropped with a one-line note — filing is not the default.
 
 Discovered Work bullets whose first token after `- ` is `handoff_to_submit_pr:`, `handoff_to_merge_pr:`, or `current_workflow_action:` are already in flight in this workflow — match `^-\s+(handoff_to_submit_pr|handoff_to_merge_pr|current_workflow_action):\s` and drop them silently. The filter applies to Discovered Work only; escalated items and `category: "issue"` suggestions are unaffected.
 
 Nothing clears the bar → § 9. Otherwise build the audit-input file per `.agents/skills/project-management/schemas/audit-issues-input.md` at `[WORKTREE_PATH]/tmp/audit-start-YYYYMMDD-HHMMSS.json`. Each escalated item's `origin` comes from its `outcome`: `"skipped"` → `origin: "skipped"`; `"blocked"` or no `outcome` field → `origin: "escalated"`. Set `tracker.type` to the resolved `TRACKER`, plus `tracker.repository` for GitHub items.
 
-**Run Workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 8 tail`. audit-issues is a primary-session wrapper: run it in this session, because it holds the interactive approval gate and its mutations require approvals collected there. Do not delegate the wrapper to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
+**Run Workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 8 tail`. audit-issues is a primary-session wrapper holding the interactive approval gate: run it in this session, never delegated to a subagent; the only delegable part is the `tpm-audit.md` analysis, which audit-issues spawns itself.
 
 Record each created issue:
 
@@ -434,7 +434,7 @@ Record each created issue:
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] audit_issues_created "[CREATED_ISSUE_ID]"
 ```
 
-**Children created to be worked here** (Linear only). When the audit created `make_child` issues under `[ISSUE_ID]`, they belong in this PR's session — delegate them immediately via `⤵ workflows/dev-start.md § 1-4` with context `worktree`, `lifecycle`: inherit, `issue_id`, and `audit_bundle: true` (the mechanical single-PR opt-in for dev-start's container guard). If delegation is skipped, FIRST detach every `audit_issues_created` entry from `[ISSUE_ID]` — otherwise `merge-pr.md` cascade-Dones them:
+**Children created to be worked here** (Linear only). When the audit created `make_child` issues under `[ISSUE_ID]`, delegate them immediately via `⤵ workflows/dev-start.md § 1-4` with context `worktree`, `lifecycle`: inherit, `issue_id`, and `audit_bundle: true` (the single-PR opt-in for dev-start's container guard). If delegation is skipped, FIRST detach every `audit_issues_created` entry from `[ISSUE_ID]` — otherwise `merge-pr.md` cascade-Dones them:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues update [CHILD_ID] --remove-parent

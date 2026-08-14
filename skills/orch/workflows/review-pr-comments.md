@@ -40,7 +40,7 @@ gh api user -q .login
 .agents/skills/github/scripts/github.sh find-comment [PR_NUMBER] --author "[BOT_LOGIN]" --review-summary
 ```
 
-`--review-summary` picks, in order: the "View job" sticky, the review-section comment, then that bot's earliest comment. No bot having posted yet is normal in the async model — continue with the human and inline comments that exist.
+`--review-summary` picks, in order: the "View job" sticky, the review-section comment, then that bot's earliest comment. No bot having posted yet is normal — continue with the human and inline comments that exist.
 
 **Extract** per item: `thread_id`/`comment_id`, `author`, `body`, `path`, `line`, `url`, and `source` (`inline` or `pr-level`). Bot review summaries additionally get a `section` and a keyword-derived source type — architectural, documentation, security, testing, performance, or plain suggestion — plus `blocking: true` for security items and `false` when the text says non-blocking or optional. Skip anything the bot labels an inline comment: those are already captured as review threads, with the bot username as `author`. Never filter bot inline threads out.
 
@@ -50,7 +50,7 @@ gh api user -q .login
 .agents/skills/decider/scripts/decisions search --issue [ISSUE_ID]
 ```
 
-The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory, however plausible the slug looks. Verify each before injecting it, one command per path:
+The `path` fields in that JSON are the ONLY authorized source for decision file paths — never compose or recall one from memory. Verify each before injecting it, one command per path:
 
 ```bash
 test -f [DECISION_FILE_PATH]
@@ -181,7 +181,7 @@ Persist this group's item set: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_R
 .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json
 ```
 
-The file route keeps backticks and quotes in review text off the command line. Each group's fresh round id scopes its own record, so a prior group's set can never be checked against this group's receipt.
+The file route keeps backticks and quotes in review text off the command line; the fresh round id per group keeps a prior group's set from ever satisfying this group's receipt.
 
 ⚠ Fill placeholders only ([Format Tags Are Literal](../SKILL.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
 

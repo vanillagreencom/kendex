@@ -35,7 +35,7 @@ Present the unblocked candidates from the tracker and pick one. If several are w
 
 ## 3. Resolve Work Item
 
-**Linear** — two commands; the sync precedes the read so children added since the last reconcile cannot slip a container through a stale cache:
+**Linear** — sync before read, so a stale cache cannot slip a container through:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
@@ -81,7 +81,7 @@ Exit 75 means a branch or open PR already owns the issue even though the configu
 
 ## 5. Continue In Worktree
 
-The invocation already answered where the work runs: `start` runs it in this session; a separate session is launched with the `handoff` command instead. Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
+The invocation already answered where the work runs: `start` runs it here; a separate session is the `handoff` command. Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
 
 <output_format>
 

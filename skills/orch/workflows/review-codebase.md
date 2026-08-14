@@ -25,7 +25,7 @@ Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-li
 .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0
 ```
 
-`0` delegates to every reviewer in one parallel batch; a positive value smaller than the reviewer count runs bounded sequential waves, retiring each completed session before launching the next. A thread-limit spawn failure under an unlimited budget continues in waves sized by the reviewers that did spawn. There are no re-review cycles here, so waves change scheduling only. On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`.
+`0` delegates to every reviewer in one parallel batch; a positive value smaller than the reviewer count runs bounded sequential waves, retiring each completed session before launching the next. A thread-limit spawn failure under an unlimited budget continues in waves sized by the reviewers that did spawn. No re-review cycles here — waves change scheduling only. On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`.
 
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/codebase-review.md

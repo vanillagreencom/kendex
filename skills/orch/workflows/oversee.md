@@ -12,19 +12,36 @@ Once per session, first match wins:
 
 ## 2. Select Work
 
-Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gates them (ancestor chain, blocker union, container rules). Ownership is settled by tooling, not judgment: an item whose `worktree create` exits 75 belongs to another session — skip it. Keep at most `ORCH_OVERSEER_LANES` items in flight.
+Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gates them (ancestor chain, blocker union, container rules). Ownership is settled by tooling, not judgment: an item whose `worktree create` exits 75 belongs to another session — skip it. Every surface claims through that same gate — create the item's worktree (or record the claim in workflow-state) BEFORE launching its session; thread/session surfaces have no other atomic claim, and two lanes must never take one item. Read the lane cap and keep at most that many items in flight:
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_OVERSEER_LANES 3
+```
 
 ## 3. Launch
 
-Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`), size launch flags to the item, and launch on the § 1 surface. Record the lane:
+Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`) plus the terminal condition: the item is complete only when its PR is MERGED and its worktree cleaned up — an opened PR is not done. `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2), each still carrying the terminal condition. Size launch flags to the item and launch on the § 1 surface.
 
+Record the lane. First use only — when `exists` reports false, run `init` (init overwrites: never re-init a live lane log):
+
+```bash
+.agents/skills/orch/scripts/workflow-state exists --json oversee
+```
+```bash
+.agents/skills/orch/scripts/workflow-state init oversee
+```
 ```bash
 .agents/skills/orch/scripts/workflow-state append oversee lanes '{"issue":"[ISSUE_ID]","surface":"[SURFACE]","launched_at":"[NOW]"}'
 ```
 
 ## 4. Watch And Advance
 
-When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer across every open PR; otherwise fall back to per-PR `approval-wait`/`queue-wait` ([references/gates.md](../references/gates.md)). Never hand-roll a transition-keyed monitor.
+When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer across every open PR — it exits 2 without `GH_REPO`, so resolve and export it in the same call; otherwise fall back to per-PR `approval-wait`/`queue-wait` ([references/gates.md](../references/gates.md)). Never hand-roll a transition-keyed monitor.
+
+```bash
+export GH_REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+.agents/skills/review-gate/scripts/pr-watch.sh
+```
 
 - A lane's PR merges → mark the lane done, launch the next unblocked item.
 - A lane's session ends with no merged PR → inspect its worktree and PR state, re-launch once with the same brief; a second death is surfaced to the user, not retried.

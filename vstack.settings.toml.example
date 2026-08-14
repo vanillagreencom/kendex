@@ -58,14 +58,16 @@ ORCH_OVERSEER_LANES = "3"
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
 
 ORCH_DECISION_MODE = "ask"
-# Used by: orch (`review-pr` § 4/§ 7, `dev-fix` § 1). How workflow decision
-# points behave. "ask" (default) presents every decision to the user.
-# "auto-recommended" executes the workflow's recommended option and logs
-# "auto-selected: [option] — [reason]" in the round record (workflow-state
-# auto_decisions) — for fleet launchers whose workers would otherwise
-# serialize on one supervisor. Decision-record revisits, scope expansion
-# beyond the issue, and anything touching benchmark-host protocol ALWAYS
-# ask, in every mode; merge is governed by ORCH_MERGE_AUTONOMY.
+# Used by: orch (`dev-fix` § 1). How workflow decision points behave. "ask"
+# (default) presents decision points to the user. Review findings disposition
+# (`review-pr` § 4/§ 7, `review` § 4) is by rule in EVERY mode — no mode
+# presents a selection menu over findings. "auto-recommended" executes the
+# workflow's recommended option and logs "auto-selected: [option] — [reason]"
+# in the round record (workflow-state auto_decisions) — for fleet launchers
+# whose workers would otherwise serialize on one supervisor. Decision-record
+# revisits, scope expansion beyond the issue, and anything touching
+# benchmark-host protocol ALWAYS ask, in every mode; merge is governed by
+# ORCH_MERGE_AUTONOMY.
 
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 # Used by: orch (`open-terminal`, `lanes`). Renames auto-discovered launch

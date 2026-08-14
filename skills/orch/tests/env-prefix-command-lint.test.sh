@@ -3,7 +3,7 @@
 # command-shape class). Under Codex `approval=never`, an env-assignment
 # prefix (`VAR=value cmd args`, e.g. `LC_ALL=C tools/test-ci-changes`) is
 # rejected purely for its prefix shape — the inner command is irrelevant.
-# The canonical normalization (orch SKILL.md § Harness-Safe Shell) happens
+# The canonical normalization (orch references/codex-runtime.md § Env-assignment prefixes) happens
 # where a required command is ACCEPTED into the workflow: confirm the
 # ambient environment satisfies the precondition (`printenv VAR`, `locale`),
 # then run the bare command unchanged. The docs must therefore never present
