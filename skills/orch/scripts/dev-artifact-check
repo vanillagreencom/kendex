@@ -81,13 +81,17 @@ be a non-empty array of numeric .n; a missing, mismatched, or malformed record
 means the expected set cannot be established, so the check refuses to run
 (exit 2) rather than silently degrading to the weaker fallback gate.
 
-Prints JSON: {ok: bool, path: string|null,
+Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|"incomplete",
               warning: "commit_unreachable"|null,
               hint: usage diagnosis (count-vs-set --expect-items misuse)|null}
 
 Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
 commit object → commit_unresolvable → items → incomplete → valid.
+
+Exit status reflects artifact validity only: a valid artifact whose recorded
+validation is failing exits 0 with verdict "retry". Acceptance keys on the
+verdict field, never the exit code.
 
 reason meanings when ok=false:
   missing     artifact file does not exist at the resolved path

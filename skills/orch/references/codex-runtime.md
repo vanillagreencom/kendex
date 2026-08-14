@@ -4,7 +4,7 @@ Deep halves of the Codex notes in [../SKILL.md](../SKILL.md). Everything here is
 
 ## Shell-shape classifier (`approval_policy = never`)
 
-The CLI classifies shell CONTROL SYNTAX as approval-required however harmless the inner commands are. Rejected shapes: `for`/`while` loops; multi-command blocks (`;`- or newline-separated — the shape alone triggers it); `VAR=x cmd` env-assignment prefixes; `$(...)` substitution, including a literal backtick anywhere in the command, even inside a quoted search pattern; and redirection. Write search patterns with the regex hex escape `\x60` (`[\x60]` inside a bracket expression) in regex mode — `rg -F` has no escapes and would need the literal character. Canonical safe search shape:
+The CLI classifies shell CONTROL SYNTAX as approval-required however harmless the inner commands are. Rejected shapes: `for`/`while` loops; multi-command blocks (`;`- or newline-separated — the shape alone triggers it); `VAR=x cmd` env-assignment prefixes; `$(...)` substitution, including a literal backtick anywhere in the command, even inside a quoted search pattern; array building; heredocs; value-plumbing pipelines; and redirection. Write search patterns with the regex hex escape `\x60` (`[\x60]` inside a bracket expression) in regex mode — `rg -F` has no escapes and would need the literal character. Canonical safe search shape:
 
 ```bash
 rg -n '\x60vstack refresh\x60' skills/
@@ -30,7 +30,7 @@ The prefix is an environment precondition, not part of the required command — 
 
 The classifier rejects some porcelain verbs outright, top-level `git rebase` among them. The classification is harness-side: no user authorization or delegation lifts it, and an "explicitly authorized" rebase fails identically. The replacement for a clean linear issue branch is the worktree skill's guarded `create <ID> --reuse --replay` (or `--restack --replay` to pause on conflicts) with `worktree restack continue|skip|abort` — worktree SKILL.md § Policy-blocked rebase (cherry-pick replay fallback) — never an improvised force-push. A dirty tree or merge commits in range put the branch outside that recipe: report a blocker.
 
-## Spawning collaboration agents
+## Spawning Codex collaboration agents
 
 Spawn generated agents with `fork_context: false` — a full-history fork inherits the parent agent type and the runtime rejects the spawn. Resolve parameters with `scripts/spawn-adapter spawn <canonical-agent-name>`: the canonical hyphenated name is the identity everywhere orch records anything, and the adapter confines the runtime spelling to `record.runtime_metadata`. `--fallback-reason` is for a deliberate generic-worker fallback, never one a name-schema rejection caused. After the spawn, `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
 
@@ -38,7 +38,7 @@ Spawn generated agents with `fork_context: false` — a full-history fork inheri
 
 ## Codex Desktop app handoff
 
-`workflows/handoff.md` with `harness=codex-app`, the default for multi-issue handoff when the runtime exposes `codex_app` thread tools. Create exactly one thread per issue with `codex_app.create_thread`, targeting a worktree environment whose `startingState` is `{type: "branch", branchName: "[BASE_BRANCH]"}` from `resolve-base-branch`. Start it with exactly `$orch start [ISSUE_ID]` or `$orch start github [OWNER/REPO]#[N]`, and record the returned thread ID. If the runtime separates creation from prompting, call `codex_app.send_message_to_thread` once with that same prompt.
+`workflows/handoff.md` with `harness=codex-app`, the default for multi-issue handoff when the runtime exposes `codex_app` thread tools. Create exactly one thread per issue with `codex_app.create_thread`, targeting a worktree environment whose `startingState` is `{type: "branch", branchName: "[BASE_BRANCH]"}` from `resolve-base-branch`. Start it with `$orch start [ISSUE_ID]` or `$orch start github [OWNER/REPO]#[N]`, followed by the caller's terminal condition (handoff/oversee: complete means the PR is MERGED and the worktree cleaned up), and record the returned thread ID. If the runtime separates creation from prompting, call `codex_app.send_message_to_thread` once with that same prompt.
 
 A `working-tree` starting state can begin the child before generated Codex agents are visible, forcing a `worker` fallback — use it only when the user explicitly asks for a dirty local snapshot. Generated agents must be tracked under `.codex/agents/*.toml` in the saved project branch to be discoverable at all: setup hooks and worktree symlinks run too late.
 

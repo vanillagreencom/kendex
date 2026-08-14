@@ -408,7 +408,7 @@ Examples:
   workflow-state append PROJ-123 json_paths "review.json"
   workflow-state append PROJ-123 fixed_items '{"description":"Fix","commit":"abc"}'
   workflow-state set PROJ-123 pr_review.mode review
-  workflow-state set PROJ-123 pr_review_baseline '{"last_ts":"2026-01-28","last_threads":["PRRT_kwDOABC123"]}'
+  workflow-state set PROJ-123 pr_review_baseline '{"last_threads":["PRRT_kwDOABC123"]}'
   workflow-state set-git-head PROJ-123 pre_delegate_sha /tmp/wt
   workflow-state set-now PROJ-123 review_delegated_at
   workflow-state new-round-id PROJ-123 dev_round_id

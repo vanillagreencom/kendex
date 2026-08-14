@@ -2,6 +2,74 @@
 
 ## Unreleased
 
+- **orch/fleet simplification v2 — ablation-tested condensation.** Every
+  contested SKILL.md section got an A/B answer from live drills on the private
+  rig (claude arm: full cycle 13 min vs the 14 min CI+perf baseline, zero
+  questions, section removed; codex one-shot arm: full unattended cycle to
+  merged-and-cleaned in 26.5 min — better than the stops-at-asks baseline —
+  zero shape rejections, four transient runtime errors all self-recovered),
+  and a section survived only where its removal measurably hurt an arm or a
+  contract test pins it:
+  - **Bootstrap Message deleted.** It shipped with every agent spawn; the
+    claude arm ran a full cycle without it — role boundaries already live in
+    the generated agent files and the artifact contracts in the dev/reviewer
+    skills. Spawns go straight to the delegation message.
+  - **Claude Code runtime block deleted** (team-creation/task-ordering
+    guidance): the ablated arm created teams, re-delegated, and read idle
+    wakes correctly without it.
+  - **Codex runtime block and Harness-Safe Shell reduced to the rejection
+    rule plus pointers**; the full shape catalogue, env-prefix normalization,
+    spawn contract (`fork_context: false`, `spawn-adapter`, thread cap), and
+    the no-`git rebase` rule are canonical in `references/codex-runtime.md` —
+    which also carries the corrected conflict-recovery flag form
+    (`--restack --replay` pauses; `--reuse --replay` aborts), fixing a
+    bot-flagged wrong-flag recovery path that survived two review rounds.
+  - **Codex dual-channel completion note kept**: not exercised by the arm,
+    pinned by its regression test, four lines.
+  - **Configuration table moved to README.md** (repo-owner material; no
+    executing workflow reads it — they call `orch-env` inline), and the
+    workflow-state/review-gate-modes/multi-PR-watching paragraphs collapsed
+    to their non-derivable rules plus pointers to the CLI reference and
+    `references/gates.md`.
+  - Coordination, Round Closure, reviewer-persistence, Tracker Resolution,
+    and Review Pipeline compressed to their contracts; `dev-artifact-check`'s
+    one-word verdict made the acceptance re-explanations redundant.
+- **Untriaged bot findings from #1272-#1277 markdown fixed** (the md-prose
+  comments deliberately deferred to this pass): review-pr's diff scan used a
+  broken `grep -clE` count and an unbound `[BASE]` placeholder; its DECLINED
+  derivation never loaded `fixed_items`, so already-fixed blockers could be
+  reported as outstanding; both settings templates still claimed
+  `ORCH_DECISION_MODE=ask` restores the retired findings menus; submit-pr
+  ignored `ORCH_MERGE_AUTONOMY` on the standalone path and misread non-CI
+  merge-blockers (conflicts, unresolved threads) as stale CI state;
+  start-worktree parsed the dev return's retired `QA Labels` field name;
+  oversee shipped with five launch-surface defects (no `workflow-state init`,
+  unresolved `GH_REPO` for pr-watch, `/orch` slash syntax on Codex lanes, an
+  unread `ORCH_OVERSEER_LANES`, and no atomic per-item claim on
+  thread/session surfaces); the workflow-state schema and help text still
+  showed the number-shaped `last_threads` example that recreates the
+  comment-triage loop.
+- **merge-pr: post-merge worktree cleanup is by rule, not a question.** A
+  merged PR's worktree with a clean tree and the merged branch checked out is
+  removed and its branch deleted; a dirty tree or foreign lease keeps it,
+  reported in the outcome table. submit-pr's merge offer now honors
+  `ORCH_MERGE_AUTONOMY=auto` the same way the managed path does. handoff and
+  oversee briefs state the terminal condition — complete means PR merged and
+  worktree cleaned, not opened (codex one-shot sessions self-judged "done" at
+  PR-open).
+- **worktree: `remove` no longer tears down a live sibling session's tree.**
+  An issue-addressed `remove` derives lease ownership from the issue ID, so
+  any session naming the issue passed the probe; now a lease whose recorded
+  claiming process is still alive on this host (and is not this session or an
+  ancestor) refuses the removal, naming the owner and pid. `remove --force`
+  skips exactly that refusal; dead or ancestor pids, env-ladder identities,
+  and every other safeguard behave as before. New 20-check suite with
+  mutation-proven controls.
+- project-management, dev, preflight, worktree, review-gate markdown:
+  verified tight (three prior passes + this one); zero-cut apart from a
+  second-opinion harness-table dedupe and the fixes above. linear/github
+  markdown untouched.
+
 - review-gate: the writer template header now counts the retry path's second
   content-creating request, matching the #1280 adoption.md correction (the
   two had diverged); adopted consumer copies inherit it at their next writer

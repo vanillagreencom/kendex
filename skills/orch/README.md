@@ -41,7 +41,7 @@ Invoke through your AI coding harness (`/orch <command>`, `/skill:orch <command>
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names (matched case-insensitively, then canonicalized: `issue-N` lowercase, Linear-style uppercase) | `[A-Z]+-[0-9]+` |
 | `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission or merge recovery | `6` |
 | `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session; `0` = unlimited. On Codex, set it to the cap `spawn-adapter slots` reports | `0` |
-| `ORCH_DECISION_MODE` | `ask` presents every workflow decision; `auto-recommended` executes the recommended option and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. The always-ask set in [SKILL.md § The Cycle](SKILL.md#the-cycle) applies in every mode | `ask` |
+| `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` executes the recommended option and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. Review findings disposition is by rule in EVERY mode — no mode presents a selection menu over findings. The always-ask set in [SKILL.md § The Cycle](SKILL.md#the-cycle) applies in every mode | `ask` |
 | `ORCH_MERGE_AUTONOMY` | `auto` merges without asking once every merge gate is green; `ask` presents the merge decision. A `MERGE_READY = false` state never auto-merges | `ask` |
 | `ORCH_OVERSEER_LANES` | Max concurrent lanes `oversee` keeps in flight | `3` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal in `workflows/review-pr.md` § 5. Empty means the diff scan never raises it | empty |

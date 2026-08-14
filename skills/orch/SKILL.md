@@ -168,7 +168,7 @@ An agent sends exactly one completion message. A second return is a violation: d
 
 ### Agent Lifecycle
 
-`SPAWN (bootstrap) → DELEGATE → WORK → RETURN (single message) → IDLE / RE-DELEGATE`.
+`SPAWN → DELEGATE → WORK → RETURN (single message) → IDLE / RE-DELEGATE`.
 
 **Dev agents persist** for the whole session and are re-delegated for review-fix, QA-fix, comment-fix, and CI-fix rounds. Shut them down only on explicit user request or a confirmed stall — quiet is not stalled, idle is not stuck.
 
@@ -186,7 +186,7 @@ The orchestrator owns round closure. A correct dev or QA agent may background a 
 
 The acceptance decision table lives in the delegating workflow (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1); the return message is display-only, and tracker corroboration (**B**) applies only where that table names it. A path whose agent writes no dev-return artifact (`ci-fix.md`) is accepted by its return message plus the escalation ladder, never by a stale artifact. Dev-vs-reviewer asymmetry and invalid stall signals: [references/artifact-checks.md](references/artifact-checks.md).
 
-**Escalation.** Only after the 10-minute quiet window AND a confirmed stall (task status unchanged across idle cycles, no session-log entries for 10+ minutes, or the agent process exited): re-message once naming the missing step → wait 5 minutes → still inactive means shut down, re-create tasks, respawn, re-delegate.
+**Escalation.** Only after the 10-minute quiet window AND a confirmed stall (task status unchanged across idle cycles, no session-log entries for 10+ minutes, or the agent process exited): re-message once naming the missing step → wait 5 minutes → new activity means go idle; still inactive means shut down, re-create tasks, respawn, re-delegate.
 
 ---
 
@@ -204,7 +204,7 @@ After compaction, resume from the step after the last completed one: read workfl
 
 **Ancestor gate.** Every directly selected issue walks its full `parent_id` chain — one hop is never enough. An enclosing `(one PR)` bundle becomes the work item; promotion REPLACES the selection, and the superseded child id never proceeds. Dispatch requires the item's own `state_type` non-terminal AND the union of its `blocked_by` with every container ancestor's resolving terminal. Fetch blocker states in chunks of at most 50 ids, verify every requested id came back, and keep the item blocked on a missing lookup — never fail open on a truncated read. Entry workflows (start, start-worktree, handoff, dev-start) carry the per-workflow mechanics.
 
-**Sequencing.** Order by data flow (Creates ↔ Consumes), never by agent ordering; existing blocking relations on the issues outrank inference. Cross-bundle relations go on the parent issues; dependent children of one container get sibling child-blocks-child relations, which ARE the execution order.
+**Sequencing.** Order by data flow (Creates ↔ Consumes), never by agent ordering; existing blocking relations on the issues outrank inference. Cross-bundle relations go on the parent issues; dependent children of one container get sibling child-blocks-child relations, which ARE the execution order; only an explicit `(one PR)` bundle leaves intra-bundle ordering to the delegated session.
 
 **Single-PR bundles.** Exactly three opt-ins delegate all children as one session: a parent marked `(one PR)`, a delegation carrying `Audit Bundle: yes`, or a leaf issue with an internal checklist. One composite task per sub-issue, not one per section; multi-domain bundles process groups sequentially, collecting handoff notes between groups.
 

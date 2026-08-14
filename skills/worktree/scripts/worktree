@@ -2490,6 +2490,21 @@ session_guard_host() {
   printf '%s' "${host//[^A-Za-z0-9._:@+-]/-}"
 }
 
+# This session's leader pid — the identity the guard records in a lease (its
+# session_leader_pid, mirrored). Falls back through the procps `sid` spelling
+# to $$; validation is strict rather than digit-stripping, because BSD ps
+# prints `sess` as a hex pointer that stripping would mangle into a
+# plausible-looking pid.
+session_leader_pid() {
+  local sid
+  sid="$(ps -o sess= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
+  if ! [[ "$sid" =~ ^[1-9][0-9]*$ ]]; then
+    sid="$(ps -o sid= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
+  fi
+  [[ "$sid" =~ ^[1-9][0-9]*$ ]] || sid=$$
+  printf '%s' "$sid"
+}
+
 # The guard's mkdir_lock_holder_gone, mirrored: ps(1) sees other users'
 # processes where `kill -0` gets EPERM and would call a live pid dead; with no
 # usable pid, or no ps at all, the pid is presumed alive.
@@ -2520,22 +2535,48 @@ pid_is_self_or_ancestor() {
 # session that names the issue passes the ownership probe (#907), so on that
 # identity alone `remove <ID>` would release a sibling session's live lease
 # and tear down the worktree it is still working in. The lease's recorded pid
-# decides: already dead, or this process or one of its ancestors (the claiming
-# invocation's shell), means the claim is this session's — proceed. Alive and
-# unrelated on this host is another session mid-flight — refuse. A pid
-# recorded on another host cannot be probed from here, so it proceeds as
-# before, exactly like a lease that records no usable pid.
+# — the claiming session's leader — decides: this session's own leader, a
+# provably dead pid, or an ancestor of this process proceeds; alive and
+# unrelated on this host refuses. A pid recorded on another host cannot be
+# probed from here, so it proceeds as before, exactly like a lease that
+# records no usable pid.
 issue_release_permits_removal() {
-  local wt="$1" owner="$2" status pid host
-  status="$("$SESSION_GUARD" status "$wt" --owner "$owner" --repo "$PROJECT_ROOT" 2>/dev/null || true)"
+  local wt="$1" owner="$2" status rc=0 err_file pid host
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-lease-status.XXXXXX")"; then
+    echo "Error: could not create a scratch file to verify the session lease of $wt; refusing to remove it." >&2
+    return 1
+  fi
+  status="$("$SESSION_GUARD" status "$wt" --owner "$owner" --repo "$PROJECT_ROOT" 2>"$err_file")" || rc=$?
+  # The identity probe just succeeded, so an unreadable lease HERE is abnormal
+  # — and permitting on it would release on exactly the evidence gap this
+  # gate exists to close.
+  if [[ "$rc" -ne 0 ]]; then
+    echo "Error: could not re-read the session guard state of $wt (exit $rc); refusing to remove it." >&2
+    sed 's/^/  /' "$err_file" >&2
+    rm -f "$err_file"
+    return 1
+  fi
+  rm -f "$err_file"
   pid="$(session_lease_field "$status" pid || true)"
   host="$(session_lease_field "$status" host || true)"
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+  # pid 1 is init, never a claiming session; a lease recording it is corrupt,
+  # and the ancestor walk would call it everyone's ancestor.
+  [[ "$pid" =~ ^[1-9][0-9]*$ && "$pid" != "1" ]] || return 0
   [[ "$host" == "$(session_guard_host)" ]] || return 0
-  recorded_pid_gone "$pid" && return 0
-  pid_is_self_or_ancestor "$pid" && return 0
-  echo "Error: $wt is claimed by a live session (owner=$owner pid=$pid); refusing to remove it." >&2
-  echo "  Matching the issue ID does not prove the lease is this session's, and its claiming process is still running on this host." >&2
+  # Equal-session short-circuit: covers a reparented (orphaned) shell of the
+  # claiming session that the PPID walk below can no longer reach.
+  [[ "$pid" == "$(session_leader_pid)" ]] && return 0
+  if command -v ps >/dev/null 2>&1; then
+    recorded_pid_gone "$pid" && return 0
+    pid_is_self_or_ancestor "$pid" && return 0
+    echo "Error: $wt is claimed by a live session (owner=$owner pid=$pid); refusing to remove it." >&2
+    echo "  Matching the issue ID does not prove the lease is this session's, and its claiming session is still running on this host." >&2
+  else
+    # Without ps the pid can be proved neither dead nor related; it is
+    # presumed alive (the guard's own conservatism), but the refusal must not
+    # claim more than was verified.
+    echo "Error: $wt is claimed under owner=$owner by session pid=$pid, whose liveness cannot be verified on this host (no ps(1)); refusing to remove it." >&2
+  fi
   echo "  If that session is truly finished: $0 remove \"$owner\" --force" >&2
   echo "  Or release its lease directly: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
   return 1

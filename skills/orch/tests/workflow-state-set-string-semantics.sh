@@ -69,7 +69,7 @@ assert_eq "$(jq -c '.pr_review.mode' "$sf")" '"\"review\""' \
   "pre-quoted set stores literal quote characters (raw-string semantics)"
 
 # Test 3: JSON-looking values splice as JSON; `off` is none of them.
-"$WS" --state-dir "$sd" set issue-705 pr_review_baseline '{"last_ts":"t","last_threads":2}'
+"$WS" --state-dir "$sd" set issue-705 pr_review_baseline '{"last_threads":["PRRT_t"]}'
 assert_eq "$(jq -r '.pr_review_baseline | type' "$sf")" "object" \
   "set splices a {…} value as a JSON object"
 "$WS" --state-dir "$sd" set issue-705 review_agents '["a"]'
@@ -184,7 +184,7 @@ printf '%s\n' ".agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_revi
 assert_eq "$([[ -z "$(scan_set_quoted "$scratch")" ]] && echo clean)" "clean" \
   "lint accepts the bare-word set shape"
 
-printf '%s\n' ".agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline '{\"last_ts\":\"x\",\"last_threads\":1}'" > "$scratch"
+printf '%s\n' ".agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_review_baseline '{\"last_threads\":[\"PRRT_x\"]}'" > "$scratch"
 assert_eq "$([[ -z "$(scan_set_quoted "$scratch")" ]] && echo clean)" "clean" \
   "lint accepts the JSON-object set idiom"
 

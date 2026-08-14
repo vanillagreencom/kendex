@@ -125,7 +125,7 @@ scripts/worktree-session-guard sweep --dry-run               # every lease past 
 |---|---|
 | `worktree create` | **Never claims.** A fresh worktree is unclaimed. |
 | `worktree create --reuse\|--restack` | Refuses a foreign lease by name (exit 75); **refreshes** its own in place, so a long reuse cycle cannot age past the TTL and be swept. |
-| `worktree remove` | Releases **its own** lease before removing, so a claiming session can tear down its own tree. A foreign lease is left alone and refuses the removal, naming the owner. An issue-keyed lease whose recorded claiming process is still running on this host in another session is also refused (dead or ancestor pids proceed); `remove <ID> --force` skips only that refusal, leaving every other safeguard intact. |
+| `worktree remove` | Releases **its own** lease before removing, so a claiming session can tear down its own tree. A foreign lease is left alone and refuses the removal, naming the owner. An issue-keyed lease whose recorded claiming session (its session-leader pid, recorded at claim and refresh) is still alive on this host and is not the removing session or an ancestor of it is also refused; `remove <ID> --force` skips only that refusal, leaving every other safeguard intact. |
 | `worktree cleanup` | **Never collects a claimed worktree** — not even one this session claimed, since our own lease still means work is in progress. Every skip is reported; a quiet cleanup means nothing was held back. |
 | `worktree cleanup --stale [--ttl-minutes N]` | Additionally releases and collects leases past the TTL (default 720) — the abandoned-session recovery path. |
 

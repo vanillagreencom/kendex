@@ -126,19 +126,21 @@ echo "=== the prose actually collapsed ==="
 # not adding a helper beside it. Guard both directions.
 assert_contains "$(cat "$SKILL")" "spawn-adapter" "SKILL.md points at the adapter"
 
-# Measure the TWO blocks this issue named, by content, rather than the longest
-# blockquote in the file. Other dense blocks exist (the Codex shell
-# control-syntax rules, for one) and are a separate audit item — a test that
-# conflated them would fail for work this change never claimed to do.
-block_len() { grep -o "^> .*$1.*" "$SKILL" | awk '{ print length }' | sort -rn | head -1; }
-spawn_len=$(block_len "spawn-adapter spawn")
-slots_len=$(block_len "spawn-adapter slots")
-for probe in "task_name/worker-fallback:$spawn_len" "thread-cap:$slots_len"; do
-  name="${probe%%:*}"; len="${probe#*:}"
-  if [[ -n "$len" && "$len" -lt 1200 ]]; then
-    pass "the $name block is collapsed to intent ($len chars, was >1150)"
+# The choreography moved out of SKILL.md entirely: the Codex runtime block is a
+# pointer, and the spawn + thread-cap contracts live in references/codex-runtime.md.
+# Guard both directions: the pointer stays short, the contract stays present.
+CODEX_REF="$(dirname "$SKILL")/references/codex-runtime.md"
+codex_line_len=$(grep -o '^> If you are running in \*\*Codex\*\*.*' "$SKILL" | awk '{ print length }' | sort -rn | head -1)
+if [[ -n "$codex_line_len" && "$codex_line_len" -lt 1200 ]]; then
+  pass "the SKILL.md Codex block stays a pointer ($codex_line_len chars, cap 1200)"
+else
+  fail "the SKILL.md Codex block stays a pointer (got: ${codex_line_len:-not found})"
+fi
+for phrase in "spawn-adapter spawn" "spawn-adapter slots"; do
+  if grep -Fq "$phrase" "$CODEX_REF"; then
+    pass "codex-runtime.md carries the $phrase contract"
   else
-    fail "the $name block is collapsed to intent (got: ${len:-not found})"
+    fail "codex-runtime.md lost the $phrase contract"
   fi
 done
 if grep -q 'reviewer-arch. → .task_name=reviewer_arch' "$SKILL"; then

@@ -414,7 +414,14 @@ refresh_real_git="$(command -v git)"
 } >"$unlock_shim_dir/git"
 chmod +x "$unlock_shim_dir/git"
 
-lease_before="$(lock_reason_of "$repo" "$wt")"
+# The shim only observes, so the rewrite must be independently detectable —
+# without waiting a second for the epoch clock to tick, and without leaning
+# on the recorded pid, which is the session leader and identical across
+# invocations from one session. Age the heartbeat in place: a genuine
+# rewrite stamps it back to now.
+aged_heartbeat=$(($(date -u +%s) - 120))
+forge_lease "$repo" "$wt" \
+	"vstack-session-guard v1 owner=CC-1000 pid=1 host=h claimed=old claimed_epoch=$claimed_before heartbeat=old heartbeat_epoch=$aged_heartbeat"
 for _ in 1 2 3; do
 	PATH="$unlock_shim_dir:$PATH" "$GUARD" refresh "$wt" --owner CC-1000 >/dev/null \
 		|| fail "refresh must succeed for the owning session"
@@ -423,10 +430,7 @@ done
 if [[ -e "$unlock_marker" ]]; then
 	fail "refresh unlocked the worktree; a rewrite must never open an unlocked window"
 fi
-# The shim only observes, so the refresh must genuinely have happened. The
-# lease records the writing process's pid, which differs on every invocation,
-# so this detects a rewrite without waiting a second for the clock to tick.
-[[ "$(lock_reason_of "$repo" "$wt")" != "$lease_before" ]] \
+[[ "$(lease_epoch_of "$repo" "$wt" heartbeat_epoch)" != "$aged_heartbeat" ]] \
 	|| fail "instrumented refresh did not rewrite the lease"
 assert_eq "$(lease_epoch_of "$repo" "$wt" claimed_epoch)" "$claimed_before" \
 	"refresh must preserve the original claim time"

@@ -22,7 +22,7 @@
 # JSON output (always when --json):
 #   {
 #     "status": "complete" | "timeout" | "error",
-#     "verdict": "pass" | "fail" | "pending",
+#     "verdict": "pass" | "fail" | "pending" | "none",
 #     "elapsed_seconds": <int>,
 #     "error": <string>,            # only when status == "error"
 #     "pending_checks": [ {name,state} ... ],
@@ -519,12 +519,20 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       if [ -n "$head_sha" ]; then
         ext_statuses=$(gh api "repos/$REPO/commits/$head_sha/status" --jq '.total_count' 2>/dev/null) || ext_statuses="probe_failed"
       fi
+      # An inconclusive probe falls through to the grace path; say so, or the
+      # eventual grace-exhausted error steers the operator at the wrong cause.
+      for probe_result in "workflows:$wf_count" "protection:$protected" "rules:$rule_checks" "statuses:$ext_statuses"; do
+        if [ "${probe_result#*:}" = "probe_failed" ]; then
+          echo "no-CI probe inconclusive (${probe_result%%:*} lookup failed); continuing to wait for checks" >&2
+        fi
+      done
       if [ "$wf_count" = "0" ] && [ "$protected" = "false" ] && [ "$rule_checks" = "0" ] && [ "$ext_statuses" = "0" ]; then
         update_elapsed
         if $JSON_OUTPUT; then
           jq -n --argjson elapsed "$elapsed" --arg base "$base_branch" \
             '{status: "complete", verdict: "none", elapsed_seconds: $elapsed,
-              reason: ("no CI configured: no active workflows and no required checks on " + $base)}'
+              reason: ("no CI configured: no active workflows and no required checks on " + $base),
+              pending_checks: [], failed_checks: [], passed_checks: []}'
         else
           echo "CI: none configured (no active workflows, no required checks on $base_branch)"
         fi

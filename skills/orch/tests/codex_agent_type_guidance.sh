@@ -65,12 +65,13 @@ development="$REPO_ROOT/skills/orch/DEVELOPMENT.md"
 
 # --- Identity: routed through the adapter, canonical name is the identity ----
 assert_not_contains "$skill" "Spawn workers with \`fork_context: false\`" "Codex guidance does not default to a generic worker"
-assert_contains "$skill" "spawn-adapter spawn" "Codex guidance routes spawns through the adapter"
-assert_contains "$skill" "canonical hyphenated" "Codex guidance tells the caller to pass the canonical name"
-assert_contains "$skill" "identity everywhere orch records anything" "Codex guidance states the identity rule"
-assert_contains "$skill" "runtime_metadata" "Codex guidance says where the runtime spelling belongs"
-assert_contains "$skill" "fallback-reason" "Codex guidance names the explicit fallback path"
-assert_contains "$skill" "never one" "Codex guidance keeps a schema rejection out of the fallback path"
+assert_contains "$skill" "spawn-adapter" "SKILL.md routes Codex spawns through the adapter"
+assert_contains "$codex_runtime_ref" "spawn-adapter spawn" "Codex reference routes spawns through the adapter"
+assert_contains "$codex_runtime_ref" "canonical hyphenated" "Codex reference tells the caller to pass the canonical name"
+assert_contains "$codex_runtime_ref" "identity everywhere orch records anything" "Codex reference states the identity rule"
+assert_contains "$codex_runtime_ref" "runtime_metadata" "Codex reference says where the runtime spelling belongs"
+assert_contains "$codex_runtime_ref" "fallback-reason" "Codex reference names the explicit fallback path"
+assert_contains "$codex_runtime_ref" "never one" "Codex reference keeps a schema rejection out of the fallback path"
 
 # Every workflow that spawns reviewers or dev agents must route through the
 # adapter too — a workflow that hand-rolls the translation is the regression.

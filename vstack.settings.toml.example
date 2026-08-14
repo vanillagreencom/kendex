@@ -45,9 +45,9 @@ CI_FIX_MAX_CYCLES = "6"
 # to the user.
 
 ORCH_MERGE_AUTONOMY = "ask"
-# Used by: orch (`start-worktree` § 5.5). "ask" (default) presents the merge
-# decision; "auto" merges without asking once every merge gate is green.
-# MERGE_READY = false never auto-merges.
+# Used by: orch (`start-worktree` § 5.5, `submit-pr` § 6.2). "ask" (default)
+# presents the merge decision; "auto" merges without asking once every merge
+# gate is green. MERGE_READY = false never auto-merges.
 
 ORCH_OVERSEER_LANES = "3"
 # Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in

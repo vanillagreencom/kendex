@@ -120,10 +120,11 @@ Options:
                      directory). Applies to: release, status, list, sweep;
                      needed for release/status when PATH no longer exists.
 
-Staleness is heartbeat age and nothing else. The recorded pid and host identify
-who took a claim but are never consulted, so there is NO liveness check: a
-session that is still running and has outlived its TTL without refreshing WILL
-be treated as abandoned, and `release --stale` or `sweep` will unlock it.
+Staleness is heartbeat age and nothing else. The recorded pid (the claiming
+session's leader) and host identify who took a claim; this tool never consults
+them, so there is NO liveness check here: a session that is still running and
+has outlived its TTL without refreshing WILL be treated as abandoned, and
+`release --stale` or `sweep` will unlock it.
 Nothing refreshes a lease automatically, so run `refresh` if a session will
 outlive the TTL, raise the TTL, or confirm the owner is really gone before
 releasing.
@@ -230,6 +231,22 @@ sanitize_host() {
 	[[ -n "$host" ]] || host="unknown-host"
 	host="${host//[^A-Za-z0-9._:@+-]/-}"
 	printf '%s\n' "$host"
+}
+
+# The pid recorded in a lease. $$ names this transient CLI invocation, dead
+# the moment it exits; the SESSION LEADER lives as long as the claiming
+# session, which is the liveness a remove-time gate can actually probe. Falls
+# back through the procps `sid` spelling to $$ — no worse than before — and
+# validates strictly rather than digit-stripping, because BSD ps prints
+# `sess` as a hex pointer that stripping would mangle into a plausible pid.
+session_leader_pid() {
+	local sid
+	sid="$(ps -o sess= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
+	if ! [[ "$sid" =~ ^[1-9][0-9]*$ ]]; then
+		sid="$(ps -o sid= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
+	fi
+	[[ "$sid" =~ ^[1-9][0-9]*$ ]] || sid=$$
+	printf '%s\n' "$sid"
 }
 
 # Two ways a TTL can make the staleness comparison lie, both rejected here:
@@ -532,7 +549,7 @@ lease_line() {
 	claimed_iso="$(iso_from_epoch "$claimed_epoch")"
 	heartbeat_iso="$(iso_from_epoch "$heartbeat_epoch")"
 	printf '%s %s owner=%s pid=%s host=%s claimed=%s claimed_epoch=%s heartbeat=%s heartbeat_epoch=%s' \
-		"$GUARD_MARKER" "$GUARD_VERSION" "$owner" "$$" "$host" \
+		"$GUARD_MARKER" "$GUARD_VERSION" "$owner" "$(session_leader_pid)" "$host" \
 		"$claimed_iso" "$claimed_epoch" "$heartbeat_iso" "$heartbeat_epoch"
 }
 

@@ -745,7 +745,7 @@ resolve_label_id() {
     label_id=$(echo "$result" | jq -r '.issueLabels.nodes[0].id // empty')
 
     if [ -z "$label_id" ]; then
-        echo "Warning: Label not found: '$label_name' (skipped)" >&2
+        echo "Warning: Label not found: '$label_name'" >&2
         return 1
     fi
 

@@ -2,9 +2,11 @@
 # `remove <ID>` derives a lease-release identity from the issue ID (#907) — an
 # identity ANY session naming that issue can produce — so before trusting it
 # the release asks whether the claiming session is still alive. The lease
-# records the claiming process's pid and host: a live unrelated pid on this
-# host refuses the removal (`remove --force` overrides), while a dead pid or
-# an ancestor of the removing process proceeds exactly as before.
+# records the claiming SESSION LEADER's pid (a transient CLI pid would be dead
+# before anyone could probe it) and the host: a live unrelated pid on this
+# host refuses the removal (`remove --force` overrides), while our own
+# session, a dead pid, or an ancestor of the removing process proceeds
+# exactly as before.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,6 +85,49 @@ plant_lease_pid() {
   sed "s/ pid=[0-9]* / pid=$pid /" "$lock_file" > "$lock_file.planted"
   mv "$lock_file.planted" "$lock_file"
 }
+
+echo "=== a real claim records a session-durable pid ==="
+
+# The vacuity check: the recorded pid must still be ALIVE after the claiming
+# guard invocation has exited — recording the guard CLI's own $$ fails this,
+# because that process is dead the moment the claim returns, and a liveness
+# gate keyed on it never fires on a real lease.
+REC_ROOT="$TMP_ROOT/recorded"
+make_repo "$REC_ROOT/main"
+git -C "$REC_ROOT/main" worktree add -q -b issue-rec "$REC_ROOT/trees/issue-rec" main
+REC_WT="$REC_ROOT/trees/issue-rec"
+"$GUARD_SCRIPT" claim "$REC_WT" --owner issue-rec >/dev/null
+rec_pid="$(sed -n 's/.* pid=\([0-9]*\) .*/\1/p' "$REC_ROOT/main/.git/worktrees/issue-rec/locked")"
+if [[ "$rec_pid" =~ ^[1-9][0-9]*$ ]]; then
+  pass "the claim records a numeric pid"
+else
+  fail "the claim records a numeric pid (got: '$rec_pid')"
+fi
+if ps -o pid= -p "$rec_pid" >/dev/null 2>&1; then
+  pass "the recorded pid is alive after the claim returns"
+else
+  fail "the recorded pid is alive after the claim returns (pid=$rec_pid is dead)"
+fi
+test_sid="$(ps -o sess= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
+if ! [[ "$test_sid" =~ ^[1-9][0-9]*$ ]]; then
+  test_sid="$(ps -o sid= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
+fi
+if [[ "$test_sid" =~ ^[1-9][0-9]*$ ]]; then
+  assert_eq "$rec_pid" "$test_sid" "the recorded pid is this session's leader"
+else
+  printf '  SKIP  session id not resolvable via ps here; leader equality not checked\n'
+fi
+
+# Same-session teardown with that live recorded pid: the claiming session
+# removing its own worktree must stay frictionless.
+set +e
+rec_out=$(cd "$REC_ROOT/main" && env -u VSTACK_SESSION_OWNER -u HT_SESSION_OWNER \
+  "$WORKTREE_SCRIPT" remove issue-rec 2>"$REC_ROOT/rec.err")
+rec_code=$?
+set -e
+assert_eq "$rec_code" "0" "same-session remove <ID> with a live recorded leader exits 0"
+assert_contains "$rec_out" "Removed: $REC_WT" "the same-session removal reports the removal"
+assert_path_absent "$REC_WT" "the same-session worktree is gone"
 
 echo "=== a live foreign session's issue-keyed lease refuses remove <ID> ==="
 
@@ -180,6 +225,59 @@ assert_contains "$anc_out" "Removed: $ANC_WT" "the ancestor-pid removal reports 
 assert_contains "$(cat "$ANC_ROOT/anc.err")" "Released session guard lease (owner=issue-anc)" \
   "the ancestor-pid lease is released as the issue identity"
 assert_path_absent "$ANC_WT" "the ancestor-pid worktree is gone"
+
+echo "=== end-to-end: a claim from a genuinely foreign session (setsid) ==="
+
+# No planted pids: a real second session claims through the documented path
+# and stays alive, and `remove <ID>` from this session must refuse without
+# --force and proceed with it.
+if command -v setsid >/dev/null 2>&1; then
+  E2E_ROOT="$TMP_ROOT/e2e"
+  make_repo "$E2E_ROOT/main"
+  git -C "$E2E_ROOT/main" worktree add -q -b issue-e2e "$E2E_ROOT/trees/issue-e2e" main
+  E2E_WT="$E2E_ROOT/trees/issue-e2e"
+  setsid bash -c "echo \$\$ >'$E2E_ROOT/leader.pid'; '$GUARD_SCRIPT' claim '$E2E_WT' --owner issue-e2e >/dev/null 2>&1 && touch '$E2E_ROOT/claimed'; sleep 300" &
+  E2E_JOB=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [[ -e "$E2E_ROOT/claimed" ]] && break
+    sleep 0.25
+  done
+  E2E_LEADER="$(cat "$E2E_ROOT/leader.pid" 2>/dev/null || true)"
+  if [[ ! -e "$E2E_ROOT/claimed" ]]; then
+    fail "the foreign session claimed the worktree"
+  else
+    pass "the foreign session claimed the worktree"
+
+    set +e
+    e2e_out=$(cd "$E2E_ROOT/main" && env -u VSTACK_SESSION_OWNER -u HT_SESSION_OWNER \
+      "$WORKTREE_SCRIPT" remove issue-e2e 2>"$E2E_ROOT/e2e.err")
+    e2e_code=$?
+    set -e
+    assert_eq "$e2e_code" "1" "remove <ID> refuses while the foreign session lives"
+    assert_contains "$(cat "$E2E_ROOT/e2e.err")" "claimed by a live session" \
+      "the end-to-end refusal says the claiming session is still running"
+    assert_contains "$(cat "$E2E_ROOT/e2e.err")" "pid=$E2E_LEADER" \
+      "the end-to-end refusal names the foreign session leader"
+    assert_path_exists "$E2E_WT" "the foreign session's worktree survives"
+    assert_eq "$(guard_status_code "$E2E_WT" "$E2E_ROOT/main" --owner issue-e2e)" "0" \
+      "the foreign session's lease survives"
+
+    set +e
+    e2e_force_out=$(cd "$E2E_ROOT/main" && env -u VSTACK_SESSION_OWNER -u HT_SESSION_OWNER \
+      "$WORKTREE_SCRIPT" remove issue-e2e --force 2>"$E2E_ROOT/e2e-force.err")
+    e2e_force_code=$?
+    set -e
+    assert_eq "$e2e_force_code" "0" "remove <ID> --force proceeds over the live foreign session"
+    assert_contains "$e2e_force_out" "Removed: $E2E_WT" "the forced end-to-end removal is reported"
+    assert_path_absent "$E2E_WT" "the worktree is gone after the forced removal"
+  fi
+  if [[ "$E2E_LEADER" =~ ^[1-9][0-9]*$ ]]; then
+    kill -- -"$E2E_LEADER" 2>/dev/null || kill "$E2E_LEADER" 2>/dev/null || true
+  fi
+  wait "$E2E_JOB" 2>/dev/null || true
+else
+  printf 'SKIP: setsid not on PATH; the end-to-end foreign-session scenario was not exercised\n'
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

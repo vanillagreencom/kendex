@@ -1250,6 +1250,8 @@ create_issue() {
                 jq -cn --arg label "$label_name" \
                     '{error: ("Agent label failed to resolve in Linear: " + $label + " - refusing to create an issue that would look routed but is not. Create the label in Linear (or fix LINEAR_AGENT_LABELS), then retry.")}' >&2
                 return 1
+            else
+                echo "Skipped label '$label_name' — not found; the create proceeds without it" >&2
             fi
         done
         if [ ${#label_ids[@]} -gt 0 ]; then
@@ -1657,6 +1659,43 @@ update_issue() {
     local team_name
     team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
 
+    # Resolve --labels BEFORE any attachment upload: an unresolvable label
+    # refuses the whole update below, and an upload done first would strand
+    # orphaned assets in Linear storage (the create path pre-resolves its
+    # refusal-capable labels for the same reason).
+    local resolved_label_json=""
+    if [ "$clear_labels" != "true" ] && [ -n "$labels" ]; then
+        IFS=',' read -ra label_names <<<"$labels"
+        local label_ids=() label_rc=0
+        for label_name in "${label_names[@]}"; do
+            local label_id
+            label_rc=0
+            label_id=$(resolve_label_id "$label_name") && label_ids+=("\"$label_id\"") || label_rc=$?
+            if [ "$label_rc" = "2" ]; then
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Label lookup failed for " + $label + " - refusing the update: --labels replaces the label set, so proceeding would strip labels this lookup could not confirm")}' >&2
+                return 1
+            fi
+            # A label that resolves to nothing (rc=1) must refuse too: --labels
+            # replaces the whole set, so silently dropping one requested name
+            # ships a partial set — the same wipe class as the lookup failure.
+            if [ "$label_rc" != "0" ]; then
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Unknown label " + $label + " - refusing the update: --labels replaces the label set, so a dropped name would ship a partial set. Fix the name or remove it from --labels")}' >&2
+                return 1
+            fi
+        done
+        if [ ${#label_ids[@]} -eq 0 ]; then
+            jq -cn --arg labels "$labels" \
+                '{error: ("No requested label resolved (" + $labels + ") - refusing to send an empty label set, which would clear every label on the issue. Use --clear-labels to do that deliberately.")}' >&2
+            return 1
+        fi
+        resolved_label_json=$(
+            IFS=,
+            echo "[${label_ids[*]}]"
+        )
+    fi
+
     # Upload --attach files. Image embeds append to the description being
     # written; when this update does not itself rewrite the description,
     # seed it from the issue's current one so the embed is an append, not a
@@ -1740,37 +1779,8 @@ update_issue() {
     elif [ "$clear_labels" = "true" ]; then
         input_parts+=("\"labelIds\": []")
     elif [ -n "$labels" ]; then
-        IFS=',' read -ra label_names <<<"$labels"
-        local label_ids=() label_rc=0
-        for label_name in "${label_names[@]}"; do
-            local label_id
-            label_rc=0
-            label_id=$(resolve_label_id "$label_name") && label_ids+=("\"$label_id\"") || label_rc=$?
-            if [ "$label_rc" = "2" ]; then
-                jq -cn --arg label "$label_name" \
-                    '{error: ("Label lookup failed for " + $label + " - refusing the update: --labels replaces the label set, so proceeding would strip labels this lookup could not confirm")}' >&2
-                return 1
-            fi
-            # A label that resolves to nothing (rc=1) must refuse too: --labels
-            # replaces the whole set, so silently dropping one requested name
-            # ships a partial set — the same wipe class as the lookup failure.
-            if [ "$label_rc" != "0" ]; then
-                jq -cn --arg label "$label_name" \
-                    '{error: ("Unknown label " + $label + " - refusing the update: --labels replaces the label set, so a dropped name would ship a partial set. Fix the name or remove it from --labels")}' >&2
-                return 1
-            fi
-        done
-        if [ ${#label_ids[@]} -eq 0 ]; then
-            jq -cn --arg labels "$labels" \
-                '{error: ("No requested label resolved (" + $labels + ") - refusing to send an empty label set, which would clear every label on the issue. Use --clear-labels to do that deliberately.")}' >&2
-            return 1
-        fi
-        local label_json
-        label_json=$(
-            IFS=,
-            echo "[${label_ids[*]}]"
-        )
-        input_parts+=("\"labelIds\": $label_json")
+        # Resolved (or refused) above, before the attachment upload.
+        input_parts+=("\"labelIds\": $resolved_label_json")
     fi
 
     # Handle project (auto-resolves name or UUID)

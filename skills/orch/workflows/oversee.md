@@ -36,7 +36,7 @@ Record the lane. First use only — when `exists` reports false, run `init` (ini
 
 ## 4. Watch And Advance
 
-When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer across every open PR — it exits 2 without `GH_REPO`, so resolve and export it in the same call; otherwise fall back to per-PR `approval-wait`/`queue-wait` ([references/gates.md](../references/gates.md)). Never hand-roll a transition-keyed monitor.
+When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer across every open PR — it exits 2 without `GH_REPO`, so resolve and export it in the same call; otherwise fall back to per-PR `approval-wait`/`queue-wait` ([references/gates.md](../references/gates.md)). Never hand-roll a transition-keyed monitor. On a Codex lane the export-plus-reducer shape below is classifier-rejected with no compliant rewrite — use the per-PR waiter fallback there.
 
 ```bash
 export GH_REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"

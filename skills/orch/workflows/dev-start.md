@@ -18,7 +18,7 @@ Delegate implementation to specialist agent(s). Handles a single issue and a bun
 
 Resolve `TRACKER` first — `github` skips the Linear-only container preflight.
 
-**Container preflight** (Linear only, before any workflow state exists). Fetch the bundle — only `--with-bundle` carries the `blocked_by` and `depth` fields the gate needs:
+**Container preflight** (Linear only, before any workflow state exists). Fetch the bundle with `--with-bundle` — it carries the `blocked_by` and `depth` fields the gate needs:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile
