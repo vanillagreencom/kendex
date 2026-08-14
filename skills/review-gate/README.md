@@ -66,9 +66,10 @@ keeping the two separate is what makes this small enough to trust.
                     └────────────────────────────┘
 ```
 
-\* Two greens prove no review. With `REVIEW_GATE_MODE = "off"` the writer
-posts green with a "gate disabled by settings" description; and merge-group
-(queue) statuses bypass the predicate entirely, always posting green as
+\* Two greens do NOT prove a review happened. With `REVIEW_GATE_MODE = "off"`
+the writer posts green with a "gate disabled by settings" description — it
+attests only that the gate is off; and merge-group (queue) statuses bypass
+the predicate entirely, always posting green as
 "merge-queue entry: post-approval by construction". Caveats:
 [references/settings.md](references/settings.md) § `REVIEW_GATE_MODE`.
 

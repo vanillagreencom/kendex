@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **review-gate docs: a compression in #1277 INVERTED the gate's central
+  safety caveat** — README claimed "Two greens prove no review" where the
+  contract is "two greens do NOT prove a review happened" (they attest only
+  that the gate is off). Caught by both bot reviewers on all five consumer
+  vendor PRs, held unmerged by the propagation agent, fixed upstream here and
+  re-vendored. Also: the relay cost line now counts the retry path's second
+  content-creating request, and the rate-limit table row states the real
+  beyond-cap behavior (skip, not clamp).
+
 - **Bot-review triage across #1272-#1277 scripts** (admin merges skip bot
   rounds; this closes the loop): linear `issues update --labels` now refuses
   an unknown label instead of silently shipping a partial set (new

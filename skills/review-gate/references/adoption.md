@@ -190,7 +190,7 @@ each repo takes it as its own PR. What changed in the template:
 
   | Answer | Wait | Recognized by |
   |---|---|---|
-  | Rate limit | The named window, floored at 60s and capped at 120s, plus bounded jitter | `retry-after`; `x-ratelimit-reset` *only when `x-ratelimit-remaining` is 0*; a header-less secondary limit, from its body or an HTTP 429 |
+  | Rate limit | The named window, floored at 60s, plus bounded jitter — a window beyond 120s skips the retry instead of waiting | `retry-after`; `x-ratelimit-reset` *only when `x-ratelimit-remaining` is 0*; a header-less secondary limit, from its body or an HTTP 429 |
   | Transient | 5s | Anything else retryable — the minute is for rate limits, not blips |
   | Permanent | Not retried | 400; 404 (renamed workflow file); 405; 422 (bad ref); 401 (revoked token); 403 carrying no rate-limit evidence — the `Resource not accessible by integration` shape a trimmed permissions block or an org token policy produces |
 
@@ -215,8 +215,9 @@ attempt), which still fits inside the job's 5-minute budget. The relay is
 unconditional and group-less, so unlike the writer group it coalesces nothing
 — that is one run per event, including every `status` transition every CI
 provider posts on every open head. Each run also spends one content-creating
-API request against the repo's shared secondary-limit budget; exhausting that
-budget degrades events to the cron floor rather than breaking convergence.
+API request against the repo's shared secondary-limit budget — two when the
+retry path fires its bounded second attempt; exhausting that budget degrades
+events to the cron floor rather than breaking convergence.
 Event-fast latency grows by a whole extra run lifecycle — two queue and
 runner-allocation waits instead of one, typically seconds and well inside the
 cron floor's period. When runner allocation exceeds that period the scheduled
