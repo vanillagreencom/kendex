@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+- **orch + dev: six determinism/efficiency fixes from a live end-to-end drill**
+  (a fake issue run through the full stack on a low-effort lane, watched phase
+  by phase; every fix is a deletion, a short-circuit, or a tool — no added
+  instruction prose).
+  - `start` no longer asks where the work should run — the invocation already
+    answers it (`start` runs in-session, `handoff` launches a separate one).
+    The routing question stalled launch-only sessions forever.
+  - **New `ORCH_MERGE_AUTONOMY` setting** (`ask` default | `auto`): `auto`
+    merges without asking once every merge gate is green; `MERGE_READY = false`
+    never auto-merges. Merge leaves the unconditional always-ask set.
+  - `dev-artifact-check` prints a one-word `verdict` — `accept`/`wait`/`retry`
+    — folding artifact validity, validation state, and commit resolution into
+    a single answer. Round closure's on-wake check is now run-one-command,
+    read-one-word; in the drill a low-effort orchestrator narrated the wake
+    instead of combining two checks and a table, and misread a completed round.
+  - `ci-wait` recognizes a repo with no CI at all (zero active workflows, no
+    branch protection, no required-check rules — every probe affirmative,
+    probe failures fall through to the normal grace) and reports
+    `verdict=none` immediately; submit-pr routes it as a documented no-CI
+    path. Previously a CI-less repo burned the dispatch grace repeatedly and
+    ended in an override-framed merge.
+  - `review-artifact-check --path` prints the canonical timestamped artifact
+    path; reviewers stop hand-formatting filename clocks (three of four
+    drill reviewers wrote placeholder times).
+  - **Breaking — QA routing no longer touches tracker labels.** dev § 8
+    becomes Record QA Signals: the same trigger table (unsafe/atomics →
+    `needs-safety-audit`, hot path → `needs-perf-test`, new public API →
+    `needs-review`) now records signals in the completion artifact
+    (`--qa-label`, artifact field `qa_labels` unchanged) instead of applying
+    repository labels — a fresh repo can no longer fail QA with
+    `configuration_error`, and no label inventory is required. review-pr § 5
+    derives the QA panel from dev signals ∪ a deterministic diff scan
+    (unsafe/atomics grep; `QA_PERF_PATHS` glob matching for perf) ∪ recorded
+    one-line judgment, and § 6 maps signals to agents directly. QA passes are
+    costly, so judgment may drop a trivial-trigger signal — with the rationale
+    recorded, never silently. The bundled parent label aggregation is gone
+    with the rest of the label mechanics.
+  - New `acceptance-verdicts` test covers all three script changes, including
+    an active-workflows control proving the no-CI shortcut cannot fire when
+    workflows exist.
+
 - **Catalog-wide cleanup: every skill and agent reduced to contracts, commands,
   and non-derivable domain knowledge; orch and project-management rewritten
   from scratch.** Markdown across the touched assets drops from ~19,000 to

@@ -502,8 +502,9 @@ done
 # the numbered "orchestrator owns round closure" list (same requirements, new
 # wording) and made that list the primary path rather than a recovery fallback.
 orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
-assert_file_contains "$orch_skill" "Run A/B on every wake and at the deadline" "SKILL mandates the per-wake and deadline A/B check"
-assert_file_contains "$orch_skill" "classifying mechanically rather than from wording or elapsed time" "SKILL forbids classifying a round from wording or elapsed time"
+assert_file_contains "$orch_skill" "Run the check on every wake and at the deadline" "SKILL mandates the per-wake and deadline check"
+assert_file_contains "$orch_skill" "never classify from wording or elapsed time" "SKILL forbids classifying a round from wording or elapsed time"
+assert_file_contains "$orch_skill" 'prints `verdict`' "SKILL routes acceptance through the one-word verdict"
 assert_file_contains "$orch_skill" "Arm a single-shot wall-clock watchdog" "SKILL mandates a wall-clock watchdog independent of sub-agent wakes (vstack#803)"
 assert_file_contains "$orch_skill" "The orchestrator owns round closure" "SKILL puts round closure on the orchestrator, not on a return arriving"
 assert_file_contains "$orch_skill" "the return message is display-only" "SKILL keeps the return message out of the acceptance decision"

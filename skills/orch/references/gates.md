@@ -25,7 +25,7 @@ Approval is GitHub-native only, on either signal: `reviewDecision == "APPROVED"`
 
 ## `ci-wait`
 
-`--json` returns `{status, verdict, elapsed_seconds, pending_checks, failed_checks, passed_checks}` where `status` is `complete`/`timeout`/`error` and `verdict` is `pass`/`fail`/`pending`.
+`--json` returns `{status, verdict, elapsed_seconds, pending_checks, failed_checks, passed_checks}` where `status` is `complete`/`timeout`/`error` and `verdict` is `pass`/`fail`/`pending`/`none`. `verdict=none` (with `status=complete`) means the repo has no CI to wait for — no active workflows, no branch protection, and no required-check rules on the PR's base branch, each probe answering affirmatively; a probe failure falls through to the normal grace path instead. Callers treat `none` as a documented no-CI route, never as a failure needing an override.
 
 It ignores later all-skipped dispatches when selecting the current-head substantive run, and treats an aggregate status still linked to an older run as pending while a newer substantive run has no failures. A settled failure attributable only to superseded runs is correlated against the head's Actions run list: any queued or in-progress substantive-event run on the head — including a rerun attempt of an older run, which keeps its original run id — keeps the verdict pending; a newest same-workflow run that completed successfully discards the stale failures; a failed newest run, or a cancelled run with no newer or fresher sibling, stays terminal. Current-run failures remain terminal and a missing replacement reaches the timeout rather than passing. `CI_WAIT_NO_CHECKS_GRACE` (default 180s) bounds unregistered checks.
 

@@ -24,7 +24,7 @@ Records are immutable per round: an identical re-invocation is idempotent, diffe
 
 ## `dev-artifact-check`
 
-Validates a dev agent's round-scoped artifact and prints `{ok, path, reason}`. The gates are ordered missing → invalid → incomplete → valid, and the first failure wins. Round mode (`--worktree WT --issue ISSUE --round-id RID [--expect-items N,N,... | --expect-items-from-round]`) resolves `WT/tmp/dev-return-ISSUE-RID.json` and requires:
+Validates a dev agent's round-scoped artifact and prints `{ok, verdict, path, reason}`. `verdict` is the one-word acceptance answer: `accept` (valid artifact, `.validate == "pass"`, recorded commit resolves), `wait` (`reason=missing` — no artifact for this round yet), `retry` (anything else, including a valid artifact whose `.validate` is failing). The gates are ordered missing → invalid → incomplete → valid, and the first failure wins. Round mode (`--worktree WT --issue ISSUE --round-id RID [--expect-items N,N,... | --expect-items-from-round]`) resolves `WT/tmp/dev-return-ISSUE-RID.json` and requires:
 
 - the internal `round_id == RID` — clock-independent identity, no mtime gate;
 - type-strict scalars: `.kind` ∈ implement|fix|analysis; `.issue`/`.branch` non-empty strings; `.round_id` a string; `.schema_version` a number. implement and fix additionally require non-empty `.commit`/`.validate`; `analysis` requires the inverse — no `.commit`, `.validate`, or `.validate_note` key present at all, since their presence would assert a validation that never ran;
