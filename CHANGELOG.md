@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- review-gate: the writer template header now counts the retry path's second
+  content-creating request, matching the #1280 adoption.md correction (the
+  two had diverged); adopted consumer copies inherit it at their next writer
+  migration.
+
 - **review-gate docs: a compression in #1277 INVERTED the gate's central
   safety caveat** — README claimed "Two greens prove no review" where the
   contract is "two greens do NOT prove a review happened" (they attest only

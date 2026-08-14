@@ -39,7 +39,8 @@
 # — and the relay is unconditional and group-less, so unlike the writer
 # group it coalesces nothing: that is one billed-minimum run per event,
 # including every status transition from every CI provider on every open
-# head. Each run also spends one content-creating API request against the
+# head. Each run also spends one content-creating API request — two when the
+# retry path fires its bounded second attempt — against the
 # repo's SHARED secondary-limit budget; exhausting that budget degrades
 # every event to the cron floor rather than breaking convergence. A run
 # that has to back off holds its runner longer — worst modeled case ~4.2
