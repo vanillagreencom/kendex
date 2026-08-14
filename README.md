@@ -225,7 +225,7 @@ Windows: CLI runs natively; symlink mode falls back to copy.
 | [`github`](skills/github/)* | Bash CLI over the GitHub API for PR operations: threads, comments, reviews, CI logs, merging, and cross-PR analysis. |
 | [`dev`](skills/dev/)* | Delegated implementation and review-fix issue workflows for dev agents. |
 | [`linear`](skills/linear/)* | Bash CLI over Linear's GraphQL API with local cache, mutation syncing, and structured output (issues, cycles, milestones, projects). |
-| [`orch`](skills/orch/)* | Primary-agent single work-item orchestration for Linear/GitHub issues: prepare, delegate, review, submit, merge, and launch handoff. Sub-agents do NOT load this directly. |
+| [`orch`](skills/orch/)* | Primary-agent orchestration for Linear/GitHub issues: prepare, delegate, review, submit, merge, launch handoff, and oversee session fleets. Sub-agents do NOT load this directly. |
 | [`code-quality`](skills/code-quality/) | Generic code-authoring standards for dev agents: no fail-open branches, prove-your-guards, comment rules, over-engineering and cleanup discipline. |
 | [`preflight`](skills/preflight/) | Diff-scoped deterministic pre-review checks: shell syntax/fail-open lint, dead doc citations, unlinked TODOs, JSON/TOML syntax. |
 | [`project-management`](skills/project-management/)* | TPM-driven planning, audits, roadmaps, and research-backed decomposition. |

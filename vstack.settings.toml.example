@@ -49,6 +49,10 @@ ORCH_MERGE_AUTONOMY = "ask"
 # decision; "auto" merges without asking once every merge gate is green.
 # MERGE_READY = false never auto-merges.
 
+ORCH_OVERSEER_LANES = "3"
+# Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
+# flight.
+
 ORCH_DECISION_MODE = "ask"
 # Used by: orch (`review-pr` § 4/§ 7, `dev-fix` § 1). How workflow decision
 # points behave. "ask" (default) presents every decision to the user.

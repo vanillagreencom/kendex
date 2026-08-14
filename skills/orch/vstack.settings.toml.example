@@ -106,3 +106,7 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # discovery already found. ORCH_LANE_DIRS (colon-separated) covers a layout
 # discovery cannot reach.
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
+
+# Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
+# flight.
+ORCH_OVERSEER_LANES = "3"

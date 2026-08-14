@@ -1,6 +1,6 @@
 ---
 name: orch
-description: "PRIMARY AGENT ONLY — single work-item orchestration for Linear or GitHub issues: prepare, delegate implementation, review, submit, merge, and hand off."
+description: "PRIMARY AGENT ONLY — work-item orchestration for Linear or GitHub issues: prepare, delegate implementation, review, submit, merge, hand off, and oversee fleets of sessions."
 license: MIT
 user-invocable: true
 dependencies:
@@ -53,6 +53,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `submit-pr` | `[PR_NUMBER]` | `workflows/submit-pr.md` | Push, create PR, triage, review gate, CI, merge gates |
 | `merge-pr` | `PR_NUMBER` \| `all` | `workflows/merge-pr.md` | Verify conditions and merge |
 | `post-summary` | `[ISSUE_ID]` | `workflows/post-summary.md` | Post summary and handoff comments |
+| `oversee` | — | `workflows/oversee.md` | Fleet mode: launch one session per unblocked item and shepherd every PR to merge |
 
 **`start` routing.** Parse explicit args first: `github OWNER/REPO#N` → `TRACKER=github`, `ISSUE_ID=issue-N`, keep `OWNER/REPO` for the API; otherwise Linear unless the id already starts with `issue-`. A cwd whose git common dir differs from `.git` is a worktree → `workflows/start-worktree.md`; otherwise `workflows/start.md`.
 
@@ -114,6 +115,7 @@ Non-secret settings go in committed `vstack.settings.toml` under `[env]`; `.env.
 | `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session; `0` = unlimited. On Codex, set it to the cap `spawn-adapter slots` reports | `0` |
 | `ORCH_DECISION_MODE` | `ask` presents every workflow decision; `auto-recommended` executes the recommended option and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. The always-ask set in [The Cycle](#the-cycle) applies in every mode | `ask` |
 | `ORCH_MERGE_AUTONOMY` | `auto` merges without asking once every merge gate is green; `ask` presents the merge decision. A `MERGE_READY = false` state never auto-merges | `ask` |
+| `ORCH_OVERSEER_LANES` | Max concurrent lanes `oversee` keeps in flight | `3` |
 | Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS` — [references/gates.md](references/gates.md) | — |
 | Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_MAX_PCT`, `ORCH_TMUX_VERIFY_SECS` — `lanes --help`, `open-terminal --help` | — |
 

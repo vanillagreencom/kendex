@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **orch: `oversee` fleet mode.** A standing session that burns down the
+  unblocked queue: one orch session per item, shepherded to merge. The launch
+  surface resolves once — tmux lanes via `open-terminal`; otherwise the
+  harness's own session/thread launching (Codex threads, agent teams, app
+  session tools) carrying the same brief; with neither, the queue runs
+  sequentially in-session. `ORCH_OVERSEER_LANES` caps concurrent lanes
+  (default 3). pr-watch is the fleet's single PR reducer where installed.
+  The settings-parity test now enrolls new orch keys, so template drift
+  between the skill and root examples fails the suite.
+
 - finding-disposition: a decline is terminal — it appears as its one-line
   summary entry and is never re-presented as a "file it anyway?" question
   (drill 3: an orchestrator improvised exactly that ask after a correct
