@@ -28118,12 +28118,21 @@ function extractAllToolResults(messages) {
 
 // src/request-lane.ts
 import { AsyncLocalStorage } from "node:async_hooks";
-var requestLane = new AsyncLocalStorage();
+var REQUEST_LANE_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.claude-bridge.request-lane.v1");
+function requestLaneStorage() {
+  const host = globalThis;
+  let storage = host[REQUEST_LANE_SYMBOL];
+  if (!storage) {
+    storage = new AsyncLocalStorage();
+    host[REQUEST_LANE_SYMBOL] = storage;
+  }
+  return storage;
+}
 function runInRequestLane(sessionId, callback) {
-  return sessionId ? requestLane.run(sessionId, callback) : callback();
+  return sessionId !== void 0 ? requestLaneStorage().run(sessionId, callback) : callback();
 }
 function currentRequestLaneId() {
-  return requestLane.getStore();
+  return requestLaneStorage().getStore();
 }
 
 // src/query-state.ts
@@ -28494,15 +28503,27 @@ var QueryContext = class {
     };
   }
 };
-var defaultLane = { current: new QueryContext(), stack: [] };
-var sessionLanes = /* @__PURE__ */ new Map();
+var QUERY_LANES_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.claude-bridge.query-lanes.v1");
+function queryLaneStore() {
+  const host = globalThis;
+  let store = host[QUERY_LANES_SYMBOL];
+  if (!store) {
+    store = {
+      defaultLane: { current: new QueryContext(), stack: [] },
+      sessionLanes: /* @__PURE__ */ new Map()
+    };
+    host[QUERY_LANES_SYMBOL] = store;
+  }
+  return store;
+}
 function lane() {
+  const store = queryLaneStore();
   const sessionId = currentRequestLaneId();
-  if (!sessionId) return defaultLane;
-  let state = sessionLanes.get(sessionId);
+  if (sessionId === void 0) return store.defaultLane;
+  let state = store.sessionLanes.get(sessionId);
   if (!state) {
     state = { current: new QueryContext(), stack: [] };
-    sessionLanes.set(sessionId, state);
+    store.sessionLanes.set(sessionId, state);
   }
   return state;
 }
@@ -28538,10 +28559,12 @@ function popContextFor(target) {
   state.stack.splice(idx, 1);
   return true;
 }
-function clearQueryLanes() {
-  sessionLanes.clear();
-  defaultLane.current = new QueryContext();
-  defaultLane.stack.length = 0;
+function deleteQueryLane(sessionId) {
+  const store = queryLaneStore();
+  if (sessionId === void 0) {
+    store.defaultLane.current = new QueryContext();
+    store.defaultLane.stack.length = 0;
+  } else store.sessionLanes.delete(sessionId);
 }
 
 // src/tool-pairing-audit.ts
@@ -28643,32 +28666,38 @@ function summarizeMissingToolNames(missing) {
 }
 
 // src/bridge-state.ts
-var defaultSharedSession = null;
-var primaryLaneId;
-var sharedSessions = /* @__PURE__ */ new Map();
+var SHARED_SESSION_LANES_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.claude-bridge.shared-session-lanes.v1");
+function sharedSessionLaneStore() {
+  const host = globalThis;
+  let store = host[SHARED_SESSION_LANES_SYMBOL];
+  if (!store) {
+    store = { defaultSession: null, sessions: /* @__PURE__ */ new Map() };
+    host[SHARED_SESSION_LANES_SYMBOL] = store;
+  }
+  return store;
+}
 var extensionApi;
 var piUI;
 function getSharedSession() {
+  const store = sharedSessionLaneStore();
   const sessionId = currentRequestLaneId();
-  if (!sessionId) return defaultSharedSession;
-  if (!sharedSessions.has(sessionId) && primaryLaneId === void 0) {
-    primaryLaneId = sessionId;
-    sharedSessions.set(sessionId, defaultSharedSession);
-    defaultSharedSession = null;
-  }
-  return sharedSessions.get(sessionId) ?? null;
+  return sessionId === void 0 ? store.defaultSession : store.sessions.get(sessionId) ?? null;
 }
 function setSharedSession(next) {
+  const store = sharedSessionLaneStore();
   const sessionId = currentRequestLaneId();
-  if (sessionId) {
-    primaryLaneId ??= sessionId;
-    sharedSessions.set(sessionId, next);
-  } else defaultSharedSession = next;
+  if (sessionId === void 0) store.defaultSession = next;
+  else store.sessions.set(sessionId, next);
+}
+function deleteSharedSessionLane(sessionId) {
+  const store = sharedSessionLaneStore();
+  if (sessionId === void 0) store.defaultSession = null;
+  else store.sessions.delete(sessionId);
 }
 function clearSharedSessionLanes() {
-  sharedSessions.clear();
-  primaryLaneId = void 0;
-  defaultSharedSession = null;
+  const store = sharedSessionLaneStore();
+  store.sessions.clear();
+  store.defaultSession = null;
 }
 function markSessionForRebuild(opts = {}) {
   const sharedSession = getSharedSession();
@@ -28788,18 +28817,15 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
 function __testSetBridgeIntegrityState(state) {
   if ("ui" in state) piUI = state.ui;
   if ("sharedSession" in state) {
-    if (currentRequestLaneId()) setSharedSession(state.sharedSession ?? null);
+    if (currentRequestLaneId() !== void 0) setSharedSession(state.sharedSession ?? null);
     else {
       clearSharedSessionLanes();
-      defaultSharedSession = state.sharedSession ?? null;
+      sharedSessionLaneStore().defaultSession = state.sharedSession ?? null;
     }
   }
 }
 function __testGetBridgeIntegrityState() {
-  const laneId = currentRequestLaneId();
-  return {
-    sharedSession: laneId ? getSharedSession() : primaryLaneId ? sharedSessions.get(primaryLaneId) ?? null : defaultSharedSession
-  };
+  return { sharedSession: getSharedSession() };
 }
 
 // src/connector-audit.ts
@@ -46923,13 +46949,14 @@ function index_default(pi) {
     applyProviderRegistration(`session_start:${event.reason}`);
   }));
   pi.on("session_shutdown", (_event, ctx2) => {
-    runInRequestLane(ctx2.sessionManager.getSessionId(), () => {
+    const sessionId = ctx2.sessionManager.getSessionId();
+    runInRequestLane(sessionId, () => {
       cancelScheduledSessionPersistence();
       clearSession("session_shutdown");
       releaseProviderTokens("session_shutdown");
     });
-    clearSharedSessionLanes();
-    clearQueryLanes();
+    deleteSharedSessionLane(sessionId);
+    deleteQueryLane(sessionId);
   });
   pi.on("message_end", (event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => {
     const message = event.message;

@@ -100,7 +100,7 @@ afterEach(() => {
 describe("foreign-conversation completion (#1001)", () => {
 	it("does not replace the parent record with the child session id on success", async () => {
 		const record = parentRecord();
-		__testSetBridgeIntegrityState({ sharedSession: { ...record } });
+		runInRequestLane("foreign-success", () => __testSetBridgeIntegrityState({ sharedSession: { ...record } }));
 		__testSetSdkQueryFactory(() => fakeSdkQuery([
 			{ type: "system", subtype: "init", session_id: "child-session" },
 			...STREAMED_TEXT("subagent answer"),
@@ -116,7 +116,7 @@ describe("foreign-conversation completion (#1001)", () => {
 		assert.equal(events.filter((event) => event.type === "done").length, 1);
 		assert.equal(events.filter((event) => event.type === "error").length, 0);
 		assert.deepEqual(
-			__testGetBridgeIntegrityState().sharedSession,
+			runInRequestLane("foreign-success", () => __testGetBridgeIntegrityState().sharedSession),
 			record,
 			"a foreign one-shot's completion must leave the parent record untouched",
 		);
@@ -124,7 +124,7 @@ describe("foreign-conversation completion (#1001)", () => {
 
 	it("does not replace the parent record on a terminal failure either", async () => {
 		const record = parentRecord();
-		__testSetBridgeIntegrityState({ sharedSession: { ...record } });
+		runInRequestLane("foreign-failure", () => __testSetBridgeIntegrityState({ sharedSession: { ...record } }));
 		__testSetSdkQueryFactory(() => fakeSdkQuery([
 			{ type: "system", subtype: "init", session_id: "child-session" },
 			...STREAMED_TEXT("partial"),
@@ -139,7 +139,7 @@ describe("foreign-conversation completion (#1001)", () => {
 
 		assert.equal(events.filter((event) => event.type === "error").length, 1);
 		assert.deepEqual(
-			__testGetBridgeIntegrityState().sharedSession,
+			runInRequestLane("foreign-failure", () => __testGetBridgeIntegrityState().sharedSession),
 			record,
 			"the terminal-failure persist site must be gated for foreign queries too",
 		);
@@ -147,7 +147,7 @@ describe("foreign-conversation completion (#1001)", () => {
 
 	it("a foreign one-shot dying with an unresolved tool call never marks the parent record for rebuild", async () => {
 		const record = parentRecord();
-		__testSetBridgeIntegrityState({ sharedSession: { ...record } });
+		runInRequestLane("foreign-unresolved-tool", () => __testSetBridgeIntegrityState({ sharedSession: { ...record } }));
 		__testSetSdkQueryFactory(() => fakeSdkQuery([
 			{ type: "system", subtype: "init", session_id: "child-session" },
 			{ type: "stream_event", event: { type: "message_start", message: { id: "m1", model: model.id, usage: { input_tokens: 1 } } } },
@@ -176,7 +176,7 @@ describe("foreign-conversation completion (#1001)", () => {
 			"the foreign non-claim must ride the query context",
 		);
 		assert.deepEqual(
-			__testGetBridgeIntegrityState().sharedSession,
+			runInRequestLane("foreign-unresolved-tool", () => __testGetBridgeIntegrityState().sharedSession),
 			record,
 			"an unresolved tool call at foreign teardown must leave the parent record untouched",
 		);
@@ -192,7 +192,7 @@ describe("foreign-conversation completion (#1001)", () => {
 		const messages = [userMessage("hello")];
 		await collect(streamClaudeAgentSdk(model, { messages }, { sessionId: "clean-start" }));
 
-		const { sharedSession } = __testGetBridgeIntegrityState();
+		const { sharedSession } = runInRequestLane("clean-start", () => __testGetBridgeIntegrityState());
 		assert.equal(sharedSession?.sessionId, "session-new");
 		assert.equal(
 			sharedSession?.conversationFingerprint,

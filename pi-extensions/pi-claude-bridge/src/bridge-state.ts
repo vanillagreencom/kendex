@@ -46,39 +46,56 @@ export interface SessionState {
 	forceRotate?: boolean;
 }
 
-// Claude session state is scoped to Pi's provider `sessionId`. The parent and
-// in-process subagents share this module and provider registration, but they do
-// not share a conversation. Keeping one process-global record lets one request
-// resume, overwrite, or abort another request's Claude Code session.
-let defaultSharedSession: SessionState | null = null;
-let primaryLaneId: string | undefined;
-const sharedSessions = new Map<string, SessionState | null>();
+// Claude session state is scoped to Pi's provider `sessionId`. Parent and child
+// agents can load separate copies of the extension module while sharing the
+// primary provider closure, so the lane registry must live on globalThis rather
+// than in one module instance. The versioned symbol prevents an incompatible
+// future store shape from being mistaken for this one.
+interface SharedSessionLaneStoreV1 {
+	defaultSession: SessionState | null;
+	sessions: Map<string, SessionState | null>;
+}
+
+const SHARED_SESSION_LANES_SYMBOL = Symbol.for("vstack.pi.claude-bridge.shared-session-lanes.v1");
+
+function sharedSessionLaneStore(): SharedSessionLaneStoreV1 {
+	const host = globalThis as Record<symbol, unknown>;
+	let store = host[SHARED_SESSION_LANES_SYMBOL] as SharedSessionLaneStoreV1 | undefined;
+	if (!store) {
+		store = { defaultSession: null, sessions: new Map() };
+		host[SHARED_SESSION_LANES_SYMBOL] = store;
+	}
+	return store;
+}
+
 export let extensionApi: ExtensionAPI | undefined;
 export let piUI: ExtensionUIContext | undefined;
 
 export function getSharedSession(): SessionState | null {
+	const store = sharedSessionLaneStore();
 	const sessionId = currentRequestLaneId();
-	if (!sessionId) return defaultSharedSession;
-	if (!sharedSessions.has(sessionId) && primaryLaneId === undefined) {
-		primaryLaneId = sessionId;
-		sharedSessions.set(sessionId, defaultSharedSession);
-		defaultSharedSession = null;
-	}
-	return sharedSessions.get(sessionId) ?? null;
+	return sessionId === undefined
+		? store.defaultSession
+		: (store.sessions.get(sessionId) ?? null);
 }
 
 export function setSharedSession(next: SessionState | null): void {
+	const store = sharedSessionLaneStore();
 	const sessionId = currentRequestLaneId();
-	if (sessionId) {
-		primaryLaneId ??= sessionId;
-		sharedSessions.set(sessionId, next);
-	} else defaultSharedSession = next;
+	if (sessionId === undefined) store.defaultSession = next;
+	else store.sessions.set(sessionId, next);
+}
+
+export function deleteSharedSessionLane(sessionId: string | undefined): void {
+	const store = sharedSessionLaneStore();
+	if (sessionId === undefined) store.defaultSession = null;
+	else store.sessions.delete(sessionId);
 }
 
 export function clearSharedSessionLanes(): void {
-	sharedSessions.clear();
-	primaryLaneId = undefined;
-	defaultSharedSession = null;
+	const store = sharedSessionLaneStore();
+	store.sessions.clear();
+	store.defaultSession = null;
 }
 
 /** Force the next syncSharedSession down the REBUILD path (no-op without a
@@ -252,21 +269,18 @@ export function reportToolResultMismatch(
 export function __testSetBridgeIntegrityState(state: { ui?: Pick<ExtensionUIContext, "notify"> | null; sharedSession?: SessionState | null }): void {
 	if ("ui" in state) piUI = state.ui as ExtensionUIContext | undefined;
 	if ("sharedSession" in state) {
-		if (currentRequestLaneId()) setSharedSession(state.sharedSession ?? null);
+		if (currentRequestLaneId() !== undefined) setSharedSession(state.sharedSession ?? null);
 		else {
 			clearSharedSessionLanes();
-			defaultSharedSession = state.sharedSession ?? null;
+			sharedSessionLaneStore().defaultSession = state.sharedSession ?? null;
 		}
 	}
 }
 
 export function __testGetBridgeIntegrityState(): { sharedSession: SessionState | null } {
-	const laneId = currentRequestLaneId();
-	return {
-		sharedSession: laneId
-			? getSharedSession()
-			: primaryLaneId
-				? (sharedSessions.get(primaryLaneId) ?? null)
-				: defaultSharedSession,
-	};
+	return { sharedSession: getSharedSession() };
+}
+
+export function __testSharedSessionLaneCount(): number {
+	return sharedSessionLaneStore().sessions.size;
 }

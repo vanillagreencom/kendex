@@ -7,9 +7,18 @@ import {
 	__testSetSdkQueryFactory,
 	streamClaudeAgentSdk,
 } from "../src/index.ts";
-import { setExtensionApi } from "../src/bridge-state.ts";
-import { ctx, resetStack } from "../src/query-state.ts";
-import { runInRequestLane } from "../src/request-lane.ts";
+import {
+	__testSharedSessionLaneCount,
+	deleteSharedSessionLane,
+	setExtensionApi,
+} from "../src/bridge-state.ts";
+import {
+	__testQueryLaneCount,
+	ctx,
+	deleteQueryLane,
+	resetStack,
+} from "../src/query-state.ts";
+import { currentRequestLaneId, runInRequestLane } from "../src/request-lane.ts";
 
 const model = {
 	id: "claude-haiku-4-5",
@@ -173,5 +182,74 @@ describe("provider request session lanes", () => {
 		assert.equal(runInRequestLane("parent", () => __testGetBridgeIntegrityState().sharedSession.sessionId), "parent-session");
 		assert.equal(runInRequestLane("child", () => ctx().activeQuery.id), "child-query");
 		assert.equal(runInRequestLane("child", () => __testGetBridgeIntegrityState().sharedSession.sessionId), "child-session");
+	});
+
+	it("treats an empty session id as a real lane rather than the default lane", () => {
+		__testSetBridgeIntegrityState({
+			sharedSession: { sessionId: "default-session", cursor: 0, cwd: "/default" },
+		});
+
+		runInRequestLane("", () => {
+			assert.equal(currentRequestLaneId(), "");
+			assert.equal(__testGetBridgeIntegrityState().sharedSession, null);
+			ctx().activeQuery = { id: "empty-id-query" };
+			__testSetBridgeIntegrityState({ sharedSession: { sessionId: "empty-id-session", cursor: 1, cwd: "/empty" } });
+		});
+
+		assert.equal(__testGetBridgeIntegrityState().sharedSession.sessionId, "default-session");
+		assert.equal(runInRequestLane("", () => ctx().activeQuery.id), "empty-id-query");
+		assert.equal(runInRequestLane("", () => __testGetBridgeIntegrityState().sharedSession.sessionId), "empty-id-session");
+	});
+
+	it("does not let the first named lane claim default-host session state", () => {
+		const defaultRecord = { sessionId: "direct-host-session", cursor: 2, cwd: "/direct" };
+		__testSetBridgeIntegrityState({ sharedSession: defaultRecord });
+
+		assert.equal(runInRequestLane("child-first", () => __testGetBridgeIntegrityState().sharedSession), null);
+		assert.deepEqual(__testGetBridgeIntegrityState().sharedSession, defaultRecord);
+	});
+
+	it("shares lane registries across separately loaded extension module instances", async () => {
+		const suffix = `instance=${Date.now()}-${Math.random()}`;
+		const siblingBridgeState = await import(`../src/bridge-state.ts?${suffix}`);
+		const siblingQueryState = await import(`../src/query-state.ts?${suffix}`);
+		const siblingRequestLane = await import(`../src/request-lane.ts?${suffix}`);
+
+		runInRequestLane("shared-child", () => {
+			ctx().activeQuery = { id: "primary-query" };
+			__testSetBridgeIntegrityState({ sharedSession: { sessionId: "primary-session", cursor: 3, cwd: "/shared" } });
+		});
+		siblingRequestLane.runInRequestLane("shared-child", () => {
+			assert.equal(siblingQueryState.ctx().activeQuery.id, "primary-query");
+			assert.equal(siblingBridgeState.getSharedSession().sessionId, "primary-session");
+			siblingBridgeState.setSharedSession({ sessionId: "sibling-session", cursor: 4, cwd: "/shared" });
+		});
+
+		assert.equal(runInRequestLane("shared-child", () => __testGetBridgeIntegrityState().sharedSession.sessionId), "sibling-session");
+	});
+
+	it("prunes only the shutting-down session's shared and query lanes", () => {
+		for (const sessionId of ["parent", "child"]) {
+			runInRequestLane(sessionId, () => {
+				ctx().activeQuery = { id: `${sessionId}-query` };
+				__testSetBridgeIntegrityState({ sharedSession: { sessionId: `${sessionId}-session`, cursor: 1, cwd: `/${sessionId}` } });
+			});
+		}
+		assert.equal(__testQueryLaneCount(), 2);
+		assert.equal(__testSharedSessionLaneCount(), 2);
+
+		deleteQueryLane("child");
+		deleteSharedSessionLane("child");
+
+		assert.equal(__testQueryLaneCount(), 1);
+		assert.equal(__testSharedSessionLaneCount(), 1);
+		assert.equal(runInRequestLane("parent", () => ctx().activeQuery.id), "parent-query");
+		assert.equal(runInRequestLane("parent", () => __testGetBridgeIntegrityState().sharedSession.sessionId), "parent-session");
+		assert.equal(runInRequestLane("child", () => __testGetBridgeIntegrityState().sharedSession), null);
+
+		deleteQueryLane("parent");
+		deleteSharedSessionLane("parent");
+		assert.equal(__testQueryLaneCount(), 0);
+		assert.equal(__testSharedSessionLaneCount(), 0);
 	});
 });

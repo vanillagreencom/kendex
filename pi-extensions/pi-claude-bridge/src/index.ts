@@ -7,7 +7,7 @@ import { PROVIDER_ID, messageContentToText } from "./convert.js";
 import { buildModels, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
-import { QueryContext, clearQueryLanes, ctx, drainPendingToolCalls, popContext, stackDepth, pushContext, summarizeDroppedUserMessages, toolCallDrainCause, type DeferredUserMessage } from "./query-state.js";
+import { QueryContext, ctx, deleteQueryLane, drainPendingToolCalls, popContext, stackDepth, pushContext, summarizeDroppedUserMessages, toolCallDrainCause, type DeferredUserMessage } from "./query-state.js";
 import { teardownQuery } from "./query-teardown.js";
 import { loadConfig, recordProjectTrust, registerExternalConfigResolver } from "./config.js";
 import { hasClaudeCredentials } from "./auth-presence.js";
@@ -38,7 +38,7 @@ export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, scope
 export { connectorServersSnapshot, primeConnectorServers } from "./connector-runtime.js";
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable } from "./claude-executable.js";
-import { appendIntegrityEntry, argKeys, clearSharedSessionLanes, extensionApi, getSharedSession, markSessionForRebuild, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, type SessionState } from "./bridge-state.js";
+import { appendIntegrityEntry, argKeys, deleteSharedSessionLane, extensionApi, getSharedSession, markSessionForRebuild, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, type SessionState } from "./bridge-state.js";
 import { connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
 import { primeConnectorServers } from "./connector-runtime.js";
 import { cancelScheduledSessionPersistence, conversationFingerprint, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
@@ -1371,13 +1371,14 @@ export default function (pi: ExtensionAPI) {
 		applyProviderRegistration(`session_start:${event.reason}`);
 	}));
 	pi.on("session_shutdown", (_event, ctx) => {
-		runInRequestLane(ctx.sessionManager.getSessionId(), () => {
+		const sessionId = ctx.sessionManager.getSessionId();
+		runInRequestLane(sessionId, () => {
 			cancelScheduledSessionPersistence();
 			clearSession("session_shutdown");
 			releaseProviderTokens("session_shutdown");
 		});
-		clearSharedSessionLanes();
-		clearQueryLanes();
+		deleteSharedSessionLane(sessionId);
+		deleteQueryLane(sessionId);
 	});
 	pi.on("message_end", (event, ctx) => runInRequestLane(ctx.sessionManager.getSessionId(), () => {
 		const message = (event as { message?: AssistantMessage }).message;

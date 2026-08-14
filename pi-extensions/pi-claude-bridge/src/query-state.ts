@@ -526,16 +526,34 @@ interface QueryLaneState {
 	stack: QueryContext[];
 }
 
-const defaultLane: QueryLaneState = { current: new QueryContext(), stack: [] };
-const sessionLanes = new Map<string, QueryLaneState>();
+interface QueryLaneStoreV1 {
+	defaultLane: QueryLaneState;
+	sessionLanes: Map<string, QueryLaneState>;
+}
+
+const QUERY_LANES_SYMBOL = Symbol.for("vstack.pi.claude-bridge.query-lanes.v1");
+
+function queryLaneStore(): QueryLaneStoreV1 {
+	const host = globalThis as Record<symbol, unknown>;
+	let store = host[QUERY_LANES_SYMBOL] as QueryLaneStoreV1 | undefined;
+	if (!store) {
+		store = {
+			defaultLane: { current: new QueryContext(), stack: [] },
+			sessionLanes: new Map(),
+		};
+		host[QUERY_LANES_SYMBOL] = store;
+	}
+	return store;
+}
 
 function lane(): QueryLaneState {
+	const store = queryLaneStore();
 	const sessionId = currentRequestLaneId();
-	if (!sessionId) return defaultLane;
-	let state = sessionLanes.get(sessionId);
+	if (sessionId === undefined) return store.defaultLane;
+	let state = store.sessionLanes.get(sessionId);
 	if (!state) {
 		state = { current: new QueryContext(), stack: [] };
-		sessionLanes.set(sessionId, state);
+		store.sessionLanes.set(sessionId, state);
 	}
 	return state;
 }
@@ -589,8 +607,21 @@ export function resetStack(): void {
 	clearQueryLanes();
 }
 
+export function deleteQueryLane(sessionId: string | undefined): void {
+	const store = queryLaneStore();
+	if (sessionId === undefined) {
+		store.defaultLane.current = new QueryContext();
+		store.defaultLane.stack.length = 0;
+	} else store.sessionLanes.delete(sessionId);
+}
+
 export function clearQueryLanes(): void {
-	sessionLanes.clear();
-	defaultLane.current = new QueryContext();
-	defaultLane.stack.length = 0;
+	const store = queryLaneStore();
+	store.sessionLanes.clear();
+	store.defaultLane.current = new QueryContext();
+	store.defaultLane.stack.length = 0;
+}
+
+export function __testQueryLaneCount(): number {
+	return queryLaneStore().sessionLanes.size;
 }

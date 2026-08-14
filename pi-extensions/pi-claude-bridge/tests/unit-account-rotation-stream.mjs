@@ -20,6 +20,7 @@ import { setExtensionApi } from "../src/bridge-state.ts";
 import { CLAUDE_ACCOUNT_ROUTER_SYMBOL } from "../src/account-router.ts";
 import { setConnectorCallAuditSink } from "../src/connector-audit.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
+import { runInRequestLane } from "../src/request-lane.ts";
 
 const model = {
 	id: "claude-haiku-4-5",
@@ -111,6 +112,10 @@ function textEvents(events) {
 	return events.filter((event) => event.type === "text_delta").map((event) => event.delta);
 }
 
+function bridgeStateFor(sessionId) {
+	return runInRequestLane(sessionId, () => __testGetBridgeIntegrityState());
+}
+
 let notifications;
 let emittedRateLimitEvents;
 let diagDir;
@@ -190,7 +195,7 @@ describe("legacy sessions (no account router)", () => {
 		const rateLimitNotifies = notifications.filter((n) => n.message.includes(RATE_LIMIT_TOKEN));
 		assert.equal(rateLimitNotifies.length, 1, "exactly one rate-limit toast");
 		assert.equal(emittedRateLimitEvents.length, 1, "exactly one vstack:rate-limit event");
-		const { sharedSession } = __testGetBridgeIntegrityState();
+		const { sharedSession } = bridgeStateFor("legacy-recovery");
 		assert.equal(sharedSession?.sessionId, "session-legacy", "session persisted on success");
 		assert.equal(sharedSession?.needsRebuild, undefined);
 	});
@@ -205,7 +210,7 @@ describe("legacy sessions (no account router)", () => {
 		const errors = events.filter((event) => event.type === "error");
 		assert.equal(errors.length, 1);
 		assert.match(errors[0].error.errorMessage, /weekly limit/);
-		const { sharedSession } = __testGetBridgeIntegrityState();
+		const { sharedSession } = bridgeStateFor("legacy-usage-limit");
 		assert.equal(sharedSession?.sessionId, "session-legacy", "session persisted after usage-limit error");
 	});
 
@@ -236,7 +241,7 @@ describe("legacy sessions (no account router)", () => {
 		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "deferred-terminal" }));
 		assert.equal(calls, 1, "no continuation query may be spawned after a surfaced failure");
 		assert.equal(events.filter((event) => event.type === "error").length, 1);
-		const { sharedSession } = __testGetBridgeIntegrityState();
+		const { sharedSession } = bridgeStateFor("deferred-terminal");
 		assert.equal(sharedSession?.sessionId, "session-legacy", "session record still persisted");
 		assert.equal(sharedSession?.needsRebuild, true, "record with dropped steers behind its cursor must rebuild");
 		const diag = readDiagLog();
@@ -259,7 +264,7 @@ describe("legacy sessions (no account router)", () => {
 		const errors = events.filter((event) => event.type === "error");
 		assert.equal(errors.length, 1);
 		assert.match(errors[0].error.errorMessage, /max turns/);
-		const { sharedSession } = __testGetBridgeIntegrityState();
+		const { sharedSession } = bridgeStateFor("legacy-max-turns");
 		assert.equal(sharedSession?.sessionId, "session-legacy");
 		assert.equal(sharedSession?.needsRebuild, undefined);
 	});
@@ -739,7 +744,7 @@ describe("managed account stream rotation", () => {
 		// completed managed query: success persists a fresh record on purpose.
 		const observed = observedState();
 		globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL] = makeRouter(observed);
-		__testSetBridgeIntegrityState({
+		runInRequestLane("clear-flags", () => __testSetBridgeIntegrityState({
 			sharedSession: {
 				sessionId: "existing-session",
 				cursor: 0,
@@ -747,7 +752,7 @@ describe("managed account stream rotation", () => {
 				accountProfileId: "a",
 				claudeConfigDir: "/profiles/a",
 			},
-		});
+		}));
 		__testSetSdkQueryFactory(() => ({
 			async *[Symbol.asyncIterator]() {
 				yield { type: "system", subtype: "init", session_id: "successful-session" };
@@ -767,7 +772,7 @@ describe("managed account stream rotation", () => {
 
 		const events = await collect(streamClaudeAgentSdk(model, context, { sessionId: "clear-flags" }));
 		assert.ok(textEvents(events).includes("success-clears-flags"));
-		const state = __testGetBridgeIntegrityState().sharedSession;
+		const state = bridgeStateFor("clear-flags").sharedSession;
 		assert.equal(state?.sessionId, "successful-session");
 		assert.equal(state?.accountProfileId, "a");
 		assert.equal(state?.claudeConfigDir, "/profiles/a");
@@ -783,7 +788,7 @@ describe("reentrant subagent queries and the shared session (C1)", () => {
 		// short conversation. Writing that context's length used to shrink the
 		// parent's cursor from 40 down to the foreign context's length.
 		const parentRecord = { sessionId: "parent-session-0001", cursor: 40, cwd: "/parent" };
-		__testSetBridgeIntegrityState({ sharedSession: { ...parentRecord } });
+		runInRequestLane("parent", () => __testSetBridgeIntegrityState({ sharedSession: { ...parentRecord } }));
 		let release;
 		const gate = new Promise((resolve) => { release = resolve; });
 		__testSetSdkQueryFactory(() => ({
@@ -801,7 +806,7 @@ describe("reentrant subagent queries and the shared session (C1)", () => {
 		const parentStream = streamClaudeAgentSdk(model, context, { sessionId: "parent" });
 		assert.ok(parentStream);
 		await new Promise((resolve) => setTimeout(resolve, 10));
-		const before = JSON.stringify(__testGetBridgeIntegrityState().sharedSession);
+		const before = JSON.stringify(bridgeStateFor("parent").sharedSession);
 
 		// Reentrant call: a subagent's own short [user] conversation (empty text,
 		// so nothing is queued for replay — this isolates the cursor guard).
@@ -809,7 +814,7 @@ describe("reentrant subagent queries and the shared session (C1)", () => {
 			messages: [{ role: "user", content: "", timestamp: Date.now() }],
 		}, { sessionId: "subagent" });
 		assert.ok(subagentStream, "the reentrant call returns a stream");
-		const after = __testGetBridgeIntegrityState().sharedSession;
+		const after = bridgeStateFor("parent").sharedSession;
 		assert.equal(JSON.stringify(after), before, "parent record must be byte-identical after the reentrant call");
 		assert.equal(after?.cursor, 40, "cursor must not shrink to the foreign context's length");
 
@@ -827,7 +832,7 @@ describe("reentrant subagent queries and the shared session (C1)", () => {
 		// between turns). Its short [user] context with the parent's large cursor
 		// used to CLAMP into a REUSE plan that resumed the parent's Claude
 		// session; the plan now rejects and the query runs as a clean one-shot.
-		__testSetBridgeIntegrityState({ sharedSession: { sessionId: "parent-session-0002", cursor: 40, cwd: "/parent" } });
+		runInRequestLane("subagent", () => __testSetBridgeIntegrityState({ sharedSession: { sessionId: "parent-session-0002", cursor: 40, cwd: "/parent" } }));
 		let queryOptions;
 		__testSetSdkQueryFactory((input) => {
 			queryOptions = input.options;
