@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- finding-disposition: a decline is terminal — it appears as its one-line
+  summary entry and is never re-presented as a "file it anyway?" question
+  (drill 3: an orchestrator improvised exactly that ask after a correct
+  decline).
+
 - orch review-pr mints each reviewer's artifact path at delegation time
   (`review-artifact-check --path`) and passes it as the delegation's
   `Artifact:` line; reviewers write to that exact path instead of

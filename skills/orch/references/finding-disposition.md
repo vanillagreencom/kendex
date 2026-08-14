@@ -37,7 +37,7 @@ An `issue` signal is necessary but not sufficient. File only for:
 
 The audit pipeline applies project-management's creation bar (its SKILL.md § Disposition) as the final authority; these classes describe what clears it.
 
-Everything else is absorbed or declined. P4 polish never files: absorb it when it is est-1 and related, otherwise drop it with a one-line note in the review summary. A finding that cannot affect real usage is declined with one line of rationale — neither fixed nor filed. Vague items are noise, not visibility.
+Everything else is absorbed or declined. P4 polish never files: absorb it when it is est-1 and related, otherwise drop it with a one-line note in the review summary. A finding that cannot affect real usage is declined with one line of rationale — neither fixed nor filed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?"). Vague items are noise, not visibility.
 
 When a same-surface bundle or umbrella parent already exists, residue attaches to it as a child or related issue; a standalone filing needs a stated reason.
 
