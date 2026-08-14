@@ -148,6 +148,15 @@ finding_item_detail() {
                      and ((["fix","issue"] | index($item.category | tostring)) == null)
                   then ["category(not fix|issue)"] else [] end )
                 as $badcat
+              # A present-but-blank impact is as unroutable as a missing one:
+              # the filing bar adjudicates its text.
+              | ( if ($arr == "suggestions")
+                     and (($item | type) == "object")
+                     and ($item.category == "issue")
+                     and ($item.impact != null)
+                     and ((($item.impact | type) != "string") or (($item.impact | tostring | gsub("\\s";"")) == ""))
+                  then ["impact(blank)"] else [] end )
+                as $blankimpact
               # priority in 1..4, estimate in 1..5 per review-finding.md — a present
               # but non-numeric or out-of-range value is unusable, not just the
               # null case $missing already covers (vstack#810). Only checked when
@@ -161,7 +170,7 @@ finding_item_detail() {
                          | map("\(.f)(not \(.lo)..\(.hi))") )
                   else [] end )
                 as $badnum
-              | ($missing + $badcat + $badnum) as $problems
+              | ($missing + $badcat + $blankimpact + $badnum) as $problems
               # Name the expected set, not just what is wrong. The rejection is
               # relayed verbatim to the agent that has to redo the artifact, and
               # a bare "missing id, description, estimate, category" does not

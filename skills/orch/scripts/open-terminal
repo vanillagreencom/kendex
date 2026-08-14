@@ -67,23 +67,27 @@ default 15, positive integer clamped to 120).
 USAGE
 }
 
+# A valued option with no value must fail with the flag named, not crash on an
+# unbound $2 under nounset.
+need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || { echo "Error: $1 requires a value" >&2; exit 2; }; }
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --tracker) TRACKER="$2"; shift 2 ;;
+    --tracker) need_val "$@"; TRACKER="$2"; shift 2 ;;
     --tracker=*) TRACKER="${1#--tracker=}"; shift ;;
-    --repo) REPO="$2"; shift 2 ;;
+    --repo) need_val "$@"; REPO="$2"; shift 2 ;;
     --repo=*) REPO="${1#--repo=}"; shift ;;
     --tmux) TERMINAL_MODE="tmux"; shift ;;
     --ghostty) TERMINAL_MODE="ghostty"; shift ;;
-    --harness) HARNESS="$2"; shift 2 ;;
+    --harness) need_val "$@"; HARNESS="$2"; shift 2 ;;
     --harness=*) HARNESS="${1#--harness=}"; shift ;;
-    --cmd) CMD_TEMPLATE="$2"; shift 2 ;;
+    --cmd) need_val "$@"; CMD_TEMPLATE="$2"; shift 2 ;;
     --cmd=*) CMD_TEMPLATE="${1#--cmd=}"; shift ;;
-    --lane) LANE="$2"; shift 2 ;;
+    --lane) need_val "$@"; LANE="$2"; shift 2 ;;
     --lane=*) LANE="${1#--lane=}"; shift ;;
-    --lane-max-pct) LANE_MAX_PCT="$2"; shift 2 ;;
+    --lane-max-pct) need_val "$@"; LANE_MAX_PCT="$2"; shift 2 ;;
     --lane-max-pct=*) LANE_MAX_PCT="${1#--lane-max-pct=}"; shift ;;
-    --launch-flags) LAUNCH_FLAGS="$2"; shift 2 ;;
+    --launch-flags) need_val "$@"; LAUNCH_FLAGS="$2"; shift 2 ;;
     --launch-flags=*) LAUNCH_FLAGS="${1#--launch-flags=}"; shift ;;
     --help|-h) usage; exit 0 ;;
     *) ITEMS+=("$1"); shift ;;
@@ -434,8 +438,17 @@ for raw in "${ITEMS[@]}"; do
     if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
   fi
   # The lane is recorded in the launched command itself, so `ps` and the tmux
-  # window both show which account a stalled session belongs to.
-  [[ -n "$LANE_ENV" ]] && cmd="env $LANE_ENV $cmd"
+  # window both show which account a stalled session belongs to. The value is
+  # single-quoted in the rendered command: lane dirs are paths, and an unquoted
+  # space would split the env assignment inside the launch shell. A single
+  # quote inside the path cannot be embedded safely, so it is refused.
+  if [[ -n "$LANE_ENV" ]]; then
+    if [[ "$LANE_ENV" == *"'"* ]]; then
+      echo "Error: lane config dir contains a single quote; cannot render a safe launch command: $LANE_ENV" >&2
+      exit 1
+    fi
+    cmd="env ${LANE_ENV%%=*}='${LANE_ENV#*=}' $cmd"
+  fi
   if [[ "$TERMINAL_MODE" == "tmux" ]]; then
     open_tmux "$wt" "$title" "$cmd" "$brief" || { failed=$((failed + 1)); continue; }
   else

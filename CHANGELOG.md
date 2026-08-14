@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Bot-review triage across #1272-#1277 scripts** (admin merges skip bot
+  rounds; this closes the loop): linear `issues update --labels` now refuses
+  an unknown label instead of silently shipping a partial set (new
+  refusal test asserts no mutation is sent); open-terminal guards every
+  valued flag against a missing value under nounset and single-quotes the
+  lane env value in rendered launch commands; ci-wait's no-CI shortcut
+  waits for a second empty poll and probes external commit statuses, so
+  late-registering or non-Actions CI cannot be misread as absent; a blank
+  `impact` is rejected like a missing one; the dev acceptance tables in
+  dev-start/dev-fix/review-pr-comments now branch on the one-word `verdict`
+  (closing the gap where a failing-validation artifact could route to
+  Accept) with an explicit never-accept `retry` row; the external-review
+  prompt schema teaches `impact` for issue candidates; a test's `mapfile`
+  replaced for Bash 3.2 portability.
+
 - **Issue candidates must argue reality: `category: issue` findings require an
   `impact` line.** One sentence naming who hits the problem, on what real path
   — enforced by `review-artifact-check` (a candidate without it is rejected

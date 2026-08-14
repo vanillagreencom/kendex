@@ -499,16 +499,27 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
     # terminal state instead of burning the dispatch grace and exiting 1.
     # Every probe must answer affirmatively; any probe failure falls through
     # to the grace path (fail closed toward waiting, never toward skipping).
-    if [ "${ci_probe_done:-}" != "true" ]; then
+    # Second empty poll (or the last one the grace allows, whichever is
+    # sooner): a first-poll shortcut races checks that register a beat after
+    # PR creation. One extra interval is cheap; the race is not.
+    probe_at=2
+    [ "$max_no_checks" -lt 2 ] && probe_at="$max_no_checks"
+    if [ "${ci_probe_done:-}" != "true" ] && [ "$no_checks_count" -ge "$probe_at" ]; then
       ci_probe_done=true
       wf_count=$(gh api "repos/$REPO/actions/workflows" --jq '[.workflows[] | select(.state == "active")] | length' 2>/dev/null) || wf_count="probe_failed"
       base_branch=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName --jq '.baseRefName' 2>/dev/null) || base_branch=""
-      protected="probe_failed"; rule_checks="probe_failed"
+      protected="probe_failed"; rule_checks="probe_failed"; ext_statuses="probe_failed"
       if [ -n "$base_branch" ]; then
         protected=$(gh api "repos/$REPO/branches/$base_branch" --jq '.protected' 2>/dev/null) || protected="probe_failed"
         rule_checks=$(gh api "repos/$REPO/rules/branches/$base_branch" --jq '[.[] | select(.type == "required_status_checks")] | length' 2>/dev/null) || rule_checks="probe_failed"
       fi
-      if [ "$wf_count" = "0" ] && [ "$protected" = "false" ] && [ "$rule_checks" = "0" ]; then
+      # External (non-Actions) CI posts commit statuses without any workflow or
+      # required check existing — a head that carries even one status has CI.
+      head_sha=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null) || head_sha=""
+      if [ -n "$head_sha" ]; then
+        ext_statuses=$(gh api "repos/$REPO/commits/$head_sha/status" --jq '.total_count' 2>/dev/null) || ext_statuses="probe_failed"
+      fi
+      if [ "$wf_count" = "0" ] && [ "$protected" = "false" ] && [ "$rule_checks" = "0" ] && [ "$ext_statuses" = "0" ]; then
         update_elapsed
         if $JSON_OUTPUT; then
           jq -n --argjson elapsed "$elapsed" --arg base "$base_branch" \

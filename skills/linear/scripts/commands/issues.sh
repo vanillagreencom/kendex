@@ -1744,10 +1744,19 @@ update_issue() {
         local label_ids=() label_rc=0
         for label_name in "${label_names[@]}"; do
             local label_id
+            label_rc=0
             label_id=$(resolve_label_id "$label_name") && label_ids+=("\"$label_id\"") || label_rc=$?
             if [ "$label_rc" = "2" ]; then
                 jq -cn --arg label "$label_name" \
                     '{error: ("Label lookup failed for " + $label + " - refusing the update: --labels replaces the label set, so proceeding would strip labels this lookup could not confirm")}' >&2
+                return 1
+            fi
+            # A label that resolves to nothing (rc=1) must refuse too: --labels
+            # replaces the whole set, so silently dropping one requested name
+            # ships a partial set — the same wipe class as the lookup failure.
+            if [ "$label_rc" != "0" ]; then
+                jq -cn --arg label "$label_name" \
+                    '{error: ("Unknown label " + $label + " - refusing the update: --labels replaces the label set, so a dropped name would ship a partial set. Fix the name or remove it from --labels")}' >&2
                 return 1
             fi
         done

@@ -218,7 +218,7 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" log -1 --oneline
 ```
 
-Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is canonical — including exact-commit binding on accept, the bounded git re-read on `ok==true` with B failing, and the report-only tail-reconciliation nudge on `ok==false` with B passing, which never re-runs the fix. On accept: applied items are marked for reply, items the agent skipped go to the skipped list with their reason, and blocked items become issue candidates in § 6.2.
+Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is canonical — including exact-commit binding on accept, the bounded git re-read on `accept` with B failing, the report-only tail-reconciliation nudge on `wait` with B passing, and the never-accept `retry` row, which never re-runs the fix. On accept: applied items are marked for reply, items the agent skipped go to the skipped list with their reason, and blocked items become issue candidates in § 6.2.
 
 Push, then reply to and resolve every inline thread handled in this pass — do not defer them to § 7:
 

@@ -258,7 +258,8 @@ collect_broken() {
   printf '%s' "$out"
 }
 
-mapfile -t ORCH_DOCS < <(orch_docs)
+ORCH_DOCS=()
+while IFS= read -r orch_doc; do ORCH_DOCS+=("$orch_doc"); done < <(orch_docs)
 refs="$(scan_refs "${ORCH_DOCS[@]}")"
 ref_count="$(grep -c . <<<"$refs" || true)"
 broken="$(collect_broken <<<"$refs")"

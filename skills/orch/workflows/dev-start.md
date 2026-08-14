@@ -141,7 +141,7 @@ Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and
 .agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND]
 ```
 
-`A` is the `ok` field. The check resolves `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` and matches its internal `round_id`, so only this delegation's receipt can satisfy A.
+`A` is the `verdict` field — `accept` (valid artifact, validation passing, recorded commit resolves), `wait` (no artifact for this round yet), or `retry` (an artifact exists but a gate fails, including a failing `validate`). The check resolves `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` and matches its internal `round_id`, so only this delegation's receipt can satisfy A.
 
 **Check B** — `B = pass` only when every check passes:
 
@@ -154,16 +154,17 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 `HEAD` must differ from `pre_delegate_sha`, `status --porcelain` must be empty, and the Linear validation (Linear only) must report `.all_ok`. `--include-children-of` expands explicit single-PR bundles and audit-created sub-issues worked in this session; a container child has no children of its own and validates alone. `state_ok` expects bundle-expanded sub-issues `Done` and the session-root issue in a pre-merge state (`In Progress` or `In Review`) — never `Done` before merge. GitHub and ad-hoc rounds skip tracker validation: B is the new commit plus the clean worktree.
 
-| A (artifact) | B (git/tracker) | Action |
+| A (verdict) | B (git/tracker) | Action |
 |---|---|---|
-| `ok==true` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD` — so a later unrelated commit is never attributed to this round. → Store QA state. |
-| `ok==true` | fail | The artifact claims done, git or the tracker disagree. Re-read ONCE after a brief pause (a transient tracker lag must not trigger a duplicate-summary re-delegation); if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
-| `ok==false` | pass | Code landed but the round did not finish — B proves a commit exists, not that the tail ran. Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
-| `ok==false` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
+| `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD` — so a later unrelated commit is never attributed to this round. → Store QA state. |
+| `accept` | fail | The artifact claims done, git or the tracker disagree. Re-read ONCE after a brief pause (a transient tracker lag must not trigger a duplicate-summary re-delegation); if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
+| `wait` | pass | Code landed but the round did not finish — B proves a commit exists, not that the tail ran. Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
+| `wait` | fail | **Not done.** Wait to the deadline, then escalate per [SKILL.md § Round Closure](../SKILL.md#round-closure). |
+| `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. A failing `validate` re-delegates fixing the validation; an identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
-**Analysis rounds.** When THIS round was delegated as investigate-and-recommend, the honest receipt is `kind: analysis`: no `commit`, no `validate`, the recommendation in `summary`. B is redefined for the round — expect NO new commit and a clean worktree, with no exact-commit binding and no validate gate. On A `ok==true` + B pass, accept, read the recommendation, and decide the next step yourself: delegate implementation as a fresh round, close with reasoning, or re-scope. A `kind` that does not match what was delegated is a mis-filed round — treat it as the `ok==false` row.
+**Analysis rounds.** When THIS round was delegated as investigate-and-recommend, the honest receipt is `kind: analysis`: no `commit`, no `validate`, the recommendation in `summary`. B is redefined for the round — expect NO new commit and a clean worktree, with no exact-commit binding and no validate gate. On A `accept` + B pass, accept, read the recommendation, and decide the next step yourself: delegate implementation as a fresh round, close with reasoning, or re-scope. A `kind` that does not match what was delegated is a mis-filed round — treat it as the `retry` row.
 
-Do not import the reviewer's re-delegate-on-`ok==false` rule; the asymmetry is intentional ([references/artifact-checks.md](../references/artifact-checks.md)).
+Do not import the reviewer's re-delegate-on-invalid rule; the asymmetry is intentional ([references/artifact-checks.md](../references/artifact-checks.md)).
 
 **Store QA state** on accept:
 

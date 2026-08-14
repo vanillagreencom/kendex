@@ -71,6 +71,8 @@ case "$*" in
   *"rules/branches"*) echo "0"; exit 0 ;;
   *"branches/main"*) echo "false"; exit 0 ;;
   *"pr view"*"baseRefName"*) echo "main"; exit 0 ;;
+  *"pr view"*"headRefOid"*) echo "deadbeefcafe"; exit 0 ;;
+  *"/status"*) echo "${GH_STUB_EXT_STATUSES:-0}"; exit 0 ;;
   *"pr view"*"mergeStateStatus"*) echo "CLEAN"; exit 0 ;;
   *"pr view"*) echo '{}'; exit 0 ;;
   *"pr checks"*) echo "[]"; exit 0 ;;

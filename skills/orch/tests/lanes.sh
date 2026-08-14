@@ -299,8 +299,8 @@ fi
 # A refusal from `lanes` must stop the launch entirely.
 assert_contains "$(cat "$OPEN_TERMINAL")" "nothing was launched" \
   "open-terminal says nothing was launched when no lane qualifies"
-assert_contains "$(cat "$OPEN_TERMINAL")" 'cmd="env $LANE_ENV $cmd"' \
-  "the chosen lane is applied to the launched command as an env prefix"
+assert_contains "$(cat "$OPEN_TERMINAL")" 'cmd="env ${LANE_ENV%%=*}=' \
+  "the chosen lane is applied to the launched command as an env prefix (value single-quoted)"
 
 # An explicit lane that is not a directory is a typo, not a config dir.
 set +e
