@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Regression test for required GitHub QA-label application policy.
+# Contract test for the QA-signal step: signals derive from the final code,
+# live in the completion artifact, involve no tracker mutation, and are never
+# silently dropped.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,13 +20,21 @@ require_text() {
     printf 'ok - %s\n' "$description"
 }
 
-require_text '`needs-safety-audit`' 'safety QA label remains documented'
-require_text '`needs-perf-test`' 'performance QA label remains documented'
-require_text '`needs-review`' 'architecture QA label remains documented'
-require_text 'label-add [PR_OR_ISSUE] [QA_LABEL] --required' 'GitHub QA mutation uses required capability preflight'
-require_text '`configuration_error` (required label missing)' 'missing required label has a configuration outcome'
-require_text '`capability_error`' 'insufficient permission has a capability outcome'
-require_text 'silently omit the QA gate' 'workflow prohibits silently dropping the QA gate'
-require_text '`--optional` is reserved for a label that project policy explicitly declares' 'optional mode requires explicit non-gating policy'
+require_absent() {
+    local needle="$1" description="$2"
+    if grep -Fq -- "$needle" "$WORKFLOW"; then
+        fail "$description"
+    fi
+    printf 'ok - %s\n' "$description"
+}
+
+require_text '`needs-safety-audit`' 'safety QA signal remains documented'
+require_text '`needs-perf-test`' 'performance QA signal remains documented'
+require_text '`needs-review`' 'review QA signal remains documented'
+require_text 'not a tracker' 'signals are recorded in the artifact, not the tracker'
+require_text 'never silently dropped' 'workflow prohibits silently dropping a signal'
+require_text '`none` is an explicit answer' 'none is an evaluated answer, not a default'
+require_text 'does not take `needs-perf-test`' 'feature-gated work stays exempt from the perf signal'
+require_absent 'label-add [PR_OR_ISSUE] [QA_LABEL] --required' 'the tracker label mutation is retired from the QA step'
 
 printf 'all pass\n'

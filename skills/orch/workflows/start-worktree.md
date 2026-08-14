@@ -133,8 +133,12 @@ Terminate every still-active agent in `child_sessions`, then retire the records 
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions = ((.child_sessions // {}) | with_entries(.value.status = "closed"))'
 ```
 
-### 5.5 Offer Merge
+### 5.5 Merge
 
 **Skip if** no PR was created, CI is not passing, or `submit-pr.md` § 6.1 reported `MERGE_READY = false`.
 
-Ask: `orch merge-pr [PR_NUMBER]` | `Skip`. On merge, `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`.
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY ask
+```
+
+`auto` → merge without asking: `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7 → end`. Anything else → ask: `orch merge-pr [PR_NUMBER]` | `Skip`, and on merge run the same workflow. Autonomy applies only on this fully-gated path — a `MERGE_READY = false` state never auto-merges.

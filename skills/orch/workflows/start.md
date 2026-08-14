@@ -79,15 +79,12 @@ Otherwise create it, checking the exit status directly (`issue-[N]` for GitHub i
 
 Exit 75 means a branch or open PR already owns the issue even though the configured path was absent — inspect it instead of delegating. Use the create output as `WT_PATH`.
 
-## 5. Continue Or Hand Off
+## 5. Continue In Worktree
 
-Ask one question:
-
-| Choice | Action |
-|--------|--------|
-| Continue here | Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context |
-| Hand off | Invoke `workflows/handoff.md` |
-| Manual | Print the worktree path and the exact command: `/orch start [ISSUE_ID]`, or `/orch start github [OWNER/REPO]#[N]` |
+The invocation already answered where the work runs: `start` runs it in this
+session; a separate session is launched with the `handoff` command instead.
+Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree
+context — no question.
 
 <output_format>
 

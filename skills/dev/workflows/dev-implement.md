@@ -175,25 +175,22 @@ The log read verifies the commit exists before you proceed. Use the CURRENT sub-
 
 ---
 
-## 8. Apply QA Labels
+## 8. Record QA Signals
 
-Based on the FINAL validated code:
+Based on the FINAL validated code, decide which extra QA passes the change
+genuinely needs. You wrote the code — this is your call, recorded in the
+completion artifact (§ 9.1 `--qa-label`, one per signal), not a tracker
+mutation. No repository label configuration is involved.
 
-| Trigger | Label |
-|---------|-------|
+| Trigger | Signal |
+|---------|--------|
 | Unsafe code, atomics, lock-free | `needs-safety-audit` |
 | Hot path, latency-sensitive, or shared/main-build perf risk | `needs-perf-test` |
 | New module, public API | `needs-review` |
 
-Full triggers live in the project label application guide. Work isolated behind a development-only feature gate does not take `needs-perf-test`: run the feature-gated checks locally and label only if shared or feature-off paths are affected.
+Work isolated behind a development-only feature gate does not take `needs-perf-test`: run the feature-gated checks locally and signal only if shared or feature-off paths are affected.
 
-Every label this table selects is required policy, not an optional repository capability. Apply it to an existing GitHub PR or issue through the helper's required mode, which checks the live label inventory and verifies the token's effective write capability against GitHub's authoritative label endpoint (add `--issue` when the target is an issue):
-
-```bash
-.agents/skills/github/scripts/github.sh -C [WORKTREE_PATH] label-add [PR_OR_ISSUE] [QA_LABEL] --required
-```
-
-`configuration_error` (required label missing) and `capability_error` (insufficient permission) are supported outcomes: stop and report them. Do not silently omit the QA gate, substitute `--optional`, or return `QA Labels: none`. `--optional` is reserved for a label that project policy explicitly declares non-gating.
+A signal is never silently dropped: every triggered row appears in the artifact and in the return's `QA:` line, and `none` is an explicit answer meaning you evaluated the table and nothing triggered — not a default.
 
 ---
 
@@ -252,7 +249,7 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|"FAILING: check1,check2"] [--validate-note [TEXT]] [--qa-label [LABEL]]...
 ```
 
-One `--qa-label` per § 8 label applied, none if there were none. GitHub and ad-hoc rounds append `--no-summary --summary-file tmp/completion-summary-[ISSUE_ID].md`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
+One `--qa-label` per § 8 signal, none if nothing triggered. GitHub and ad-hoc rounds append `--no-summary --summary-file tmp/completion-summary-[ISSUE_ID].md`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
 
 **A read-only analysis round** has no commit and ran no validation, so § 5, § 7, and § 8 do not apply. Pass the recommendation inline, or a file for longer evidence — exactly one of the two, the inline form being the sanctioned route when the harness refuses a file write:
 
@@ -274,7 +271,7 @@ Then return the recommendation in place of the block below.
 <output_format>
 Branch: [BRANCH_NAME]
 Commit: [SHA]
-QA Labels: [labels or "none"]
+QA: [signals or "none"]
 Validate: [pass or "FAILING: check1, check2"]
 Summary: [ISSUE_ID] ✓
 </output_format>
@@ -287,7 +284,7 @@ Summary: [ISSUE_ID] ✓
 
 **Skip if** single — you returned at § 10.
 
-1. **Aggregate QA labels onto the parent** (Linear only), collecting from every sub-issue including nested ones: `linear.sh issues update [PARENT_ID] --labels "[EXISTING_LABELS],[AGGREGATED_QA_LABELS]"`.
+1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags — the union of every sub-issue's § 8 signals. No tracker mutation.
 
 2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`.
 
@@ -317,6 +314,6 @@ Summary: [ISSUE_ID] ✓
    Sub-Issues: [tree format with ✓]
    Branch: [BRANCH]
    Commits: [COUNT] ([SHAS])
-   QA Labels: [AGGREGATED]
+   QA: [AGGREGATED_SIGNALS or "none"]
    Summaries: [all issue IDs ✓]
    </output_format>

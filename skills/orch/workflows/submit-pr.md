@@ -249,6 +249,7 @@ On always-on repos CI has been running since § 2; on approval-gated repos check
 | Result | Action |
 |--------|--------|
 | `status=complete`, `verdict=pass` | → § 6 |
+| `status=complete`, `verdict=none` | Repo has no CI configured (no active workflows, no required checks). Record `ci: none` in workflow state and → § 6 — this is a documented route, not a failure or an override |
 | `status=complete`, `verdict=fail` | → § 5.1 |
 | `status=timeout` or `status=error` | Re-run once; if it repeats, ask: `Skip CI` \| `Retry` \| `Abort` |
 
@@ -275,7 +276,7 @@ A PR merges on exactly four deterministic gates. Gates 2 and 4 **verify results 
 | # | Gate | Check |
 |---|------|-------|
 | 1 | Internal review verdict recorded | Managed: `review-pr.md` completed with verdict `pass`. Standalone: `json_paths` is non-empty |
-| 2 | CI green | The § 5 result is `status=complete`, `verdict=pass` |
+| 2 | CI green | The § 5 result is `status=complete` with `verdict=pass`, or `verdict=none` (repo has no CI configured — satisfied with a `CI: none configured` note in the summary) |
 | 3 | Zero unresolved review comments | `pr-threads` reports `unresolved_count == 0` AND every actionable PR-level bot comment has a reply (tracked in `pr_comment_review.replied`) |
 | 4 | Reviewer-gate verdict | Mode-aware per `GATE_MODE`. `approval`: § 4 ended `approved`. `review`: § 4 ended `reviewed`. Either mode is also met by a recorded `pr_approval.forced` or `pr_approval.reviewer_down`. `off`: not applicable for this repo |
 

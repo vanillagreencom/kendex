@@ -12,7 +12,7 @@ Pre-submission review: reviewer fan-out, bounded fix rounds, QA checks, and the 
 
 **With a PR number**: `github.sh pr-issue [PR_NUMBER] --format=text` gives `ISSUE`. Apply [Worktree Scope](../SKILL.md#workflow-execution); ask before `worktree create $ISSUE --pr [PR_NUMBER]`. With no argument, `WT_PATH` is the current directory.
 
-**Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init`, resolve `TRACKER`, and set `qa_labels` from the issue labels.
+**Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init`, and resolve `TRACKER`. The § 5 QA routing derives its signals from the diff scan and judgment on this path — there is no dev artifact.
 
 ---
 
@@ -317,19 +317,34 @@ Shut the review agents down and clear their state (wave mode: sessions are alrea
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [] | .review_agent_ids = {} | .review_wave_done = []'
 ```
 
-Then read the QA routing:
+Then decide the QA routing. The inputs, in precedence order:
+
+1. **Dev signals** — the dev round's artifact `qa_labels` (its § 8 self-assessment of the final code).
+2. **Diff scan** — deterministic checks on the round's full diff:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{skip_qa: (.skip_qa // false), qa_labels: (.qa_labels // [])}'
+git -C [WORKTREE_PATH] diff [BASE]...HEAD --unified=0 | grep -clE 'unsafe |Ordering::|Atomic(U|I|Bool|Ptr)'
 ```
 
-`skip_qa` true → set it false and go to § 8. QA labels present → § 6. Otherwise → § 8.
+   A nonzero count adds `needs-safety-audit`. When the repo sets `QA_PERF_PATHS` (space-separated path globs), any changed file matching one adds `needs-perf-test`:
+
+```bash
+.agents/skills/orch/scripts/orch-env QA_PERF_PATHS ""
+```
+
+3. **Judgment** — you may add or drop a signal with one line of rationale; record it:
+
+```bash
+.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] qa_decision '{"signals":[SIGNALS],"rationale":"[ONE_LINE]"}'
+```
+
+QA passes are expensive — perf and safety audits especially. Drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with rationale "user skip", → § 8. Signals empty → § 8. Otherwise → § 6.
 
 ## 6. QA Checks
 
-**Skip if** no QA labels → § 8.
+**Skip if** the recorded `qa_decision.signals` is empty → § 8.
 
-QA agent types are project-configured; map each `needs-*` label to its agent. For each, delegate and wait:
+Map each signal to its agent — `needs-safety-audit` → `reviewer-safety`, `needs-perf-test` → `reviewer-perf`, `needs-review` → `reviewer-correctness`; a project may override the mapping in its instructions. For each, delegate and wait:
 
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/qa-review.md
@@ -338,7 +353,7 @@ Issue: [ISSUE_ID]
 Tracker: [TRACKER] [OWNER/REPO]
 Branch: [BRANCH]
 Worktree: [WORKTREE_PATH]
-Trigger: [needs-* label]
+Trigger: [QA signal]
 
 Dev summary:
 [completion summary from the dev return, or a description of the branch changes]

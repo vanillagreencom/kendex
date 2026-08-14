@@ -83,9 +83,15 @@ REVIEWER_SLOT_BUDGET = "0"
 # executes the workflow's recommended option and logs
 # "auto-selected: [option] — [reason]" in the round record (workflow-state
 # auto_decisions) — for fleet launchers whose workers would otherwise
-# serialize on one supervisor. Decision-record revisits, scope expansion
-# beyond the issue, and merge ALWAYS ask, in every mode.
+# serialize on one supervisor. Decision-record revisits and scope expansion
+# beyond the issue ALWAYS ask, in every mode; merge is governed by
+# ORCH_MERGE_AUTONOMY.
 ORCH_DECISION_MODE = "ask"
+
+# Used by: orch (`start-worktree` § 5.5). "ask" (default) presents the merge
+# decision; "auto" merges without asking once every merge gate is green.
+# MERGE_READY = false never auto-merges.
+ORCH_MERGE_AUTONOMY = "ask"
 
 # Used by: orch (`open-terminal`). Bounded seconds per brief-delivery
 # verification pass on tmux claude handoff lanes (one initial pass plus one

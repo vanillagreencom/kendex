@@ -12,6 +12,12 @@ usage() {
 Usage:
   review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch>
   review-artifact-check --file <json_path> [delegated_at_epoch]
+  review-artifact-check --path <worktree_path> <agent_name>
+
+Path mode (--path): prints the canonical artifact path for the agent with a
+real UTC timestamp ([WORKTREE]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json) and
+creates the tmp/ directory. Reviewers write their artifact to exactly this
+path instead of hand-formatting the timestamp.
 
 Glob mode: checks [WORKTREE]/tmp/review-[AGENT]-*.json newest-first.
 File mode (--file): checks one explicit JSON file, for artifacts written to a
@@ -167,6 +173,27 @@ finding_item_detail() {
     else "" end
   ' "$1" 2>/dev/null
 }
+
+# --- Path mode: print the canonical artifact path for an agent ---
+if [[ "${1:-}" == "--path" ]]; then
+  if [[ $# -ne 3 || -z "${2:-}" || -z "${3:-}" ]]; then
+    usage
+    exit 2
+  fi
+  wt="$2"
+  agent="$3"
+  if [[ ! -d "$wt" ]]; then
+    echo "Error: worktree path does not exist: $wt" >&2
+    exit 2
+  fi
+  if [[ ! "$agent" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Error: agent name contains path-unsafe characters: $agent" >&2
+    exit 2
+  fi
+  mkdir -p -- "$wt/tmp"
+  printf '%s/tmp/review-%s-%s.json\n' "$wt" "$agent" "$(date -u +%Y%m%d-%H%M%S)"
+  exit 0
+fi
 
 # --- File mode: validate one explicit JSON path deterministically ---
 if [[ "${1:-}" == "--file" ]]; then

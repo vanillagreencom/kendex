@@ -149,10 +149,25 @@ emit() {
     validate="$(jq -c 'if (.validate? | type) == "string" then .validate else null end' "$path" 2>/dev/null || printf 'null')"
     validate_note="$(jq -c 'if (.validate_note? | type) == "string" then .validate_note else null end' "$path" 2>/dev/null || printf 'null')"
   fi
+  # verdict is the one-word acceptance answer the orchestrator acts on:
+  #   accept — artifact valid for this round (warnings ride along)
+  #   wait   — no artifact for this round yet; the round is still running
+  #   retry  — an artifact exists but fails identity/schema/commit gates
+  # A validate value other than "pass" downgrades accept to retry: the agent
+  # finished its tail but the round's validation is failing.
+  local verdict
+  if [[ "$ok" == "true" ]]; then
+    verdict="accept"
+    if [[ "$validate" != null && "$validate" != '"pass"' ]]; then verdict="retry"; fi
+  elif [[ "$reason" == "missing" ]]; then
+    verdict="wait"
+  else
+    verdict="retry"
+  fi
   jq -n --argjson ok "$ok" --arg path "$path" --arg reason "$reason" --arg warning "$warning" \
-    --arg hint "$hint" \
+    --arg hint "$hint" --arg verdict "$verdict" \
     --argjson validate "${validate:-null}" --argjson validate_note "${validate_note:-null}" \
-    '{ok: $ok, path: (if $path == "" then null else $path end), reason: $reason,
+    '{ok: $ok, verdict: $verdict, path: (if $path == "" then null else $path end), reason: $reason,
       warning: (if $warning == "" then null else $warning end),
       hint: (if $hint == "" then null else $hint end),
       validate: $validate, validate_note: $validate_note}'

@@ -44,6 +44,11 @@ CI_FIX_MAX_CYCLES = "6"
 # submission or merge recovery before reporting the persistent CI failure back
 # to the user.
 
+ORCH_MERGE_AUTONOMY = "ask"
+# Used by: orch (`start-worktree` § 5.5). "ask" (default) presents the merge
+# decision; "auto" merges without asking once every merge gate is green.
+# MERGE_READY = false never auto-merges.
+
 ORCH_DECISION_MODE = "ask"
 # Used by: orch (`review-pr` § 4/§ 7, `dev-fix` § 1). How workflow decision
 # points behave. "ask" (default) presents every decision to the user.
@@ -51,8 +56,8 @@ ORCH_DECISION_MODE = "ask"
 # "auto-selected: [option] — [reason]" in the round record (workflow-state
 # auto_decisions) — for fleet launchers whose workers would otherwise
 # serialize on one supervisor. Decision-record revisits, scope expansion
-# beyond the issue, anything touching benchmark-host protocol, and merge
-# ALWAYS ask, in every mode.
+# beyond the issue, and anything touching benchmark-host protocol ALWAYS
+# ask, in every mode; merge is governed by ORCH_MERGE_AUTONOMY.
 
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 # Used by: orch (`open-terminal`, `lanes`). Renames auto-discovered launch

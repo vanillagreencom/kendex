@@ -38,7 +38,11 @@ Shared contract for every review specialist. Each agent's domain and probes live
 
 ## Output Contract
 
-Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md) at `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` (`[AGENT]` = your full agent name), written with the harness file-write tool — never shell redirection. **Self-validate before returning** — run the same check the orchestrator will run, and fix until it prints `"ok": true`:
+Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md), written with the harness file-write tool — never shell redirection — to the exact path this prints (`[AGENT]` = your full agent name):
+
+```bash
+.agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]
+``` **Self-validate before returning** — run the same check the orchestrator will run, and fix until it prints `"ok": true`:
 
 ```bash
 .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] 0

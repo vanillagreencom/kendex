@@ -30,7 +30,7 @@ Four rules bound it:
 
 - **Bounded loops.** A fix round addresses blockers. Minor suggestions never trigger another cycle; re-review narrows to the fix diff and the domains it touched; two consecutive rounds that surface no new blocker end the review.
 - **No edge-case churn.** A finding that cannot affect real usage is declined with one line of rationale — not fixed in-PR, not filed. Issue creation is for critical follow-ups only, never the default disposal path for review output.
-- **Ask the user only about product or experience.** Every technical choice is settled by rule here or by the specialist who owns it. Merge, scope expansion beyond the issue, and revisiting a recorded decision always ask, whatever `ORCH_DECISION_MODE` says.
+- **Ask the user only about product or experience.** Every technical choice is settled by rule here or by the specialist who owns it. Scope expansion beyond the issue and revisiting a recorded decision always ask, whatever `ORCH_DECISION_MODE` says. Merge asks unless `ORCH_MERGE_AUTONOMY=auto`, which merges without asking when — and only when — every merge gate is green.
 - **Acceptance is artifact-based, never prose-based.** A round closes on a validated on-disk artifact plus git/tracker state. A return message is display material.
 
 ## Commands
@@ -113,6 +113,7 @@ Non-secret settings go in committed `vstack.settings.toml` under `[env]`; `.env.
 | `CI_FIX_MAX_CYCLES` | Max automated ci-fix cycles per PR submission or merge recovery | `6` |
 | `REVIEWER_SLOT_BUDGET` | The runtime's total concurrent agent-session budget, counting the primary session; `0` = unlimited. On Codex, set it to the cap `spawn-adapter slots` reports | `0` |
 | `ORCH_DECISION_MODE` | `ask` presents every workflow decision; `auto-recommended` executes the recommended option and logs `auto-selected: [option] — [reason]` in workflow-state `auto_decisions`. The always-ask set in [The Cycle](#the-cycle) applies in every mode | `ask` |
+| `ORCH_MERGE_AUTONOMY` | `auto` merges without asking once every merge gate is green; `ask` presents the merge decision. A `MERGE_READY = false` state never auto-merges | `ask` |
 | Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_NUDGE*`, `PR_REVIEW_WAIT_SECS` — [references/gates.md](references/gates.md) | — |
 | Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_MAX_PCT`, `ORCH_TMUX_VERIFY_SECS` — `lanes --help`, `open-terminal --help` | — |
 

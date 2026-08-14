@@ -494,6 +494,32 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   # Handle no checks / empty response (only reached when gh succeeded)
   if [ -z "$checks_json" ] || [ "$checks_json" = "[]" ] || [ "$checks_json" = "null" ]; then
     no_checks_count=$((no_checks_count + 1))
+    # One-time probe: a repo with no active workflows AND no required checks
+    # on the PR's base branch has no CI to wait for — report that as its own
+    # terminal state instead of burning the dispatch grace and exiting 1.
+    # Every probe must answer affirmatively; any probe failure falls through
+    # to the grace path (fail closed toward waiting, never toward skipping).
+    if [ "${ci_probe_done:-}" != "true" ]; then
+      ci_probe_done=true
+      wf_count=$(gh api "repos/$REPO/actions/workflows" --jq '[.workflows[] | select(.state == "active")] | length' 2>/dev/null) || wf_count="probe_failed"
+      base_branch=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName --jq '.baseRefName' 2>/dev/null) || base_branch=""
+      protected="probe_failed"; rule_checks="probe_failed"
+      if [ -n "$base_branch" ]; then
+        protected=$(gh api "repos/$REPO/branches/$base_branch" --jq '.protected' 2>/dev/null) || protected="probe_failed"
+        rule_checks=$(gh api "repos/$REPO/rules/branches/$base_branch" --jq '[.[] | select(.type == "required_status_checks")] | length' 2>/dev/null) || rule_checks="probe_failed"
+      fi
+      if [ "$wf_count" = "0" ] && [ "$protected" = "false" ] && [ "$rule_checks" = "0" ]; then
+        update_elapsed
+        if $JSON_OUTPUT; then
+          jq -n --argjson elapsed "$elapsed" --arg base "$base_branch" \
+            '{status: "complete", verdict: "none", elapsed_seconds: $elapsed,
+              reason: ("no CI configured: no active workflows and no required checks on " + $base)}'
+        else
+          echo "CI: none configured (no active workflows, no required checks on $base_branch)"
+        fi
+        exit 0
+      fi
+    fi
     if [ $no_checks_count -ge $max_no_checks ]; then
       emit_error "no CI checks registered on PR #$PR_NUM after ${elapsed}s (merge conflicts, draft status, approval-gated CI not yet dispatched, or webhook delay)"
       echo "No CI checks after ${elapsed}s (grace ${NO_CHECKS_GRACE}s)" >&2
