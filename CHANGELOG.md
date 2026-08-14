@@ -11,9 +11,11 @@
   and a section survived only where its removal measurably hurt an arm or a
   contract test pins it:
   - **Bootstrap Message deleted.** It shipped with every agent spawn; the
-    claude arm ran a full cycle without it — role boundaries already live in
-    the generated agent files and the artifact contracts in the dev/reviewer
-    skills. Spawns go straight to the delegation message.
+    claude arm ran a full cycle without it. Sub-agent spawning is already
+    blocked deterministically (generated agents deny the spawn/question
+    tools in frontmatter), the artifact contracts live in the dev/reviewer
+    skills, and the drill held single-return and idle discipline with no
+    bootstrap prose. Spawns go straight to the delegation message.
   - **Claude Code runtime block deleted** (team-creation/task-ordering
     guidance): the ablated arm created teams, re-delegated, and read idle
     wakes correctly without it.

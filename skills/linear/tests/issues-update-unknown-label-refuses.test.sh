@@ -78,6 +78,24 @@ else
   ok "no mutation was sent for the refused update"
 fi
 
+# Unknown label + --attach → refuse BEFORE the upload, so no asset is
+# stranded in Linear storage (labels resolve ahead of upload_attach_paths).
+: >"$CURL_LOG"
+printf 'x' >"$TMP_ROOT/asset.bin"
+if ( cd "$PROJECT" \
+    && CURL_LOG="$CURL_LOG" PATH="$PROJECT/bin:$PATH" LINEAR_API_KEY=stub LINEAR_TEAM=TestTeam \
+       "$LINEAR" issues update ISS-1 --labels "ghost-label" --attach "$TMP_ROOT/asset.bin" ) \
+       >"$TMP_ROOT/out.txt" 2>"$ERR_FILE"; then
+  bad "unknown label with --attach refuses the update (exited 0)"
+else
+  ok "unknown label with --attach refuses the update"
+fi
+if grep -qiE "fileUpload|attachment" "$CURL_LOG"; then
+  bad "no upload was sent before the refusal"
+else
+  ok "no upload was sent before the refusal"
+fi
+
 # Control: all labels resolve → the update proceeds and mutates.
 : >"$CURL_LOG"
 if run_update "real-label"; then
