@@ -12,7 +12,7 @@ Once per session, first match wins:
 
 ## 2. Select Work
 
-Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gates them (ancestor chain, blocker union, container rules). Ownership is settled by tooling, not judgment: an item whose `worktree create` exits 75 belongs to another session — skip it. Every surface claims through that same gate — create the item's worktree BEFORE launching its session where the surface allows it. A surface that creates its own worktree environment (Codex app threads) instead records the claim in workflow-state before launch; that record is not atomic, so it guards a restarted overseer against re-launching, while the single-overseer-per-repo rule is what keeps two lanes off one item. Read the lane cap and keep at most that many items in flight:
+Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gates them (ancestor chain, blocker union, container rules). Ownership is settled by tooling, not judgment: an item whose `worktree create` exits 75 belongs to another session — skip it. Every surface claims through that same gate — create the item's worktree BEFORE launching its session where the surface allows it. A surface that creates its own worktree environment (Codex app threads) instead records the claim in workflow-state before launch; that record is not atomic, so it guards a restarted overseer against re-launching; oversee runs as at most one session per repo, and that single-launcher rule is what keeps two lanes off one item. Read the lane cap and keep at most that many items in flight:
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_OVERSEER_LANES 3
