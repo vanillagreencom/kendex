@@ -330,6 +330,8 @@ assert_contains "$c6_out" "Re-delivered brief to 'CC-737'" "re-delivery is repor
 c6_log="$(cat "$OT_TMUX_LOG")"
 c6_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG")"
 assert_eq "$c6_resends" "1" "brief is re-sent exactly once"
+c6_full_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737${TC}" "$OT_TMUX_LOG")"
+assert_eq "$c6_full_resends" "1" "the re-sent brief carries the terminal condition"
 
 # Case 6b: TWO dialog screens before the composer is ready — each
 # wait-composer pass sends one dismissing Enter, and the brief goes in only

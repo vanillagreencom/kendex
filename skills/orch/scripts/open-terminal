@@ -287,10 +287,10 @@ start_cmd() {
   esac
 }
 
-# Handoff lanes are unattended and some runtimes self-judge completion (a
-# Codex one-shot has stopped at PR-open); every rendered brief — the launch
-# command's prompt AND the tmux delivery/re-send copy — carries the terminal
-# condition (handoff.md / oversee.md).
+# Handoff lanes are unattended and some runtimes self-judge completion, so
+# every rendered brief — the launch command's prompt AND the tmux
+# delivery/re-send copy — carries the terminal condition (handoff.md /
+# oversee.md).
 readonly BRIEF_TERMINAL_CONDITION=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
 
 # Delivered means SUBMITTED, not merely present: the brief echoed in the
