@@ -273,15 +273,19 @@ start_cmd() {
       flags+="'$tok' "
     done
   fi
+  # Handoff lanes are unattended and some runtimes self-judge completion (a
+  # Codex one-shot has stopped at PR-open); every rendered brief therefore
+  # carries the terminal condition (handoff.md / oversee.md).
+  local tc=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
   case "$TRACKER:$HARNESS" in
-    linear:claude)   printf "claude -n %q %s'/orch start %s'\n" "$item" "$flags" "$item" ;;
-    linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
-    linear:opencode) printf "opencode %s--prompt '/orch start %s'\n" "$flags" "$item" ;;
-    linear:pi)       printf "pi %s'/skill:orch start %s'\n" "$flags" "$item" ;;
-    github:claude)   printf "claude -n github-%q %s'/orch start github %s#%s'\n" "$item" "$flags" "$repo" "$item" ;;
-    github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
-    github:opencode) printf "opencode %s--prompt '/orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
-    github:pi)       printf "pi %s'/skill:orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
+    linear:claude)   printf "claude -n %q %s'/orch start %s%s'\n" "$item" "$flags" "$item" "$tc" ;;
+    linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s%s'\n" "$flags" "$item" "$tc" ;;
+    linear:opencode) printf "opencode %s--prompt '/orch start %s%s'\n" "$flags" "$item" "$tc" ;;
+    linear:pi)       printf "pi %s'/skill:orch start %s%s'\n" "$flags" "$item" "$tc" ;;
+    github:claude)   printf "claude -n github-%q %s'/orch start github %s#%s%s'\n" "$item" "$flags" "$repo" "$item" "$tc" ;;
+    github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s%s'\n" "$flags" "$repo" "$item" "$tc" ;;
+    github:opencode) printf "opencode %s--prompt '/orch start github %s#%s%s'\n" "$flags" "$repo" "$item" "$tc" ;;
+    github:pi)       printf "pi %s'/skill:orch start github %s#%s%s'\n" "$flags" "$repo" "$item" "$tc" ;;
     *) echo "Error: unsupported harness: $HARNESS" >&2; exit 1 ;;
   esac
 }

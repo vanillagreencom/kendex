@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Post-merge bot triage of #1284: `open-terminal` now renders the
+  merged-and-cleaned terminal condition into every launched brief (the
+  handoff/oversee requirement previously reached only hand-minted briefs);
+  README's `GH_ISSUE_PATTERN` row documents the real built-in default
+  (`([A-Z]+-[0-9]+|issue-[0-9]+)` — the transcribed value would have
+  rejected `issue-N` branches if copied into settings); post-summary's
+  downstream-handoff trigger regains `interface` alongside `API`.
+
 - **orch/fleet simplification v2 — ablation-tested condensation.** Every
   contested SKILL.md section got an A/B answer from live drills on the private
   rig (claude arm: full cycle 13 min vs the 14 min CI+perf baseline, zero

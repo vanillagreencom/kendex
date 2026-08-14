@@ -44,7 +44,7 @@ Two handoff-specific rules follow from expanding items:
 
 ## 2. Launch
 
-**Every launched brief states the terminal condition**: the item is complete only when its PR is MERGED and its worktree cleaned up — an opened PR is not done.
+**Every launched brief states the terminal condition**: the item is complete only when its PR is MERGED and its worktree cleaned up — an opened PR is not done. `open-terminal` renders it into every brief; briefs minted by hand (codex-app threads, oversee's non-terminal surfaces) carry it explicitly.
 
 ### Terminal harnesses
 

@@ -33,7 +33,10 @@
 # Adds a "## Launch Instructions" section near the top
 # of each agent file. Use this for startup tasks, required
 # reading, or project-specific operating notes.
+# The reserved key `all` applies to every agent, rendered
+# before that agent's own entry.
 # Examples:
+# all = "Run `just setup` before anything else."
 # rust = "Read docs/architecture.md before coding."
 # iced = """
 # Read docs/ui.md.

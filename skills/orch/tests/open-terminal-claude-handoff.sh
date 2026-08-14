@@ -24,6 +24,9 @@
 # harness is ever launched.
 set -euo pipefail
 
+# The terminal-condition tail every rendered brief carries (open-terminal start_cmd).
+TC=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
@@ -172,20 +175,20 @@ OT="$(make_ot_repo "$REPO")"
 # Pane screen where the brief appears ONLY inside the echoed launch command —
 # exactly what a first-run dialog leaves behind. The delivery check must treat
 # this as UNDELIVERED (the filter's failing input).
-ECHO_SCREEN="\$ claude -n CC-737 --dangerously-skip-permissions '/orch start CC-737'
+ECHO_SCREEN="\$ claude -n CC-737 --dangerously-skip-permissions '/orch start CC-737${TC}'
 ╭─ Enable browser integration? ─╮
 > "
 # Pane screen after the brief reached the TUI: the brief is visible on its own
 # transcript line, distinct from the echoed launch command, and the response
 # has begun (● transcript marker).
-DELIVERED_SCREEN="> /orch start CC-737
+DELIVERED_SCREEN="> /orch start CC-737${TC}
 ● Reading workflows/start.md"
 # Pane screen where the brief sits UNSENT in the composer's │-bordered input
 # box — visible outside the echoed launch command, but with no transcript
 # activity anywhere. Delivery means SUBMITTED, so this must count as
 # UNDELIVERED.
 COMPOSER_SCREEN="╭──────────────────────────────────────────╮
-│ > /orch start CC-737                      │
+│ > /orch start CC-737${TC} │
 ╰──────────────────────────────────────────╯
   ? for shortcuts"
 # Main TUI at a ready, EMPTY composer (the '? for shortcuts' footer is the
@@ -206,7 +209,7 @@ set -e
 assert_eq "$c1_code" "0" "linear:claude launch succeeds"
 if wait_capture "$CAP1"; then
   c1_cmd="$(cat "$CAP1")"
-  assert_contains "$c1_cmd" "'--model' 'opus[1m]' '--effort' 'max' '--dangerously-skip-permissions' '/orch start CC-737'" \
+  assert_contains "$c1_cmd" "'--model' 'opus[1m]' '--effort' 'max' '--dangerously-skip-permissions' '/orch start CC-737${TC}'" \
     "linear:claude renders the caller's launch flags before the brief"
 else
   FAIL=$((FAIL + 1))
@@ -224,7 +227,7 @@ set -e
 assert_eq "$c2_code" "0" "github:claude launch succeeds"
 if wait_capture "$CAP2"; then
   c2_cmd="$(cat "$CAP2")"
-  assert_contains "$c2_cmd" "'--effort' 'max' '--dangerously-skip-permissions' '/orch start github acme/widgets#42'" \
+  assert_contains "$c2_cmd" "'--effort' 'max' '--dangerously-skip-permissions' '/orch start github acme/widgets#42${TC}'" \
     "github:claude renders the caller's launch flags before the brief"
 else
   FAIL=$((FAIL + 1))
@@ -242,7 +245,7 @@ set -e
 assert_eq "$c3_code" "0" "a second launch with different flags succeeds"
 if wait_capture "$CAP3"; then
   c3_cmd="$(cat "$CAP3")"
-  assert_contains "$c3_cmd" "'--model' 'sonnet' '--permission-mode' 'bypassPermissions' '/orch start CC-737'" \
+  assert_contains "$c3_cmd" "'--model' 'sonnet' '--permission-mode' 'bypassPermissions' '/orch start CC-737${TC}'" \
     "the flags this launch passed are the flags rendered"
   assert_not_contains "$c3_cmd" "'--effort' 'max'" \
     "no flag leaks in from another launch or a stored default"
@@ -263,7 +266,7 @@ if wait_capture "$CAP3B"; then
   c3b_cmd="$(cat "$CAP3B")"
   # The launch command must end exactly at the brief: no model, effort, or
   # permission flag may appear from anywhere but --launch-flags.
-  assert_eq "${c3b_cmd##*&& }" "claude -n CC-737 '/orch start CC-737'" \
+  assert_eq "${c3b_cmd##*&& }" "claude -n CC-737 '/orch start CC-737${TC}'" \
     "an unflagged launch renders no model, effort, or permission default"
 else
   FAIL=$((FAIL + 1))
@@ -281,7 +284,7 @@ c4_code=$?
 set -e
 assert_eq "$c4_code" "0" "prompting flags still launch"
 if wait_capture "$CAP4"; then
-  assert_contains "$(cat "$CAP4")" "'--permission-mode' 'plan' '/orch start CC-737'" \
+  assert_contains "$(cat "$CAP4")" "'--permission-mode' 'plan' '/orch start CC-737${TC}'" \
     "prompting flags are rendered as given"
 fi
 c4_err="$(cat "$TMP_ROOT/c4.err")"
@@ -303,7 +306,7 @@ assert_eq "$c5_code" "0" "tmux delivered-first-pass exits 0"
 assert_contains "$c5_out" "Opened tmux window 'CC-737'" "tmux window opened"
 assert_not_contains "$c5_out" "Re-delivered" "no re-send when the brief is visible"
 c5_log="$(cat "$OT_TMUX_LOG")"
-assert_contains "$c5_log" "'--dangerously-skip-permissions' '/orch start CC-737'" \
+assert_contains "$c5_log" "'--dangerously-skip-permissions' '/orch start CC-737${TC}'" \
   "tmux-sent launch command carries the flags the caller chose"
 assert_contains "$c5_log" "capture-pane" "delivery was verified via capture-pane"
 assert_contains "$c5_log" "capture-pane -pJ -S - -t %7" \

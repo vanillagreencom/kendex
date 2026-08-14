@@ -17,6 +17,9 @@
 # would launch.
 set -euo pipefail
 
+# The terminal-condition tail every rendered brief carries (open-terminal start_cmd).
+TC=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
@@ -126,7 +129,7 @@ set -e
 assert_eq "$c1_code" "0" "linear:codex launch succeeds"
 if wait_capture "$CAP1"; then
   c1_cmd="$(cat "$CAP1")"
-  assert_contains "$c1_cmd" "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737'" \
+  assert_contains "$c1_cmd" "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for CC-737${TC}'" \
     "linear:codex emits the prose kickoff naming SKILL.md and the item"
   assert_not_contains "$c1_cmd" '$' "linear:codex command contains no \$"
   assert_not_contains "$c1_cmd" '`' "linear:codex command contains no backtick"
@@ -144,7 +147,7 @@ set -e
 assert_eq "$c2_code" "0" "github:codex launch succeeds"
 if wait_capture "$CAP2"; then
   c2_cmd="$(cat "$CAP2")"
-  assert_contains "$c2_cmd" "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42'" \
+  assert_contains "$c2_cmd" "codex 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github acme/widgets#42${TC}'" \
     "github:codex emits the prose kickoff carrying repo#item"
   assert_not_contains "$c2_cmd" '$' "github:codex command contains no \$"
   assert_not_contains "$c2_cmd" '`' "github:codex command contains no backtick"

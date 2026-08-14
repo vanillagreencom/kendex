@@ -66,7 +66,7 @@ Omit empty sections. Created Issues comes from `audit_issues_created` plus `pr_c
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 ```
 
-Read `.blocks`. Post a handoff comment to a downstream issue only when it earns one: its description references files this PR touched, a decision it should know about was created, or an API it depends on changed. Simply being unblocked — the common case — earns nothing.
+Read `.blocks`. Post a handoff comment to a downstream issue only when it earns one: its description references files this PR touched, a decision it should know about was created, or an API or interface it depends on changed. Simply being unblocked — the common case — earns nothing.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh comments create [DOWNSTREAM_ISSUE_ID] --body "Handoff from [ISSUE_ID]:
