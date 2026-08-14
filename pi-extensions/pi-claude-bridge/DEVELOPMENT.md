@@ -2,6 +2,12 @@
 
 Implementation details for contributors. End-user setup, settings, and troubleshooting live in [`README.md`](./README.md).
 
+## Concurrent request lanes
+
+Pi can call one provider instance concurrently for parent sessions, subagents, and sibling conversations. Each `streamSimple` request therefore enters an `AsyncLocalStorage` lane (`src/request-lane.ts`) keyed by `SimpleStreamOptions.sessionId`. All request-owned bridge state resolves through that lane: the active `QueryContext`, Pi stream, pushed-context stack, watchdog owner, and Claude session record. Promise continuations, Agent SDK callbacks, and MCP tool handlers inherit the lane automatically, so nested asynchronous work cannot observe a sibling request's state.
+
+The default lane exists for direct hosts that omit `sessionId` and for initialization before any request starts; it preserves the bridge's historical single-conversation behavior. Code that reads or mutates request-owned state must use the accessors in `bridge-state.ts`, `query-state.ts`, and `session-persistence.ts` rather than introducing another process-global mutable binding. Regression coverage lives in `tests/unit-session-lanes.mjs` and `tests/unit-foreign-conversation.mjs`, including overlapping parent/child requests, sibling abort isolation, and independent parallel tool-result loops.
+
 ## Stream and tool-result handling
 
 - The bridge runs Claude Code through the Claude Agent SDK while Pi remains the owner of the visible TUI and tool execution.

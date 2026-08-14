@@ -28116,6 +28116,16 @@ function extractAllToolResults(messages) {
   return { results, stopIdx };
 }
 
+// src/request-lane.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+var requestLane = new AsyncLocalStorage();
+function runInRequestLane(sessionId, callback) {
+  return sessionId ? requestLane.run(sessionId, callback) : callback();
+}
+function currentRequestLaneId() {
+  return requestLane.getStore();
+}
+
 // src/query-state.ts
 function summarizeDroppedUserMessages(site, dropped) {
   return {
@@ -28484,36 +28494,54 @@ var QueryContext = class {
     };
   }
 };
-var _ctx = new QueryContext();
-var contextStack = [];
+var defaultLane = { current: new QueryContext(), stack: [] };
+var sessionLanes = /* @__PURE__ */ new Map();
+function lane() {
+  const sessionId = currentRequestLaneId();
+  if (!sessionId) return defaultLane;
+  let state = sessionLanes.get(sessionId);
+  if (!state) {
+    state = { current: new QueryContext(), stack: [] };
+    sessionLanes.set(sessionId, state);
+  }
+  return state;
+}
 function ctx() {
-  return _ctx;
+  return lane().current;
 }
 function stackDepth() {
-  return contextStack.length;
+  return lane().stack.length;
 }
 function pushContext() {
-  if (!_ctx.activeQuery) throw new Error("pushContext() called with no active query");
-  contextStack.push(_ctx);
-  _ctx = new QueryContext();
+  const state = lane();
+  if (!state.current.activeQuery) throw new Error("pushContext() called with no active query");
+  state.stack.push(state.current);
+  state.current = new QueryContext();
 }
 function popContext() {
-  if (contextStack.length === 0) throw new Error("popContext() called with empty stack");
-  const parent = contextStack[contextStack.length - 1];
-  parent.deferredUserMessages.push(..._ctx.deferredUserMessages);
-  _ctx = contextStack.pop();
+  const state = lane();
+  if (state.stack.length === 0) throw new Error("popContext() called with empty stack");
+  const parent = state.stack[state.stack.length - 1];
+  parent.deferredUserMessages.push(...state.current.deferredUserMessages);
+  state.current = state.stack.pop();
 }
 function popContextFor(target) {
-  if (_ctx === target) {
+  const state = lane();
+  if (state.current === target) {
     popContext();
     return true;
   }
-  const idx = contextStack.indexOf(target);
+  const idx = state.stack.indexOf(target);
   if (idx < 0) return false;
-  const parent = idx > 0 ? contextStack[idx - 1] : void 0;
+  const parent = idx > 0 ? state.stack[idx - 1] : void 0;
   parent?.deferredUserMessages.push(...target.deferredUserMessages);
-  contextStack.splice(idx, 1);
+  state.stack.splice(idx, 1);
   return true;
+}
+function clearQueryLanes() {
+  sessionLanes.clear();
+  defaultLane.current = new QueryContext();
+  defaultLane.stack.length = 0;
 }
 
 // src/tool-pairing-audit.ts
@@ -28615,15 +28643,37 @@ function summarizeMissingToolNames(missing) {
 }
 
 // src/bridge-state.ts
-var sharedSession = null;
+var defaultSharedSession = null;
+var primaryLaneId;
+var sharedSessions = /* @__PURE__ */ new Map();
 var extensionApi;
 var piUI;
+function getSharedSession() {
+  const sessionId = currentRequestLaneId();
+  if (!sessionId) return defaultSharedSession;
+  if (!sharedSessions.has(sessionId) && primaryLaneId === void 0) {
+    primaryLaneId = sessionId;
+    sharedSessions.set(sessionId, defaultSharedSession);
+    defaultSharedSession = null;
+  }
+  return sharedSessions.get(sessionId) ?? null;
+}
 function setSharedSession(next) {
-  sharedSession = next;
+  const sessionId = currentRequestLaneId();
+  if (sessionId) {
+    primaryLaneId ??= sessionId;
+    sharedSessions.set(sessionId, next);
+  } else defaultSharedSession = next;
+}
+function clearSharedSessionLanes() {
+  sharedSessions.clear();
+  primaryLaneId = void 0;
+  defaultSharedSession = null;
 }
 function markSessionForRebuild(opts = {}) {
+  const sharedSession = getSharedSession();
   if (!sharedSession) return;
-  sharedSession = { ...sharedSession, needsRebuild: true, ...opts.forceRotate ? { forceRotate: true } : {} };
+  setSharedSession({ ...sharedSession, needsRebuild: true, ...opts.forceRotate ? { forceRotate: true } : {} });
 }
 function setExtensionApi(next) {
   extensionApi = next;
@@ -28701,6 +28751,7 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
       return true;
     }
     const toolNameSummary = compactToolNameSummary(progress.toolNames);
+    const sharedSession = getSharedSession();
     diagDump("tool_result_delivery_mismatch", {
       reason,
       cwd,
@@ -28736,10 +28787,19 @@ function reportToolResultMismatch(queryCtx, reason, cwd, opts = {}) {
 }
 function __testSetBridgeIntegrityState(state) {
   if ("ui" in state) piUI = state.ui;
-  if ("sharedSession" in state) sharedSession = state.sharedSession ?? null;
+  if ("sharedSession" in state) {
+    if (currentRequestLaneId()) setSharedSession(state.sharedSession ?? null);
+    else {
+      clearSharedSessionLanes();
+      defaultSharedSession = state.sharedSession ?? null;
+    }
+  }
 }
 function __testGetBridgeIntegrityState() {
-  return { sharedSession };
+  const laneId = currentRequestLaneId();
+  return {
+    sharedSession: laneId ? getSharedSession() : primaryLaneId ? sharedSessions.get(primaryLaneId) ?? null : defaultSharedSession
+  };
 }
 
 // src/connector-audit.ts
@@ -30339,8 +30399,8 @@ function prettifyError(error51) {
 }
 
 // node_modules/zod/v4/core/parse.js
-var _parse = (_Err) => (schema, value, _ctx2, _params) => {
-  const ctx2 = _ctx2 ? { ..._ctx2, async: false } : { async: false };
+var _parse = (_Err) => (schema, value, _ctx, _params) => {
+  const ctx2 = _ctx ? { ..._ctx, async: false } : { async: false };
   const result = schema._zod.run({ value, issues: [] }, ctx2);
   if (result instanceof Promise) {
     throw new $ZodAsyncError();
@@ -30353,8 +30413,8 @@ var _parse = (_Err) => (schema, value, _ctx2, _params) => {
   return result.value;
 };
 var parse2 = /* @__PURE__ */ _parse($ZodRealError);
-var _parseAsync = (_Err) => async (schema, value, _ctx2, params) => {
-  const ctx2 = _ctx2 ? { ..._ctx2, async: true } : { async: true };
+var _parseAsync = (_Err) => async (schema, value, _ctx, params) => {
+  const ctx2 = _ctx ? { ..._ctx, async: true } : { async: true };
   let result = schema._zod.run({ value, issues: [] }, ctx2);
   if (result instanceof Promise)
     result = await result;
@@ -30366,8 +30426,8 @@ var _parseAsync = (_Err) => async (schema, value, _ctx2, params) => {
   return result.value;
 };
 var parseAsync = /* @__PURE__ */ _parseAsync($ZodRealError);
-var _safeParse = (_Err) => (schema, value, _ctx2) => {
-  const ctx2 = _ctx2 ? { ..._ctx2, async: false } : { async: false };
+var _safeParse = (_Err) => (schema, value, _ctx) => {
+  const ctx2 = _ctx ? { ..._ctx, async: false } : { async: false };
   const result = schema._zod.run({ value, issues: [] }, ctx2);
   if (result instanceof Promise) {
     throw new $ZodAsyncError();
@@ -30378,8 +30438,8 @@ var _safeParse = (_Err) => (schema, value, _ctx2) => {
   } : { success: true, data: result.value };
 };
 var safeParse = /* @__PURE__ */ _safeParse($ZodRealError);
-var _safeParseAsync = (_Err) => async (schema, value, _ctx2) => {
-  const ctx2 = _ctx2 ? { ..._ctx2, async: true } : { async: true };
+var _safeParseAsync = (_Err) => async (schema, value, _ctx) => {
+  const ctx2 = _ctx ? { ..._ctx, async: true } : { async: true };
   let result = schema._zod.run({ value, issues: [] }, ctx2);
   if (result instanceof Promise)
     result = await result;
@@ -30389,40 +30449,40 @@ var _safeParseAsync = (_Err) => async (schema, value, _ctx2) => {
   } : { success: true, data: result.value };
 };
 var safeParseAsync = /* @__PURE__ */ _safeParseAsync($ZodRealError);
-var _encode = (_Err) => (schema, value, _ctx2) => {
-  const ctx2 = _ctx2 ? { ..._ctx2, direction: "backward" } : { direction: "backward" };
+var _encode = (_Err) => (schema, value, _ctx) => {
+  const ctx2 = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
   return _parse(_Err)(schema, value, ctx2);
 };
 var encode = /* @__PURE__ */ _encode($ZodRealError);
-var _decode = (_Err) => (schema, value, _ctx2) => {
-  return _parse(_Err)(schema, value, _ctx2);
+var _decode = (_Err) => (schema, value, _ctx) => {
+  return _parse(_Err)(schema, value, _ctx);
 };
 var decode = /* @__PURE__ */ _decode($ZodRealError);
-var _encodeAsync = (_Err) => async (schema, value, _ctx2) => {
-  const ctx2 = _ctx2 ? { ..._ctx2, direction: "backward" } : { direction: "backward" };
+var _encodeAsync = (_Err) => async (schema, value, _ctx) => {
+  const ctx2 = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
   return _parseAsync(_Err)(schema, value, ctx2);
 };
 var encodeAsync = /* @__PURE__ */ _encodeAsync($ZodRealError);
-var _decodeAsync = (_Err) => async (schema, value, _ctx2) => {
-  return _parseAsync(_Err)(schema, value, _ctx2);
+var _decodeAsync = (_Err) => async (schema, value, _ctx) => {
+  return _parseAsync(_Err)(schema, value, _ctx);
 };
 var decodeAsync = /* @__PURE__ */ _decodeAsync($ZodRealError);
-var _safeEncode = (_Err) => (schema, value, _ctx2) => {
-  const ctx2 = _ctx2 ? { ..._ctx2, direction: "backward" } : { direction: "backward" };
+var _safeEncode = (_Err) => (schema, value, _ctx) => {
+  const ctx2 = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
   return _safeParse(_Err)(schema, value, ctx2);
 };
 var safeEncode = /* @__PURE__ */ _safeEncode($ZodRealError);
-var _safeDecode = (_Err) => (schema, value, _ctx2) => {
-  return _safeParse(_Err)(schema, value, _ctx2);
+var _safeDecode = (_Err) => (schema, value, _ctx) => {
+  return _safeParse(_Err)(schema, value, _ctx);
 };
 var safeDecode = /* @__PURE__ */ _safeDecode($ZodRealError);
-var _safeEncodeAsync = (_Err) => async (schema, value, _ctx2) => {
-  const ctx2 = _ctx2 ? { ..._ctx2, direction: "backward" } : { direction: "backward" };
+var _safeEncodeAsync = (_Err) => async (schema, value, _ctx) => {
+  const ctx2 = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
   return _safeParseAsync(_Err)(schema, value, ctx2);
 };
 var safeEncodeAsync = /* @__PURE__ */ _safeEncodeAsync($ZodRealError);
-var _safeDecodeAsync = (_Err) => async (schema, value, _ctx2) => {
-  return _safeParseAsync(_Err)(schema, value, _ctx2);
+var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
+  return _safeParseAsync(_Err)(schema, value, _ctx);
 };
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync($ZodRealError);
 
@@ -31616,7 +31676,7 @@ var $ZodCustomStringFormat = /* @__PURE__ */ $constructor("$ZodCustomStringForma
 var $ZodNumber = /* @__PURE__ */ $constructor("$ZodNumber", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.pattern = inst._zod.bag.pattern ?? number;
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     if (def.coerce)
       try {
         payload.value = Number(payload.value);
@@ -31644,7 +31704,7 @@ var $ZodNumberFormat = /* @__PURE__ */ $constructor("$ZodNumberFormat", (inst, d
 var $ZodBoolean = /* @__PURE__ */ $constructor("$ZodBoolean", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.pattern = boolean;
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     if (def.coerce)
       try {
         payload.value = Boolean(payload.value);
@@ -31665,7 +31725,7 @@ var $ZodBoolean = /* @__PURE__ */ $constructor("$ZodBoolean", (inst, def) => {
 var $ZodBigInt = /* @__PURE__ */ $constructor("$ZodBigInt", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.pattern = bigint;
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     if (def.coerce)
       try {
         payload.value = BigInt(payload.value);
@@ -31688,7 +31748,7 @@ var $ZodBigIntFormat = /* @__PURE__ */ $constructor("$ZodBigIntFormat", (inst, d
 });
 var $ZodSymbol = /* @__PURE__ */ $constructor("$ZodSymbol", (inst, def) => {
   $ZodType.init(inst, def);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     const input = payload.value;
     if (typeof input === "symbol")
       return payload;
@@ -31705,7 +31765,7 @@ var $ZodUndefined = /* @__PURE__ */ $constructor("$ZodUndefined", (inst, def) =>
   $ZodType.init(inst, def);
   inst._zod.pattern = _undefined;
   inst._zod.values = /* @__PURE__ */ new Set([void 0]);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     const input = payload.value;
     if (typeof input === "undefined")
       return payload;
@@ -31722,7 +31782,7 @@ var $ZodNull = /* @__PURE__ */ $constructor("$ZodNull", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.pattern = _null;
   inst._zod.values = /* @__PURE__ */ new Set([null]);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     const input = payload.value;
     if (input === null)
       return payload;
@@ -31745,7 +31805,7 @@ var $ZodUnknown = /* @__PURE__ */ $constructor("$ZodUnknown", (inst, def) => {
 });
 var $ZodNever = /* @__PURE__ */ $constructor("$ZodNever", (inst, def) => {
   $ZodType.init(inst, def);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     payload.issues.push({
       expected: "never",
       code: "invalid_type",
@@ -31757,7 +31817,7 @@ var $ZodNever = /* @__PURE__ */ $constructor("$ZodNever", (inst, def) => {
 });
 var $ZodVoid = /* @__PURE__ */ $constructor("$ZodVoid", (inst, def) => {
   $ZodType.init(inst, def);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     const input = payload.value;
     if (typeof input === "undefined")
       return payload;
@@ -31772,7 +31832,7 @@ var $ZodVoid = /* @__PURE__ */ $constructor("$ZodVoid", (inst, def) => {
 });
 var $ZodDate = /* @__PURE__ */ $constructor("$ZodDate", (inst, def) => {
   $ZodType.init(inst, def);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     if (def.coerce) {
       try {
         payload.value = new Date(payload.value);
@@ -32719,7 +32779,7 @@ var $ZodEnum = /* @__PURE__ */ $constructor("$ZodEnum", (inst, def) => {
   const valuesSet = new Set(values);
   inst._zod.values = valuesSet;
   inst._zod.pattern = new RegExp(`^(${values.filter((k) => propertyKeyTypes.has(typeof k)).map((o) => typeof o === "string" ? escapeRegex(o) : o.toString()).join("|")})$`);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     const input = payload.value;
     if (valuesSet.has(input)) {
       return payload;
@@ -32741,7 +32801,7 @@ var $ZodLiteral = /* @__PURE__ */ $constructor("$ZodLiteral", (inst, def) => {
   const values = new Set(def.values);
   inst._zod.values = values;
   inst._zod.pattern = new RegExp(`^(${def.values.map((o) => typeof o === "string" ? escapeRegex(o) : o ? escapeRegex(o.toString()) : String(o)).join("|")})$`);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     const input = payload.value;
     if (values.has(input)) {
       return payload;
@@ -32757,7 +32817,7 @@ var $ZodLiteral = /* @__PURE__ */ $constructor("$ZodLiteral", (inst, def) => {
 });
 var $ZodFile = /* @__PURE__ */ $constructor("$ZodFile", (inst, def) => {
   $ZodType.init(inst, def);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     const input = payload.value;
     if (input instanceof File)
       return payload;
@@ -32975,7 +33035,7 @@ var $ZodCatch = /* @__PURE__ */ $constructor("$ZodCatch", (inst, def) => {
 });
 var $ZodNaN = /* @__PURE__ */ $constructor("$ZodNaN", (inst, def) => {
   $ZodType.init(inst, def);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     if (typeof payload.value !== "number" || !Number.isNaN(payload.value)) {
       payload.issues.push({
         input: payload.value,
@@ -33111,7 +33171,7 @@ var $ZodTemplateLiteral = /* @__PURE__ */ $constructor("$ZodTemplateLiteral", (i
     }
   }
   inst._zod.pattern = new RegExp(`^${regexParts.join("")}$`);
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     if (typeof payload.value !== "string") {
       payload.issues.push({
         input: payload.value,
@@ -33165,7 +33225,7 @@ var $ZodFunction = /* @__PURE__ */ $constructor("$ZodFunction", (inst, def) => {
       return result;
     };
   };
-  inst._zod.parse = (payload, _ctx2) => {
+  inst._zod.parse = (payload, _ctx) => {
     if (typeof payload.value !== "function") {
       payload.issues.push({
         code: "invalid_type",
@@ -40605,8 +40665,8 @@ function finalize(ctx2, schema) {
     throw new Error("Error converting schema to JSON.");
   }
 }
-function isTransforming(_schema, _ctx2) {
-  const ctx2 = _ctx2 ?? { seen: /* @__PURE__ */ new Set() };
+function isTransforming(_schema, _ctx) {
+  const ctx2 = _ctx ?? { seen: /* @__PURE__ */ new Set() };
   if (ctx2.seen.has(_schema))
     return false;
   ctx2.seen.add(_schema);
@@ -40746,7 +40806,7 @@ var numberProcessor = (schema, ctx2, _json, _params) => {
   if (typeof multipleOf === "number")
     json2.multipleOf = multipleOf;
 };
-var booleanProcessor = (_schema, _ctx2, json2, _params) => {
+var booleanProcessor = (_schema, _ctx, json2, _params) => {
   json2.type = "boolean";
 };
 var bigintProcessor = (_schema, ctx2, _json, _params) => {
@@ -40778,19 +40838,19 @@ var voidProcessor = (_schema, ctx2, _json, _params) => {
     throw new Error("Void cannot be represented in JSON Schema");
   }
 };
-var neverProcessor = (_schema, _ctx2, json2, _params) => {
+var neverProcessor = (_schema, _ctx, json2, _params) => {
   json2.not = {};
 };
-var anyProcessor = (_schema, _ctx2, _json, _params) => {
+var anyProcessor = (_schema, _ctx, _json, _params) => {
 };
-var unknownProcessor = (_schema, _ctx2, _json, _params) => {
+var unknownProcessor = (_schema, _ctx, _json, _params) => {
 };
 var dateProcessor = (_schema, ctx2, _json, _params) => {
   if (ctx2.unrepresentable === "throw") {
     throw new Error("Date cannot be represented in JSON Schema");
   }
 };
-var enumProcessor = (schema, _ctx2, json2, _params) => {
+var enumProcessor = (schema, _ctx, json2, _params) => {
   const def = schema._zod.def;
   const values = getEnumValues(def.entries);
   if (values.every((v2) => typeof v2 === "number"))
@@ -40844,7 +40904,7 @@ var nanProcessor = (_schema, ctx2, _json, _params) => {
     throw new Error("NaN cannot be represented in JSON Schema");
   }
 };
-var templateLiteralProcessor = (schema, _ctx2, json2, _params) => {
+var templateLiteralProcessor = (schema, _ctx, json2, _params) => {
   const _json = json2;
   const pattern = schema._zod.pattern;
   if (!pattern)
@@ -40852,7 +40912,7 @@ var templateLiteralProcessor = (schema, _ctx2, json2, _params) => {
   _json.type = "string";
   _json.pattern = pattern.source;
 };
-var fileProcessor = (schema, _ctx2, json2, _params) => {
+var fileProcessor = (schema, _ctx, json2, _params) => {
   const _json = json2;
   const file2 = {
     type: "string",
@@ -40876,7 +40936,7 @@ var fileProcessor = (schema, _ctx2, json2, _params) => {
     Object.assign(_json, file2);
   }
 };
-var successProcessor = (_schema, _ctx2, json2, _params) => {
+var successProcessor = (_schema, _ctx, json2, _params) => {
   json2.type = "boolean";
 };
 var customProcessor = (_schema, ctx2, _json, _params) => {
@@ -42564,8 +42624,8 @@ var ZodTransform = /* @__PURE__ */ $constructor("ZodTransform", (inst, def) => {
   $ZodTransform.init(inst, def);
   ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx2, json2, params) => transformProcessor(inst, ctx2, json2, params);
-  inst._zod.parse = (payload, _ctx2) => {
-    if (_ctx2.direction === "backward") {
+  inst._zod.parse = (payload, _ctx) => {
+    if (_ctx.direction === "backward") {
       throw new $ZodEncodeError(inst.constructor.name);
     }
     payload.addIssue = (issue2) => {
@@ -44723,6 +44783,7 @@ function cancelScheduledSessionPersistence() {
   scheduledPersistenceTimers.clear();
 }
 function schedulePersistSharedSession(ctxLike) {
+  const sharedSession = getSharedSession();
   if (!extensionApi || !sharedSession || !ctxLike?.sessionManager) return;
   const sessionManager = ctxLike.sessionManager;
   const { claudeConfigDir: _omitted, ...snapshot } = sharedSession;
@@ -44848,6 +44909,7 @@ function debugSessionPaths(label, cwd, jsonlPath, claudeDir) {
   debug(`${label}: selected.CLAUDE_CONFIG_DIR=${claudeDir ?? "(unset)"} HOME=${process.env.HOME ?? "(unset)"}`);
 }
 function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account) {
+  const sharedSession = getSharedSession();
   const priorMessages = messages.slice(0, -1);
   const accountProfileId = account?.accountProfileId;
   const scopeConfigDir = account?.claudeConfigDir;
@@ -46280,6 +46342,9 @@ function applyProviderRegistration(trigger) {
   }
 }
 function streamClaudeAgentSdk(model, context, options) {
+  return runInRequestLane(options?.sessionId, () => streamClaudeAgentSdkInLane(model, context, options));
+}
+function streamClaudeAgentSdkInLane(model, context, options) {
   const stream = newAssistantMessageEventStream();
   const lastMsgRole = context.messages[context.messages.length - 1]?.role;
   const cwd = options?.cwd ?? process.cwd();
@@ -46345,8 +46410,9 @@ function streamClaudeAgentSdk(model, context, options) {
         });
       }
     }
-    if (sharedSession && stackDepth() === 0 && !queryCtx.detachedFromSharedSession) {
-      setSharedSession({ ...sharedSession, cursor: Math.max(sharedSession.cursor, capturedThrough) });
+    const activeSession = getSharedSession();
+    if (activeSession && stackDepth() === 0 && !queryCtx.detachedFromSharedSession) {
+      setSharedSession({ ...activeSession, cursor: Math.max(activeSession.cursor, capturedThrough) });
     }
     queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
     return stream;
@@ -46354,7 +46420,8 @@ function streamClaudeAgentSdk(model, context, options) {
   const lastMsg = context.messages[context.messages.length - 1];
   if (lastMsg?.role === "toolResult") {
     debug(`provider: orphaned tool result after abort, emitting end_turn`);
-    if (sharedSession && stackDepth() === 0 && !ctx().detachedFromSharedSession) setSharedSession({ ...sharedSession, cursor: context.messages.length });
+    const activeSession = getSharedSession();
+    if (activeSession && stackDepth() === 0 && !ctx().detachedFromSharedSession) setSharedSession({ ...activeSession, cursor: context.messages.length });
     const c = ctx();
     queueMicrotask(() => {
       c.resetTurnState(model);
@@ -46475,7 +46542,7 @@ function streamClaudeAgentSdk(model, context, options) {
   const claudeExecutable = resolveClaudeExecutable(providerSettings.pathToClaudeCodeExecutable);
   const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
   const accountScope = accountSessionScope(account);
-  const cursorBeforeSync = sharedSession?.cursor ?? null;
+  const cursorBeforeSync = getSharedSession()?.cursor ?? null;
   const syncResult = isReentrant ? { sessionId: null, promptStart: context.messages.length - 1 } : syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope);
   const { sessionId: resumeSessionId, promptStart } = syncResult;
   const foreignContext = syncResult.foreignContext === true;
@@ -46494,7 +46561,10 @@ function streamClaudeAgentSdk(model, context, options) {
       cursorBeforeSync,
       promptStart,
       promptRoles: promptMessages.map((m) => m.role).join(" "),
-      sharedSession: sharedSession ? { sessionId: sharedSession.sessionId.slice(0, 8), cursor: sharedSession.cursor } : null,
+      sharedSession: (() => {
+        const activeSession = getSharedSession();
+        return activeSession ? { sessionId: activeSession.sessionId.slice(0, 8), cursor: activeSession.cursor } : null;
+      })(),
       messageRoles: context.messages.map((m, i) => `[${i}]${m.role}`).join(" ")
     });
     promptText = "[continue]";
@@ -46697,17 +46767,19 @@ function streamClaudeAgentSdk(model, context, options) {
       if (requestRotation(failure)) return;
       if (!abortCtx.handledTerminalError) surfaceFailure(failure);
       const droppedSteers = dropDeferredUserMessages("terminal-failure");
-      const failedSessionId = capturedSessionId ?? sharedSession?.sessionId;
+      const activeSession2 = getSharedSession();
+      const failedSessionId = capturedSessionId ?? activeSession2?.sessionId;
       if (failedSessionId) {
-        const cursor = Math.max(context.messages.length, abortCtx.latestCursor, sharedSession?.cursor ?? 0);
+        const cursor = Math.max(context.messages.length, abortCtx.latestCursor, activeSession2?.cursor ?? 0);
         debug(`provider: terminal failure, persisting session=${failedSessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}, droppedSteers=${droppedSteers.length}`);
         persistSession({ sessionId: failedSessionId, cursor, cwd, ...accountScope, ...droppedSteers.length > 0 ? { needsRebuild: true } : {} });
       }
       return;
     }
-    const sessionId = capturedSessionId ?? sharedSession?.sessionId;
+    const activeSession = getSharedSession();
+    const sessionId = capturedSessionId ?? activeSession?.sessionId;
     if (sessionId) {
-      const cursor = Math.max(context.messages.length, abortCtx.latestCursor, sharedSession?.cursor ?? 0);
+      const cursor = Math.max(context.messages.length, abortCtx.latestCursor, activeSession?.cursor ?? 0);
       debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}`);
       persistSession({ sessionId, cursor, cwd, ...accountScope });
     }
@@ -46719,7 +46791,7 @@ function streamClaudeAgentSdk(model, context, options) {
         debug(`provider: replaying deferred user message: ${steerPreview}`);
         abortCtx.resetTurnState(queryModel);
         abortCtx.resetToolTracking();
-        const resumeId = foreignContext ? capturedSessionId : sharedSession?.sessionId;
+        const resumeId = foreignContext ? capturedSessionId : getSharedSession()?.sessionId;
         if (!resumeId) {
           debug(`WARNING: no session to resume for deferred message, dropping`);
           dropDeferredUserMessages("continuation-no-resume-id", steer);
@@ -46739,9 +46811,10 @@ function streamClaudeAgentSdk(model, context, options) {
             }
             break;
           }
-          const sid = continuation.capturedSessionId ?? sharedSession?.sessionId;
+          const activeSession2 = getSharedSession();
+          const sid = continuation.capturedSessionId ?? activeSession2?.sessionId;
           if (sid) {
-            persistSession({ sessionId: sid, cursor: sharedSession?.cursor ?? 0, cwd, ...accountScope });
+            persistSession({ sessionId: sid, cursor: activeSession2?.cursor ?? 0, cwd, ...accountScope });
           }
         } catch (contError) {
           debug(`provider: continuation query error:`, contError);
@@ -46836,10 +46909,11 @@ function index_default(pi) {
     host[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] = BRIDGE_ACCOUNT_HOST;
   }
   const clearSession = (event) => {
-    debug(`${event}: clearing session ${sharedSession?.sessionId?.slice(0, 8) ?? "none"}`);
+    const activeSession = getSharedSession();
+    debug(`${event}: clearing session ${activeSession?.sessionId?.slice(0, 8) ?? "none"}`);
     setSharedSession(null);
   };
-  pi.on("session_start", (event, ctx2) => {
+  pi.on("session_start", (event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => {
     recordProjectTrust(ctx2);
     setPiUI(ctx2.ui);
     if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
@@ -46847,27 +46921,32 @@ function index_default(pi) {
     }
     if (event.reason === "startup" || event.reason === "resume") restoreSharedSessionFromPi(ctx2);
     applyProviderRegistration(`session_start:${event.reason}`);
+  }));
+  pi.on("session_shutdown", (_event, ctx2) => {
+    runInRequestLane(ctx2.sessionManager.getSessionId(), () => {
+      cancelScheduledSessionPersistence();
+      clearSession("session_shutdown");
+      releaseProviderTokens("session_shutdown");
+    });
+    clearSharedSessionLanes();
+    clearQueryLanes();
   });
-  pi.on("session_shutdown", () => {
-    cancelScheduledSessionPersistence();
-    clearSession("session_shutdown");
-    releaseProviderTokens("session_shutdown");
-  });
-  pi.on("message_end", (event, ctx2) => {
+  pi.on("message_end", (event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => {
     const message = event.message;
     if (message?.role === "assistant" && message.provider === PROVIDER_ID) schedulePersistSharedSession(ctx2);
-  });
+  }));
   const markRebuild = (event) => {
+    const activeSession = getSharedSession();
     if (ctx().activeQuery) {
-      reportToolResultMismatch(ctx(), event, sharedSession?.cwd ?? process.cwd());
+      reportToolResultMismatch(ctx(), event, activeSession?.cwd ?? process.cwd());
     }
-    if (sharedSession) {
-      debug(`${event}: marking needsRebuild on session ${sharedSession.sessionId.slice(0, 8)}`);
+    if (activeSession) {
+      debug(`${event}: marking needsRebuild on session ${activeSession.sessionId.slice(0, 8)}`);
       markSessionForRebuild();
     }
   };
-  pi.on("session_compact", () => markRebuild("session_compact"));
-  pi.on("session_tree", () => markRebuild("session_tree"));
+  pi.on("session_compact", (_event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => markRebuild("session_compact")));
+  pi.on("session_tree", (_event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => markRebuild("session_tree")));
   applyProviderRegistration("load");
 }
 export {

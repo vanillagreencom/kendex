@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.2.1
+
+- **Parallel Pi conversations and subagents no longer share mutable bridge request state.** The provider's process-global active query, Pi stream, context stack, watchdog ownership, and persisted Claude session bookkeeping could be overwritten when two `streamSimple` calls overlapped in one process. That allowed one conversation to abort, resume, or deliver tool results through another conversation's state, most visibly as hanging parallel subagents and stalled independent tool loops. Each request now runs in an `AsyncLocalStorage` lane keyed by Pi's stable provider `sessionId`; callbacks and nested tool continuations retain that lane, while direct hosts that omit `sessionId` keep the previous single-lane behavior. Concurrent parent/child requests, sibling aborts, foreign-conversation protection, and independent parallel tool loops are covered by regression tests.
+
 ### 3.2.0
 
 - **Pi 0.84.0 parity: `AGENTS.override.md` is now honored when forwarding context to Claude Code.** Pi added per-directory `AGENTS.override.md` files that replace `AGENTS.md` in the same directory; the bridge mirrors the `AGENTS.*` half of that discovery and previously forwarded the superseded `AGENTS.md`. Per directory the bridge now tries `AGENTS.override.md`, `AGENTS.md`, then `AGENTS.MD`, and only accepts regular files. Pi's candidate list continues with `CLAUDE.md` and `CLAUDE.MD`, which the bridge deliberately omits — the Claude Code subprocess loads `CLAUDE.md` natively, so forwarding it would apply the same context twice. A candidate that exists but cannot be stat'd (dangling symlink, permissions) is now traced through `debug()` rather than skipped silently, since skipping an override silently forwards the file it was meant to supersede.

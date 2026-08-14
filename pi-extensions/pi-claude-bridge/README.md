@@ -14,6 +14,7 @@ Forked from [`elidickinson/pi-claude-bridge`](https://github.com/elidickinson/pi
 - `pi-claude/claude-fable-5`, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku in `/model`. `/model opus` selects Opus 5; older Opus releases stay selectable by full ID.
 - Pi tool calls run on Pi; Claude Code handles reasoning.
 - Tool-use turns block until Pi-delivered tool results reach Claude Code, including persistent subagent panes.
+- Parallel conversations and subagents keep independent request, abort, tool-loop, and Claude-session state.
 - Session continuity across normal turns, `/compact`, tree navigation, abort recovery, and account-profile changes.
 - Optional companion integration for usage-aware subscription account rotation without copying the bridge engine.
 - Thinking-level forwarding with summarized Opus thinking display.
