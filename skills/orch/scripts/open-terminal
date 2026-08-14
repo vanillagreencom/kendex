@@ -273,10 +273,7 @@ start_cmd() {
       flags+="'$tok' "
     done
   fi
-  # Handoff lanes are unattended and some runtimes self-judge completion (a
-  # Codex one-shot has stopped at PR-open); every rendered brief therefore
-  # carries the terminal condition (handoff.md / oversee.md).
-  local tc=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
+  local tc="$BRIEF_TERMINAL_CONDITION"
   case "$TRACKER:$HARNESS" in
     linear:claude)   printf "claude -n %q %s'/orch start %s%s'\n" "$item" "$flags" "$item" "$tc" ;;
     linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s%s'\n" "$flags" "$item" "$tc" ;;
@@ -289,6 +286,12 @@ start_cmd() {
     *) echo "Error: unsupported harness: $HARNESS" >&2; exit 1 ;;
   esac
 }
+
+# Handoff lanes are unattended and some runtimes self-judge completion (a
+# Codex one-shot has stopped at PR-open); every rendered brief — the launch
+# command's prompt AND the tmux delivery/re-send copy — carries the terminal
+# condition (handoff.md / oversee.md).
+readonly BRIEF_TERMINAL_CONDITION=" — complete means the PR is MERGED and the worktree cleaned up, not merely opened"
 
 # Delivered means SUBMITTED, not merely present: the brief echoed in the
 # launch command (`claude -n` line) or sitting unsent in the composer's
@@ -447,7 +450,7 @@ for raw in "${ITEMS[@]}"; do
   # custom --cmd templates, which disables the check.
   brief=""
   if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" ]]; then
-    if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
+    if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item$BRIEF_TERMINAL_CONDITION"; else brief="/orch start github $repo#$item$BRIEF_TERMINAL_CONDITION"; fi
   fi
   # The lane is recorded in the launched command itself, so `ps` and the tmux
   # window both show which account a stalled session belongs to. The value is

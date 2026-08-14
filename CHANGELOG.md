@@ -3,8 +3,10 @@
 ## Unreleased
 
 - Post-merge bot triage of #1284: `open-terminal` now renders the
-  merged-and-cleaned terminal condition into every launched brief (the
-  handoff/oversee requirement previously reached only hand-minted briefs);
+  merged-and-cleaned terminal condition into every launched brief — including
+  the tmux delivery/re-send copy, which first shipped without it (caught by
+  three bots on the triage PR itself); the README pattern row uses the
+  GFM-safe pipe entity so the copyable value is a working regex;
   README's `GH_ISSUE_PATTERN` row documents the real built-in default
   (`([A-Z]+-[0-9]+|issue-[0-9]+)` — the transcribed value would have
   rejected `issue-N` branches if copied into settings); post-summary's
