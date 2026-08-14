@@ -38,7 +38,7 @@ Shared contract for every review specialist. Each agent's domain and probes live
 
 ## Output Contract
 
-Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md), written with the harness file-write tool — never shell redirection — to the exact path this prints (`[AGENT]` = your full agent name):
+Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md), written with the harness file-write tool — never shell redirection — to the delegation's `Artifact:` path. When the delegation carries no `Artifact:` line, mint the path yourself (`[AGENT]` = your full agent name):
 
 ```bash
 .agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]

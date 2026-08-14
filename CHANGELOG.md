@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- orch review-pr mints each reviewer's artifact path at delegation time
+  (`review-artifact-check --path`) and passes it as the delegation's
+  `Artifact:` line; reviewers write to that exact path instead of
+  hand-formatting filename timestamps (two of four drill-2 reviewers still
+  wrote placeholder clocks under the mint-it-yourself contract).
+
 - **orch + dev: six determinism/efficiency fixes from a live end-to-end drill**
   (a fake issue run through the full stack on a low-effort lane, watched phase
   by phase; every fix is a deletion, a short-circuit, or a tool — no added

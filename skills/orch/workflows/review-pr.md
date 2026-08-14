@@ -128,11 +128,18 @@ Stamp the freshness boundary immediately before the delegation batch — it gate
 
 Delegate to every reviewer in the active set in parallel. When `EXTERNAL_REVIEW_REQUESTED=true`, launch the external review in the same batch — it is a shell command, not an agent session, so it consumes no slot and joins only the cycle's first wave.
 
+Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
+
+```bash
+.agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]
+```
+
 <delegation_format>
 Follow workflow: .agents/skills/reviewer/workflows/review.md
 
 Worktree: [WORKTREE_PATH]
 Branch: [BRANCH]
+Artifact: [ARTIFACT_PATH]
 
 Decisions:
 [For each verified decision: "- [DECISION_ID]: [ONE_LINE_SUMMARY] — [DECISION_FILE_PATH]"]
