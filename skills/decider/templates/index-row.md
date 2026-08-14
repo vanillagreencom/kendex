@@ -17,7 +17,7 @@
 
 The Link cell is how the CLI reaches the decision document for body search and `get`; a cell naming no file leaves those blind to the decision.
 
-New rows go at the end of the table, before the `---` separator, in date order.
+New rows go at the end of the table, before the `---` separator — append-only, never re-sorted (the Date cell carries chronology; a decision written up late still appends).
 
 ```markdown
 | 2026-03-24 | D034 | [PROJ-200](../research/PROJ-200/findings.md) | Use tokio for async runtime | Battle-tested, ecosystem support | Alternative runtime outperforms tokio 2x | Active | [Full](D034-async-runtime.md) |

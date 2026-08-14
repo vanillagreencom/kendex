@@ -12,6 +12,7 @@ use super::{SummaryAction, SummaryData};
 
 /// Show a post-install summary screen.
 pub fn run_summary_screen(data: &SummaryData) -> Result<SummaryAction> {
+    super::ensure_interactive_terminal()?;
     terminal::enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     io::stdout().execute(EnableMouseCapture)?;

@@ -10,9 +10,16 @@ set -euo pipefail
 usage() {
   cat >&2 << 'EOF'
 Usage:
-  review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch>
+  review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch> \
+    [--wait SECS] [--interval SECS]
   review-artifact-check --file <json_path> [delegated_at_epoch]
   review-artifact-check --path <worktree_path> <agent_name>
+
+--wait SECS (glob mode): blocking — poll every --interval seconds (default 5)
+until any fresh artifact lands (valid or rejected, both return immediately) or
+SECS elapse (reason "missing" is the escalation trigger). Arm it in the
+background at delegation and the caller wakes the moment the reviewer writes,
+independent of any return-message delivery.
 
 Path mode (--path): prints the canonical artifact path for the agent with a
 real UTC timestamp ([WORKTREE]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json) and
@@ -264,14 +271,26 @@ if [[ "${1:-}" == "--file" ]]; then
   exit 0
 fi
 
-if [[ $# -ne 3 ]]; then
+wait_secs=0
+interval=5
+if (( $# >= 3 )); then
+  worktree="$1"
+  agent="$2"
+  delegated_at="$3"
+  shift 3
+  while (( $# > 0 )); do
+    case "$1" in
+      --wait)     [[ -n "${2:-}" ]] || { echo "Error: --wait requires a value" >&2; exit 2; }; wait_secs="$2"; shift 2 ;;
+      --interval) [[ -n "${2:-}" ]] || { echo "Error: --interval requires a value" >&2; exit 2; }; interval="$2"; shift 2 ;;
+      *) usage; exit 2 ;;
+    esac
+  done
+else
   usage
   exit 2
 fi
-
-worktree="$1"
-agent="$2"
-delegated_at="$3"
+[[ "$wait_secs" =~ ^[0-9]+$ ]] || { echo "Error: --wait must be a non-negative integer (seconds), got '$wait_secs'" >&2; exit 2; }
+[[ "$interval" =~ ^[1-9][0-9]*$ ]] || { echo "Error: --interval must be a positive integer (seconds), got '$interval'" >&2; exit 2; }
 
 if [[ ! -d "$worktree" ]]; then
   echo "Error: worktree path '$worktree' is not a directory" >&2
@@ -286,6 +305,7 @@ if ! [[ "$delegated_at" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
+glob_check() {
 reason="missing"
 fail_path=""
 fail_detail=""
@@ -331,8 +351,29 @@ while IFS= read -r file; do
     continue
   fi
   emit true "$file" "valid"
-  exit 0
+  return 0
 done < <(ls -1t "$worktree/tmp/review-$agent-"*.json 2>/dev/null)
 
 emit false "$fail_path" "$reason" "$fail_detail"
-exit 1
+return 1
+}
+
+if (( wait_secs > 0 )); then
+  # Blocking watchdog: only "missing" (no fresh artifact yet) keeps polling.
+  # Any landed artifact — valid or rejected — returns immediately, so an armed
+  # background invocation wakes the caller the moment the reviewer writes,
+  # independent of any return-message delivery. A deadline return still
+  # carries reason=missing and is the escalation trigger.
+  deadline=$(( $(date +%s) + wait_secs ))
+  while :; do
+    rc=0
+    out="$(glob_check)" || rc=$?
+    landed_reason="$(jq -r '.reason // ""' <<<"$out" 2>/dev/null || printf '')"
+    if [[ "$rc" == "0" || "$landed_reason" != "missing" ]] || (( $(date +%s) >= deadline )); then
+      printf '%s\n' "$out"
+      exit "$rc"
+    fi
+    sleep "$interval"
+  done
+fi
+glob_check

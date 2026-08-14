@@ -176,7 +176,7 @@ Each canonical agent declares its own `effort:` (`low` | `medium` | `high` | `xh
 
 ## Rules
 
-- **Engineer over patch.** When an issue or finding prompts a change, fix the mechanism, not the prose. Never add defensive caveat blocks or issue-number citations to skill/agent md files — provenance belongs in git history and code comments. If a skill needs a paragraph of explanation to be used safely, that is a tool gap: make it just work instead.
+- **Engineer over patch.** When an issue or finding prompts a change, fix the mechanism, not the prose: determinism and tooling first — a deletion, a short-circuit, or a tool; added prose is the last resort. Skills are instructions, not explanations. Never add defensive caveat blocks or issue-number citations to skill/agent md files — provenance belongs in git history and code comments. If a skill needs a paragraph of explanation to be used safely, that is a tool gap: make it just work instead.
 - **SKILL.md is progressive disclosure.** Always-loaded content is only what every agent needs on every load; depth goes in `references/` and `workflows/` files read on demand. No history, no editorializing, nothing irrelevant.
 - **No project-specific references.** Zero mentions of specific apps, crate names, paths, or tools in `agents/`, `skills/`, `hooks/`.
 - **Validate ctx7 IDs.** Every library ID in SKILL.md ctx7 tables must resolve via `npx ctx7@latest docs <id> "test"`.

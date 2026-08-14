@@ -89,6 +89,7 @@ pub fn run_install_flow(
     items: DiscoveredItems,
     source_selector: &SourceSelectorData,
 ) -> Result<InstallFlowResult> {
+    super::ensure_interactive_terminal()?;
     if items.agents.is_empty()
         && items.skills.is_empty()
         && items.hooks.is_empty()

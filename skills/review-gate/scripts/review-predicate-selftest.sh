@@ -259,9 +259,13 @@ threads() { # isResolved values as args
   jq -n --argjson nodes "$nodes" \
     '{data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:$nodes}}}}}'
 }
-review() { # login, state, submitted_at, [commit sha; default HEAD] -> one review row
+review() { # login, state, submitted_at, [commit sha; default HEAD], [body] -> one review row
+  # Real review rows always carry a body (often ""), so the fixture does too:
+  # the errored-attestation filter reads it, and modeling the field as absent
+  # would leave the `.body // ""` fallback the only shape ever exercised.
   jq -n --arg sha "${4:-$HEAD}" --arg login "$1" --arg state "$2" --arg at "${3:-2026-01-01T00:00:00Z}" \
-    '{commit_id:$sha,state:$state,submitted_at:$at,user:{login:$login}}'
+    --arg body "${5-}" \
+    '{commit_id:$sha,state:$state,submitted_at:$at,body:$body,user:{login:$login}}'
 }
 reviews_set() { # rows... -> reviews.json
   local rows="[]" row
@@ -894,6 +898,48 @@ reset
 CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
 reviews_set "$(review "reviewer" COMMENTED)"
 run "min_state=any: COMMENTED review counts (compatible default)" approved
+
+# An ERRORED auto-review is a normal COMMENTED row whose body is the
+# reviewer's own "nothing ran" attestation (observed live: Copilot errored
+# at head and the row alone satisfied the gate as review evidence, then a
+# genuine re-review produced real findings). Silence, both directions:
+# never evidence, never a blocker, never masking genuine rows.
+ERRORED_BODY='Copilot encountered an error and was unable to review this pull request. You can try again by re-requesting a review.'
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")"
+run "an errored auto-review alone is NOT evidence (silence)" awaiting
+
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")" \
+            "$(review "auto-reviewer" COMMENTED "2026-08-02T19:00:00Z" "$HEAD" "Reviewed 4 of 4 changed files and generated 1 comment.")"
+run "errored auto-review then a genuine re-review: the genuine row counts" approved
+
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")" \
+            "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")"
+run "errored auto-review + later genuine approval approves" approved
+
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")" \
+            "$(review "reviewer" CHANGES_REQUESTED "2026-08-02T19:00:00Z")"
+run "errored auto-review does not mask a genuine changes-requested" changes-requested
+
+# Regression guards on the marker itself: a genuine approval (empty body)
+# still approves, and a genuine review BODY is not error-filtered — the
+# marker must recognize the attestation sentence, not review prose.
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+reviews_set "$(review "reviewer" APPROVED)"
+run "genuine approval alone still approves (errored filter is inert on it)" approved
+
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+reviews_set "$(review "reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "The parser encountered an error path worth a second look; otherwise fine.")"
+run "a genuine body mentioning errors is NOT the attestation (no over-match)" approved
 
 # NON-SUPERSESSION: a trailing COMMENTED from the same reviewer at the same
 # head must not mask its earlier APPROVED (observed live: APPROVED at
@@ -1782,6 +1828,15 @@ reset
 CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="approved"
 reviews_set "$(review "reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER")"
 run "carry: min_state=approved refuses a COMMENTED-only ancestor candidate" awaiting
+
+# An errored auto-review at an ancestor is no more a carry seed than it is
+# head evidence: with a carry-safe delta staged, the errored row must still
+# leave the gate awaiting — carry extends reviews, and nothing reviewed N.
+reset
+CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER" "$ERRORED_BODY")"
+compare_fix ahead "[$DOCS_DELTA]"
+run "carry: an errored ancestor auto-review is not a carry candidate" awaiting
 
 reset
 carry_candidate

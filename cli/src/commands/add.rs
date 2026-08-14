@@ -2025,23 +2025,6 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             None
         };
 
-        // Persist the source choice only once the run can still succeed: a
-        // failed add must not mutate sources.json — neither the remembered
-        // source nor the opportunistic self-entry prune may land when nothing
-        // will be installed (vstack#1024 review round; the empty-source and
-        // zero-harness validations above must stay above this block).
-        if resolved.persist {
-            if global {
-                registry.remember(&resolved.source);
-            } else {
-                registry.remember_for_project(&project_root, &resolved.source);
-            }
-            // vstack#1038: opportunistic hygiene on the write path — drop a
-            // stale self entry left by an earlier project-local install.
-            registry.prune_project_self_non_source(&project_root);
-            registry.save(&config::source_registry_path())?;
-        }
-
         eprintln!(
             "Found {} agent(s), {} skill(s), {} hook(s), {} pi-package(s), {} extra(s) in {}",
             agents.len(),
@@ -2183,6 +2166,24 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         linked_project_skill_root_has_managed_auto_skill(&project_root, &auto_included_skill_names),
     ) {
         crate::commands::refresh::preflight_project_refresh(&project_root)?;
+    }
+
+    // Persist the source choice only after every pre-install validation: a
+    // run that fails (or is cancelled) before installing anything must not
+    // mutate sources.json — neither the remembered source nor the
+    // opportunistic self-entry prune may land (vstack#1024 review round;
+    // VST-255 moved this below the interactive TUI, which fails on a
+    // TTY-less stdin, and below the preflights above).
+    if resolved_source.persist {
+        if global {
+            registry.remember(&resolved_source.source);
+        } else {
+            registry.remember_for_project(&project_root, &resolved_source.source);
+        }
+        // vstack#1038: opportunistic hygiene on the write path — drop a
+        // stale self entry left by an earlier project-local install.
+        registry.prune_project_self_non_source(&project_root);
+        registry.save(&config::source_registry_path())?;
     }
 
     // Whether we should write/update the project-level vstack.toml.

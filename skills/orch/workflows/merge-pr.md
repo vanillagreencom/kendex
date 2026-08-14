@@ -149,6 +149,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | `merged` | Merge landed | → step 2 |
    | `ejected` | The merge-group CI run failed and GitHub removed this PR from the queue | Recovery cycle below |
    | `disarmed` | Auto-merge cleared, or a required check failed (`cause` says which) | Recovery cycle below |
+   | `dequeued` | The late-findings guard saw a NEW unresolved review thread while queued/armed and pulled the arming (`cause: late_findings`) — or tried and failed (`cause: late_findings_dequeue_failed`: the PR is STILL queued and the merge may fire; dequeue manually before triage) | Late-findings triage below |
    | `closed` | The PR was closed out from under the merge | Skip steps 2-4 and hand back |
    | `queued` | Deadline reached, still armed | Not a failure: the merge fires when checks and protection clear. Skip steps 2-4 and note in § 6 that sync and cleanup need `merge-pr [PR_NUMBER]` re-run once merged |
    | `not_queued` | The `--auto` merge never armed | Re-run `pr-merge [PR_NUMBER] --auto` once; still unarmed → surface and hand back |
@@ -169,6 +170,12 @@ Use the output as `MAIN_REPO_ROOT`.
       ```
 
    3. Re-run `pr-merge [PR_NUMBER] --auto`, then `queue-wait` with a fresh poll budget.
+
+   **Late-findings triage** — the guard dequeued because a reviewer posted after enqueue; the findings, not CI, are the blocker:
+
+   1. On `cause: late_findings_dequeue_failed` first confirm the dequeue by hand (GraphQL `dequeuePullRequest` — its `id` input takes the PR node id) or disable auto-merge; the PR must be out of the queue before triage pushes anything.
+   2. `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 5 step 1` with managed context — every new thread replied to and resolved.
+   3. Triage may have pushed a new head: re-confirm the gate exactly as recovery step 2 above, then re-run `pr-merge [PR_NUMBER] --auto` and `queue-wait` with a fresh poll budget.
 
 2. **Sync the tracker and close a finished container** — **Linear only**; merged PRs close issues via magic words, so the cache must reflect the new Done states. Skip the WHOLE step for GitHub work items: resolve the tracker first, since an `issue-N` key in any casing is a GitHub item and running Linear commands for it would fail the merge outright.
 

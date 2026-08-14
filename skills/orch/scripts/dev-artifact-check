@@ -54,8 +54,15 @@ usage() {
   cat << 'EOF'
 Usage:
   dev-artifact-check --worktree WT --issue ISSUE --round-id RID \
-    [--expect-items N,N,... | --expect-items-from-round]
-  dev-artifact-check --file <json_path> [--round-id RID] [--expect-items N,N,...]
+    [--expect-items N,N,... | --expect-items-from-round] [--wait SECS] [--interval SECS]
+  dev-artifact-check --file <json_path> [--round-id RID] [--expect-items N,N,...] \
+    [--wait SECS] [--interval SECS]
+
+--wait SECS: blocking mode — poll every --interval seconds (default 5) until the
+verdict leaves "wait" (an artifact landed: accept or retry) or SECS elapse (the
+last result, verdict "wait", is printed). Run it as the armed round watchdog: it
+returns the moment the receipt is written, independent of any return-message
+delivery, and a deadline return is the escalation trigger.
 
 Round mode (the production path): resolves WT/tmp/dev-return-ISSUE-RID.json,
 requires it exists, its internal .round_id == RID, then the scalar/kind, commit
@@ -355,6 +362,8 @@ want_round=""
 expect_items=""
 expect_from_round=false
 repo=""
+wait_secs=0
+interval=5
 
 if [[ "${1:-}" == "--file" ]]; then
   shift
@@ -367,6 +376,8 @@ if [[ "${1:-}" == "--file" ]]; then
       --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
       --expect-items-from-round)
         die "--expect-items-from-round requires round mode (there is no worktree/issue/round to resolve a round record from)" ;;
+      --wait)         need "$1" $#; wait_secs="$2"; shift 2 ;;
+      --interval)     need "$1" $#; interval="$2"; shift 2 ;;
       *) die "unknown --file argument: $1" ;;
     esac
   done
@@ -381,6 +392,8 @@ elif [[ "${1:-}" == --* ]]; then
       --round-id)     need "$1" $#; round_id="$2"; shift 2 ;;
       --expect-items) need "$1" $#; expect_items="$2"; shift 2 ;;
       --expect-items-from-round) expect_from_round=true; shift ;;
+      --wait)         need "$1" $#; wait_secs="$2"; shift 2 ;;
+      --interval)     need "$1" $#; interval="$2"; shift 2 ;;
       *) die "unknown argument: $1" ;;
     esac
   done
@@ -432,8 +445,29 @@ else
   exit 2
 fi
 
-# Shared tail: --expect-items grammar (both modes), then validate once.
+# Shared tail: --expect-items grammar (both modes), then validate — once, or,
+# with --wait, repeatedly until the verdict leaves "wait" or the deadline lands.
 if [[ -n "$expect_items" && ! "$expect_items" =~ $EXPECT_GRAMMAR ]]; then
   die "--expect-items must be comma-separated item numbers, got '$expect_items'"
+fi
+[[ "$wait_secs" =~ ^[0-9]+$ ]] || die "--wait must be a non-negative integer (seconds), got '$wait_secs'"
+[[ "$interval" =~ ^[1-9][0-9]*$ ]] || die "--interval must be a positive integer (seconds), got '$interval'"
+if (( wait_secs > 0 )); then
+  # Blocking watchdog: only "wait" (no artifact yet) keeps polling; the first
+  # accept/retry verdict returns immediately, so an armed background invocation
+  # wakes the orchestrator the moment the receipt lands instead of at a fixed
+  # deadline — and never depends on the agent's return message being delivered.
+  deadline=$(( $(date +%s) + wait_secs ))
+  while :; do
+    rc=0
+    out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo")" || rc=$?
+    verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null || printf 'wait')"
+    if [[ "$verdict" != "wait" ]] || (( $(date +%s) >= deadline )); then
+      printf '%s
+' "$out"
+      exit "$rc"
+    fi
+    sleep "$interval"
+  done
 fi
 if validate_artifact "$file" "$want_round" "$expect_items" "$repo"; then exit 0; else exit 1; fi

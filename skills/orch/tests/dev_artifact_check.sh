@@ -601,5 +601,44 @@ assert_eq "$(jq -r '.validate_note' <<<"$out")" "null" "a missing artifact repor
 assert_file_contains "$dev_return_schema" "validate_note" "dev-return schema documents validate_note"
 assert_file_contains "$dev_return_schema" "Analysis rounds" "dev-return schema documents analysis rounds (vstack#952)"
 
+echo "=== --wait blocking mode ==="
+
+# An artifact landing mid-wait ends the wait immediately: the writer lands an
+# (invalid) receipt after ~2s; --wait 20 must return well before its deadline
+# with the artifact's verdict, proving closure does not depend on any message.
+wait_dir="$TMP_ROOT/waitwt"
+mkdir -p "$wait_dir"
+start_epoch="$(date +%s)"
+( sleep 2; printf '{"bad":true}' > "$wait_dir/landing.json" ) &
+writer_pid=$!
+wait_out="$("$CHECK" --file "$wait_dir/landing.json" --wait 20 --interval 1 2>/dev/null || true)"
+wait "$writer_pid" 2>/dev/null || true
+elapsed=$(( $(date +%s) - start_epoch ))
+assert_eq "$(jq -r '.verdict' <<<"$wait_out")" "retry" "--wait returns the landed artifact's verdict"
+if (( elapsed < 15 )); then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "--wait returned on the landing, not the deadline (${elapsed}s)"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "--wait burned toward its deadline (${elapsed}s) instead of returning on the landing"
+fi
+
+# No artifact at the deadline: verdict wait, exit 1, and the deadline was honored.
+start_epoch="$(date +%s)"
+rc=0
+wait_out="$("$CHECK" --file "$wait_dir/never.json" --wait 2 --interval 1 2>/dev/null)" || rc=$?
+elapsed=$(( $(date +%s) - start_epoch ))
+assert_eq "$(jq -r '.verdict' <<<"$wait_out")" "wait" "--wait deadline returns verdict wait"
+assert_eq "$rc" "1" "--wait deadline exits 1"
+if (( elapsed >= 2 )); then
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "--wait held until its deadline (${elapsed}s)"
+else
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "--wait gave up before its deadline (${elapsed}s)"
+fi
+
+# Flag validation fails closed as usage errors.
+rc=0; "$CHECK" --file "$wait_dir/never.json" --wait nope >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "2" "a non-integer --wait is a usage error"
+rc=0; "$CHECK" --file "$wait_dir/never.json" --wait 5 --interval 0 >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "2" "a zero --interval is a usage error"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

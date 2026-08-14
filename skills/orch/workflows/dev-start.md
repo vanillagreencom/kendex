@@ -68,7 +68,7 @@ Before EVERY implementation delegation, including each group's delegation in bun
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
-Embed the printed token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line, and arm the watchdog for `dev_delegated_at + 10 min` per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
+Embed the printed token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line, and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
 
 After each spawn, persist the session — `"status": "active"` is what reviewer slot accounting counts:
 

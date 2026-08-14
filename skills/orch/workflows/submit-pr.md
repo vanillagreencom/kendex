@@ -27,7 +27,7 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
 ```
 
-Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
+Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then prove the HEAD being pushed, not a memory of it: run `.agents/skills/preflight/scripts/preflight --base origin/[BASE_BRANCH]` when installed, and re-run the validation command this session's dev rounds used — a rebase or fix commit since the last green run changes what CI will see. Either failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
 
 ### 1.2 Local Pre-PR Review
 
@@ -156,7 +156,7 @@ Bots may post minutes or hours after the PR opens. **Bot prose is never a gate s
 .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations
 ```
 
-Fixes pushed during triage were already replied to and resolved by that workflow. Do not wait for a bot re-review round — late comments land in threads the § 4 gate or the § 6.1 gate-3 check catches.
+Fixes pushed during triage were already replied to and resolved by that workflow. Do not wait for a bot re-review round — late comments land in threads the § 4 gate or the § 6.1 gate-3 check catches, and a thread that first appears after the merge enqueues is caught by queue-wait's late-findings guard, which dequeues and routes back through this same comment triage (merge-pr § 5, verdict `dequeued`).
 
 Issues created during triage need implementing before merge, bounded at two re-submit cycles:
 

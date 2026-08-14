@@ -31,6 +31,8 @@ For each changed predicate, parser, or guard, mentally execute:
 - **Locale/Unicode** — `[A-Za-z]` ranges and byte-wise tests under non-C locales and non-ASCII identifiers.
 - **Canonicalization** — lexical path checks where symlinks or `..` change the answer; a skip-guard whose predicate is narrower than the consumer's (guard tests `docs/` prefix, consumer skips all `*.md`).
 - **Sibling consistency** — two code paths answering the same question with different logic.
+- **Declarative formats** — a new manifest/grammar/config the code parses gets every field × every malformation (absent, empty, duplicated, extra, non-canonical, wrong type), never a sample; report what the parser silently accepts as one class.
+- **Pre-steady-state** — behavior while detection is still pending, state is unseeded, or readiness was declared on selection rather than on answerability.
 
 ## Output
 

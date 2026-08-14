@@ -22,6 +22,14 @@
 #   12. PR closed without merging
 #   13. human-readable (non --json) output names the verdict
 #   14. a transient GitHub error is absorbed inside the wait budget
+#   15-19. argument validation, --help, low-confidence one-poll flag, budget bound
+#   20. late-findings guard (vstack#1289): a NEW unresolved thread while
+#       queued dequeues via dequeuePullRequest with the PR node id
+#   21. pre-existing (and since-resolved) threads never trigger the guard
+#   22. a failed thread fetch is no evidence — no dequeue, keep polling, warn
+#   23. --no-guard restores unguarded queueing (no thread reads at all)
+#   24. a failed dequeue mutation is loud (late_findings_dequeue_failed)
+#   25. armed-but-never-enqueued guard path disables auto-merge
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,10 +78,18 @@ git -C "$TMP_ROOT/repo" config user.email test@example.com
 git -C "$TMP_ROOT/repo" config user.name Test
 
 # Sequenced `gh` stub. Each poll of queue-wait makes exactly one
-# `gh pr view --json state,mergedAt` call and one `gh api graphql` call, so
-# two independent counters replay a per-poll script of fixtures:
+# `gh pr view --json state,mergedAt` call and one queue-membership
+# `gh api graphql` call, so independent counters replay a per-poll script of
+# fixtures, routed by query content so guard traffic never shifts the queue
+# sequence:
 #   $STUB_SEQ_DIR/state-<n>.json   PR state for poll n
-#   $STUB_SEQ_DIR/queue-<n>.json   GraphQL body for poll n
+#   $STUB_SEQ_DIR/queue-<n>.json   queue-membership GraphQL body for poll n
+#   $STUB_SEQ_DIR/threads-<n>.json reviewThreads body for guard probe n
+#                                  (default: zero threads, so legacy cases
+#                                  run with the guard on and quiet)
+#   $STUB_SEQ_DIR/dequeue-<n>.json dequeue/disable-auto-merge mutation reply
+# Mutations are also appended to $STUB_SEQ_DIR/mutations.log (name + args)
+# so tests can assert a dequeue was or was not issued.
 # `<prefix>-last.json` serves every poll past the last numbered fixture.
 # Optional sidecars: `<prefix>-<n>.exit` (exit code) and `<prefix>-<n>.err`
 # (stderr text, for transient-failure classification).
@@ -103,10 +119,14 @@ _next() {
 }
 
 _emit_fixture() {
-  local prefix="$1" n="$2" f
+  local prefix="$1" n="$2" default_body="${3:-}" f
   f="$STUB_SEQ_DIR/$prefix-$n.json"
   [[ -f "$f" ]] || f="$STUB_SEQ_DIR/$prefix-last.json"
   if [[ ! -f "$f" ]]; then
+    if [[ -n "$default_body" ]]; then
+      printf '%s\n' "$default_body"
+      exit 0
+    fi
     printf 'stub: no fixture for %s-%s\n' "$prefix" "$n" >&2
     exit 1
   fi
@@ -128,6 +148,16 @@ _args_have() {
   return 1
 }
 
+_args_have_sub() {
+  local needle="$1"
+  shift
+  local a
+  for a in "$@"; do
+    [[ "$a" == *"$needle"* ]] && return 0
+  done
+  return 1
+}
+
 case "${1:-}" in
   auth)
     if [[ "${2:-}" == "status" ]]; then
@@ -142,6 +172,18 @@ case "${1:-}" in
   api)
     if [[ "${2:-}" == "graphql" ]]; then
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      if _args_have_sub "reviewThreads" "$@"; then
+        _emit_fixture threads "$(_next threads)" \
+          '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
+      fi
+      if _args_have_sub "dequeuePullRequest" "$@"; then
+        printf 'dequeuePullRequest %s\n' "$*" >> "$STUB_SEQ_DIR/mutations.log"
+        _emit_fixture dequeue "$(_next dequeue)"
+      fi
+      if _args_have_sub "disablePullRequestAutoMerge" "$@"; then
+        printf 'disablePullRequestAutoMerge %s\n' "$*" >> "$STUB_SEQ_DIR/mutations.log"
+        _emit_fixture dequeue "$(_next dequeue)"
+      fi
       _emit_fixture queue "$(_next graphql)"
     fi
     if [[ "${2:-}" == "user" ]]; then
@@ -227,9 +269,19 @@ pr_closed='{"state":"CLOSED","mergedAt":null}'
 
 # In the merge queue (and armed), out of it entirely, and armed-only (plain
 # auto-merge repo shape: enabled but never enqueued).
-q_in_queue='{"data":{"repository":{"pullRequest":{"isInMergeQueue":true,"mergeQueueEntry":{"state":"QUEUED"},"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
-q_out='{"data":{"repository":{"pullRequest":{"isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}}}}'
-q_armed_only='{"data":{"repository":{"pullRequest":{"isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
+q_in_queue='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":true,"mergeQueueEntry":{"state":"QUEUED"},"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
+q_out='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}}}}'
+q_armed_only='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
+
+# Late-findings guard (vstack#1289) fixtures: unresolved review-thread sets
+# and the dequeue-mutation replies.
+t_none='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
+t_pre='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PRRT_pre1","isResolved":false},{"id":"PRRT_pre2","isResolved":false}]}}}}}'
+t_pre_one_resolved='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PRRT_pre1","isResolved":false},{"id":"PRRT_pre2","isResolved":true}]}}}}}'
+t_late='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PRRT_late1","isResolved":false}]}}}}}'
+dq_ok='{"data":{"dequeuePullRequest":{"mergeQueueEntry":{"id":"MQE_1"}}}}'
+dq_err='{"errors":[{"message":"Pull request is not in the merge queue"}]}'
+am_ok='{"data":{"disablePullRequestAutoMerge":{"clientMutationId":null}}}'
 
 # Run queue-wait through the .agents symlink, exactly how it is invoked in
 # production. `env "$@"` injects the stub's fixture directory and knobs; the
@@ -480,6 +532,112 @@ if [[ "$elapsed_seconds" =~ ^[0-9]+$ ]] && [ "$elapsed_seconds" -le 5 ]; then
 else
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        elapsed_seconds=%s (want <= 5)\n' "budget upper bound" "$elapsed_seconds"; dump_stderr "$err"
 fi
+
+# --- 20. late-findings guard: NEW unresolved thread while queued dequeues ----
+# Poll 1 baselines an empty thread set; poll 2 sees PRRT_late1 → the guard
+# must issue dequeuePullRequest with the PR NODE id (not the queue-entry id)
+# and exit 1 with verdict dequeued / cause late_findings (vstack#1289).
+new_case guard_dequeue
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture threads 1 "$t_none"
+write_fixture threads last "$t_late"
+write_fixture dequeue last "$dq_ok"
+err="$TMP_ROOT/e20"
+out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "1" "late-findings dequeue exits 1" "$err"
+assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "late-findings verdict is dequeued" "$err"
+assert_eq "$(jq -r .status <<<"$out")" "complete" "late-findings status complete" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "late_findings" "late-findings cause" "$err"
+assert_eq "$(jq -r .unresolved_count <<<"$out")" "1" "unresolved count reported" "$err"
+assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "dequeue mutation issued" "$err"
+assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "PR_node123" "dequeue passes the PR node id" "$err"
+
+# 20h. same shape, human-readable output names the dequeue.
+new_case guard_dequeue_human
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture threads 1 "$t_none"
+write_fixture threads last "$t_late"
+write_fixture dequeue last "$dq_ok"
+err="$TMP_ROOT/e20h"
+out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_contains "$out" "Merge queue: dequeued" "non-JSON output names the dequeue" "$err"
+
+# --- 21. pre-existing threads never trigger the guard ------------------------
+# Two threads unresolved at entry (the caller's problem — approval-wait gates
+# those before enqueue); one resolves while queued. Neither the standing
+# baseline nor the resolution may dequeue.
+new_case guard_preexisting
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture threads 1 "$t_pre"
+write_fixture threads last "$t_pre_one_resolved"
+err="$TMP_ROOT/e21"
+out="$(run_queue_wait -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "pre-existing threads leave the PR queued" "$err"
+assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "no mutation for pre-existing threads" "$err"
+assert_eq "$(jq -r .unresolved_count <<<"$out")" "1" "count tracks the live unresolved set" "$err"
+
+# --- 22. a failed thread fetch is no evidence --------------------------------
+# Every guard fetch fails: no dequeue may be fabricated, the wait keeps
+# polling to its deadline, and 3 consecutive failures warn on stderr.
+new_case guard_fetch_fail
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture threads last '' 1 "HTTP 502: Bad Gateway"
+err="$TMP_ROOT/e22"
+out="$(run_queue_wait -- 1 1 5 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "1" "blind guard still exits 1 at the deadline" "$err"
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "fetch failure never fabricates a dequeue" "$err"
+assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "no mutation on fetch failure" "$err"
+assert_contains "$(cat "$err")" "thread fetch failed 3 consecutive" "consecutive fetch failures warn" "$err"
+
+# --- 23. --no-guard restores unguarded queueing ------------------------------
+# Same trigger fixtures as case 20: with the guard off there must be no
+# thread read at all (the flag has teeth), no mutation, and the old
+# still-queued timeout verdict.
+new_case guard_off
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture threads 1 "$t_none"
+write_fixture threads last "$t_late"
+write_fixture dequeue last "$dq_ok"
+err="$TMP_ROOT/e23"
+out="$(run_queue_wait -- 1 1 3 --json --no-check-probe --no-guard 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "--no-guard leaves the PR queued" "$err"
+assert_eq "$([ -f "$SEQ_DIR/threads.count" ] && echo present || echo absent)" "absent" "--no-guard never reads threads" "$err"
+assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "--no-guard never mutates" "$err"
+
+# --- 24. a failed dequeue mutation is loud -----------------------------------
+new_case guard_dequeue_fail
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture threads 1 "$t_none"
+write_fixture threads last "$t_late"
+write_fixture dequeue last "$dq_err" 1
+err="$TMP_ROOT/e24"
+out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "1" "failed dequeue exits 1" "$err"
+assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "failed dequeue keeps the dequeued verdict" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "late_findings_dequeue_failed" "failed dequeue has its own cause" "$err"
+assert_eq "$(jq -r .status <<<"$out")" "error" "failed dequeue is an error result" "$err"
+assert_contains "$(jq -r .error <<<"$out")" "STILL QUEUED" "failed dequeue states the PR is still queued" "$err"
+assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "failed dequeue was attempted" "$err"
+
+# --- 25. armed-but-never-enqueued guard path disables auto-merge -------------
+new_case guard_armed_only
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_armed_only"
+write_fixture threads 1 "$t_none"
+write_fixture threads last "$t_late"
+write_fixture dequeue last "$am_ok"
+err="$TMP_ROOT/e25"
+out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "1" "armed-only late finding exits 1" "$err"
+assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "armed-only verdict is dequeued" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "late_findings" "armed-only cause" "$err"
+assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "disablePullRequestAutoMerge" "armed-only path disables auto-merge" "$err"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

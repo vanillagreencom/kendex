@@ -25,11 +25,12 @@ The recurring shapes that shipped, in rough frequency order:
 
 - A validator/verifier that degrades to "no findings" or "not applicable" when its input, probe, or dependency fails — instead of failing loudly.
 - Unchecked effectful calls: `$(mktemp)`/`readlink`/`git` substitutions whose failure leaves an empty variable and a running script; pipelines whose failure is masked (no `pipefail`); discarded error returns.
+- An async helper/service asked to start but neither confirmed running nor reported failed — the caller proceeds against a maybe-started dependency and a start failure surfaces nowhere.
 - Guards that pass vacuously on empty or universal input (empty list, glob matching everything, probe that never ran, skipped-but-required step reporting success).
 - One-directional validation: entries checked when present, orphaned/stale entries never checked.
 - Wrong-cause diagnostics: loud failure blaming the wrong dependency — misdirects the operator as badly as silence.
 - Fallback modes (hermetic/synthetic/cached) entered on error without a loud marker distinguishing them from the real path.
-- Verification that reports success without inspecting what it claims to verify.
+- Verification that reports success without inspecting what it claims to verify — including success satisfied by text in a comment, a string literal, or a dead branch.
 
 ## Output
 

@@ -2,86 +2,40 @@
 
 ## Unreleased
 
-- Post-merge bot triage of #1284: `open-terminal` now renders the
-  merged-and-cleaned terminal condition into every launched brief — including
-  the tmux delivery/re-send copy, which first shipped without it (caught by
-  three bots on the triage PR itself); the README pattern row keeps the
-  GFM table-escaped pipe (`\|` renders as `|` inside table code spans, the
-  form this README already uses) so the copyable value is a working regex;
-  README's `GH_ISSUE_PATTERN` row documents the real built-in default
-  (`([A-Z]+-[0-9]+|issue-[0-9]+)` — the transcribed value would have
-  rejected `issue-N` branches if copied into settings); post-summary's
-  downstream-handoff trigger regains `interface` alongside `API`.
-
-- **orch/fleet simplification v2 — ablation-tested condensation.** Every
-  contested SKILL.md section got an A/B answer from live drills on the private
-  rig (claude arm: full cycle 13 min vs the 14 min CI+perf baseline, zero
-  questions, section removed; codex one-shot arm: full unattended cycle to
-  merged-and-cleaned in 26.5 min — better than the stops-at-asks baseline —
-  zero shape rejections, four transient runtime errors all self-recovered),
-  and a section survived only where its removal measurably hurt an arm or a
-  contract test pins it:
-  - **Bootstrap Message deleted.** It shipped with every agent spawn; the
-    claude arm ran a full cycle without it. Sub-agent spawning is already
-    blocked deterministically (generated agents deny the spawn/question
-    tools in frontmatter), the artifact contracts live in the dev/reviewer
-    skills, and the drill held single-return and idle discipline with no
-    bootstrap prose. Spawns go straight to the delegation message.
-  - **Claude Code runtime block deleted** (team-creation/task-ordering
-    guidance): the ablated arm created teams, re-delegated, and read idle
-    wakes correctly without it.
-  - **Codex runtime block and Harness-Safe Shell reduced to the rejection
-    rule plus pointers**; the full shape catalogue, env-prefix normalization,
-    spawn contract (`fork_context: false`, `spawn-adapter`, thread cap), and
-    the no-`git rebase` rule are canonical in `references/codex-runtime.md` —
-    which also carries the corrected conflict-recovery flag form
-    (`--restack --replay` pauses; `--reuse --replay` aborts), fixing a
-    bot-flagged wrong-flag recovery path that survived two review rounds.
-  - **Codex dual-channel completion note kept**: not exercised by the arm,
-    pinned by its regression test, four lines.
-  - **Configuration table moved to README.md** (repo-owner material; no
-    executing workflow reads it — they call `orch-env` inline), and the
-    workflow-state/review-gate-modes/multi-PR-watching paragraphs collapsed
-    to their non-derivable rules plus pointers to the CLI reference and
-    `references/gates.md`.
-  - Coordination, Round Closure, reviewer-persistence, Tracker Resolution,
-    and Review Pipeline compressed to their contracts; `dev-artifact-check`'s
-    one-word verdict made the acceptance re-explanations redundant.
-- **Untriaged bot findings from #1272-#1277 markdown fixed** (the md-prose
-  comments deliberately deferred to this pass): review-pr's diff scan used a
-  broken `grep -clE` count and an unbound `[BASE]` placeholder; its DECLINED
-  derivation never loaded `fixed_items`, so already-fixed blockers could be
-  reported as outstanding; both settings templates still claimed
-  `ORCH_DECISION_MODE=ask` restores the retired findings menus; submit-pr
-  ignored `ORCH_MERGE_AUTONOMY` on the standalone path and misread non-CI
-  merge-blockers (conflicts, unresolved threads) as stale CI state;
-  start-worktree parsed the dev return's retired `QA Labels` field name;
-  oversee shipped with five launch-surface defects (no `workflow-state init`,
-  unresolved `GH_REPO` for pr-watch, `/orch` slash syntax on Codex lanes, an
-  unread `ORCH_OVERSEER_LANES`, and no atomic per-item claim on
-  thread/session surfaces); the workflow-state schema and help text still
-  showed the number-shaped `last_threads` example that recreates the
-  comment-triage loop.
-- **merge-pr: post-merge worktree cleanup is by rule, not a question.** A
-  merged PR's worktree with a clean tree and the merged branch checked out is
-  removed and its branch deleted; a dirty tree or foreign lease keeps it,
-  reported in the outcome table. submit-pr's merge offer now honors
-  `ORCH_MERGE_AUTONOMY=auto` the same way the managed path does. handoff and
-  oversee briefs state the terminal condition — complete means PR merged and
-  worktree cleaned, not opened (codex one-shot sessions self-judged "done" at
-  PR-open).
-- **worktree: `remove` no longer tears down a live sibling session's tree.**
-  An issue-addressed `remove` derives lease ownership from the issue ID, so
-  any session naming the issue passed the probe; now a lease whose recorded
-  claiming process is still alive on this host (and is not this session or an
-  ancestor) refuses the removal, naming the owner and pid. `remove --force`
-  skips exactly that refusal; dead or ancestor pids, env-ladder identities,
-  and every other safeguard behave as before. New 20-check suite with
-  mutation-proven controls.
-- project-management, dev, preflight, worktree, review-gate markdown:
-  verified tight (three prior passes + this one); zero-cut apart from a
-  second-opinion harness-table dedupe and the fixes above. linear/github
-  markdown untouched.
+- orch: `dev-artifact-check` and `review-artifact-check` gain a blocking
+  `--wait SECS [--interval N]` mode; the armed watchdog now returns the moment
+  a completion artifact lands (or at the deadline), so round closure never
+  depends on a sub-agent's return message being delivered.
+- orch: `queue-wait` guards queued PRs against late review findings (#1289,
+  five near-misses in one night): a new unresolved thread while queued or
+  armed triggers a dequeue — verdict `dequeued`, cause `late_findings` —
+  and merge-pr routes it to comment triage and re-enqueue. Default on;
+  `--no-guard` opts out. Failed reads are never quiet; failed dequeues are
+  loud and distinct.
+- orch oversee: unattended by default (#1290). Minted briefs route blocking
+  questions to the overseer via harness session-messaging where available
+  (local question tool still used); the watch checks tmux lanes for pending
+  question prompts and answers what available evidence decides, relaying
+  only product-changing or owner-standing calls to the user.
+- reviewer: six gap-closing scope lines from the vgs #133-135 analysis (87
+  real bot findings, 91% precision): decoy-mutation must-fail controls,
+  unconfirmed-start and dead-branch-success fail-open shapes, full
+  field×malformation enumeration for new declarative formats,
+  pre-steady-state probes, and mutation kills under every selection mode.
+  review-pr's cycle cap now bounds new cycles, never verification — an
+  unreviewed fix diff always gets its focused pass; submit-pr proves the
+  HEAD it pushes (preflight + the session's validation command).
+- review-gate: an errored bot review object is treated as silence, not
+  approval evidence — the gate stays awaiting (VST-253; fail-open observed
+  live). New selftest cases with pre-fix controls.
+- cli: `vstack add` without `-y` in a non-TTY session fails with an
+  actionable message instead of `os error 6`, and no longer repoints the
+  global source registry on that failure (VST-255).
+- decider: index rows are append-only, never re-sorted — the template's
+  "date order" clause contradicted its own example and the CLI reads rows
+  positionally (VST-263); the schema carries the placement rule.
+- AGENTS.md: the "Engineer over patch" rule now states determinism/tooling
+  first, prose last; skills are instructions, not explanations.
 
 - review-gate: the writer template header now counts the retry path's second
   content-creating request, matching the #1280 adoption.md correction (the
