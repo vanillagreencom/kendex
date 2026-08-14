@@ -10,6 +10,7 @@ import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import type { AssistantMessage, AssistantMessageEventStream, Model } from "@earendil-works/pi-ai";
 import { isConnectorTool } from "./connectors.js";
 import type { McpResult } from "./extract-tool-results.js";
+import { currentRequestLaneId } from "./request-lane.js";
 
 /** A mid-query user run captured for replay after the active query ends.
  *  `text` is the joined text form (previews, and the replay prompt when no
@@ -520,24 +521,42 @@ export class QueryContext {
 	}
 }
 
-let _ctx = new QueryContext();
-const contextStack: QueryContext[] = [];
+interface QueryLaneState {
+	current: QueryContext;
+	stack: QueryContext[];
+}
 
-export function ctx(): QueryContext { return _ctx; }
+const defaultLane: QueryLaneState = { current: new QueryContext(), stack: [] };
+const sessionLanes = new Map<string, QueryLaneState>();
 
-export function stackDepth(): number { return contextStack.length; }
+function lane(): QueryLaneState {
+	const sessionId = currentRequestLaneId();
+	if (!sessionId) return defaultLane;
+	let state = sessionLanes.get(sessionId);
+	if (!state) {
+		state = { current: new QueryContext(), stack: [] };
+		sessionLanes.set(sessionId, state);
+	}
+	return state;
+}
+
+export function ctx(): QueryContext { return lane().current; }
+
+export function stackDepth(): number { return lane().stack.length; }
 
 export function pushContext(): void {
-	if (!_ctx.activeQuery) throw new Error("pushContext() called with no active query");
-	contextStack.push(_ctx);
-	_ctx = new QueryContext();
+	const state = lane();
+	if (!state.current.activeQuery) throw new Error("pushContext() called with no active query");
+	state.stack.push(state.current);
+	state.current = new QueryContext();
 }
 
 export function popContext(): void {
-	if (contextStack.length === 0) throw new Error("popContext() called with empty stack");
-	const parent = contextStack[contextStack.length - 1];
-	parent.deferredUserMessages.push(..._ctx.deferredUserMessages);
-	_ctx = contextStack.pop()!;
+	const state = lane();
+	if (state.stack.length === 0) throw new Error("popContext() called with empty stack");
+	const parent = state.stack[state.stack.length - 1];
+	parent.deferredUserMessages.push(...state.current.deferredUserMessages);
+	state.current = state.stack.pop()!;
 }
 
 /** Pop the context that belongs to ONE specific query, wherever it sits.
@@ -552,21 +571,26 @@ export function popContext(): void {
  *  the correct lineage. Returns false when `target` is nowhere in the state —
  *  already popped — so callers can treat that as "someone else tore this down". */
 export function popContextFor(target: QueryContext): boolean {
-	if (_ctx === target) {
+	const state = lane();
+	if (state.current === target) {
 		popContext();
 		return true;
 	}
-	const idx = contextStack.indexOf(target);
+	const idx = state.stack.indexOf(target);
 	if (idx < 0) return false;
-	const parent = idx > 0 ? contextStack[idx - 1] : undefined;
+	const parent = idx > 0 ? state.stack[idx - 1] : undefined;
 	parent?.deferredUserMessages.push(...target.deferredUserMessages);
-	contextStack.splice(idx, 1);
+	state.stack.splice(idx, 1);
 	return true;
 }
 
-// Test-only: drop all state so test files can start from a clean module.
-// Not called from production.
+// Test-only: drop every lane so test files can start clean.
 export function resetStack(): void {
-	_ctx = new QueryContext();
-	contextStack.length = 0;
+	clearQueryLanes();
+}
+
+export function clearQueryLanes(): void {
+	sessionLanes.clear();
+	defaultLane.current = new QueryContext();
+	defaultLane.stack.length = 0;
 }

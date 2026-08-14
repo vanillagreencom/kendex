@@ -25,6 +25,7 @@ import {
 import { conversationFingerprint } from "../src/session-persistence.ts";
 import { setExtensionApi } from "../src/bridge-state.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
+import { runInRequestLane } from "../src/request-lane.ts";
 
 const model = {
 	id: "claude-haiku-4-5",
@@ -169,7 +170,11 @@ describe("foreign-conversation completion (#1001)", () => {
 		await new Promise((resolve) => setTimeout(resolve, 25));
 
 		assert.ok(events.some((event) => event.type === "done" && event.reason === "toolUse"));
-		assert.equal(ctx().detachedFromSharedSession, true, "the foreign non-claim must ride the query context");
+		assert.equal(
+			runInRequestLane("foreign-unresolved-tool", () => ctx().detachedFromSharedSession),
+			true,
+			"the foreign non-claim must ride the query context",
+		);
 		assert.deepEqual(
 			__testGetBridgeIntegrityState().sharedSession,
 			record,

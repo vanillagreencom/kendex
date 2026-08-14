@@ -1,6 +1,7 @@
 import { type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { debug, diagDump, diagGuidance } from "./debug.js";
 import { type QueryContext } from "./query-state.js";
+import { currentRequestLaneId } from "./request-lane.js";
 import { summarizeMissingToolNames, type MissingToolResult } from "./tool-pairing-audit.js";
 
 export interface SessionState {
@@ -45,16 +46,39 @@ export interface SessionState {
 	forceRotate?: boolean;
 }
 
-// Shared mutable bridge state. Lives in its own module so the extracted
-// modules and index.ts observe the SAME state: ESM live bindings let every
-// importer READ these `let` bindings live, but only this module may assign
-// them — cross-module writes must go through the setters below.
-export let sharedSession: SessionState | null = null;
+// Claude session state is scoped to Pi's provider `sessionId`. The parent and
+// in-process subagents share this module and provider registration, but they do
+// not share a conversation. Keeping one process-global record lets one request
+// resume, overwrite, or abort another request's Claude Code session.
+let defaultSharedSession: SessionState | null = null;
+let primaryLaneId: string | undefined;
+const sharedSessions = new Map<string, SessionState | null>();
 export let extensionApi: ExtensionAPI | undefined;
 export let piUI: ExtensionUIContext | undefined;
 
+export function getSharedSession(): SessionState | null {
+	const sessionId = currentRequestLaneId();
+	if (!sessionId) return defaultSharedSession;
+	if (!sharedSessions.has(sessionId) && primaryLaneId === undefined) {
+		primaryLaneId = sessionId;
+		sharedSessions.set(sessionId, defaultSharedSession);
+		defaultSharedSession = null;
+	}
+	return sharedSessions.get(sessionId) ?? null;
+}
+
 export function setSharedSession(next: SessionState | null): void {
-	sharedSession = next;
+	const sessionId = currentRequestLaneId();
+	if (sessionId) {
+		primaryLaneId ??= sessionId;
+		sharedSessions.set(sessionId, next);
+	} else defaultSharedSession = next;
+}
+
+export function clearSharedSessionLanes(): void {
+	sharedSessions.clear();
+	primaryLaneId = undefined;
+	defaultSharedSession = null;
 }
 
 /** Force the next syncSharedSession down the REBUILD path (no-op without a
@@ -62,8 +86,9 @@ export function setSharedSession(next: SessionState | null): void {
  *  a concurrent CC writer may still be flushing (abort, idle kill); see the
  *  field docs on SessionState. */
 export function markSessionForRebuild(opts: { forceRotate?: boolean } = {}): void {
+	const sharedSession = getSharedSession();
 	if (!sharedSession) return;
-	sharedSession = { ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) };
+	setSharedSession({ ...sharedSession, needsRebuild: true, ...(opts.forceRotate ? { forceRotate: true } : {}) });
 }
 
 export function setExtensionApi(next: ExtensionAPI | undefined): void {
@@ -183,6 +208,7 @@ export function reportToolResultMismatch(
 			return true;
 		}
 		const toolNameSummary = compactToolNameSummary(progress.toolNames);
+		const sharedSession = getSharedSession();
 		diagDump("tool_result_delivery_mismatch", {
 			reason,
 			cwd,
@@ -225,9 +251,22 @@ export function reportToolResultMismatch(
 
 export function __testSetBridgeIntegrityState(state: { ui?: Pick<ExtensionUIContext, "notify"> | null; sharedSession?: SessionState | null }): void {
 	if ("ui" in state) piUI = state.ui as ExtensionUIContext | undefined;
-	if ("sharedSession" in state) sharedSession = state.sharedSession ?? null;
+	if ("sharedSession" in state) {
+		if (currentRequestLaneId()) setSharedSession(state.sharedSession ?? null);
+		else {
+			clearSharedSessionLanes();
+			defaultSharedSession = state.sharedSession ?? null;
+		}
+	}
 }
 
 export function __testGetBridgeIntegrityState(): { sharedSession: SessionState | null } {
-	return { sharedSession };
+	const laneId = currentRequestLaneId();
+	return {
+		sharedSession: laneId
+			? getSharedSession()
+			: primaryLaneId
+				? (sharedSessions.get(primaryLaneId) ?? null)
+				: defaultSharedSession,
+	};
 }

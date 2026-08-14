@@ -3,7 +3,7 @@ import { createSession, deleteSession, openSession, repairToolPairing } from "cc
 import { createHash } from "crypto";
 import { realpathSync, statSync } from "fs";
 import { resolve as pathResolve } from "path";
-import { extensionApi, reportSyntheticToolResultRepair, safeNotify, setSharedSession, sharedSession, type SessionState } from "./bridge-state.js";
+import { extensionApi, getSharedSession, reportSyntheticToolResultRepair, safeNotify, setSharedSession, type SessionState } from "./bridge-state.js";
 import { displayPath } from "./config.js";
 import { convertPiMessages } from "./convert.js";
 import { DEBUG, DEBUG_LOG_PATH, debug, diagDump } from "./debug.js";
@@ -227,6 +227,7 @@ export function cancelScheduledSessionPersistence(): void {
 }
 
 export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknown }): void {
+	const sharedSession = getSharedSession();
 	if (!extensionApi || !sharedSession || !ctxLike?.sessionManager) return;
 	// Extension contexts become guarded/stale as soon as shutdown or replacement
 	// starts. Capture the plain SessionManager reference now and cancel the timer
@@ -475,6 +476,7 @@ export function syncSharedSession(
 	modelId?: string,
 	account?: AccountSessionScope,
 ): SyncResult {
+	const sharedSession = getSharedSession();
 	const priorMessages = messages.slice(0, -1); // everything before the new user prompt
 	const accountProfileId = account?.accountProfileId;
 	const scopeConfigDir = account?.claudeConfigDir; // resolved dir for managed, undefined for legacy
