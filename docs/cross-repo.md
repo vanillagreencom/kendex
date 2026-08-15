@@ -60,29 +60,7 @@ Agreed shape for drovr, memsira, and hyprtrade, settled by live testing on real 
 
 ## A Vendored Tree Is Reviewed Once, Upstream
 
-Consuming repos merge re-vendor PRs whose entire delta is bytes already reviewed
-upstream. Every reviewer re-reviews them in every consumer, and each inline
-comment opens a thread that blocks that repo's merge until someone answers it —
-one upstream finding becomes one blocking thread per reviewer per repo, and the
-sessions answering them carry the argument back upstream as though it were new.
-
-- **Route a finding by where its fix would land, not by which file it sits on.**
-  A remedy in a repo-owned file (the vendor pin, settings, CI wiring) is local
-  and belongs inline — a re-vendor that moves pinned bytes without updating the
-  pin is a real defect. A remedy in the vendored bytes belongs in the review
-  summary body, which creates no thread — or, for a reviewer that can only
-  anchor findings to file locations, in ONE consolidated comment for the whole
-  PR rather than one per finding.
-- **Do not silence the reviewer by excluding the path.** A pure re-vendor PR is
-  nothing but vendored files, so a reviewer that skips them produces no review
-  object and the review gate's evidence term starves with no reviewer that can
-  ever clear it. Constrain what a reviewer SAYS, never whether it reviews.
-- **File upstream once, from one consumer.** Reviewers have no cross-repo memory
-  and restate the same finding in every repo; the first session to see it files
-  it, the rest cite that issue.
-
-Mechanism, wiring, and the per-repo verification protocol:
-`skills/review-gate/references/vendored-paths.md`.
+Consuming repos merge re-vendor PRs whose delta is bytes already reviewed upstream. Route each finding by where its fix would land, never by which file it sits on, and never silence a reviewer by excluding the path — mechanism, wiring, and the per-repo verification protocol: `skills/review-gate/references/vendored-paths.md`.
 
 ## Do Not Restate Another Repo's Status From A Stale Check
 
@@ -102,33 +80,6 @@ Sessions send into each other's tmux panes. The failure modes are not obvious.
 - **Send ONE LINE. A multi-line `send-keys -l` becomes a paste, and a paste does not submit.** Claude Code collapses multi-line input to `[Pasted text #1]`, and neither `Enter` nor `C-m` submits it. Newlines are the trigger, not length — a very long single line is fine.
 - **A collapsed paste also defeats fragment verification**, because `capture-pane` only ever shows `[Pasted text #1]` and never the body. One more reason single-line is the only reliable form.
 - **Clear a stuck composer with `C-u` rather than leaving it.** Text abandoned there can later be submitted glued to the other session's own message. `C-u` doubles as the power check: if it clears the composer, keystrokes *are* registering, so "Enter did not submit" is a real finding rather than a dead pane.
-
-## An Export Surface Is A Security Surface — Re-vendor Before You Re-export
-
-- **A latent defect becomes reachable the moment you export it.** Making an API genuinely callable makes its inputs genuinely untrusted, even when the code has been unchanged for many merges.
-- **Fix and export in the same change**, so no merged state is ever simultaneously reachable and vulnerable. The dangerous window otherwise exists in intermediate branch pushes — the concrete argument for never vendoring from an unmerged branch.
-
-## A Bundled Package With Externals Will Not Import From An Arbitrary Directory
-
-`pi-claude-bridge`'s `bundle/index.js` keeps `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` as externals, so importing the package root only works from a tree where those resolve — inside the consuming app, not from a repo root or a scratch directory.
-
-**The failure mode is a false negative that looks exactly like a real one.** A root import from the wrong directory returns `ERR_MODULE_NOT_FOUND`, which reads as "the export is missing" and invites an upstream bug report. Run the import from the directory that declares the dependency before concluding anything about the export.
-
-## When A Grep Surprises You, The Pattern Is The First Suspect
-
-- **When a grep result surprises you, re-measure a different way before writing it down.** Read the actual site. A surprising result is far more often a broken pattern than surprising code.
-- **A result that CONFIRMS what you expected deserves the same suspicion, and gets less.** Confirmation is where the check is skipped.
-- **A whole-artifact grep answers a question about the artifact, not about the site you care about.** Scope the search to the call site, or read it.
-- **Appearing, being exported, and being resolvable are three different properties.** Verify the specific one your claim depends on.
-
-## A Probe That Cannot Produce A Positive Proves Nothing
-
-- **Before trusting a negative, say what a positive would have looked like in that exact output.** If you cannot point at the line, count, or field that would have differed, the probe has no power and its zero means nothing.
-- **Prefer an output where a positive has a known shape** — e.g. a debug log line whose success form is already known from a rig where it works.
-- **Build the power check into the probe's own output.** Report the corroborating counts next to the answer so a later reader can judge a negative without re-running anything. A probe that reports only its verdict asks to be trusted; one that reports its own reach can be checked.
-- **An underpowered probe is worse than no probe**, because it launders an assumption into evidence and then eliminates the candidates that would have found the real cause.
-
-Same failure as `[live]` tone-upgrading above, one layer earlier: there the tag outran the observation, here the observation could not have existed. Related, for probes whose results other repos store: the Capability Probe Contract below.
 
 ## Installed Connectors Are Not Attached Connectors
 

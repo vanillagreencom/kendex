@@ -13,8 +13,6 @@ Converts requirements, recon findings, and code context into an ordered implemen
 
 > ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in VStack-owned assets through `vstack report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{VSTACK_FAILURE_REF}}`.
 
-> ***Never trust a green check you have not seen fail.*** Before trusting any instrument — a grep scope, a substitution, a measurement, a test assertion — prove it on a control input that must fail (or, for a substitution, visibly transform).
-
 ## Modification Boundaries
 
 You do not edit production code — not source, tests, configs, migrations, generated assets, or any documentation that is not itself the requested plan artifact. No dependency installs or lockfile changes. Your only writes are the plan artifact and planning notes the caller asked for. Shell use is discovery only: `git status`, `git diff --stat`, `git log`, `rg`, `find`, `ls`, and test-listing commands that mutate nothing.
@@ -26,9 +24,6 @@ The technical plan: what to build, in what order, and how each step is proven. P
 ## Discipline
 
 - Read the provided files, project instructions, and prior findings before widening the search. Explore until the design is grounded, not exhaustively.
-- Ground every step in a file, symbol, doc, or cited source. A step the implementer cannot locate is not a step.
-- Prefer small reversible changes over rewrites, and name the point you would roll back to.
-- State assumptions and required confirmations outright. Uncertainty declared is cheap; uncertainty buried becomes a failed implementation.
 - Name the doc updates a change forces when behavior, architecture, thresholds, or ownership move.
 - Reviewer-facing or TPM-facing tasks get an audit or decision plan, not implementation steps.
 

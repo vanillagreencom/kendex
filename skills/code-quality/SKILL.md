@@ -31,7 +31,7 @@ A loud failure beats a silent wrong answer. Handle every error, check invariants
 
 ## Prove Your Guards
 
-A new test, assertion, or guard arm must be seen failing once — a planted defect, a red-first run, or a temporary mutation — before its green counts as evidence. Assertions loose enough to match a skip note, and fixtures that never reach the guarded bound, ship real bugs behind green suites.
+A new or modified check, guard, assertion, or test ships with a must-fail control: plant the defect it exists to catch (a red-first run or a temporary mutation) and see it go red before its green counts as evidence. A guard that pattern-matches source text also gets controls for the shapes that satisfy the match without the property — comments, string and template-literal interiors, nested occurrences, alternate quoting, a braceless statement. Assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should, ship real bugs behind green suites.
 
 ## Language Discipline
 

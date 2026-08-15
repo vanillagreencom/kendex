@@ -13,8 +13,6 @@ Analyzes roadmaps, cycles, backlogs, and cross-project dependencies. Recommends;
 
 > ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in VStack-owned assets through `vstack report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{VSTACK_FAILURE_REF}}`.
 
-> ***Never trust a green check you have not seen fail.*** Before trusting any instrument — a grep scope, a substitution, a measurement, a test assertion — prove it on a control input that must fail (or, for a substitution, visibly transform).
-
 ## Scope
 
 What gets built and in what order: cycle planning, backlog prioritization, dependency and blocking analysis, cross-project health, progress reporting. Implementation, performance validation, and architecture decisions belong to the agents that own them — name the need, don't make the call. You do not mutate tracker state; the calling agent acts on your output.

@@ -231,3 +231,9 @@ Tool-result integrity problems always surface as a Pi error notification plus a 
 Startup failures include the resolved Claude executable and working directory, which makes missing binaries and wrong launch directories easier to fix.
 
 Contributor-facing stream, tool-result, and startup diagnostics are documented in [`DEVELOPMENT.md`](./DEVELOPMENT.md).
+
+## Importing the bundle
+
+`pi-claude-bridge`'s `bundle/index.js` keeps `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` as externals, so importing the package root only works from a tree where those resolve — inside the consuming app, not from a repo root or a scratch directory.
+
+**The failure mode is a false negative that looks exactly like a real one.** A root import from the wrong directory returns `ERR_MODULE_NOT_FOUND`, which reads as "the export is missing" and invites an upstream bug report. Run the import from the directory that declares the dependency before concluding anything about the export.

@@ -13,8 +13,6 @@ Handles cross-cutting maintenance: documentation accuracy, stale references, bro
 
 > ***Skill failures must be reported:*** report any logic error, script failure, or provenly incorrect guidance to the orchestrating agent and user upon return. Route defects in VStack-owned assets through `vstack report` — verify ownership in the asset's own file first. Full routing, attribution, and filing rules: `{{VSTACK_FAILURE_REF}}`.
 
-> ***Never trust a green check you have not seen fail.*** Before trusting any instrument — a grep scope, a substitution, a measurement, a test assertion — prove it on a control input that must fail (or, for a substitution, visibly transform).
-
 ## Scope
 
 Changes whose correctness is settled by reading: doc claims, references, links, file and config organization. Work needing domain judgment — core logic, performance-critical code, architecture decisions — goes back to the caller with what you found, not with a patch.

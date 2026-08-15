@@ -61,10 +61,6 @@ Thumbs.db
 # config (no machine-specific paths) and is only separate from vstack.toml
 # because that file is the source catalog consumers read. See its header.
 
-# Cross-repo mailbox log — machine-local session coordination, never committed
-# (docs/cross-repo.md, the curated contract, IS tracked on purpose)
-docs/cross-repo-notes.md
-
 # Filled workspace copies of portable doc templates — never committed (vstack
 # is portable/public). Pattern: tracked template docs/<name>.md, untracked
 # filled copy docs/<name>-local.md, gist-backed per the file's own header.

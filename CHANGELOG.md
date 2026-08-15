@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- agents: the seven engineer/analyst agents (generalist, iced, planner,
+  researcher, rust, scout, tpm) drop the house "never trust a green check"
+  blockquote — the rule's canonical homes are `code-quality` § Prove Your
+  Guards (engineers) and the reviewer skill (reviewers); rust drops
+  project-owned Build/Portability opinions; planner's discipline is cut to
+  what its output format does not already require.
+- code-quality/dev: must-fail controls are required where code is written,
+  not only where it is reviewed (VST-266) — dev-implement § Validate requires
+  a red-once control for every added or modified check, and Prove Your Guards
+  names the source-text shapes a pattern-matching guard must be proven
+  against.
+- docs: issue-label-taxonomy states the one-way GitHub → Linear creation
+  sync; cross-repo.md is cut to the cross-repo contracts (generic epistemics
+  removed, the vendored-tree section is a pointer to
+  `review-gate/references/vendored-paths.md`, the bundle-import note moved to
+  the pi-claude-bridge README); the retired in-repo mailbox path leaves
+  .gitignore.
 - orch: `PR_REVIEW_QUORUM` — approval-wait's multi-bot enqueue gate. When a
   repo lists its reviewer logins, no success emits (either mode) until every
   listed login has a non-dismissed review pinned to the current head AND
