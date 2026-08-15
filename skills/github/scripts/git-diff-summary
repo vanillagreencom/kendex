@@ -862,7 +862,7 @@ main() {
     done <<<"$test_paths"
     if [ ${#test_path_args[@]} -gt 0 ]; then
         local test_diff=""
-        scan_diff test_diff "panic paths" "$diff_ref" -- "${test_path_args[@]}"
+        scan_diff test_diff "test panic paths" "$diff_ref" -- "${test_path_args[@]}"
         test_diff=$(printf '%s\n' "$test_diff" | grep -E '^\+' || true)
         if echo "$test_diff" | grep -qE '^\+.*(panic!|unwrap\(\))'; then test_panic=1; fi
     fi

@@ -502,7 +502,7 @@ done <<'CASES'
 stats|--stat
 risk flags|*.rs
 panic paths|src/lib.rs
-panic paths|tests/it.rs
+test panic paths|tests/it.rs
 CASES
 
 # --head content reads are tracked-only, like the sibling listing: an
