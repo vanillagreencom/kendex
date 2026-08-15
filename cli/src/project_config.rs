@@ -536,9 +536,7 @@ impl ProjectConfig {
 
         out = dedupe_agent_frontmatter_sections(&out);
 
-        if !same_ignoring_trailing_newline(&out, &existing) {
-            let _ = std::fs::write(&path, out);
-        }
+        write_if_changed(&path, out, &existing);
     }
 }
 
@@ -1059,9 +1057,7 @@ pub fn merge_upstream_agent_skills(project_root: &Path, updates: &HashMap<String
     }
 
     out = ensure_value_section_entry_spacing(&out);
-    if !same_ignoring_trailing_newline(&out, &content) {
-        let _ = std::fs::write(&path, out);
-    }
+    write_if_changed(&path, out, &content);
 }
 
 /// Replace a TOML array value for a key within a specific section.
@@ -1174,9 +1170,7 @@ pub fn write_agent_skills(project_root: &Path, agent_skill_map: &HashMap<String,
         "[agent-skills]",
         &new_entries,
     ));
-    if !same_ignoring_trailing_newline(&out, &existing) {
-        let _ = std::fs::write(&path, out);
-    }
+    write_if_changed(&path, out, &existing);
 }
 
 /// Deprecated compatibility shim. Default colors now live in each
@@ -1246,9 +1240,7 @@ pub fn write_agent_frontmatter_defaults(
     }
 
     content = ensure_value_section_entry_spacing(&dedupe_agent_frontmatter_sections(&content));
-    if !same_ignoring_trailing_newline(&content, &existing) {
-        let _ = std::fs::write(path, content);
-    }
+    write_if_changed(&path, content, &existing);
 }
 
 fn project_config_from_content(content: &str) -> ProjectConfig {
@@ -1871,9 +1863,7 @@ fn repair_project_config_structure(path: &Path) {
     // ours to keep in sync.
     let preserve_header = path.file_name().and_then(|n| n.to_str()) == Some("vstack-local.toml");
     let out = repair_project_config_content(&existing, preserve_header);
-    if !same_ignoring_trailing_newline(&out, &existing) {
-        let _ = std::fs::write(path, out);
-    }
+    write_if_changed(path, out, &existing);
 }
 
 fn repair_project_config_content(existing: &str, preserve_header: bool) -> String {
@@ -2745,19 +2735,21 @@ fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
 
     // Only write if content actually changed to avoid bumping mtime,
     // which would make staleness checks flag everything as outdated.
-    if !same_ignoring_trailing_newline(&out, &existing) {
-        let _ = std::fs::write(path, out);
-    }
+    write_if_changed(path, out, &existing);
 }
 
-/// True when the two contents differ at most by the presence of a single
-/// trailing newline. Refresh writers must skip the write in that case:
-/// consumers commit `vstack.toml` without a final newline, and a write whose
-/// only effect is normalizing that newline dirties their working tree on
-/// every refresh (vstack#987). A real content change still writes — and may
-/// normalize the newline along the way.
-fn same_ignoring_trailing_newline(a: &str, b: &str) -> bool {
-    a.strip_suffix('\n').unwrap_or(a) == b.strip_suffix('\n').unwrap_or(b)
+/// Write `out` to `path` only when it differs from `existing`, so an
+/// unchanged config never has its mtime bumped (staleness checks key on it).
+/// The written text always ends in a newline: a file that lost its
+/// terminator is repaired by the first pass that reads it, and every later
+/// pass sees identical content and skips the write.
+fn write_if_changed(path: &Path, mut out: String, existing: &str) {
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    if out != existing {
+        let _ = std::fs::write(path, out);
+    }
 }
 
 /// Returns true if a name does NOT appear as a TOML key in the file.
@@ -2842,7 +2834,11 @@ fn insert_keys_into_section(content: &str, section_header: &str, new_keys: &[&St
         }
     }
 
-    result.join("\n")
+    let mut out = result.join("\n");
+    if content.ends_with('\n') && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
 }
 
 /// Insert raw TOML text after existing keys in a `[section]`, preserving all
@@ -2898,7 +2894,11 @@ fn insert_entries_into_section(content: &str, section_header: &str, entries: &st
         }
     }
 
-    result.join("\n")
+    let mut out = result.join("\n");
+    if content.ends_with('\n') && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
 }
 
 fn strip_skills_reference(content: &str) -> String {
@@ -4673,7 +4673,39 @@ command = \"./scripts/x.sh\"\n";
     }
 
     #[test]
-    fn refresh_skips_write_when_only_trailing_newline_differs() {
+    fn insert_keys_into_section_preserves_trailing_newline() {
+        let content = "[agent-skills]\ngeneralist = [\"github\"]\n";
+        let key = "github".to_string();
+        let out = insert_keys_into_section(content, "[skill-instructions]", &[&key]);
+        assert!(
+            out.ends_with("[skill-instructions]\ngithub = \"\"\n"),
+            "{out:?}"
+        );
+
+        let existing = "[skill-instructions]\nfoo = \"\"\n";
+        let out = insert_keys_into_section(existing, "[skill-instructions]", &[&key]);
+        assert!(out.ends_with("github = \"\"\n"), "{out:?}");
+
+        // A file with no terminator keeps none — the helper is shape-preserving.
+        let out = insert_keys_into_section("[a]\nx = 1", "[skill-instructions]", &[&key]);
+        assert!(out.ends_with("github = \"\""), "{out:?}");
+    }
+
+    #[test]
+    fn insert_entries_into_section_preserves_trailing_newline() {
+        let content = "[agent-skills]\ngeneralist = [\"github\"]\n";
+        let out = insert_entries_into_section(content, "[agent-skills]", "rust = [\"github\"]");
+        assert!(out.ends_with("rust = [\"github\"]\n"), "{out:?}");
+
+        let out = insert_entries_into_section("[other]\nx = 1\n", "[agent-skills]", "rust = []");
+        assert!(out.ends_with("[agent-skills]\nrust = []\n"), "{out:?}");
+
+        let out = insert_entries_into_section("[other]\nx = 1", "[agent-skills]", "rust = []");
+        assert!(out.ends_with("rust = []"), "{out:?}");
+    }
+
+    #[test]
+    fn refresh_heals_missing_trailing_newline_once() {
         let dir = std::env::temp_dir().join(format!(
             "vstack_test_newline_only_skip_{}",
             std::process::id()
@@ -4696,13 +4728,20 @@ command = \"./scripts/x.sh\"\n";
 
         ensure_project_config(&dir, &agents, &skills);
 
+        // First pass repairs the terminator (a real write)...
         let after = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(
-            after, no_newline,
-            "newline-only normalization must not touch the file"
-        );
+        assert_eq!(after, stable, "missing final newline must be repaired");
         let mtime_after = std::fs::metadata(&path).unwrap().modified().unwrap();
-        assert_eq!(mtime_before, mtime_after, "no write should have occurred");
+        assert_ne!(mtime_before, mtime_after, "the repair is a write");
+
+        // ...and every later pass sees identical content and skips.
+        ensure_project_config(&dir, &agents, &skills);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), stable);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            mtime_after,
+            "no write should occur once the file is healed"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

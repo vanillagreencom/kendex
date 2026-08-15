@@ -35,6 +35,12 @@
   `skills/review-gate/references/vendored-paths.md`, the bundle-import note moved to
   the pi-claude-bridge DEVELOPMENT.md); the retired in-repo mailbox path leaves
   .gitignore.
+
+- cli: `vstack add`/`refresh` no longer strip the trailing newline from
+  `vstack.toml` (the `[skill-instructions]`/`[agent-skills]` insert paths
+  did), and every `vstack.toml` writer now repairs a file that already lost
+  it on the first pass that reads it — one write, then stable — instead of
+  pinning the malformed file forever (VST-252).
 - orch: `PR_REVIEW_QUORUM` — approval-wait's multi-bot enqueue gate. When a
   repo lists its reviewer logins, no success emits (either mode) until every
   listed login has a non-dismissed review pinned to the current head AND
