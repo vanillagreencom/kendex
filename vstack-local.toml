@@ -121,6 +121,10 @@ scout = ""
 [skill-instructions]
 price-handling = ""
 
+html-artifact = ""
+
+iced-shadcn = ""
+
 vstack-issues = ""
 
 trading-design = ""

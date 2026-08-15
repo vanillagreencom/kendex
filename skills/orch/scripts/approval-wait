@@ -250,7 +250,7 @@ NUDGE_BODY="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE "")"
 QUORUM_RAW="$("$SCRIPT_DIR/orch-env" PR_REVIEW_QUORUM "")"
 QUORUM_LOGINS=""
 if [ -n "$QUORUM_RAW" ]; then
-  QUORUM_LOGINS="$(printf '%s' "$QUORUM_RAW" | tr ',' ' ' | tr -s ' ' | sed 's/^ //; s/ $//')"
+  QUORUM_LOGINS="$(printf '%s' "$QUORUM_RAW" | tr ',\t\n' '   ' | tr -s ' ' | sed 's/^ //; s/ $//')"
 fi
 last_quorum_missing=""
 
@@ -357,6 +357,26 @@ head_changed_during_wait=false
 # through here (or emit_error) so the script can never finish silently.
 #   status: approved | reviewed | changes_requested | comments | timeout
 #         | proceeded | error
+# Approval-mode quorum gate shared by both approved-evidence branches: emits
+# and exits on a settled outcome, returns 1 to keep polling. Success requires
+# the full quorum at head AND zero unresolved threads; open threads settle to
+# "comments" so callers triage instead of idling to the deadline.
+quorum_settles_approval() {
+  if [ -z "$QUORUM_LOGINS" ]; then
+    emit_result "approved"
+    exit 0
+  fi
+  if [ -z "$last_quorum_missing" ] && [ "$last_unresolved" -eq 0 ]; then
+    emit_result "approved"
+    exit 0
+  fi
+  if [ "$last_unresolved" -gt 0 ]; then
+    emit_result "comments"
+    exit 1
+  fi
+  return 1
+}
+
 emit_result() {
   local status="$1" error_msg="${2:-}" mode_fields
   update_elapsed
@@ -924,38 +944,14 @@ while true; do
     fi
   else
     if [ "$last_review_decision" = "APPROVED" ]; then
-      # A quorum turns approval mode's verdict-only success into the full
-      # gate: every listed login at head AND zero unresolved threads.
-      if [ -z "$QUORUM_LOGINS" ]; then
-        emit_result "approved"
-        exit 0
-      fi
-      if [ -z "$last_quorum_missing" ] && [ "$last_unresolved" -eq 0 ]; then
-        emit_result "approved"
-        exit 0
-      fi
-      if [ "$last_unresolved" -gt 0 ]; then
-        emit_result "comments"
-        exit 1
-      fi
+      quorum_settles_approval || true
     fi
     if [ "$last_review_decision" = "CHANGES_REQUESTED" ] || [ "$last_changes" -gt 0 ]; then
       emit_result "changes_requested"
       exit 1
     fi
     if [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ]; then
-      if [ -z "$QUORUM_LOGINS" ]; then
-        emit_result "approved"
-        exit 0
-      fi
-      if [ -z "$last_quorum_missing" ] && [ "$last_unresolved" -eq 0 ]; then
-        emit_result "approved"
-        exit 0
-      fi
-      if [ "$last_unresolved" -gt 0 ]; then
-        emit_result "comments"
-        exit 1
-      fi
+      quorum_settles_approval || true
     fi
     if [ "$last_unresolved" -gt 0 ]; then
       emit_result "comments"

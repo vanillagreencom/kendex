@@ -47,8 +47,8 @@ PR_REVIEW_NUDGE = ""
 # check on repos where all publishers are trusted.
 PR_REVIEW_CHECK = ""
 
-# Used by: orch (`approval-wait`). Comma-separated reviewer logins that must
-# EACH have a review pinned to the current head — with zero unresolved
+# Used by: orch (`approval-wait`). Comma- or space-separated reviewer logins
+# that must EACH have a review pinned to the current head — with zero unresolved
 # threads — before the review gate opens, in either mode. The multi-bot
 # enqueue gate: one bot's pass cannot open the gate while a listed sibling
 # has not yet reacted to this head; findings hold the gate as threads.
