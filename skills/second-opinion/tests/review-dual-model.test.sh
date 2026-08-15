@@ -275,7 +275,7 @@ run_multi "$out7" SECOND_OPINION_MODELS="codex, codex claude" || rc7=$?
 assert_eq "$rc7" "0" "duplicate-lane review exits 0"
 assert_eq "$(count lane-codex)" "1" "duplicated lane invoked exactly once"
 assert_jq "$out7" '.qa_metadata.lanes | length' "2" "lane provenance lists each lane once"
-grep -q "duplicate review target" "$TMP_ROOT/last.stderr" || fail "duplicate skip is not loud"
+grep -q "skipping codex: model codex already selected" "$TMP_ROOT/last.stderr" || fail "duplicate skip is not loud"
 
 echo "=== scenario 8: all-lanes failure removes a stale union artifact ==="
 reset_counts
@@ -336,7 +336,10 @@ grep -q "skipping codex: runs the same model as this session" "$TMP_ROOT/last.st
 echo "=== scenario 12: harness detection excludes without a declaration (control: declared other) ==="
 # CLAUDECODE=1 is what Claude Code sets; with no SECOND_OPINION_CURRENT_MODEL
 # the session identity comes from it. The control run declares a foreign
-# identity under the same env and must dispatch to claude.
+# identity under the same env and must dispatch to claude. When this suite
+# itself runs under Claude Code the process-tree walk finds the claude ancestor
+# first, so a mutant that drops the CLAUDECODE branch is only killed on a
+# non-Claude runner (CI); the ancestor path is covered by scenarios 19-20.
 reset_counts
 out12="$TMP_ROOT/out12.json"
 rc12=0
@@ -431,6 +434,113 @@ got18b=$(env SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude" 
   SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
   "$SECOND_OPINION" detect 2>/dev/null) || rc18=$?
 assert_eq "$got18b:$rc18" "none:1" "detect prints none and exits 1 when refusing"
+
+echo "=== scenario 19-20: nearest harness ancestor is the identity (skipped where ps hides script names) ==="
+# A wrapper script named after a harness stands in as the innermost ancestor.
+# Probe first: on platforms where `ps -o comm=` reports the interpreter rather
+# than the script, the wrapper is invisible and these scenarios cannot run.
+mkdir -p "$TMP_ROOT/fake"
+for h in pi codex; do
+  printf '#!/bin/bash\n"$@"\n' > "$TMP_ROOT/fake/$h"
+  chmod +x "$TMP_ROOT/fake/$h"
+done
+probe=$("$TMP_ROOT/fake/pi" bash -c 'ps -o comm= -p $PPID' 2>/dev/null | tr -d ' ')
+probe="${probe##*/}"
+if [[ "$probe" == "pi" ]]; then
+  echo "=== scenario 19: undeclared Pi session refuses — no CLI run, reason names the setting ==="
+  reset_counts
+  out19="$TMP_ROOT/out19.json"
+  rc19=0
+  set +e
+  env -u SECOND_OPINION_CURRENT_MODEL SECOND_OPINION_MODELS="codex claude" \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+    "$TMP_ROOT/fake/pi" "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$out19" \
+    >/dev/null 2>"$TMP_ROOT/last.stderr"
+  rc19=$?
+  set -e
+  assert_eq "$rc19" "1" "undeclared Pi session exits 1"
+  assert_file_absent "$out19" "undeclared Pi session writes no artifact"
+  assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "undeclared Pi session invokes no CLI"
+  grep -q "model undeclared" "$TMP_ROOT/last.stderr" || fail "refusal does not say the model is undeclared"
+  grep -q "SECOND_OPINION_CURRENT_MODEL" "$TMP_ROOT/last.stderr" || fail "refusal does not name the setting"
+  # control: the same Pi session, declared, dispatches cross-model
+  reset_counts
+  set +e
+  env SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+    "$TMP_ROOT/fake/pi" "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$out19" \
+    >/dev/null 2>"$TMP_ROOT/last.stderr"
+  set -e
+  assert_eq "$(count lane-codex)" "1" "control: declared Pi-on-claude session gets codex"
+  assert_eq "$(count lane-claude)" "0" "control: declared Pi-on-claude session never gets claude"
+
+  echo "=== scenario 20: conflicting markers — innermost harness wins over an inherited CLAUDECODE ==="
+  reset_counts
+  set +e
+  env -u SECOND_OPINION_CURRENT_MODEL CLAUDECODE=1 SECOND_OPINION_MODELS="codex claude" \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+    "$TMP_ROOT/fake/codex" "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$TMP_ROOT/out20.json" \
+    >/dev/null 2>"$TMP_ROOT/last.stderr"
+  set -e
+  assert_eq "$(count lane-codex)" "0" "codex-under-Claude session never gets codex"
+  assert_eq "$(count lane-claude)" "1" "codex-under-Claude session gets claude"
+else
+  echo "  skip  scenarios 19-20: ps reports '$probe' for a script ancestor on this platform"
+fi
+
+echo "=== scenario 21: SECOND_OPINION_COUNT applies to review only ==="
+reset_counts
+set +e
+env SECOND_OPINION_COUNT=2 SECOND_OPINION_MODELS="codex claude" \
+  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+  "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" >"$TMP_ROOT/out21.txt" 2>"$TMP_ROOT/last.stderr"
+rc21=$?
+set -e
+assert_eq "$rc21" "0" "quick with COUNT=2 exits 0"
+assert_eq "$(count lane-codex)" "1" "quick with COUNT=2 invokes exactly one lane"
+assert_eq "$(count lane-claude)" "0" "quick with COUNT=2 does not fan out"
+grep -q "target=codex mode=quick" "$TMP_ROOT/last.stderr" || fail "quick did not take the single-target path"
+grep -q "multi-lane" "$TMP_ROOT/last.stderr" && fail "quick took the multi-lane path"
+assert_eq "$(jq -r '.agent' "$TMP_ROOT/out21.txt")" "external-codex" "quick stdout is the lane's own answer"
+
+echo "=== scenario 22: SECOND_OPINION_COUNT is validated ==="
+reset_counts
+rc22=0
+run_multi "$TMP_ROOT/out22.json" SECOND_OPINION_COUNT=0 || rc22=$?
+assert_eq "$rc22" "1" "COUNT=0 exits 1"
+grep -q "must be a positive integer" "$TMP_ROOT/last.stderr" || fail "COUNT=0 is not diagnosed"
+assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "COUNT=0 invokes no CLI"
+
+echo "=== scenario 23: a shortfall against the requested count is recorded, not implied away ==="
+reset_counts
+out23="$TMP_ROOT/out23.json"
+rc23=0
+run_multi "$out23" SECOND_OPINION_CURRENT_MODEL=codex || rc23=$?
+assert_eq "$rc23" "0" "shortfall review exits 0 on the eligible lane"
+grep -q "requested 2 opinions, selected 1" "$TMP_ROOT/last.stderr" || fail "shortfall is not stated"
+assert_jq "$out23" '.qa_metadata.requested_count' "2" "artifact records the requested count"
+assert_jq "$out23" '.qa_metadata.selected_count' "1" "artifact records the selected count"
+assert_jq "$out23" '.qa_metadata.coverage' "degraded" "shortfall marks coverage degraded"
+# control: full breadth is not degraded and carries the counts too
+reset_counts
+run_multi "$out23" || true
+assert_jq "$out23" '.qa_metadata.coverage' "full" "control: two-of-two is full coverage"
+assert_jq "$out23" '.qa_metadata.selected_count' "2" "control: union records selected_count"
+
+echo "=== scenario 24: a declared identity matching no roster entry is called out ==="
+reset_counts
+run_multi "$TMP_ROOT/out24.json" SECOND_OPINION_CURRENT_MODEL=clade SECOND_OPINION_COUNT=1 || true
+grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" || fail "unmatched declared identity is not called out"
+reset_counts
+run_multi "$TMP_ROOT/out24.json" SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_COUNT=1 || true
+grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" && fail "control: matched identity is wrongly called out"
+
+echo "=== scenario 25: a settings-forced target that is refused names the roster's pick ==="
+reset_counts
+rc25=0
+run_multi "$TMP_ROOT/out25.json" SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_TARGET=codex || rc25=$?
+assert_eq "$rc25" "1" "settings-forced same-model target exits 1"
+grep -q "without it the roster would select claude" "$TMP_ROOT/last.stderr" || fail "refusal does not name the roster's pick"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

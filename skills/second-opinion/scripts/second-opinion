@@ -27,28 +27,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Resolve project root for .env sourcing (works in worktrees and main repos)
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
 
-# Save caller-set env vars before .env sourcing can overwrite them
-_CALLER_TARGET="${SECOND_OPINION_TARGET:-}"
-_CALLER_TIMEOUT="${SECOND_OPINION_TIMEOUT:-}"
-_CALLER_CLAUDE_CMD="${SECOND_OPINION_CLAUDE_CMD:-}"
-_CALLER_CODEX_CMD="${SECOND_OPINION_CODEX_CMD:-}"
-# Set-ness (not emptiness) is preserved for the instructions var: an explicitly
-# EMPTY caller value is meaningful ("" disables the instruction block) and must
-# survive the .env reload rather than fall back to project config.
-_CALLER_REVIEW_INSTRUCTIONS="${SECOND_OPINION_REVIEW_INSTRUCTIONS-}"
-_CALLER_REVIEW_INSTRUCTIONS_SET="${SECOND_OPINION_REVIEW_INSTRUCTIONS+x}"
-
-# Source project config/secrets. .env.local overrides public settings.
+# Source project config/secrets. .env.local overrides public settings; the
+# caller's own environment (set or set-but-empty) outranks every project file —
+# vstack_load_project_env snapshots and re-asserts it.
 # shellcheck source=lib/vstack-env.sh
 source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
-
-# Restore caller-set env vars — inline overrides beat .env files
-[[ -n "$_CALLER_TARGET" ]] && SECOND_OPINION_TARGET="$_CALLER_TARGET"
-[[ -n "$_CALLER_TIMEOUT" ]] && SECOND_OPINION_TIMEOUT="$_CALLER_TIMEOUT"
-[[ -n "$_CALLER_CLAUDE_CMD" ]] && SECOND_OPINION_CLAUDE_CMD="$_CALLER_CLAUDE_CMD"
-[[ -n "$_CALLER_CODEX_CMD" ]] && SECOND_OPINION_CODEX_CMD="$_CALLER_CODEX_CMD"
-[[ -n "$_CALLER_REVIEW_INSTRUCTIONS_SET" ]] && SECOND_OPINION_REVIEW_INSTRUCTIONS="$_CALLER_REVIEW_INSTRUCTIONS"
 
 # Dependency check
 command -v jq >/dev/null 2>&1 || { echo "Error: jq is required but not found" >&2; exit 1; }
@@ -143,7 +127,8 @@ Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
 first target that is available AND runs a different model from this session —
 the model this session runs is never dispatched to, in any mode, forced or not.
 When no eligible target remains the run refuses (exit 1) and says why.
-Review mode collects SECOND_OPINION_COUNT opinions (default 1); with 2 or more,
+Review mode collects up to SECOND_OPINION_COUNT opinions (default 1; a
+shortfall is stated and stamped as degraded coverage); with 2 or more,
 the lanes run in parallel on the same derived scope and one union artifact is
 written — findings deduplicated by normalized location, per-lane provenance in
 each finding's `sources` and in qa_metadata.lanes, lane artifacts kept beside
@@ -157,8 +142,8 @@ Environment (set in vstack.settings.toml [env] or .env.local):
   SECOND_OPINION_COUNT       Opinions to collect in review mode (default: 1)
   SECOND_OPINION_CURRENT_MODEL
                              Model identity of THIS session; overrides harness
-                             detection. Set it in a multi-model front end (Pi,
-                             OpenCode) so exclusion is model-level
+                             detection. Required in a multi-model front end
+                             (Pi, OpenCode) — refused until set
   SECOND_OPINION_<NAME>_MODEL
                              Model identity of target <NAME> (default: <NAME>)
   SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
@@ -240,17 +225,31 @@ done
 # --- Harness detection --------------------------------------------------------
 
 detect_current_harness() {
-  # Claude Code sets these env vars
-  if [[ -n "${CLAUDECODE:-}" ]] || [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
-    echo "claude"
-    return
-  fi
-  # Codex sandbox detection
+  # Nearest harness ancestor wins: environment markers are inherited by every
+  # descendant, so a Codex session spawned under Claude Code carries CLAUDECODE
+  # while its own process is the innermost harness — the process tree is the
+  # authoritative signal and the markers are the fallback for when it cannot
+  # be read. Bash tool PPID is the shell, not the harness, so walk upward.
+  local pid=$$
+  local ancestor_cmd
+  while pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') && [[ -n "$pid" && "$pid" != "0" && "$pid" != "1" ]]; do
+    ancestor_cmd=$(ps -o comm= -p "$pid" 2>/dev/null || echo "")
+    ancestor_cmd="${ancestor_cmd##*/}"
+    case "$ancestor_cmd" in
+      claude*) echo "claude"; return ;;
+      codex*)  echo "codex"; return ;;
+      pi|pi-*) echo "pi"; return ;;
+      opencode*) echo "opencode"; return ;;
+    esac
+  done
   if [[ -n "${CODEX_SANDBOX:-}" ]]; then
     echo "codex"
     return
   fi
-  # Pi coding agent
+  if [[ -n "${CLAUDECODE:-}" ]] || [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    echo "claude"
+    return
+  fi
   if [[ -n "${PI_CODING_AGENT_DIR:-}" ]]; then
     echo "pi"
     return
@@ -259,18 +258,6 @@ detect_current_harness() {
     echo "opencode"
     return
   fi
-  # Process-tree fallback: walk ancestors (Bash tool PPID is the shell, not the harness)
-  local pid=$$
-  local ancestor_cmd
-  while pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') && [[ -n "$pid" && "$pid" != "0" && "$pid" != "1" ]]; do
-    ancestor_cmd=$(ps -o comm= -p "$pid" 2>/dev/null || echo "")
-    case "$ancestor_cmd" in
-      claude*) echo "claude"; return ;;
-      codex*)  echo "codex"; return ;;
-      pi|pi-*) echo "pi"; return ;;
-      opencode*) echo "opencode"; return ;;
-    esac
-  done
   echo "unknown"
 }
 
@@ -279,24 +266,27 @@ detect_current_harness() {
 # whichever model the session selected, and a session cannot be probed for it
 # from outside. Identity is therefore DECLARED and compared: the current
 # session's identity is SECOND_OPINION_CURRENT_MODEL when set, else the model
-# the detected harness is known to run (claude, codex), else the harness name
-# itself; a target's identity is SECOND_OPINION_<NAME>_MODEL, defaulting to the
-# target name. Identities are lowercase tokens; the built-in ones are "claude"
-# and "codex".
+# the detected harness is known to run (claude, codex). A multi-model front end
+# with no declaration has NO identity — the run refuses rather than guess. An
+# undetected harness is "unknown": nothing can be excluded, so the run says so
+# and proceeds. A target's identity is SECOND_OPINION_<NAME>_MODEL, defaulting
+# to the target name. Identities are lowercase tokens; the built-in ones are
+# "claude" and "codex".
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 CURRENT_HARNESS=""
 CURRENT_MODEL=""
-CURRENT_MODEL_DECLARED=false
 resolve_current_model() {
   CURRENT_HARNESS=$(detect_current_harness)
   if [[ -n "${SECOND_OPINION_CURRENT_MODEL:-}" ]]; then
     CURRENT_MODEL=$(lower "$SECOND_OPINION_CURRENT_MODEL")
-    CURRENT_MODEL_DECLARED=true
-  else
-    CURRENT_MODEL="$CURRENT_HARNESS"
+    return
   fi
+  case "$CURRENT_HARNESS" in
+    claude|codex|unknown) CURRENT_MODEL="$CURRENT_HARNESS" ;;
+    *) CURRENT_MODEL="" ;;
+  esac
 }
 
 # Env var naming for a target's settings: name uppercased, hyphens as
@@ -355,7 +345,7 @@ target_available() {
 # priority order and a target is taken when it is available and its declared
 # model differs from this session's — the model this session runs is never
 # dispatched to, and multi-lane cannot bypass that because it is the same walk
-# taken further: review mode takes SECOND_OPINION_COUNT distinct models
+# taken further: review mode takes up to SECOND_OPINION_COUNT distinct models
 # (default 1), every other mode exactly one. A forced target (--target /
 # SECOND_OPINION_TARGET) skips the walk but not the exclusion. When nothing
 # eligible remains the run refuses and says why: a same-model review presented
@@ -382,7 +372,10 @@ skip_target() {
   echo "→ skipping $1: $2" >&2
 }
 
-# Take a target if eligible. Returns 0 when taken.
+# Take a target if eligible. Returns 0 when taken. Dedupe is by MODEL: a
+# repeated name is a repeated model (the identity defaults to the name), and
+# two names fronting one model are one opinion — either way a second child on
+# the same lane would race on its artifact paths and duplicate its provenance.
 consider_target() {
   local t="$1" model existing
   if [[ ! "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
@@ -391,11 +384,6 @@ consider_target() {
     skip_target "$t" "invalid target name"
     return 1
   fi
-  for existing in ${REVIEW_LANES[@]+"${REVIEW_LANES[@]}"}; do
-    # A duplicate would launch concurrent children racing on the same lane
-    # artifact/stderr paths and duplicate the lane's provenance.
-    [[ "$existing" == "$t" ]] && { skip_target "$t" "duplicate review target"; return 1; }
-  done
   model="$(target_model "$t")"
   if [[ "$model" == "$CURRENT_MODEL" ]]; then
     skip_target "$t" "runs the same model as this session ($model) — a second opinion must be cross-model"
@@ -413,23 +401,47 @@ consider_target() {
   return 0
 }
 
-FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
-if [[ -n "$FORCED_TARGET" ]]; then
-  consider_target "$FORCED_TARGET" || true
-else
+# Walk the roster, taking up to $1 targets. Splits with globbing off: an
+# entry is a name, never a pattern.
+walk_roster() {
+  local want="$1" raw t
   raw="${SECOND_OPINION_MODELS:-$DEFAULT_MODELS}"
   raw="${raw//,/ }"
   set -f
   for t in $raw; do
-    set +f
-    [[ ${#REVIEW_LANES[@]} -lt "$WANT" ]] || break
+    [[ ${#REVIEW_LANES[@]} -lt "$want" ]] || break
     consider_target "$t" || true
   done
   set +f
+}
+
+FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
+if [[ -z "$CURRENT_MODEL" ]]; then
+  # No identity to compare against: no target can be shown to be a different
+  # model, so none is taken. The refusal below carries the one reason.
+  skip_target "session" "model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
+elif [[ -n "$FORCED_TARGET" ]]; then
+  # A force asks for exactly one opinion.
+  WANT=1
+  consider_target "$FORCED_TARGET" || true
+else
+  walk_roster "$WANT"
 fi
 
-if [[ "$CURRENT_MODEL" == "pi" || "$CURRENT_MODEL" == "opencode" ]] && ! $CURRENT_MODEL_DECLARED; then
-  echo "→ current session model is undeclared ($CURRENT_HARNESS fronts a selectable model): set SECOND_OPINION_CURRENT_MODEL so exclusion is model-level, not CLI-level" >&2
+if [[ "$CURRENT_MODEL" == "unknown" ]]; then
+  echo "→ this session's harness was not detected: nothing is excluded — set SECOND_OPINION_CURRENT_MODEL to the model this session runs so exclusion is model-level" >&2
+elif [[ -n "$CURRENT_MODEL" && -z "$FORCED_TARGET" ]]; then
+  # A declared identity that matches no roster entry excludes nothing, which is
+  # exactly what a typo looks like.
+  roster_has_current=false
+  roster_raw="${SECOND_OPINION_MODELS:-$DEFAULT_MODELS}"
+  roster_raw="${roster_raw//,/ }"
+  set -f
+  for t in $roster_raw; do
+    [[ "$(target_model "$t")" == "$CURRENT_MODEL" ]] && roster_has_current=true
+  done
+  set +f
+  $roster_has_current || echo "→ session model $CURRENT_MODEL matches no roster identity in SECOND_OPINION_MODELS — nothing is excluded; check SECOND_OPINION_CURRENT_MODEL" >&2
 fi
 
 if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
@@ -437,10 +449,30 @@ if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
   # second opinion, never skip silently. Every candidate and why it was not
   # taken is in the error, so the fix is one settings edit away.
   reasons_json=$(printf '%s\n' ${SKIP_REASONS[@]+"${SKIP_REASONS[@]}"} | jq -R 'select(length > 0)' | jq -s .)
-  jq -n --arg current "$CURRENT_MODEL" --argjson candidates "$reasons_json" \
+  jq -n --arg current "${CURRENT_MODEL:-undeclared}" --argjson candidates "$reasons_json" \
     '{error: "no eligible cross-model target — refusing to run a second opinion", current_model: $current, candidates: $candidates}' >&2
+  # A force that came from project settings rather than the command line is a
+  # seeded value nobody typed today: name what the roster would have picked so
+  # the settings fix is one edit.
+  if [[ -z "$TARGET" && -n "${SECOND_OPINION_TARGET:-}" ]]; then
+    SKIP_REASONS=()
+    walk_roster 1 2>/dev/null
+    if [[ ${#REVIEW_LANES[@]} -gt 0 ]]; then
+      echo "→ SECOND_OPINION_TARGET=$SECOND_OPINION_TARGET forced this; without it the roster would select ${REVIEW_LANES[0]} — unset the key (project settings or environment)" >&2
+    fi
+  fi
   if [[ "$MODE" == "detect" ]]; then echo "none"; fi
   exit 1
+fi
+
+# Requested breadth the roster could not supply is recorded, never implied
+# away: the run proceeds with what is eligible, says so, and stamps the counts
+# into the artifact (see the qa_metadata writers) so a single-lane review that
+# was asked to be two reads as degraded, not as a run that never asked.
+REQUESTED_COUNT="$WANT"
+SELECTED_COUNT="${#REVIEW_LANES[@]}"
+if [[ "$SELECTED_COUNT" -lt "$REQUESTED_COUNT" ]]; then
+  echo "→ requested $REQUESTED_COUNT opinions, selected $SELECTED_COUNT — the roster has no further eligible model (coverage degraded)" >&2
 fi
 
 if [[ "$MODE" == "detect" ]]; then
@@ -469,17 +501,44 @@ fi
 # Records this run writes that are not anchored by --output — the preserved
 # raw/failed/rejected responses of a stdout-mode review or audit — live under
 # SECOND_OPINION_ARTIFACT_DIR (default tmp/second-opinion inside the reviewed
-# project), never in shared system temp. Owner-only, created on first use.
-artifact_dir() {
-  local dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
-  [[ "$dir" == /* ]] || dir="$CWD/$dir"
-  (umask 077 && mkdir -p -- "$dir") || { echo "Error: cannot create artifact dir: $dir" >&2; exit 1; }
-  printf '%s' "$dir"
-}
-
-# A fresh record file in the artifact home: <mode>-<target>-<kind>.XXXXXX.
+# project), not in shared system temp. Placement can never change the run's
+# outcome: when the home cannot be created, or a relative home resolves through
+# a symlink or outside --cwd (the reviewed checkout is untrusted, same rule as
+# its instruction files; an absolute setting is the operator's own and exempt),
+# the record falls back to a plain temp file and the fallback is named on
+# stderr — the exit code and the diagnostic the record exists to carry survive.
+# Sets ARTIFACT_PATH; never exits.
+ARTIFACT_PATH=""
 artifact_file() {
-  mktemp "$(artifact_dir)/${MODE}-${TARGET_CLI}-$1.XXXXXX"
+  local kind="$1" dir phys_root phys_dir
+  dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
+  ARTIFACT_PATH=""
+  if [[ "$dir" == /* ]]; then
+    (umask 077 && mkdir -p -- "$dir") 2>/dev/null \
+      || echo "→ artifact home not creatable: $dir" >&2
+  else
+    dir="$CWD/$dir"
+    if ! (umask 077 && mkdir -p -- "$dir") 2>/dev/null; then
+      echo "→ artifact home not creatable: $dir" >&2
+    elif [[ -L "$dir" || -L "${dir%/*}" ]]; then
+      echo "→ artifact home rejected (symlink inside the reviewed repo): $dir" >&2
+      dir=""
+    else
+      phys_root="$(cd "$CWD" 2>/dev/null && pwd -P)" || phys_root=""
+      phys_dir="$(cd "$dir" 2>/dev/null && pwd -P)" || phys_dir=""
+      if [[ -z "$phys_root" || -z "$phys_dir" || ( "$phys_dir" != "$phys_root" && "$phys_dir" != "$phys_root"/* ) ]]; then
+        echo "→ artifact home rejected (resolves outside the reviewed repo): $dir -> ${phys_dir:-?}" >&2
+        dir=""
+      fi
+    fi
+  fi
+  if [[ -n "$dir" ]]; then
+    ARTIFACT_PATH=$(mktemp "$dir/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || ARTIFACT_PATH=""
+  fi
+  if [[ -z "$ARTIFACT_PATH" ]]; then
+    ARTIFACT_PATH=$(mktemp)
+    echo "→ record kept in system temp instead: $ARTIFACT_PATH" >&2
+  fi
 }
 
 # --- Review scope derivation (review mode) ------------------------------------
@@ -1045,7 +1104,8 @@ if $MULTI_LANE; then
   # reviewed_head is the scope-derivation pin, for per-push budget accounting.
   STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   REVIEWED_HEAD="$REVIEW_HEAD_SHA"
-  MERGED=$(printf '%s\n' "${LANE_WRAPS[@]}" | jq -s --argjson failed "$LANES_FAILED_JSON" --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" '
+  MERGED=$(printf '%s\n' "${LANE_WRAPS[@]}" | jq -s --argjson failed "$LANES_FAILED_JSON" --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
+      --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" '
     def norm: ((.location // "") | ascii_downcase | gsub("`"; "") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" "));
     def with_occ: reduce .[] as $f ({seen: {}, out: []};
       ($f | norm) as $n
@@ -1077,7 +1137,9 @@ if $MULTI_LANE; then
         questions: ([ $lanes[] | .review.questions[] ] | unique),
         qa_metadata: ({
           union: true,
-          coverage: (if ($failed | length) > 0 then "degraded" else "full" end),
+          coverage: (if ($failed | length) > 0 or $selected < $requested then "degraded" else "full" end),
+          requested_count: $requested,
+          selected_count: $selected,
           lanes: (($lanes | map({target: .target, status: "ok",
                                  agent: (.review.agent // ("external-" + .target)),
                                  verdict: .review.verdict,
@@ -1201,7 +1263,7 @@ preserve_cli_failure_and_fail() {
     mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     sidecar="${OUTPUT_PATH}.failed.json"
   else
-    sidecar=$(artifact_file failed)
+    artifact_file failed; sidecar="$ARTIFACT_PATH"
   fi
   jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
         --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
@@ -1354,7 +1416,7 @@ preserve_raw_response() {
     mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     RAW_PRESERVED_PATH="${OUTPUT_PATH}.raw.txt"
   else
-    RAW_PRESERVED_PATH=$(artifact_file raw)
+    artifact_file raw; RAW_PRESERVED_PATH="$ARTIFACT_PATH"
   fi
   printf '%s\n' "$raw" > "$RAW_PRESERVED_PATH"
 }
@@ -1375,14 +1437,14 @@ preserve_raw_and_fail() {
     raw_path="${OUTPUT_PATH}.raw.txt"
     printf '%s\n' "$raw" > "$raw_path"
   else
-    raw_path=$(artifact_file raw)
+    artifact_file raw; raw_path="$ARTIFACT_PATH"
     printf '%s\n' "$raw" > "$raw_path"
   fi
   if [[ -n "$retry" ]]; then
     if [[ -n "$OUTPUT_PATH" ]]; then
       retry_path="${OUTPUT_PATH}.retry.txt"
     else
-      retry_path=$(artifact_file retry)
+      artifact_file retry; retry_path="$ARTIFACT_PATH"
     fi
     printf '%s\n' "$retry" > "$retry_path"
   fi
@@ -1465,7 +1527,7 @@ preserve_no_review_and_fail() {
     mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     sidecar="${OUTPUT_PATH}.${suffix}.json"
   else
-    sidecar=$(artifact_file "$suffix")
+    artifact_file "$suffix"; sidecar="$ARTIFACT_PATH"
   fi
   printf '%s\n' "$json" > "$sidecar"
 
@@ -1577,14 +1639,24 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     # mutable HEAD after the review finished.
     REVIEWED_HEAD="$REVIEW_HEAD_SHA"
   fi
+  # requested/selected opinion counts (review mode): a review asked for more
+  # breadth than the roster could supply reads as degraded coverage, in the
+  # artifact and not only on stderr.
   if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
       --argjson raw_bytes "$RAW_RESPONSE_BYTES" \
       --argjson retry_bytes "${RETRY_RESPONSE_BYTES:-null}" \
+      --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" \
+      --arg mode "$MODE" \
       '.timestamp = $ts
        | (if $head == "" then . else .qa_metadata.reviewed_head = $head end)
        | .qa_metadata.raw_response_bytes = $raw_bytes
-       | if $retry_bytes == null then .
-         else .qa_metadata.retry_response_bytes = $retry_bytes end' 2>/dev/null); then
+       | (if $retry_bytes == null then .
+          else .qa_metadata.retry_response_bytes = $retry_bytes end)
+       | if $mode != "review" then . else
+           .qa_metadata.requested_count = $requested
+           | .qa_metadata.selected_count = $selected
+           | (if $selected < $requested then .qa_metadata.coverage = "degraded" else . end)
+         end' 2>/dev/null); then
     RESULT="$STAMPED"
   fi
 fi

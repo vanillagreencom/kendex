@@ -375,10 +375,10 @@ SECOND_OPINION_MODELS = "claude codex"
 # SECOND_OPINION_<NAME>_MODEL (identity, when it differs from the name).
 
 SECOND_OPINION_COUNT = "1"
-# Used by: second-opinion (review mode). Opinions to collect; 2+ unions distinct models.
+# Used by: second-opinion (review mode). Opinions to collect; 2+ unions up to that many distinct models.
 
 # SECOND_OPINION_CURRENT_MODEL = "claude"
-# Used by: second-opinion. The model this session runs, for Pi/OpenCode sessions.
+# Used by: second-opinion. The model this session runs; required in Pi/OpenCode sessions.
 
 SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # Used by: second-opinion. Home for records written without --output, relative to --cwd.

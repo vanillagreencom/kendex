@@ -19,12 +19,14 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reas
 # SECOND_OPINION_<NAME>_MODEL when the CLI fronts a model other than its name.
 SECOND_OPINION_MODELS = "claude codex"
 
-# Used by: second-opinion (review mode). Opinions to collect: 2 or more runs
-# that many distinct models on the same diff and unions the findings.
+# Used by: second-opinion (review mode). Opinions to collect: 2 or more runs up
+# to that many distinct models on the same diff and unions the findings; a
+# shortfall is reported and stamped as degraded coverage.
 SECOND_OPINION_COUNT = "1"
 
 # Used by: second-opinion. The model THIS session runs, for front ends where
-# the CLI does not say (Pi, OpenCode). Claude Code and Codex are detected.
+# the CLI does not say (Pi, OpenCode — required there; the run refuses without
+# it). Claude Code and Codex are detected.
 # SECOND_OPINION_CURRENT_MODEL = "claude"
 
 # Used by: second-opinion. Home for review/audit records written without

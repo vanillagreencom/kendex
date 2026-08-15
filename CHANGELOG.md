@@ -146,7 +146,13 @@
   or invoked) when no eligible model remains. `review` collects
   `SECOND_OPINION_COUNT` opinions (default 1); 2+ is the former multi-lane
   union, now opt-in breadth. `SECOND_OPINION_REVIEW_TARGETS` is no longer
-  read (a set value is named on stderr). `SECOND_OPINION_ARTIFACT_DIR`
+  read (a set value is named on stderr). Migration for settings seeded from
+  the old top-level example: a `SECOND_OPINION_TARGET` that names the
+  session's own model is now refused rather than honoured — remove the key
+  (the refusal names what the roster would pick). Pi/OpenCode sessions must
+  set `SECOND_OPINION_CURRENT_MODEL` or are refused. A shortfall against
+  `SECOND_OPINION_COUNT` is stamped as `qa_metadata.requested_count` /
+  `selected_count` with `coverage: "degraded"`. `SECOND_OPINION_ARTIFACT_DIR`
   (default `tmp/second-opinion` under `--cwd`, owner-only) is the home for
   review/audit records written without `--output`. `detect` prints the
   target(s) a review would run.

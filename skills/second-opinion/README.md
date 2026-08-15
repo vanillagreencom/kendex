@@ -42,13 +42,13 @@ Project installs seed `vstack.settings.toml` from this skill's `vstack.settings.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SECOND_OPINION_MODELS` | `claude codex` | Priority-ordered roster; the first available entry that is not your session's model wins |
-| `SECOND_OPINION_COUNT` | `1` | Opinions a `review` collects; 2+ runs that many distinct models and unions the findings, deduped by location |
-| `SECOND_OPINION_CURRENT_MODEL` | (unset) | The model your session runs, when the CLI cannot tell (Pi, OpenCode); Claude Code and Codex are detected |
+| `SECOND_OPINION_COUNT` | `1` | Opinions a `review` collects; 2+ runs up to that many distinct models and unions the findings, deduped by location (a shortfall is reported and marked degraded) |
+| `SECOND_OPINION_CURRENT_MODEL` | (unset) | The model your session runs, when the CLI cannot tell (Pi, OpenCode — required there); Claude Code and Codex are detected |
 | `SECOND_OPINION_<NAME>_MODEL` | `<name>` | The model a roster entry runs, when it differs from its name (a Pi lane fronting Claude: `claude`) |
 | `SECOND_OPINION_<NAME>_CMD` | (none) | Full command for a roster entry — another model CLI is a settings entry, not new code |
 | `SECOND_OPINION_TARGET` | (unset) | Force one target; refused if it is your session's model |
 | `SECOND_OPINION_TIMEOUT` | `300` | Max seconds to wait |
-| `SECOND_OPINION_ARTIFACT_DIR` | `tmp/second-opinion` | Where records land when you pass no `--output` (relative to `--cwd`, owner-only) |
+| `SECOND_OPINION_ARTIFACT_DIR` | `tmp/second-opinion` | Where records land when you pass no `--output` (relative to `--cwd`; falls back to a temp file, loudly, if it cannot be created or is a symlink) |
 | `SECOND_OPINION_REVIEW_INSTRUCTIONS` | (see above) | Instruction-file globs appended to the review prompt; set empty to disable |
 
 ### Default commands

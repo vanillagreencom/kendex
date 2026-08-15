@@ -182,7 +182,7 @@ PATH="$TMP_ROOT/bin:$PATH" \
   SECOND_OPINION_CLAUDE_CMD="$STUB" \
   SECOND_OPINION_TIMEOUT=1 \
   STUB_COUNTER="$COUNTER" \
-  STUB_SLEEP=3 \
+  STUB_SLEEP=5 \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s3_out" \
     >/dev/null 2>"$s3_err"
 rc3=$?
@@ -262,7 +262,7 @@ PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s7_tmp" \
 rc7=$?
 set -e
 assert_eq "$rc7" "5" "stdout-mode CLI failure still exits 5"
-s7_rec=$(ls "$WORK"/tmp/second-opinion/review-claude-failed.* 2>/dev/null | head -1)
+s7_rec=$(ls "$WORK"/tmp/second-opinion/review-claude-failed.* 2>/dev/null | head -1 || true)
 [[ -n "$s7_rec" ]] && pass "failure record written under <cwd>/tmp/second-opinion" || fail "no failure record under <cwd>/tmp/second-opinion"
 assert_file_contains "$s7_err" "$WORK/tmp/second-opinion/review-claude-failed." "stderr names the record's project-local path"
 assert_eq "$(ls "$s7_tmp" | wc -l | tr -d ' ')" "0" "nothing is left in TMPDIR by a stdout-mode failure"
@@ -279,6 +279,64 @@ PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s7_tmp" \
 set -e
 [[ -n "$(ls "$s7_alt"/review-claude-failed.* 2>/dev/null)" ]] && pass "SECOND_OPINION_ARTIFACT_DIR relocates the record" || fail "SECOND_OPINION_ARTIFACT_DIR not honored"
 assert_file_absent "$WORK/tmp/second-opinion" "default home untouched when SECOND_OPINION_ARTIFACT_DIR is set"
+
+# --- Scenario 8: record placement never changes the outcome ------------------
+# An artifact home that cannot be created (or that resolves through a symlink
+# inside the reviewed repo) falls back to a plain temp file, loudly; the exit
+# code and the CLI's cause text — what the record exists to carry — survive.
+echo "=== scenario 8: uncreatable artifact home -> temp fallback, exit 5 and cause kept ==="
+s8_err="$TMP_ROOT/s8.stderr"
+s8_tmp="$TMP_ROOT/tmpdir8"
+mkdir -p "$s8_tmp"
+rc8=0
+printf '0' > "$COUNTER"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s8_tmp" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  SECOND_OPINION_ARTIFACT_DIR="/proc/no-such-home/second-opinion" \
+  STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s8_err"
+rc8=$?
+set -e
+assert_eq "$rc8" "5" "uncreatable artifact home keeps EXIT_CLI_FAILED (5)"
+assert_file_contains "$s8_err" "artifact home not creatable" "fallback is named on stderr"
+assert_file_contains "$s8_err" "record kept in system temp instead" "fallback location is named"
+assert_file_contains "$s8_err" "hit your usage limit" "the CLI's cause text still reaches stderr"
+s8_rec=$(ls "$s8_tmp" 2>/dev/null | head -1 || true)
+[[ -n "$s8_rec" ]] && pass "record fell back to TMPDIR" || fail "no fallback record in TMPDIR"
+
+echo "=== scenario 9: symlinked artifact home inside the reviewed repo is rejected ==="
+s9_err="$TMP_ROOT/s9.stderr"
+s9_tmp="$TMP_ROOT/tmpdir9"
+s9_evil="$TMP_ROOT/evil"
+mkdir -p "$s9_tmp" "$s9_evil" "$WORK/tmp"
+rm -rf "$WORK/tmp/second-opinion"
+ln -s "$s9_evil" "$WORK/tmp/second-opinion"
+rc9=0
+set +e
+PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s9_err"
+rc9=$?
+set -e
+assert_eq "$rc9" "5" "symlinked home keeps EXIT_CLI_FAILED (5)"
+assert_file_contains "$s9_err" "artifact home rejected" "symlinked home is rejected loudly"
+assert_eq "$(ls "$s9_evil" | wc -l | tr -d ' ')" "0" "nothing is written through the symlink"
+[[ -n "$(ls "$s9_tmp" 2>/dev/null | head -1 || true)" ]] && pass "record fell back to TMPDIR" || fail "no fallback record in TMPDIR"
+rm -f "$WORK/tmp/second-opinion"
+# control: a symlinked PARENT (tmp itself) is caught the same way
+ln -s "$s9_evil" "$WORK/tmp/link-parent"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  SECOND_OPINION_ARTIFACT_DIR="tmp/link-parent/second-opinion" \
+  STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s9_err"
+set -e
+assert_file_contains "$s9_err" "artifact home rejected" "symlinked parent is rejected too"
+assert_eq "$(find "$s9_evil" -type f | wc -l | tr -d ' ')" "0" "nothing is written through the symlinked parent"
+rm -rf "$s9_evil/second-opinion" "$WORK/tmp/link-parent"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
