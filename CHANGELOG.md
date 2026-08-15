@@ -17,7 +17,7 @@
   sync; cross-repo.md is cut to the cross-repo contracts (generic epistemics
   removed, the vendored-tree section is a pointer to
   `review-gate/references/vendored-paths.md`, the bundle-import note moved to
-  the pi-claude-bridge README); the retired in-repo mailbox path leaves
+  the pi-claude-bridge DEVELOPMENT.md); the retired in-repo mailbox path leaves
   .gitignore.
 - orch: `PR_REVIEW_QUORUM` — approval-wait's multi-bot enqueue gate. When a
   repo lists its reviewer logins, no success emits (either mode) until every
