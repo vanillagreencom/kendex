@@ -12,7 +12,7 @@ Once per session, first match wins:
 
 ## 2. Select Work
 
-Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gates them (ancestor chain, blocker union, container rules). Ownership is settled by tooling, not judgment: an item whose `worktree create` exits 75 belongs to another session — skip it. Every surface claims through that same gate — create the item's worktree BEFORE launching its session where the surface allows it. A surface that creates its own worktree environment (Codex app threads) instead records the claim in workflow-state before launch; that record is not atomic, so it guards a restarted overseer against re-launching; oversee runs as at most one session per repo, and that single-launcher rule is what keeps two lanes off one item. Read the lane cap and keep at most that many items in flight:
+Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gates them (ancestor chain, blocker union, container rules). A GitHub item labeled `blocked` is not a candidate (the tracker's only "not for the fleet" signal, mirroring Linear's blocked label). Ownership is settled by tooling, not judgment: an item whose `worktree create` exits 75 belongs to another session. On the tmux surface that claim IS `open-terminal`'s own worktree create — never pre-create the worktree; an owned item is skipped and its siblings still launch. A surface that creates its own worktree environment (Codex app threads) records the claim in workflow-state before launch; that record is not atomic, so it guards a restarted overseer against re-launching; oversee runs as at most one session per repo, and that single-launcher rule is what keeps two lanes off one item. Read the lane cap and keep at most that many items in flight:
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_OVERSEER_LANES 3
@@ -36,17 +36,16 @@ Record the lane. First use only — when `exists` reports false, run `init` (ini
 
 ## 4. Watch And Advance
 
-When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer across every open PR — it exits 2 without `GH_REPO`, so resolve and export it in the same call; otherwise fall back to per-PR `approval-wait`/`queue-wait` ([references/gates.md](../references/gates.md)). Never hand-roll a transition-keyed monitor. On a Codex lane the export-plus-reducer shape below is classifier-rejected with no compliant rewrite — use the per-PR waiter fallback there.
+One blocking command, passed every live lane's tmux window name (none on a non-tmux surface); it exits on the first event that needs the overseer and prints one `EVENT` line. Re-run it after handling each event. Never hand-roll a monitor. It runs `pr-watch.sh` when the review-gate skill is installed and skips that step otherwise (`gate-stale` is then invisible — [references/gates.md](../references/gates.md) § Multi-PR watching).
 
 ```bash
-export GH_REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
-.agents/skills/review-gate/scripts/pr-watch.sh
+.agents/skills/orch/scripts/oversee-watch --interval 240 [LANE_WINDOW...]
 ```
 
-- A lane's PR merges → mark the lane done, launch the next unblocked item.
-- A lane's session ends with no merged PR → inspect its worktree and PR state, re-launch once with the same brief; a second death is surfaced to the user, not retried.
-- Each watch pass also checks tmux lanes for a pending question prompt (`tmux capture-pane -t [LANE] -p` — a lane showing a question dialog is blocked, not working; it looks identical to a working lane from the outside). Non-tmux surfaces are covered by pushed questions; a surface with neither messaging nor an inspectable pane makes prolonged lane silence itself the needs-attention signal — inspect the session through that surface's own status tools.
-- A lane's question → answer it when available evidence already decides it: repo state, the issue body, a stated convention — including scope-narrowing calls and a lane's own well-argued recommendation. Relay to the user only what changes the product for a user or spends the owner's standing (retiring a reviewer, filing outside the repo, closing as won't-do). Either way, send the answer back to the lane.
+- `merged` → mark the lane done, launch the next unblocked item.
+- `window-gone`, or any lane whose session ended with no merged PR → inspect its worktree and PR state, re-launch once with the same brief; a second death is surfaced to the user, not retried.
+- `question` → answer it when available evidence already decides it: repo state, the issue body, a stated convention — including scope-narrowing calls and a lane's own well-argued recommendation. Relay to the user only what changes the product for a user or spends the owner's standing (retiring a reviewer, filing outside the repo, closing as won't-do). Either way, send the answer back to the lane. Non-tmux surfaces are covered by pushed questions; a surface with neither messaging nor an inspectable pane makes prolonged lane silence itself the needs-attention signal — inspect the session through that surface's own status tools.
+- `pr-watch` → act on its attention lines; `heartbeat` → nothing needs the overseer, re-run.
 
 ## 5. Stop
 

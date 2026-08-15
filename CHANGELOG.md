@@ -60,6 +60,25 @@
   did), and every `vstack.toml` writer now repairs a file that already lost
   it on the first pass that reads it — one write, then stable — instead of
   pinning the malformed file forever (VST-252).
+- orch oversee: `oversee-watch` — one command that blocks until the fleet
+  needs the overseer (a new pr-watch attention line, a live `--item`'s PR
+  merged at or after a fixed `--since`, a lane window gone, a lane pane
+  showing a question prompt, or a heartbeat), replacing per-session
+  hand-rolled watch loops and the Codex-rejected export+reducer shape;
+  pr-watch attention standing at run start is a baseline carried on every
+  event rather than a preempting event, so it cannot starve the lane checks —
+  and that baseline persists per fleet (repo + `--since`, under
+  `OVERSEE_WATCH_STATE_DIR`), so attention that arrives between two runs is
+  the next run's first-pass event, not a fresh baseline; oversee's tmux claim is open-terminal's own worktree
+  create (an owned item is skipped, siblings launch) instead of a pre-claim it
+  then refused; GitHub items labeled `blocked` are not fleet candidates; lanes stopped by a harness session limit are resumed under another auth lane or nudged after the reset; a lane whose window is alive but whose pane has fallen back to a bare shell — harness exited on a session limit, crash, or quit — is its own `lane-exited` event with the pane tail, instead of holding a slot until the next heartbeat; the merged check is one `--head` query per live item, so a busy repo's listing window cannot miss an item's merge.
+- orch submit-pr: GitHub items get a real `Closes #N` line in the PR body (the
+  template rendered `Closes issue-N`, which GitHub ignores; three drill PRs
+  merged without closing their issue).
+- orch: `open-terminal` skips an item whose worktree is owned by another
+  session (create exit 75) and launches the rest, instead of aborting the
+  batch; the summary line reports launched/skipped/failed, exit 75 when every
+  item was owned.
 - orch: `PR_REVIEW_QUORUM` — approval-wait's multi-bot enqueue gate. When a
   repo lists its reviewer logins, no success emits (either mode) until every
   listed login has a non-dismissed review pinned to the current head AND

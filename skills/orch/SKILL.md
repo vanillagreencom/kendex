@@ -81,10 +81,11 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Launch-only terminal handoff; model, effort, and permission flags come from `--launch-flags`. `--help` |
 | `lanes` | Enumerate harness auth lanes and their live usage; `pick` prints the launch env prefix for the lane with the most headroom, exit 3 when none qualifies. `--help` |
+| `oversee-watch` | Block until the fleet needs the overseer, then print one `EVENT` line: pr-watch attention, a lane's PR merged, a lane window gone, a lane pane at a question prompt, or a heartbeat. `--help` |
 
 The three waiters share a bounded env-first GitHub auth ladder and exit `3` on hard auth failure — [references/gates.md](references/gates.md).
 
-**Multi-PR watching.** Never hand-roll a monitor keyed on gate-state transitions — steady states transition nothing and the session sleeps through them. When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer; otherwise per-PR `approval-wait`/`queue-wait`. Contract and fallback limits: [references/gates.md](references/gates.md).
+**Multi-PR watching.** Never hand-roll a monitor keyed on gate-state transitions — steady states transition nothing and the session sleeps through them. When `.agents/skills/review-gate/scripts/pr-watch.sh` exists, run it as the single state reducer (oversee runs it through `oversee-watch`); otherwise per-PR `approval-wait`/`queue-wait`. Contract and fallback limits: [references/gates.md](references/gates.md).
 
 **`workflow-state`.** Run it with no arguments for the action reference. State keys are normalized issue IDs — `issue-N` for GitHub, `PROJ-123` for Linear — never the bare GitHub number; full key rules in `schemas/workflow-state.md`.
 
@@ -138,7 +139,7 @@ System dependencies: `jq`; `bash` 4+; `flock` (util-linux).
 
 #### Tracker Resolution
 
-An `ISSUE_ID` starting with `issue-` is GitHub (`TRACKER=github`, issue number `${ISSUE_ID#issue-}`, repo from caller context else `gh repo view --json nameWithOwner`); anything else is Linear. A caller-supplied `tracker` wins; resolve once per workflow and store as `TRACKER`. Steps marked **Linear only** / **GitHub only** run only for that tracker; never run `linear.sh` against a GitHub item — its state lives in `gh issue` and PR linkage (`Closes #N`).
+An `ISSUE_ID` starting with `issue-` is GitHub (`TRACKER=github`, issue number `${ISSUE_ID#issue-}`, repo from caller context else `gh repo view --json nameWithOwner`); anything else is Linear. A caller-supplied `tracker` wins; resolve once per workflow and store as `TRACKER`, with `ISSUE_REF` — the tracker's own issue reference, `#N` for GitHub, the Linear identifier as-is otherwise — the only form a `Closes` line renders. Steps marked **Linear only** / **GitHub only** run only for that tracker; never run `linear.sh` against a GitHub item — its state lives in `gh issue` and PR linkage (`Closes #N`).
 
 ---
 

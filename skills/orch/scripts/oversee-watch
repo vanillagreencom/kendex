@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# oversee-watch — block until the fleet needs the overseer, then report ONE
+# event and exit. The overseer handles the event and re-runs this command.
+#
+# Each pass, in order:
+#   1. pr-watch   the review-gate reducer over every open PR (when installed;
+#                 absent → one stderr note at start, step skipped)
+#   2. merged     a PR whose head branch matches --branch-regex merged at or
+#                 after --since
+#   3. window-gone a listed tmux lane window no longer exists
+#   4. question   a listed lane's pane shows a question/selection prompt
+#   5. heartbeat  after --max-loops passes with no event
+#
+# Output on the first event: `EVENT <kind> ...` on stdout, followed by
+# supporting lines (pr-watch output, the merged PR list, the pane tail, or the
+# open PR list for a heartbeat). Silence on stdout never means "fine": every
+# exit path prints an EVENT line or a stderr error.
+#
+# Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
+#                      [--branch-regex RE] [--repo OWNER/REPO] [LANE_WINDOW...]
+#
+# Exit codes:
+#   0  an EVENT line was printed
+#   2  usage error, or a global failure (gh not authenticated, repo
+#      unresolvable, PR listing failed, lanes given outside tmux)
+#
+# Environment:
+#   OVERSEE_WATCH_PR_WATCH  path to the pr-watch reducer (default:
+#                           $PROJECT_ROOT/.agents/skills/review-gate/scripts/pr-watch.sh)
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
+# shellcheck source=lib/vstack-env.sh
+source "$SCRIPT_DIR/lib/vstack-env.sh"
+vstack_load_project_env "$PROJECT_ROOT"
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+
+PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
+QUESTION_RE='❯ [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
+
+INTERVAL=240
+MAX_LOOPS=25
+SINCE=""
+BRANCH_RE='^(issue-[0-9]+|[A-Za-z]+-[0-9]+)$'
+REPO=""
+LANES=()
+
+usage() {
+  cat <<'USAGE'
+Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
+                     [--branch-regex RE] [--repo OWNER/REPO] [LANE_WINDOW...]
+
+Blocks until the fleet needs the overseer, prints one `EVENT <kind> ...` line
+(plus supporting lines), and exits 0. Re-run it after handling the event.
+
+Events, checked in this order every pass:
+  EVENT pr-watch rc=N        the review-gate reducer reported attention (its
+                             output follows); skipped with a stderr note when
+                             pr-watch.sh is not installed
+  EVENT merged <PR> <branch> a PR whose head branch matches --branch-regex
+                             merged at or after --since (one line per PR)
+  EVENT window-gone <lane>   a listed tmux window no longer exists
+  EVENT question <lane>      the lane's pane shows a question/selection
+                             prompt (last 40 non-empty pane lines follow)
+  EVENT heartbeat            --max-loops passes with no event (open PR list
+                             follows: number, head branch, title)
+
+Options:
+  --interval SECS     seconds between passes (default 240)
+  --max-loops N       passes before a heartbeat (default 25)
+  --since ISO8601     merged-at floor for `merged` (default: now, at start)
+  --branch-regex RE   head-branch filter for `merged`
+                      (default '^(issue-[0-9]+|[A-Za-z]+-[0-9]+)$')
+  --repo OWNER/REPO   repository (default: gh repo view)
+  LANE_WINDOW...      tmux window names to watch; requires $TMUX
+
+Exit codes:
+  0  an EVENT line was printed
+  2  usage error, or a global failure: gh not authenticated, repo
+     unresolvable, PR listing failed, lanes given outside tmux
+
+Environment:
+  OVERSEE_WATCH_PR_WATCH  path to pr-watch.sh (default: the review-gate
+                          skill's install under .agents/skills)
+USAGE
+}
+
+die() { echo "oversee-watch: $*" >&2; exit 2; }
+need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die "$1 requires a value"; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
+    --interval=*) INTERVAL="${1#--interval=}"; shift ;;
+    --max-loops) need_val "$@"; MAX_LOOPS="$2"; shift 2 ;;
+    --max-loops=*) MAX_LOOPS="${1#--max-loops=}"; shift ;;
+    --since) need_val "$@"; SINCE="$2"; shift 2 ;;
+    --since=*) SINCE="${1#--since=}"; shift ;;
+    --branch-regex) need_val "$@"; BRANCH_RE="$2"; shift 2 ;;
+    --branch-regex=*) BRANCH_RE="${1#--branch-regex=}"; shift ;;
+    --repo) need_val "$@"; REPO="$2"; shift 2 ;;
+    --repo=*) REPO="${1#--repo=}"; shift ;;
+    --help|-h) usage; exit 0 ;;
+    -*) usage >&2; die "unknown option '$1'" ;;
+    *) LANES+=("$1"); shift ;;
+  esac
+done
+
+[[ "$INTERVAL" =~ ^[0-9]+$ ]] || die "--interval must be a non-negative integer (got '$INTERVAL')"
+[[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die "--max-loops must be a positive integer (got '$MAX_LOOPS')"
+if [[ ${#LANES[@]} -gt 0 && -z "${TMUX:-}" ]]; then
+  die "lane windows given (${LANES[*]}) but not inside tmux; drop the lanes or run from the tmux session that owns them"
+fi
+
+# ISO8601 → epoch, GNU date first, then BSD/macOS. -u is load-bearing so a
+# Z-suffixed timestamp is not shifted by the local zone.
+to_epoch() {
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
+}
+
+if [[ -z "$SINCE" ]]; then
+  SINCE_EPOCH="$(date +%s)"
+  SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+else
+  SINCE_EPOCH="$(to_epoch "$SINCE")" || die "--since '$SINCE' is not an ISO8601 timestamp"
+fi
+
+command -v gh >/dev/null 2>&1 || die "gh CLI not found on PATH"
+command -v jq >/dev/null 2>&1 || die "jq not found on PATH"
+
+# Auth ladder (gates.md § Waiter auth ladder): a stale env token yields to the
+# keyring; with no working env token, the project's GH_BOT_TOKEN is the last
+# candidate. Never proceed unauthenticated — an unauthenticated `gh pr list`
+# would report an empty fleet, not a failure.
+orch_sanitize_gh_env
+if ! orch_github_auth_status; then
+  if [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+    orch_load_env_bot_token "$PROJECT_ROOT" || true
+  fi
+  orch_github_auth_status \
+    || die "no working GitHub auth path (tried env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN). Run: gh auth login"
+fi
+
+if [[ -z "$REPO" ]]; then
+  REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+  [[ -n "$REPO" ]] || die "could not resolve the repository (gh repo view failed); pass --repo OWNER/REPO"
+fi
+
+if [[ -x "$PR_WATCH" ]]; then
+  :
+else
+  echo "oversee-watch: pr-watch.sh not found at $PR_WATCH; skipping the review-gate reducer (merged/window/question checks still run)" >&2
+  PR_WATCH=""
+fi
+
+# Every step exits on its first event; the loop body only reaches `sleep`
+# when nothing needs the overseer.
+check_pr_watch() {
+  [[ -n "$PR_WATCH" ]] || return 0
+  local out rc=0
+  out="$(GH_REPO="$REPO" "$PR_WATCH" 2>&1)" || rc=$?
+  [[ "$rc" -ne 0 ]] || return 0
+  echo "EVENT pr-watch rc=$rc"
+  [[ -z "$out" ]] || printf '%s\n' "$out"
+  exit 0
+}
+
+check_merged() {
+  local list hits
+  list="$(gh pr list --repo "$REPO" --state merged --limit 50 --json number,headRefName,mergedAt 2>&1)" \
+    || die "gh pr list --state merged failed for $REPO: $list"
+  hits="$(jq -r --arg re "$BRANCH_RE" --argjson since "$SINCE_EPOCH" '
+    [ .[]
+      | select(.headRefName | test($re))
+      | select(.mergedAt != null)
+      | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
+      | "EVENT merged \(.number) \(.headRefName)" ]
+    | .[]' <<<"$list" 2>/dev/null)" \
+    || die "could not parse gh pr list output for $REPO"
+  [[ -n "$hits" ]] || return 0
+  printf '%s\n' "$hits"
+  exit 0
+}
+
+check_lanes() {
+  [[ ${#LANES[@]} -gt 0 ]] || return 0
+  local existing lane pane
+  existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
+  for lane in "${LANES[@]}"; do
+    if ! grep -qxF -- "$lane" <<<"$existing"; then
+      echo "EVENT window-gone $lane"
+      exit 0
+    fi
+  done
+  for lane in "${LANES[@]}"; do
+    if ! pane="$(tmux capture-pane -t "$lane" -p 2>/dev/null)"; then
+      echo "EVENT window-gone $lane"
+      exit 0
+    fi
+    if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
+      echo "EVENT question $lane"
+      grep -v '^[[:space:]]*$' <<<"$pane" | tail -40
+      exit 0
+    fi
+  done
+}
+
+heartbeat() {
+  local open
+  open="$(gh pr list --repo "$REPO" --state open --limit 50 --json number,headRefName,title \
+    --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>&1)" \
+    || die "gh pr list --state open failed for $REPO: $open"
+  echo "EVENT heartbeat loops=$MAX_LOOPS interval=${INTERVAL}s since=$SINCE"
+  [[ -z "$open" ]] || printf '%s\n' "$open"
+  exit 0
+}
+
+loop=0
+while :; do
+  loop=$((loop + 1))
+  check_pr_watch
+  check_merged
+  check_lanes
+  [[ "$loop" -lt "$MAX_LOOPS" ]] || heartbeat
+  sleep "$INTERVAL"
+done

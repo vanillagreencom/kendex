@@ -34,8 +34,8 @@ Write the summary to a file first — inline bodies with backticks or fenced blo
 
 ```markdown
 ## Completed Issues
-- Closes [ISSUE_ID] - [TITLE]
-  - Closes [SUB_ISSUE_ID] - [SUB_TITLE]
+- Closes [ISSUE_REF] - [TITLE]
+  - Closes [SUB_ISSUE_REF] - [SUB_TITLE]
 
 ## Created Issues
 - [ISSUE_ID] - [TITLE] — [PROJECT]
