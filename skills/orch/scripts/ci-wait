@@ -508,7 +508,11 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       ci_probe_done=true
       wf_count=$(gh api "repos/$REPO/actions/workflows" --jq '[.workflows[] | select(.state == "active")] | length' 2>/dev/null) || wf_count="probe_failed"
       base_branch=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName --jq '.baseRefName' 2>/dev/null) || base_branch=""
-      protected="probe_failed"; rule_checks="probe_failed"; ext_statuses="probe_failed"
+      # Distinct from probe_failed: these probes need the PR's base branch or
+      # head sha, and when THAT lookup failed they were never attempted. Both
+      # are inconclusive, but naming a skipped probe as a failed one points the
+      # operator at the wrong lookup.
+      protected="probe_unattempted"; rule_checks="probe_unattempted"; ext_statuses="probe_unattempted"
       if [ -n "$base_branch" ]; then
         protected=$(gh api "repos/$REPO/branches/$base_branch" --jq '.protected' 2>/dev/null) || protected="probe_failed"
         rule_checks=$(gh api "repos/$REPO/rules/branches/$base_branch" --jq '[.[] | select(.type == "required_status_checks")] | length' 2>/dev/null) || rule_checks="probe_failed"
@@ -522,9 +526,16 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
       # An inconclusive probe falls through to the grace path; say so, or the
       # eventual grace-exhausted error steers the operator at the wrong cause.
       for probe_result in "workflows:$wf_count" "protection:$protected" "rules:$rule_checks" "statuses:$ext_statuses"; do
-        if [ "${probe_result#*:}" = "probe_failed" ]; then
-          echo "no-CI probe inconclusive (${probe_result%%:*} lookup failed); continuing to wait for checks" >&2
-        fi
+        probe_name="${probe_result%%:*}"
+        case "${probe_result#*:}" in
+          probe_failed)
+            echo "no-CI probe inconclusive ($probe_name lookup failed); continuing to wait for checks" >&2
+            ;;
+          probe_unattempted)
+            if [ "$probe_name" = "statuses" ]; then probe_input="head-sha"; else probe_input="base-branch"; fi
+            echo "no-CI probe inconclusive ($probe_name not probed: the PR's $probe_input lookup failed); continuing to wait for checks" >&2
+            ;;
+        esac
       done
       if [ "$wf_count" = "0" ] && [ "$protected" = "false" ] && [ "$rule_checks" = "0" ] && [ "$ext_statuses" = "0" ]; then
         update_elapsed

@@ -1572,8 +1572,48 @@ role: engineer
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// VST-255 fix round: the interactive repo dialog removes sources by
-    /// writing sources.json directly mid-run (install_flow::forget_source).
+    /// An unreadable registry is a failed read, not an empty one: defaulting
+    /// past it and saving would overwrite the file with an empty registry,
+    /// destroying every remembered source and tombstone it still holds.
+    #[test]
+    fn persist_confirmed_source_refuses_to_overwrite_an_unreadable_registry() {
+        let root = tmpdir("persist-corrupt");
+        let home = root.join("home");
+        let config_home = root.join("config");
+        let project = root.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config_home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+
+        crate::test_util::with_home_and_config(&home, &config_home, || {
+            let reg_path = config::source_registry_path();
+            std::fs::create_dir_all(reg_path.parent().unwrap()).unwrap();
+            std::fs::write(&reg_path, "{ this is not json").unwrap();
+
+            let resolved = ResolvedSource {
+                source: "owner/confirmed".into(),
+                source_repo: None,
+                label: "owner/confirmed".into(),
+                dir: PathBuf::from("/cache/owner_confirmed"),
+                persist: true,
+            };
+            let err = persist_confirmed_source(&resolved, false, &project)
+                .expect_err("an unreadable registry must fail, not default to empty");
+            assert!(
+                format!("{err:#}").contains("source registry"),
+                "the error must name the registry it could not read: {err:#}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&reg_path).unwrap(),
+                "{ this is not json",
+                "the unreadable registry must be left exactly as it was"
+            );
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The interactive repo dialog removes sources by writing sources.json
+    /// directly mid-run (install_flow::forget_source).
     /// The post-confirmation persist must work from the on-disk registry, not
     /// this run's pre-TUI snapshot — saving the snapshot resurrects the entry
     /// and drops its removed-source tombstone.
@@ -1734,7 +1774,11 @@ fn persist_confirmed_source(
         return Ok(());
     }
     let registry_path = config::source_registry_path();
-    let mut registry = config::SourceRegistry::load(&registry_path).unwrap_or_default();
+    // A missing registry loads as the default; anything else is a real read or
+    // parse failure, and defaulting past it here would save an EMPTY registry
+    // over the unreadable one — losing every remembered source and every
+    // forget_source tombstone this write path exists to preserve.
+    let mut registry = config::SourceRegistry::load(&registry_path)?;
     if global {
         registry.remember(&resolved.source);
     } else {

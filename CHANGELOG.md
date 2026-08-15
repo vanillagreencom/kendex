@@ -76,6 +76,53 @@
   did), and every `vstack.toml` writer now repairs a file that already lost
   it on the first pass that reads it — one write, then stable — instead of
   pinning the malformed file forever (VST-252).
+- **Review-thread triage sweep across the last nine merged PRs (#1298).** 67
+  unresolved threads re-derived against `main`; the ones still live:
+  - orch `approval-wait`: the quorum gate no longer reports a verdict it never
+    emitted — the shared approval gate returns keep-polling as its ordinary
+    status, so call sites drop the blanket `|| true` that also disabled
+    errexit through the helper body, and a failed JSON emit propagates instead
+    of falling through to `exit 0`. `PR_REVIEW_QUORUM` accepts any whitespace
+    as a separator (carriage returns included — a CRLF-sourced value no longer
+    holds the gate open forever on a login nothing can match). A PARTIAL
+    quorum now counts as reviewer engagement, so `PR_REVIEW_ON_TIMEOUT=proceed`
+    can no longer report a met gate while a listed sibling stayed silent. The
+    paginated reviews read is captured in two steps with a zero-byte guard, a
+    jq failure in the quorum parse is a loud failed read rather than an empty
+    reviewer set, and the text (non-`--json`) timeout/proceeded lines name the
+    missing logins. `PR_REVIEW_QUORUM` joins the orch README's setting table.
+  - worktree: `remove <ID>` closes the last two holes in the live-lease guard.
+    A session whose `VSTACK_SESSION_OWNER`/`HT_SESSION_OWNER` happens to equal
+    the issue ID no longer skips the liveness gate — two sessions on one issue
+    export the same string, so it proves nothing the argument did not. And the
+    liveness verdict is now bound to the lease it was made on:
+    `worktree-session-guard release --expect-pid` re-reads the pid under the
+    same lock that serializes claim/refresh/release, so a sibling that claimed
+    or refreshed between the check and the release is refused instead of
+    unlocked.
+  - orch `queue-wait`: a GraphQL response carrying both data and a top-level
+    `errors` array is a failed read, not a thread count — partial data can no
+    longer undercount the blockers the late-findings guard exists to see. A
+    blind guard keeps warning every three consecutive failed probes instead of
+    once, and `merge-pr`'s `queued` row now says to re-enter the wait, since
+    the guard only watches while a wait is running.
+  - orch `ci-wait`: a no-CI probe skipped because the PR's base-branch or
+    head-sha lookup failed is reported as unattempted, not as its own failed
+    lookup.
+  - orch `review-pr`: the QA safety-signal scan is a single
+    `git diff --quiet -G…` predicate instead of a `git diff | grep -c`
+    pipeline, which Codex `approval=never` classifies as approval-required.
+  - linear `issues update`: `--labels` with `--clear-labels` is refused before
+    `--attach` uploads, so the deterministic refusal no longer strands the
+    uploaded asset in Linear storage.
+  - cli `vstack add`: an unreadable `sources.json` fails the confirmed-source
+    persist instead of defaulting to an empty registry and saving it back over
+    the remembered sources and `forget_source` tombstones.
+  - docs: gates.md distinguishes the two gate modes on the zero-thread
+    requirement and states the concrete reason the triage-then-re-enqueue
+    route cannot churn-loop; the worktree live-lease suite's check count is
+    corrected (35, not 20).
+
 - orch: `PR_REVIEW_QUORUM` — approval-wait's multi-bot enqueue gate. When a
   repo lists its reviewer logins, no success emits (either mode) until every
   listed login has a non-dismissed review pinned to the current head AND
@@ -214,7 +261,7 @@
   claiming process is still alive on this host (and is not this session or an
   ancestor) refuses the removal, naming the owner and pid. `remove --force`
   skips exactly that refusal; dead or ancestor pids, env-ladder identities,
-  and every other safeguard behave as before. New 20-check suite with
+  and every other safeguard behave as before. New 35-check suite with
   mutation-proven controls.
 - project-management, dev, preflight, worktree, review-gate markdown:
   verified tight (three prior passes + this one); zero-cut apart from a

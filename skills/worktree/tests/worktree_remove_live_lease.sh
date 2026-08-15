@@ -185,6 +185,82 @@ kill "$SLEEPER_PID" 2>/dev/null || true
 wait "$SLEEPER_PID" 2>/dev/null || true
 SLEEPER_PID=""
 
+echo "=== the env owner matching the issue ID does not skip the liveness gate ==="
+
+# VSTACK_SESSION_OWNER/HT_SESSION_OWNER are set to the ISSUE ID by the
+# orchestrating workflows, so a sibling session on the same issue exports the
+# very same string. The recorded pid must still decide.
+ENV_ROOT="$TMP_ROOT/envowner"
+make_repo "$ENV_ROOT/main"
+git -C "$ENV_ROOT/main" worktree add -q -b issue-envown "$ENV_ROOT/trees/issue-envown" main
+ENV_WT="$ENV_ROOT/trees/issue-envown"
+"$GUARD_SCRIPT" claim "$ENV_WT" --owner issue-envown >/dev/null
+sleep 300 &
+ENV_SLEEPER=$!
+plant_lease_pid "$ENV_ROOT/main/.git/worktrees/issue-envown/locked" "$ENV_SLEEPER"
+
+set +e
+env_out=$(cd "$ENV_ROOT/main" && VSTACK_SESSION_OWNER=issue-envown \
+  "$WORKTREE_SCRIPT" remove issue-envown 2>"$ENV_ROOT/env.err")
+env_code=$?
+set -e
+assert_eq "$env_code" "1" "remove <ID> with VSTACK_SESSION_OWNER equal to the issue ID still refuses"
+assert_contains "$(cat "$ENV_ROOT/env.err")" "(owner=issue-envown pid=$ENV_SLEEPER)" \
+  "the env-owner path names the live pid it refused on"
+if grep -qF "Removed:" <<<"$env_out"; then
+  fail "the env-owner removal does not report a removal"
+else
+  pass "the env-owner removal does not report a removal"
+fi
+assert_path_exists "$ENV_WT" "the sibling's worktree survives an equal-env-owner removal"
+assert_eq "$(guard_status_code "$ENV_WT" "$ENV_ROOT/main" --owner issue-envown)" "0" \
+  "the sibling's lease survives an equal-env-owner removal"
+kill "$ENV_SLEEPER" 2>/dev/null || true
+wait "$ENV_SLEEPER" 2>/dev/null || true
+
+echo "=== compare-and-release refuses a lease rewritten after the liveness check ==="
+
+# The liveness verdict and the release are two guard calls; a sibling that
+# claims or refreshes in between rewrites the lease pid. `release --expect-pid`
+# is what makes the pair atomic — it re-reads the pid under the same lock.
+CAS_ROOT="$TMP_ROOT/cas"
+make_repo "$CAS_ROOT/main"
+git -C "$CAS_ROOT/main" worktree add -q -b issue-cas "$CAS_ROOT/trees/issue-cas" main
+CAS_WT="$CAS_ROOT/trees/issue-cas"
+"$GUARD_SCRIPT" claim "$CAS_WT" --owner issue-cas >/dev/null
+CAS_LOCK="$CAS_ROOT/main/.git/worktrees/issue-cas/locked"
+cas_pid_before="$(sed -n 's/.* pid=\([0-9]*\) .*/\1/p' "$CAS_LOCK")"
+
+# Control: the release DOES go through when the lease still records the pid
+# the caller checked — without this the refusal below would prove nothing.
+set +e
+cas_ok_out=$("$GUARD_SCRIPT" release "$CAS_WT" --owner issue-cas --repo "$CAS_ROOT/main" \
+  --expect-pid "$cas_pid_before" 2>"$CAS_ROOT/cas-ok.err")
+cas_ok_code=$?
+set -e
+assert_eq "$cas_ok_code" "0" "control: --expect-pid matching the lease releases it"
+assert_contains "$cas_ok_out" "released $CAS_WT" "control: the matching release is reported"
+
+# Now the racing case: re-claim, then release naming the pid seen BEFORE.
+"$GUARD_SCRIPT" claim "$CAS_WT" --owner issue-cas >/dev/null
+sleep 300 &
+CAS_SLEEPER=$!
+plant_lease_pid "$CAS_LOCK" "$CAS_SLEEPER"
+set +e
+"$GUARD_SCRIPT" release "$CAS_WT" --owner issue-cas --repo "$CAS_ROOT/main" \
+  --expect-pid "$cas_pid_before" >/dev/null 2>"$CAS_ROOT/cas.err"
+cas_code=$?
+set -e
+assert_eq "$cas_code" "75" "--expect-pid refuses a lease whose pid changed since the check"
+assert_contains "$(cat "$CAS_ROOT/cas.err")" "changed since it was checked" \
+  "the refusal says the lease changed under the caller"
+assert_contains "$(cat "$CAS_ROOT/cas.err")" "expected pid=$cas_pid_before" \
+  "the refusal names the pid the caller checked"
+assert_eq "$(guard_status_code "$CAS_WT" "$CAS_ROOT/main" --owner issue-cas)" "0" \
+  "the refreshed lease survives the compare-and-release refusal"
+kill "$CAS_SLEEPER" 2>/dev/null || true
+wait "$CAS_SLEEPER" 2>/dev/null || true
+
 echo "=== a dead recorded pid proceeds as before ==="
 
 DEAD_ROOT="$TMP_ROOT/dead"

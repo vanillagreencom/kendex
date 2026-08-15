@@ -177,6 +177,19 @@ if jq -s -e 'any(.[]; .query? // "" | contains("attachmentCreate"))' "$CURL_LOG"
   fail "attachmentCreate was reached after a rejected update"
 fi
 
+echo "=== --labels with --clear-labels is refused BEFORE the upload ==="
+
+# The combination can only ever be refused, so refusing it after the upload
+# would strand the asset in Linear storage — the same class the pre-upload
+# label resolution already guards against.
+run_linear issues update TEAM-9 --labels bug --clear-labels --attach "$TMP_ROOT/notes.pdf"
+[[ "$RC" -ne 0 ]] || fail "--labels with --clear-labels exited 0: $OUT"
+grep -q "not both" <<<"$ERR" || fail "conflicting label flags lack the refusal message: $ERR"
+if jq -s -e 'any(.[]; (.query? // "" | contains("fileUpload"))
+    or (.put? != null))' "$CURL_LOG" >/dev/null; then
+  fail "the refused update still uploaded the attachment: $(cat "$CURL_LOG")"
+fi
+
 echo "=== bulk-update forwards --attach to each issue ==="
 
 run_linear issues bulk-update TEAM-9 --attach "$TMP_ROOT/shot.png"

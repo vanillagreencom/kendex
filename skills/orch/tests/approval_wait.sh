@@ -288,6 +288,9 @@ case "${1:-}" in
         two_bots_at_head)
           echo '[{"user":{"login":"bot-a"},"state":"COMMENTED","commit_id":"headsha1"},{"user":{"login":"bot-b"},"state":"APPROVED","commit_id":"headsha1"}]'
           ;;
+        one_bot_at_head)
+          echo '[{"user":{"login":"bot-a"},"state":"COMMENTED","commit_id":"headsha1"}]'
+          ;;
         none|*)
           echo '[]'
           ;;
@@ -1493,6 +1496,43 @@ assert_eq "$(json_field "$output" '.status')" "timeout" "quorum: approval verdic
 # Quorum unset: JSON carries no quorum_missing key (legacy shape).
 output=$(run_wait_json STUB_APPROVAL_MODE=approved_decision 2>"$stderr")
 assert_eq "$(json_field "$output" 'has("quorum_missing")')" "false" "quorum: unset leaves the legacy JSON shape" "$stderr"
+
+# Carriage returns from a CRLF-sourced setting are delimiters, not part of the
+# last login — otherwise "bot-b\r" matches no GitHub user and holds the gate
+# open forever. Newline and tab separators are accepted for the same reason.
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="$(printf 'bot-a,bot-b\r')" STUB_REVIEWS_MODE=two_bots_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: a trailing carriage return is stripped, not matched" "$stderr"
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="$(printf 'bot-a\n\tbot-b\n')" STUB_REVIEWS_MODE=two_bots_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: newline and tab separate logins too" "$stderr"
+
+# A PARTIAL quorum is reviewer ENGAGEMENT: the bot that reviewed this head is
+# demonstrably alive, so the reviewer-down degrade must not fire past it.
+# Without this, PR_REVIEW_ON_TIMEOUT=proceed reports a met gate on one bot's
+# review while the configured quorum was never satisfied.
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=one_bot_at_head \
+    PR_REVIEW_ON_TIMEOUT=proceed \
+    .agents/skills/orch/scripts/approval-wait 1 1 3 --json --mode review) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "timeout" "quorum: a partial quorum times out rather than proceeding" "$stderr"
+assert_eq "$(json_field "$output" '.quorum_missing | join(",")')" "bot-b" "quorum: the partial-quorum timeout names the silent login" "$stderr"
+
+# Control for the line above: with NO reviewer at head at all, proceed still
+# degrades — the guard must bound the reviewer-down case, not abolish it.
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=none \
+    PR_REVIEW_ON_TIMEOUT=proceed \
+    .agents/skills/orch/scripts/approval-wait 1 1 3 --json --mode review) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "proceeded" "quorum: total reviewer silence still proceeds on timeout" "$stderr"
+
+# Without --json the missing logins are the whole diagnosis of a held gate.
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=one_bot_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 3 --mode review) 2>"$stderr" || true)
+assert_contains "$output" "quorum missing: bot-b" "quorum: the text timeout names the missing logins" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

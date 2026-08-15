@@ -463,8 +463,7 @@ if (( wait_secs > 0 )); then
     out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo")" || rc=$?
     verdict="$(jq -r '.verdict // "wait"' <<<"$out" 2>/dev/null || printf 'wait')"
     if [[ "$verdict" != "wait" ]] || (( $(date +%s) >= deadline )); then
-      printf '%s
-' "$out"
+      printf '%s\n' "$out"
       exit "$rc"
     fi
     remaining=$(( deadline - $(date +%s) ))

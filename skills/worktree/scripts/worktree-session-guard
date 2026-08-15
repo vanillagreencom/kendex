@@ -115,6 +115,10 @@ Options:
                      release, sweep.
   --stale            release: also accept a foreign lease past the TTL.
   --force            release: accept a foreign lease regardless of age.
+  --expect-pid PID   release: compare-and-release. Refuse (exit 75) unless the
+                     lease still records this pid, so a decision taken from an
+                     earlier `status` read cannot unlock a lease a sibling
+                     claimed or refreshed in between.
   --dry-run          sweep: report what would be released, release nothing.
   --repo DIR         Any checkout of the target repository (default: current
                      directory). Applies to: release, status, list, sweep;
@@ -839,7 +843,8 @@ cmd_refresh() {
 
 cmd_release() {
 	local repo="$1" target="$2" owner="$3" ttl_minutes="$4" allow_stale="$5" force="$6"
-	local worktree registration existing_owner age now rc=0
+	local expect_pid="${7:-}"
+	local worktree registration existing_owner existing_pid age now rc=0
 
 	resolve_worktree "$repo" "$target" false
 	worktree="$RESOLVED_WORKTREE"
@@ -860,6 +865,21 @@ cmd_release() {
 	fi
 
 	existing_owner="$(lease_field "$LEASE_TEXT" owner || true)"
+	# Compare-and-release: the owner match proves only the same ISSUE, so a
+	# caller that decided this lease was safe to release from a SEPARATE
+	# `status` read passes the pid that decision was made on. Re-reading it
+	# here — under the same guard lock that serializes claim/refresh/release —
+	# is what makes the decision and the release atomic: a sibling that
+	# claimed or refreshed in between rewrote the pid, and this refuses
+	# instead of unlocking its live lease.
+	if [[ -n "$expect_pid" ]]; then
+		existing_pid="$(lease_field "$LEASE_TEXT" pid || true)"
+		if [[ "$existing_pid" != "$expect_pid" ]]; then
+			printf 'worktree-session-guard: %s changed since it was checked (expected pid=%s, lease records pid=%s); refusing to release: %s\n' \
+				"$worktree" "$expect_pid" "${existing_pid:-none}" "$LEASE_TEXT" >&2
+			exit "$EXIT_OWNED"
+		fi
+	fi
 	if [[ "$existing_owner" == "$owner" && "$allow_stale" != true ]]; then
 		# The ordinary "I am done here" release, e.g. orch at merge time. The
 		# lease is recorded before it is destroyed: an owner match only proves
@@ -1024,7 +1044,7 @@ main() {
 
 	local target='' repo='' owner="${VSTACK_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"
 	local ttl_minutes="$DEFAULT_TTL_MINUTES"
-	local allow_stale=false force=false dry_run=false owner_explicit=false
+	local allow_stale=false force=false dry_run=false owner_explicit=false expect_pid=''
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1057,6 +1077,13 @@ main() {
 			require_flag_applies --force "$command" "release"
 			force=true
 			shift
+			;;
+		--expect-pid)
+			[[ $# -ge 2 ]] || fail "--expect-pid requires a value"
+			require_flag_applies --expect-pid "$command" "release"
+			[[ "$2" =~ ^[1-9][0-9]*$ ]] || fail "--expect-pid takes a positive pid, got: $2"
+			expect_pid="$2"
+			shift 2
 			;;
 		--dry-run)
 			require_flag_applies --dry-run "$command" "sweep"
@@ -1112,7 +1139,7 @@ main() {
 	case "$command" in
 	claim) cmd_claim "$repo" "$target" "$owner" ;;
 	refresh) cmd_refresh "$repo" "$target" "$owner" ;;
-	release) cmd_release "$repo" "$target" "$owner" "$ttl_minutes" "$allow_stale" "$force" ;;
+	release) cmd_release "$repo" "$target" "$owner" "$ttl_minutes" "$allow_stale" "$force" "$expect_pid" ;;
 	status) cmd_status "$repo" "$target" "$owner" ;;
 	list) cmd_list "$repo" ;;
 	sweep) cmd_sweep "$repo" "$ttl_minutes" "$dry_run" ;;

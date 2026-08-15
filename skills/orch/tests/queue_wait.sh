@@ -303,6 +303,10 @@ t_rt_null='{"data":{"repository":{"pullRequest":{"reviewThreads":null}}}}'
 t_bad_bool='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":"false"}]}}}}}'
 t_cursor_null='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":null},"nodes":[{"isResolved":false}]}}}}}'
 t_cursor_stuck='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":false}]}}}}}'
+# GitHub answers 200 with BOTH data and a top-level errors array when part of
+# the query failed. The thread set beside it is a partial view, so counting it
+# would undercount the blockers the guard exists to see.
+t_partial_errors='{"errors":[{"message":"Something went wrong"}],"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false}]}}}}}'
 dq_ok='{"data":{"dequeuePullRequest":{"mergeQueueEntry":{"id":"MQE_1"}}}}'
 dq_err='{"errors":[{"message":"Pull request is not in the merge queue"}]}'
 am_ok='{"data":{"disablePullRequestAutoMerge":{"clientMutationId":null}}}'
@@ -570,10 +574,10 @@ else
 fi
 
 # --- 20. late-findings guard: unresolved thread while queued -----------------
-# approval-wait gates threads to zero before enqueue, so ANY unresolved
-# thread seen while queued is late by construction (vstack#1289). The queued
-# PR is also armed, so the guard must disarm auto-merge FIRST (a bare
-# dequeue can be raced back into the queue by the arming) and then issue
+# ANY unresolved thread seen while queued triggers, with no baseline: an
+# unresolved thread in the queue is unsafe whenever it appeared (vstack#1289).
+# The queued PR is also armed, so the guard must disarm auto-merge FIRST (a
+# bare dequeue can be raced back into the queue by the arming) and then issue
 # dequeuePullRequest with the PR NODE id (not the queue-entry id).
 new_case guard_dequeue
 write_fixture state last "$pr_open"
@@ -604,8 +608,8 @@ out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_contains "$out" "Merge queue: dequeued" "non-JSON output names the dequeue" "$err"
 
 # --- 21. pre-existing unresolved threads trigger too -------------------------
-# A thread unresolved since before enqueue is exactly the unsafe state —
-# the gate required zero at enqueue — so it dequeues; the resolved sibling
+# A thread unresolved since before enqueue is exactly the unsafe state, and
+# enqueue never proved threads were zero, so it dequeues; the resolved sibling
 # is not counted.
 new_case guard_preexisting
 write_fixture state last "$pr_open"
@@ -645,17 +649,19 @@ assert_eq "$(jq -r .verdict <<<"$out")" "queued" "fetch failure never fabricates
 assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "no mutation on fetch failure" "$err"
 assert_contains "$(cat "$err")" "thread fetch failed 3 consecutive" "consecutive fetch failures warn" "$err"
 
-# 22b-22d. anomalous read shapes are FAILED reads, never counts (each body
+# 22b-22e. anomalous read shapes are FAILED reads, never counts (each body
 # plants an unresolved node, so a fail-open reader would dequeue and a
 # read-as-empty reader would stay silent without the warning): a null
 # reviewThreads, a non-boolean isResolved, a hasNextPage with a null cursor,
-# and a hasNextPage whose cursor never advances.
-for shape in rt_null bad_bool cursor_null cursor_stuck; do
+# a hasNextPage whose cursor never advances, and a 200 whose well-shaped data
+# rides alongside a top-level GraphQL errors array.
+for shape in rt_null bad_bool cursor_null cursor_stuck partial_errors; do
   case "$shape" in
     rt_null) body="$t_rt_null" ;;
     bad_bool) body="$t_bad_bool" ;;
     cursor_null) body="$t_cursor_null" ;;
     cursor_stuck) body="$t_cursor_stuck" ;;
+    partial_errors) body="$t_partial_errors" ;;
   esac
   new_case "guard_shape_$shape"
   write_fixture state last "$pr_open"

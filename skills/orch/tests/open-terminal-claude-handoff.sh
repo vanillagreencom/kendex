@@ -328,9 +328,9 @@ set -e
 assert_eq "$c6_code" "0" "tmux re-delivery path exits 0"
 assert_contains "$c6_out" "Re-delivered brief to 'CC-737'" "re-delivery is reported"
 c6_log="$(cat "$OT_TMUX_LOG")"
-c6_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG")"
+c6_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG")"
 assert_eq "$c6_resends" "1" "brief is re-sent exactly once"
-c6_full_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737${TC}" "$OT_TMUX_LOG")"
+c6_full_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737${TC}" -- "$OT_TMUX_LOG")"
 assert_eq "$c6_full_resends" "1" "the re-sent brief carries the terminal condition"
 
 # Case 6b: TWO dialog screens before the composer is ready — each
@@ -351,9 +351,9 @@ assert_eq "$c6b_code" "0" "dialog-then-ready path exits 0"
 assert_contains "$c6b_out" "Re-delivered brief to 'CC-737'" "re-delivery after dialog dismissal is reported"
 # Bare Enters: 1 at launch + 1 dialog dismissal nudge + 1 submitting the
 # re-sent brief. The brief itself is typed exactly once, after readiness.
-c6b_enters="$(grep -c "send-keys -t %7 Enter$" "$OT_TMUX_LOG" || true)"
+c6b_enters="$(grep -c "send-keys -t %7 Enter$" -- "$OT_TMUX_LOG" || true)"
 assert_eq "$c6b_enters" "3" "one dismissing Enter per dialog pass, none extra"
-c6b_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG")"
+c6b_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG")"
 assert_eq "$c6b_resends" "1" "brief typed exactly once, after the composer is ready"
 
 # Case 7: the brief never leaves the echoed launch line (the TUI reaches a
@@ -373,7 +373,7 @@ c7_err="$(cat "$TMP_ROOT/c7.err")"
 assert_contains "$c7_err" "brief undelivered to 'CC-737'" "per-lane failure line names the lane"
 assert_contains "$c7_err" "handoff lane(s) failed" "summary reports the failed lane count"
 assert_not_contains "$c7_out" "Done: launched 1" "a failed lane is not counted as launched"
-c7_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG")"
+c7_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG")"
 assert_eq "$c7_resends" "1" "re-send is attempted exactly once before failing"
 
 # Case 8: the brief sitting unsent in the composer box is NOT delivery —
@@ -390,7 +390,7 @@ assert_contains "$(cat "$TMP_ROOT/c8.err")" "brief undelivered to 'CC-737'" \
   "unsubmitted composer text is reported undelivered"
 # `|| true` keeps set -e alive when the buggy no-re-send path yields count 0
 # (grep -c still prints the 0 but exits 1).
-c8_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG" || true)"
+c8_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG" || true)"
 assert_eq "$c8_resends" "1" "composer-only screen still gets exactly one re-send"
 
 # Case 8b: a huge retained pane (larger than a pipe buffer) with the
@@ -404,7 +404,7 @@ c8b_out=$(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1 PATH="$BIN:$PATH" WORKTREE_CLI="
 c8b_code=$?
 set -e
 assert_eq "$c8b_code" "0" "huge scrollback with an early delivered brief exits 0"
-c8b_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG" || true)"
+c8b_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG" || true)"
 assert_eq "$c8b_resends" "0" "no duplicate brief is sent into a running session"
 
 echo
@@ -540,7 +540,7 @@ set -e
 assert_eq "$c13c_code" "0" "overflow-sized verify secs still launches (clamped)"
 assert_contains "$(cat "$TMP_ROOT/c13c.err")" "clamped to 120" \
   "overflow-sized value is clamped loudly"
-c13c_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" "$OT_TMUX_LOG" || true)"
+c13c_resends="$(grep -cF "send-keys -t %7 -l /orch start CC-737" -- "$OT_TMUX_LOG" || true)"
 assert_eq "$c13c_resends" "0" "no instant resend from a zero-pass verify loop"
 
 # Case 13d: a broken tmux-only setting must not abort a GUI launch that

@@ -1659,6 +1659,14 @@ update_issue() {
     local team_name
     team_name=$(echo "$issue_result" | jq -r '.issue.team.name // empty')
 
+    # Same rule as the label resolution below, applied to the pure argument
+    # check: a combination that can only be refused must be refused before any
+    # upload, or the refusal strands the uploaded asset in Linear storage.
+    if [ "$clear_labels" = "true" ] && [ -n "$labels" ]; then
+        echo '{"error": "Use either --labels <names> or --clear-labels, not both"}' >&2
+        return 1
+    fi
+
     # Resolve --labels BEFORE any attachment upload: an unresolvable label
     # refuses the whole update below, and an upload done first would strand
     # orphaned assets in Linear storage (the create path pre-resolves its
@@ -1773,10 +1781,8 @@ update_issue() {
     # lookup (rc 2) leaves that unknowable, and resolving nothing at all would
     # send an empty array, stripping every label while reporting success.
     # --clear-labels is the only way to ask for that.
-    if [ "$clear_labels" = "true" ] && [ -n "$labels" ]; then
-        echo '{"error": "Use either --labels <names> or --clear-labels, not both"}' >&2
-        return 1
-    elif [ "$clear_labels" = "true" ]; then
+    if [ "$clear_labels" = "true" ]; then
+        # The --labels conflict was refused before the upload, above.
         input_parts+=("\"labelIds\": []")
     elif [ -n "$labels" ]; then
         # Resolved (or refused) above, before the attachment upload.

@@ -63,10 +63,11 @@
 # or silence when there is nobody to re-request. Both keys read with the
 # orch-env precedence (process env > vstack.settings.toml > default).
 #
-# Reviewer quorum (PR_REVIEW_QUORUM, empty = off): comma/space-separated
-# logins that must EACH have a non-dismissed review pinned to the current
-# head, with zero unresolved threads, before any success emit in either
-# mode. JSON gains quorum_missing when configured.
+# Reviewer quorum (PR_REVIEW_QUORUM, empty = off): logins separated by commas
+# or any whitespace, that must EACH have a non-dismissed review pinned to the
+# current head, with zero unresolved threads, before any success emit in either
+# mode. JSON gains quorum_missing when configured. A partial quorum is reviewer
+# engagement, so it reaches "timeout" and never the proceed-on-timeout degrade.
 #
 # Reviewer-down flexibility (PR_REVIEW_ON_TIMEOUT, default "block"): when the
 # gate signal never arrives before the deadline — the reviewer posted nothing,
@@ -239,28 +240,38 @@ elapsed=0
 NUDGE_SECS="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE_SECS 600)"
 NUDGE_BODY="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE "")"
 
-# Reviewer quorum (PR_REVIEW_QUORUM, empty = off): comma/space-separated
-# reviewer logins that must EACH have a non-dismissed review pinned to the
-# CURRENT head — with zero unresolved threads — before any success emit, in
-# either mode. This is the multi-bot enqueue gate: one bot's verdict cannot
-# open the gate while a listed sibling has not yet reacted to the head it
-# would merge. Deterministic on review objects and thread state only — a
-# bot's findings hold the gate as threads/CR; its prose is never parsed.
-# The deadline and PR_REVIEW_ON_TIMEOUT still bound a dead reviewer.
+# Reviewer quorum (PR_REVIEW_QUORUM, empty = off): reviewer logins separated
+# by commas or any whitespace — spaces, tabs, and newlines alike, so a long
+# list can span lines in a TOML value — that must EACH have a non-dismissed
+# review pinned to the CURRENT head, with zero unresolved threads, before any
+# success emit, in either mode. This is the multi-bot enqueue gate: one bot's
+# verdict cannot open the gate while a listed sibling has not yet reacted to
+# the head it would merge. Deterministic on review objects and thread state
+# only — a bot's findings hold the gate as threads/CR; its prose is never
+# parsed. The deadline still bounds the wait, but PR_REVIEW_ON_TIMEOUT=proceed
+# needs EVERY listed reviewer silent: one that reviewed the head is engagement,
+# so a partial quorum reaches "timeout", never "proceeded".
 QUORUM_RAW="$("$SCRIPT_DIR/orch-env" PR_REVIEW_QUORUM "")"
 QUORUM_LOGINS=""
 if [ -n "$QUORUM_RAW" ]; then
-  QUORUM_LOGINS="$(printf '%s' "$QUORUM_RAW" | tr ',\t\n' '   ' | tr -s ' ' | sed 's/^ //; s/ $//')"
+  QUORUM_LOGINS="$(printf '%s' "$QUORUM_RAW" | tr ',\t\n\r' '    ' | tr -s ' ' | sed 's/^ //; s/ $//')"
 fi
 last_quorum_missing=""
 
 # Logins from QUORUM_LOGINS with no non-dismissed, non-pending review pinned
 # to $1 (head sha) in $2 (REST reviews JSON array). Case-insensitive compare.
+# A jq failure here is a failed READ, not an empty reviewer set: returning
+# "everything missing" would be indistinguishable from a silent quorum, so it
+# returns 1 and the caller treats the poll as a transient API failure.
 quorum_missing_for_head() {
-  local head="$1" reviews="$2" login missing=""
+  local head="$1" reviews="$2" login missing="" jq_status=0
   local have
   have="$(jq -r --arg head "$head"     '[.[] | select(.commit_id == $head and .state != "DISMISSED" and .state != "PENDING")
-      | (.user.login // "") | ascii_downcase] | unique | .[]' <<<"$reviews" 2>/dev/null)" || have=""
+      | (.user.login // "") | ascii_downcase] | unique | .[]' <<<"$reviews")" || jq_status=$?
+  if [ "$jq_status" -ne 0 ]; then
+    echo "quorum review parse failed for PR #$PR_NUM in $REPO" >&2
+    return 1
+  fi
   for login in $QUORUM_LOGINS; do
     if ! printf '%s\n' "$have" | grep -Fxq "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')"; then
       missing="$missing $login"
@@ -358,9 +369,12 @@ head_changed_during_wait=false
 #   status: approved | reviewed | changes_requested | comments | timeout
 #         | proceeded | error
 # Approval-mode quorum gate shared by both approved-evidence branches: emits
-# and exits on a settled outcome, returns 1 to keep polling. Success requires
-# the full quorum at head AND zero unresolved threads; open threads settle to
-# "comments" so callers triage instead of idling to the deadline.
+# and exits on a settled outcome. Success requires the full quorum at head AND
+# zero unresolved threads; open threads settle to "comments" so callers triage
+# instead of idling to the deadline. Keep-polling is the ORDINARY return (0),
+# so call sites need no `|| true` — a blanket suppression there would also
+# disable errexit inside this body and let a failed emit_result fall through
+# to `exit 0`, reporting a gate the caller never received a result for.
 quorum_settles_approval() {
   if [ -z "$QUORUM_LOGINS" ]; then
     emit_result "approved"
@@ -374,12 +388,17 @@ quorum_settles_approval() {
     emit_result "comments"
     exit 1
   fi
-  return 1
+  return 0
 }
 
 emit_result() {
-  local status="$1" error_msg="${2:-}" mode_fields
+  local status="$1" error_msg="${2:-}" mode_fields quorum_note=""
   update_elapsed
+  # Without --json the missing logins are the whole diagnosis of a held gate,
+  # so the text timeout/proceeded lines carry them too, not just the JSON.
+  if [ -n "$QUORUM_LOGINS" ]; then
+    quorum_note=", quorum missing: ${last_quorum_missing:-none}"
+  fi
   if $JSON_OUTPUT; then
     # Review-mode fields are additive only, so approval-mode JSON stays
     # byte-compatible with the pre-#642 contract.
@@ -423,7 +442,7 @@ emit_result() {
         + (if $quorum == "" then {}
            else {quorum_missing: ($quorum_missing | split(" ") | map(select(length > 0)))} end)
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
-        + (if $error == "" then {} else {error: $error} end)'
+        + (if $error == "" then {} else {error: $error} end)' || return $?
     return 0
   fi
   case "$status" in
@@ -441,9 +460,9 @@ emit_result() {
       ;;
     proceeded)
       if [[ "$MODE" == "review" ]]; then
-        echo "Review: no reviewer evidence after ${elapsed}s — proceeding per PR_REVIEW_ON_TIMEOUT=proceed (head: ${last_head_sha:-unknown}, unresolved threads: $last_unresolved)"
+        echo "Review: no reviewer evidence after ${elapsed}s — proceeding per PR_REVIEW_ON_TIMEOUT=proceed (head: ${last_head_sha:-unknown}, unresolved threads: $last_unresolved${quorum_note})"
       else
-        echo "Approval: no approval verdict after ${elapsed}s — proceeding per PR_REVIEW_ON_TIMEOUT=proceed (decision: ${last_review_decision:-none}, unresolved threads: $last_unresolved)"
+        echo "Approval: no approval verdict after ${elapsed}s — proceeding per PR_REVIEW_ON_TIMEOUT=proceed (decision: ${last_review_decision:-none}, unresolved threads: $last_unresolved${quorum_note})"
       fi
       ;;
     changes_requested)
@@ -462,9 +481,9 @@ emit_result() {
       ;;
     timeout)
       if [[ "$MODE" == "review" ]]; then
-        echo "Review timeout after ${elapsed}s (head: ${last_head_sha:-unknown}, reviews at head: $last_reviews_at_head)"
+        echo "Review timeout after ${elapsed}s (head: ${last_head_sha:-unknown}, reviews at head: $last_reviews_at_head${quorum_note})"
       else
-        echo "Approval timeout after ${elapsed}s (decision: ${last_review_decision:-none}, approvals: $last_approvals)"
+        echo "Approval timeout after ${elapsed}s (decision: ${last_review_decision:-none}, approvals: $last_approvals${quorum_note})"
       fi
       ;;
     error)
@@ -717,12 +736,22 @@ while true; do
     pr_author=$(jq -r '.author.login // ""' <<<"$view_json")
 
     # --- submitted reviews snapshot (REST carries commit_id; latestReviews
-    # does not, so head pinning needs the pulls/reviews listing) ---
+    # does not, so head pinning needs the pulls/reviews listing). Captured in
+    # two steps so the paginated read's own status is read before jq shapes it,
+    # and a zero-byte producer is a FAILED read, never an empty page set that
+    # would silently read as "nobody has reviewed this head". ---
     reviews_status=0
     set +e
-    reviews_json=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE" | jq -s 'add // []')
+    reviews_raw=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE")
     reviews_status=$?
     set -e
+    if [ "$reviews_status" -eq 0 ] && [ -z "$reviews_raw" ]; then
+      reviews_status=1
+    fi
+    reviews_json=""
+    if [ "$reviews_status" -eq 0 ]; then
+      reviews_json=$(jq -s 'add // []' <<<"$reviews_raw") || reviews_status=$?
+    fi
     if [ "$reviews_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$reviews_json"; then
       if gh_failure_is_transient "$reviews_status"; then
         transient_retry "review listing failed for PR #$PR_NUM in $REPO"
@@ -773,12 +802,14 @@ while true; do
     last_check_app=""
     last_check_creator=""
     # Reviewer engagement for the proceed-on-timeout guard (review mode): a
-    # named check/status present in ANY state means the reviewer engaged this
-    # head, so proceed must not treat it as silence. Reset per poll; set below
-    # when a check-run or status of the configured name is found. (A review
-    # object at head exits as "reviewed" before the deadline, so only the
-    # check/status surface can reach the proceed branch here.)
+    # review object pinned to this head, or a named check/status present in
+    # ANY state, means a reviewer engaged this head, so proceed must not treat
+    # it as silence. A review at head does NOT always exit as "reviewed"
+    # first — a configured quorum holds the gate until every listed login has
+    # reviewed — so the one bot that did review must still count as engagement,
+    # or an incomplete quorum would degrade to "proceeded" past a live reviewer.
     last_reviews_present=0
+    [ "$last_reviews_at_head" -gt 0 ] && last_reviews_present=1
     if [ -n "$REVIEW_CHECK_NAME" ] && [ "$last_reviews_at_head" -eq 0 ] \
       && [ -n "$last_head_sha" ]; then
       checks_status=0
@@ -880,13 +911,23 @@ while true; do
       | unique | .[]' <<<"$view_json")
 
     # Quorum needs head-pinned rows; latestReviews carries no commit_id, so
-    # the REST listing is fetched only when a quorum is configured.
+    # the REST listing is fetched only when a quorum is configured. Captured
+    # in two steps so the paginated read's own status is read before jq shapes
+    # it, and a zero-byte producer is a FAILED read, never an empty page set
+    # that would silently read as "no reviewer has looked at this head".
     if [ -n "$QUORUM_LOGINS" ]; then
       reviews_status=0
       set +e
-      reviews_json=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE" | jq -s 'add // []')
+      reviews_raw=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE")
       reviews_status=$?
       set -e
+      if [ "$reviews_status" -eq 0 ] && [ -z "$reviews_raw" ]; then
+        reviews_status=1
+      fi
+      reviews_json=""
+      if [ "$reviews_status" -eq 0 ]; then
+        reviews_json=$(jq -s 'add // []' <<<"$reviews_raw") || reviews_status=$?
+      fi
       if [ "$reviews_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$reviews_json"; then
         if gh_failure_is_transient "$reviews_status"; then
           transient_retry "review listing failed for PR #$PR_NUM in $REPO"
@@ -900,7 +941,15 @@ while true; do
   fi
 
   if [ -n "$QUORUM_LOGINS" ]; then
+    quorum_status=0
+    set +e
     last_quorum_missing="$(quorum_missing_for_head "$last_head_sha" "${reviews_json:-[]}")"
+    quorum_status=$?
+    set -e
+    if [ "$quorum_status" -ne 0 ]; then
+      transient_retry "quorum review parse failed for PR #$PR_NUM in $REPO"
+      continue
+    fi
   fi
 
   # --- unresolved review threads snapshot ---
@@ -944,14 +993,14 @@ while true; do
     fi
   else
     if [ "$last_review_decision" = "APPROVED" ]; then
-      quorum_settles_approval || true
+      quorum_settles_approval
     fi
     if [ "$last_review_decision" = "CHANGES_REQUESTED" ] || [ "$last_changes" -gt 0 ]; then
       emit_result "changes_requested"
       exit 1
     fi
     if [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ]; then
-      quorum_settles_approval || true
+      quorum_settles_approval
     fi
     if [ "$last_unresolved" -gt 0 ]; then
       emit_result "comments"

@@ -619,8 +619,13 @@ count_unresolved_threads() {
     set -e
     [ "$threads_status" -eq 0 ] || return 1
     # One strict pass per page: count only when every shape assumption holds.
+    # A top-level `errors` array means the response is PARTIAL, however
+    # well-shaped the data beside it looks — counting it would undercount the
+    # blockers this guard exists to see, so it is a failed read like any other.
     page_result=$(jq -r '
-      (.data // .) as $d
+      if (type == "object" and ((.errors? // []) | length) > 0)
+        then error("graphql errors") else . end
+      | (.data // .) as $d
       | ($d.repository.pullRequest.reviewThreads?) as $rt
       | if ($rt | type) != "object" then error("bad reviewThreads")
         elif ($rt.nodes | type) != "array" then error("bad nodes")
@@ -703,10 +708,14 @@ guard_fire() {
   exit 1
 }
 
-# One rate-limited guard probe. approval-wait gates unresolved threads to
-# zero before enqueue, so ANY unresolved thread observed while queued/armed
-# is late by construction — a nonzero count fires guard_fire, no baseline.
-# Failed reads are absorbed: keep waiting, and 3 consecutive failures warn.
+# One rate-limited guard probe. ANY unresolved thread observed while
+# queued/armed fires guard_fire — no baseline, because an unresolved thread in
+# the queue is unsafe whenever it appeared, and enqueue does not prove threads
+# were zero (approval mode emits `approved` on the verdict alone).
+# Failed reads are absorbed rather than treated as a trigger: dequeuing on no
+# evidence would churn the queue on every transient API error. Blindness is
+# loud instead — every GUARD_FETCH_WARN_POLLS consecutive failures warn again,
+# so a long blind window keeps saying so rather than warning once.
 guard_fetch_failures=0
 GUARD_FETCH_WARN_POLLS=3
 guard_last_at=-1
@@ -715,7 +724,7 @@ guard_probe() {
   local count
   if ! count=$(count_unresolved_threads); then
     guard_fetch_failures=$((guard_fetch_failures + 1))
-    if [ "$guard_fetch_failures" -eq "$GUARD_FETCH_WARN_POLLS" ]; then
+    if [ $((guard_fetch_failures % GUARD_FETCH_WARN_POLLS)) -eq 0 ]; then
       echo "queue-wait: late-findings guard: thread fetch failed $guard_fetch_failures consecutive probes — no thread evidence while PR #$PR_NUM sits queued/armed; still retrying" >&2
     fi
     return 0
