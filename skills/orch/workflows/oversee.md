@@ -45,7 +45,7 @@ export GH_REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 
 - A lane's PR merges → mark the lane done, launch the next unblocked item.
 - A lane's session ends with no merged PR → inspect its worktree and PR state, re-launch once with the same brief; a second death is surfaced to the user, not retried.
-- Each watch pass also checks tmux lanes for a pending question prompt (`tmux capture-pane -t [LANE] -p` — a lane showing a question dialog is blocked, not working; it looks identical to a working lane from the outside). Non-tmux surfaces are covered by pushed questions.
+- Each watch pass also checks tmux lanes for a pending question prompt (`tmux capture-pane -t [LANE] -p` — a lane showing a question dialog is blocked, not working; it looks identical to a working lane from the outside). Non-tmux surfaces are covered by pushed questions; a surface with neither messaging nor an inspectable pane makes prolonged lane silence itself the needs-attention signal — inspect the session through that surface's own status tools.
 - A lane's question → answer it when available evidence already decides it: repo state, the issue body, a stated convention — including scope-narrowing calls and a lane's own well-argued recommendation. Relay to the user only what changes the product for a user or spends the owner's standing (retiring a reviewer, filing outside the repo, closing as won't-do). Either way, send the answer back to the lane.
 
 ## 5. Stop

@@ -27,7 +27,7 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEAD --stat
 ```
 
-Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then prove the HEAD being pushed, not a memory of it: run `.agents/skills/preflight/scripts/preflight --base origin/[BASE_BRANCH] --repo [WORKTREE_PATH]` when installed, and re-run the validation command this session's dev rounds used — a rebase or fix commit since the last green run changes what CI will see. Either failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
+Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then prove the HEAD being pushed, not a memory of it: run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed, and re-run the validation command this session's dev rounds used — a rebase or fix commit since the last green run changes what CI will see. Either failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
 
 ### 1.2 Local Pre-PR Review
 
