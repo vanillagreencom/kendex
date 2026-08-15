@@ -401,8 +401,8 @@ RUST
     assert_eq "unreadable diff member: production panic scan prints no summary" \
         "" "$unreadable_diff_out"
 
-    # The test-path scan on the same failure used to degrade to an empty diff
-    # (fail-open: test_panic_path_added silently never set). Same contract.
+    # The test-path scan on the same failure fails closed too: an unreadable
+    # diff member is never read as "no test panics".
     unreadable_test_repo="$SANDBOX/unreadable-test-diff"
     init_repo "$unreadable_test_repo"
     mkdir -p "$unreadable_test_repo/tests"

@@ -628,10 +628,10 @@ panic_scan_diff() {
         printf 'git-diff-summary: git diff failed (exit %d) while scanning panic paths for %s: %s\n' \
             "$__rc" "$(printf '%s' "$*" | head -c 300)" \
             "$(tr '\n' ' ' <"$__err" | head -c 300)" >&2
-        rm -f "$__err"
+        rm -f -- "$__err"
         exit 1
     fi
-    rm -f "$__err"
+    rm -f -- "$__err"
     printf -v "$__out_var" '%s' "$__out"
 }
 
