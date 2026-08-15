@@ -894,6 +894,25 @@ assert_eq "$(jq -r '.progressing' <<<"$out")" "null" "failed check-run read: pro
 assert_eq "$(jq -r .cause <<<"$out")" "stalled" "failed check-run read: never asserted as still_progressing" "$err"
 assert_contains "$(cat "$err")" "check-run read failed 3 consecutive" "consecutive check-run read failures warn" "$err"
 
+# 29d2. a failed read BETWEEN two successful reads must not erase movement:
+# counts 1 → unreadable → 2 on the same head, nothing running, tuple flat.
+# The completed count advanced within the window, so the verdict is still
+# progressing — the unknown poll neither counts as zero nor resets the
+# comparison baseline. Control for 29b: same fixtures with the middle read
+# succeeding at 1 would also be progressing; only a baseline erasure could
+# make this stalled.
+new_case progress_read_fail_between
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue_head"
+write_fixture checkruns 1 "$(checkruns_body 1 0)"
+write_fixture checkruns 2 '' 1 "HTTP 502: Bad Gateway"
+write_fixture checkruns last "$(checkruns_body 2 0)"
+err="$TMP_ROOT/e29d2"
+out="$(run_queue_wait -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "read failure between reads: verdict stays queued" "$err"
+assert_eq "$(jq -r .progressing <<<"$out")" "true" "read failure between reads: the later count advance is still progress" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "still_progressing" "read failure between reads: cause still_progressing" "$err"
+
 # 29e. progressing is emitted on every verdict, not only queued.
 new_case progress_on_merged
 write_fixture state last "$pr_merged"

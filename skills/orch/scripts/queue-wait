@@ -749,15 +749,16 @@ read_check_run_counts() {
 }
 
 # Compare this poll's entry tuple (state|position|head oid) and, when both
-# sides are known, its completed check-run count against the previous poll;
-# record the running count from the same read. A change stamps
-# progress_last_change_poll; a successful read is evidence that progress was
-# measurable at all.
+# sides are known, its completed check-run count against the last successful
+# read on the same head; record the running count from the same read. A
+# change stamps progress_last_change_poll; a successful read is evidence that
+# progress was measurable at all.
 observe_progress() {
   local tuple="$1" head_oid="$2" counts count="" running="" changed=false
-  # The running count is per commit: a new merge-group head (or no entry)
-  # invalidates the previous read until this head is read successfully.
-  [ "$head_oid" = "$prev_head_oid" ] || last_running_count=""
+  # Both counts are per commit: a new merge-group head (or no entry)
+  # invalidates the previous read until this head is read successfully, so a
+  # cross-commit count comparison can never register as movement.
+  [ "$head_oid" = "$prev_head_oid" ] || { last_running_count=""; prev_check_count=""; }
   if [ -n "$head_oid" ]; then
     if counts=$(read_check_run_counts "$head_oid"); then
       read -r count running <<<"$counts"
@@ -783,11 +784,11 @@ observe_progress() {
     progress_last_change_poll="$polls"
   fi
   prev_progress_tuple="$tuple"
-  # "" when this poll's count is unknown, so the next poll cannot compare
-  # against a fabricated value. A head change is caught by the tuple, so a
-  # cross-commit count comparison only ever adds to an already-registered
-  # change.
-  prev_check_count="$count"
+  # The baseline is the last SUCCESSFUL count on this head: an unknown poll
+  # neither replaces it (a read failure cannot erase movement — a count that
+  # advanced across the failed poll still compares as a change on the next
+  # successful read) nor fabricates one (an unknown count is never compared).
+  [ -z "$count" ] || prev_check_count="$count"
   prev_head_oid="$head_oid"
   progress_have_prev=true
 }
