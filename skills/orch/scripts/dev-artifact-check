@@ -467,7 +467,11 @@ if (( wait_secs > 0 )); then
 ' "$out"
       exit "$rc"
     fi
-    sleep "$interval"
+    remaining=$(( deadline - $(date +%s) ))
+    sleep_for="$interval"
+    if (( remaining < interval )); then sleep_for="$remaining"; fi
+    if (( sleep_for < 1 )); then sleep_for=1; fi
+    sleep "$sleep_for"
   done
 fi
 if validate_artifact "$file" "$want_round" "$expect_items" "$repo"; then exit 0; else exit 1; fi

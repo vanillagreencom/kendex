@@ -67,6 +67,9 @@
 #   REVIEW_GATE_REVIEW_OBJECT_MIN_STATE       (a) "any" (any review row) or "approved"
 #                                             (an APPROVED row not withdrawn by a later
 #                                             CHANGES_REQUESTED from the same login)
+#   REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS  (a) errored-attestation body markers,
+#                                             ';'-separated, case-insensitive
+#                                             substrings; empty disables
 #   REVIEW_GATE_THREADS                       "enforce" (default) or "off": "off" skips
 #                                             the reviewThreads GraphQL read entirely and
 #                                             never emits threads-open — for repos whose
@@ -174,6 +177,7 @@ fi
 PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 2
 TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 2
 MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 2
+ERROR_PATTERNS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS "encountered an error and was unable to review")" || exit 2
 THREADS_MODE="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
 API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 2
 API_RETRY_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 2
@@ -378,13 +382,15 @@ cr="$(jq '[.[] | select(.state != "DISMISSED" and .state != "PENDING") | select(
 # pass: NOT-EVIDENCE, never a failure — it must not satisfy the gate, not
 # mask other rows, and not seed a carry. The body is read only to WITHDRAW
 # its own row toward silence (the fail-closed direction), never to
-# establish trust, so the trust model is unchanged. Case-insensitive
-# substring markers, ';'-separated like the check-run skip patterns.
-# Deliberately NOT applied to the changes-requested reduction below: body
-# text that could erase a standing objection would be a fail-open lever,
-# and an errored row can never block anyway (it is not CHANGES_REQUESTED).
-REVIEW_ERROR_MARKERS="encountered an error and was unable to review"
-
+# establish trust, so the trust model is unchanged. The markers come from
+# REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS — case-insensitive substrings,
+# ';'-separated, the same shape as the check-run skip patterns; a
+# configured value replaces the default list, and empty disables the filter
+# (an explicit choice to count errored rows as evidence). Deliberately NOT
+# applied to the changes-requested reduction above: body text that could
+# erase a standing objection would be a fail-open lever, and an errored row
+# can never block anyway (it is not CHANGES_REQUESTED).
+#
 # Review-object evidence. NOT a latest-review-per-reviewer reduction (see the
 # header): in "any" mode every accepted row counts; in "approved" mode a
 # login contributes evidence when its newest APPROVED at head is not followed
@@ -392,7 +398,7 @@ REVIEW_ERROR_MARKERS="encountered an error and was unable to review"
 # never withdraws an approval.
 got="$(jq --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS" --arg minstate "$MIN_STATE" \
-        --arg errmarks "$REVIEW_ERROR_MARKERS" '
+        --arg errmarks "$ERROR_PATTERNS" '
   ($trusted | split("[;,\n]+"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
   | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
   | [ .[]
@@ -859,7 +865,7 @@ if [ -n "$CARRY_FORWARD" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # bounded so a force-push-heavy PR cannot turn the walk into an API storm.
   carry_candidates="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
       --arg trusted "$TRUSTED_LOGINS" --arg minstate "$MIN_STATE" \
-      --arg errmarks "$REVIEW_ERROR_MARKERS" '
+      --arg errmarks "$ERROR_PATTERNS" '
     ($trusted | split("[;,\n]+"; "") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $t
     | ($errmarks | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | map(ascii_downcase)) as $mk
     | [ .[]

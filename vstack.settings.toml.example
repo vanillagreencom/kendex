@@ -283,6 +283,14 @@ REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 # (an APPROVED at head not withdrawn by a LATER CHANGES_REQUESTED from the
 # same login; a trailing COMMENTED never supersedes an approval).
 
+REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
+# Used by: review-gate (`review-predicate.sh`). Case-insensitive substrings
+# marking a review row's BODY as the reviewer's own errored-run attestation
+# (the reviews API has no errored state — an errored auto-review is a normal
+# COMMENTED row whose body says the review never ran). Such a row is
+# NOT-EVIDENCE and never a carry candidate, but never a blocker either. A
+# configured value replaces the default list; empty disables the filter.
+
 REVIEW_GATE_THREADS = "enforce"
 # Used by: review-gate (`review-predicate.sh`). "enforce" evaluates
 # unresolved review threads CI-side and fails closed; "off" skips the

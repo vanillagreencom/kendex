@@ -97,6 +97,17 @@ REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = ""
 # supersedes an approval).
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 
+# An errored bot review must prove nothing about the head: the reviews API
+# has no errored state, so an auto-review that ERRORS lands as a normal
+# COMMENTED row whose body is the reviewer's own attestation that the review
+# never ran (e.g. "Copilot encountered an error and was unable to review
+# this pull request."). A row whose body contains one of these
+# case-insensitive substrings is NOT-EVIDENCE — the same as absent, never a
+# failure — and never a carry-forward candidate. A configured value replaces
+# the default list. Empty disables the filter (an explicit choice to count
+# errored rows as evidence).
+REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable to review"
+
 # Thread term: "enforce" (default) evaluates unresolved review threads
 # CI-side and fails closed on them; "off" skips the reviewThreads GraphQL
 # read entirely and never emits threads-open — for repos whose thread

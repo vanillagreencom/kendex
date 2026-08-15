@@ -23,13 +23,19 @@
 #   13. human-readable (non --json) output names the verdict
 #   14. a transient GitHub error is absorbed inside the wait budget
 #   15-19. argument validation, --help, low-confidence one-poll flag, budget bound
-#   20. late-findings guard (vstack#1289): a NEW unresolved thread while
-#       queued dequeues via dequeuePullRequest with the PR node id
-#   21. pre-existing (and since-resolved) threads never trigger the guard
-#   22. a failed thread fetch is no evidence — no dequeue, keep polling, warn
+#   20. late-findings guard (vstack#1289): ANY unresolved thread while queued
+#       disarms auto-merge first, then dequeues with the PR node id
+#   21. pre-existing unresolved threads trigger too (late by construction);
+#       a fully resolved thread set never triggers
+#   22. a failed or anomalous thread read is no evidence — no dequeue, keep
+#       polling, warn after 3 (query failure, null reviewThreads, non-boolean
+#       isResolved, missing/non-advancing cursor)
 #   23. --no-guard restores unguarded queueing (no thread reads at all)
-#   24. a failed dequeue mutation is loud (late_findings_dequeue_failed)
-#   25. armed-but-never-enqueued guard path disables auto-merge
+#   24. a failed dequeue half is loud (late_findings_dequeue_failed, named)
+#   25. armed-but-never-enqueued guard path disables auto-merge only
+#   26. an errors[] body on HTTP success is a mutation failure (named half)
+#   27. the final guard probe fires before a still-queued timeout return
+#   28. the pagination walk is bounded — an overlong walk is a failed read
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -273,15 +279,21 @@ q_in_queue='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQu
 q_out='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":null}}}}'
 q_armed_only='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":false,"mergeQueueEntry":null,"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
 
-# Late-findings guard (vstack#1289) fixtures: unresolved review-thread sets
-# and the dequeue-mutation replies.
+# Late-findings guard (vstack#1289) fixtures: unresolved review-thread sets,
+# anomalous read shapes (each planting an unresolved node so a fail-open read
+# would fire), and the mutation replies.
 t_none='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
-t_pre='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PRRT_pre1","isResolved":false},{"id":"PRRT_pre2","isResolved":false}]}}}}}'
-t_pre_one_resolved='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PRRT_pre1","isResolved":false},{"id":"PRRT_pre2","isResolved":true}]}}}}}'
-t_late='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PRRT_late1","isResolved":false}]}}}}}'
+t_pre_one_resolved='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false},{"isResolved":true}]}}}}}'
+t_all_resolved='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":true},{"isResolved":true}]}}}}}'
+t_late='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false}]}}}}}'
+t_rt_null='{"data":{"repository":{"pullRequest":{"reviewThreads":null}}}}'
+t_bad_bool='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":"false"}]}}}}}'
+t_cursor_null='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":null},"nodes":[{"isResolved":false}]}}}}}'
+t_cursor_stuck='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"CUR1"},"nodes":[{"isResolved":false}]}}}}}'
 dq_ok='{"data":{"dequeuePullRequest":{"mergeQueueEntry":{"id":"MQE_1"}}}}'
 dq_err='{"errors":[{"message":"Pull request is not in the merge queue"}]}'
 am_ok='{"data":{"disablePullRequestAutoMerge":{"clientMutationId":null}}}'
+am_errs_on_200='{"data":{"disablePullRequestAutoMerge":null},"errors":[{"message":"auto merge is not enabled"}]}'
 
 # Run queue-wait through the .agents symlink, exactly how it is invoked in
 # production. `env "$@"` injects the stub's fixture directory and knobs; the
@@ -533,16 +545,18 @@ else
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        elapsed_seconds=%s (want <= 5)\n' "budget upper bound" "$elapsed_seconds"; dump_stderr "$err"
 fi
 
-# --- 20. late-findings guard: NEW unresolved thread while queued dequeues ----
-# Poll 1 baselines an empty thread set; poll 2 sees PRRT_late1 → the guard
-# must issue dequeuePullRequest with the PR NODE id (not the queue-entry id)
-# and exit 1 with verdict dequeued / cause late_findings (vstack#1289).
+# --- 20. late-findings guard: unresolved thread while queued -----------------
+# approval-wait gates threads to zero before enqueue, so ANY unresolved
+# thread seen while queued is late by construction (vstack#1289). The queued
+# PR is also armed, so the guard must disarm auto-merge FIRST (a bare
+# dequeue can be raced back into the queue by the arming) and then issue
+# dequeuePullRequest with the PR NODE id (not the queue-entry id).
 new_case guard_dequeue
 write_fixture state last "$pr_open"
 write_fixture queue last "$q_in_queue"
-write_fixture threads 1 "$t_none"
 write_fixture threads last "$t_late"
-write_fixture dequeue last "$dq_ok"
+write_fixture dequeue 1 "$am_ok"
+write_fixture dequeue 2 "$dq_ok"
 err="$TMP_ROOT/e20"
 out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "1" "late-findings dequeue exits 1" "$err"
@@ -550,34 +564,48 @@ assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "late-findings verdict is deq
 assert_eq "$(jq -r .status <<<"$out")" "complete" "late-findings status complete" "$err"
 assert_eq "$(jq -r .cause <<<"$out")" "late_findings" "late-findings cause" "$err"
 assert_eq "$(jq -r .unresolved_count <<<"$out")" "1" "unresolved count reported" "$err"
-assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "dequeue mutation issued" "$err"
-assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "PR_node123" "dequeue passes the PR node id" "$err"
+assert_contains "$(sed -n 1p "$SEQ_DIR/mutations.log" 2>/dev/null)" "disablePullRequestAutoMerge" "disarm runs first" "$err"
+assert_contains "$(sed -n 2p "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "dequeue runs second" "$err"
+assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "PR_node123" "mutations pass the PR node id" "$err"
 
 # 20h. same shape, human-readable output names the dequeue.
 new_case guard_dequeue_human
 write_fixture state last "$pr_open"
 write_fixture queue last "$q_in_queue"
-write_fixture threads 1 "$t_none"
 write_fixture threads last "$t_late"
-write_fixture dequeue last "$dq_ok"
+write_fixture dequeue 1 "$am_ok"
+write_fixture dequeue 2 "$dq_ok"
 err="$TMP_ROOT/e20h"
 out="$(run_queue_wait -- 1 1 20 --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_contains "$out" "Merge queue: dequeued" "non-JSON output names the dequeue" "$err"
 
-# --- 21. pre-existing threads never trigger the guard ------------------------
-# Two threads unresolved at entry (the caller's problem — approval-wait gates
-# those before enqueue); one resolves while queued. Neither the standing
-# baseline nor the resolution may dequeue.
+# --- 21. pre-existing unresolved threads trigger too -------------------------
+# A thread unresolved since before enqueue is exactly the unsafe state —
+# the gate required zero at enqueue — so it dequeues; the resolved sibling
+# is not counted.
 new_case guard_preexisting
 write_fixture state last "$pr_open"
 write_fixture queue last "$q_in_queue"
-write_fixture threads 1 "$t_pre"
 write_fixture threads last "$t_pre_one_resolved"
+write_fixture dequeue 1 "$am_ok"
+write_fixture dequeue 2 "$dq_ok"
 err="$TMP_ROOT/e21"
+out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "1" "pre-existing unresolved thread exits 1" "$err"
+assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "pre-existing unresolved thread dequeues" "$err"
+assert_eq "$(jq -r .unresolved_count <<<"$out")" "1" "resolved sibling not counted" "$err"
+assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "pre-existing thread issues the dequeue" "$err"
+
+# 21b. a fully resolved thread set never triggers.
+new_case guard_all_resolved
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture threads last "$t_all_resolved"
+err="$TMP_ROOT/e21b"
 out="$(run_queue_wait -- 1 1 3 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
-assert_eq "$(jq -r .verdict <<<"$out")" "queued" "pre-existing threads leave the PR queued" "$err"
-assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "no mutation for pre-existing threads" "$err"
-assert_eq "$(jq -r .unresolved_count <<<"$out")" "1" "count tracks the live unresolved set" "$err"
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "resolved-only threads leave the PR queued" "$err"
+assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "no mutation for resolved-only threads" "$err"
+assert_eq "$(jq -r .unresolved_count <<<"$out")" "0" "resolved-only count is zero" "$err"
 
 # --- 22. a failed thread fetch is no evidence --------------------------------
 # Every guard fetch fails: no dequeue may be fabricated, the wait keeps
@@ -593,6 +621,31 @@ assert_eq "$(jq -r .verdict <<<"$out")" "queued" "fetch failure never fabricates
 assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "no mutation on fetch failure" "$err"
 assert_contains "$(cat "$err")" "thread fetch failed 3 consecutive" "consecutive fetch failures warn" "$err"
 
+# 22b-22d. anomalous read shapes are FAILED reads, never counts (each body
+# plants an unresolved node, so a fail-open reader would dequeue and a
+# read-as-empty reader would stay silent without the warning): a null
+# reviewThreads, a non-boolean isResolved, a hasNextPage with a null cursor,
+# and a hasNextPage whose cursor never advances.
+for shape in rt_null bad_bool cursor_null cursor_stuck; do
+  case "$shape" in
+    rt_null) body="$t_rt_null" ;;
+    bad_bool) body="$t_bad_bool" ;;
+    cursor_null) body="$t_cursor_null" ;;
+    cursor_stuck) body="$t_cursor_stuck" ;;
+  esac
+  new_case "guard_shape_$shape"
+  write_fixture state last "$pr_open"
+  write_fixture queue last "$q_in_queue"
+  write_fixture threads last "$body"
+  write_fixture dequeue 1 "$am_ok"
+  write_fixture dequeue 2 "$dq_ok"
+  err="$TMP_ROOT/e22-$shape"
+  out="$(run_queue_wait -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+  assert_eq "$(jq -r .verdict <<<"$out")" "queued" "$shape is a failed read, not a dequeue" "$err"
+  assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "$shape never mutates" "$err"
+  assert_contains "$(cat "$err")" "thread fetch failed 3 consecutive" "$shape takes the failed-read path (warns)" "$err"
+done
+
 # --- 23. --no-guard restores unguarded queueing ------------------------------
 # Same trigger fixtures as case 20: with the guard off there must be no
 # thread read at all (the flag has teeth), no mutation, and the old
@@ -600,22 +653,24 @@ assert_contains "$(cat "$err")" "thread fetch failed 3 consecutive" "consecutive
 new_case guard_off
 write_fixture state last "$pr_open"
 write_fixture queue last "$q_in_queue"
-write_fixture threads 1 "$t_none"
 write_fixture threads last "$t_late"
-write_fixture dequeue last "$dq_ok"
+write_fixture dequeue 1 "$am_ok"
+write_fixture dequeue 2 "$dq_ok"
 err="$TMP_ROOT/e23"
 out="$(run_queue_wait -- 1 1 3 --json --no-check-probe --no-guard 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(jq -r .verdict <<<"$out")" "queued" "--no-guard leaves the PR queued" "$err"
 assert_eq "$([ -f "$SEQ_DIR/threads.count" ] && echo present || echo absent)" "absent" "--no-guard never reads threads" "$err"
 assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "--no-guard never mutates" "$err"
 
-# --- 24. a failed dequeue mutation is loud -----------------------------------
+# --- 24. a failed dequeue half is loud ---------------------------------------
+# Disarm succeeds, dequeue fails: partial success must surface its own cause,
+# name the failed half, and state the PR may still be queued.
 new_case guard_dequeue_fail
 write_fixture state last "$pr_open"
 write_fixture queue last "$q_in_queue"
-write_fixture threads 1 "$t_none"
 write_fixture threads last "$t_late"
-write_fixture dequeue last "$dq_err" 1
+write_fixture dequeue 1 "$am_ok"
+write_fixture dequeue 2 "$dq_err" 1
 err="$TMP_ROOT/e24"
 out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "1" "failed dequeue exits 1" "$err"
@@ -623,21 +678,74 @@ assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "failed dequeue keeps the deq
 assert_eq "$(jq -r .cause <<<"$out")" "late_findings_dequeue_failed" "failed dequeue has its own cause" "$err"
 assert_eq "$(jq -r .status <<<"$out")" "error" "failed dequeue is an error result" "$err"
 assert_contains "$(jq -r .error <<<"$out")" "STILL QUEUED" "failed dequeue states the PR is still queued" "$err"
+assert_contains "$(jq -r .error <<<"$out")" "dequeuePullRequest" "failed dequeue names the failed half" "$err"
 assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "failed dequeue was attempted" "$err"
 
-# --- 25. armed-but-never-enqueued guard path disables auto-merge -------------
+# --- 25. armed-but-never-enqueued guard path disables auto-merge only --------
 new_case guard_armed_only
 write_fixture state last "$pr_open"
 write_fixture queue last "$q_armed_only"
-write_fixture threads 1 "$t_none"
 write_fixture threads last "$t_late"
-write_fixture dequeue last "$am_ok"
+write_fixture dequeue 1 "$am_ok"
 err="$TMP_ROOT/e25"
 out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "1" "armed-only late finding exits 1" "$err"
 assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "armed-only verdict is dequeued" "$err"
 assert_eq "$(jq -r .cause <<<"$out")" "late_findings" "armed-only cause" "$err"
 assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "disablePullRequestAutoMerge" "armed-only path disables auto-merge" "$err"
+assert_eq "$(grep -c "dequeuePullRequest" "$SEQ_DIR/mutations.log" 2>/dev/null || true)" "0" "armed-only path never dequeues" "$err"
+
+# --- 26. an errors[] body on HTTP success is a mutation failure --------------
+# The disarm half returns HTTP 200 with an errors key; the dequeue half
+# succeeds. Partial failure, loudly naming disablePullRequestAutoMerge.
+new_case guard_errors_on_200
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture threads last "$t_late"
+write_fixture dequeue 1 "$am_errs_on_200"
+write_fixture dequeue 2 "$dq_ok"
+err="$TMP_ROOT/e26"
+out="$(run_queue_wait -- 1 1 20 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "1" "errors-on-200 exits 1" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "late_findings_dequeue_failed" "errors-on-200 is a mutation failure" "$err"
+assert_contains "$(jq -r .error <<<"$out")" "disablePullRequestAutoMerge" "errors-on-200 names the failed half" "$err"
+assert_eq "$(grep -c "dequeuePullRequest" "$SEQ_DIR/mutations.log" 2>/dev/null || true)" "1" "the dequeue half was still attempted" "$err"
+
+# --- 27. the final guard probe fires before a still-queued timeout -----------
+# Budget 1/1: the single loop poll reads a clean thread set; the late thread
+# lands after it. The deadline return must run one last probe and dequeue
+# instead of reporting "still queued".
+new_case guard_final_probe
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture threads 1 "$t_none"
+write_fixture threads last "$t_late"
+write_fixture dequeue 1 "$am_ok"
+write_fixture dequeue 2 "$dq_ok"
+err="$TMP_ROOT/e27"
+out="$(run_queue_wait -- 1 1 1 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "dequeued" "final probe catches the late thread at the deadline" "$err"
+assert_eq "$(jq -r .polls <<<"$out")" "1" "the catch came from the final probe, not a loop poll" "$err"
+assert_contains "$(cat "$SEQ_DIR/mutations.log" 2>/dev/null)" "dequeuePullRequest" "final probe issues the dequeue" "$err"
+
+# --- 28. the pagination walk is bounded --------------------------------------
+# 40 pages that keep promising more, then a terminal page (with an
+# unresolved node) reachable only by an unbounded walk. Both the loop probe
+# and the final probe must refuse past 20 pages — no count, no dequeue —
+# despite every page also showing an unresolved node.
+new_case guard_page_bound
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+for i in $(seq 1 40); do
+  write_fixture threads "$i" '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":true,"endCursor":"c'"$i"'"},"nodes":[{"isResolved":false}]}}}}}'
+done
+write_fixture threads 41 "$t_late"
+write_fixture dequeue 1 "$am_ok"
+write_fixture dequeue 2 "$dq_ok"
+err="$TMP_ROOT/e28"
+out="$(run_queue_wait -- 1 1 1 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "overlong walk is a failed read, not a count" "$err"
+assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "overlong walk never mutates" "$err"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

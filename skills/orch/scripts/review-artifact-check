@@ -16,10 +16,13 @@ Usage:
   review-artifact-check --path <worktree_path> <agent_name>
 
 --wait SECS (glob mode): blocking — poll every --interval seconds (default 5)
-until any fresh artifact lands (valid or rejected, both return immediately) or
-SECS elapse (reason "missing" is the escalation trigger). Arm it in the
-background at delegation and the caller wakes the moment the reviewer writes,
-independent of any return-message delivery.
+until a FRESH artifact lands (valid returns immediately; a fresh rejection is
+confirmed once after one interval, then returned) or SECS elapse. "missing"
+and "stale" both keep polling: a prior round's artifact on disk is the normal
+state while the current reviewer works. A deadline return (missing/stale) is
+the escalation trigger. Arm it in the background at delegation and the caller
+wakes the moment the reviewer writes, independent of any return-message
+delivery.
 
 Path mode (--path): prints the canonical artifact path for the agent with a
 real UTC timestamp ([WORKTREE]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json) and
@@ -359,21 +362,44 @@ return 1
 }
 
 if (( wait_secs > 0 )); then
-  # Blocking watchdog: only "missing" (no fresh artifact yet) keeps polling.
-  # Any landed artifact — valid or rejected — returns immediately, so an armed
-  # background invocation wakes the caller the moment the reviewer writes,
-  # independent of any return-message delivery. A deadline return still
-  # carries reason=missing and is the escalation trigger.
+  # Blocking watchdog: "missing" AND "stale" both mean "no fresh artifact yet"
+  # — re-review cycles reuse agent names in the same worktree, so a prior
+  # round's artifact (older than delegated_at) is the normal on-disk state
+  # while the current reviewer works. Any FRESH artifact — valid or rejected —
+  # returns immediately, so an armed background invocation wakes the caller
+  # the moment the reviewer writes, independent of any return-message
+  # delivery. Reviewer artifacts are written non-atomically, so a fresh
+  # failure is confirmed once after one interval before it is returned (a
+  # torn mid-write read must not become a false rejection). A deadline
+  # return carries missing/stale and is the escalation trigger.
   deadline=$(( $(date +%s) + wait_secs ))
+  confirming=false
   while :; do
     rc=0
     out="$(glob_check)" || rc=$?
     landed_reason="$(jq -r '.reason // ""' <<<"$out" 2>/dev/null || printf '')"
-    if [[ "$rc" == "0" || "$landed_reason" != "missing" ]] || (( $(date +%s) >= deadline )); then
+    if [[ "$rc" == "0" ]]; then
       printf '%s\n' "$out"
-      exit "$rc"
+      exit 0
     fi
-    sleep "$interval"
+    if [[ "$landed_reason" != "missing" && "$landed_reason" != "stale" ]]; then
+      if [[ "$confirming" == "true" ]] || (( $(date +%s) >= deadline )); then
+        printf '%s\n' "$out"
+        exit "$rc"
+      fi
+      confirming=true
+    else
+      confirming=false
+      if (( $(date +%s) >= deadline )); then
+        printf '%s\n' "$out"
+        exit "$rc"
+      fi
+    fi
+    remaining=$(( deadline - $(date +%s) ))
+    sleep_for="$interval"
+    if (( remaining < interval )); then sleep_for="$remaining"; fi
+    if (( sleep_for < 1 )); then sleep_for=1; fi
+    sleep "$sleep_for"
   done
 fi
 glob_check

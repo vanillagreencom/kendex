@@ -35,10 +35,10 @@
 #   disarmed    - the PR was armed (autoMergeRequest) but never entered the
 #                 queue, and the arming is gone — or, while armed and not
 #                 enqueued, a required check has failed (see the probe below).
-#   dequeued    - the late-findings guard saw a NEW unresolved review thread
-#                 appear while the PR was queued or armed and pulled the
-#                 arming (cause late_findings). A failed pull instead reports
-#                 cause late_findings_dequeue_failed with the PR still queued.
+#   dequeued    - the late-findings guard saw an unresolved review thread
+#                 while the PR was queued or armed and pulled the arming
+#                 (cause late_findings). A failed pull instead reports cause
+#                 late_findings_dequeue_failed with the PR still queued.
 #   closed      - the PR was closed without merging.
 #   queued      - poll bound reached with the PR still queued/armed. Reported
 #                 as status "timeout": the merge stays armed and fires on its
@@ -67,23 +67,28 @@
 # Late-findings guard (--no-guard to disable): reviewers post findings
 # asynchronously, and the merge queue never re-checks thread resolution once
 # a PR is queued (vstack#1289) — a finding landing after enqueue merges
-# unless something dequeues. While the PR is queued or armed, the guard
-# fetches the unresolved review-thread set (the same reviewThreads surface
-# approval-wait reads), rate-limited by QUEUE_WAIT_PROBE_INTERVAL on its own
-# clock. The set at the first guarded poll is the baseline: threads already
-# unresolved at entry are the caller's problem (approval-wait gates those
-# before enqueue), so only a thread id absent from the baseline triggers —
-# a pre-existing count can never churn-loop, and a thread resolved while
-# queued is fine. On trigger the guard dequeues via GraphQL
+# unless something dequeues. approval-wait gates unresolved threads to zero
+# before enqueue, so ANY unresolved review thread observed while the PR is
+# queued or armed is late by construction: each guard probe (the same
+# reviewThreads surface approval-wait reads, rate-limited by
+# QUEUE_WAIT_PROBE_INTERVAL on its own clock) fires on a nonzero unresolved
+# count, and one final probe runs before a still-queued deadline return so
+# the timeout can never skip the last chance. On trigger the guard disarms
+# auto-merge FIRST (an armed PR re-enqueues itself when requirements go
+# green, racing a bare dequeue) and then dequeues via GraphQL
 # dequeuePullRequest — whose input field is named `id` but takes the PULL
 # REQUEST node id, per schema introspection, unlike enqueue's
-# `pullRequestId` — or, for an armed-but-never-enqueued PR, disables
-# auto-merge; either way verdict "dequeued", cause "late_findings", exit 1.
-# A failed mutation is loud, never swallowed: cause
-# "late_findings_dequeue_failed", exit 1, the PR stated still queued. A
-# failed thread fetch is "no evidence", never "no threads": the guard keeps
-# waiting and retries at the next probe, warning after 3 consecutive
-# failures — it never fabricates a dequeue or a quiet.
+# `pullRequestId`. Each mutation response is verified: an `errors` key in
+# the body, or a missing mutation payload, is a failure even on HTTP
+# success. Full success exits 1 with verdict "dequeued", cause
+# "late_findings"; any failed half is loud, never swallowed — cause
+# "late_findings_dequeue_failed", exit 1, the failed mutation(s) named and
+# the PR stated still queued. Thread reads fail closed: a query failure, a
+# null or malformed reviewThreads, a non-boolean isResolved, a hasNextPage
+# with a missing or non-advancing cursor, or a walk needing more than 20
+# pages is "no evidence", never "no threads" — the guard keeps waiting,
+# retries at the next probe, and warns after 3 consecutive failures without
+# ever fabricating a dequeue or a quiet.
 #
 # Exit codes:
 #   0 - merged
@@ -254,6 +259,10 @@ last_unresolved_count=""
 #                    disarm (never entered it), which WAS_QUEUED alone cannot.
 was_queued="false"
 was_in_queue="false"
+# Live shape from the most recent parsed poll; also read by the final guard
+# probe after the loop, so initialize before any poll runs.
+in_queue_now=false
+armed_now=false
 
 # Transient-failure bookkeeping, mirroring approval-wait (vstack#748): every
 # gh call in the poll loop writes stderr to GH_ERR_FILE so a failure can be
@@ -321,9 +330,9 @@ emit_result() {
       ;;
     dequeued)
       if [[ "$last_cause" == "late_findings_dequeue_failed" ]]; then
-        echo "Merge queue: DEQUEUE FAILED — new unresolved review thread(s) appeared while PR #$PR_NUM was queued (${last_unresolved_count:-?} unresolved), but the dequeue mutation failed: the PR is STILL QUEUED and the merge may still fire. Dequeue manually, then triage the threads."
+        echo "Merge queue: DEQUEUE FAILED — unresolved review thread(s) on PR #$PR_NUM while queued (${last_unresolved_count:-?} unresolved), but a guard mutation failed: the PR may be STILL QUEUED or armed and the merge may still fire. Dequeue/disarm manually, then triage the threads."
       else
-        echo "Merge queue: dequeued — new unresolved review thread(s) appeared while PR #$PR_NUM was queued (${last_unresolved_count:-?} unresolved). Triage the review comments, then re-arm."
+        echo "Merge queue: dequeued — unresolved review thread(s) on PR #$PR_NUM while queued (${last_unresolved_count:-?} unresolved). Triage the review comments, then re-arm."
       fi
       ;;
     closed)
@@ -487,26 +496,32 @@ probe_failed_check() {
 }
 
 # --- Late-findings guard (vstack#1289) --------------------------------------
-# Same reviewThreads surface approval-wait reads, with thread ids so a NEW
-# thread is distinguishable from a pre-existing one.
+# Same reviewThreads surface approval-wait reads.
 THREADS_QUERY='query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       reviewThreads(first: 100, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id isResolved }
+        nodes { isResolved }
       }
     }
   }
 }'
 
-# Print unresolved review-thread ids one per line, following pagination.
-# Returns nonzero when any page fails or is unreadable — "no evidence",
-# never "no threads".
-fetch_unresolved_thread_ids() {
-  local cursor="" out="" threads_json threads_status page_ids has_next
-  local nl=$'\n'
+# Count unresolved review threads with a strict, fail-closed read (the
+# review-predicate posture: anything unverifiable is "no evidence", never
+# "no threads"). Prints the count; returns nonzero on a query failure, a
+# null/malformed reviewThreads, a non-boolean isResolved, a hasNextPage with
+# a missing or non-advancing cursor, or a pagination walk needing more than
+# GUARD_MAX_THREAD_PAGES pages.
+GUARD_MAX_THREAD_PAGES=20
+
+count_unresolved_threads() {
+  local cursor="" total=0 pages=0 threads_json threads_status
+  local page_result page_count page_next page_cursor
   while true; do
+    pages=$((pages + 1))
+    [ "$pages" -le "$GUARD_MAX_THREAD_PAGES" ] || return 1
     set +e
     if [ -n "$cursor" ]; then
       threads_json=$(gh api graphql \
@@ -520,59 +535,85 @@ fetch_unresolved_thread_ids() {
     fi
     threads_status=$?
     set -e
-    if [ "$threads_status" -ne 0 ] \
-       || ! jq -e '((.data // .) | .repository.pullRequest?) != null' >/dev/null 2>&1 <<<"$threads_json"; then
-      return 1
+    [ "$threads_status" -eq 0 ] || return 1
+    # One strict pass per page: count only when every shape assumption holds.
+    page_result=$(jq -r '
+      (.data // .) as $d
+      | ($d.repository.pullRequest.reviewThreads?) as $rt
+      | if ($rt | type) != "object" then error("bad reviewThreads")
+        elif ($rt.nodes | type) != "array" then error("bad nodes")
+        elif ([$rt.nodes[] | (.isResolved | type)] | all(. == "boolean") | not)
+          then error("bad isResolved")
+        elif ($rt.pageInfo.hasNextPage | type) != "boolean" then error("bad pageInfo")
+        else
+          ([$rt.nodes[] | select(.isResolved == false)] | length | tostring)
+          + " " + ($rt.pageInfo.hasNextPage | tostring)
+          + " " + ($rt.pageInfo.endCursor // "")
+        end' <<<"$threads_json" 2>/dev/null) || return 1
+    read -r page_count page_next page_cursor <<<"$page_result"
+    total=$((total + page_count))
+    if [ "$page_next" = "true" ]; then
+      # More pages promised: a missing or non-advancing cursor means the
+      # walk cannot verify the remainder — fail closed now.
+      [ -n "$page_cursor" ] || return 1
+      [ "$page_cursor" != "$cursor" ] || return 1
+      cursor="$page_cursor"
+    else
+      printf '%s\n' "$total"
+      return 0
     fi
-    page_ids=$(jq -r '(.data // .)
-      | .repository.pullRequest.reviewThreads.nodes[]?
-      | select(.isResolved == false) | .id // empty' <<<"$threads_json")
-    if [ -n "$page_ids" ]; then
-      out="${out}${out:+$nl}$page_ids"
-    fi
-    has_next=$(jq -r '(.data // .)
-      | .repository.pullRequest.reviewThreads.pageInfo.hasNextPage // false' <<<"$threads_json")
-    [ "$has_next" = "true" ] || break
-    cursor=$(jq -r '(.data // .)
-      | .repository.pullRequest.reviewThreads.pageInfo.endCursor // ""' <<<"$threads_json")
-    [ -n "$cursor" ] || break
   done
-  printf '%s\n' "$out"
-  return 0
 }
 
-# Pull the arming on a late finding: dequeue a queued PR, disable auto-merge
-# on an armed-but-never-enqueued one. dequeuePullRequest's input field is
-# named `id` but takes the PULL REQUEST node id (schema-verified), not the
-# mergeQueueEntry id; enqueue's is `pullRequestId`. Exits 1 either way — a
-# failed mutation is loud, with the PR stated still queued.
+# Run one guard mutation and verify its response: HTTP success is not
+# enough — a body carrying an `errors` key, or missing the mutation's own
+# payload, is a failure.
+run_guard_mutation() {
+  local what="$1" mutation resp status reason
+  case "$what" in
+    dequeuePullRequest)
+      mutation='mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { mergeQueueEntry { id } } }' ;;
+    disablePullRequestAutoMerge)
+      mutation='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }' ;;
+  esac
+  set +e
+  resp=$(gh api graphql -f query="$mutation" -F id="$last_pr_node_id" 2>"$GH_ERR_FILE")
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ] \
+     && jq -e --arg m "$what" 'type == "object" and (has("errors") | not) and (.data[$m] != null)' >/dev/null 2>&1 <<<"$resp"; then
+    return 0
+  fi
+  reason=$(jq -r '[.errors[]?.message] | join("; ")' <<<"$resp" 2>/dev/null || true)
+  [ -n "$reason" ] || reason="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
+  echo "queue-wait: $what failed for PR #$PR_NUM${reason:+: $reason}" >&2
+  return 1
+}
+
+# Pull the arming on late findings. Disarm BEFORE dequeuing: an armed PR
+# re-enqueues itself the moment requirements go green, so a bare dequeue can
+# be raced straight back into the queue mid-triage. dequeuePullRequest's
+# input field is named `id` but takes the PULL REQUEST node id
+# (schema-verified), not the mergeQueueEntry id; enqueue's is
+# `pullRequestId`. Exits 1 either way — a partial or full mutation failure
+# is loud, naming the failed half, with the PR stated still queued.
 guard_fire() {
-  local new_count="$1" mutation what resp status detail
-  echo "queue-wait: late-findings guard: $new_count new unresolved review thread(s) on PR #$PR_NUM while queued/armed — pulling the arming" >&2
-  if [[ "$in_queue_now" == true ]]; then
-    mutation='mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { mergeQueueEntry { id } } }'
-    what="dequeuePullRequest"
+  local count="$1" failed=""
+  echo "queue-wait: late-findings guard: $count unresolved review thread(s) on PR #$PR_NUM while queued/armed — disarming and dequeuing" >&2
+  if [ -z "$last_pr_node_id" ]; then
+    failed="no PR node id from the queue query"
   else
-    mutation='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }'
-    what="disablePullRequestAutoMerge"
+    if [[ "$last_auto_merge" == "true" ]] && ! run_guard_mutation disablePullRequestAutoMerge; then
+      failed="disablePullRequestAutoMerge"
+    fi
+    if [[ "$in_queue_now" == true ]] && ! run_guard_mutation dequeuePullRequest; then
+      failed="${failed:+$failed and }dequeuePullRequest"
+    fi
   fi
-  resp=""
-  status=1
-  if [ -n "$last_pr_node_id" ]; then
-    set +e
-    resp=$(gh api graphql -f query="$mutation" -F id="$last_pr_node_id" 2>"$GH_ERR_FILE")
-    status=$?
-    set -e
-  else
-    echo "queue-wait: no PR node id from the queue query; cannot run $what" >>"$GH_ERR_FILE"
-  fi
-  if [ "$status" -ne 0 ] \
-     || jq -e '(.errors? | type) == "array" and ((.errors | length) > 0)' >/dev/null 2>&1 <<<"$resp"; then
-    detail=$(jq -r '[.errors[]?.message] | join("; ")' <<<"$resp" 2>/dev/null || true)
-    [ -n "$detail" ] || detail="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
+  if [ -n "$failed" ]; then
     last_cause="late_findings_dequeue_failed"
-    emit_result "error" "dequeued" "$what failed for PR #$PR_NUM${detail:+: $detail} — the PR is STILL QUEUED with $last_unresolved_count unresolved thread(s) and the merge may still fire; dequeue manually and triage"
-    echo "queue-wait: $what FAILED for PR #$PR_NUM — still queued/armed past new review findings${detail:+: $detail}" >&2
+    emit_result "error" "dequeued" "guard mutation failed ($failed) for PR #$PR_NUM — the PR may be STILL QUEUED or armed with $count unresolved thread(s) and the merge may still fire; dequeue/disarm manually, then triage"
+    echo "queue-wait: guard mutation FAILED ($failed) for PR #$PR_NUM — still queued/armed past unresolved review findings" >&2
     exit 1
   fi
   last_cause="late_findings"
@@ -580,19 +621,17 @@ guard_fire() {
   exit 1
 }
 
-# One rate-limited guard probe. The first successful fetch is the baseline
-# (pre-enqueue threads are the caller's problem); after that, any unresolved
-# id absent from the baseline fires guard_fire. Fetch failures are absorbed:
-# baseline and trigger state persist, and 3 consecutive failures warn.
-guard_baseline_set=false
-guard_baseline_ids=""
+# One rate-limited guard probe. approval-wait gates unresolved threads to
+# zero before enqueue, so ANY unresolved thread observed while queued/armed
+# is late by construction — a nonzero count fires guard_fire, no baseline.
+# Failed reads are absorbed: keep waiting, and 3 consecutive failures warn.
 guard_fetch_failures=0
 GUARD_FETCH_WARN_POLLS=3
 guard_last_at=-1
 
 guard_probe() {
-  local ids count tid new_count=0
-  if ! ids=$(fetch_unresolved_thread_ids); then
+  local count
+  if ! count=$(count_unresolved_threads); then
     guard_fetch_failures=$((guard_fetch_failures + 1))
     if [ "$guard_fetch_failures" -eq "$GUARD_FETCH_WARN_POLLS" ]; then
       echo "queue-wait: late-findings guard: thread fetch failed $guard_fetch_failures consecutive probes — no thread evidence while PR #$PR_NUM sits queued/armed; still retrying" >&2
@@ -600,18 +639,8 @@ guard_probe() {
     return 0
   fi
   guard_fetch_failures=0
-  count=$(grep -c . <<<"$ids" || true)
   last_unresolved_count="$count"
-  if ! $guard_baseline_set; then
-    guard_baseline_set=true
-    guard_baseline_ids="$ids"
-    return 0
-  fi
-  while IFS= read -r tid; do
-    [ -n "$tid" ] || continue
-    grep -qxF -- "$tid" <<<"$guard_baseline_ids" || new_count=$((new_count + 1))
-  done <<<"$ids"
-  [ "$new_count" -eq 0 ] || guard_fire "$new_count"
+  [ "$count" -eq 0 ] || guard_fire "$count"
 }
 
 # Ejection/disarm confirmation across consecutive polls.
@@ -812,6 +841,12 @@ if [[ "$was_queued" == "false" ]]; then
   last_cause="never_armed"
   emit_result "timeout" "not_queued"
   exit 1
+fi
+# Last-chance guard probe before reporting "still queued": the deadline must
+# not skip a late finding that landed since the final poll. guard_probe exits
+# via guard_fire on a trigger; a failed read falls through to the timeout.
+if $GUARD && [[ "$armed_now" == true ]]; then
+  guard_probe
 fi
 emit_result "timeout" "queued"
 exit 1

@@ -52,7 +52,11 @@ Evidence for the CURRENT head is any of:
    login — restricted to `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` when set,
    and to APPROVED reviews when `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE =
    "approved"`. An approval is never superseded by a later COMMENTED from the
-   same reviewer; only a later CHANGES_REQUESTED withdraws it.
+   same reviewer; only a later CHANGES_REQUESTED withdraws it. A row whose
+   body matches `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` (an errored
+   auto-review's own "unable to review" attestation — the reviews API has no
+   errored state) is NOT-EVIDENCE, never a failure: the review-object mirror
+   of the skip-pattern rule below.
 2. **Trusted clean-analysis check-run or commit status**
    (`REVIEW_GATE_TRUSTED_STATUS_CONTEXTS`) succeeding on this head — but a
    pass must prove analysis RAN: a success matching

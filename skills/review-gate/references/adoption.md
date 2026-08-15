@@ -256,6 +256,7 @@ here. Full key table: [settings.md](settings.md).
 | `REVIEW_GATE_STATUS_PUBLISHER_REJECT` | Set `github-actions[bot]` wherever PR workflows hold `statuses: write` — PR content can mint any status context through that identity, including the override. Requires the override to be posted by a non-Actions identity (operator PAT), which is the v2 posture. Empty disables. |
 | `REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS` | Empty = any non-author (adoption-non-breaking). A repo closing the any-collaborator-COMMENTED gap lists its trusted reviewer logins. |
 | `REVIEW_GATE_REVIEW_OBJECT_MIN_STATE` | `any` counts COMMENTED reviews (for bots that never APPROVE); `approved` requires an APPROVED verdict. |
+| `REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS` | Default closes the errored-auto-review gap everywhere (an errored bot review is a normal COMMENTED row whose body says the review never ran); override where a repo's reviewer words its attestation differently; empty is an explicit opt-out. |
 | `REVIEW_GATE_THREADS` | `enforce` unless the server-side zero-bypass thread ruleset is the enforcement point and CI-side latency is unwanted. |
 | `REVIEW_GATE_CARRY_FORWARD` | Off by default. Enable `docs`/`comments` classes where re-review of provably review-inert deltas is not wanted. |
 

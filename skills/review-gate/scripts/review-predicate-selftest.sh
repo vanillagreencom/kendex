@@ -80,6 +80,7 @@ fi
 ACTIVE_PUBLISHER_REJECT="$(rg_setting REVIEW_GATE_STATUS_PUBLISHER_REJECT "")" || exit 1
 ACTIVE_TRUSTED_LOGINS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS "")" || exit 1
 ACTIVE_MIN_STATE="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_MIN_STATE "any")" || exit 1
+ACTIVE_ERROR_PATTERNS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS "encountered an error and was unable to review")" || exit 1
 ACTIVE_GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
 ACTIVE_THREADS="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 1
 ACTIVE_API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
@@ -317,6 +318,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_STATUS_PUBLISHER_REJECT="$CFG_PUBLISHER_REJECT" \
     REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS="$CFG_TRUSTED_LOGINS" \
     REVIEW_GATE_REVIEW_OBJECT_MIN_STATE="$CFG_MIN_STATE" \
+    REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS="$CFG_ERROR_PATTERNS" \
     REVIEW_GATE_CONTEXT="$CFG_GATE_CONTEXT" \
     REVIEW_GATE_THREADS="$CFG_THREADS" \
     REVIEW_GATE_API_ATTEMPTS="$CFG_API_ATTEMPTS" \
@@ -372,6 +374,7 @@ reset() {
   CFG_PUBLISHER_REJECT="$ACTIVE_PUBLISHER_REJECT"
   CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
   CFG_MIN_STATE="$ACTIVE_MIN_STATE"
+  CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
   CFG_GATE_CONTEXT="$ACTIVE_GATE_CONTEXT"
 }
 
@@ -903,27 +906,31 @@ run "min_state=any: COMMENTED review counts (compatible default)" approved
 # reviewer's own "nothing ran" attestation (observed live: Copilot errored
 # at head and the row alone satisfied the gate as review evidence, then a
 # genuine re-review produced real findings). Silence, both directions:
-# never evidence, never a blocker, never masking genuine rows.
+# never evidence, never a blocker, never masking genuine rows. The battery
+# pins the shipped default marker explicitly (mechanism-layer convention) so
+# a repo's own REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS cannot skew it; the
+# configured value is exercised by the pattern cases below.
+ERRORED_MARK='encountered an error and was unable to review'
 ERRORED_BODY='Copilot encountered an error and was unable to review this pull request. You can try again by re-requesting a review.'
 reset
-CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
 reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")"
 run "an errored auto-review alone is NOT evidence (silence)" awaiting
 
 reset
-CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
 reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")" \
             "$(review "auto-reviewer" COMMENTED "2026-08-02T19:00:00Z" "$HEAD" "Reviewed 4 of 4 changed files and generated 1 comment.")"
 run "errored auto-review then a genuine re-review: the genuine row counts" approved
 
 reset
-CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
 reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")" \
             "$(review "reviewer" APPROVED "2026-08-02T19:00:00Z")"
 run "errored auto-review + later genuine approval approves" approved
 
 reset
-CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
 reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")" \
             "$(review "reviewer" CHANGES_REQUESTED "2026-08-02T19:00:00Z")"
 run "errored auto-review does not mask a genuine changes-requested" changes-requested
@@ -932,14 +939,35 @@ run "errored auto-review does not mask a genuine changes-requested" changes-requ
 # still approves, and a genuine review BODY is not error-filtered — the
 # marker must recognize the attestation sentence, not review prose.
 reset
-CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
 reviews_set "$(review "reviewer" APPROVED)"
 run "genuine approval alone still approves (errored filter is inert on it)" approved
 
 reset
-CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS="$ERRORED_MARK"
 reviews_set "$(review "reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "The parser encountered an error path worth a second look; otherwise fine.")"
 run "a genuine body mentioning errors is NOT the attestation (no over-match)" approved
+
+# The marker list is the repo's to own (REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS,
+# same shape as the check-run skip patterns): a configured value REPLACES
+# the default list — the custom attestation withdraws, the default-shaped
+# body no longer does — and empty disables the filter entirely.
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+CFG_ERROR_PATTERNS="analysis could not be completed"
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "Automated review: analysis could not be completed for this revision.")"
+run "a CONFIGURED error pattern withdraws a matching review body" awaiting
+
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"
+CFG_ERROR_PATTERNS="analysis could not be completed"
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")"
+run "configured error patterns REPLACE the default list (not extend)" approved
+
+reset
+CFG_TRUSTED_LOGINS=""; CFG_MIN_STATE="any"; CFG_ERROR_PATTERNS=""
+reviews_set "$(review "auto-reviewer" COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$ERRORED_BODY")"
+run "empty error-pattern list disables the filter (explicit opt-out)" approved
 
 # NON-SUPERSESSION: a trailing COMMENTED from the same reviewer at the same
 # head must not mask its earlier APPROVED (observed live: APPROVED at
@@ -1833,7 +1861,7 @@ run "carry: min_state=approved refuses a COMMENTED-only ancestor candidate" awai
 # head evidence: with a carry-safe delta staged, the errored row must still
 # leave the gate awaiting — carry extends reviews, and nothing reviewed N.
 reset
-CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""
+CFG_CARRY="docs"; CFG_TRUSTED_LOGINS=""; CFG_ERROR_PATTERNS="$ERRORED_MARK"
 reviews_set "$(review "auto-reviewer" COMMENTED "2026-01-01T00:00:00Z" "$OTHER" "$ERRORED_BODY")"
 compare_fix ahead "[$DOCS_DELTA]"
 run "carry: an errored ancestor auto-review is not a carry candidate" awaiting

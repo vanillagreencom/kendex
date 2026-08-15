@@ -1572,6 +1572,59 @@ role: engineer
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// VST-255 fix round: the interactive repo dialog removes sources by
+    /// writing sources.json directly mid-run (install_flow::forget_source).
+    /// The post-confirmation persist must work from the on-disk registry, not
+    /// this run's pre-TUI snapshot — saving the snapshot resurrects the entry
+    /// and drops its removed-source tombstone.
+    #[test]
+    fn persist_confirmed_source_keeps_registry_mutations_made_during_the_tui() {
+        let root = tmpdir("persist-reload");
+        let home = root.join("home");
+        let config_home = root.join("config");
+        let project = root.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&config_home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+
+        crate::test_util::with_home_and_config(&home, &config_home, || {
+            let reg_path = config::source_registry_path();
+            let mut pre_tui = config::SourceRegistry::default();
+            pre_tui.remember("owner/keep");
+            pre_tui.remember("owner/removed-in-tui");
+            pre_tui.save(&reg_path).unwrap();
+
+            // Mid-TUI: the repo dialog forgets one source on disk.
+            let mut on_disk = config::SourceRegistry::load(&reg_path).unwrap();
+            on_disk.forget("owner/removed-in-tui");
+            on_disk.save(&reg_path).unwrap();
+
+            let resolved = ResolvedSource {
+                source: "owner/confirmed".into(),
+                source_repo: None,
+                label: "owner/confirmed".into(),
+                dir: PathBuf::from("/cache/owner_confirmed"),
+                persist: true,
+            };
+            persist_confirmed_source(&resolved, false, &project).unwrap();
+
+            let after = config::SourceRegistry::load(&reg_path).unwrap();
+            assert!(
+                !after.entries.iter().any(|e| e == "owner/removed-in-tui"),
+                "persist must not resurrect a source removed during the TUI: {:?}",
+                after.entries
+            );
+            assert!(
+                after.was_removed("owner/removed-in-tui"),
+                "the removed-source tombstone must survive the persist"
+            );
+            assert!(after.entries.iter().any(|e| e == "owner/keep"));
+            assert!(after.entries.iter().any(|e| e == "owner/confirmed"));
+            assert_eq!(after.current_for_project(&project), Some("owner/confirmed"));
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// The source resolved for THIS run always stays listed, even when it is
     /// the current project's own non-source root — the user explicitly chose
     /// it (e.g. a project-skills-dir self-add, vstack#1024).
@@ -1665,6 +1718,32 @@ fn preserved_auto_skill_methods(
             Some((name.clone(), entry.method))
         })
         .collect()
+}
+
+/// Record the confirmed install source in the on-disk registry. Re-reads
+/// sources.json rather than reusing the registry loaded at the start of the
+/// run: the interactive repo dialog removes sources by writing the file
+/// directly mid-run (install_flow::forget_source), and saving the pre-TUI
+/// snapshot would resurrect them.
+fn persist_confirmed_source(
+    resolved: &ResolvedSource,
+    global: bool,
+    project_root: &Path,
+) -> Result<()> {
+    if !resolved.persist {
+        return Ok(());
+    }
+    let registry_path = config::source_registry_path();
+    let mut registry = config::SourceRegistry::load(&registry_path).unwrap_or_default();
+    if global {
+        registry.remember(&resolved.source);
+    } else {
+        registry.remember_for_project(project_root, &resolved.source);
+    }
+    // vstack#1038: opportunistic hygiene on the write path — drop a
+    // stale self entry left by an earlier project-local install.
+    registry.prune_project_self_non_source(project_root);
+    registry.save(&registry_path)
 }
 
 fn resolve_source_for_app(
@@ -1869,7 +1948,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         }
     }
 
-    let mut registry =
+    let registry =
         config::SourceRegistry::load(&config::source_registry_path()).unwrap_or_default();
     let mut current_source = source.clone();
     let project_root = config::project_root();
@@ -2174,17 +2253,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     // opportunistic self-entry prune may land (vstack#1024 review round;
     // VST-255 moved this below the interactive TUI, which fails on a
     // TTY-less stdin, and below the preflights above).
-    if resolved_source.persist {
-        if global {
-            registry.remember(&resolved_source.source);
-        } else {
-            registry.remember_for_project(&project_root, &resolved_source.source);
-        }
-        // vstack#1038: opportunistic hygiene on the write path — drop a
-        // stale self entry left by an earlier project-local install.
-        registry.prune_project_self_non_source(&project_root);
-        registry.save(&config::source_registry_path())?;
-    }
+    persist_confirmed_source(&resolved_source, global, &project_root)?;
 
     // Whether we should write/update the project-level vstack.toml.
     // Suppress when:
