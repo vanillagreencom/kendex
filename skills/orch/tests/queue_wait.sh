@@ -36,6 +36,12 @@
 #   26. an errors[] body on HTTP success is a mutation failure (named half)
 #   27. the final guard probe fires before a still-queued timeout return
 #   28. the pagination walk is bounded — an overlong walk is a failed read
+#   29. progress signal on the budget-exhausted queued verdict (VST-249):
+#       advancing check-run count, or a check-run still running on a flat
+#       count → progressing true / still_progressing; nothing moving (or a
+#       change older than the window) with nothing running → false / stalled;
+#       no headCommit → progressing null, never still_progressing;
+#       a failed check-run read is unknown (null), never zero, and warns
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -94,6 +100,8 @@ git -C "$TMP_ROOT/repo" config user.name Test
 #                                  (default: zero threads, so legacy cases
 #                                  run with the guard on and quiet)
 #   $STUB_SEQ_DIR/dequeue-<n>.json dequeue/disable-auto-merge mutation reply
+#   $STUB_SEQ_DIR/checkruns-<n>.json REST check-runs body for the n-th
+#                                  progress read of the merge-queue head
 # Mutations are also appended to $STUB_SEQ_DIR/mutations.log (name + args)
 # so tests can assert a dequeue was or was not issued.
 # `<prefix>-last.json` serves every poll past the last numbered fixture.
@@ -204,6 +212,11 @@ case "${1:-}" in
       echo '{"workflow_runs":[]}'
       exit 0
     fi
+    # queue-wait's progress read of the merge-queue head commit.
+    if [[ "${2:-}" == repos/*/commits/*/check-runs* ]]; then
+      _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
+      _emit_fixture checkruns "$(_next checkruns)"
+    fi
     ;;
   repo)
     if [[ "${2:-}" == "view" ]]; then
@@ -294,6 +307,17 @@ dq_ok='{"data":{"dequeuePullRequest":{"mergeQueueEntry":{"id":"MQE_1"}}}}'
 dq_err='{"errors":[{"message":"Pull request is not in the merge queue"}]}'
 am_ok='{"data":{"disablePullRequestAutoMerge":{"clientMutationId":null}}}'
 am_errs_on_200='{"data":{"disablePullRequestAutoMerge":null},"errors":[{"message":"auto merge is not enabled"}]}'
+
+# Progress-signal (VST-249) fixtures: a queue entry that exposes its
+# merge-group head commit, and REST check-runs bodies for that commit.
+q_in_queue_head='{"data":{"repository":{"pullRequest":{"id":"PR_node123","isInMergeQueue":true,"mergeQueueEntry":{"state":"AWAITING_CHECKS","position":1,"headCommit":{"oid":"aaa111"}},"autoMergeRequest":{"enabledAt":"2026-07-24T09:00:00Z"}}}}}'
+# checkruns_body <completed> <in_progress>
+checkruns_body() {
+  local done="$1" pending="$2" runs="" i
+  for i in $(seq 1 "$done"); do runs+='{"name":"c'"$i"'","status":"completed","conclusion":"success"},'; done
+  for i in $(seq 1 "$pending"); do runs+='{"name":"p'"$i"'","status":"in_progress","conclusion":null},'; done
+  printf '{"total_count":%d,"check_runs":[%s]}' "$((done + pending))" "${runs%,}"
+}
 
 # Run queue-wait through the .agents symlink, exactly how it is invoked in
 # production. `env "$@"` injects the stub's fixture directory and knobs; the
@@ -746,6 +770,139 @@ err="$TMP_ROOT/e28"
 out="$(run_queue_wait -- 1 1 1 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(jq -r .verdict <<<"$out")" "queued" "overlong walk is a failed read, not a count" "$err"
 assert_eq "$([ -f "$SEQ_DIR/mutations.log" ] && echo present || echo absent)" "absent" "overlong walk never mutates" "$err"
+
+# --- 29. progress signal on the budget-exhausted queued verdict (VST-249) ----
+# A `queued` verdict at the deadline cannot by itself tell "the merge-group
+# suite is still running" from "nothing has moved". queue-wait tracks the
+# entry tuple (state, position, headCommit.oid) and, when the head commit is
+# exposed, the check-runs on it: a tuple/completed-count change within the
+# last 3 polls OR a check-run still running on the last read is
+# `progressing: true` / `cause: still_progressing`; measurable, unchanged in
+# the window, and nothing running is `stalled`. Every fixture below is still
+# queued and OPEN throughout.
+
+# 29a. completed check-run count advancing every poll → still progressing.
+new_case progress_advancing
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue_head"
+for i in $(seq 1 12); do
+  write_fixture checkruns "$i" "$(checkruns_body "$i" 1)"
+done
+err="$TMP_ROOT/e29a"
+out="$(run_queue_wait -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "1" "progressing queued verdict still exits 1" "$err"
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "advancing check-runs: verdict stays queued" "$err"
+assert_eq "$(jq -r .status <<<"$out")" "timeout" "advancing check-runs: status stays timeout" "$err"
+assert_eq "$(jq -r .progressing <<<"$out")" "true" "advancing check-runs: progressing true" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "still_progressing" "advancing check-runs: cause still_progressing" "$err"
+assert_eq "$([ -f "$SEQ_DIR/checkruns.count" ] && echo present || echo absent)" "present" "the head commit's check-runs were read" "$err"
+herr="$TMP_ROOT/e29ah"
+new_case progress_advancing_human
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue_head"
+for i in $(seq 1 12); do
+  write_fixture checkruns "$i" "$(checkruns_body "$i" 1)"
+done
+hout="$(run_queue_wait -- 1 1 4 --no-check-probe 2>"$herr")" && rc=0 || rc=$?
+assert_contains "$hout" "still progressing" "human still-queued line reports progress" "$herr"
+
+# 29b. nothing moves across polls AND nothing is running → stalled. This is
+# the control for the still-running term: same flat count as 29f below with
+# zero non-completed check-runs, so an over-broad "running" read would flip
+# it to progressing.
+new_case progress_flat
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue_head"
+write_fixture checkruns last "$(checkruns_body 1 0)"
+err="$TMP_ROOT/e29b"
+out="$(run_queue_wait -- 1 1 8 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "flat check-runs: verdict stays queued" "$err"
+assert_eq "$(jq -r .progressing <<<"$out")" "false" "flat, none running: progressing false" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "stalled" "flat, none running: cause stalled" "$err"
+assert_eq "$([ -f "$SEQ_DIR/checkruns.count" ] && echo present || echo absent)" "present" "flat case did read the check-runs (stalled is evidence, not absence)" "$err"
+
+# 29b2. one early change, then flat past the 3-poll window with nothing
+# running → stalled. The window is the discriminator: an old change is not
+# "still progressing".
+new_case progress_early_then_flat
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue_head"
+write_fixture checkruns 1 "$(checkruns_body 1 0)"
+write_fixture checkruns last "$(checkruns_body 2 0)"
+err="$TMP_ROOT/e29b2"
+out="$(run_queue_wait -- 1 1 8 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "early-then-flat: verdict stays queued" "$err"
+assert_eq "$(jq -r .progressing <<<"$out")" "false" "early-then-flat: a change older than the window is not progress" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "stalled" "early-then-flat: cause stalled" "$err"
+herr="$TMP_ROOT/e29bh"
+new_case progress_flat_human
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue_head"
+write_fixture checkruns last "$(checkruns_body 1 0)"
+hout="$(run_queue_wait -- 1 1 8 --no-check-probe 2>"$herr")" && rc=0 || rc=$?
+assert_contains "$hout" "STALLED" "human still-queued line reports the stall" "$herr"
+
+# 29f. completed count flat across 4+ polls, but a check-run is in_progress:
+# a suite still running IS progress (a 15-min shard completes nothing for
+# many polls). Must be still_progressing, never stalled.
+new_case progress_flat_running
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue_head"
+write_fixture checkruns last "$(checkruns_body 1 1)"
+err="$TMP_ROOT/e29f"
+out="$(run_queue_wait -- 1 1 8 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "flat count, one running: verdict stays queued" "$err"
+polls_n="$(jq -r .polls <<<"$out")"
+assert_eq "$([ "$polls_n" -ge 4 ] 2>/dev/null && echo "4+" || echo "$polls_n")" "4+" "flat count, one running: 4+ polls elapsed" "$err"
+assert_eq "$(jq -r .progressing <<<"$out")" "true" "flat count, one running: progressing true" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "still_progressing" "flat count, one running: cause still_progressing" "$err"
+# 29f2. same, with the running check-run `queued` rather than `in_progress`.
+new_case progress_flat_queued_run
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue_head"
+write_fixture checkruns last '{"total_count":2,"check_runs":[{"name":"c1","status":"completed","conclusion":"success"},{"name":"q1","status":"queued","conclusion":null}]}'
+err="$TMP_ROOT/e29f2"
+out="$(run_queue_wait -- 1 1 8 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .progressing <<<"$out")" "true" "flat count, one queued check-run: progressing true" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "still_progressing" "flat count, one queued check-run: cause still_progressing" "$err"
+
+# 29c. no headCommit on the entry (existing fixture shape): progress is
+# never observable — progressing null, cause stalled, and NO check-run read.
+new_case progress_no_head
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue"
+write_fixture checkruns last "$(checkruns_body 3 0)"
+err="$TMP_ROOT/e29c"
+out="$(run_queue_wait -- 1 1 4 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "no headCommit: verdict stays queued" "$err"
+assert_eq "$(jq -r 'has("progressing")' <<<"$out")" "true" "no headCommit: progressing key present" "$err"
+assert_eq "$(jq -r '.progressing' <<<"$out")" "null" "no headCommit: progressing null (never observable)" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "stalled" "no headCommit: never asserted as still_progressing" "$err"
+assert_eq "$([ -f "$SEQ_DIR/checkruns.count" ] && echo present || echo absent)" "absent" "no headCommit: no check-run read attempted" "$err"
+
+# 29d. head present but every check-run read fails: unknown, never zero —
+# progressing null, cause stalled, loud after 3 consecutive failures.
+new_case progress_read_fail
+write_fixture state last "$pr_open"
+write_fixture queue last "$q_in_queue_head"
+write_fixture checkruns last '' 1 "HTTP 502: Bad Gateway"
+err="$TMP_ROOT/e29d"
+out="$(run_queue_wait -- 1 1 5 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "queued" "failed check-run read: verdict stays queued" "$err"
+assert_eq "$(jq -r 'has("progressing")' <<<"$out")" "true" "failed check-run read: progressing key present" "$err"
+assert_eq "$(jq -r '.progressing' <<<"$out")" "null" "failed check-run read: progressing null, never false-from-zero" "$err"
+assert_eq "$(jq -r .cause <<<"$out")" "stalled" "failed check-run read: never asserted as still_progressing" "$err"
+assert_contains "$(cat "$err")" "check-run read failed 3 consecutive" "consecutive check-run read failures warn" "$err"
+
+# 29e. progressing is emitted on every verdict, not only queued.
+new_case progress_on_merged
+write_fixture state last "$pr_merged"
+write_fixture queue last "$q_in_queue_head"
+err="$TMP_ROOT/e29e"
+out="$(run_queue_wait -- 1 1 10 --json --no-check-probe 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(jq -r .verdict <<<"$out")" "merged" "merged verdict unchanged by the progress signal" "$err"
+assert_eq "$(jq -r 'has("progressing")' <<<"$out")" "true" "merged verdict carries progressing" "$err"
+assert_eq "$(jq -r 'has("cause")' <<<"$out")" "false" "merged verdict carries no progress cause" "$err"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

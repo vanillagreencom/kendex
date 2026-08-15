@@ -139,7 +139,7 @@ Use the output as `MAIN_REPO_ROOT`.
    Exit `75` = queued or armed. Watch it with queue-wait — it blocks until the outcome is decided and carries the cross-poll `WAS_QUEUED` memory separate tool calls cannot:
 
    ```bash
-   .agents/skills/orch/scripts/queue-wait [PR_NUMBER] 30 600 --json
+   .agents/skills/orch/scripts/queue-wait [PR_NUMBER] 30 2400 --json
    ```
 
    Never poll `gh pr view --json mergeable` — it stays UNKNOWN after merge and loops forever. Ejection is per-PR: a failed merge-group run removes only this PR, so each session's own watch owns its recovery and parallel sessions never coordinate.
@@ -151,7 +151,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | `disarmed` | Auto-merge cleared, or a required check failed (`cause` says which) | Recovery cycle below |
    | `dequeued` | The late-findings guard saw a NEW unresolved review thread while queued/armed and pulled the arming (`cause: late_findings`) — or tried and failed (`cause: late_findings_dequeue_failed`: the PR is STILL queued and the merge may fire; dequeue manually before triage) | Late-findings triage below |
    | `closed` | The PR was closed out from under the merge | Skip steps 2-4 and hand back |
-   | `queued` | Deadline reached, still armed | Not a failure: the merge fires when checks and protection clear. Skip steps 2-4 and note in § 6 that sync and cleanup need `merge-pr [PR_NUMBER]` re-run once merged |
+   | `queued` | Deadline reached, still armed. `cause: still_progressing` = queue-entry or check-run movement within the last 3 polls, or a check-run still running on the merge-group head; `stalled` = neither (`progressing` is `null` when unobservable) | Not a failure: the merge fires when checks and protection clear — never re-arm or recover on `still_progressing`. Skip steps 2-4 and note in § 6 that sync and cleanup need `merge-pr [PR_NUMBER]` re-run once merged |
    | `not_queued` | The `--auto` merge never armed | Re-run `pr-merge [PR_NUMBER] --auto` once; still unarmed → surface and hand back |
 
    **Recovery cycle** — route the failure back into ci-fix, never fix CI by hand:

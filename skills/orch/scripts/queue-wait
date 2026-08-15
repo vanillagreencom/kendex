@@ -16,16 +16,33 @@
 #
 # Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]
 #                   [--no-guard]
-#   poll_interval default 30s, max_wait default 600s (10 min) — the same
-#   budget as the merge-pr § 5 step 1 loop it replaces.
+#   poll_interval default 30s, max_wait default 2400s (40 min) — sized to the
+#   merge-group suite: measured runs up to ~25 min.
 #
 # Per poll it reads both signals the routing table consumes:
 #   gh pr view <PR> --json state,mergedAt
-#   gh api graphql ... { isInMergeQueue mergeQueueEntry { state }
+#   gh api graphql ... { isInMergeQueue
+#                        mergeQueueEntry { state position headCommit { oid } }
 #                        autoMergeRequest { enabledAt } }
 # `gh pr view --json` exposes no queue-membership field (verified against gh
 # 2.96.0), so the GraphQL query is required. `gh pr view --json mergeable` is
 # never polled — it stays UNKNOWN after a merge and would loop forever.
+#
+# Progress signal (VST-249): a deadline reached with the PR still queued
+# cannot by itself distinguish "the merge-group suite is still running" from
+# "nothing has moved", and a caller acting on a stale `queued` re-arms a
+# healthy merge. So across polls the script tracks the entry tuple
+# (mergeQueueEntry.state, position, headCommit.oid) and — when the entry
+# exposes its head commit — the check-runs on that commit, one paginated
+# read per poll (`gh api repos/OWNER/REPO/commits/SHA/check-runs`) yielding
+# the completed count and the not-completed (running/queued) count. A tuple
+# or completed-count change within the last PROGRESS_WINDOW_POLLS polls is
+# progress; so is any not-completed check-run on the last successful read —
+# a 15-minute shard completes nothing for many polls and is still running.
+# Stalled means measurable, unchanged in the window, and nothing running. A
+# failed check-run read is "unknown", never zero: it is absorbed (warn after
+# 3 consecutive failures) and never compared, so a read failure can neither
+# fabricate nor erase movement.
 #
 # Verdicts (merge-pr § 5 step 1 routing table):
 #   merged      - state == "MERGED". Exit 0.
@@ -43,7 +60,9 @@
 #   queued      - poll bound reached with the PR still queued/armed. Reported
 #                 as status "timeout": the merge stays armed and fires on its
 #                 own, so this is NOT a failure of the merge — and never a
-#                 success either.
+#                 success either. Carries cause still_progressing (queue-entry
+#                 or check-run movement within the last 3 polls, or a
+#                 check-run still running) or stalled.
 #   not_queued  - no poll ever observed the PR queued or armed, and the arming
 #                 grace expired. The merge was never armed; nothing will fire.
 #
@@ -110,10 +129,16 @@
 #     "auto_merge_enabled": <bool>,  # last poll
 #     "was_queued": <bool>,          # ANY poll saw queued OR armed
 #     "was_in_merge_queue": <bool>,  # ANY poll saw actual queue membership
+#     "progressing": <bool|null>,    # queue-entry/check-run movement within
+#                                    # the last 3 polls, or a check-run still
+#                                    # running; null when progress was never
+#                                    # observable (no head commit exposed, or
+#                                    # its check-runs unreadable)
 #     "cause": <string>,             # only when known: merge_group_failed |
 #                                    # check_failed | auto_merge_cleared |
 #                                    # never_armed | late_findings |
-#                                    # late_findings_dequeue_failed
+#                                    # late_findings_dequeue_failed |
+#                                    # still_progressing | stalled (queued)
 #     "unresolved_count": <int>,     # only once the guard has read threads
 #     "transient_api_errors": <int>, # only when > 0
 #     "error": <string>              # only when status == "error"
@@ -157,7 +182,7 @@ Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe] [
 
   <PR#>          pull request number (required)
   poll_interval  seconds between polls (default 30)
-  max_wait       total budget in seconds, an upper bound (default 600)
+  max_wait       total budget in seconds, an upper bound (default 2400)
                  poll_interval must be <= max_wait
   --json         emit the machine-readable result object on stdout
   --no-check-probe  skip the failed-required-check ci-wait delegation
@@ -185,7 +210,7 @@ done
 
 PR_NUM="${POSITIONAL[0]:?Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]}"
 POLL_INTERVAL="${POSITIONAL[1]:-30}"
-MAX_WAIT="${POSITIONAL[2]:-600}"
+MAX_WAIT="${POSITIONAL[2]:-2400}"
 START_TIME="$(date +%s)"
 elapsed=0
 
@@ -263,6 +288,23 @@ was_in_queue="false"
 # probe after the loop, so initialize before any poll runs.
 in_queue_now=false
 armed_now=false
+# Progress signal (VST-249). The entry tuple and completed check-run count of
+# the previous successful poll, the not-completed (running/queued) check-run
+# count from the last successful read ("" when never read), the poll number
+# of the last observed change ("" when none), and whether progress was ever
+# measurable — a check-run read succeeded, or a change was seen. Without
+# evidence the verdict says null, never false: "unobservable" is not
+# "stalled".
+PROGRESS_WINDOW_POLLS=3
+prev_progress_tuple=""
+prev_check_count=""
+prev_head_oid=""
+last_running_count=""
+progress_have_prev=false
+progress_last_change_poll=""
+progress_evidence=false
+checkrun_fetch_failures=0
+CHECKRUN_FETCH_WARN_POLLS=3
 
 # Transient-failure bookkeeping, mirroring approval-wait (vstack#748): every
 # gh call in the poll loop writes stderr to GH_ERR_FILE so a failure can be
@@ -274,13 +316,42 @@ trap 'rm -f "$GH_ERR_FILE"' EXIT
 retry_interval="$POLL_INTERVAL"
 RETRY_INTERVAL_CAP=$((POLL_INTERVAL * 8))
 
+# Progress verdict for the JSON `progressing` field: "true" when the last
+# observed change is within the last PROGRESS_WINDOW_POLLS polls OR the last
+# check-run read still shows a not-completed run (a suite mid-flight
+# completes nothing for many polls and is still progress); "false" when
+# progress was measurable, nothing moved in the window, and nothing is
+# running; "null" when it was never measurable.
+progressing_value() {
+  if [ -n "$progress_last_change_poll" ] \
+     && [ $((polls - progress_last_change_poll)) -lt "$PROGRESS_WINDOW_POLLS" ]; then
+    printf 'true'
+  elif [ -n "$last_running_count" ] && [ "$last_running_count" -gt 0 ]; then
+    printf 'true'
+  elif [ "$progress_evidence" = true ]; then
+    printf 'false'
+  else
+    printf 'null'
+  fi
+}
+
 # Emit the final machine-readable result on stdout. Every exit path routes
 # through here (or emit_error) so the script can never finish silently.
 emit_result() {
   local status="$1" verdict="$2" error_msg="${3:-}"
   update_elapsed
-  local poll_age=""
+  local poll_age="" progressing
   [ -n "$last_poll_time" ] && poll_age=$(( $(date +%s) - last_poll_time ))
+  progressing="$(progressing_value)"
+  # The still-queued verdict carries its progress cause; every other verdict
+  # keeps its own cause untouched.
+  if [ "$verdict" = "queued" ]; then
+    if [ "$progressing" = "true" ]; then
+      last_cause="still_progressing"
+    else
+      last_cause="stalled"
+    fi
+  fi
   if $JSON_OUTPUT; then
     jq -n \
       --arg s "$status" \
@@ -294,6 +365,7 @@ emit_result() {
       --argjson auto_merge "$last_auto_merge" \
       --argjson was_queued "$was_queued" \
       --argjson was_in_queue "$was_in_queue" \
+      --argjson progressing "$progressing" \
       --arg cause "$last_cause" \
       --arg unresolved "$last_unresolved_count" \
       --argjson transient "$transient_api_errors" \
@@ -310,7 +382,8 @@ emit_result() {
         merge_queue_state: $queue_state,
         auto_merge_enabled: $auto_merge,
         was_queued: $was_queued,
-        was_in_merge_queue: $was_in_queue
+        was_in_merge_queue: $was_in_queue,
+        progressing: $progressing
       } + (if $cause == "" then {} else {cause: $cause} end)
         + (if $unresolved == "" then {} else {unresolved_count: ($unresolved|tonumber)} end)
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
@@ -339,10 +412,16 @@ emit_result() {
       echo "Merge queue: closed — PR #$PR_NUM was closed without merging"
       ;;
     queued)
+      local progress_note
+      case "$progressing" in
+        true)  progress_note="still progressing: queue-entry or check-run movement within the last ${PROGRESS_WINDOW_POLLS} polls, or a check-run still running${last_running_count:+ (${last_running_count} not completed)}" ;;
+        false) progress_note="STALLED: no queue-entry or check-run movement in the last ${PROGRESS_WINDOW_POLLS} polls and no check-run running" ;;
+        *)     progress_note="progress unobservable: no merge-group head commit exposed or its check-runs unreadable" ;;
+      esac
       if [ "${polls:-0}" -le 1 ]; then
-        echo "Merge queue: still queued after ${elapsed}s — LOW CONFIDENCE: a single poll${poll_age:+, last observed ${poll_age}s ago}. Widen max_wait or shorten poll_interval for a live read. The merge stays armed and fires when checks and protection clear"
+        echo "Merge queue: still queued after ${elapsed}s — LOW CONFIDENCE: a single poll${poll_age:+, last observed ${poll_age}s ago}. Widen max_wait or shorten poll_interval for a live read. The merge stays armed and fires when checks and protection clear (${progress_note})"
       else
-        echo "Merge queue: still queued after ${elapsed}s (${polls} polls${poll_age:+, last polled ${poll_age}s ago}) — the merge stays armed and fires when checks and protection clear"
+        echo "Merge queue: still queued after ${elapsed}s (${polls} polls${poll_age:+, last polled ${poll_age}s ago}) — the merge stays armed and fires when checks and protection clear (${progress_note})"
       fi
       ;;
     not_queued)
@@ -439,7 +518,10 @@ if [ -z "$REPO_OWNER" ] || [ -z "$REPO_NAME" ] || [ "$REPO_OWNER" = "$REPO" ]; t
   exit 1
 fi
 
-QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id isInMergeQueue mergeQueueEntry { state } autoMergeRequest { enabledAt } } } }'
+# mergeQueueEntry.position and .headCommit are schema-verified fields
+# (`__type(name:"MergeQueueEntry")`); headCommit is the merge-group commit
+# whose check-runs are the progress signal.
+QUEUE_QUERY='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id isInMergeQueue mergeQueueEntry { state position headCommit { oid } } autoMergeRequest { enabledAt } } } }'
 
 # Classify a failed gh call whose stderr sits in GH_ERR_FILE — identical
 # policy to approval-wait (vstack#748). Transient means the service or
@@ -643,6 +725,73 @@ guard_probe() {
   [ "$count" -eq 0 ] || guard_fire "$count"
 }
 
+# --- Progress signal (VST-249) ---------------------------------------------
+# Check-run counts on the merge-queue head commit from ONE paginated read:
+# prints "<completed> <running>" — running being every not-completed status
+# (in_progress, queued, waiting, requested, pending) — and returns 0 only
+# when every page is a readable check_runs array; a query failure, an
+# unreadable page, or a non-integer result returns nonzero and the caller
+# records "unknown" — never zero.
+read_check_run_counts() {
+  local sha="$1" body status
+  set +e
+  body=$(gh api "repos/$REPO/commits/$sha/check-runs" --paginate 2>>"$GH_ERR_FILE" \
+    | jq -r 'if length == 0 or (all(.[]; (.check_runs | type) == "array") | not)
+             then error("bad check_runs")
+             else ([.[].check_runs[] | select(.status == "completed")] | length | tostring)
+                  + " " + ([.[].check_runs[] | select(.status != "completed")] | length | tostring)
+             end' -s 2>/dev/null)
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || return 1
+  [[ "$body" =~ ^[0-9]+\ [0-9]+$ ]] || return 1
+  printf '%s\n' "$body"
+}
+
+# Compare this poll's entry tuple (state|position|head oid) and, when both
+# sides are known, its completed check-run count against the previous poll;
+# record the running count from the same read. A change stamps
+# progress_last_change_poll; a successful read is evidence that progress was
+# measurable at all.
+observe_progress() {
+  local tuple="$1" head_oid="$2" counts count="" running="" changed=false
+  # The running count is per commit: a new merge-group head (or no entry)
+  # invalidates the previous read until this head is read successfully.
+  [ "$head_oid" = "$prev_head_oid" ] || last_running_count=""
+  if [ -n "$head_oid" ]; then
+    if counts=$(read_check_run_counts "$head_oid"); then
+      read -r count running <<<"$counts"
+      checkrun_fetch_failures=0
+      last_running_count="$running"
+      progress_evidence=true
+    else
+      count=""
+      checkrun_fetch_failures=$((checkrun_fetch_failures + 1))
+      if [ "$checkrun_fetch_failures" -eq "$CHECKRUN_FETCH_WARN_POLLS" ]; then
+        echo "queue-wait: progress signal: check-run read failed $checkrun_fetch_failures consecutive polls for commit $head_oid in $REPO — check-run movement unknown (never counted as zero); still retrying" >&2
+      fi
+    fi
+  fi
+  if [ "$progress_have_prev" = true ]; then
+    [ "$tuple" != "$prev_progress_tuple" ] && changed=true
+    if [ -n "$count" ] && [ -n "$prev_check_count" ]; then
+      [ "$count" != "$prev_check_count" ] && changed=true
+    fi
+  fi
+  if [ "$changed" = true ]; then
+    progress_evidence=true
+    progress_last_change_poll="$polls"
+  fi
+  prev_progress_tuple="$tuple"
+  # "" when this poll's count is unknown, so the next poll cannot compare
+  # against a fabricated value. A head change is caught by the tuple, so a
+  # cross-commit count comparison only ever adds to an already-registered
+  # change.
+  prev_check_count="$count"
+  prev_head_oid="$head_oid"
+  progress_have_prev=true
+}
+
 # Ejection/disarm confirmation across consecutive polls.
 candidate_verdict=""
 candidate_cause=""
@@ -754,11 +903,18 @@ while [ "$polls" -eq 0 ] || [ "$elapsed" -lt "$MAX_WAIT" ]; do
   last_queue_state=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.state // ""' <<<"$queue_json")
   has_entry=$(jq -r '.data.repository.pullRequest.mergeQueueEntry != null' <<<"$queue_json")
   last_auto_merge=$(jq -r '.data.repository.pullRequest.autoMergeRequest != null' <<<"$queue_json")
+  entry_position=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.position // ""' <<<"$queue_json")
+  entry_head_oid=$(jq -r '.data.repository.pullRequest.mergeQueueEntry.headCommit.oid // ""' <<<"$queue_json")
 
   in_queue_now=false
   [[ "$last_in_queue" == "true" || "$has_entry" == "true" ]] && in_queue_now=true
   armed_now=false
   [[ "$in_queue_now" == true || "$last_auto_merge" == "true" ]] && armed_now=true
+
+  # Progress signal: compare this poll's entry tuple and check-run count
+  # against the previous poll before routing, so the deadline verdict can
+  # say whether the queue is still moving.
+  observe_progress "${last_queue_state}|${entry_position}|${entry_head_oid}" "$entry_head_oid"
 
   # WAS_QUEUED and its membership half — the state a re-entering orchestrator
   # cannot keep, and the reason this loop lives in a script.
