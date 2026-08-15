@@ -1788,11 +1788,7 @@ fn upsert_missing_inline_table_fields(
         ));
     }
 
-    let mut rendered = result.join("\n");
-    if content.ends_with('\n') {
-        rendered.push('\n');
-    }
-    rendered
+    join_keep_blank_tail(content, &result)
 }
 
 /// Create or update vstack.toml at the project root.
@@ -2010,11 +2006,7 @@ fn normalize_attached_section_headers(content: &str) -> String {
             }
         }
     }
-    let mut rendered = out.join("\n");
-    if content.ends_with('\n') {
-        rendered.push('\n');
-    }
-    rendered
+    join_keep_blank_tail(content, &out)
 }
 
 fn repair_instruction_multiline_values(content: &str) -> String {
@@ -2093,11 +2085,7 @@ fn repair_instruction_multiline_values(content: &str) -> String {
         out.push(lines[i].to_string());
         i += 1;
     }
-    let mut rendered = out.join("\n");
-    if content.ends_with('\n') {
-        rendered.push('\n');
-    }
-    rendered
+    join_keep_blank_tail(content, &out)
 }
 
 fn ensure_value_section_entry_spacing(content: &str) -> String {
@@ -2162,10 +2150,7 @@ fn ensure_value_section_entry_spacing(content: &str) -> String {
         i += 1;
     }
 
-    let mut rendered = out.join("\n");
-    if content.ends_with('\n') {
-        rendered.push('\n');
-    }
+    let rendered = join_keep_blank_tail(content, &out);
     ensure_blank_line_before_section_headers(&rendered)
 }
 
@@ -2184,11 +2169,7 @@ fn ensure_blank_line_before_section_headers(content: &str) -> String {
         out.push(line.to_string());
     }
 
-    let mut rendered = out.join("\n");
-    if content.ends_with('\n') {
-        rendered.push('\n');
-    }
-    rendered
+    join_keep_blank_tail(content, &out)
 }
 
 fn starts_multiline_array_value(trimmed_line: &str) -> bool {
@@ -2236,11 +2217,7 @@ fn dedupe_agent_frontmatter_sections(content: &str) -> String {
         out.push(line.to_string());
     }
 
-    let mut rendered = out.join("\n");
-    if content.ends_with('\n') {
-        rendered.push('\n');
-    }
-    rendered
+    join_keep_blank_tail(content, &out)
 }
 
 fn skip_orphan_duplicate_multiline_body(lines: &[&str], i: usize) -> usize {
@@ -2668,7 +2645,9 @@ fn create_project_config(path: &Path, agents: &[String], skills: &[String]) {
     out.push_str("# description = \"What this hook does\"     # inlined as instructions in non-Claude-Code harnesses\n");
     out.push_str("# agents = \"all\"             # \"all\", a role (\"engineer\"), or a list [\"rust\", \"iced\"]\n");
 
-    let _ = std::fs::write(path, out);
+    if let Err(e) = std::fs::write(path, out) {
+        eprintln!("warning: could not write {}: {e}", path.display());
+    }
 }
 
 fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
@@ -2717,14 +2696,15 @@ fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
 
 /// Write `out` to `path` only when it differs from `existing`, so an
 /// unchanged config never has its mtime bumped (staleness checks key on it).
-/// The written text always ends in a newline: a file that lost its
+/// The written text always ends in a line terminator — `\r\n` when the
+/// content is CRLF throughout, `\n` otherwise — so a file that lost its
 /// terminator is repaired by the first pass that reads it, and every later
 /// pass sees identical content and skips the write. A failed write is
 /// reported, never swallowed — the caller's update would otherwise vanish
 /// behind a successful exit.
 fn write_if_changed(path: &Path, mut out: String, existing: &str) {
     if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
+        out.push_str(line_terminator(&out));
     }
     if out != existing
         && let Err(e) = std::fs::write(path, out)
@@ -2733,12 +2713,38 @@ fn write_if_changed(path: &Path, mut out: String, existing: &str) {
     }
 }
 
-/// Rejoin edited lines, restoring the final newline iff `content` had one.
-/// Every section transform that splits on `lines()` rebuilds through this so
-/// none can drop the terminator on its own.
+/// `"\r\n"` when every line of `text` ends in CRLF, else `"\n"`.
+fn line_terminator(text: &str) -> &'static str {
+    let crlf = text.matches("\r\n").count();
+    if crlf > 0 && crlf == text.matches('\n').count() {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+/// Rejoin edited lines with `\n`, restoring a final newline iff `content`
+/// had one. This is the terminator convention for the section transforms
+/// that split on `lines()` and rebuild by key/entry (`insert_*`,
+/// `replace_toml_array_value`, `upsert_*`); a trailing blank line in
+/// `content` collapses into the terminator. Transforms that must round-trip
+/// a trailing blank line use [`join_keep_blank_tail`] instead.
 fn join_like(content: &str, lines: &[String]) -> String {
     let mut out = lines.join("\n");
     if content.ends_with('\n') && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// Rejoin edited lines with `\n`, appending a final newline iff `content`
+/// had one — even when the last element is empty, so a trailing blank line
+/// survives the round trip. Used by the whole-file layout transforms
+/// (spacing, header, dedupe, scaffold) whose output must be byte-stable
+/// across passes.
+fn join_keep_blank_tail(content: &str, lines: &[String]) -> String {
+    let mut out = lines.join("\n");
+    if content.ends_with('\n') {
         out.push('\n');
     }
     out
@@ -3285,6 +3291,37 @@ trading-design = "Dark theme."
         let on_disk = std::fs::read_to_string(dir.join("vstack.toml")).unwrap();
         assert!(on_disk.contains("rust = \"mine\""), "on disk: {on_disk}");
         assert!(!on_disk.contains("Old shared."), "on disk: {on_disk}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_extracted_new_agent_entry_keeps_trailing_newline() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_save_extracted_newline_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("vstack.toml"),
+            "[agent-launch-instructions]\nother = \"x\"\n",
+        )
+        .unwrap();
+        let mut config = ProjectConfig::load(&dir);
+
+        // No entry for `rust` yet: the value is inserted as a new entry.
+        let extracted = crate::agent::AgentExtras {
+            guidance: Some("mine".to_string()),
+            ..Default::default()
+        };
+        config.save_extracted(&dir, "rust", &extracted);
+        let on_disk = std::fs::read_to_string(dir.join("vstack.toml")).unwrap();
+        assert!(on_disk.contains("rust = \"mine\""), "on disk: {on_disk:?}");
+        assert!(
+            on_disk.ends_with('\n') && !on_disk.ends_with("\n\n"),
+            "exactly one final newline expected: {on_disk:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4688,6 +4725,31 @@ command = \"./scripts/x.sh\"\n";
     }
 
     #[test]
+    fn write_if_changed_heals_crlf_file_with_crlf() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_write_if_changed_crlf_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+
+        let existing = "[a]\r\nx = 1";
+        std::fs::write(&path, existing).unwrap();
+        write_if_changed(&path, "[a]\r\nx = 2".to_string(), existing);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[a]\r\nx = 2\r\n");
+
+        // Mixed endings are not CRLF-throughout: plain LF is appended.
+        write_if_changed(&path, "[a]\r\nx = 3\ny = 4".to_string(), "");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[a]\r\nx = 3\ny = 4\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn write_agent_skills_heals_missing_trailing_newline_once() {
         let dir = std::env::temp_dir().join(format!(
             "vstack_test_agent_skills_heal_{}",
@@ -4855,6 +4917,10 @@ command = \"./scripts/x.sh\"\n";
         assert!(
             after.contains("extra-skill"),
             "new skill entry missing: {after}"
+        );
+        assert!(
+            after.ends_with('\n') && !after.ends_with("\n\n"),
+            "exactly one final newline expected: {after:?}"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
