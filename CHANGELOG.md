@@ -136,6 +136,20 @@
   under `tools/`, enforced PR-time in the preflight job, queue-time in the
   merge group's shell shard, and locally by the pre-commit lane; the
   1000-line bar has a machine enforcer again (VST-248).
+- second-opinion: the cross-model guarantee holds in every mode. Target
+  selection is one roster walk — `SECOND_OPINION_MODELS`, priority-ordered
+  (default `claude codex`) — that skips any target whose declared model
+  identity equals the session's (`SECOND_OPINION_CURRENT_MODEL`, else the
+  detected harness's model; per-target `SECOND_OPINION_<NAME>_MODEL`,
+  default the name), forced `--target`/`SECOND_OPINION_TARGET` included, and
+  refuses (exit 1, every candidate and its reason on stderr, nothing written
+  or invoked) when no eligible model remains. `review` collects
+  `SECOND_OPINION_COUNT` opinions (default 1); 2+ is the former multi-lane
+  union, now opt-in breadth. `SECOND_OPINION_REVIEW_TARGETS` is no longer
+  read (a set value is named on stderr). `SECOND_OPINION_ARTIFACT_DIR`
+  (default `tmp/second-opinion` under `--cwd`, owner-only) is the home for
+  review/audit records written without `--output`. `detect` prints the
+  target(s) a review would run.
 - orch: `PR_REVIEW_QUORUM` — approval-wait's multi-bot enqueue gate. When a
   repo lists its reviewer logins, no success emits (either mode) until every
   listed login has a non-dismissed review pinned to the current head AND

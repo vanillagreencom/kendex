@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Regression test for second-opinion multi-lane review (VST-124).
+# Regression test for second-opinion target selection and multi-lane review.
 #
-# GH-bot parity: model diversity has different blind spots, so a review with no
-# forced target runs EVERY available lane in SECOND_OPINION_REVIEW_TARGETS on
-# the same derived scope and writes one union artifact:
+# Cross-model is the guarantee: every mode walks the SECOND_OPINION_MODELS
+# roster in priority order, never dispatches to the model this session runs
+# (declared identity — SECOND_OPINION_CURRENT_MODEL / SECOND_OPINION_<NAME>_MODEL),
+# and refuses when nothing eligible remains. Breadth is opt-in: with
+# SECOND_OPINION_COUNT >= 2 the selected lanes run on the same derived scope
+# and write one union artifact:
 #   - findings deduplicated by normalized location (file + symbol), duplicate
 #     findings carry every contributing lane in `sources`;
 #   - a suggestion whose location a blocker already covers is dropped;
@@ -11,12 +14,17 @@
 #   - one failed lane degrades coverage LOUDLY (qa_metadata.coverage,
 #     qa_metadata.lanes) instead of failing the run or narrowing silently;
 #   - all lanes failed -> no artifact, exit 4/5 (no-verdict class);
-#   - SECOND_OPINION_TARGET / --target still force the single-lane path;
-#   - a third target is a settings entry (SECOND_OPINION_<NAME>_CMD), not code.
+#   - SECOND_OPINION_TARGET / --target still force the single-lane path, but
+#     never past the self-exclusion guard;
+#   - another target is a settings entry (SECOND_OPINION_<NAME>_CMD), not code.
 #
 # Drives a hermetic copy of the skill (vstack#580) with fake lane CLIs.
 
 set -euo pipefail
+
+# Pin this session's model identity to one no lane declares, so the cross-model
+# guard neither depends on nor is defeated by the harness running the tests.
+export SECOND_OPINION_CURRENT_MODEL=test-harness
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -139,7 +147,7 @@ run_multi() {
   shift
   local rc=0
   set +e
-  env "$@" \
+  env SECOND_OPINION_MODELS="codex claude" SECOND_OPINION_COUNT=2 "$@" \
     SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
     SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
     "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$out" \
@@ -221,16 +229,16 @@ assert_jq "$out4" '.qa_metadata.reviewed_head' "$HEAD_SHA" "single lane also rec
 assert_file_absent "$out4.codex.json" "no lane sidecars in single-lane mode"
 
 # --- Scenario 5: a third target is a settings entry, not new code -------------
-echo "=== scenario 5: custom lane via SECOND_OPINION_REVIEW_TARGETS + <NAME>_CMD ==="
+echo "=== scenario 5: custom lane via SECOND_OPINION_MODELS + <NAME>_CMD ==="
 reset_counts
 out5="$TMP_ROOT/out5.json"
 rc5=0
 run_multi "$out5" \
-  SECOND_OPINION_REVIEW_TARGETS="claude my-model" \
+  SECOND_OPINION_MODELS="claude my-model" \
   SECOND_OPINION_MY_MODEL_CMD="$TMP_ROOT/bin/lane-extra" || rc5=$?
 assert_eq "$rc5" "0" "custom lane review exits 0"
 assert_eq "$(count lane-extra)" "1" "custom lane CLI invoked exactly once"
-assert_eq "$(count lane-codex)" "0" "lanes outside SECOND_OPINION_REVIEW_TARGETS do not run"
+assert_eq "$(count lane-codex)" "0" "lanes outside SECOND_OPINION_MODELS do not run"
 assert_jq "$out5" '.agent' "external-union(claude+my-model)" "union agent includes the custom lane"
 assert_file_exists "$out5.my-model.json" "custom lane artifact kept beside the union"
 
@@ -263,7 +271,7 @@ echo "=== scenario 7: duplicate lane names run once ==="
 reset_counts
 out7="$TMP_ROOT/out7.json"
 rc7=0
-run_multi "$out7" SECOND_OPINION_REVIEW_TARGETS="codex, codex claude" || rc7=$?
+run_multi "$out7" SECOND_OPINION_MODELS="codex, codex claude" || rc7=$?
 assert_eq "$rc7" "0" "duplicate-lane review exits 0"
 assert_eq "$(count lane-codex)" "1" "duplicated lane invoked exactly once"
 assert_jq "$out7" '.qa_metadata.lanes | length' "2" "lane provenance lists each lane once"
@@ -291,6 +299,138 @@ rc9=0
 run_multi "$out9" || rc9=$?
 assert_eq "$rc9" "4" "all lanes answering unusably exits 4"
 assert_file_absent "$out9" "no artifact when every lane answered unusably"
+
+# --- Cross-model guard --------------------------------------------------------
+# run_multi pins SECOND_OPINION_CURRENT_MODEL=test-harness via the export at
+# the top; these scenarios override it per call to stand in a real session.
+cat > "$TMP_ROOT/resp-lane-claude.json" <<'JSON'
+{"agent":"external-claude","timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"clean",
+ "blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}
+JSON
+cat > "$TMP_ROOT/resp-lane-codex.json" <<'JSON'
+{"agent":"external-codex","timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"clean",
+ "blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}
+JSON
+
+echo "=== scenario 10: default count is ONE opinion, first eligible in priority order ==="
+reset_counts
+out10="$TMP_ROOT/out10.json"
+rc10=0
+run_multi "$out10" SECOND_OPINION_COUNT=1 || rc10=$?
+assert_eq "$rc10" "0" "single-opinion review exits 0"
+assert_eq "$(count lane-codex)" "1" "first roster entry runs"
+assert_eq "$(count lane-claude)" "0" "second roster entry does not run at count 1"
+assert_jq "$out10" '.agent' "external-codex" "single-opinion artifact is the lane's own, not a union"
+
+echo "=== scenario 11: the session's own model is excluded even at count 2 ==="
+reset_counts
+out11="$TMP_ROOT/out11.json"
+rc11=0
+run_multi "$out11" SECOND_OPINION_CURRENT_MODEL=codex || rc11=$?
+assert_eq "$rc11" "0" "self-excluded review still exits 0 on the remaining lane"
+assert_eq "$(count lane-codex)" "0" "the session's own model is never invoked"
+assert_eq "$(count lane-claude)" "1" "the other model runs"
+assert_jq "$out11" '.agent' "external-claude" "artifact comes from the cross-model lane only"
+grep -q "skipping codex: runs the same model as this session" "$TMP_ROOT/last.stderr" || fail "self-exclusion is not loud"
+
+echo "=== scenario 12: harness detection excludes without a declaration (control: declared other) ==="
+# CLAUDECODE=1 is what Claude Code sets; with no SECOND_OPINION_CURRENT_MODEL
+# the session identity comes from it. The control run declares a foreign
+# identity under the same env and must dispatch to claude.
+reset_counts
+out12="$TMP_ROOT/out12.json"
+rc12=0
+run_multi "$out12" SECOND_OPINION_CURRENT_MODEL= CLAUDECODE=1 SECOND_OPINION_COUNT=1 SECOND_OPINION_MODELS="claude codex" || rc12=$?
+assert_eq "$rc12" "0" "detected-harness review exits 0"
+assert_eq "$(count lane-claude)" "0" "detected claude session never invokes claude"
+assert_eq "$(count lane-codex)" "1" "detected claude session gets codex"
+reset_counts
+run_multi "$out12" SECOND_OPINION_CURRENT_MODEL=other CLAUDECODE=1 SECOND_OPINION_COUNT=1 SECOND_OPINION_MODELS="claude codex" || true
+assert_eq "$(count lane-claude)" "1" "control: declared identity outranks harness detection"
+
+echo "=== scenario 13: forced target equal to the session model is refused ==="
+reset_counts
+out13="$TMP_ROOT/out13.json"
+rc13=0
+run_multi "$out13" SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_TARGET=claude || rc13=$?
+assert_eq "$rc13" "1" "forced same-model target exits 1"
+assert_file_absent "$out13" "refusal writes no artifact"
+assert_eq "$(count lane-claude)" "0" "refusal invokes no CLI"
+grep -q "refusing to run a second opinion" "$TMP_ROOT/last.stderr" || fail "refusal is not stated"
+
+echo "=== scenario 14: declared <NAME>_MODEL identity is what the guard compares ==="
+# my-model is a Pi-style front end declared to run claude: from a claude
+# session it is excluded and codex is taken instead; from a codex session
+# it is eligible.
+reset_counts
+out14="$TMP_ROOT/out14.json"
+rc14=0
+run_multi "$out14" SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_COUNT=1 \
+  SECOND_OPINION_MODELS="my-model codex" \
+  SECOND_OPINION_MY_MODEL_CMD="$TMP_ROOT/bin/lane-extra" SECOND_OPINION_MY_MODEL_MODEL=claude || rc14=$?
+assert_eq "$rc14" "0" "declared-identity review exits 0"
+assert_eq "$(count lane-extra)" "0" "target declared as the session's model is excluded"
+assert_eq "$(count lane-codex)" "1" "next distinct model in priority order is taken"
+reset_counts
+run_multi "$out14" SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_COUNT=1 \
+  SECOND_OPINION_MODELS="my-model codex" \
+  SECOND_OPINION_MY_MODEL_CMD="$TMP_ROOT/bin/lane-extra" SECOND_OPINION_MY_MODEL_MODEL=claude || true
+assert_eq "$(count lane-extra)" "1" "control: same target is eligible from a different-model session"
+
+echo "=== scenario 15: two roster entries with one declared model count as one opinion ==="
+reset_counts
+out15="$TMP_ROOT/out15.json"
+rc15=0
+run_multi "$out15" SECOND_OPINION_MODELS="claude my-model codex" \
+  SECOND_OPINION_MY_MODEL_CMD="$TMP_ROOT/bin/lane-extra" SECOND_OPINION_MY_MODEL_MODEL=claude || rc15=$?
+assert_eq "$rc15" "0" "distinct-model review exits 0"
+assert_eq "$(count lane-extra)" "0" "a second entry for an already-selected model is skipped"
+assert_eq "$(count lane-codex)" "1" "the second opinion is the next DISTINCT model"
+
+echo "=== scenario 16: nothing eligible -> refuse, no artifact, no CLI spend ==="
+reset_counts
+out16="$TMP_ROOT/out16.json"
+rc16=0
+run_multi "$out16" SECOND_OPINION_CURRENT_MODEL=claude \
+  SECOND_OPINION_MODELS="claude my-model" \
+  SECOND_OPINION_MY_MODEL_CMD="$TMP_ROOT/bin/lane-extra" SECOND_OPINION_MY_MODEL_MODEL=claude || rc16=$?
+assert_eq "$rc16" "1" "all-same-model roster exits 1"
+assert_file_absent "$out16" "refusal writes no artifact"
+assert_eq "$(( $(count lane-claude) + $(count lane-extra) ))" "0" "refusal invokes no CLI"
+grep -q '"current_model": "claude"' "$TMP_ROOT/last.stderr" || fail "refusal does not name the session model"
+grep -q "my-model: runs the same model" "$TMP_ROOT/last.stderr" || fail "refusal does not list every candidate with its reason"
+
+echo "=== scenario 17: quick mode is guarded too ==="
+reset_counts
+rc17=0
+set +e
+env SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_MODELS="codex" \
+  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+  "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" >/dev/null 2>"$TMP_ROOT/last.stderr"
+rc17=$?
+set -e
+assert_eq "$rc17" "1" "quick mode refuses a same-model roster"
+assert_eq "$(count lane-codex)" "0" "quick mode refusal invokes no CLI"
+reset_counts
+set +e
+env SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_MODELS="codex claude" \
+  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+  "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" >/dev/null 2>"$TMP_ROOT/last.stderr"
+rc17b=$?
+set -e
+assert_eq "$rc17b" "0" "control: quick mode takes the next eligible model"
+assert_eq "$(count lane-claude)" "1" "control: quick mode dispatched to the cross-model lane"
+
+echo "=== scenario 18: detect reports the selection and refuses the same way ==="
+got18=$(env SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
+  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+  "$SECOND_OPINION" detect 2>/dev/null) || true
+assert_eq "$got18" "codex" "detect prints the cross-model target"
+rc18=0
+got18b=$(env SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude" \
+  SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+  "$SECOND_OPINION" detect 2>/dev/null) || rc18=$?
+assert_eq "$got18b:$rc18" "none:1" "detect prints none and exits 1 when refusing"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -369,8 +369,19 @@ REVIEW_GATE_MODE = "enforce"
 
 # SECOND OPINION
 
-SECOND_OPINION_TARGET = "codex"
-# Used by: second-opinion. Values: claude, codex.
+SECOND_OPINION_MODELS = "claude codex"
+# Used by: second-opinion. Priority-ordered roster; the first available entry that
+# is not this session's model wins. Per-entry: SECOND_OPINION_<NAME>_CMD and
+# SECOND_OPINION_<NAME>_MODEL (identity, when it differs from the name).
+
+SECOND_OPINION_COUNT = "1"
+# Used by: second-opinion (review mode). Opinions to collect; 2+ unions distinct models.
+
+# SECOND_OPINION_CURRENT_MODEL = "claude"
+# Used by: second-opinion. The model this session runs, for Pi/OpenCode sessions.
+
+SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
+# Used by: second-opinion. Home for records written without --output, relative to --cwd.
 
 SECOND_OPINION_TIMEOUT = "300"
 # Used by: second-opinion.

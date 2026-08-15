@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-model second opinion — detect current harness, call the opposite CLI.
+# Cross-model second opinion — never ask a model to second-guess its own work.
 #
 # Usage:
 #   second-opinion review  [--range <ref..ref>] [--cwd <path>] [--output <path>]
@@ -9,12 +9,15 @@
 #   second-opinion detect
 #
 # Environment:
-#   SECOND_OPINION_TARGET        Force a single target CLI (disables multi-lane review)
+#   SECOND_OPINION_MODELS        Priority-ordered target roster (default: "claude codex")
+#   SECOND_OPINION_COUNT         Opinions to collect in review mode (default: 1)
+#   SECOND_OPINION_CURRENT_MODEL Declared model identity of THIS session (overrides detection)
+#   SECOND_OPINION_<NAME>_MODEL  Declared model identity of target <NAME> (default: <NAME>)
+#   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude/codex have defaults)
+#   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
 #   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 300)
-#   SECOND_OPINION_CLAUDE_CMD    Full claude command
-#   SECOND_OPINION_CODEX_CMD     Full codex command
-#   SECOND_OPINION_<NAME>_CMD    Full command for any custom review target
-#   SECOND_OPINION_REVIEW_TARGETS       Review lanes (default: "codex claude")
+#   SECOND_OPINION_ARTIFACT_DIR  Home for artifacts not anchored by --output
+#                                (default: tmp/second-opinion under --cwd)
 #   SECOND_OPINION_REVIEW_INSTRUCTIONS  Repo instruction-file globs for review
 
 set -euo pipefail
@@ -29,12 +32,9 @@ _CALLER_TARGET="${SECOND_OPINION_TARGET:-}"
 _CALLER_TIMEOUT="${SECOND_OPINION_TIMEOUT:-}"
 _CALLER_CLAUDE_CMD="${SECOND_OPINION_CLAUDE_CMD:-}"
 _CALLER_CODEX_CMD="${SECOND_OPINION_CODEX_CMD:-}"
-# Set-ness (not emptiness) is preserved for the review vars: an explicitly
-# EMPTY caller value is meaningful ("" disables the instruction block / lane
-# list) and must survive the .env reload rather than fall back to project
-# config.
-_CALLER_REVIEW_TARGETS="${SECOND_OPINION_REVIEW_TARGETS-}"
-_CALLER_REVIEW_TARGETS_SET="${SECOND_OPINION_REVIEW_TARGETS+x}"
+# Set-ness (not emptiness) is preserved for the instructions var: an explicitly
+# EMPTY caller value is meaningful ("" disables the instruction block) and must
+# survive the .env reload rather than fall back to project config.
 _CALLER_REVIEW_INSTRUCTIONS="${SECOND_OPINION_REVIEW_INSTRUCTIONS-}"
 _CALLER_REVIEW_INSTRUCTIONS_SET="${SECOND_OPINION_REVIEW_INSTRUCTIONS+x}"
 
@@ -48,7 +48,6 @@ vstack_load_project_env "$PROJECT_ROOT"
 [[ -n "$_CALLER_TIMEOUT" ]] && SECOND_OPINION_TIMEOUT="$_CALLER_TIMEOUT"
 [[ -n "$_CALLER_CLAUDE_CMD" ]] && SECOND_OPINION_CLAUDE_CMD="$_CALLER_CLAUDE_CMD"
 [[ -n "$_CALLER_CODEX_CMD" ]] && SECOND_OPINION_CODEX_CMD="$_CALLER_CODEX_CMD"
-[[ -n "$_CALLER_REVIEW_TARGETS_SET" ]] && SECOND_OPINION_REVIEW_TARGETS="$_CALLER_REVIEW_TARGETS"
 [[ -n "$_CALLER_REVIEW_INSTRUCTIONS_SET" ]] && SECOND_OPINION_REVIEW_INSTRUCTIONS="$_CALLER_REVIEW_INSTRUCTIONS"
 
 # Dependency check
@@ -129,35 +128,47 @@ Modes:
   challenge  Adversarial analysis — accepts prompt, returns text critique
   audit      Deep code examination — accepts prompt, returns review-finding JSON
   quick      Question to alternate model — accepts prompt, returns text
-  detect     Print auto-detected target CLI name and exit
+  detect     Print the target(s) a review would run and exit
 
 Options:
   --prompt <file>   Prompt file (or pass text as positional arg, or pipe stdin)
   --output <path>   Write result to file (default: stdout)
-  --target <name>   Override target: claude | codex
+  --target <name>   Force one target (refused when it is this session's model)
   --range <ref>     Git diff range for review (default: origin/BASE...HEAD)
   --cwd <path>      Working directory for external CLI (default: .)
   --timeout <secs>  CLI timeout (default: 300, env: SECOND_OPINION_TIMEOUT)
   -h, --help        Show this help
 
-Multi-lane review: with no --target and no SECOND_OPINION_TARGET, review mode
-runs EVERY available lane in SECOND_OPINION_REVIEW_TARGETS on the same derived
-scope and writes one union artifact — findings deduplicated by normalized
-location, per-lane provenance in each finding's `sources` and in
-qa_metadata.lanes. Lane artifacts are kept beside it as <output>.<target>.json.
-A failed lane is recorded in the artifact (qa_metadata.coverage="degraded");
-when every lane fails there is no artifact and the run exits 4/5.
+Target selection: every mode walks SECOND_OPINION_MODELS in order and takes the
+first target that is available AND runs a different model from this session —
+the model this session runs is never dispatched to, in any mode, forced or not.
+When no eligible target remains the run refuses (exit 1) and says why.
+Review mode collects SECOND_OPINION_COUNT opinions (default 1); with 2 or more,
+the lanes run in parallel on the same derived scope and one union artifact is
+written — findings deduplicated by normalized location, per-lane provenance in
+each finding's `sources` and in qa_metadata.lanes, lane artifacts kept beside
+it as <output>.<target>.json. A failed lane is recorded in the artifact
+(qa_metadata.coverage="degraded"); when every lane fails there is no artifact
+and the run exits 4/5.
 
 Environment (set in vstack.settings.toml [env] or .env.local):
-  SECOND_OPINION_TARGET      Force a single target CLI (disables multi-lane review)
+  SECOND_OPINION_MODELS      Priority-ordered target roster, space/comma
+                             separated (default: "claude codex")
+  SECOND_OPINION_COUNT       Opinions to collect in review mode (default: 1)
+  SECOND_OPINION_CURRENT_MODEL
+                             Model identity of THIS session; overrides harness
+                             detection. Set it in a multi-model front end (Pi,
+                             OpenCode) so exclusion is model-level
+  SECOND_OPINION_<NAME>_MODEL
+                             Model identity of target <NAME> (default: <NAME>)
+  SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
+                             hyphens become underscores); claude and codex
+                             have defaults (below)
+  SECOND_OPINION_TARGET      Force one target; still subject to self-exclusion
   SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 300)
-  SECOND_OPINION_CLAUDE_CMD  Full claude command (default below)
-  SECOND_OPINION_CODEX_CMD   Full codex command (default below)
-  SECOND_OPINION_<NAME>_CMD  Full command for any custom target (name uppercased,
-                             hyphens become underscores)
-  SECOND_OPINION_REVIEW_TARGETS
-                             Review lanes, space/comma separated (default:
-                             "codex claude"); every available lane runs
+  SECOND_OPINION_ARTIFACT_DIR
+                             Home for review/audit records written without
+                             --output (default: tmp/second-opinion under --cwd)
   SECOND_OPINION_REVIEW_INSTRUCTIONS
                              Repo instruction-file globs appended to the review
                              prompt, resolved inside --cwd (default:
@@ -173,7 +184,8 @@ Default commands:
 
 Exit codes:
   0  success
-  1  config failure (bad target, missing jq), or an unrecoverable non-JSON
+  1  config failure (bad target, missing jq), no eligible cross-model target
+     (refused — never a same-model review), or an unrecoverable non-JSON
      response that survived the one-shot retry (review/audit)
   3  review: derived diff scope is empty or invalid — nothing to review
   4  review/audit: model self-reported no review was performed
@@ -229,7 +241,7 @@ done
 
 detect_current_harness() {
   # Claude Code sets these env vars
-  if [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+  if [[ -n "${CLAUDECODE:-}" ]] || [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
     echo "claude"
     return
   fi
@@ -243,9 +255,8 @@ detect_current_harness() {
     echo "pi"
     return
   fi
-  # OpenCode uses GPT models, so treat as codex for cross-model pairing
   if [[ -n "${OPENCODE:-}" ]]; then
-    echo "codex"
+    echo "opencode"
     return
   fi
   # Process-tree fallback: walk ancestors (Bash tool PPID is the shell, not the harness)
@@ -257,49 +268,60 @@ detect_current_harness() {
       claude*) echo "claude"; return ;;
       codex*)  echo "codex"; return ;;
       pi|pi-*) echo "pi"; return ;;
-      opencode*) echo "codex"; return ;;
+      opencode*) echo "opencode"; return ;;
     esac
   done
   echo "unknown"
 }
 
-resolve_target() {
-  # Explicit flag
-  if [[ -n "$TARGET" ]]; then echo "$TARGET"; return; fi
-  # Env var override
-  if [[ -n "${SECOND_OPINION_TARGET:-}" ]]; then echo "$SECOND_OPINION_TARGET"; return; fi
+# --- Model identity -----------------------------------------------------------
+# The guarantee is cross-MODEL, and a CLI is not a model: Pi and OpenCode front
+# whichever model the session selected, and a session cannot be probed for it
+# from outside. Identity is therefore DECLARED and compared: the current
+# session's identity is SECOND_OPINION_CURRENT_MODEL when set, else the model
+# the detected harness is known to run (claude, codex), else the harness name
+# itself; a target's identity is SECOND_OPINION_<NAME>_MODEL, defaulting to the
+# target name. Identities are lowercase tokens; the built-in ones are "claude"
+# and "codex".
 
-  # Auto-detect: call the opposite of current harness
-  local current
-  current=$(detect_current_harness)
-  case "$current" in
-    claude) echo "codex" ;;
-    codex)  echo "claude" ;;
-    pi)     echo "claude" ;;
-    *)
-      # Unknown harness (OpenCode, Cursor, etc.) — prefer claude since
-      # non-Claude harnesses typically use GPT models already
-      if command -v claude >/dev/null 2>&1; then echo "claude"
-      elif command -v codex >/dev/null 2>&1; then echo "codex"
-      else echo ""; fi
-      ;;
-  esac
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+CURRENT_HARNESS=""
+CURRENT_MODEL=""
+CURRENT_MODEL_DECLARED=false
+resolve_current_model() {
+  CURRENT_HARNESS=$(detect_current_harness)
+  if [[ -n "${SECOND_OPINION_CURRENT_MODEL:-}" ]]; then
+    CURRENT_MODEL=$(lower "$SECOND_OPINION_CURRENT_MODEL")
+    CURRENT_MODEL_DECLARED=true
+  else
+    CURRENT_MODEL="$CURRENT_HARNESS"
+  fi
+}
+
+# Env var naming for a target's settings: name uppercased, hyphens as
+# underscores (Bash 3.2: no ${var^^}).
+target_var() {
+  printf 'SECOND_OPINION_%s_%s' "$(printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_')" "$2"
+}
+target_cmd_var() { target_var "$1" CMD; }
+
+# Declared model identity of a target: SECOND_OPINION_<NAME>_MODEL, else the
+# target's own name.
+target_model() {
+  local var
+  var="$(target_var "$1" MODEL)"
+  if [[ -n "${!var:-}" ]]; then lower "${!var}"; else lower "$1"; fi
 }
 
 # --- Pluggable target commands ------------------------------------------------
-# VST-124: a review target is a NAME plus a full command line. claude and codex
-# carry built-in default commands; any other name resolves ONLY through its
-# SECOND_OPINION_<NAME>_CMD variable, so a third local model CLI is a settings
+# A target is a NAME plus a full command line. claude and codex carry built-in
+# default commands; any other name resolves ONLY through its
+# SECOND_OPINION_<NAME>_CMD variable, so another local model CLI is a settings
 # entry, not new code.
 
 DEFAULT_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 DEFAULT_CODEX_CMD="codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
-
-# Env var that configures a target's full command: name uppercased, hyphens as
-# underscores (Bash 3.2: no ${var^^}).
-target_cmd_var() {
-  printf 'SECOND_OPINION_%s_CMD' "$(printf '%s' "$1" | tr '[:lower:]-' '[:upper:]_')"
-}
 
 # Full command line for a target: its env override, else the built-in default.
 # Empty output = unconfigured target.
@@ -328,95 +350,137 @@ target_available() {
   command -v "$1" >/dev/null 2>&1
 }
 
-# --- Review lane resolution ---------------------------------------------------
-# GH-bot parity (VST-124): different models have different blind spots, so a
-# review with no forced target fans out to EVERY available lane listed in
-# SECOND_OPINION_REVIEW_TARGETS and unions the findings. --target and
-# SECOND_OPINION_TARGET still force a single lane.
+# --- Target selection ---------------------------------------------------------
+# One path for every mode. The roster SECOND_OPINION_MODELS is walked in
+# priority order and a target is taken when it is available and its declared
+# model differs from this session's — the model this session runs is never
+# dispatched to, and multi-lane cannot bypass that because it is the same walk
+# taken further: review mode takes SECOND_OPINION_COUNT distinct models
+# (default 1), every other mode exactly one. A forced target (--target /
+# SECOND_OPINION_TARGET) skips the walk but not the exclusion. When nothing
+# eligible remains the run refuses and says why: a same-model review presented
+# as a second opinion is worse than no review.
+
+[[ -n "${SECOND_OPINION_REVIEW_TARGETS:-}" ]] \
+  && echo "→ SECOND_OPINION_REVIEW_TARGETS is not read; the roster is SECOND_OPINION_MODELS" >&2
+
+DEFAULT_MODELS="claude codex"
+COUNT="${SECOND_OPINION_COUNT:-1}"
+[[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "Error: SECOND_OPINION_COUNT must be a positive integer" >&2; exit 1; }
+WANT=1
+[[ "$MODE" == "review" || "$MODE" == "detect" ]] && WANT="$COUNT"
+
+resolve_current_model
 
 REVIEW_LANES=()
-resolve_review_lanes() {
-  local raw="${SECOND_OPINION_REVIEW_TARGETS-codex claude}"
-  raw="${raw//,/ }"
-  local t seen existing
-  # Same name shape the single-lane path enforces — an arbitrary token would
-  # otherwise reach indirect variable expansion and per-lane file paths. A
-  # duplicate name would launch concurrent children racing on the same lane
-  # artifact/stderr paths and duplicate the lane's provenance, so each
-  # available target joins at most once. Skips are loud.
-  set -f
-  for t in $raw; do
-    set +f
-    if [[ ! "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
-      echo "→ skipping invalid review target name: $t" >&2
-      continue
-    fi
-    seen=""
-    for existing in ${REVIEW_LANES[@]+"${REVIEW_LANES[@]}"}; do
-      [[ "$existing" == "$t" ]] && seen=1 && break
-    done
-    if [[ -n "$seen" ]]; then
-      echo "→ skipping duplicate review target: $t" >&2
-      continue
-    fi
-    target_available "$t" && REVIEW_LANES+=("$t")
+SELECTED_MODELS=()
+# One "target: reason" line per roster entry that was NOT taken — the refusal
+# body, and stderr detail on every run.
+SKIP_REASONS=()
+skip_target() {
+  SKIP_REASONS+=("$1: $2")
+  echo "→ skipping $1: $2" >&2
+}
+
+# Take a target if eligible. Returns 0 when taken.
+consider_target() {
+  local t="$1" model existing
+  if [[ ! "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
+    # An arbitrary token would otherwise reach indirect variable expansion and
+    # per-lane file paths.
+    skip_target "$t" "invalid target name"
+    return 1
+  fi
+  for existing in ${REVIEW_LANES[@]+"${REVIEW_LANES[@]}"}; do
+    # A duplicate would launch concurrent children racing on the same lane
+    # artifact/stderr paths and duplicate the lane's provenance.
+    [[ "$existing" == "$t" ]] && { skip_target "$t" "duplicate review target"; return 1; }
   done
-  set +f
+  model="$(target_model "$t")"
+  if [[ "$model" == "$CURRENT_MODEL" ]]; then
+    skip_target "$t" "runs the same model as this session ($model) — a second opinion must be cross-model"
+    return 1
+  fi
+  for existing in ${SELECTED_MODELS[@]+"${SELECTED_MODELS[@]}"}; do
+    [[ "$existing" == "$model" ]] && { skip_target "$t" "model $model already selected"; return 1; }
+  done
+  if ! target_available "$t"; then
+    skip_target "$t" "CLI not found — install it or configure $(target_cmd_var "$t")"
+    return 1
+  fi
+  REVIEW_LANES+=("$t")
+  SELECTED_MODELS+=("$model")
   return 0
 }
 
+FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
+if [[ -n "$FORCED_TARGET" ]]; then
+  consider_target "$FORCED_TARGET" || true
+else
+  raw="${SECOND_OPINION_MODELS:-$DEFAULT_MODELS}"
+  raw="${raw//,/ }"
+  set -f
+  for t in $raw; do
+    set +f
+    [[ ${#REVIEW_LANES[@]} -lt "$WANT" ]] || break
+    consider_target "$t" || true
+  done
+  set +f
+fi
+
+if [[ "$CURRENT_MODEL" == "pi" || "$CURRENT_MODEL" == "opencode" ]] && ! $CURRENT_MODEL_DECLARED; then
+  echo "→ current session model is undeclared ($CURRENT_HARNESS fronts a selectable model): set SECOND_OPINION_CURRENT_MODEL so exclusion is model-level, not CLI-level" >&2
+fi
+
+if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
+  # No eligible different model. Refuse — never emit a same-model review as a
+  # second opinion, never skip silently. Every candidate and why it was not
+  # taken is in the error, so the fix is one settings edit away.
+  reasons_json=$(printf '%s\n' ${SKIP_REASONS[@]+"${SKIP_REASONS[@]}"} | jq -R 'select(length > 0)' | jq -s .)
+  jq -n --arg current "$CURRENT_MODEL" --argjson candidates "$reasons_json" \
+    '{error: "no eligible cross-model target — refusing to run a second opinion", current_model: $current, candidates: $candidates}' >&2
+  if [[ "$MODE" == "detect" ]]; then echo "none"; fi
+  exit 1
+fi
+
+if [[ "$MODE" == "detect" ]]; then
+  echo "${REVIEW_LANES[*]}"
+  exit 0
+fi
+
 TARGET_CLI=""
 MULTI_LANE=false
-if [[ "$MODE" == "review" && -z "$TARGET" && -z "${SECOND_OPINION_TARGET:-}" ]]; then
-  resolve_review_lanes
-  if [[ ${#REVIEW_LANES[@]} -ge 2 ]]; then
-    MULTI_LANE=true
-  elif [[ ${#REVIEW_LANES[@]} -eq 1 ]]; then
-    TARGET_CLI="${REVIEW_LANES[0]}"
-  else
-    # No configured lane is available — fall through to the legacy resolver so
-    # the error message stays the familiar "CLI not found" shape.
-    TARGET_CLI=$(resolve_target)
-  fi
+if [[ ${#REVIEW_LANES[@]} -ge 2 ]]; then
+  MULTI_LANE=true
 else
-  TARGET_CLI=$(resolve_target)
-fi
-
-# Handle detect mode
-if [[ "$MODE" == "detect" ]]; then
-  if [[ -n "$TARGET_CLI" ]] && target_available "$TARGET_CLI"; then
-    echo "$TARGET_CLI"
-    exit 0
-  else
-    echo "none"
-    exit 1
-  fi
-fi
-
-# Validate target (multi-lane already filtered to available lanes)
-if ! $MULTI_LANE; then
-  if [[ -z "$TARGET_CLI" ]]; then
-    echo '{"error": "No external CLI found. Install claude or codex CLI."}' >&2
-    exit 1
-  fi
-  if [[ ! "$TARGET_CLI" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
-    echo "{\"error\": \"Invalid target name: $TARGET_CLI\"}" >&2
-    exit 1
-  fi
-  if ! target_available "$TARGET_CLI"; then
-    echo "{\"error\": \"CLI not found: $TARGET_CLI. Install it, set SECOND_OPINION_TARGET, or configure $(target_cmd_var "$TARGET_CLI").\"}" >&2
-    exit 1
-  fi
+  TARGET_CLI="${REVIEW_LANES[0]}"
 fi
 
 # Validate CWD
 [[ -d "$CWD" ]] || { echo "Error: --cwd directory not found: $CWD" >&2; exit 1; }
 
 if $MULTI_LANE; then
-  echo "→ second-opinion: targets=$(IFS=+; echo "${REVIEW_LANES[*]}") mode=$MODE (multi-lane) cwd=$CWD timeout=${TIMEOUT}s" >&2
+  echo "→ second-opinion: targets=$(IFS=+; echo "${REVIEW_LANES[*]}") mode=$MODE (multi-lane) current=$CURRENT_MODEL cwd=$CWD timeout=${TIMEOUT}s" >&2
 else
-  echo "→ second-opinion: target=$TARGET_CLI mode=$MODE cwd=$CWD timeout=${TIMEOUT}s" >&2
+  echo "→ second-opinion: target=$TARGET_CLI mode=$MODE current=$CURRENT_MODEL cwd=$CWD timeout=${TIMEOUT}s" >&2
 fi
+
+# --- Artifact home ------------------------------------------------------------
+# Records this run writes that are not anchored by --output — the preserved
+# raw/failed/rejected responses of a stdout-mode review or audit — live under
+# SECOND_OPINION_ARTIFACT_DIR (default tmp/second-opinion inside the reviewed
+# project), never in shared system temp. Owner-only, created on first use.
+artifact_dir() {
+  local dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
+  [[ "$dir" == /* ]] || dir="$CWD/$dir"
+  (umask 077 && mkdir -p -- "$dir") || { echo "Error: cannot create artifact dir: $dir" >&2; exit 1; }
+  printf '%s' "$dir"
+}
+
+# A fresh record file in the artifact home: <mode>-<target>-<kind>.XXXXXX.
+artifact_file() {
+  mktemp "$(artifact_dir)/${MODE}-${TARGET_CLI}-$1.XXXXXX"
+}
 
 # --- Review scope derivation (review mode) ------------------------------------
 # vstack#652: the external model must never be asked to guess its own scope. A
@@ -672,7 +736,7 @@ read_prompt() {
 }
 
 # --- Multi-lane review orchestration ------------------------------------------
-# VST-124: with no forced target, review mode runs every available lane on the
+# With SECOND_OPINION_COUNT >= 2, review mode runs the selected lanes on the
 # SAME derived scope (in parallel — GH bots run concurrently too) and unions
 # their findings, deduplicated by normalized location (file + backticked
 # symbol; the schema forbids line numbers). Each lane is a recursive
@@ -1137,7 +1201,7 @@ preserve_cli_failure_and_fail() {
     mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     sidecar="${OUTPUT_PATH}.failed.json"
   else
-    sidecar=$(mktemp)
+    sidecar=$(artifact_file failed)
   fi
   jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
         --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
@@ -1290,7 +1354,7 @@ preserve_raw_response() {
     mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     RAW_PRESERVED_PATH="${OUTPUT_PATH}.raw.txt"
   else
-    RAW_PRESERVED_PATH=$(mktemp)
+    RAW_PRESERVED_PATH=$(artifact_file raw)
   fi
   printf '%s\n' "$raw" > "$RAW_PRESERVED_PATH"
 }
@@ -1311,14 +1375,14 @@ preserve_raw_and_fail() {
     raw_path="${OUTPUT_PATH}.raw.txt"
     printf '%s\n' "$raw" > "$raw_path"
   else
-    raw_path=$(mktemp)
+    raw_path=$(artifact_file raw)
     printf '%s\n' "$raw" > "$raw_path"
   fi
   if [[ -n "$retry" ]]; then
     if [[ -n "$OUTPUT_PATH" ]]; then
       retry_path="${OUTPUT_PATH}.retry.txt"
     else
-      retry_path=$(mktemp)
+      retry_path=$(artifact_file retry)
     fi
     printf '%s\n' "$retry" > "$retry_path"
   fi
@@ -1401,7 +1465,7 @@ preserve_no_review_and_fail() {
     mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
     sidecar="${OUTPUT_PATH}.${suffix}.json"
   else
-    sidecar=$(mktemp)
+    sidecar=$(artifact_file "$suffix")
   fi
   printf '%s\n' "$json" > "$sidecar"
 

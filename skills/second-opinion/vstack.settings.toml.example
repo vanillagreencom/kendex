@@ -11,17 +11,31 @@ SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --e
 # Used by: second-opinion.
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 
-# Used by: second-opinion (review mode). Space- or comma-separated review lanes;
-# every AVAILABLE lane runs on the same diff and findings are unioned, deduped
-# by location. Adding a third local model CLI is one entry here plus its
-# SECOND_OPINION_<NAME>_CMD (name uppercased, hyphens as underscores).
-SECOND_OPINION_REVIEW_TARGETS = "codex claude"
+# Used by: second-opinion. Priority-ordered target roster, space- or
+# comma-separated. Every mode takes the first entry that is available and
+# runs a model other than this session's; a target that runs the session's own
+# model is never dispatched to. Adding a model CLI is one entry here plus its
+# SECOND_OPINION_<NAME>_CMD (name uppercased, hyphens as underscores), and
+# SECOND_OPINION_<NAME>_MODEL when the CLI fronts a model other than its name.
+SECOND_OPINION_MODELS = "claude codex"
+
+# Used by: second-opinion (review mode). Opinions to collect: 2 or more runs
+# that many distinct models on the same diff and unions the findings.
+SECOND_OPINION_COUNT = "1"
+
+# Used by: second-opinion. The model THIS session runs, for front ends where
+# the CLI does not say (Pi, OpenCode). Claude Code and Codex are detected.
+# SECOND_OPINION_CURRENT_MODEL = "claude"
+
+# Used by: second-opinion. Home for review/audit records written without
+# --output, relative to --cwd (absolute paths are taken as-is).
+SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 
 # Used by: second-opinion (review mode). Glob list of repo instruction files
 # appended to the review prompt (repo-rule adherence lens). Globs resolve
 # inside the reviewed repo (--cwd). Set empty to disable.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 
-# Uncomment only when this project must force one target instead of auto-detecting
-# (this also disables multi-lane review).
+# Uncomment only when this project must force one target instead of walking the
+# roster. A forced target that runs this session's model is refused.
 # SECOND_OPINION_TARGET = "claude"

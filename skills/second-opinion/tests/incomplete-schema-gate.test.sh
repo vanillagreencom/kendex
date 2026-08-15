@@ -18,6 +18,10 @@
 
 set -euo pipefail
 
+# Pin this session's model identity to one no lane declares, so the cross-model
+# guard neither depends on nor is defeated by the harness running the tests.
+export SECOND_OPINION_CURRENT_MODEL=test-harness
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 SECOND_OPINION="$REPO_ROOT/skills/second-opinion/scripts/second-opinion"

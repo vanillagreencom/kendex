@@ -20,6 +20,10 @@
 
 set -euo pipefail
 
+# Pin this session's model identity to one no lane declares, so the cross-model
+# guard neither depends on nor is defeated by the harness running the tests.
+export SECOND_OPINION_CURRENT_MODEL=test-harness
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 SECOND_OPINION="$REPO_ROOT/skills/second-opinion/scripts/second-opinion"
@@ -238,6 +242,43 @@ assert_eq "$(jq -r '.cause_source' "$s6_out.failed.json")" "claude stdout" "side
 assert_file_contains "$s6_out.failed.json" "hit your usage limit" "sidecar cause is populated from stdout, not empty"
 assert_file_contains "$s6_err" "hit your usage limit" "stderr surfaces the stdout-reported cause, not a bare code"
 assert_file_contains "$s6_err" "cause (claude stdout)" "printed cause block names the stdout source"
+
+# --- Scenario 7: stdout-mode records live in the artifact home ---------------
+# Without --output the preserved failure record has no sibling to sit beside;
+# it goes to SECOND_OPINION_ARTIFACT_DIR (default tmp/second-opinion under
+# --cwd), never to shared system temp. Relative values resolve under --cwd;
+# absolute values are taken as-is.
+echo "=== scenario 7: stdout-mode .failed record lands in the artifact home, not TMPDIR ==="
+s7_err="$TMP_ROOT/s7.stderr"
+s7_tmp="$TMP_ROOT/tmpdir7"
+mkdir -p "$s7_tmp"
+rc7=0
+printf '0' > "$COUNTER"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s7_tmp" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s7_err"
+rc7=$?
+set -e
+assert_eq "$rc7" "5" "stdout-mode CLI failure still exits 5"
+s7_rec=$(ls "$WORK"/tmp/second-opinion/review-claude-failed.* 2>/dev/null | head -1)
+[[ -n "$s7_rec" ]] && pass "failure record written under <cwd>/tmp/second-opinion" || fail "no failure record under <cwd>/tmp/second-opinion"
+assert_file_contains "$s7_err" "$WORK/tmp/second-opinion/review-claude-failed." "stderr names the record's project-local path"
+assert_eq "$(ls "$s7_tmp" | wc -l | tr -d ' ')" "0" "nothing is left in TMPDIR by a stdout-mode failure"
+s7_mode=$(stat -c%a "$WORK/tmp/second-opinion" 2>/dev/null || stat -f%Lp "$WORK/tmp/second-opinion")
+assert_eq "$s7_mode" "700" "artifact home is owner-only"
+
+s7_alt="$TMP_ROOT/alt-home"
+rm -rf "$WORK/tmp/second-opinion"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s7_tmp" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  SECOND_OPINION_ARTIFACT_DIR="$s7_alt" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s7_err"
+set -e
+[[ -n "$(ls "$s7_alt"/review-claude-failed.* 2>/dev/null)" ]] && pass "SECOND_OPINION_ARTIFACT_DIR relocates the record" || fail "SECOND_OPINION_ARTIFACT_DIR not honored"
+assert_file_absent "$WORK/tmp/second-opinion" "default home untouched when SECOND_OPINION_ARTIFACT_DIR is set"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

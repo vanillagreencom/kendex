@@ -1,6 +1,6 @@
 # Second Opinion
 
-Cross-model code review and consultation via external AI CLI. `review` mode runs every available review lane (default: codex + claude) on the same diff and unions the findings — model diversity has different blind spots. The other modes auto-detect your current harness and call the opposite — Claude calls Codex, Codex calls Claude, Pi calls Claude.
+Cross-model code review and consultation via external AI CLI. The model your session runs is never asked to review its own work: every mode picks the first entry in your model roster that is available and runs a different model — Claude Code gets Codex, Codex gets Claude — and refuses, stating why, when nothing else is eligible. Want breadth? Raise `SECOND_OPINION_COUNT` and `review` runs that many distinct models on the same diff and unions the findings.
 
 Four modes: `review` (code review → JSON), `challenge` (adversarial analysis → text), `audit` (code examination → JSON), `quick` (question → text).
 
@@ -41,21 +41,23 @@ Project installs seed `vstack.settings.toml` from this skill's `vstack.settings.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `SECOND_OPINION_TARGET` | (unset) | Force a single target; disables multi-lane review |
+| `SECOND_OPINION_MODELS` | `claude codex` | Priority-ordered roster; the first available entry that is not your session's model wins |
+| `SECOND_OPINION_COUNT` | `1` | Opinions a `review` collects; 2+ runs that many distinct models and unions the findings, deduped by location |
+| `SECOND_OPINION_CURRENT_MODEL` | (unset) | The model your session runs, when the CLI cannot tell (Pi, OpenCode); Claude Code and Codex are detected |
+| `SECOND_OPINION_<NAME>_MODEL` | `<name>` | The model a roster entry runs, when it differs from its name (a Pi lane fronting Claude: `claude`) |
+| `SECOND_OPINION_<NAME>_CMD` | (none) | Full command for a roster entry — another model CLI is a settings entry, not new code |
+| `SECOND_OPINION_TARGET` | (unset) | Force one target; refused if it is your session's model |
 | `SECOND_OPINION_TIMEOUT` | `300` | Max seconds to wait |
-| `SECOND_OPINION_CLAUDE_CMD` | (see below) | Full command when calling Claude |
-| `SECOND_OPINION_CODEX_CMD` | (see below) | Full command when calling Codex |
-| `SECOND_OPINION_REVIEW_TARGETS` | `codex claude` | Review lanes; every available lane runs and findings are unioned, deduped by location |
+| `SECOND_OPINION_ARTIFACT_DIR` | `tmp/second-opinion` | Where records land when you pass no `--output` (relative to `--cwd`, owner-only) |
 | `SECOND_OPINION_REVIEW_INSTRUCTIONS` | (see above) | Instruction-file globs appended to the review prompt; set empty to disable |
-| `SECOND_OPINION_<NAME>_CMD` | (none) | Full command for a custom review target — a third model CLI is a settings entry, not new code |
 
 ### Default commands
 
 ```bash
-# When calling Claude (from Codex):
+# Roster entry claude (model identity: claude):
 SECOND_OPINION_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 
-# When calling Codex (from Claude):
+# Roster entry codex (model identity: codex):
 SECOND_OPINION_CODEX_CMD="codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 ```
 

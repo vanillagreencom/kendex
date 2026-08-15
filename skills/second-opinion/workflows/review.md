@@ -2,7 +2,7 @@
 
 Code review of pending changes via external model. The script auto-generates the review prompt — embedded schema, the review lenses, and the repo's own instruction files (both listed in SKILL.md) — so no custom prompt is needed.
 
-With no `--target` and no `SECOND_OPINION_TARGET`, the script runs **every available lane** in `SECOND_OPINION_REVIEW_TARGETS` (default: codex + claude) in parallel and writes one union artifact — do not pass `--target` unless the user asked for a specific model.
+With no `--target` and no `SECOND_OPINION_TARGET`, the script takes the first eligible entry of `SECOND_OPINION_MODELS` that is not this session's model (`SECOND_OPINION_COUNT` of 2 or more runs that many distinct models in parallel and writes one union artifact) — do not pass `--target` unless the user asked for a specific model. A refusal (exit 1, "no eligible cross-model target") is reported as-is, never worked around by forcing the same model.
 
 ## 1. Interpret Scope
 

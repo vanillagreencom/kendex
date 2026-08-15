@@ -6,25 +6,31 @@ SKILL.md; this file is the mechanism behind it.
 
 ## Lane resolution
 
-`SECOND_OPINION_REVIEW_TARGETS` (default `codex claude`, space- or
-comma-separated) lists the lanes. A target joins the run when it has a
-configured command whose first word resolves — the first word is what gets
-executed, and an override may point it away from the target's own name.
+Selection is the same walk every mode takes, carried further. The roster
+`SECOND_OPINION_MODELS` (default `claude codex`, space- or comma-separated) is
+walked in order and a target is taken when all of these hold:
 
-Names must match `^[A-Za-z][A-Za-z0-9_-]*$` and each available target joins at
-most once. An invalid or repeated name is skipped loudly on stderr: an
-arbitrary token would otherwise reach indirect variable expansion and per-lane
-file paths, and a duplicate would launch concurrent children racing on one
-lane's artifact and stderr paths.
+| Check | Skipped when |
+|---|---|
+| Name shape | Not `^[A-Za-z][A-Za-z0-9_-]*$` — an arbitrary token would otherwise reach indirect variable expansion and per-lane file paths |
+| Not a repeat | The name is already taken — a duplicate would launch concurrent children racing on one lane's artifact and stderr paths |
+| Cross-model | Its declared identity (`SECOND_OPINION_<NAME>_MODEL`, default the name) equals the session's (`SECOND_OPINION_CURRENT_MODEL`, else the detected harness's model) |
+| Distinct model | Its identity is already covered by a taken lane — two entries fronting one model are one opinion |
+| Available | Its configured command's first word does not resolve — the first word is what gets executed, and an override may point it away from the target's own name |
 
-Two or more resolved lanes make the run multi-lane. One resolved lane runs as
-a single-lane review; none falls through to the single-lane resolver so the
-error keeps the familiar "CLI not found" shape. `--target` and
-`SECOND_OPINION_TARGET` force a single lane and disable the fan-out.
+Every skip is one line on stderr naming the target and the reason. Review mode
+stops after `SECOND_OPINION_COUNT` lanes (default 1); every other mode after
+one. Two or more lanes make the run multi-lane; one runs as a single-lane
+review; none is a refusal — exit 1, a JSON error on stderr listing every
+candidate with its reason, no artifact, no CLI invoked. `--target` and
+`SECOND_OPINION_TARGET` replace the walk with the one named target, which
+passes the same checks: forcing the session's own model is refused, not
+honoured.
 
 Adding a lane is a settings entry, not new code: add its name to
-`SECOND_OPINION_REVIEW_TARGETS` and define `SECOND_OPINION_<NAME>_CMD` (name
-uppercased, hyphens as underscores).
+`SECOND_OPINION_MODELS`, define `SECOND_OPINION_<NAME>_CMD` (name uppercased,
+hyphens as underscores), and — when the CLI fronts a model other than its own
+name — `SECOND_OPINION_<NAME>_MODEL`.
 
 ## Scope
 

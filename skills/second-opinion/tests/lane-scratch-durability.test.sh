@@ -38,6 +38,10 @@
 
 set -euo pipefail
 
+# Pin this session's model identity to one no lane declares, so the cross-model
+# guard neither depends on nor is defeated by the harness running the tests.
+export SECOND_OPINION_CURRENT_MODEL=test-harness
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
@@ -429,6 +433,7 @@ run_lanes() {
   rm -f "$PERM_PROBE" "$PERM_PROBE.count"
   set +e
   env TMPDIR="$SCRATCH" PATH="${LANE_TEST_PATH:-$PATH}" \
+    SECOND_OPINION_MODELS="codex claude" SECOND_OPINION_COUNT=2 \
     SECOND_OPINION_CLAUDE_CMD="$claude_cmd" \
     SECOND_OPINION_CODEX_CMD="$codex_cmd" \
     "$SECOND_OPINION" review --range HEAD --cwd "$WORK" "$@" \
