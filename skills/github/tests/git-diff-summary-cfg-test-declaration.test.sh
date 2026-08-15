@@ -363,9 +363,9 @@ RUST
     git -C "$unreadable_repo" add src/x/cand.rs
     chmod 000 "$unreadable_repo/src/x/other.rs"
     # Keep the unreadable file out of the diff itself: chmod invalidates its
-    # cached stat, and a pre-existing (unguarded) `git diff -- <prod paths>`
-    # pipeline dies on unreadable diff members. This case targets the
-    # declaration scanner's fail-closed read, not that pipeline.
+    # cached stat, and every content `git diff` scan fails closed (loud exit)
+    # on unreadable diff members. This case targets the declaration scanner's
+    # fail-closed read, not those scans.
     git -C "$unreadable_repo" update-index --assume-unchanged src/x/other.rs
     unreadable_json="$($SUMMARY -C "$unreadable_repo" --head)"
     chmod 644 "$unreadable_repo/src/x/other.rs"
@@ -374,10 +374,13 @@ RUST
     assert_eq "unreadable declaring module fails closed to production scope" \
         "production" "$(jq -r '.scope' <<<"$unreadable_json")"
 
-    # VST-233: an unreadable tracked file INSIDE the diff makes the panic-scan
-    # `git diff` itself fail (exit 128). That must be a named diagnostic and a
-    # non-zero exit — never a bare pipefail death, and never an empty diff that
-    # reads as "no panics". No assume-unchanged here: the failure is the point.
+    # VST-233: an unreadable tracked file INSIDE the diff makes every content
+    # `git diff` scan fail (exit 128) — stats, `*.rs` risk flags, and both
+    # panic-path scans. Whichever scan touches it first (stats runs first)
+    # must exit non-zero with a diagnostic naming `git diff` and, through
+    # git's own stderr, the path — never a bare pipefail death, an empty diff
+    # read as "no panics", or a placeholder stat line. No assume-unchanged
+    # here: the failure is the point.
     unreadable_diff_repo="$SANDBOX/unreadable-diff"
     init_repo "$unreadable_diff_repo"
     mkdir -p "$unreadable_diff_repo/src"
@@ -394,11 +397,11 @@ RUST
     unreadable_diff_out="$($SUMMARY -C "$unreadable_diff_repo" --head 2>"$SANDBOX/unreadable-diff.err")" || unreadable_diff_rc=$?
     unreadable_diff_err="$(cat "$SANDBOX/unreadable-diff.err")"
     chmod 644 "$unreadable_diff_repo/src/lib.rs"
-    assert_eq "unreadable diff member: production panic scan exits non-zero" \
+    assert_eq "unreadable prod-path diff member: exits non-zero" \
         "1" "$unreadable_diff_rc"
-    assert_eq "unreadable diff member: production panic scan names git diff and the path on stderr" \
+    assert_eq "unreadable prod-path diff member: names git diff and the path on stderr" \
         "yes" "$(grep -qE 'git diff failed .*src/lib\.rs' <<<"$unreadable_diff_err" && echo yes || echo no)"
-    assert_eq "unreadable diff member: production panic scan prints no summary" \
+    assert_eq "unreadable prod-path diff member: prints no summary" \
         "" "$unreadable_diff_out"
 
     # The test-path scan on the same failure fails closed too: an unreadable
@@ -415,15 +418,92 @@ RUST
     unreadable_test_out="$($SUMMARY -C "$unreadable_test_repo" --head 2>"$SANDBOX/unreadable-test-diff.err")" || unreadable_test_rc=$?
     unreadable_test_err="$(cat "$SANDBOX/unreadable-test-diff.err")"
     chmod 644 "$unreadable_test_repo/tests/it.rs"
-    assert_eq "unreadable diff member: test panic scan exits non-zero" \
+    assert_eq "unreadable test-path diff member: exits non-zero" \
         "1" "$unreadable_test_rc"
-    assert_eq "unreadable diff member: test panic scan names git diff and the path on stderr" \
+    assert_eq "unreadable test-path diff member: names git diff and the path on stderr" \
         "yes" "$(grep -qE 'git diff failed .*tests/it\.rs' <<<"$unreadable_test_err" && echo yes || echo no)"
-    assert_eq "unreadable diff member: test panic scan prints no summary" \
+    assert_eq "unreadable test-path diff member: prints no summary" \
         "" "$unreadable_test_out"
+
+    # A .rs file outside every panic-scan path (not src/, lib/, tests/) is
+    # read only by the stats and `*.rs` risk-flag scans — the two that used to
+    # swallow git failures into "0 files changed" and "no unsafe/repr(C)/
+    # extern/atomics" respectively.
+    unreadable_bin_repo="$SANDBOX/unreadable-bin-diff"
+    init_repo "$unreadable_bin_repo"
+    mkdir -p "$unreadable_bin_repo/bin"
+    printf 'fn main() {}\n' > "$unreadable_bin_repo/bin/main.rs"
+    git -C "$unreadable_bin_repo" add bin
+    git -C "$unreadable_bin_repo" commit -q -m bin
+    printf 'fn main() {\n    unsafe { core::ptr::null::<u8>().read() };\n}\n' > "$unreadable_bin_repo/bin/main.rs"
+    chmod 000 "$unreadable_bin_repo/bin/main.rs"
+    unreadable_bin_rc=0
+    unreadable_bin_out="$($SUMMARY -C "$unreadable_bin_repo" --head 2>"$SANDBOX/unreadable-bin-diff.err")" || unreadable_bin_rc=$?
+    unreadable_bin_err="$(cat "$SANDBOX/unreadable-bin-diff.err")"
+    chmod 644 "$unreadable_bin_repo/bin/main.rs"
+    assert_eq "unreadable non-panic-path .rs diff member: exits non-zero" \
+        "1" "$unreadable_bin_rc"
+    assert_eq "unreadable non-panic-path .rs diff member: names git diff and the path on stderr" \
+        "yes" "$(grep -qE 'git diff failed .*bin/main\.rs' <<<"$unreadable_bin_err" && echo yes || echo no)"
+    assert_eq "unreadable non-panic-path .rs diff member: prints no summary" \
+        "" "$unreadable_bin_out"
 else
     printf '  SKIP: unreadable-module cases (running as root)\n'
 fi
+
+# Per-scan isolation: a git shim fails exactly the `git diff` invocation whose
+# argument list contains $FAIL_ON_ARG and execs the real git otherwise, so
+# each of the four scans is proven to fail closed under its own label even
+# though on a real unreadable file the stats scan always reports first.
+shim_repo="$SANDBOX/shim"
+init_repo "$shim_repo"
+mkdir -p "$shim_repo/src" "$shim_repo/tests"
+printf 'pub fn a() {}\n' > "$shim_repo/src/lib.rs"
+printf '#[test]\nfn t() {}\n' > "$shim_repo/tests/it.rs"
+git -C "$shim_repo" add src tests
+git -C "$shim_repo" commit -q -m base
+printf 'pub fn a() {\n    panic!("x");\n}\n' > "$shim_repo/src/lib.rs"
+printf '#[test]\nfn t() {\n    let v: u32 = "1".parse().unwrap();\n    assert_eq!(v, 1);\n}\n' > "$shim_repo/tests/it.rs"
+shim_dir="$SANDBOX/git-shim"
+mkdir -p "$shim_dir"
+cat > "$shim_dir/git" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = diff ] && [ -n "${FAIL_ON_ARG:-}" ]; then
+    for a in "$@"; do
+        if [ "$a" = "$FAIL_ON_ARG" ]; then
+            printf 'fatal: shim: injected failure for %s\n' "$FAIL_ON_ARG" >&2
+            exit 128
+        fi
+    done
+fi
+exec "$REAL_GIT" "$@"
+SH
+chmod +x "$shim_dir/git"
+REAL_GIT="$(command -v git)"
+# Control: the shim is transparent when no failure is injected.
+shim_ctrl_json="$(PATH="$shim_dir:$PATH" REAL_GIT="$REAL_GIT" FAIL_ON_ARG= $SUMMARY -C "$shim_repo" --head)"
+assert_eq "git shim without injection is transparent" \
+    '["panic_path_added","test_panic_path_added"]' "$(jq -c '.risk_flags' <<<"$shim_ctrl_json")"
+while IFS='|' read -r shim_label shim_arg; do
+    shim_rc=0
+    shim_out="$(PATH="$shim_dir:$PATH" REAL_GIT="$REAL_GIT" FAIL_ON_ARG="$shim_arg" \
+        $SUMMARY -C "$shim_repo" --head 2>"$SANDBOX/shim.err")" || shim_rc=$?
+    shim_err="$(cat "$SANDBOX/shim.err")"
+    assert_eq "injected git diff failure in the $shim_label scan ($shim_arg): exits non-zero" \
+        "1" "$shim_rc"
+    assert_eq "injected git diff failure in the $shim_label scan ($shim_arg): diagnostic names the scan and the arguments" \
+        "yes" "$(grep -qF "git diff failed (exit 128) while scanning $shim_label (git diff " <<<"$shim_err" \
+            && grep -qF -- "$shim_arg" <<<"$shim_err" && echo yes || echo no)"
+    assert_eq "injected git diff failure in the $shim_label scan ($shim_arg): quotes git's stderr" \
+        "yes" "$(grep -qF 'shim: injected failure' <<<"$shim_err" && echo yes || echo no)"
+    assert_eq "injected git diff failure in the $shim_label scan ($shim_arg): prints no summary" \
+        "" "$shim_out"
+done <<'CASES'
+stats|--stat
+risk flags|*.rs
+panic paths|src/lib.rs
+panic paths|tests/it.rs
+CASES
 
 # --head content reads are tracked-only, like the sibling listing: an
 # UNTRACKED 2018-style parent file carrying a gated declaration must not

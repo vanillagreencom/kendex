@@ -613,20 +613,21 @@ scan_dir_declaring_files() {
     done < <(new_side_rs_siblings "$1")
 }
 
-# panic_scan_diff <out-var> <diff-ref> <path>...
-# `git diff <diff-ref> -- <path>...` for a panic-path scan, failing closed and
+# scan_diff <out-var> <label> <git-diff-arg>...
+# `git diff <git-diff-arg>...` for a scan named <label>, failing closed and
 # loud when git fails (an unreadable tracked file in the diff, exit 128): a
-# bare death under pipefail or an empty diff would both read downstream as
-# "no panics". Stdout lands in <out-var>; git's stderr is kept out of it (a
-# warning must not shift hunk line numbers) and quoted in the diagnostic.
-panic_scan_diff() {
-    local __out_var="$1" __diff_ref="$2"; shift 2
+# bare death under pipefail, an empty diff, or a placeholder stat would each
+# read downstream as "nothing found". Stdout lands in <out-var>; git's stderr
+# is kept out of it (a warning must not shift hunk line numbers) and quoted
+# in the diagnostic.
+scan_diff() {
+    local __out_var="$1" __label="$2"; shift 2
     local __err __rc=0 __out
     __err=$(mktemp -t git-diff-summary-err.XXXXXX)
-    __out=$(git diff "$__diff_ref" -- "$@" 2>"$__err") || __rc=$?
+    __out=$(git diff "$@" 2>"$__err") || __rc=$?
     if [ "$__rc" -ne 0 ]; then
-        printf 'git-diff-summary: git diff failed (exit %d) while scanning panic paths for %s: %s\n' \
-            "$__rc" "$(printf '%s' "$*" | head -c 300)" \
+        printf 'git-diff-summary: git diff failed (exit %d) while scanning %s (git diff %s): %s\n' \
+            "$__rc" "$__label" "$(printf '%s' "$*" | head -c 300)" \
             "$(tr '\n' ' ' <"$__err" | head -c 300)" >&2
         rm -f -- "$__err"
         exit 1
@@ -733,14 +734,16 @@ main() {
     fi
 
     # Get stats
-    local stats
-    stats=$(git diff --stat --stat-count=999 "$diff_ref" 2>/dev/null | tail -1 || echo "0 files changed")
+    local stat_out="" stats
+    scan_diff stat_out "stats" --stat --stat-count=999 "$diff_ref"
+    stats=$(printf '%s\n' "$stat_out" | tail -1)
 
     # Detect risk flags via grep (avoids passing huge diffs through jq)
     local risk_flags="[]"
     local flags=()
-    local rust_diff_added
-    rust_diff_added=$(git diff "$diff_ref" -- '*.rs' 2>/dev/null | grep -E '^\+' || true)
+    local rust_diff_added=""
+    scan_diff rust_diff_added "risk flags" "$diff_ref" -- '*.rs'
+    rust_diff_added=$(printf '%s\n' "$rust_diff_added" | grep -E '^\+' || true)
 
     if echo "$rust_diff_added" | grep -qE '^\+.*unsafe '; then flags+=("unsafe_code_added"); fi
     if echo "$rust_diff_added" | grep -qE '^\+.*#\[repr\(C\)\]'; then flags+=("repr_c_struct_changed"); fi
@@ -782,7 +785,7 @@ main() {
     if [ ${#prod_path_args[@]} -gt 0 ]; then
         # path<TAB>new-side line number of each added panic-pattern line
         local prod_diff="" panic_lines
-        panic_scan_diff prod_diff "$diff_ref" "${prod_path_args[@]}"
+        scan_diff prod_diff "panic paths" "$diff_ref" -- "${prod_path_args[@]}"
         panic_lines=$(printf '%s\n' "$prod_diff" | awk '
             /^diff --git / { path = ""; inhunk = 0 }
             /^\+\+\+ b\//  { path = substr($0, 7); next }
@@ -859,7 +862,7 @@ main() {
     done <<<"$test_paths"
     if [ ${#test_path_args[@]} -gt 0 ]; then
         local test_diff=""
-        panic_scan_diff test_diff "$diff_ref" "${test_path_args[@]}"
+        scan_diff test_diff "panic paths" "$diff_ref" -- "${test_path_args[@]}"
         test_diff=$(printf '%s\n' "$test_diff" | grep -E '^\+' || true)
         if echo "$test_diff" | grep -qE '^\+.*(panic!|unwrap\(\))'; then test_panic=1; fi
     fi
