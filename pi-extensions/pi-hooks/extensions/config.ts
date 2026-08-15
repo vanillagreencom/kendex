@@ -20,10 +20,13 @@ export const DEFAULTS = {
 	preCommitCheck: true,
 	postEditLint: true,
 	taskCompletedCheck: true,
+	sessionDriftCheck: true,
+	sessionDriftAvailable: true,
 	clippyTimeoutMs: 30000,
+	driftCheckTimeoutMs: 30000,
 } as const;
 
-export type HookKey = Exclude<keyof typeof DEFAULTS, "clippyTimeoutMs">;
+export type HookKey = Exclude<keyof typeof DEFAULTS, "clippyTimeoutMs" | "driftCheckTimeoutMs">;
 
 function piUserDir(): string {
 	const home = homedir();
@@ -122,7 +125,7 @@ export function getBool(cfg: VstackConfig, key: HookKey | "enabled"): boolean {
 	return typeof v === "boolean" ? v : (DEFAULTS[key] as boolean);
 }
 
-export function getNumber(cfg: VstackConfig, key: "clippyTimeoutMs"): number {
+export function getNumber(cfg: VstackConfig, key: "clippyTimeoutMs" | "driftCheckTimeoutMs"): number {
 	const v = cfg[key];
 	if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
 	if (typeof v === "string") {

@@ -1,7 +1,7 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.3.0",
-  "description": "First-class Pi port of the vstack safety hooks: bare-cd blocking, pre-commit fmt+clippy, post-edit clippy, end-of-turn lint. Per-hook toggles via pi-extension-manager.",
+  "version": "0.4.0",
+  "description": "First-class Pi port of the vstack safety hooks: bare-cd blocking, pre-commit fmt+clippy, post-edit clippy, end-of-turn lint, session-start vstack drift report. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -75,6 +75,33 @@
           "type": "boolean",
           "default": true,
           "category": "Rust",
+          "apply": "live"
+        },
+        {
+          "key": "sessionDriftCheck",
+          "label": "Session-start drift report",
+          "description": "At session start, run `vstack check --quiet` and hand the agent the drift report: outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`), and items available in the source but not installed (`vstack add --<kind> <name>`, pending your approval). Silent when the install is current, when no vstack binary is on PATH, and on extension reload. Informational only \u2014 never installs, removes, or touches git. Mirrors hooks/session-drift-check.sh.",
+          "type": "boolean",
+          "default": true,
+          "category": "Session",
+          "apply": "live"
+        },
+        {
+          "key": "sessionDriftAvailable",
+          "label": "Include available-but-not-installed items",
+          "description": "Include the available-but-not-installed suggestions in the session-start drift report. Off passes `--no-available`, so only outdated, removed, orphaned, and missing items are reported. Mirrors VSTACK_DRIFT_HOOK_AVAILABLE=off for the shell hook.",
+          "type": "boolean",
+          "default": true,
+          "category": "Session",
+          "apply": "live"
+        },
+        {
+          "key": "driftCheckTimeoutMs",
+          "label": "Drift check timeout",
+          "description": "Maximum milliseconds the session-start `vstack check` may run before it is abandoned. Matches the `timeout: 30` declared in hooks/session-drift-check.sh.",
+          "type": "number",
+          "default": 30000,
+          "category": "Session",
           "apply": "live"
         },
         {

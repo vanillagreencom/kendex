@@ -154,6 +154,20 @@ Key rules:
 
 > **v3 migration:** legacy shared `[agent-frontmatter]` and `tools` allowlists are no longer read. Move overrides into `[agent-frontmatter.<harness>]` and switch allowlists to `deny-tools`.
 
+### Checking For Drift
+
+`vstack check` compares every installed scope against its source and reports outdated items, items removed upstream, items on disk but missing from the lock, lock entries missing from disk, agents referencing uninstalled skills, and items a source ships that the scope never installed (only kinds the scope already uses are offered). Its exit code is the contract: `0` clean, `1` drift found, `2` the check itself could not run.
+
+```bash
+vstack check                 # human report; also looks up the latest CLI version
+vstack check --quiet         # prints nothing when clean — what the session-drift-check hook runs
+vstack check --json          # machine-readable report on stdout
+vstack check --offline       # no network at all
+vstack check --no-available  # skip the available-but-not-installed suggestions
+```
+
+Remote source caches under `~/.vstack/cache/` are refetched at most once every six hours by `check` (never with `--offline`), so a session-start check is instant and works offline. `vstack refresh` applies updates; `check` itself never installs or removes anything.
+
 ### Runtime Settings
 
 Portable skill scripts load runtime settings in this order:
@@ -246,6 +260,7 @@ Windows: CLI runs natively; symlink mode falls back to copy.
 | `pre-commit-check` | `PreToolUse` | Validates formatting and lint before commits. Rust Clippy lane is scoped to staged packages and configurable via `VSTACK_PRE_COMMIT_RUST_CLIPPY` (custom command or `off`). |
 | `post-edit-lint` | `PostToolUse` | Runs lint checks after source edits. |
 | `task-completed-check` | `TaskCompleted` | Runs final lint checks before marking work complete. Claude-Code-only — codex has no clean equivalent event. |
+| `session-drift-check` | `SessionStart` | Runs `vstack check --quiet` and hands the agent the drift report — outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`), items available but not installed (`vstack add --<kind> <name>`, pending your approval). Prints nothing when the install is current; never installs, removes, or touches git. `VSTACK_DRIFT_HOOK=off` disables it, `VSTACK_DRIFT_HOOK_AVAILABLE=off` hides the available-item suggestions. Claude Code and Codex only (native `SessionStart`); Pi gets the same report from `pi-hooks`. |
 
 Hook installation per harness:
 

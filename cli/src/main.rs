@@ -190,8 +190,9 @@ enum Commands {
         harness: Option<String>,
     },
 
-    /// Check installation status (outdated, orphaned, missing).
-    /// Defaults to all scopes.
+    /// Check installation status: outdated, removed upstream, orphaned,
+    /// missing, and available-but-not-installed items. Defaults to all
+    /// scopes. Exit 0 = clean, 1 = drift found, 2 = check could not run.
     Check {
         /// Shortcut for `--scope global`.
         #[arg(short, long)]
@@ -199,6 +200,19 @@ enum Commands {
         /// project | global | all (default: all)
         #[arg(long)]
         scope: Option<String>,
+        /// Print the report as JSON on stdout.
+        #[arg(long)]
+        json: bool,
+        /// Print nothing when there is no drift; drop the per-item listing.
+        #[arg(short, long)]
+        quiet: bool,
+        /// No network: skip the CLI version lookup and the remote source
+        /// cache fetch (which otherwise runs at most once per TTL).
+        #[arg(long)]
+        offline: bool,
+        /// Do not report items available in a source but not installed.
+        #[arg(long)]
+        no_available: bool,
     },
 
     /// Self-update the vstack CLI binary from GitHub releases. Does NOT
@@ -381,10 +395,37 @@ fn main() -> Result<()> {
                 scope::ScopeFilter::resolve(scope.as_deref(), global, scope::ScopeFilter::All)?;
             commands::list::run(scope, harness.as_deref())
         }
-        Some(Commands::Check { global, scope }) => {
-            let scope =
-                scope::ScopeFilter::resolve(scope.as_deref(), global, scope::ScopeFilter::All)?;
-            commands::check::run(scope)
+        Some(Commands::Check {
+            global,
+            scope,
+            json,
+            quiet,
+            offline,
+            no_available,
+        }) => {
+            // Exit codes are the hook contract: 0 clean, 1 drift, 2 the
+            // check itself failed. `?` would fold failure into 1.
+            let outcome =
+                scope::ScopeFilter::resolve(scope.as_deref(), global, scope::ScopeFilter::All)
+                    .and_then(|scope| {
+                        commands::check::run(
+                            scope,
+                            commands::check::CheckOptions {
+                                json,
+                                quiet,
+                                offline,
+                                no_available,
+                            },
+                        )
+                    });
+            match outcome {
+                Ok(commands::check::CheckOutcome::Clean) => Ok(()),
+                Ok(commands::check::CheckOutcome::Drift) => std::process::exit(1),
+                Err(err) => {
+                    eprintln!("Error: {err:#}");
+                    std::process::exit(2);
+                }
+            }
         }
         Some(Commands::Update { force }) => commands::update::run(force),
         Some(Commands::Refresh {

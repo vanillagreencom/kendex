@@ -830,6 +830,48 @@ fn collect_key_values(prefix: &str, table: &toml::value::Table, name: &str, out:
 /// Refresh cached repos for all remote sources found in installed lock entries.
 /// Called once at TUI startup so staleness checks see the latest content.
 pub fn refresh_remote_caches(lock: &LockFile) {
+    refresh_remote_caches_older_than(lock, None);
+}
+
+/// How long `vstack check` trusts a remote source cache before fetching
+/// again. Session-start hooks run `check` on every session, so the fetch is
+/// rate-limited here rather than at each call site.
+pub const REMOTE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// Stamp file recording the last fetch ATTEMPT for a cached remote source.
+/// It lives inside `.git/` so `reset --hard` and `clean` never touch it, and
+/// it is written on failure too — an offline attempt must not retry every
+/// session until the TTL passes.
+fn remote_cache_fetch_stamp(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(".git").join("vstack-fetch-stamp")
+}
+
+/// True when the cache has not been fetched within `max_age`. `None` means
+/// always due.
+pub fn remote_cache_fetch_due(cache_dir: &Path, max_age: Option<std::time::Duration>) -> bool {
+    let Some(max_age) = max_age else {
+        return true;
+    };
+    let Ok(meta) = std::fs::metadata(remote_cache_fetch_stamp(cache_dir)) else {
+        return true;
+    };
+    let Ok(modified) = meta.modified() else {
+        return true;
+    };
+    // A future mtime (clock skew) counts as fresh: `elapsed()` errors, and
+    // treating that as due would refetch on every call until the clock passes it.
+    modified.elapsed().is_ok_and(|age| age >= max_age)
+}
+
+fn stamp_remote_cache_fetch(cache_dir: &Path) {
+    let stamp = remote_cache_fetch_stamp(cache_dir);
+    // Rewrite rather than touch: content is irrelevant, mtime is the record.
+    let _ = std::fs::write(&stamp, b"");
+}
+
+/// [`refresh_remote_caches`] with a freshness bound: a cache fetched (or
+/// attempted) within `max_age` is left alone. `None` always fetches.
+pub fn refresh_remote_caches_older_than(lock: &LockFile, max_age: Option<std::time::Duration>) {
     let mut seen = std::collections::HashSet::new();
     for entry in lock.entries.values() {
         let src = &entry.source;
@@ -843,7 +885,8 @@ pub fn refresh_remote_caches(lock: &LockFile) {
                 .join(".vstack")
                 .join("cache")
                 .join(&cache_key);
-            if cache_dir.join(".git").exists() {
+            if cache_dir.join(".git").exists() && remote_cache_fetch_due(&cache_dir, max_age) {
+                stamp_remote_cache_fetch(&cache_dir);
                 let fetch = std::process::Command::new("git")
                     .args(["fetch", "origin", "--quiet"])
                     .current_dir(&cache_dir)
@@ -860,6 +903,52 @@ pub fn refresh_remote_caches(lock: &LockFile) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_cache_ttl_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn cache_with_git_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack-cache-ttl-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn unstamped_cache_is_due_and_no_bound_is_always_due() {
+        let dir = cache_with_git_dir("unstamped");
+        assert!(remote_cache_fetch_due(
+            &dir,
+            Some(Duration::from_secs(3600))
+        ));
+        assert!(remote_cache_fetch_due(&dir, None));
+        stamp_remote_cache_fetch(&dir);
+        assert!(remote_cache_fetch_due(&dir, None));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fresh_stamp_suppresses_fetch_until_ttl_passes() {
+        let dir = cache_with_git_dir("fresh");
+        stamp_remote_cache_fetch(&dir);
+        assert!(
+            !remote_cache_fetch_due(&dir, Some(Duration::from_secs(3600))),
+            "a just-written stamp must not be due"
+        );
+        // Control: a zero TTL is always due — proves the predicate reads age,
+        // not mere stamp presence.
+        assert!(remote_cache_fetch_due(&dir, Some(Duration::ZERO)));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
 

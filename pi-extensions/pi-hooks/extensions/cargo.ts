@@ -36,6 +36,15 @@ function appendChunk(chunks: Buffer[], chunk: Buffer | string, totalBytes: { val
 }
 
 export function runCargoAsync(args: string[], cwd: string, timeoutMs: number): Promise<CargoResult> {
+	return runCommandAsync("cargo", args, cwd, timeoutMs);
+}
+
+/**
+ * Spawn `command args` in `cwd` with a hard timeout, collecting bounded
+ * stdout/stderr. Never rejects: a spawn failure (ENOENT included) settles as
+ * `exitCode: -1` with the error text in `stderr`.
+ */
+export function runCommandAsync(command: string, args: string[], cwd: string, timeoutMs: number): Promise<CargoResult> {
 	return new Promise((resolve) => {
 		const stdout: Buffer[] = [];
 		const stderr: Buffer[] = [];
@@ -50,7 +59,7 @@ export function runCargoAsync(args: string[], cwd: string, timeoutMs: number): P
 
 		let child: ReturnType<typeof spawn>;
 		try {
-			child = spawn("cargo", args, {
+			child = spawn(command, args, {
 				cwd,
 				detached,
 				stdio: ["ignore", "pipe", "pipe"],
@@ -95,7 +104,7 @@ export function runCargoAsync(args: string[], cwd: string, timeoutMs: number): P
 			killChild("SIGTERM");
 			killTimer = setTimeout(() => {
 				killChild("SIGKILL");
-				finish(-1, `\ncargo ${args.join(" ")} timed out after ${Math.max(1, timeoutMs)}ms and was killed.`);
+				finish(-1, `\n${command} ${args.join(" ")} timed out after ${Math.max(1, timeoutMs)}ms and was killed.`);
 			}, 1000);
 		}, Math.max(1, timeoutMs));
 
