@@ -153,7 +153,7 @@ Deterministic gates first — every finding is fixed here, never carried into re
 
 Then the project's build/test/lint validation command, plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling, and the invariant for a run that outlasts your turn, are in [dev SKILL.md § Validation](../SKILL.md#validation).
 
-Every check, guard, assertion, or test this change adds or modifies has its must-fail control run red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); a guard without one is not validated.
+Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); a guard without one is not validated.
 
 **Visual QA** — **skip if** the issue has no `design` label. Otherwise use the project's visual QA skills to confirm what your change affects renders correctly, not the full checklist. Do NOT capture golden baselines; that happens at submit-pr time.
 

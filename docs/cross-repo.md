@@ -60,7 +60,14 @@ Agreed shape for drovr, memsira, and hyprtrade, settled by live testing on real 
 
 ## A Vendored Tree Is Reviewed Once, Upstream
 
-Consuming repos merge re-vendor PRs whose delta is bytes already reviewed upstream. Route each finding by where its fix would land, never by which file it sits on, and never silence a reviewer by excluding the path — mechanism, wiring, and the per-repo verification protocol: `skills/review-gate/references/vendored-paths.md`.
+Consuming repos merge re-vendor PRs whose delta is bytes already reviewed
+upstream.
+
+- **Route each finding by where its fix would land, never by which file it sits on.**
+- **Never silence a reviewer by excluding the path.**
+
+Mechanism, wiring, and the per-repo verification protocol:
+`skills/review-gate/references/vendored-paths.md`.
 
 ## Do Not Restate Another Repo's Status From A Stale Check
 

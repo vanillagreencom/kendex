@@ -1,7 +1,7 @@
 # vstack issue-label taxonomy
 
-Linear team `vstack` (VST). GitHub `vanillagreencom/vstack` is the code and PR surface;
-issue CREATION syncs one way, GitHub → Linear, so a label applied at file time arrives in
+Linear team `vstack` (VST). GitHub `vanillagreencom/vstack` is the code and PR surface.
+Issue creation syncs one way, GitHub → Linear, so a label applied at file time arrives in
 Linear with the synced issue. Updates and comments on an already-synced issue propagate in
 both directions.
 
