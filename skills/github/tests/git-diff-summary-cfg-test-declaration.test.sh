@@ -373,6 +373,54 @@ RUST
         '["panic_path_added"]' "$(jq -c '.risk_flags' <<<"$unreadable_json")"
     assert_eq "unreadable declaring module fails closed to production scope" \
         "production" "$(jq -r '.scope' <<<"$unreadable_json")"
+
+    # VST-233: an unreadable tracked file INSIDE the diff makes the panic-scan
+    # `git diff` itself fail (exit 128). That must be a named diagnostic and a
+    # non-zero exit — never a bare pipefail death, and never an empty diff that
+    # reads as "no panics". No assume-unchanged here: the failure is the point.
+    unreadable_diff_repo="$SANDBOX/unreadable-diff"
+    init_repo "$unreadable_diff_repo"
+    mkdir -p "$unreadable_diff_repo/src"
+    printf 'pub fn parse(s: &str) -> u32 {\n    s.len() as u32\n}\n' > "$unreadable_diff_repo/src/lib.rs"
+    git -C "$unreadable_diff_repo" add src
+    git -C "$unreadable_diff_repo" commit -q -m lib
+    cat > "$unreadable_diff_repo/src/lib.rs" <<'RUST'
+pub fn parse(s: &str) -> u32 {
+    s.parse().unwrap()
+}
+RUST
+    chmod 000 "$unreadable_diff_repo/src/lib.rs"
+    unreadable_diff_rc=0
+    unreadable_diff_out="$($SUMMARY -C "$unreadable_diff_repo" --head 2>"$SANDBOX/unreadable-diff.err")" || unreadable_diff_rc=$?
+    unreadable_diff_err="$(cat "$SANDBOX/unreadable-diff.err")"
+    chmod 644 "$unreadable_diff_repo/src/lib.rs"
+    assert_eq "unreadable diff member: production panic scan exits non-zero" \
+        "1" "$unreadable_diff_rc"
+    assert_eq "unreadable diff member: production panic scan names git diff and the path on stderr" \
+        "yes" "$(grep -qE 'git diff failed .*src/lib\.rs' <<<"$unreadable_diff_err" && echo yes || echo no)"
+    assert_eq "unreadable diff member: production panic scan prints no summary" \
+        "" "$unreadable_diff_out"
+
+    # The test-path scan on the same failure used to degrade to an empty diff
+    # (fail-open: test_panic_path_added silently never set). Same contract.
+    unreadable_test_repo="$SANDBOX/unreadable-test-diff"
+    init_repo "$unreadable_test_repo"
+    mkdir -p "$unreadable_test_repo/tests"
+    printf '#[test]\nfn t() {}\n' > "$unreadable_test_repo/tests/it.rs"
+    git -C "$unreadable_test_repo" add tests
+    git -C "$unreadable_test_repo" commit -q -m tests
+    printf '#[test]\nfn t() {\n    let v: u32 = "1".parse().unwrap();\n    assert_eq!(v, 1);\n}\n' > "$unreadable_test_repo/tests/it.rs"
+    chmod 000 "$unreadable_test_repo/tests/it.rs"
+    unreadable_test_rc=0
+    unreadable_test_out="$($SUMMARY -C "$unreadable_test_repo" --head 2>"$SANDBOX/unreadable-test-diff.err")" || unreadable_test_rc=$?
+    unreadable_test_err="$(cat "$SANDBOX/unreadable-test-diff.err")"
+    chmod 644 "$unreadable_test_repo/tests/it.rs"
+    assert_eq "unreadable diff member: test panic scan exits non-zero" \
+        "1" "$unreadable_test_rc"
+    assert_eq "unreadable diff member: test panic scan names git diff and the path on stderr" \
+        "yes" "$(grep -qE 'git diff failed .*tests/it\.rs' <<<"$unreadable_test_err" && echo yes || echo no)"
+    assert_eq "unreadable diff member: test panic scan prints no summary" \
+        "" "$unreadable_test_out"
 else
     printf '  SKIP: unreadable-module cases (running as root)\n'
 fi

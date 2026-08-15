@@ -613,6 +613,28 @@ scan_dir_declaring_files() {
     done < <(new_side_rs_siblings "$1")
 }
 
+# panic_scan_diff <out-var> <diff-ref> <path>...
+# `git diff <diff-ref> -- <path>...` for a panic-path scan, failing closed and
+# loud when git fails (an unreadable tracked file in the diff, exit 128): a
+# bare death under pipefail or an empty diff would both read downstream as
+# "no panics". Stdout lands in <out-var>; git's stderr is kept out of it (a
+# warning must not shift hunk line numbers) and quoted in the diagnostic.
+panic_scan_diff() {
+    local __out_var="$1" __diff_ref="$2"; shift 2
+    local __err __rc=0 __out
+    __err=$(mktemp -t git-diff-summary-err.XXXXXX)
+    __out=$(git diff "$__diff_ref" -- "$@" 2>"$__err") || __rc=$?
+    if [ "$__rc" -ne 0 ]; then
+        printf 'git-diff-summary: git diff failed (exit %d) while scanning panic paths for %s: %s\n' \
+            "$__rc" "$(printf '%s' "$*" | head -c 300)" \
+            "$(tr '\n' ' ' <"$__err" | head -c 300)" >&2
+        rm -f "$__err"
+        exit 1
+    fi
+    rm -f "$__err"
+    printf -v "$__out_var" '%s' "$__out"
+}
+
 is_cfg_test_declared() {
     local candidate="$1"
     local basefile dir d relevant_dirs routes
@@ -759,9 +781,9 @@ main() {
     done <<<"$prod_paths"
     if [ ${#prod_path_args[@]} -gt 0 ]; then
         # path<TAB>new-side line number of each added panic-pattern line
-        local panic_lines
-        # shellcheck disable=SC2086
-        panic_lines=$(git diff "$diff_ref" -- "${prod_path_args[@]}" 2>/dev/null | awk '
+        local prod_diff="" panic_lines
+        panic_scan_diff prod_diff "$diff_ref" "${prod_path_args[@]}"
+        panic_lines=$(printf '%s\n' "$prod_diff" | awk '
             /^diff --git / { path = ""; inhunk = 0 }
             /^\+\+\+ b\//  { path = substr($0, 7); next }
             /^@@/ {
@@ -836,9 +858,9 @@ main() {
         [ -n "$p" ] && test_path_args+=("$p")
     done <<<"$test_paths"
     if [ ${#test_path_args[@]} -gt 0 ]; then
-        local test_diff
-        # shellcheck disable=SC2086
-        test_diff=$(git diff "$diff_ref" -- "${test_path_args[@]}" 2>/dev/null | grep -E '^\+' || true)
+        local test_diff=""
+        panic_scan_diff test_diff "$diff_ref" "${test_path_args[@]}"
+        test_diff=$(printf '%s\n' "$test_diff" | grep -E '^\+' || true)
         if echo "$test_diff" | grep -qE '^\+.*(panic!|unwrap\(\))'; then test_panic=1; fi
     fi
     if [ "$test_panic" -eq 1 ]; then flags+=("test_panic_path_added"); fi
