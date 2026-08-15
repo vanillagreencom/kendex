@@ -27,6 +27,15 @@
 #   vstack.settings.toml.example
 #                           the suites whose settings-example-sync tests read
 #                           the root template (orch, linear, review-gate)
+#   cross-suite reads — a suite whose tests read another area's files runs
+#   for changes there too (a mapped suite with no tests is a failure):
+#     skills/**, agents/**  skill:orch (repo-wide doc lints over skills/*/
+#                           SKILL.md and agents/*.md, dev/github/reviewer/
+#                           project-management doc contracts, cross-skill
+#                           reference integrity)
+#     skills/orch/**        skill:github, skill:reviewer
+#     skills/linear/**      skill:project-management
+#     agents/**             skill:reviewer
 #   .github/workflows/** or tools/validate-changed
 #                           every lane (--all)
 #   any change              review-predicate selftest + preflight --base REF
@@ -83,14 +92,21 @@ BASE="$(git merge-base HEAD "$BASE_REF" 2>/dev/null)" || die "no merge base betw
 # `git diff <merge-base>` (no `..`) covers committed AND uncommitted changes;
 # untracked files come from ls-files. --no-renames lists both ends of a move
 # so the source area is validated too. Sorted and deduplicated.
+RAW_FILE="$(mktemp)"
 CHANGED_FILE="$(mktemp)"
-trap 'rm -f "$CHANGED_FILE"' EXIT
+trap 'rm -f "$RAW_FILE" "$CHANGED_FILE"' EXIT
 {
   git -c core.quotePath=false diff --name-only --no-renames -z "$BASE" -- \
     || die "git diff against $BASE failed"
   git -c core.quotePath=false ls-files --others --exclude-standard -z \
     || die "git ls-files failed"
-} | tr '\0' '\n' | LC_ALL=C sort -u >"$CHANGED_FILE"
+} >"$RAW_FILE"
+# The NUL-delimited stream carries a newline only inside a path; such a path
+# would split into fragments below, so refuse rather than derive from them.
+if [ "$(tr -cd '\n' <"$RAW_FILE" | wc -c)" -gt 0 ]; then
+  die "a changed path contains a newline; lanes cannot be derived from it (see: git status --porcelain=v1 -z)"
+fi
+tr '\0' '\n' <"$RAW_FILE" | LC_ALL=C sort -u >"$CHANGED_FILE"
 
 # --- derivation ------------------------------------------------------------
 # Selection flags and lists first, then the lane list is emitted in a fixed
@@ -134,6 +150,10 @@ want_skill() { # name -> 0 when the skill has a suite, 1 otherwise
   in_list "$1" "${want_skills[@]+"${want_skills[@]}"}" || want_skills+=("$1")
 }
 
+want_suite() { # name -> selects the skill's suite unconditionally (cross-suite reads)
+  in_list "$1" "${want_skills[@]+"${want_skills[@]}"}" || want_skills+=("$1")
+}
+
 want_pi() { # name -> 0 when CI runs a suite for it, 1 otherwise
   in_list "$1" "${PI_SUITES[@]}" || return 1
   in_list "$1" "${want_pis[@]+"${want_pis[@]}"}" || want_pis+=("$1")
@@ -172,6 +192,15 @@ else
         name="${path#skills/}"
         name="${name%%/*}"
         want_skill "$name" || NO_LANE+=("$path (skills/$name has no tests)")
+        want_suite orch
+        case "$name" in
+          orch) want_suite github; want_suite reviewer ;;
+          linear) want_suite project-management ;;
+        esac
+        ;;
+      agents/*)
+        want_suite orch
+        want_suite reviewer
         ;;
       hooks/*)
         want_lint=1
@@ -307,23 +336,33 @@ run_file() { # path args... -> the path must exist and be executable
   "$f" "$@"
 }
 
+# Tracked AND untracked (non-ignored) files, since the change set includes
+# untracked paths and CI will see them once committed.
+lint_files() { # pathspec... -> tracked + untracked matches
+  git ls-files --cached --others --exclude-standard -- "$@"
+}
+
 run_lint_shell() {
   local fail=0 f mode
-  # executable bits on skill tests and scripts (+ tools)
+  # executable bits on skill tests and scripts (+ tools); an untracked file
+  # has no index mode, and git records its filesystem mode on add
   while IFS= read -r f; do
     mode="$(git ls-files -s -- "$f" | cut -d' ' -f1)"
     if [ "$mode" = "100644" ]; then
       echo "not executable in git: $f"
       fail=1
+    elif [ -z "$mode" ] && [ ! -x "$f" ]; then
+      echo "not executable (untracked): $f"
+      fail=1
     fi
-  done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' 'tools/tests/*.sh' 'tools/validate-changed' | grep -v '/scripts/lib/' || true)
+  done < <(lint_files 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' 'tools/tests/*.sh' 'tools/validate-changed' | grep -v '/scripts/lib/' || true)
   # skills point reports at `vstack report`
   while IFS= read -r f; do
     if ! grep -qF 'vstack report' "$f"; then
       echo "missing \`vstack report\` guidance: $f"
       fail=1
     fi
-  done < <(git ls-files -- 'skills/*/SKILL.md')
+  done < <(lint_files 'skills/*/SKILL.md')
   return "$fail"
 }
 

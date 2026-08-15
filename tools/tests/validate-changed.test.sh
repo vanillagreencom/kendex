@@ -102,6 +102,12 @@ mkexec skills/preflight/tests/a.test.sh '#!/usr/bin/env bash
 exit 0'
 mkexec skills/linear/tests/a.test.sh '#!/usr/bin/env bash
 exit 0'
+mkexec skills/github/tests/a.test.sh '#!/usr/bin/env bash
+exit 0'
+mkexec skills/reviewer/tests/a.test.sh '#!/usr/bin/env bash
+exit 0'
+mkexec skills/project-management/tests/a.test.sh '#!/usr/bin/env bash
+exit 0'
 mkfile skills/deep-research/tests/deep-research.test.mjs '// stub'
 mkfile skills/deep-research/SKILL.md 'report via vstack report'
 mkexec hooks/tests/h.test.sh '#!/usr/bin/env bash
@@ -155,7 +161,6 @@ touch_path docs/guide.md
 touch_path README.md
 touch_path CHANGELOG.md
 touch_path AGENTS.md
-touch_path agents/rust.md
 touch_path .github/instructions/x.md
 mkfile docs/new-untracked.md 'new'
 run --dry-run
@@ -163,10 +168,17 @@ assert_rc "docs-only" 0
 assert_only_always "docs-only"
 assert_line "docs-only" "no suite lane: docs/guide.md"
 assert_line "docs-only" "no suite lane: docs/new-untracked.md"
-assert_line "docs-only" "no suite lane: agents/rust.md"
 assert_line "docs-only" "no suite lane: .github/instructions/x.md"
 assert_no_line "docs-only" "all lanes:"
-assert_line "docs-only" "7 changed path(s)"
+assert_line "docs-only" "6 changed path(s)"
+reset_tree
+
+# A changed path containing a newline cannot be derived from: fail closed.
+mkfile "docs/bad
+name.md" 'x'
+run --dry-run
+assert_rc "newline in path" 2
+assert_line "newline in path" "a changed path contains a newline"
 reset_tree
 
 # --- 2. skills/<name>/** with tests -----------------------------------------
@@ -175,6 +187,8 @@ run --dry-run
 assert_lane "skill with tests" "skill:withtests"
 assert_line "skill with tests" "bash skills/withtests/tests/*.sh (1 file(s))"
 assert_lane "skill with tests" "lint:shell"
+assert_lane "skill with tests" "skill:orch"
+assert_no_lane "skill with tests" "skill:(github|reviewer|project-management)"
 assert_no_lane "skill with tests" "hooks"
 assert_no_lane "skill with tests" "cli:"
 assert_no_lane "skill with tests" "pi:"
@@ -185,7 +199,8 @@ reset_tree
 # --- 3. skills/<name>/** without tests -> no suite lane -----------------------
 touch_path skills/notests/SKILL.md
 run --dry-run
-assert_no_lane "skill without tests" "skill:"
+assert_no_lane "skill without tests" "skill:notests"
+assert_lane "skill without tests" "skill:orch"
 assert_lane "skill without tests" "lint:shell"
 assert_line "skill without tests" "no suite lane: skills/notests/SKILL.md (skills/notests has no tests)"
 reset_tree
@@ -204,6 +219,9 @@ run --dry-run
 assert_lane "orch" "skill:orch"
 assert_line "orch" "bash skills/orch/tests/run-all.sh"
 assert_no_line "orch" "bash skills/orch/tests/*.sh"
+assert_lane "orch" "skill:github"
+assert_lane "orch" "skill:reviewer"
+assert_no_lane "orch" "skill:project-management"
 reset_tree
 
 # --- 5. review-gate -> its tests/*.sh -----------------------------------------
@@ -279,12 +297,38 @@ assert_lane "root template" "skill:review-gate"
 assert_no_lane "root template" "skill:withtests"
 reset_tree
 
+# --- 11b. cross-suite reads: agents/** -> orch + reviewer; linear -> pm ------
+touch_path agents/rust.md
+run --dry-run
+assert_lane "agents" "skill:orch"
+assert_lane "agents" "skill:reviewer"
+assert_no_lane "agents" "lint:shell"
+assert_no_lane "agents" "skill:(github|project-management|withtests)"
+assert_no_line "agents" "no suite lane:"
+reset_tree
+
+touch_path skills/linear/tests/a.test.sh
+run --dry-run
+assert_lane "linear" "skill:linear"
+assert_lane "linear" "skill:project-management"
+assert_lane "linear" "skill:orch"
+assert_no_lane "linear" "skill:(github|reviewer)"
+reset_tree
+
+# A mapped suite with no tests is a lane that fails, never a silent skip.
+rm -r "$REPO/skills/reviewer"
+touch_path agents/rust.md
+run
+assert_rc "mapped suite missing" 1
+assert_line "mapped suite missing" "FAILED: skill:reviewer — no suite files matched"
+reset_tree
+
 # --- 12. CONTROL: .github/workflows/** -> every lane -------------------------
 touch_path .github/workflows/skill-tests.yml
 run --dry-run
 assert_rc "workflow change" 0
 assert_line "workflow change" "all lanes: .github/workflows/skill-tests.yml changed"
-for id in always:preflight always:gate-selftest lint:shell skill:withtests skill:orch skill:review-gate node:deep-research skill:preflight skill:linear hooks tools cli:cargo-test cli:integration-check pi:pi-qol pi:pi-output-policy pi:pi-agents-tmux pi:pi-codex-minimal-tools pi:pi-questions pi:pi-claude-bridge; do
+for id in always:preflight always:gate-selftest lint:shell skill:withtests skill:orch skill:review-gate node:deep-research skill:preflight skill:linear skill:github skill:reviewer skill:project-management hooks tools cli:cargo-test cli:integration-check pi:pi-qol pi:pi-output-policy pi:pi-agents-tmux pi:pi-codex-minimal-tools pi:pi-questions pi:pi-claude-bridge; do
   assert_lane "workflow change" "$id"
 done
 assert_no_lane "workflow change" "skill:notests"
@@ -349,7 +393,7 @@ assert_line "runner pass" "===== lane: always:preflight"
 assert_line "runner pass" "preflight-stub --base main"
 assert_line "runner pass" "selftest-stub"
 assert_line "runner pass" "=== skills/withtests/tests/a.test.sh"
-assert_line "runner pass" "all 4 lane(s) passed"
+assert_line "runner pass" "all 5 lane(s) passed"
 assert_no_line "runner pass" "FAILED"
 reset_tree
 
@@ -404,6 +448,21 @@ printf 'no routing here\n' >"$REPO/skills/withtests/SKILL.md"
 run
 assert_rc "vstack report lint" 1
 assert_line "vstack report lint" "missing \`vstack report\` guidance: skills/withtests/SKILL.md"
+reset_tree
+
+# Untracked files are linted by their filesystem mode / content: a new 0644
+# script and a new SKILL.md without routing fail before they are ever added.
+mkfile skills/withtests/scripts/new-script '#!/usr/bin/env bash'
+mkfile skills/newskill/SKILL.md 'no routing here'
+run
+assert_rc "untracked lint" 1
+assert_line "untracked lint" "not executable (untracked): skills/withtests/scripts/new-script"
+assert_line "untracked lint" "missing \`vstack report\` guidance: skills/newskill/SKILL.md"
+chmod +x "$REPO/skills/withtests/scripts/new-script"
+printf 'report via vstack report\n' >"$REPO/skills/newskill/SKILL.md"
+run
+assert_rc "untracked lint fixed" 0
+assert_no_line "untracked lint fixed" "not executable"
 reset_tree
 
 # --- 20. --help ------------------------------------------------------------------
