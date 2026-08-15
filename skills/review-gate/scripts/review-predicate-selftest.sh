@@ -84,7 +84,8 @@ ACTIVE_ERROR_PATTERNS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS "en
 ACTIVE_GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
 ACTIVE_THREADS="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 1
 ACTIVE_API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
-ACTIVE_API_DELAY="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
+# Read for the fail-loud parse only — reset() pins the delay to 0.
+rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2" >/dev/null || exit 1
 ACTIVE_CARRY="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 1
 ACTIVE_CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 1
 ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 1
@@ -354,7 +355,11 @@ reset() {
   unset GH_SHIM_FAIL GH_SHIM_FAIL_TIMES GH_SHIM_EMPTY || true
   CFG_THREADS="$ACTIVE_THREADS"
   CFG_API_ATTEMPTS="$ACTIVE_API_ATTEMPTS"
-  CFG_API_DELAY="$ACTIVE_API_DELAY"
+  # PINNED to 0, never the repo's ACTIVE value: the delay paces production
+  # retries and decides no verdict, while under a committed attempts>1 every
+  # fail-loud case would sleep it out per retry. The retry cases below set
+  # their own attempts/delay explicitly.
+  CFG_API_DELAY="0"
   CFG_CARRY="$ACTIVE_CARRY"
   CFG_CARRY_EXCLUDE="$ACTIVE_CARRY_EXCLUDE"
   # PINNED to enforce, never the repo's ACTIVE value: mode "off" is a bypass
