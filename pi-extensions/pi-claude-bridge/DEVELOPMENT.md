@@ -133,3 +133,9 @@ The `./connector-inventory` entry point is a separate build output. It cannot co
 - Integrity diagnostics are written to `<piUserDir>/claude-bridge-diag.log` (`PI_CODING_AGENT_DIR` when set, else `~/.pi/agent`) with counts, affected tool names, and sampled tool-call IDs — only when `CLAUDE_BRIDGE_DEBUG=1`, the same gate as the debug log, and never with user-authored message content (VST-15).
 - `CLAUDE_BRIDGE_ISOLATED=1` (embedding hosts) disables all `AGENTS.md` discovery and all extension-manager/project config overlays, so bridge settings come only from `<piUserDir>/claude-bridge.json`. It also disables project `APPEND_SYSTEM.md` and the `$PATH` Claude executable search. This matters when an in-process host must share `PI_CODING_AGENT_DIR` with Pi but still needs an authoritative executable/connector policy. See `isolatedFromEnv` in `src/config.ts`.
 - Startup preflight failures preserve the underlying `code`, `errno`, `syscall`, `path`, `cwd`, and detected executable file type before handing the error back to the SDK.
+
+## Importing the package root
+
+`pi-claude-bridge`'s `bundle/index.js` keeps `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` as externals, so importing the package root only works from a tree where those resolve — inside the consuming app, not from a repo root or a scratch directory.
+
+**The failure mode is a false negative that looks exactly like a real one.** A root import from the wrong directory returns `ERR_MODULE_NOT_FOUND`, which reads as "the export is missing" and invites an upstream bug report. Run the import from the directory that declares the dependency before concluding anything about the export.
