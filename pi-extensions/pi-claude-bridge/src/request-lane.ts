@@ -22,8 +22,13 @@ function requestLaneStorage(): AsyncLocalStorage<string> {
 	return storage;
 }
 
+/** Run `callback` in the lane for `sessionId`. `undefined` selects the default
+ *  (direct-host) lane even when a named lane is active — a listener that fires
+ *  inside another request's context must not inherit that request's lane. */
 export function runInRequestLane<T>(sessionId: string | undefined, callback: () => T): T {
-	return sessionId !== undefined ? requestLaneStorage().run(sessionId, callback) : callback();
+	const storage = requestLaneStorage();
+	if (sessionId !== undefined) return storage.run(sessionId, callback);
+	return storage.getStore() === undefined ? callback() : storage.exit(callback);
 }
 
 export function currentRequestLaneId(): string | undefined {

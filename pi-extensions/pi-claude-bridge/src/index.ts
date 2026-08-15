@@ -63,7 +63,7 @@ import { registerBridgeCommands } from "./bridge-commands.js";
 import { consumeQuery, emitRateLimitEvent, type ClaudeAttemptFailure } from "./consume-query.js";
 import { buildClaudeQueryOptions } from "./query-options.js";
 import { sdkQueryFactory } from "./sdk-query.js";
-import { runInRequestLane } from "./request-lane.js";
+import { currentRequestLaneId, runInRequestLane } from "./request-lane.js";
 
 // Re-exports: the module decomposition must not change the bundle entry's
 // public surface — unit tests and downstream consumers import these from
@@ -537,6 +537,19 @@ export function streamClaudeAgentSdk(model: Model<any>, context: Context, option
 
 function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream {
 	const stream = newAssistantMessageEventStream();
+	// The lane this request runs in, for callbacks that fire OUTSIDE it: an
+	// AbortSignal listener runs in the aborter's async context, not ours.
+	const laneId = currentRequestLaneId();
+	// Pi marks its compaction and branch-summary one-shots with cacheRetention
+	// "none" and a fresh sessionId per call; no session_shutdown ever prunes
+	// those lanes. Map the hint onto lane lifetime: nothing about this request
+	// is retained once it settles.
+	const ephemeralLane = laneId !== undefined && options?.cacheRetention === "none";
+	const releaseEphemeralLane = (): void => {
+		if (!ephemeralLane) return;
+		deleteSharedSessionLane(laneId);
+		deleteQueryLane(laneId);
+	};
 
 	// DEBUG: trace followUp message triggering
 	const lastMsgRole = context.messages[context.messages.length - 1]?.role;
@@ -667,6 +680,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			c.resetTurnState(model);
 			stream.push({ type: "done", reason: "stop", message: c.turnOutput });
 			stream.end();
+			releaseEphemeralLane();
 		});
 		return stream;
 	}
@@ -697,6 +711,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		queueMicrotask(() => {
 			stream.push({ type: "error", reason: "error", error: errorOutput });
 			stream.end();
+			releaseEphemeralLane();
 		});
 		return stream;
 	}
@@ -772,6 +787,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			queueMicrotask(() => {
 				stream.push({ type: "error", reason: "error", error: errorOutput });
 				stream.end();
+				releaseEphemeralLane();
 			});
 			return stream;
 		}
@@ -1049,7 +1065,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		activeStreamIdleWatchdogs.set(abortCtx, streamIdleWatchdog);
 		streamIdleWatchdog.refresh();
 	}
-	const onAbort = () => {
+	// Runs in the ABORTER's async context (AbortSignal listeners do not inherit
+	// AsyncLocalStorage), so re-enter this request's lane explicitly: the
+	// mismatch report marks the shared record of whatever lane is current.
+	const onAbort = () => runInRequestLane(laneId, () => {
 		wasAborted = true;
 		// Prevent stale deferred messages from being replayed by parent on pop
 		dropDeferredUserMessages("abort");
@@ -1061,7 +1080,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		if (drained > 0) debug(`provider: abort drained ${drained} waiting MCP handler(s) as errors`);
 		abortCtx.pendingResults.clear();
 		requestAbort();
-	};
+	});
 	if (options?.signal) {
 		if (options.signal.aborted) onAbort();
 		else options.signal.addEventListener("abort", onAbort, { once: true });
@@ -1314,7 +1333,9 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			}
 			stream.push({ type: "error", reason: "error", error: abortCtx.turnOutput! });
 			stream.end();
-		});
+		})
+		// After teardown and any retry pipeline: nothing else reads this lane.
+		.finally(releaseEphemeralLane);
 
 	return stream;
 }
@@ -1355,7 +1376,16 @@ export default function (pi: ExtensionAPI) {
 		setSharedSession(null);
 	};
 
+	// The lane this session started in. An in-memory session (`pi --no-session`)
+	// forks by mutating the SAME SessionManager's id before session_shutdown
+	// fires, so the live id there names the fork, not the session being torn
+	// down; the manager identity tells the two apart.
+	let startedLane: { manager: unknown; sessionId: string } | undefined;
+	const shutdownLaneId = (ctx: { sessionManager: { getSessionId(): string } }): string =>
+		startedLane && startedLane.manager === ctx.sessionManager ? startedLane.sessionId : ctx.sessionManager.getSessionId();
+
 	pi.on("session_start", (event, ctx) => runInRequestLane(ctx.sessionManager.getSessionId(), () => {
+		startedLane = { manager: ctx.sessionManager, sessionId: ctx.sessionManager.getSessionId() };
 		recordProjectTrust(ctx);
 		setPiUI(ctx.ui);
 		if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
@@ -1371,7 +1401,8 @@ export default function (pi: ExtensionAPI) {
 		applyProviderRegistration(`session_start:${event.reason}`);
 	}));
 	pi.on("session_shutdown", (_event, ctx) => {
-		const sessionId = ctx.sessionManager.getSessionId();
+		const sessionId = shutdownLaneId(ctx);
+		startedLane = undefined;
 		runInRequestLane(sessionId, () => {
 			cancelScheduledSessionPersistence();
 			clearSession("session_shutdown");

@@ -28129,7 +28129,9 @@ function requestLaneStorage() {
   return storage;
 }
 function runInRequestLane(sessionId, callback) {
-  return sessionId !== void 0 ? requestLaneStorage().run(sessionId, callback) : callback();
+  const storage = requestLaneStorage();
+  if (sessionId !== void 0) return storage.run(sessionId, callback);
+  return storage.getStore() === void 0 ? callback() : storage.exit(callback);
 }
 function currentRequestLaneId() {
   return requestLaneStorage().getStore();
@@ -46372,6 +46374,13 @@ function streamClaudeAgentSdk(model, context, options) {
 }
 function streamClaudeAgentSdkInLane(model, context, options) {
   const stream = newAssistantMessageEventStream();
+  const laneId = currentRequestLaneId();
+  const ephemeralLane = laneId !== void 0 && options?.cacheRetention === "none";
+  const releaseEphemeralLane = () => {
+    if (!ephemeralLane) return;
+    deleteSharedSessionLane(laneId);
+    deleteQueryLane(laneId);
+  };
   const lastMsgRole = context.messages[context.messages.length - 1]?.role;
   const cwd = options?.cwd ?? process.cwd();
   debug(`provider: streamClaudeAgentSdk called, activeQuery=${!!ctx().activeQuery}, lastMsgRole=${lastMsgRole}, isReentrant=${ctx().activeQuery !== null}`);
@@ -46453,6 +46462,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       c.resetTurnState(model);
       stream.push({ type: "done", reason: "stop", message: c.turnOutput });
       stream.end();
+      releaseEphemeralLane();
     });
     return stream;
   }
@@ -46484,6 +46494,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     queueMicrotask(() => {
       stream.push({ type: "error", reason: "error", error: errorOutput });
       stream.end();
+      releaseEphemeralLane();
     });
     return stream;
   }
@@ -46544,6 +46555,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       queueMicrotask(() => {
         stream.push({ type: "error", reason: "error", error: errorOutput });
         stream.end();
+        releaseEphemeralLane();
       });
       return stream;
     }
@@ -46733,7 +46745,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     activeStreamIdleWatchdogs.set(abortCtx, streamIdleWatchdog);
     streamIdleWatchdog.refresh();
   }
-  const onAbort = () => {
+  const onAbort = () => runInRequestLane(laneId, () => {
     wasAborted = true;
     dropDeferredUserMessages("abort");
     reportToolResultMismatch(abortCtx, "abort", cwd, {
@@ -46744,7 +46756,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     if (drained > 0) debug(`provider: abort drained ${drained} waiting MCP handler(s) as errors`);
     abortCtx.pendingResults.clear();
     requestAbort();
-  };
+  });
   if (options?.signal) {
     if (options.signal.aborted) onAbort();
     else options.signal.addEventListener("abort", onAbort, { once: true });
@@ -46916,7 +46928,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     }
     stream.push({ type: "error", reason: "error", error: abortCtx.turnOutput });
     stream.end();
-  });
+  }).finally(releaseEphemeralLane);
   return stream;
 }
 function index_default(pi) {
@@ -46939,7 +46951,10 @@ function index_default(pi) {
     debug(`${event}: clearing session ${activeSession?.sessionId?.slice(0, 8) ?? "none"}`);
     setSharedSession(null);
   };
+  let startedLane;
+  const shutdownLaneId = (ctx2) => startedLane && startedLane.manager === ctx2.sessionManager ? startedLane.sessionId : ctx2.sessionManager.getSessionId();
   pi.on("session_start", (event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => {
+    startedLane = { manager: ctx2.sessionManager, sessionId: ctx2.sessionManager.getSessionId() };
     recordProjectTrust(ctx2);
     setPiUI(ctx2.ui);
     if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
@@ -46949,7 +46964,8 @@ function index_default(pi) {
     applyProviderRegistration(`session_start:${event.reason}`);
   }));
   pi.on("session_shutdown", (_event, ctx2) => {
-    const sessionId = ctx2.sessionManager.getSessionId();
+    const sessionId = shutdownLaneId(ctx2);
+    startedLane = void 0;
     runInRequestLane(sessionId, () => {
       cancelScheduledSessionPersistence();
       clearSession("session_shutdown");

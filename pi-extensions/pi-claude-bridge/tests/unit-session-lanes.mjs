@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import {
+import claudeBridge, {
 	__testGetBridgeIntegrityState,
 	__testSetBridgeIntegrityState,
 	__testSetSdkQueryFactory,
@@ -51,6 +54,44 @@ async function collect(stream) {
 	const events = [];
 	for await (const event of stream) events.push(event);
 	return events;
+}
+
+const userMessage = (text) => ({ role: "user", content: text, timestamp: Date.now() });
+
+/** A fake SDK query that emits one tool_use for `call-<label>` and then stays
+ *  open (like a real query waiting on its MCP handler) until its gate opens. */
+function toolUseQueryFactory(gates) {
+	return ({ prompt }) => {
+		const label = String(prompt);
+		const gate = deferred();
+		gates.set(label, gate);
+		let closed = false;
+		return {
+			async *[Symbol.asyncIterator]() {
+				yield { type: "system", subtype: "init", session_id: `sdk-${label}` };
+				yield { type: "stream_event", event: { type: "message_start", message: { id: `m-${label}`, model: model.id, usage: { input_tokens: 1 } } } };
+				yield { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: `call-${label}`, name: "mytool", input: {} } } };
+				yield { type: "stream_event", event: { type: "content_block_stop", index: 0 } };
+				yield { type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } } };
+				yield { type: "stream_event", event: { type: "message_stop" } };
+				await gate.promise;
+				if (closed) return;
+				yield { type: "result", subtype: "success", result: `done-${label}` };
+			},
+			close() { closed = true; gate.resolve(); },
+			async interrupt() { closed = true; gate.resolve(); },
+		};
+	};
+}
+
+function toolLoopContext(label, resultFor = label, text = `${label}-output`) {
+	return {
+		messages: [
+			userMessage(label),
+			{ role: "assistant", content: [{ type: "toolCall", id: `call-${resultFor}`, name: "mytool", arguments: {} }], timestamp: Date.now() },
+			{ role: "toolResult", toolCallId: `call-${resultFor}`, toolName: "mytool", content: [{ type: "text", text }], isError: false, timestamp: Date.now() },
+		],
+	};
 }
 
 beforeEach(() => {
@@ -251,5 +292,150 @@ describe("provider request session lanes", () => {
 		deleteSharedSessionLane("parent");
 		assert.equal(__testQueryLaneCount(), 0);
 		assert.equal(__testSharedSessionLaneCount(), 0);
+	});
+
+	it("routes concurrent tool-result deliveries to the lane that owns the call", async () => {
+		const gates = new Map();
+		__testSetSdkQueryFactory(toolUseQueryFactory(gates));
+
+		const [aEvents, bEvents] = await Promise.all([
+			collect(streamClaudeAgentSdk(model, { messages: [userMessage("A")] }, { sessionId: "A" })),
+			collect(streamClaudeAgentSdk(model, { messages: [userMessage("B")] }, { sessionId: "B" })),
+		]);
+		assert.ok(aEvents.some((event) => event.type === "done" && event.reason === "toolUse"), "A reached its tool turn");
+		assert.ok(bEvents.some((event) => event.type === "done" && event.reason === "toolUse"), "B reached its tool turn");
+		assert.ok(runInRequestLane("A", () => ctx().activeQuery), "A still active");
+		assert.ok(runInRequestLane("B", () => ctx().activeQuery), "B still active");
+		assert.equal(runInRequestLane("A", () => ctx().hasRecordedToolCall("call-A")), true);
+		assert.equal(runInRequestLane("A", () => ctx().hasRecordedToolCall("call-B")), false);
+		assert.equal(runInRequestLane("B", () => ctx().hasRecordedToolCall("call-B")), true);
+
+		// Pi delivers B's result on lane B: queued for B's handler, invisible to A.
+		assert.ok(streamClaudeAgentSdk(model, toolLoopContext("B"), { sessionId: "B" }));
+		assert.equal(runInRequestLane("B", () => ctx().pendingResults.has("call-B")), true, "B queued its own result");
+		assert.equal(runInRequestLane("A", () => ctx().pendingResults.size), 0, "A untouched by B's delivery");
+		assert.equal(runInRequestLane("A", () => ctx().activeQuery !== null), true, "A still active after B's delivery");
+
+		// A result carrying B's call id delivered on lane A is refused, not applied.
+		assert.ok(streamClaudeAgentSdk(model, toolLoopContext("A", "B", "misrouted"), { sessionId: "A" }));
+		assert.equal(runInRequestLane("A", () => ctx().pendingResults.has("call-B")), false, "A refuses a foreign call id");
+		assert.equal(runInRequestLane("B", () => ctx().pendingResults.get("call-B")?.content?.[0]?.text), "B-output", "B's queued result is intact");
+
+		for (const gate of gates.values()) gate.resolve();
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		assert.equal(runInRequestLane("A", () => ctx().activeQuery), null);
+		assert.equal(runInRequestLane("B", () => ctx().activeQuery), null);
+	});
+
+	it("marks only the aborted lane when the abort comes from another lane's context", async () => {
+		const parentRecord = { sessionId: "parent-session", cursor: 3, cwd: "/parent" };
+		const directRecord = { sessionId: "direct-host-session", cursor: 2, cwd: "/direct" };
+		// The default lane holds a direct-host record (the test hook resets every
+		// named lane when called outside a lane, so seed it first).
+		__testSetBridgeIntegrityState({ sharedSession: { ...directRecord } });
+		runInRequestLane("parent", () => __testSetBridgeIntegrityState({ sharedSession: { ...parentRecord } }));
+		assert.deepEqual(runInRequestLane("parent", () => __testGetBridgeIntegrityState().sharedSession), parentRecord);
+		assert.deepEqual(__testGetBridgeIntegrityState().sharedSession, directRecord);
+		const gates = new Map();
+		__testSetSdkQueryFactory(toolUseQueryFactory(gates));
+
+		// A named-lane child with an in-flight tool call, aborted from the PARENT's
+		// async context (an AbortSignal listener runs in the aborter's context).
+		const childAbort = new AbortController();
+		const child = collect(streamClaudeAgentSdk(model, { messages: [userMessage("child")] }, { sessionId: "child", signal: childAbort.signal }));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.ok(runInRequestLane("child", () => ctx().activeQuery), "child is mid tool call");
+		runInRequestLane("parent", () => childAbort.abort());
+		await child;
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.deepEqual(
+			runInRequestLane("parent", () => __testGetBridgeIntegrityState().sharedSession),
+			parentRecord,
+			"the aborter's lane must not be marked needsRebuild/forceRotate",
+		);
+		assert.deepEqual(__testGetBridgeIntegrityState().sharedSession, directRecord, "the default lane must not be marked either");
+
+		// A DEFAULT-lane query aborted from a named lane marks the default record, not the named lane.
+		const directAbort = new AbortController();
+		const direct = collect(streamClaudeAgentSdk(model, { messages: [userMessage("direct")] }, { signal: directAbort.signal }));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.ok(ctx().activeQuery, "direct-host query is mid tool call");
+		runInRequestLane("parent", () => directAbort.abort());
+		await direct;
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.deepEqual(runInRequestLane("parent", () => __testGetBridgeIntegrityState().sharedSession), parentRecord, "named lane untouched by a default-lane abort");
+		assert.equal(__testGetBridgeIntegrityState().sharedSession?.needsRebuild, true, "the default lane record carries the abort mark");
+		assert.equal(__testGetBridgeIntegrityState().sharedSession?.forceRotate, true);
+	});
+
+	it("releases the lane of a cacheRetention:none one-shot once it settles", async () => {
+		__testSetSdkQueryFactory(({ prompt }) => {
+			const label = String(prompt);
+			return {
+				async *[Symbol.asyncIterator]() {
+					yield { type: "system", subtype: "init", session_id: `sdk-${label}` };
+					for (const message of streamedText(`answer-${label}`)) yield message;
+					yield { type: "result", subtype: "success", result: `answer-${label}` };
+				},
+				close() {},
+				async interrupt() {},
+			};
+		});
+
+		// A regular turn keeps its lane and record; Pi's compaction/branch-summary
+		// one-shots (fresh sessionId + cacheRetention "none") must not accumulate.
+		await collect(streamClaudeAgentSdk(model, { messages: [userMessage("turn")] }, { sessionId: "turn-1" }));
+		for (const n of [1, 2, 3]) {
+			await collect(streamClaudeAgentSdk(model, { messages: [userMessage(`summary-${n}`)] }, { sessionId: `summary-${n}`, cacheRetention: "none" }));
+		}
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		assert.equal(runInRequestLane("turn-1", () => __testGetBridgeIntegrityState().sharedSession?.sessionId), "sdk-turn");
+		assert.equal(__testQueryLaneCount(), 1, "only the regular turn's query lane remains");
+		assert.equal(__testSharedSessionLaneCount(), 1, "only the regular turn's session record remains");
+	});
+
+	it("prunes the session that started, not a fork id mutated onto the same in-memory session manager", () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "bridge-agent-dir-"));
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const handlers = new Map();
+		const pi = {
+			on: (event, handler) => { handlers.set(event, handler); },
+			registerCommand: () => {},
+			registerProvider: () => {},
+			events: { emit: () => {} },
+			appendEntry: () => {},
+		};
+		try {
+			claudeBridge(pi);
+			// In-memory sessions (pi --no-session) fork by mutating the SAME
+			// SessionManager's id before session_shutdown fires.
+			let sessionId = "original";
+			const sessionManager = {
+				getSessionId: () => sessionId,
+				getEntries: () => [],
+				getCwd: () => process.cwd(),
+				buildSessionContext: () => ({ messages: [] }),
+			};
+			const ctxLike = { sessionManager, ui: { notify: () => {} }, cwd: process.cwd() };
+			handlers.get("session_start")({ reason: "startup" }, ctxLike);
+			runInRequestLane("original", () => {
+				ctx().activeQuery = { id: "original-query" };
+				__testSetBridgeIntegrityState({ sharedSession: { sessionId: "original-session", cursor: 1, cwd: "/original" } });
+			});
+			assert.equal(__testQueryLaneCount(), 1);
+			assert.equal(__testSharedSessionLaneCount(), 1);
+
+			sessionId = "forked";
+			handlers.get("session_shutdown")({ reason: "fork" }, ctxLike);
+			assert.equal(__testQueryLaneCount(), 0, "the original session's query lane is pruned");
+			assert.equal(__testSharedSessionLaneCount(), 0, "the original session's record is pruned");
+			assert.equal(runInRequestLane("original", () => __testGetBridgeIntegrityState().sharedSession), null);
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			rmSync(agentDir, { recursive: true, force: true });
+		}
 	});
 });
