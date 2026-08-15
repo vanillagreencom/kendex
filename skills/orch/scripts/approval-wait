@@ -63,6 +63,11 @@
 # or silence when there is nobody to re-request. Both keys read with the
 # orch-env precedence (process env > vstack.settings.toml > default).
 #
+# Reviewer quorum (PR_REVIEW_QUORUM, empty = off): comma/space-separated
+# logins that must EACH have a non-dismissed review pinned to the current
+# head, with zero unresolved threads, before any success emit in either
+# mode. JSON gains quorum_missing when configured.
+#
 # Reviewer-down flexibility (PR_REVIEW_ON_TIMEOUT, default "block"): when the
 # gate signal never arrives before the deadline — the reviewer posted nothing,
 # e.g. its credits are exhausted — "block" reports "timeout" (exit 1) as
@@ -234,6 +239,36 @@ elapsed=0
 NUDGE_SECS="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE_SECS 600)"
 NUDGE_BODY="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE "")"
 
+# Reviewer quorum (PR_REVIEW_QUORUM, empty = off): comma/space-separated
+# reviewer logins that must EACH have a non-dismissed review pinned to the
+# CURRENT head — with zero unresolved threads — before any success emit, in
+# either mode. This is the multi-bot enqueue gate: one bot's verdict cannot
+# open the gate while a listed sibling has not yet reacted to the head it
+# would merge. Deterministic on review objects and thread state only — a
+# bot's findings hold the gate as threads/CR; its prose is never parsed.
+# The deadline and PR_REVIEW_ON_TIMEOUT still bound a dead reviewer.
+QUORUM_RAW="$("$SCRIPT_DIR/orch-env" PR_REVIEW_QUORUM "")"
+QUORUM_LOGINS=""
+if [ -n "$QUORUM_RAW" ]; then
+  QUORUM_LOGINS="$(printf '%s' "$QUORUM_RAW" | tr ',' ' ' | tr -s ' ' | sed 's/^ //; s/ $//')"
+fi
+last_quorum_missing=""
+
+# Logins from QUORUM_LOGINS with no non-dismissed, non-pending review pinned
+# to $1 (head sha) in $2 (REST reviews JSON array). Case-insensitive compare.
+quorum_missing_for_head() {
+  local head="$1" reviews="$2" login missing=""
+  local have
+  have="$(jq -r --arg head "$head"     '[.[] | select(.commit_id == $head and .state != "DISMISSED" and .state != "PENDING")
+      | (.user.login // "") | ascii_downcase] | unique | .[]' <<<"$reviews" 2>/dev/null)" || have=""
+  for login in $QUORUM_LOGINS; do
+    if ! printf '%s\n' "$have" | grep -Fxq "$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')"; then
+      missing="$missing $login"
+    fi
+  done
+  printf '%s' "${missing# }"
+}
+
 # Review-check evidence (vstack#654, vstack#681): PR_REVIEW_CHECK names the
 # check the repo's review bot publishes on analyzed heads; review mode accepts
 # a successful signal of that name on the current head as an alternative to a
@@ -355,6 +390,8 @@ emit_result() {
       --argjson mode_fields "$mode_fields" \
       --argjson transient "$transient_api_errors" \
       --arg error "$error_msg" \
+      --arg quorum "$QUORUM_LOGINS" \
+      --arg quorum_missing "$last_quorum_missing" \
       '{
         status: $s,
         review_decision: $decision,
@@ -363,6 +400,8 @@ emit_result() {
         unresolved_count: $unresolved,
         elapsed_seconds: $elapsed
       } + $mode_fields
+        + (if $quorum == "" then {}
+           else {quorum_missing: ($quorum_missing | split(" ") | map(select(length > 0)))} end)
         + (if $transient > 0 then {transient_api_errors: $transient} else {} end)
         + (if $error == "" then {} else {error: $error} end)'
     return 0
@@ -819,6 +858,29 @@ while true; do
         and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED"))] | length' <<<"$view_json")
     last_reviewer_logins=$(jq -r '[.latestReviews[]? | .author.login // empty]
       | unique | .[]' <<<"$view_json")
+
+    # Quorum needs head-pinned rows; latestReviews carries no commit_id, so
+    # the REST listing is fetched only when a quorum is configured.
+    if [ -n "$QUORUM_LOGINS" ]; then
+      reviews_status=0
+      set +e
+      reviews_json=$(gh api "repos/$REPO/pulls/$PR_NUM/reviews" --paginate 2>"$GH_ERR_FILE" | jq -s 'add // []')
+      reviews_status=$?
+      set -e
+      if [ "$reviews_status" -ne 0 ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$reviews_json"; then
+        if gh_failure_is_transient "$reviews_status"; then
+          transient_retry "review listing failed for PR #$PR_NUM in $REPO"
+          continue
+        fi
+        emit_error "review listing failed for PR #$PR_NUM in $REPO"
+        echo "review listing failed for PR #$PR_NUM in $REPO" >&2
+        exit 1
+      fi
+    fi
+  fi
+
+  if [ -n "$QUORUM_LOGINS" ]; then
+    last_quorum_missing="$(quorum_missing_for_head "$last_head_sha" "${reviews_json:-[]}")"
   fi
 
   # --- unresolved review threads snapshot ---
@@ -850,7 +912,8 @@ while true; do
     elif [ "$check_at_head" -eq 1 ]; then
       review_evidence="check"
     fi
-    if [ -n "$review_evidence" ] && [ "$last_unresolved" -eq 0 ]; then
+    if [ -n "$review_evidence" ] && [ "$last_unresolved" -eq 0 ] \
+      && { [ -z "$QUORUM_LOGINS" ] || [ -z "$last_quorum_missing" ]; }; then
       last_review_evidence="$review_evidence"
       emit_result "reviewed"
       exit 0
@@ -861,16 +924,38 @@ while true; do
     fi
   else
     if [ "$last_review_decision" = "APPROVED" ]; then
-      emit_result "approved"
-      exit 0
+      # A quorum turns approval mode's verdict-only success into the full
+      # gate: every listed login at head AND zero unresolved threads.
+      if [ -z "$QUORUM_LOGINS" ]; then
+        emit_result "approved"
+        exit 0
+      fi
+      if [ -z "$last_quorum_missing" ] && [ "$last_unresolved" -eq 0 ]; then
+        emit_result "approved"
+        exit 0
+      fi
+      if [ "$last_unresolved" -gt 0 ]; then
+        emit_result "comments"
+        exit 1
+      fi
     fi
     if [ "$last_review_decision" = "CHANGES_REQUESTED" ] || [ "$last_changes" -gt 0 ]; then
       emit_result "changes_requested"
       exit 1
     fi
     if [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ]; then
-      emit_result "approved"
-      exit 0
+      if [ -z "$QUORUM_LOGINS" ]; then
+        emit_result "approved"
+        exit 0
+      fi
+      if [ -z "$last_quorum_missing" ] && [ "$last_unresolved" -eq 0 ]; then
+        emit_result "approved"
+        exit 0
+      fi
+      if [ "$last_unresolved" -gt 0 ]; then
+        emit_result "comments"
+        exit 1
+      fi
     fi
     if [ "$last_unresolved" -gt 0 ]; then
       emit_result "comments"

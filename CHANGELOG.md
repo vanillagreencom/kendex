@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- orch: `PR_REVIEW_QUORUM` — approval-wait's multi-bot enqueue gate. When a
+  repo lists its reviewer logins, no success emits (either mode) until every
+  listed login has a non-dismissed review pinned to the current head AND
+  zero threads are unresolved; JSON gains `quorum_missing`. Deterministic on
+  review objects and thread state — a bot's findings hold the gate as
+  threads; its prose is never parsed (the retired bot-review-wait pattern
+  stays retired). Deadline and `PR_REVIEW_ON_TIMEOUT` still bound a dead
+  reviewer. Empty setting = existing behavior.
+
 - orch: `dev-artifact-check` and `review-artifact-check` gain a blocking
   `--wait SECS [--interval N]` mode; the armed watchdog now returns the moment
   a completion artifact lands (or at the deadline), so round closure never

@@ -285,6 +285,9 @@ case "${1:-}" in
         approved_at_head)
           echo '[{"user":{"login":"reviewer1"},"state":"APPROVED","commit_id":"headsha1"}]'
           ;;
+        two_bots_at_head)
+          echo '[{"user":{"login":"bot-a"},"state":"COMMENTED","commit_id":"headsha1"},{"user":{"login":"bot-b"},"state":"APPROVED","commit_id":"headsha1"}]'
+          ;;
         none|*)
           echo '[]'
           ;;
@@ -1439,6 +1442,57 @@ rm -f "$TMP_ROOT/repo/vstack.settings.toml"
 guard_out="$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
   env PR_REVIEW_WAIT_SECS=soon .agents/skills/orch/scripts/orch-env PR_REVIEW_WAIT_SECS 900) )"
 assert_eq "$guard_out" "900" "waitsecs: non-numeric value falls back to the numeric default"
+
+echo "=== PR_REVIEW_QUORUM: multi-bot enqueue gate ==="
+
+# Quorum unmet (neither listed bot has a head-pinned review): no success even
+# with a reviewer1 review at head; deadline reports the missing logins.
+stderr="$TMP_ROOT/q1.err"
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=commented_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 3 --json --mode review) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "timeout" "quorum: unmet quorum holds review mode to the deadline" "$stderr"
+assert_eq "$(json_field "$output" '.quorum_missing | length')" "2" "quorum: both missing logins reported" "$stderr"
+
+# Quorum met, zero threads: review mode succeeds; missing list is empty.
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=two_bots_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: both bots at head satisfies review mode" "$stderr"
+assert_eq "$(json_field "$output" '.quorum_missing | length')" "0" "quorum: met quorum reports no missing logins" "$stderr"
+
+# Case-insensitive login compare.
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="BOT-A, Bot-B" STUB_REVIEWS_MODE=two_bots_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: login compare is case-insensitive" "$stderr"
+
+# Approval mode: an APPROVED verdict alone no longer opens a quorum'd gate
+# when threads are unresolved — the new comments route.
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_APPROVAL_MODE=approved_decision \
+    STUB_REVIEWS_MODE=two_bots_at_head STUB_THREADS_UNRESOLVED=1 \
+    .agents/skills/orch/scripts/approval-wait 1 1 3 --json) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "comments" "quorum: approval mode with open threads routes to comments" "$stderr"
+
+# Approval mode: quorum met + zero threads + APPROVED verdict → approved.
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_APPROVAL_MODE=approved_decision \
+    STUB_REVIEWS_MODE=two_bots_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 30 --json) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "approved" "quorum: met quorum + clean threads approves" "$stderr"
+
+# Approval mode: quorum configured but a listed bot is absent at head →
+# APPROVED verdict alone must NOT succeed; deadline timeout.
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_APPROVAL_MODE=approved_decision \
+    STUB_REVIEWS_MODE=commented_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 3 --json) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "timeout" "quorum: approval verdict alone cannot open an unmet quorum" "$stderr"
+
+# Quorum unset: JSON carries no quorum_missing key (legacy shape).
+output=$(run_wait_json STUB_APPROVAL_MODE=approved_decision 2>"$stderr")
+assert_eq "$(json_field "$output" 'has("quorum_missing")')" "false" "quorum: unset leaves the legacy JSON shape" "$stderr"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
