@@ -7,6 +7,9 @@ BOT_NAME = ""
 BOT_REMOTE_NAME = ""
 CI_FIX_MAX_CYCLES = "6"
 DECISIONS_DIR = "docs/decisions"
+# Diff-scoped local validation mirroring skill-tests.yml's lanes; the merge
+# queue runs the full suite once on the merged result.
+DEV_VALIDATE_CMD = "tools/validate-changed"
 GH_BOT_USERNAME = ""
 GH_ISSUE_PATTERN = "vst-[0-9]+"
 GH_VERIFY_CMD = ""

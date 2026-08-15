@@ -1,0 +1,428 @@
+#!/usr/bin/env bash
+# tools/validate-changed — diff-scoped local validation that mirrors CI.
+#
+# Derives the suites to run from the changed paths (commits since the merge
+# base, plus uncommitted and untracked files), prints the derived lane list,
+# then runs the lanes exactly as .github/workflows/skill-tests.yml runs them.
+# That workflow is the source of truth: every lane here is a step there, and
+# a path CI does not test maps to no suite lane beyond the always-on checks.
+#
+# usage: tools/validate-changed [--base REF] [--all] [--dry-run] [--help]
+#
+#   --base REF   diff against the merge base of HEAD and REF
+#                (default: origin/main, falling back to main)
+#   --all        run every lane, including the slow CLI integration check
+#   --dry-run    print the derived lane list and exit
+#
+# Lane derivation (changed path -> lane):
+#   skills/<name>/**        bash skills/<name>/tests/*.sh (skills with tests;
+#                           orch: tests/run-all.sh; deep-research: node --test)
+#   hooks/**                bash hooks/tests/*.sh
+#   tools/**                bash tools/tests/*.sh
+#   cli/**                  cargo test --manifest-path cli/Cargo.toml
+#                           (cli/scripts/integration-check.sh only under --all)
+#   pi-extensions/<name>/** that extension's CI suite, install steps included
+#   skills/ hooks/ tools/   the shell shard's lints (executable bits,
+#                           `vstack report` guidance)
+#   vstack.settings.toml.example
+#                           the suites whose settings-example-sync tests read
+#                           the root template (orch, linear, review-gate)
+#   .github/workflows/** or tools/validate-changed
+#                           every lane (--all)
+#   any change              review-predicate selftest + preflight --base REF
+#
+# Every selected lane runs even after a failure; failures are announced
+# inline and again in a FAILED LANES block at the end (CI's convention), and
+# the exit status is non-zero. A selected lane whose suite path is missing is
+# a failure, never a skip.
+set -euo pipefail
+
+usage() {
+  awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"
+}
+
+die() {
+  printf 'validate-changed: %s\n' "$*" >&2
+  exit 2
+}
+
+BASE_REF=""
+ALL=0
+DRY_RUN=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --base) [ $# -ge 2 ] || die "--base requires a ref"; shift; BASE_REF="$1" ;;
+    --base=*) BASE_REF="${1#--base=}" ;;
+    --all) ALL=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
+cd "$REPO_ROOT"
+git rev-parse --verify --quiet HEAD >/dev/null || die "the repository has no commits yet"
+
+# --- base ------------------------------------------------------------------
+if [ -n "$BASE_REF" ]; then
+  git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || die "--base ref does not resolve to a commit: $BASE_REF"
+else
+  for cand in origin/main main; do
+    if git rev-parse --verify --quiet "$cand^{commit}" >/dev/null; then
+      BASE_REF="$cand"
+      break
+    fi
+  done
+  [ -n "$BASE_REF" ] || die "neither origin/main nor main resolves — pass --base REF"
+fi
+BASE="$(git merge-base HEAD "$BASE_REF" 2>/dev/null)" || die "no merge base between HEAD and $BASE_REF"
+
+# --- change set ------------------------------------------------------------
+# `git diff <merge-base>` (no `..`) covers committed AND uncommitted changes;
+# untracked files come from ls-files. --no-renames lists both ends of a move
+# so the source area is validated too. Sorted and deduplicated.
+CHANGED_FILE="$(mktemp)"
+trap 'rm -f "$CHANGED_FILE"' EXIT
+{
+  git -c core.quotePath=false diff --name-only --no-renames -z "$BASE" -- \
+    || die "git diff against $BASE failed"
+  git -c core.quotePath=false ls-files --others --exclude-standard -z \
+    || die "git ls-files failed"
+} | tr '\0' '\n' | LC_ALL=C sort -u >"$CHANGED_FILE"
+
+# --- derivation ------------------------------------------------------------
+# Selection flags and lists first, then the lane list is emitted in a fixed
+# order (always-on, lints, skills, hooks, tools, cli, pi) so the printed plan
+# does not depend on path sort order. Indexed (not associative) arrays keep
+# this runnable on bash 3.2.
+LINT_SHELL_DESC="executable bits + \`vstack report\` guidance (shell shard lints)"
+PI_SUITES=(pi-qol pi-output-policy pi-agents-tmux pi-codex-minimal-tools pi-questions pi-claude-bridge)
+
+want_lint=0
+want_hooks=0
+want_tools=0
+want_cli=0
+want_cli_integration=0
+want_skills=()   # skill names (deduplicated below)
+want_pis=()      # pi extension names with a CI suite
+NO_LANE=()
+
+in_list() { # needle list...
+  local x needle="$1"
+  shift
+  for x in "$@"; do
+    [ "$x" = "$needle" ] && return 0
+  done
+  return 1
+}
+
+# A skill has a suite when it is orch (its runner), deep-research (node), or
+# owns tests/*.sh files — the same shapes the shards run.
+skill_has_suite() { # name
+  local f
+  case "$1" in orch | deep-research) return 0 ;; esac
+  for f in "skills/$1/tests/"*.sh; do
+    [ -e "$f" ] && return 0
+  done
+  return 1
+}
+
+want_skill() { # name -> 0 when the skill has a suite, 1 otherwise
+  skill_has_suite "$1" || return 1
+  in_list "$1" "${want_skills[@]+"${want_skills[@]}"}" || want_skills+=("$1")
+}
+
+want_pi() { # name -> 0 when CI runs a suite for it, 1 otherwise
+  in_list "$1" "${PI_SUITES[@]}" || return 1
+  in_list "$1" "${want_pis[@]+"${want_pis[@]}"}" || want_pis+=("$1")
+}
+
+ALL_REASON=""
+if [ "$ALL" -eq 1 ]; then
+  ALL_REASON="--all"
+else
+  while IFS= read -r path; do
+    case "$path" in
+      .github/workflows/* | tools/validate-changed) ALL_REASON="$path changed"; break ;;
+    esac
+  done <"$CHANGED_FILE"
+fi
+
+if [ -n "$ALL_REASON" ]; then
+  want_lint=1
+  want_hooks=1
+  want_tools=1
+  want_cli=1
+  want_cli_integration=1
+  for d in skills/*/; do
+    [ -d "$d" ] || continue
+    name="${d#skills/}"
+    want_skill "${name%/}" || true
+  done
+  for name in "${PI_SUITES[@]}"; do
+    want_pi "$name"
+  done
+else
+  while IFS= read -r path; do
+    case "$path" in
+      skills/*/*)
+        want_lint=1
+        name="${path#skills/}"
+        name="${name%%/*}"
+        want_skill "$name" || NO_LANE+=("$path (skills/$name has no tests)")
+        ;;
+      hooks/*)
+        want_lint=1
+        want_hooks=1
+        ;;
+      tools/*)
+        want_lint=1
+        want_tools=1
+        ;;
+      cli/*)
+        want_cli=1
+        ;;
+      pi-extensions/*/*)
+        name="${path#pi-extensions/}"
+        name="${name%%/*}"
+        want_pi "$name" || NO_LANE+=("$path (CI runs no suite for pi-extensions/$name)")
+        ;;
+      vstack.settings.toml.example)
+        # Read by these skills' settings-example-sync tests.
+        for name in orch linear review-gate; do
+          want_skill "$name" || NO_LANE+=("$path (skills/$name has no tests)")
+        done
+        ;;
+      *)
+        NO_LANE+=("$path")
+        ;;
+    esac
+  done <"$CHANGED_FILE"
+fi
+
+# --- lane list -------------------------------------------------------------
+# LANE_IDS is the ordered lane list; LANE_DESC[i] its printed command
+# summary. Ids name the workflow step they mirror; run_lane dispatches on id.
+LANE_IDS=()
+LANE_DESC=()
+
+add_lane() { # id desc
+  LANE_IDS+=("$1")
+  LANE_DESC+=("$2")
+}
+
+count_glob() { # glob... -> number of existing matches
+  local f n=0
+  for f in "$@"; do
+    [ -e "$f" ] && n=$((n + 1))
+  done
+  echo "$n"
+}
+
+add_lane "always:preflight" "skills/preflight/scripts/preflight --base $BASE_REF"
+add_lane "always:gate-selftest" "skills/review-gate/scripts/review-predicate-selftest.sh"
+[ "$want_lint" -eq 1 ] && add_lane "lint:shell" "$LINT_SHELL_DESC"
+for name in $(printf '%s\n' "${want_skills[@]+"${want_skills[@]}"}" | LC_ALL=C sort); do
+  case "$name" in
+    orch) add_lane "skill:orch" "bash skills/orch/tests/run-all.sh" ;;
+    deep-research)
+      add_lane "node:deep-research" "node --test skills/deep-research/tests/deep-research.test.mjs"
+      n="$(count_glob "skills/$name/tests/"*.sh)"
+      [ "$n" -gt 0 ] && add_lane "skill:$name" "bash skills/$name/tests/*.sh ($n file(s))"
+      ;;
+    *)
+      n="$(count_glob "skills/$name/tests/"*.sh)"
+      add_lane "skill:$name" "bash skills/$name/tests/*.sh ($n file(s))"
+      ;;
+  esac
+done
+[ "$want_hooks" -eq 1 ] && add_lane "hooks" "bash hooks/tests/*.sh"
+[ "$want_tools" -eq 1 ] && add_lane "tools" "bash tools/tests/*.sh"
+[ "$want_cli" -eq 1 ] && add_lane "cli:cargo-test" "cargo test --manifest-path cli/Cargo.toml"
+[ "$want_cli_integration" -eq 1 ] && add_lane "cli:integration-check" "cli/scripts/integration-check.sh (slow; --all only)"
+for name in "${PI_SUITES[@]}"; do
+  in_list "$name" "${want_pis[@]+"${want_pis[@]}"}" || continue
+  case "$name" in
+    pi-qol) add_lane "pi:pi-qol" "npm install (pinned pi 0.80.5) && bun test ./tests  [pi-extensions/pi-qol]" ;;
+    pi-output-policy) add_lane "pi:pi-output-policy" "bun test ./tests  [pi-extensions/pi-output-policy]" ;;
+    pi-agents-tmux) add_lane "pi:pi-agents-tmux" "npm install (pinned pi 0.84.1) && bun test ./tests ./extensions/subagent/__tests__  [pi-extensions/pi-agents-tmux]" ;;
+    pi-codex-minimal-tools) add_lane "pi:pi-codex-minimal-tools" "npm install (pinned pi 0.84.1, undici@^7.25.0) && npm test  [pi-extensions/pi-codex-minimal-tools]" ;;
+    pi-questions) add_lane "pi:pi-questions" "bun test ./extensions/__tests__  [pi-extensions/pi-questions]" ;;
+    pi-claude-bridge) add_lane "pi:pi-claude-bridge" "npm ci && npm run build && npm run test:unit && git diff --exit-code -- bundle/  [pi-extensions/pi-claude-bridge]" ;;
+  esac
+done
+
+# --- print the plan --------------------------------------------------------
+n_changed="$(grep -c . "$CHANGED_FILE" || true)"
+printf 'validate-changed: base %s (merge base of HEAD and %s), %s changed path(s)\n' \
+  "$(git rev-parse --short "$BASE")" "$BASE_REF" "$n_changed"
+if [ -n "$ALL_REASON" ]; then
+  printf 'all lanes: %s\n' "$ALL_REASON"
+fi
+printf 'lanes:\n'
+i=0
+while [ "$i" -lt "${#LANE_IDS[@]}" ]; do
+  printf '  lane: %-24s %s\n' "${LANE_IDS[$i]}" "${LANE_DESC[$i]}"
+  i=$((i + 1))
+done
+for p in "${NO_LANE[@]+"${NO_LANE[@]}"}"; do
+  printf '  no suite lane: %s\n' "$p"
+done
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  exit 0
+fi
+
+# --- run -------------------------------------------------------------------
+# Each lane runs from the repo root and returns its own status. Suite loops
+# mirror the workflow: every file runs, failures are announced inline.
+run_glob() { # label glob... -> runs `bash` on each match; no match is a failure
+  local label="$1" f fail=0 n=0
+  shift
+  for f in "$@"; do
+    [ -e "$f" ] || continue
+    n=$((n + 1))
+    echo "=== $f"
+    if ! bash "$f"; then
+      echo "FAILED: $f"
+      fail=1
+    fi
+  done
+  if [ "$n" -eq 0 ]; then
+    echo "FAILED: $label — no suite files matched (a missing suite path is a failure, not a skip)"
+    return 1
+  fi
+  return "$fail"
+}
+
+run_file() { # path args... -> the path must exist and be executable
+  local f="$1"
+  shift
+  if [ ! -x "$f" ]; then
+    echo "FAILED: missing or not executable: $f"
+    return 1
+  fi
+  "$f" "$@"
+}
+
+run_lint_shell() {
+  local fail=0 f mode
+  # executable bits on skill tests and scripts (+ tools)
+  while IFS= read -r f; do
+    mode="$(git ls-files -s -- "$f" | cut -d' ' -f1)"
+    if [ "$mode" = "100644" ]; then
+      echo "not executable in git: $f"
+      fail=1
+    fi
+  done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' 'tools/tests/*.sh' 'tools/validate-changed' | grep -v '/scripts/lib/' || true)
+  # skills point reports at `vstack report`
+  while IFS= read -r f; do
+    if ! grep -qF 'vstack report' "$f"; then
+      echo "missing \`vstack report\` guidance: $f"
+      fail=1
+    fi
+  done < <(git ls-files -- 'skills/*/SKILL.md')
+  return "$fail"
+}
+
+run_in() { # dir cmd... -> run a command in a subdirectory (CI's working-directory)
+  local dir="$1"
+  shift
+  if [ ! -d "$dir" ]; then
+    echo "FAILED: missing directory: $dir"
+    return 1
+  fi
+  (cd "$dir" && "$@")
+}
+
+run_lane() { # id -> exit status of the lane
+  local id="$1" name
+  case "$id" in
+    always:preflight)
+      run_file skills/preflight/scripts/preflight --base "$BASE_REF"
+      ;;
+    always:gate-selftest)
+      run_file skills/review-gate/scripts/review-predicate-selftest.sh
+      ;;
+    lint:shell)
+      run_lint_shell
+      ;;
+    skill:orch)
+      run_file skills/orch/tests/run-all.sh
+      ;;
+    node:deep-research)
+      if [ ! -e skills/deep-research/tests/deep-research.test.mjs ]; then
+        echo "FAILED: missing suite path: skills/deep-research/tests/deep-research.test.mjs"
+        return 1
+      fi
+      node --test skills/deep-research/tests/deep-research.test.mjs
+      ;;
+    skill:*)
+      name="${id#skill:}"
+      run_glob "$id" "skills/$name/tests/"*.sh
+      ;;
+    hooks)
+      run_glob "$id" hooks/tests/*.sh
+      ;;
+    tools)
+      run_glob "$id" tools/tests/*.sh
+      ;;
+    cli:cargo-test)
+      cargo test --manifest-path cli/Cargo.toml
+      ;;
+    cli:integration-check)
+      run_file cli/scripts/integration-check.sh
+      ;;
+    pi:pi-qol)
+      run_in pi-extensions/pi-qol bash -c '
+        npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.80.5 @earendil-works/pi-ai@0.80.5 @earendil-works/pi-coding-agent@0.80.5 @earendil-works/pi-tui@0.80.5 &&
+        bun test ./tests'
+      ;;
+    pi:pi-output-policy)
+      run_in pi-extensions/pi-output-policy bun test ./tests
+      ;;
+    pi:pi-agents-tmux)
+      run_in pi-extensions/pi-agents-tmux bash -c '
+        npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox &&
+        bun test ./tests ./extensions/subagent/__tests__'
+      ;;
+    pi:pi-codex-minimal-tools)
+      run_in pi-extensions/pi-codex-minimal-tools bash -c '
+        npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox "undici@^7.25.0" &&
+        npm test'
+      ;;
+    pi:pi-questions)
+      run_in pi-extensions/pi-questions bun test ./extensions/__tests__
+      ;;
+    pi:pi-claude-bridge)
+      run_in pi-extensions/pi-claude-bridge bash -c '
+        npm ci --no-audit --no-fund &&
+        npm run build &&
+        npm run test:unit &&
+        git diff --exit-code -- bundle/'
+      ;;
+    *)
+      echo "FAILED: unknown lane id '$id' (derivation/runner desync)"
+      return 1
+      ;;
+  esac
+}
+
+failed=""
+for id in "${LANE_IDS[@]}"; do
+  echo
+  echo "===== lane: $id"
+  if ! run_lane "$id"; then
+    echo "FAILED LANE: $id"
+    failed="$failed $id"
+  fi
+done
+
+echo
+if [ -n "$failed" ]; then
+  echo "FAILED LANES:$failed"
+  exit 1
+fi
+echo "validate-changed: all ${#LANE_IDS[@]} lane(s) passed"

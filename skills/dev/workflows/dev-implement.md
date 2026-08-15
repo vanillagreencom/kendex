@@ -151,7 +151,7 @@ Deterministic gates first — every finding is fixed here, never carried into re
 .agents/skills/size-ratchet/scripts/size-ratchet
 ```
 
-Then the project's build/test/lint validation command, plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling, and the invariant for a run that outlasts your turn, are in [dev SKILL.md § Validation](../SKILL.md#validation).
+Then the project's validation command (`.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""`, run from the worktree root; unset → the project's documented build/test/lint command), plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling, and the invariant for a run that outlasts your turn, are in [dev SKILL.md § Validation](../SKILL.md#validation).
 
 Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); a guard without one is not validated.
 

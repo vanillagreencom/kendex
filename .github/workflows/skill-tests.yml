@@ -101,8 +101,15 @@ jobs:
               echo "not executable in git: $f"
               fail=1
             fi
-          done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' | grep -v '/scripts/lib/')
+          done < <(git ls-files -- 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' 'tools/tests/*.sh' 'tools/validate-changed' | grep -v '/scripts/lib/')
           exit "$fail"
+
+      # tools/validate-changed mirrors THIS workflow's lanes for local runs;
+      # its test pins the path->lane table so the local half cannot drift
+      # silently from the shards below.
+      - name: validate-changed lane derivation
+        if: matrix.shard == 'shell'
+        run: bash tools/tests/validate-changed.test.sh
 
       # Every skill must route problem reports through `vstack report`. The
       # ownership guard is a backstop for issues that bypassed it, so a skill

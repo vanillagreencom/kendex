@@ -17,6 +17,8 @@ Install with `vstack add dev`; `vstack refresh` picks up updates. It needs `orch
 
 Agent-type names, the commit prefix, and QA-label triggers are project-configurable — see SKILL.md § Configuration and the project's label application guide.
 
+`DEV_VALIDATE_CMD` (`vstack.settings.toml` `[env]`, read via `orch-env`) names the project's validation command for the Validate step of both workflows — point it at a diff-scoped validator where one exists (vstack itself sets `tools/validate-changed`); unset, the workflows fall back to the project's documented build/test/lint command.
+
 ## Tests
 
 ```bash

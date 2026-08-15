@@ -260,7 +260,11 @@ cli/scripts/integration-check.sh         # integration check in a throwaway temp
 - The gate answers review-only; CI is branch protection's job. The heavy
   suite jobs run only in the merge queue (fast/full split — see
   `.github/workflows/skill-tests.yml`); the queue runs the full suite once,
-  on the merged result, and refuses the merge if it fails. The refusal is
+  on the merged result, and refuses the merge if it fails. Locally,
+  `tools/validate-changed` validates the changed surface — it derives the
+  suite lanes from the diff, mirroring the workflow's shards, and prints
+  them before running (`--all` for the full sweep) — so a one-skill diff
+  never re-runs the whole suite that the queue will run once. The refusal is
   enforced by the queue ruleset's required contexts: `Review gate`,
   `CLI (cargo test + integration check)`, and
   `Skill suites (shell + node)`.

@@ -165,6 +165,15 @@ BOT_EMAIL = "you+bot@example.com"
 BOT_REMOTE_NAME = "bot-remote"
 # Used by: worktree.
 
+# DEV
+
+DEV_VALIDATE_CMD = ""
+# Used by: dev (`dev-implement` § 5, `dev-fix` § 3). The project's validation
+# command, run from the worktree root after the deterministic gates — point it
+# at a diff-scoped validator where one exists (vstack itself uses
+# "tools/validate-changed") so a one-skill diff does not mirror the whole CI
+# suite. Empty = the project's documented build/test/lint command.
+
 # DECIDER
 
 DECISIONS_DIR = "docs/decisions"

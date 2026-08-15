@@ -43,6 +43,22 @@
   Guards (engineers) and the reviewer skill (reviewers); rust drops
   project-owned Build/Portability opinions; planner's discipline is cut to
   what its output format does not already require.
+- preflight: the default and `--base` scopes include every non-ignored
+  untracked file as a new file — the dev validate step and
+  `tools/validate-changed` run before the commit, so a brand-new file was
+  invisible to every lane until staged; `--staged` still sees only the
+  index. The workflow lane's expression placeholder is expression-aware
+  (a `}}` inside a single-quoted literal no longer ends it).
+- tools: `validate-changed` — diff-scoped local validation that mirrors CI's
+  lanes (skill/hook/cli/pi-extension suites plus the always-on cheap checks),
+  printing its derived lane list first; suites whose tests read another
+  area's files (orch's repo-wide doc lints, github/reviewer reading orch,
+  project-management reading linear, pi-agents-tmux importing
+  pi-session-bridge) run for changes there too; the shell lints cover
+  untracked files and the working-tree executable bit; `--all` for the full sweep;
+  dev-implement reads the project validation command from settings
+  (`DEV_VALIDATE_CMD`; VST-237).
+
 - code-quality/dev: must-fail controls are required where code is written,
   not only where it is reviewed (VST-266) — dev-implement § Validate requires
   a red-once control for every added or modified check, and Prove Your Guards

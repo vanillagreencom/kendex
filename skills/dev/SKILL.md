@@ -57,4 +57,4 @@ A full suite can outlast a turn. **Invariant, every harness:** the completion ta
 
 ## Configuration
 
-Agent-type placeholders are project-configurable: `[AGENT_TYPE]` (dev agents receiving implementation delegations), `[REVIEW_AGENT]`, `[QA_AGENT]`. Commit format: `[PREFIX]([ISSUE_ID]): [DESCRIPTION]`.
+Agent-type placeholders are project-configurable: `[AGENT_TYPE]` (dev agents receiving implementation delegations), `[REVIEW_AGENT]`, `[QA_AGENT]`. Commit format: `[PREFIX]([ISSUE_ID]): [DESCRIPTION]`. `DEV_VALIDATE_CMD` (`vstack.settings.toml` `[env]`) names the project's validation command for the Validate step; unset → the project's documented build/test/lint command.
