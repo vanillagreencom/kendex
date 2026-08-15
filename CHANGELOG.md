@@ -253,7 +253,17 @@
     requirement and states the concrete reason the triage-then-re-enqueue
     route cannot churn-loop; the worktree live-lease suite's check count is
     corrected (35, not 20).
-
+- cli: every git process that touches a remote-source cache entry is built by
+  one hardened constructor — `GIT_DIR`/`GIT_WORK_TREE`-family variables
+  dropped, `GIT_TERMINAL_PROMPT=0`, ssh in `BatchMode` — and `reset --hard`
+  runs only after the entry proves to be vstack's own clone: not a symlink,
+  not a redirected `.git`, and `rev-parse --show-toplevel` resolves to the
+  entry itself. A cache whose `core.worktree` pointed at a user checkout used
+  to have that checkout's tracked files overwritten (VST-256). Refused entries
+  fail closed for `add`, `refresh` and the TUI's startup cache refresh.
+  Credential-bearing source URLs (userinfo token, `user:pass@`, query or
+  fragment) are rejected before any git runs and never echoed; ssh usernames
+  are kept.
 - decider: index rows are append-only, never re-sorted — the template's
   "date order" clause contradicted its own example and the CLI reads rows
   positionally (VST-263); the schema carries the placement rule.

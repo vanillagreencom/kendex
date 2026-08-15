@@ -2860,43 +2860,29 @@ fn clone_or_update(source: &str) -> Result<PathBuf> {
     };
 
     let repo_dir = cache_dir.join(&cache_key);
+    let display = crate::refresh_sources::remote_source_display(source);
+    crate::refresh_sources::reject_credential_bearing_git_url(&git_url)?;
 
     if repo_dir.join(".git").exists() {
-        // Update existing clone (handles force-pushed histories)
-        eprintln!("Updating cached repo...");
-        let fetch = std::process::Command::new("git")
-            .args(["fetch", "origin", "--quiet"])
-            .current_dir(&repo_dir)
-            .status();
-        if fetch.is_ok_and(|s| s.success()) {
-            let _ = std::process::Command::new("git")
-                .args(["reset", "--hard", "origin/HEAD"])
-                .current_dir(&repo_dir)
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
+        // Update existing clone (handles force-pushed histories). A refusal —
+        // the entry is not vstack's own clone — is an error; a failed fetch
+        // keeps the stale clone.
+        eprintln!("Updating cached repo {display}...");
+        crate::refresh_sources::update_cached_repo_best_effort(&display, &repo_dir)?;
     } else {
         // Fresh shallow clone
-        eprintln!("Cloning {}...", git_url);
-        let status = std::process::Command::new("git")
-            .args([
-                "clone",
-                "--depth",
-                "1",
-                &git_url,
-                repo_dir.to_str().unwrap(),
-            ])
-            .status()
-            .context("failed to run git clone — is git installed?")?;
-        if !status.success() {
-            anyhow::bail!(
-                "git clone failed. For private repos, make sure you have access:\n\
-                 \n\
-                 SSH:   git clone git@github.com:{source}.git\n\
-                 HTTPS: gh auth login\n\
-                 Token: export GH_TOKEN=<your-token>"
-            );
-        }
+        eprintln!("Cloning {display}...");
+        crate::refresh_sources::clone_cached_repo(&display, &git_url, &repo_dir).with_context(
+            || {
+                format!(
+                    "caching {display} failed. For private repos, make sure you have access:\n\
+                     \n\
+                     SSH:   git clone git@github.com:{display}.git\n\
+                     HTTPS: gh auth login\n\
+                     Token: export GH_TOKEN=<your-token>"
+                )
+            },
+        )?;
     }
 
     if !crate::resolve::is_vstack_source(&repo_dir) {
