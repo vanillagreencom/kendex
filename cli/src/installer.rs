@@ -93,70 +93,67 @@ pub fn install_skill(
         // the other checkout — the dangling-link hazard once this worktree
         // is removed.
         let lexical = normalize_absolute_path(&dest);
-        if let Some(physical) = canonicalize_allowing_missing(&dest) {
-            if physical != lexical {
-                let mut probe = physical.parent();
-                while let Some(dir) = probe {
-                    if dir.is_dir() {
-                        break;
-                    }
-                    probe = dir.parent();
+        if let Some(physical) = canonicalize_allowing_missing(&dest)
+            && physical != lexical
+        {
+            let mut probe = physical.parent();
+            while let Some(dir) = probe {
+                if dir.is_dir() {
+                    break;
                 }
-                if let Some(probe_dir) = probe
-                    && let (Some(project_common), Some((probe_common, checkout_toplevel))) = (
-                        crate::path_safety::git_common_dir(&crate::config::project_root()),
-                        crate::path_safety::git_repo_identity(probe_dir),
-                    )
-                    && probe_common == project_common
-                {
-                    let project_canon = std::fs::canonicalize(crate::config::project_root())
-                        .unwrap_or_else(|_| {
-                            normalize_absolute_path(&crate::config::project_root())
-                        });
-                    // Validate the CORRESPONDING nested project root, not the
-                    // toplevel: for a project below the git toplevel, the
-                    // shared surface lives at the other checkout's copy of
-                    // that directory, and its toplevel `.agents` (unrelated
-                    // or absent) says nothing about it.
-                    let corresponding = corresponding_project_root_in(&checkout_toplevel);
-                    match corresponding {
-                        Some(root) => {
-                            if root != project_canon
-                                && crate::path_safety::ensure_agents_dir_within_project(&root)
-                                    .is_err()
-                            {
-                                anyhow::bail!(
-                                    "refusing to install {} through {}: that same-repository checkout's .agents fails validation, and falling back to an ordinary link would write a worktree-absolute target into it",
-                                    skill.name,
-                                    root.display()
-                                );
-                            }
-                            // Symlink indirection whose landing parent is NOT
-                            // a recognized skills surface is an alias (e.g.
-                            // `.claude/skills -> cli/src`, same checkout or
-                            // another): installing would remove_existing/
-                            // replace children of an arbitrary repository
-                            // directory. Current-checkout indirection gets
-                            // the same gate — the fallback path would delete
-                            // through the alias just as readily.
-                            if let Some(parent) = physical.parent()
-                                && !is_recognized_skills_surface(&root, parent)
-                            {
-                                anyhow::bail!(
-                                    "refusing to install {} through {}: it resolves into {}, which is not a recognized skills directory of {}",
-                                    skill.name,
-                                    dest.display(),
-                                    parent.display(),
-                                    root.display()
-                                );
-                            }
+                probe = dir.parent();
+            }
+            if let Some(probe_dir) = probe
+                && let (Some(project_common), Some((probe_common, checkout_toplevel))) = (
+                    crate::path_safety::git_common_dir(&crate::config::project_root()),
+                    crate::path_safety::git_repo_identity(probe_dir),
+                )
+                && probe_common == project_common
+            {
+                let project_canon = std::fs::canonicalize(crate::config::project_root())
+                    .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
+                // Validate the CORRESPONDING nested project root, not the
+                // toplevel: for a project below the git toplevel, the
+                // shared surface lives at the other checkout's copy of
+                // that directory, and its toplevel `.agents` (unrelated
+                // or absent) says nothing about it.
+                let corresponding = corresponding_project_root_in(&checkout_toplevel);
+                match corresponding {
+                    Some(root) => {
+                        if root != project_canon
+                            && crate::path_safety::ensure_agents_dir_within_project(&root).is_err()
+                        {
+                            anyhow::bail!(
+                                "refusing to install {} through {}: that same-repository checkout's .agents fails validation, and falling back to an ordinary link would write a worktree-absolute target into it",
+                                skill.name,
+                                root.display()
+                            );
                         }
-                        None => anyhow::bail!(
-                            "refusing to install {} through {}: cannot derive the corresponding project root in that same-repository checkout",
-                            skill.name,
-                            checkout_toplevel.display()
-                        ),
+                        // Symlink indirection whose landing parent is NOT
+                        // a recognized skills surface is an alias (e.g.
+                        // `.claude/skills -> cli/src`, same checkout or
+                        // another): installing would remove_existing/
+                        // replace children of an arbitrary repository
+                        // directory. Current-checkout indirection gets
+                        // the same gate — the fallback path would delete
+                        // through the alias just as readily.
+                        if let Some(parent) = physical.parent()
+                            && !is_recognized_skills_surface(&root, parent)
+                        {
+                            anyhow::bail!(
+                                "refusing to install {} through {}: it resolves into {}, which is not a recognized skills directory of {}",
+                                skill.name,
+                                dest.display(),
+                                parent.display(),
+                                root.display()
+                            );
+                        }
                     }
+                    None => anyhow::bail!(
+                        "refusing to install {} through {}: cannot derive the corresponding project root in that same-repository checkout",
+                        skill.name,
+                        checkout_toplevel.display()
+                    ),
                 }
             }
         }
@@ -223,16 +220,11 @@ pub fn install_skill(
                             .next()
                             .and_then(|(root, _)| {
                                 // root is <checkout>/.agents/skills
-                                root.parent()
-                                    .and_then(Path::parent)
-                                    .map(Path::to_path_buf)
+                                root.parent().and_then(Path::parent).map(Path::to_path_buf)
                             })
                             .unwrap_or_else(crate::config::project_root)
                     });
-                home_root
-                    .join(".agents")
-                    .join("skills")
-                    .join(&skill.name)
+                home_root.join(".agents").join("skills").join(&skill.name)
             };
 
             // Step 1: Copy to canonical location (refresh from source).
@@ -385,8 +377,7 @@ pub fn install_skill(
                 // the reconstruction would call it canonical while it points
                 // at the wrong skill. A symlink at dest is never physically
                 // canonical — it is an artifact to (re)point in Step 3.
-                !std::fs::symlink_metadata(&dest)
-                    .is_ok_and(|meta| meta.file_type().is_symlink())
+                !std::fs::symlink_metadata(&dest).is_ok_and(|meta| meta.file_type().is_symlink())
                     && canonicalize_allowing_missing(&dest)
                         .is_some_and(|resolved| resolved == canonical_physical)
             });
@@ -413,9 +404,8 @@ pub fn install_skill(
                     // symlink was just removed above), so the link lands in
                     // this checkout — a spelling computed at the foreign
                     // parent (`github`) would be self-referential here.
-                    let creation_parent = dest
-                        .parent()
-                        .and_then(|parent| parent.canonicalize().ok());
+                    let creation_parent =
+                        dest.parent().and_then(|parent| parent.canonicalize().ok());
                     let rel = match (&link_home, creation_parent) {
                         // The repo layout is identical in every checkout, so
                         // the relative spelling computed at the link's
@@ -444,8 +434,9 @@ pub fn install_skill(
                         // OWNING checkout (stable), while this link dies with
                         // the worktree; a cross-checkout ../ chain would
                         // depend on where the worktree happens to sit.
-                        (Some(_), _) => std::fs::canonicalize(&canonical)
-                            .unwrap_or_else(|_| canonical.clone()),
+                        (Some(_), _) => {
+                            std::fs::canonicalize(&canonical).unwrap_or_else(|_| canonical.clone())
+                        }
                         (None, _) => relative_path(dest.parent().unwrap(), &canonical)?,
                     };
                     std::os::unix::fs::symlink(&rel, &dest).with_context(|| {
@@ -550,12 +541,10 @@ pub fn remove_item(
                 continue;
             }
             probed.push(dest.clone());
-            if let Some(home) = skill_link_home(&dest).filter(|home| home.checkout_root != project_checkout) {
-                let canonical = home
-                    .checkout_root
-                    .join(".agents")
-                    .join("skills")
-                    .join(name);
+            if let Some(home) =
+                skill_link_home(&dest).filter(|home| home.checkout_root != project_checkout)
+            {
+                let canonical = home.checkout_root.join(".agents").join("skills").join(name);
                 // Only an artifact OF THIS SKILL resolving to that canonical
                 // makes this removal an owner there. A parent-level share
                 // alone proves where a NEW link would land, not that one
@@ -628,7 +617,10 @@ pub fn remove_item(
     for anchored in &anchored_canonicals {
         let (Some(name), Some(owning_root)) = (
             anchored.file_name(),
-            anchored.parent().and_then(Path::parent).and_then(Path::parent),
+            anchored
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::parent),
         ) else {
             continue;
         };
@@ -789,7 +781,9 @@ pub fn remove_item(
                 .and_then(|parent| parent.canonicalize().ok())
                 .is_some_and(|parent| {
                     let project_checkout = std::fs::canonicalize(crate::config::project_root())
-                        .unwrap_or_else(|_| normalize_absolute_path(&crate::config::project_root()));
+                        .unwrap_or_else(
+                            |_| normalize_absolute_path(&crate::config::project_root()),
+                        );
                     !parent.starts_with(&project_checkout)
                 });
             if parent_foreign && std::fs::symlink_metadata(&path).is_ok() {
@@ -1655,7 +1649,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -1701,7 +1698,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -1766,7 +1766,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         // Whole .claude shared; skills subdir does not exist yet anywhere.
         std::fs::create_dir_all(main.join(".claude")).unwrap();
@@ -1820,7 +1823,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -1839,7 +1845,10 @@ mod tests {
             )
             .unwrap()
         });
-        assert!(main.join(".agents/skills/github/.vstack-refreshed").is_file());
+        assert!(
+            main.join(".agents/skills/github/.vstack-refreshed")
+                .is_file()
+        );
         assert!(
             !wt.join(".agents/skills/github").exists(),
             "split layout: no worktree-local canonical copy"
@@ -1893,7 +1902,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_copy = main.join(".agents").join("skills").join("github");
         std::fs::create_dir_all(&main_copy).unwrap();
@@ -1951,7 +1963,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         // Legitimate child link for skill X; skill Y exists only in main.
         for name in ["x-linked", "y-mainonly"] {
@@ -2011,7 +2026,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2059,7 +2077,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2128,7 +2149,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2197,7 +2221,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         // Partial sharing: real .agents/skills, child linked into main —
         // whose canonical has since been deleted, dangling the child.
@@ -2242,7 +2269,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2303,7 +2333,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2364,7 +2397,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2425,7 +2461,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         // The worktree spells its .agents through the shared symlink into
         // main's real .agents: the constructed canonical spelling
@@ -2474,7 +2513,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2532,7 +2574,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2609,7 +2654,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2740,7 +2788,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         // Main owns the canonical AND references it via its own child link;
         // the worktree shares per-child (partial sharing), so its dest is a
@@ -2812,7 +2863,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2874,7 +2928,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -2945,7 +3002,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -3010,7 +3070,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -3143,7 +3206,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -3207,7 +3273,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -3285,7 +3354,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_copy = main.join(".agents").join("skills").join("github");
         std::fs::create_dir_all(&main_copy).unwrap();
@@ -3345,7 +3417,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -3399,7 +3474,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -3468,7 +3546,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         std::fs::create_dir_all(main.join(".agents").join("skills")).unwrap();
         symlink(main.join(".agents"), wt.join(".agents")).unwrap();
@@ -3512,7 +3593,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();
@@ -3584,7 +3668,10 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
             return; // git unavailable on this host
         }
-        assert!(git_ok(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        assert!(git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap()]
+        ));
 
         let main_skills = main.join(".claude").join("skills");
         std::fs::create_dir_all(&main_skills).unwrap();

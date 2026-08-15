@@ -117,11 +117,7 @@ pub(super) fn perform_remove_plans(plans: &[RemovePlan]) -> DiskMutationReport {
     report
 }
 
-fn remove_one(
-    name: &str,
-    scope_global: bool,
-    notices: &mut Vec<String>,
-) -> anyhow::Result<bool> {
+fn remove_one(name: &str, scope_global: bool, notices: &mut Vec<String>) -> anyhow::Result<bool> {
     let lock_path = config::lock_file_path(scope_global);
     let mut lock = config::LockFile::load(&lock_path)
         .map_err(|err| anyhow::anyhow!("failed to load lock {}: {err:#}", lock_path.display()))?;

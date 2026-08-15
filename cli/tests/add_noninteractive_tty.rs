@@ -90,7 +90,10 @@ fn assert_actionable_failure(output: &std::process::Output) {
         stderr.contains("needs a terminal"),
         "error must name the missing terminal: {stderr}"
     );
-    assert!(stderr.contains("-y"), "error must name the -y fix: {stderr}");
+    assert!(
+        stderr.contains("-y"),
+        "error must name the -y fix: {stderr}"
+    );
     assert!(
         stderr.contains("--harness"),
         "error must name --harness: {stderr}"

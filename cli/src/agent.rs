@@ -500,9 +500,8 @@ fn enclosing_marked_region_end(text: &str, pos: usize) -> Option<usize> {
         if start > pos {
             return None;
         }
-        let end = start
-            + text[start..].find(SHARED_INSTRUCTIONS_END)?
-            + SHARED_INSTRUCTIONS_END.len();
+        let end =
+            start + text[start..].find(SHARED_INSTRUCTIONS_END)? + SHARED_INSTRUCTIONS_END.len();
         if pos > start && pos < end {
             return Some(end);
         }
@@ -755,7 +754,9 @@ mod tests {
         let shared = "Fleet rules.\n\n## Escalation\n\nPing the owner.";
         let body = ProjectConfig::merge_marked_shared_and_specific(Some(shared), Some("Own text."))
             .unwrap();
-        let content = format!("# Agent\n\n## Additional Instructions\n\n{body}\n\n## Hook Rules\n\nSome hook.\n");
+        let content = format!(
+            "# Agent\n\n## Additional Instructions\n\n{body}\n\n## Hook Rules\n\nSome hook.\n"
+        );
         let extracted = extract_section(&content, "## Additional Instructions").unwrap();
         // The `## Escalation` heading inside the marked region must not
         // terminate extraction: both markers and the specific text survive.
