@@ -183,9 +183,9 @@ assert_owner_only() {
 
 # The paired direction, and the control for every owner-only assertion: a file
 # this tool did not write must come out at the CALLER's umask, or a restriction
-# leaking past the tool's own artifacts reads as "merely more restrictive" and
-# nothing goes red. `find -perm`, not `stat`, whose flags differ GNU/BSD.
-assert_world_readable() {
+# leaking past its own artifacts reads as "merely more restrictive". Read bits
+# only; `find -perm` over `stat`, whose flags differ GNU/BSD.
+assert_group_other_readable() {
   local path="$1" name="$2"
   if [[ -n "$(find "$path" -maxdepth 0 -perm -g+r -perm -o+r 2>/dev/null)" ]]; then
     pass "$name"
@@ -436,9 +436,9 @@ cat "\$1"
 SH
 # Lane stub that answers with $1 and then removes every regular FILE under $2 —
 # a tmp reaper unlinking files rather than the directories `lane-reap` takes,
-# the actor a lane review sitting in shared temp space could not survive. $3 is
-# the sibling lane's agent name: the stub holds until that lane's review lands
-# in the artifact home, so the clearing is a handshake rather than a race.
+# the actor a lane review in shared temp space could not survive. $3 is the
+# sibling's agent name: the stub holds until that lane's review lands in the
+# artifact home, so the clearing is a handshake rather than a race.
 cat > "$TMP_ROOT/bin/lane-reap-files" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
@@ -462,13 +462,19 @@ SH
 
 # Lane stub that creates the session file and cache directory an external model
 # CLI keeps for itself — under $2, prefixed $3 — and then answers with $1.
-# Those belong to the CLI, not to this tool, and live outside temp space.
+# Those belong to the CLI, not to this tool, and live outside temp space. $4,
+# when given, puts an inode back at an artifact path the parent already cleared:
+# the window a mode taken from a survivor leaks through.
 cat > "$TMP_ROOT/bin/lane-cli-state" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
 mkdir -p -- "$2/$3.cache"
 printf 'session\n' > "$2/$3.session"
+if [[ $# -ge 4 ]]; then
+  printf 'reappeared\n' > "$4"
+  chmod 644 "$4"
+fi
 cat "$1"
 SH
 chmod +x "$TMP_ROOT/bin/lane-answer" "$TMP_ROOT/bin/lane-fail" "$TMP_ROOT/bin/lane-reap" \
@@ -787,9 +793,8 @@ assert_jq "$TMP_ROOT/out-nul-tail.json" '.agent' "external-union(codex)" \
 # this suite cannot construct portably, so the guard is verified here by the
 # path it shares with that case, not by the case itself.
 # The plant rests on a directory reporting a non-zero size, a filesystem
-# property: ext4 gives 4096, btrfs and some tmpfs give 0. Where it gives 0 the
-# plant is indistinguishable from an artifact the lane never wrote, so this
-# runner cannot build the shape and the case is skipped with its reason.
+# property: ext4 gives 4096, btrfs and some tmpfs give 0. Where it gives 0 it is
+# indistinguishable from an artifact never written, so the case is skipped.
 unread_probe="$TMP_ROOT/unread-probe"
 mkdir -p "$unread_probe"
 if [[ -s "$unread_probe" ]]; then
@@ -953,12 +958,11 @@ assert_stderr_has "without a usable artifact" "the loss is named on stderr"
 
 # --- Scenario 19: the restriction rides on the writes, not on the lane -------
 # A umask on the lane process governs everything the external model CLI creates
-# for the life of that lane, including the session and cache state it keeps
-# outside temp space, and whichever mode first creates a shared one fixes its
-# permissions permanently. Lane artifacts and their sidecars stay owner-only;
-# the CLI's own files come out as they do single-lane. Each half is the other's
-# control: a blanket umask fails the CLI-state assertions, dropping it without
-# moving the restriction to the writer fails the artifact ones.
+# for the life of that lane — the session and cache state it keeps outside temp
+# space included, where whichever mode created a shared one fixes its
+# permissions permanently. Lane artifacts stay owner-only, through a reappeared
+# inode too; the CLI's own files come out as they do single-lane. Each half is
+# the other's control.
 echo "=== scenario 19: lane artifacts owner-only, the CLI's own files are not ==="
 STATE="$TMP_ROOT/cli-state"
 rm -rf "$STATE"
@@ -966,16 +970,16 @@ mkdir -p "$STATE"
 out19="$TMP_ROOT/out19.json"
 rc19=0
 ( umask 022
-  run_lanes "$TMP_ROOT/bin/lane-cli-state $TMP_ROOT/resp-claude.json $STATE multi-claude" \
-    "$TMP_ROOT/bin/lane-cli-state $TMP_ROOT/resp-codex.json $STATE multi-codex" \
+  run_lanes "$TMP_ROOT/bin/lane-cli-state $TMP_ROOT/resp-claude.json $STATE multi-claude $out19.claude.json" \
+    "$TMP_ROOT/bin/lane-cli-state $TMP_ROOT/resp-codex.json $STATE multi-codex $out19.codex.json" \
     --output "$out19" ) || rc19=$?
 assert_eq "$rc19" "0" "both lanes answered"
-assert_owner_only "$out19.claude.json" "the claude lane artifact is still owner-only"
-assert_owner_only "$out19.codex.json" "the codex lane artifact is still owner-only"
-assert_world_readable "$STATE/multi-claude.session" "the claude CLI's own session file keeps the caller's umask"
-assert_world_readable "$STATE/multi-claude.cache" "the claude CLI's own cache directory keeps the caller's umask"
-assert_world_readable "$STATE/multi-codex.session" "the codex CLI's own session file keeps the caller's umask"
-assert_world_readable "$STATE/multi-codex.cache" "the codex CLI's own cache directory keeps the caller's umask"
+assert_owner_only "$out19.claude.json" "the claude lane artifact is owner-only through a reappeared inode"
+assert_owner_only "$out19.codex.json" "the codex lane artifact is owner-only through a reappeared inode"
+assert_group_other_readable "$STATE/multi-claude.session" "the claude CLI's own session file keeps the caller's umask"
+assert_group_other_readable "$STATE/multi-claude.cache" "the claude CLI's own cache directory keeps the caller's umask"
+assert_group_other_readable "$STATE/multi-codex.session" "the codex CLI's own session file keeps the caller's umask"
+assert_group_other_readable "$STATE/multi-codex.cache" "the codex CLI's own cache directory keeps the caller's umask"
 # The comparison the report was made with: single-lane never had a process
 # umask, so its result is what the CLI's own files are supposed to look like.
 # The caller's --output is theirs too, in either mode.
@@ -984,9 +988,9 @@ single19="$TMP_ROOT/out19-single.json"
   env TMPDIR="$SCRATCH" SECOND_OPINION_MODELS="codex" SECOND_OPINION_COUNT=1 \
     SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-cli-state $TMP_ROOT/resp-codex.json $STATE single" \
     "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$single19" ) >/dev/null 2>&1
-assert_world_readable "$STATE/single.session" "single-lane leaves the CLI's session file the same way"
-assert_world_readable "$STATE/single.cache" "single-lane leaves the CLI's cache directory the same way"
-assert_world_readable "$single19" "a caller's own --output follows the caller's umask"
+assert_group_other_readable "$STATE/single.session" "single-lane leaves the CLI's session file the same way"
+assert_group_other_readable "$STATE/single.cache" "single-lane leaves the CLI's cache directory the same way"
+assert_group_other_readable "$single19" "a caller's own --output follows the caller's umask"
 
 echo
 printf 'pass: %d   fail: %d   skip: %d\n' "$PASS" "$FAIL" "$SKIP"

@@ -1240,11 +1240,15 @@ SCRATCH_OUTPUT=false
 if [[ "${SECOND_OPINION_SCRATCH_OUTPUT:-}" == "1" ]]; then SCRATCH_OUTPUT=true; fi
 
 # write_owned <path> <content> — the one write that carries that policy. umask
-# governs creation only, so every path written through here is cleared before
-# the write rather than truncated through a surviving inode that would keep its
-# old mode.
+# governs creation only, and a redirection truncates whatever inode it finds,
+# keeping that inode's mode: an artifact path recreated loose after the parent
+# cleared it would otherwise take the review through a mode someone else chose,
+# for the whole length of a model call. So a path this run owns is unlinked
+# first and created fresh under the restrictive umask. rm's own failure is not
+# fatal — the write is what has to happen, and it reports its own outcome.
 write_owned() {
   if $SCRATCH_OUTPUT; then
+    rm -f -- "$1" 2>/dev/null || true
     ( umask 077 && printf '%s\n' "$2" > "$1" )
   else
     printf '%s\n' "$2" > "$1"
