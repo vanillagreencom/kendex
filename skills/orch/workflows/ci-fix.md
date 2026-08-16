@@ -62,6 +62,8 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
+`worktree-claim` exit 75 aborts the delegation: another session holds this worktree, and its stderr names the holder. Its printed token is the delegation's `Worktree Lease:` line.
+
 This agent pushes its fix directly and writes **no** dev-return artifact, so the round-mode check for this fresh token is *expected* to report `ok == false`. The fresh token is still what guarantees a leftover artifact from an earlier round — on disk under the previous token — can never be mis-accepted here. Accept this round on the agent's return message plus the pushed fix commit, and on a genuinely absent return follow the escalation ladder.
 
 <delegation_format>
@@ -74,13 +76,15 @@ Error output:
 [truncated error logs]
 
 Worktree: [WORKTREE_PATH]
+Worktree Lease: [WORKTREE_LEASE]
 
-1. Analyze the error; if it is a test failure in concurrent code, check for flaky-test patterns first.
-2. Fix the issue.
-3. Run the project's validation command.
-4. If the target failure is fixed but OTHER failures remain: still commit, and note them in the message.
-5. Commit: "fix([ISSUE_ID]): [DESCRIPTION]", appending `[validate: FAILING_CHECK]` when other failures remain.
-6. Push to the branch.
+1. Verify possession before changing anything: `.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --expect-gen [WORKTREE_LEASE]`. Any non-zero exit ends the round here — change nothing and report its stderr verbatim.
+2. Analyze the error; if it is a test failure in concurrent code, check for flaky-test patterns first.
+3. Fix the issue.
+4. Run the project's validation command.
+5. If the target failure is fixed but OTHER failures remain: still commit, and note them in the message.
+6. Commit: "fix([ISSUE_ID]): [DESCRIPTION]", appending `[validate: FAILING_CHECK]` when other failures remain.
+7. Push to the branch.
 
 Report: what was fixed, the validate status, and any unrelated failures.
 </delegation_format>

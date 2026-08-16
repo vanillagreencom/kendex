@@ -13,10 +13,13 @@
 # Usage:
 #   worktree-claim --worktree PATH --issue ID [--state-dir DIR]
 #       Take possession and print the lease generation token. A token already
-#       recorded at `.worktree_gen` in ID's workflow state is verified and
-#       refreshed rather than minted over; a token minted here is recorded
-#       there. With no state file the call always mints, so nothing is bound
-#       across rounds.
+#       recorded at `.worktree_gen` in ID's workflow state is continued —
+#       verified and refreshed rather than minted over — but only for the
+#       session the lease records as its holder: the state file is shared, so
+#       a sibling that reads the same token refuses instead of continuing the
+#       round, while a holder that is provably gone is repossessed. A token
+#       minted here is recorded there. With no state file the call always
+#       mints, so nothing is bound across rounds.
 #
 #   worktree-claim --worktree PATH --issue ID --expect-gen TOKEN
 #       Verify TOKEN and refresh the heartbeat. Never mints, never writes
@@ -47,7 +50,7 @@ GUARD_UNMANAGED=4
 GEN_GRAMMAR='^[0-9]+-[0-9a-f]+$'
 
 usage() {
-	sed -n '2,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 fail() {
@@ -122,8 +125,43 @@ guard_status() {
 		|| STATUS_RC=$?
 }
 
-status_generation() {
-	printf '%s\n' "$STATUS_JSON" | jq -r '.generation // empty'
+status_field() {
+	printf '%s\n' "$STATUS_JSON" | jq -r --arg f "$1" '.[$f] // empty'
+}
+
+status_generation() { status_field generation; }
+
+# The session leader and host are the identity the guard records in a lease.
+# Comparing them is what separates this session from a sibling working the same
+# issue, which neither the shared owner nor the shared state file can do. Both
+# are spelled to agree with the guard's own recipe; the agreement is pinned by
+# skills/orch/tests/worktree_claim.sh against a lease the guard wrote.
+session_leader_pid() {
+	local sid
+	sid="$(ps -o sess= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
+	if ! [[ "$sid" =~ ^[1-9][0-9]*$ ]]; then
+		sid="$(ps -o sid= -p $$ 2>/dev/null | tr -d '[:space:]' || true)"
+	fi
+	[[ "$sid" =~ ^[1-9][0-9]*$ ]] || sid=$$
+	printf '%s\n' "$sid"
+}
+
+session_host() {
+	local host="${HOSTNAME:-}"
+	[[ -n "$host" ]] || host="$(uname -n 2>/dev/null || true)"
+	[[ -n "$host" ]] || host="unknown-host"
+	printf '%s\n' "${host//[^A-Za-z0-9._:@+-]/-}"
+}
+
+# A recorded holder is presumed alive on any unprovable evidence — another
+# host, an unreadable pid, no ps(1) — so possession is never taken on a guess.
+# ps(1) sees processes this user cannot signal, where `kill -0` reports EPERM
+# and would call a live holder dead.
+holder_is_live() {
+	local pid="$1" host="$2"
+	[[ "$host" == "$(session_host)" ]] || return 0
+	[[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+	ps -p "$pid" >/dev/null 2>&1
 }
 
 # Map a status exit code onto this gate's contract. Every state that is not
@@ -220,9 +258,31 @@ if [[ -f "$state_file" ]]; then
 		|| fail "could not read .worktree_gen from $state_file"
 fi
 
+# A stored token proves which lease this issue's rounds have been running
+# under; it does not prove the reader is the session that minted it, because
+# the state file lives in the shared worktree. The lease's recorded session
+# leader is what separates them, so a stored token is continued only by the
+# session the guard recorded — a live sibling that read the same state refuses,
+# and a recorded holder that is provably gone is repossessed rather than
+# wedging a resumed session on a dead lease.
 if [[ "$stored_gen" =~ $GEN_GRAMMAR ]]; then
-	verify_and_refresh "$stored_gen"
-	exit 0
+	guard_status
+	# No lease at all is nobody's tree — a teardown or a stale sweep released
+	# it — so the round is repossessed rather than wedged on a token whose
+	# lease is gone. A lock this gate cannot own still refuses.
+	if [[ "$STATUS_RC" != "$GUARD_NO_LEASE" ]]; then
+		require_owned_status "before continuing the round"
+		require_generation "$stored_gen" "before continuing the round"
+		lease_pid="$(status_field pid)"
+		lease_host="$(status_field host)"
+		if [[ "$lease_pid" == "$(session_leader_pid)" && "$lease_host" == "$(session_host)" ]]; then
+			verify_and_refresh "$stored_gen"
+			exit 0
+		fi
+		if holder_is_live "$lease_pid" "$lease_host"; then
+			refuse "$worktree_abs is held by a live session (pid=${lease_pid:-unknown}, host=${lease_host:-unknown}) working $issue; that session owns this round. If it is gone, take the tree with: $GUARD release $worktree_abs --owner $issue --force"
+		fi
+	fi
 fi
 
 minted="$(take_possession)"

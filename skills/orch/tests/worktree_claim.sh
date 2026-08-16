@@ -52,6 +52,31 @@ lease_gen() {
   "$GUARD" status "$1" --owner "$2" 2>/dev/null | jq -r '.generation'
 }
 
+lease_pid() {
+  "$GUARD" status "$1" --owner "$2" 2>/dev/null | jq -r '.pid'
+}
+
+# The lease is the worktree registration's lock-reason file; rewriting its pid
+# field in place is how a foreign holder is planted without a second machine.
+lock_file_of() {
+  local common_dir entry
+  common_dir="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)"
+  for entry in "$common_dir"/worktrees/*; do
+    if [[ "$(cat -- "$entry/gitdir")" == "$1/.git" ]]; then
+      printf '%s\n' "$entry/locked"
+      return 0
+    fi
+  done
+  return 1
+}
+
+set_lease_pid() {
+  local lock="$1" pid="$2" tmp
+  tmp="$(mktemp "$TMP_ROOT/lease.XXXXXX")"
+  sed "s/ pid=[^ ]* / pid=$pid /" "$lock" >"$tmp"
+  mv -f -- "$tmp" "$lock"
+}
+
 echo "=== fixture ==="
 
 main_repo="$TMP_ROOT/repo"
@@ -253,6 +278,62 @@ assert_eq "$(jq -r '.worktree_gen' "$state_file")" "$tok_d" \
 # --state-dir reaches the same file the workflow-state CLI resolves.
 run_claim --worktree "$wt_d" --issue VST-4 --state-dir tmp
 assert_eq "$RUN_RC" "75" "--state-dir resolves the same bound token"
+
+echo
+echo "=== a stored token is continued only by the session that holds the lease ==="
+
+# The state file lives in the shared worktree, so a sibling orchestrator reads
+# the same stored token. What separates them is the session leader the guard
+# recorded in the lease.
+assert_eq "$(lease_pid "$wt_d" VST-4)" "$(ps -o sess= -p $$ | tr -d '[:space:]')" \
+  "control: the guard records this test's session leader, so the two spellings agree"
+
+lock_d="$(lock_file_of "$wt_d")"
+assert_eq "$([[ -f "$lock_d" ]] && echo ok)" "ok" "control: the lease file was located"
+
+# A released lease is nobody's tree: a stored token whose lease is gone must
+# repossess rather than wedge the round forever.
+"$GUARD" release "$wt_d" --owner VST-4 >/dev/null 2>&1
+run_claim --worktree "$wt_d" --issue VST-4
+assert_eq "$RUN_RC" "0" "a stored token whose lease was released repossesses the tree"
+tok_d3="$(cat "$run_out")"
+assert_eq "$(lease_gen "$wt_d" VST-4)" "$tok_d3" "the repossession minted the lease it reports"
+
+set_lease_pid "$lock_d" 1
+assert_eq "$(lease_gen "$wt_d" VST-4)" "$tok_d3" "control: planting a holder left the generation intact"
+run_claim --worktree "$wt_d" --issue VST-4
+assert_eq "$RUN_RC" "75" "a live sibling holding the same stored token exits 75"
+if grep -q 'held by a live session' "$run_err" && grep -q 'pid=1' "$run_err"; then
+  pass "the refusal names the live holder and the recovery"
+else
+  fail "the refusal must name the live holder: $(cat "$run_err")"
+fi
+assert_eq "$(lease_gen "$wt_d" VST-4)" "$tok_d3" "the refused stamp did not take the lease"
+
+# A holder that is provably gone must NOT wedge a resumed session: the same
+# stored token is repossessed instead of refused.
+(exit 0) &
+dead_pid=$!
+wait "$dead_pid" 2>/dev/null || true
+if ps -p "$dead_pid" >/dev/null 2>&1; then
+  fail "control: the fixture pid $dead_pid is still running, so the dead-holder case cannot be tested"
+else
+  pass "control: the fixture holder pid is gone"
+  set_lease_pid "$lock_d" "$dead_pid"
+  run_claim --worktree "$wt_d" --issue VST-4
+  assert_eq "$RUN_RC" "0" "a holder that is provably gone is repossessed, not refused"
+  tok_d4="$(cat "$run_out")"
+  assert_eq "$([[ "$tok_d4" != "$tok_d3" ]] && echo minted)" "minted" \
+    "repossessing a dead holder mints a fresh generation"
+  assert_eq "$(jq -r '.worktree_gen' "$state_file")" "$tok_d4" \
+    "the repossession records the new token in workflow state"
+fi
+
+# --expect-gen carries no identity check: a delegated agent may run in another
+# process session, and refusing it there would fail every legitimate round.
+set_lease_pid "$lock_d" 1
+run_claim --worktree "$wt_d" --issue VST-4 --expect-gen "$(lease_gen "$wt_d" VST-4)"
+assert_eq "$RUN_RC" "0" "--expect-gen verifies across process sessions"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

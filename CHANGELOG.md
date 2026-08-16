@@ -8,7 +8,10 @@
   re-verifies it at every round stamp, and passes it to the agent as the
   delegation's `Worktree Lease:` line — so a second session claiming the same
   tree makes both the next stamp and the delegated agent's first step exit 75
-  instead of silently sharing the worktree. Previously the lease was claimed
+  instead of silently sharing the worktree. The state file is shared, so a
+  stored token is continued only by the session the lease records as its
+  holder; a holder that is provably gone is repossessed rather than wedging a
+  resumed session. Previously the lease was claimed
   once at `start-worktree` and never checked again, and a concurrent writer
   could reset the tree, rewrite round artifacts, and move the PR head
   underneath a live round with nothing failing.

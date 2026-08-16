@@ -175,7 +175,7 @@ done
 # The delegated agent re-verifies the same lease, so a delegation that lands in
 # a tree another session has taken fails closed instead of clobbering it. The
 # orch side must therefore pass the token, and the dev side must check it.
-for wf in dev-start dev-fix review-pr-comments; do
+for wf in dev-start dev-fix review-pr-comments ci-fix; do
   doc="$SKILL_DIR/workflows/$wf.md"
   assert_file_contains "$doc" 'Worktree Lease: [WORKTREE_LEASE]' \
     "$wf carries the lease token into the delegation"
@@ -186,6 +186,11 @@ for wf in dev-implement dev-fix; do
     'worktree-claim --worktree [WORKTREE_PATH] --issue [ARTIFACT_KEY] --expect-gen [WORKTREE_LEASE]' \
     "dev $wf verifies the delegated lease before touching the worktree"
 done
+# ci-fix delegates a free-form prompt rather than a dev workflow, so the
+# verification has to be a step of that prompt or its agent never runs one.
+assert_file_contains "$SKILL_DIR/workflows/ci-fix.md" \
+  'worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --expect-gen [WORKTREE_LEASE]' \
+  "ci-fix makes lease verification a step of its delegation"
 
 # The three artifact-accepting paths must actually run the round-scoped check;
 # accepting on git state alone would take an unfinished round as complete.
