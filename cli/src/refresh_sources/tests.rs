@@ -2312,6 +2312,37 @@ fn a_malformed_credential_source_is_redacted_when_reported_missing() {
     );
 }
 
+/// A bare `user@host` is an ssh remote's spelling and a token-only
+/// credential's spelling both. Which one it is comes from the transport, not
+/// from the punctuation: a hostless `https:///TOKEN@host/repo` is refused, and
+/// the refusal prints it.
+#[test]
+fn a_token_only_userinfo_is_redacted_wherever_the_transport_is_not_ssh() {
+    for source in [
+        "https:///ghp_SECRET@host.example/owner/repo",
+        "https://ghp_SECRET@host.example/owner/repo",
+        "https:/ghp_SECRET@host.example/owner/repo",
+    ] {
+        let shown = remote_source_display(source);
+        assert!(!shown.contains("ghp_SECRET"), "{source}: {shown}");
+        assert!(shown.contains("<redacted>"), "{source}: {shown}");
+        assert!(
+            !absent_source_reason(source).contains("ghp_SECRET"),
+            "{source}"
+        );
+    }
+    // An ssh remote's username is not a secret and is kept in every spelling,
+    // as is a local path that merely contains an `@`.
+    for source in [
+        "ssh://git@host.example/owner/repo.git",
+        "git+ssh://git@host.example/owner/repo.git",
+        "git@host.example:owner/repo.git",
+        "/srv/checkouts/git@host/repo",
+    ] {
+        assert_eq!(remote_source_display(source), source, "{source}");
+    }
+}
+
 /// The scp-like spelling is the same grammar with different punctuation,
 /// and it used to be parsed by different code: a `user:secret@host:path`
 /// source had no authority by one splitter and no userinfo by another, so

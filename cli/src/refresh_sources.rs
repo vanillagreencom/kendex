@@ -1518,9 +1518,42 @@ fn redact_token(token: &str) -> String {
 /// verbatim, and a refusal that echoed one would put its terminal escapes on
 /// vstack's own stderr.
 pub(crate) fn remote_source_display(source: &str) -> String {
-    escape_unprintable(&redact_stray_userinfo(&redact_remote_query(
-        &redact_remote_userinfo(source),
-    )))
+    // Only an ssh spelling names a remote with a bare `user@`. Where the
+    // grammar says otherwise — or where it says nothing at all, which is how a
+    // local path reaches here — the two answers differ, so the question is
+    // asked of the ORIGINAL text once and carried through the redactions.
+    escape_unprintable(&redact_stray_userinfo(
+        &redact_remote_query(&redact_remote_userinfo(source)),
+        spelling_allows_bare_username(source),
+    ))
+}
+
+/// Whether a bare `user@` in `source` names an account rather than a token.
+///
+/// Only the ssh spellings carry a username. A string the grammar cannot parse
+/// gets the benefit of the doubt ONLY when it names no transport at all —
+/// which is what a local path looks like: `https:/TOKEN@host/repo` is
+/// malformed enough to parse as neither URL nor scp-like, and reading its
+/// token as a username printed it verbatim in the refusal.
+fn spelling_allows_bare_username(source: &str) -> bool {
+    if let Some(url) = parse_remote_url(source) {
+        return url.allows_bare_username();
+    }
+    scheme_prefix(source).is_none_or(|scheme| {
+        scheme.eq_ignore_ascii_case("ssh") || scheme.eq_ignore_ascii_case("git+ssh")
+    })
+}
+
+/// The `scheme:` a string opens with. A one-character scheme is a Windows
+/// drive letter, which names no transport.
+fn scheme_prefix(source: &str) -> Option<&str> {
+    let scheme = &source[..source.find(':')?];
+    let valid = scheme.len() > 1
+        && scheme.starts_with(|ch: char| ch.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'));
+    valid.then_some(scheme)
 }
 
 /// Redact anything shaped like `user:secret@` wherever it sits, after the
@@ -1531,7 +1564,7 @@ pub(crate) fn remote_source_display(source: &str) -> String {
 /// secret is path text and was echoed verbatim. Redaction has to be
 /// conservative about a shape it could not parse, including for a URL that is
 /// about to be refused: the refusal prints it.
-fn redact_stray_userinfo(text: &str) -> String {
+fn redact_stray_userinfo(text: &str, bare_username_is_a_username: bool) -> String {
     text.split_inclusive('/')
         .map(|segment| {
             let Some(at) = segment.rfind('@') else {
@@ -1539,8 +1572,11 @@ fn redact_stray_userinfo(text: &str) -> String {
             };
             let (userinfo, host) = segment.split_at(at);
             match userinfo.split_once(':') {
-                // A bare `user@host` is how ssh remotes are spelled.
-                None => segment.to_string(),
+                // A bare `user@host` is how an ssh remote is spelled — and how
+                // a token-only credential is spelled everywhere else, which is
+                // why the transport decides and not the punctuation.
+                None if bare_username_is_a_username => segment.to_string(),
+                None => format!("<redacted>{host}"),
                 Some((username, _)) => format!("{username}:<redacted>{host}"),
             }
         })

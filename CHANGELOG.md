@@ -362,7 +362,9 @@
   `://` and so let an scp-like `user:secret@host:path` through,
   and in the "source not found" line, which reached a credential URL malformed
   enough to be classified as a local path (`https:/user:token@host/repo`);
-  ssh usernames are kept, and any control or direction-changing character in a
+  an ssh remote's username is kept — but only where the spelling names ssh, so
+  a token-only `https:///TOKEN@host/repo` is redacted rather than read as an
+  account name — and any control or direction-changing character in a
   source string is escaped before it reaches a terminal. The bare `owner/repo`
   shorthand is not URL-shaped and so never reached those refusals: an owner or
   repository segment now accepts only characters GitHub allows, so
