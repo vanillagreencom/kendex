@@ -12,7 +12,9 @@
 # Every fixture replays the FULL decision table, and the replays are
 # independent (own cwd, own settings, own scratch dir), so they run
 # concurrently: each fixture block launches its replay as soon as it is
-# built, and the assertions read the recorded outputs after `wait`.
+# built, and the assertions read the recorded outputs after `wait`. Teardown
+# runs on EXIT, INT, TERM and HUP; SIGKILL is unrecoverable by construction,
+# so only a hard-killed run leaves replays and a scratch dir behind.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,8 +60,21 @@ settle() {
   return 0
 }
 teardown() {
+  local in_flight p
   if [ -z "$torn_down" ]; then
     torn_down=1
+    # An abort from a fixture block kills replays mid-flight and deletes the
+    # .out/.rc evidence they were writing, which in a CI log otherwise reads
+    # exactly like a completed run with one failed assertion. Counted from
+    # the same job table the sweep below signals, and silent on the normal
+    # path, where the assertions' wait has already left nothing outstanding.
+    in_flight=0
+    for p in $(jobs -pr); do
+      in_flight=$((in_flight + 1))
+    done
+    if [ "$in_flight" -ne 0 ]; then
+      echo "review-predicate-selftest.test: aborting with $in_flight replay(s) in flight — terminating them and removing $work" >&2
+    fi
     signal_replays TERM
     settle || { signal_replays KILL; settle || true; }
   fi
@@ -69,7 +84,7 @@ teardown() {
 }
 # EXIT keeps the run's own status; only the signal paths exit 130.
 trap teardown EXIT
-trap 'teardown; exit 130' INT TERM
+trap 'teardown; exit 130' INT TERM HUP
 
 # replay LABEL DIR [VAR=value ...] — run the selftest in DIR with the given
 # environment, in the background; stdout+stderr land in $work/LABEL.out and

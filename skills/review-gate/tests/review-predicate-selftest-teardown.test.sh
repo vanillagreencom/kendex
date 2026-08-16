@@ -31,6 +31,7 @@ export RG_TEARDOWN_PIDS="$work/pids"
 export RG_TEARDOWN_READY="$work/ready"
 export RG_TEARDOWN_TIMEOUT="$work/timeout"
 # Two replays, each a probe plus its descendant.
+RG_TEARDOWN_REPLAYS=2
 export RG_TEARDOWN_EXPECT=4
 : >"$RG_TEARDOWN_PIDS"
 JOBCONTROL_MARK="JOBCONTROL-LEFT-ENABLED"
@@ -130,9 +131,9 @@ L_SETPLUSM='  set +m'
 
 # variant OUT MODE LEAK PERPID NOJC — the wrapper with its selftest replaced
 # by the probe and an abort injected once two replays are outstanding. MODE
-# exit takes the early-exit arm, MODE signal takes the INT/TERM arm. The
-# three flags neuter, in turn, teardown's signalling, its group kill, and
-# the post-launch `set +m`.
+# is `exit` for the early-exit arm, or the name of a signal the wrapper
+# sends itself for the trap arm. The three flags neuter, in turn, teardown's
+# signalling, its group kill, and the post-launch `set +m`.
 variant() {
   local out="$1" mode="$2" leak="$3" perpid="$4" nojc="$5"
   awk -v stub="$probe" -v waiter="$waiter" -v mark="$JOBCONTROL_MARK" \
@@ -147,8 +148,8 @@ variant() {
       # Job control must be off again the moment replay() returns; the
       # variant with `set +m` removed is what proves this can fail.
       print "case \"$-\" in *m*) echo \"" mark "\" ;; esac"
-      if (mode == "signal") { print "kill -TERM $$"; print "exit 99" }
-      else { print "exit 9" }
+      if (mode == "exit") { print "exit 9" }
+      else { print "kill -" mode " $$"; print "exit 99" }
       n_abort++
       next
     }
@@ -209,12 +210,13 @@ started() {
 
 #       out                            mode    leak perpid nojc
 variant "$work/owning.test.sh"          exit    0    0      0
-variant "$work/signal.test.sh"          signal  0    0      0
+variant "$work/sigterm.test.sh"         TERM    0    0      0
+variant "$work/sighup.test.sh"          HUP     0    0      0
 variant "$work/leaking.test.sh"         exit    1    0      0
 variant "$work/perpid.test.sh"          exit    0    1      0
 variant "$work/nojobcontrol.test.sh"    exit    0    0      1
-for spec in "owning 1 1 0 0 0 0" "signal 1 1 0 0 0 0" "leaking 1 1 1 1 0 0" \
-            "perpid 1 1 0 0 1 0" "nojobcontrol 1 1 0 0 0 1"; do
+for spec in "owning 1 1 0 0 0 0" "sigterm 1 1 0 0 0 0" "sighup 1 1 0 0 0 0" \
+            "leaking 1 1 1 1 0 0" "perpid 1 1 0 0 1 0" "nojobcontrol 1 1 0 0 0 1"; do
   name="${spec%% *}"
   want="${spec#* }"
   got="$(cat "$work/$name.test.sh.counts")"
@@ -232,15 +234,25 @@ if [ "$fail" -eq 0 ]; then
     if grep -q "$JOBCONTROL_MARK" "$work/owning.test.sh.out"; then
       note "the wrapper left job control enabled after a replay launch — a terminal signal would reach the foreground command instead of teardown"
     fi
+    # An abort that kills replays mid-flight must say so, with the count it
+    # actually had in flight — a silent one reads like a completed run.
+    grep -q "aborting with $RG_TEARDOWN_REPLAYS replay(s) in flight" "$work/owning.test.sh.out" \
+      || note "an abort with $RG_TEARDOWN_REPLAYS replays in flight did not report them on stderr"
   fi
 
-  # --- the signal arm: the same, reached through the INT/TERM trap --------
-  rc="$(run_variant "$work/signal.test.sh")"
-  if started "$work/signal.test.sh" "$rc" 130; then
-    survivors="$(alive_settled)"
-    [ "$survivors" -eq 0 ] \
-      || note "teardown left $survivors replay descendant(s) running after a SIGTERM"
-  fi
+  # --- the signal arms: the same, reached through the trap ----------------
+  # HUP is here because putting each replay in its own process group is what
+  # takes them out of the runner's group: nothing but these traps cleans up.
+  for arm in "sigterm TERM" "sighup HUP"; do
+    v="$work/${arm%% *}.test.sh"
+    sig="${arm#* }"
+    rc="$(run_variant "$v")"
+    if started "$v" "$rc" 130; then
+      survivors="$(alive_settled)"
+      [ "$survivors" -eq 0 ] \
+        || note "teardown left $survivors replay descendant(s) running after a SIG$sig"
+    fi
+  done
 
   # --- control: the survivor check must SEE a leaked tree -----------------
   rc="$(run_variant "$work/leaking.test.sh")"
