@@ -170,9 +170,12 @@
   continue past its non-zero exits. The roster's own lane names are cleared
   unconditionally; a lane artifact left by a target since renamed or removed
   from `SECOND_OPINION_MODELS` is cleared too, but only when the file's CONTENT
-  is a review this skill emitted — a sibling that merely shares the name shape
-  (`<output>.notes.json` holding your own text or JSON) is never removed, and
-  nothing outside `--output`'s own name space is ever touched. `--help` and
+  proves this skill wrote it — the review schema AND an `external-…` agent
+  marker, which only this skill's own pipeline produces. A sibling sharing the
+  name shape (`<output>.notes.json`), or sharing the review schema under another
+  agent (an internal `reviewer-*` artifact — that schema is a shared contract,
+  not a signature), is never removed, and nothing outside `--output`'s own name
+  space is ever touched. `--help` and
   `detect` are excluded; neither writes anything. Reusing one `--output` path
   across runs is now safe, and pointing `--output` at a file you want to keep is
   not.

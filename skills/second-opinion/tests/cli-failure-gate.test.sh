@@ -630,6 +630,16 @@ printf '%s\n' "$S10_STALE" > "$s10e_out.orphan-lane.json.raw.txt"   # sidecar wi
 # a name-only rule destroys.
 printf 'MY IMPORTANT NOTES\n'    > "$s10e_out.notes.json"
 printf '{"foo":1,"bar":[2,3]}\n' > "$s10e_out.data.json"
+# The review-finding SCHEMA is a public contract — skills/reviewer writes the
+# same structure under its own agent name, and so would any other tool
+# implementing it. Shape is not provenance, so these two carry the FULL schema
+# and differ from ours only in the `agent` marker.
+printf '{"agent":"reviewer-correctness","timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"internal review","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}\n' \
+  > "$s10e_out.correctness.json"
+printf '{"timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"no agent at all","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}\n' \
+  > "$s10e_out.anon.json"
+s10e_foreign="$(cat "$s10e_out.correctness.json")"
+s10e_anon="$(cat "$s10e_out.anon.json")"
 printf 'MINE\n' > "$s10e_out.bak"
 printf 'MINE\n' > "$s10e_out.notes.md"
 printf 'MINE\n' > "${s10e_out}X"
@@ -642,6 +652,10 @@ assert_file_absent "$s10e_out.retired-model.json.failed.json" "(b3) the retired 
 assert_file_exists "$s10e_out.notes.json" "(b3) a same-shaped name holding non-JSON text survives"
 assert_file_exists "$s10e_out.data.json" "(b3) a same-shaped name holding unrelated JSON survives"
 assert_eq "$(cat "$s10e_out.notes.json")" "MY IMPORTANT NOTES" "(b3) the surviving user file is untouched"
+assert_file_exists "$s10e_out.correctness.json" "(b3) another reviewer's artifact in the shared schema survives"
+assert_eq "$(cat "$s10e_out.correctness.json")" "$s10e_foreign" "(b3) the foreign artifact is byte-identical"
+assert_file_exists "$s10e_out.anon.json" "(b3) a schema-shaped artifact with no agent survives"
+assert_eq "$(cat "$s10e_out.anon.json")" "$s10e_anon" "(b3) the agent-less artifact is byte-identical"
 # An orphaned sidecar has no artifact to prove authorship, and a .raw.txt holds
 # raw model prose rather than a verdict — nothing here can be read as a pass, so
 # it is left alone rather than deleted on the strength of its name.
@@ -655,6 +669,7 @@ assert_file_exists "$s10e_out.two.words.json" "(b3) a middle segment that is not
 # gets past a bad flag must not destroy them either.
 s10e2_out="$TMP_ROOT/out/review10e2.json"
 printf 'MY IMPORTANT NOTES\n' > "$s10e2_out.notes.json"
+printf '%s\n' "$s10e_foreign" > "$s10e2_out.correctness.json"
 printf '%s\n' "$S10_STALE"    > "$s10e2_out.retired-model.json"
 set +e
 PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
@@ -665,6 +680,7 @@ rc10e2=$?
 set -e
 assert_eq "$rc10e2" "1" "(b3) a bad-flag run still exits 1"
 assert_file_exists "$s10e2_out.notes.json" "(b3) a bad-flag run does not destroy a user's sibling"
+assert_file_exists "$s10e2_out.correctness.json" "(b3) a bad-flag run does not destroy another reviewer's artifact"
 assert_file_absent "$s10e2_out.retired-model.json" "(b3) a bad-flag run still clears a real retired lane artifact"
 
 # (b4) the prefix scan must hold for the two hostile --output shapes the rest of
