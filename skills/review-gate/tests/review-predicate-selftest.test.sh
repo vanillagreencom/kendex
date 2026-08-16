@@ -754,13 +754,13 @@ fi
 if passed cyclic; then
   note "selftest passed with a CYCLIC symlinked override — the unresolvable-override guard no longer refuses"
 else
-  grep -q "names a symlink that does not resolve to a readable file" "$work/cyclic.out" \
+  grep -q "does not resolve" "$work/cyclic.out" \
     || note "cyclic-override failure does not carry the unresolvable-override diagnostic"
 fi
 if passed dangling; then
   note "selftest passed with a DANGLING symlinked override — the unresolvable-override guard no longer refuses"
 else
-  grep -q "names a symlink that does not resolve to a readable file" "$work/dangling.out" \
+  grep -q "does not resolve" "$work/dangling.out" \
     || note "dangling-override failure does not carry the unresolvable-override diagnostic"
 fi
 

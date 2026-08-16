@@ -3,13 +3,15 @@
 ## Unreleased
 
 - review-gate/size-ratchet/growth-guards: settings resolution fails closed
-  on a path that EXISTS but is not a regular file. A directory, FIFO,
-  socket or device at `*_SETTINGS_FILE` (or at the default
-  `vstack.settings.toml`) failed `-f` exactly like an absent file, so every
-  key resolved to its built-in default with nothing said — on the gate that
-  meant an empty trusted-logins list (any non-author counts) on a run
-  nobody could tell apart from a configured one. `/dev/null` stays the
-  documented force-defaults handle; an absent plain file still falls back.
+  on an unusable settings path. A directory, FIFO, socket or device at
+  `*_SETTINGS_FILE` (or at the default `vstack.settings.toml`) failed `-f`
+  exactly like an absent file, and a symlink that does not resolve failed
+  `-e` as well, so every key resolved to its built-in default with nothing
+  said — on the gate that meant an empty trusted-logins list (any
+  non-author counts) on a run nobody could tell apart from a configured
+  one. The refusal sits in the resolver, so the live predicate and writer
+  get it too. `/dev/null` stays the documented force-defaults handle; an
+  absent plain file, and a symlink that resolves, are unchanged.
 - review-gate: a prophylactic carry-exclude declaration is validated
   whenever declarations exist, not only when the exclusion list is
   non-empty — an EMPTY `REVIEW_GATE_CARRY_FORWARD_EXCLUDE` makes every

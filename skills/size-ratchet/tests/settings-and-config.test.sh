@@ -203,6 +203,29 @@ else
   echo "  skip  mkfifo unavailable — FIFO shape not exercised"
 fi
 
+# A symlink that does not resolve fails -e as well as -f, so an existence
+# test alone never sees it — the same silent-defaults trap one shape over.
+ln -s missing.toml "$R/dangling.settings.toml"
+run_raw SIZE_RATCHET_SETTINGS_FILE=dangling.settings.toml || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
+  && ok "a DANGLING symlink settings path is exit 2, not a silent built-in default" \
+  || bad "a DANGLING symlink settings path is exit 2" "rc=$RC out=$OUT"
+
+ln -s cycle-b.settings.toml "$R/cycle-a.settings.toml"
+ln -s cycle-a.settings.toml "$R/cycle-b.settings.toml"
+run_raw SIZE_RATCHET_SETTINGS_FILE=cycle-a.settings.toml || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
+  && ok "a CYCLIC symlink settings path is exit 2, not a silent built-in default" \
+  || bad "a CYCLIC symlink settings path is exit 2" "rc=$RC out=$OUT"
+
+# A RESOLVING symlink is an ordinary install shape and must still read.
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "15"\n' >"$R/link-target.settings.toml"
+ln -s link-target.settings.toml "$R/link.settings.toml"
+run_raw SIZE_RATCHET_SETTINGS_FILE=link.settings.toml || true
+[ "$RC" -eq 1 ] && case "$OUT" in *"threshold 15"*) true ;; *) false ;; esac \
+  && ok "a RESOLVING symlink reads its target (control: 20 > 15 fails; 1000 would have passed)" \
+  || bad "a RESOLVING symlink reads its target (control)" "rc=$RC out=$OUT"
+
 # Controls: the two shapes that MUST still resolve to the built-in default.
 run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
 [ "$RC" -eq 0 ] && case "$OUT" in *"threshold 1000"*) true ;; *) false ;; esac \

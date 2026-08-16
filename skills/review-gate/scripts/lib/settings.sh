@@ -49,10 +49,15 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # that EXISTS as something else — directory, FIFO, socket, device — fails
   # -f exactly like an absent one, so every key would resolve to its
   # built-in default with nothing said, and an empty default widens the gate
-  # (empty trusted-logins = any non-author). /dev/null is the documented
-  # force-defaults handle and stays exempt.
-  if [ "$file" != "/dev/null" ] && [ -e "$file" ] && [ ! -f "$file" ]; then
-    echo "::error::$file: settings path exists but is not a regular file (directory, FIFO, socket or device); the fall-back to built-in defaults covers an absent plain file only" >&2
+  # (empty trusted-logins = any non-author). A symlink that does not resolve
+  # fails -e as well as -f, so -L is what sees it at all. /dev/null is the
+  # documented force-defaults handle and stays exempt.
+  if [ "$file" != "/dev/null" ] && { [ -e "$file" ] || [ -L "$file" ]; } && [ ! -f "$file" ]; then
+    if [ ! -e "$file" ]; then
+      echo "::error::$file: settings path is a symlink that does not resolve (dangling target, cycle, or over-long chain); the fall-back to built-in defaults covers an absent plain file only" >&2
+    else
+      echo "::error::$file: settings path exists but is not a regular file (directory, FIFO, socket or device); the fall-back to built-in defaults covers an absent plain file only" >&2
+    fi
     return 1
   fi
   if [ -f "$file" ]; then

@@ -36,26 +36,16 @@ predicate="$here/review-predicate.sh"
 [ -x "$predicate" ] || { echo "not executable: $predicate" >&2; exit 1; }
 . "$here/lib/settings.sh"
 
-# A SET settings override that exists only as an unresolvable symlink
-# (cycle, dangling target, over-long chain) must refuse UP FRONT: -f is
-# false for it, so rg_setting would silently resolve every key to its
-# built-in default and this run would green-light the wrong settings —
-# the configured layer below would never even load the exclusions it was
-# pointed at. A plain absent file (not a link) keeps the documented
+# A settings override that is unusable — a directory, FIFO, socket, device,
+# or a symlink that does not resolve — is rg_setting's refusal, for the live
+# engine as much as for this run. What rg_setting cannot see is an EXISTING
+# but UNREADABLE file: its grep presence probe just fails and every key
+# quietly resolves to its built-in default, so this run would green-light
+# settings it never read. A plain absent file keeps the documented
 # fall-back-to-defaults behavior.
 case "${REVIEW_GATE_SETTINGS_FILE:-}" in
   '' | /dev/null) : ;;
   *)
-    # An EXISTING non-regular path (directory, FIFO, socket, device) is
-    # rg_setting's refusal, for the live engine as much as for this run;
-    # these guards cover what a bare -f/-e cannot see.
-    if [ ! -f "$REVIEW_GATE_SETTINGS_FILE" ] && [ -L "$REVIEW_GATE_SETTINGS_FILE" ]; then
-      echo "FATAL: REVIEW_GATE_SETTINGS_FILE ('$REVIEW_GATE_SETTINGS_FILE') names a symlink that does not resolve to a readable file (cycle, dangling target, or over-long chain) — refusing to test built-in defaults in its place" >&2
-      exit 1
-    fi
-    # An EXISTING but unreadable override is the same silent-defaults trap
-    # one notch later: rg_setting's grep would fail its presence probe and
-    # every key would quietly resolve to its built-in default.
     if [ -f "$REVIEW_GATE_SETTINGS_FILE" ] && [ ! -r "$REVIEW_GATE_SETTINGS_FILE" ]; then
       echo "FATAL: REVIEW_GATE_SETTINGS_FILE ('$REVIEW_GATE_SETTINGS_FILE') exists but is not readable — refusing to test built-in defaults in its place" >&2
       exit 1

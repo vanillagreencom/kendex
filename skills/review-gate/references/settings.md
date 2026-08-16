@@ -44,7 +44,9 @@ Two env-only PER-INVOCATION seams are deliberately NOT settings keys:
   the file itself describes — a settings key naming its own settings file
   would be circular. Falling back to built-in defaults covers an ABSENT
   PLAIN FILE only: a path that exists as a directory, FIFO, socket or
-  device is a configuration error every reader fails loud on. `/dev/null`
+  device, or a symlink that does not resolve (dangling target, cycle,
+  over-long chain), is a configuration error every reader fails loud on. A
+  symlink that DOES resolve to a regular file reads normally. `/dev/null`
   is the one exempt path — the documented handle for forcing defaults.
 - `REVIEW_GATE_STATUS_SNAPSHOT_FILE` — path to a status snapshot (JSON
   object with a `statuses` array and a top-level `sha` equal to the

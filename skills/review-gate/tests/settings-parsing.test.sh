@@ -104,6 +104,26 @@ else
   echo "  skip  mkfifo unavailable — FIFO shape not exercised"
 fi
 
+# A symlink that does not resolve fails -e as well as -f, so an existence
+# test alone never sees it — the same silent-defaults trap one shape over.
+ln -s missing.toml "$TMP/dangling.settings.toml"
+OUT=""; RC=0
+OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/dangling.settings.toml" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "does not resolve" "$TMP/err" && ok "a DANGLING symlink settings path is a config error, not a silent default" || bad "a DANGLING symlink settings path is a config error, not a silent default" "rc=$RC out=$OUT"
+
+ln -s cycle-b.settings.toml "$TMP/cycle-a.settings.toml"
+ln -s cycle-a.settings.toml "$TMP/cycle-b.settings.toml"
+OUT=""; RC=0
+OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/cycle-a.settings.toml" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "does not resolve" "$TMP/err" && ok "a CYCLIC symlink settings path is a config error, not a silent default" || bad "a CYCLIC symlink settings path is a config error, not a silent default" "rc=$RC out=$OUT"
+
+# A RESOLVING symlink is an ordinary install shape and must still read.
+printf 'REVIEW_GATE_TL = "linked"\n' >"$TMP/link-target.settings.toml"
+ln -s link-target.settings.toml "$TMP/link.settings.toml"
+OUT=""; RC=0
+OUT="$(unset REVIEW_GATE_TL 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/link.settings.toml" rg_setting REVIEW_GATE_TL "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "linked" ]] && ok "a RESOLVING symlink reads its target (control)" || bad "a RESOLVING symlink reads its target (control)" "rc=$RC out=$OUT"
+
 # Controls: the two shapes that MUST still resolve to the caller default.
 OUT=""; RC=0
 OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE=/dev/null rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?

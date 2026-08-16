@@ -211,6 +211,29 @@ else
   echo "  skip  mkfifo unavailable — FIFO shape not exercised"
 fi
 
+# A symlink that does not resolve fails -e as well as -f, so an existence
+# test alone never sees it — the same silent-defaults trap one shape over.
+ln -s missing.toml "$R/dangling.settings.toml"
+OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=dangling.settings.toml "$BC" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
+  && ok "a DANGLING symlink settings path is exit 2, not a silent built-in default" \
+  || bad "a DANGLING symlink settings path is exit 2" "rc=$RC out=$OUT"
+
+ln -s cycle-b.settings.toml "$R/cycle-a.settings.toml"
+ln -s cycle-a.settings.toml "$R/cycle-b.settings.toml"
+OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=cycle-a.settings.toml "$BC" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"does not resolve"*) true ;; *) false ;; esac \
+  && ok "a CYCLIC symlink settings path is exit 2, not a silent built-in default" \
+  || bad "a CYCLIC symlink settings path is exit 2" "rc=$RC out=$OUT"
+
+# A RESOLVING symlink is an ordinary install shape and must still read.
+printf '[env]\nGROWTH_GUARDS_BYTE_CEILING_KB = "3"\n' >"$R/link-target.settings.toml"
+ln -s link-target.settings.toml "$R/link.settings.toml"
+OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=link.settings.toml "$BC" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 1 ] && case "$OUT" in *"ceiling 3 KB"*) true ;; *) false ;; esac \
+  && ok "a RESOLVING symlink reads its target (control: 4 KB > 3 fails; 200 would have passed)" \
+  || bad "a RESOLVING symlink reads its target (control)" "rc=$RC out=$OUT"
+
 # Controls: the two shapes that MUST still resolve to the built-in default
 # (200 KB, under which the 4 KB addition passes).
 OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=/dev/null "$BC" 2>&1)" && RC=0 || RC=$?

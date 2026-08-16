@@ -35,7 +35,7 @@ skills/linear/scripts/commands/projects.sh	1364
 skills/orch/scripts/approval-wait	1096
 skills/orch/scripts/queue-wait	1025
 skills/orch/tests/approval_wait.sh	1634
-skills/review-gate/scripts/review-predicate-selftest.sh	2634
+skills/review-gate/scripts/review-predicate-selftest.sh	2624
 skills/review-gate/scripts/review-predicate.sh	1149
 skills/review-gate/tests/pr-watch.test.sh	1158
 skills/second-opinion/scripts/second-opinion	2390
