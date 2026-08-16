@@ -449,6 +449,12 @@ else
     "a failed re-enumeration does not prune what the first snapshot proved live"
   assert_eq "$([[ -f "$CLAIM_STATE/claims/live4.claim" ]] && echo yes || echo no)" "yes" \
     "the claim the snapshot covered survives a failed re-check"
+  # The record that PROVOKED the re-check is the one a stale snapshot cannot
+  # settle: without a fresh enumeration it is unknown, and kept.
+  assert_eq "$(jq -r '.[] | select(.alias=="eclaude") | .claims' <<<"$KEPT2")" "1" \
+    "the record that provoked the failed re-check is kept, not pruned by the stale snapshot"
+  assert_eq "$([[ -f "$CLAIM_STATE/claims/gone5.claim" ]] && echo yes || echo no)" "yes" \
+    "no claim is deleted on a snapshot that predates it"
 fi
 rm -f "$CLAIM_STATE"/claims/*.claim
 

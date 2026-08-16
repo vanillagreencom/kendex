@@ -48,7 +48,7 @@ lane_claims_canon() {
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
   local dir="$1" live this_server f server pane cfg window created rc=0
-  local rechecked=0 live_now fresh
+  local rechecked=0 recheck_ok=1 live_now fresh
   # Absent is genuinely empty; anything else that is not a directory is a
   # misconfiguration, and an unreadable store is not an empty one. Reporting
   # no claims for either would report every busy account as free.
@@ -95,13 +95,21 @@ lane_claims_read() {
       # every same-server miss in this pass.
       if [[ "$rechecked" -eq 0 ]]; then
         rechecked=1
-        # A re-enumeration that FAILS says nothing; replacing the snapshot with
-        # its empty output would then prune every remaining live claim.
+        # A re-enumeration that FAILS says nothing: it neither replaces the
+        # snapshot nor settles the record that provoked it.
         if fresh="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)"; then
           live="$fresh"
+        else
+          recheck_ok=0
         fi
       fi
-      if grep -qxF -- "$server $pane" <<<"$live"; then live_now=1; fi
+      if [[ "$recheck_ok" -eq 0 ]]; then
+        # Only a snapshot taken after this record was written can call it
+        # dead, and none is available: unknown, and an unknown claim is kept.
+        live_now=1
+      elif grep -qxF -- "$server $pane" <<<"$live"; then
+        live_now=1
+      fi
     elif kill -0 "$server" 2>/dev/null; then
       # A server this process cannot enumerate, still running.
       live_now=1
