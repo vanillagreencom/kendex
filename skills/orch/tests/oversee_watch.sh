@@ -102,12 +102,23 @@ case "${1:-} ${2:-}" in
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ -f "$STUB_DIR/list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
     [[ -f "$STUB_DIR/noisy" ]] && echo "Notice: something advisory" >&2
-    for a in "$@"; do
-      if [[ "$a" == "merged" ]]; then
-        [[ -f "$STUB_DIR/merged.json" ]] && cat "$STUB_DIR/merged.json" || echo '[]'
-        exit 0
-      fi
+    head=""; limit=""; state=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --head) head="$2"; shift ;;
+        --limit) limit="$2"; shift ;;
+        --state) state="$2"; shift ;;
+      esac
+      shift
     done
+    if [[ "$state" == "merged" ]]; then
+      src="$STUB_DIR/merged.json"; [[ -f "$src" ]] || src=/dev/null
+      # newest-created first, like gh: the fixture is in that order already;
+      # --head narrows to one branch, --limit caps the page.
+      jq -c --arg head "$head" --argjson limit "${limit:-1000}" \
+        '[ .[] | select($head == "" or .headRefName == $head) ] | .[:$limit]' "$src" 2>/dev/null || echo '[]'
+      exit 0
+    fi
     [[ -f "$STUB_DIR/open.txt" ]] && cat "$STUB_DIR/open.txt"
     exit 0 ;;
 esac
@@ -278,6 +289,15 @@ err="$TMP_ROOT/e2b"
 out="$(run_watch -- --item issue-5 --item issue-6 2>"$err")" && rc=0 || rc=$?
 assert_contains "$out" "EVENT merged 6 issue-6" "without --since a merge from before the run fires (no moving floor)" "$err"
 assert_eq "$(grep -c '^EVENT' <<<"$out")" "2" "both item PRs fire, nothing else" "$err"
+
+# busy repo: the item's PR is older than 60 newer merges — a single listing
+# window would drop it; the per-item --head query still finds it
+err="$TMP_ROOT/e2c"
+jq -n '[range(1; 61) | {number: (100 + .), headRefName: ("noise-" + (.|tostring)), mergedAt: "2026-08-15T12:00:00Z"}] + [{number: 5, headRefName: "issue-5", mergedAt: "2026-08-15T10:00:00Z"}]' > "$STUB_DIR/merged.json"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "busy-repo merged exits 0" "$err"
+assert_contains "$out" "EVENT merged 5 issue-5" "an item's merge beyond a newest-60 window still fires (per-item --head query)" "$err"
+
 
 # no --item: merged check skipped with a note; a merged PR is not an event
 : > "$STUB_DIR/gh.calls"

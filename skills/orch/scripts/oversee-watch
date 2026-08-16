@@ -10,7 +10,8 @@
 #                 stderr), never a preempting event, so a PR that sits at
 #                 threads-open for an hour cannot starve the lane checks.
 #                 The latest reducer output is appended to every event.
-#   2. merged     an --item's PR (head branch = the item id, lowercased)
+#   2. merged     an --item's PR (head branch = the item id, lowercased;
+#                 one --head query per item — no listing window to miss)
 #                 merged at or after --since
 #   3. window-gone a listed tmux lane window no longer exists
 #   4. question   a listed lane's pane shows a question/selection prompt
@@ -248,18 +249,24 @@ check_pr_watch() {
 
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  local errf="$WORK_DIR/merged.err" list hits
-  list="$(gh pr list --repo "$REPO" --state merged --limit 50 --json number,headRefName,mergedAt 2>"$errf")" \
-    || die "gh pr list --state merged failed for $REPO: $(cat "$errf")"
-  hits="$(jq -r --arg branches "$ITEM_BRANCHES" --argjson since "$SINCE_EPOCH" '
-    ($branches | split("\n") | map(select(length > 0))) as $live
-    | [ .[]
-        | select(.headRefName | ascii_downcase | IN($live[]))
+  # One --head query per live item: an item count bounded by the lane cap,
+  # and no listing window a busy repo can push an item's merge out of.
+  local errf="$WORK_DIR/merged.err" branch list hit hits=""
+  while IFS= read -r branch; do
+    [[ -n "$branch" ]] || continue
+    list="$(gh pr list --repo "$REPO" --head "$branch" --state merged --limit 10 --json number,headRefName,mergedAt 2>"$errf")" \
+      || die "gh pr list --state merged failed for $REPO (--head $branch): $(cat "$errf")"
+    hit="$(jq -r --arg branch "$branch" --argjson since "$SINCE_EPOCH" '
+      [ .[]
+        | select(.headRefName | ascii_downcase == $branch)
         | select(.mergedAt != null)
         | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
         | "EVENT merged \(.number) \(.headRefName)" ]
-    | .[]' <<<"$list" 2>"$errf")" \
-    || die "could not parse gh pr list output for $REPO: $(cat "$errf")"
+      | .[]' <<<"$list" 2>"$errf")" \
+      || die "could not parse gh pr list output for $REPO ($branch): $(cat "$errf")"
+    [[ -z "$hit" ]] || hits+="$hit"$'\n'
+  done <<<"$ITEM_BRANCHES"
+  hits="${hits%$'\n'}"
   [[ -n "$hits" ]] || return 0
   printf '%s\n' "$hits"
   pr_watch_context

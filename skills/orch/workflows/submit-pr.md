@@ -14,7 +14,7 @@ Run a local pre-PR review, push, create or update the PR, triage review comments
 
 **Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
 
-**Every path** — PR number, standalone, or managed (`issue_id` arrives, the tracker reference does not) — then resolves `TRACKER` and `ISSUE_REF` from `ISSUE_ID` per [Tracker Resolution](../SKILL.md#tracker-resolution); the PR body's `Closes` line renders `ISSUE_REF` only.
+**Every path** — PR number, standalone, or managed (`issue_id` arrives, the tracker reference does not) — then resolves `TRACKER` and `ISSUE_REF` from `ISSUE_ID` per [Tracker Resolution](../SKILL.md#tracker-resolution), and `SUB_ISSUE_REF` the same way from each completed sub-issue's own id; every `Closes` line renders a tracker reference only.
 
 ---
 
