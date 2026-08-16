@@ -563,8 +563,15 @@ fn commondir_redirected_cache(label: &str) -> RedirectedCommonDir {
     }
 }
 
+/// Scrubbed exactly as the `git` fixture helper is: a runner exporting
+/// `GIT_DIR` or a `GIT_CONFIG_*` override would otherwise point this read at
+/// another repository, and the guard would be judged on the wrong answer.
 fn rev_parse(repo: &Path, rev: &str) -> String {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    for key in GIT_INHERITED_ENV_VARS.iter().chain(GIT_CACHE_ONLY_ENV_VARS) {
+        command.env_remove(key);
+    }
+    let output = command
         .args(["rev-parse", rev])
         .current_dir(repo)
         .output()
@@ -755,6 +762,77 @@ fn update_cached_repo_brings_an_owned_cache_to_origin_head() {
 
     update_cached_repo(&remote_at(&cache, &origin)).unwrap();
 
+    assert_eq!(
+        std::fs::read_to_string(cache.join("README.md")).unwrap(),
+        "newer\n"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Reading a cache entry is how its content becomes the installed asset, so
+/// the read-only resolution asks the same ownership questions the update does.
+/// An entry that is a real clone of a DIFFERENT repository passes every shape
+/// check; only the origin identity catches it — and `add`'s reconciliation
+/// reads sources through this path.
+#[test]
+fn read_only_resolution_refuses_a_cache_entry_cloned_from_another_repository() {
+    let root = tmpdir("read-only-foreign-origin");
+    let home = root.join("home");
+    let other = root.join("other-origin");
+    init_git_repo(&other);
+    std::fs::create_dir_all(other.join("skills/demo")).unwrap();
+
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        let remote = RemoteSource::parse("owner/repo").unwrap().unwrap();
+        clone_into(&other, &remote.cache_dir);
+
+        let resolution = source_path_resolution("owner/repo");
+
+        let SourceResolution::Refused(reason) = resolution else {
+            panic!("a clone of another repository resolved as this source: {resolution:?}");
+        };
+        assert!(reason.contains("its origin is"), "{reason}");
+        assert!(reason.contains("not this source"), "{reason}");
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The ownership check proves the entry is THIS repository's clone; it may
+/// still hold the URL that first minted it. Fetching through that URL means a
+/// user who selects a different transport — because the first one stopped
+/// authenticating — keeps failing over the old one, and a failed fetch is
+/// tolerated, so the selection silently never runs.
+#[test]
+fn update_fetches_through_the_url_this_invocation_selected() {
+    let root = tmpdir("origin-retarget");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+    let cache = root.join("cache").join("owner_repo");
+    clone_into(&origin, &cache);
+    std::fs::write(origin.join("README.md"), "newer\n").unwrap();
+    git(&origin, &["commit", "-q", "-am", "update"]);
+
+    // An identity-equal spelling of the same repository: the ownership check
+    // accepts it, and it is not the URL the entry was cloned with.
+    let selected = format!("{}/", file_url(&origin));
+    let remote = RemoteSource {
+        git_url: selected.clone(),
+        ..remote_at(&cache, &origin)
+    };
+
+    update_cached_repo(&remote).unwrap();
+
+    let recorded = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(&cache)
+        .output()
+        .unwrap();
+    assert_eq!(
+        git_stdout_line(&recorded.stdout),
+        selected,
+        "the entry kept the URL it was minted with"
+    );
+    // And the update still did its work through it.
     assert_eq!(
         std::fs::read_to_string(cache.join("README.md")).unwrap(),
         "newer\n"
@@ -1856,7 +1934,7 @@ fn remote_source_parse_derives_one_key_per_repository_identity() {
             .unwrap()
             .unwrap();
         assert!(
-            gitlab.cache_key.starts_with("gitlab_com_owner_repo-"),
+            gitlab.cache_key.starts_with("https_gitlab_com_owner_repo-"),
             "{}",
             gitlab.cache_key
         );
@@ -1905,6 +1983,58 @@ fn two_ssh_accounts_on_one_host_never_share_a_cache_entry() {
         assert_eq!(
             key("git@github.com:owner/repo.git"),
             key("https://github.com/owner/repo.git")
+        );
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Nothing says an arbitrary host serves the same tree at one path over https
+/// and over ssh, so the transport is part of a non-GitHub identity too — while
+/// the three spellings of ONE transport stay one entry.
+#[test]
+fn a_non_github_hosts_transports_never_share_a_cache_entry() {
+    let root = tmpdir("transport-identity");
+    let home = root.join("home");
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        let key = |source: &str| RemoteSource::parse(source).unwrap().unwrap().cache_key;
+        assert_ne!(
+            key("https://host.example/owner/repo.git"),
+            key("ssh://host.example/owner/repo.git")
+        );
+        assert_ne!(
+            key("https://host.example/owner/repo.git"),
+            key("git@host.example:owner/repo.git")
+        );
+        // One transport, three spellings, one entry.
+        let ssh = key("ssh://git@host.example/owner/repo.git");
+        assert_eq!(key("git@host.example:owner/repo.git"), ssh);
+        assert_eq!(key("git+ssh://git@host.example/owner/repo.git"), ssh);
+        // And GitHub is still the documented exception.
+        assert_eq!(
+            key("git@github.com:owner/repo.git"),
+            key("https://github.com/owner/repo.git")
+        );
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A cache key is one filesystem name, and a `file://` or self-hosted source
+/// may carry an arbitrarily deep path. Past the common 255-byte limit
+/// `git clone` fails on a source that is perfectly valid.
+#[test]
+fn a_deep_source_path_still_fits_one_filesystem_name() {
+    let root = tmpdir("long-key");
+    let home = root.join("home");
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        let deep = "seg".repeat(40);
+        let key = |source: &str| RemoteSource::parse(source).unwrap().unwrap().cache_key;
+        let long = key(&format!("https://host.example/{deep}/{deep}/repo.git"));
+        assert!(long.len() <= 255, "{} bytes: {long}", long.len());
+        // The digest is what keeps two repositories apart, so it survives the
+        // bound: two sources sharing a truncated prefix still differ.
+        assert_ne!(
+            long,
+            key(&format!("https://host.example/{deep}/{deep}/other.git"))
         );
     });
     let _ = std::fs::remove_dir_all(root);

@@ -301,6 +301,10 @@
   clone writes does not, and `fetch`/`reset --hard` run them. A cache whose
   `core.worktree` pointed at a user checkout used to have that checkout's
   tracked files overwritten (VST-256). A
+  Reading an entry asks every one of those questions too, not just the
+  filesystem ones: reading is how a cache entry's content becomes the installed
+  asset, so an entry that is a real clone of a different repository is refused
+  on the read-only path as well as the updating one. A
   remote source is a source whether or not its clone is present or usable:
   `add` fails, `refresh` reports the entry as not refreshed naming the real
   cause — the refusal, or a cache that is not on this machine — and exits
@@ -324,10 +328,20 @@
   an error. Remote
   sources resolve to one cache entry per repository identity — every spelling
   of a GitHub repo shares one, two repositories never do — so URL-added sources
-  refresh from the clone `add` made. On a non-GitHub host the ssh account is
-  part of that identity, because an scp-like path resolves relative to the
-  account's home: `alice@host:repo` and `bob@host:repo` shared one cache entry
-  and passed each other's origin check.
+  refresh from the clone `add` made. On a non-GitHub host the ssh account and
+  the transport are both part of that identity — an scp-like path resolves
+  relative to the account's home, and nothing says an arbitrary host serves the
+  same tree at one path over https and over ssh — so `alice@host:repo` and
+  `bob@host:repo`, and the https and ssh spellings of one path, no longer share
+  a cache entry and pass each other's origin check. The three spellings of one
+  ssh transport (`git@host:repo`, `ssh://`, `git+ssh://`) still do, and GitHub
+  remains the documented exception. The readable half of a cache key is bounded
+  so a deeply nested `file://` or self-hosted path cannot push the directory
+  name past a filesystem's 255-byte limit; the digest that separates two
+  repositories is never truncated. An update points the entry's `origin` at the
+  URL the invocation selected before fetching, so switching transport because
+  the first one stopped authenticating actually takes effect instead of failing
+  over the old URL into a tolerated stale cache.
   **Breaking:** cache entries written by earlier vstack versions are not
   reused, because the cache key now derives from the repository identity. The
   first `vstack refresh` after upgrading reports each remote source as not

@@ -473,10 +473,13 @@ fn resolve_single_source_with(
         if let Err(err) = update_cached_repo(&remote) {
             return SourceResolution::refused(&err);
         }
-    } else if let Err(err) = reject_unowned_cache_entry(&remote) {
-        // A symlinked entry or a redirected `.git` is some other checkout, and
-        // reading it would install that checkout's uncommitted state as the
-        // remote source.
+    } else if let Err(err) = ensure_cache_entry_is_owned(&remote) {
+        // The same question the update path asks, because reading an entry is
+        // how its content becomes the installed asset: a symlinked entry or a
+        // redirected `.git` is some other checkout, and an entry whose origin
+        // is a different repository would be installed as this source. Every
+        // check is a read; only the fetch and reset the update path adds are
+        // not.
         return SourceResolution::refused(&err);
     }
     SourceResolution::Resolved(remote.cache_dir)
@@ -679,16 +682,22 @@ fn is_plaintext_http(source: &str) -> bool {
 }
 
 /// The repository a URL names, independent of how it is spelled: a GitHub
-/// slug for GitHub remotes in any form, otherwise `[user@]host/path` with
-/// scheme, port-less host case, `.git` and trailing slashes normalized.
+/// slug for GitHub remotes in any form, otherwise
+/// `transport://[user@]host/path` with host case, `.git` and trailing slashes
+/// normalized.
 ///
-/// The username is part of a non-GitHub identity because on those hosts it
-/// selects the repository: an scp-like path is resolved relative to the
-/// account's home, so `alice@host:repo` and `bob@host:repo` are two different
-/// repositories. Dropping it gave them one cache entry, and the origin check —
-/// which asks this same question — then accepted either one's clone as the
-/// other's source. GitHub is the exception it always was: `git@github.com` and
-/// `https://github.com` are the same repository over two transports.
+/// The username and the transport are both part of a non-GitHub identity,
+/// because on an arbitrary host each of them can select the repository: an
+/// scp-like path is resolved relative to the account's home, so
+/// `alice@host:repo` and `bob@host:repo` are two repositories, and nothing
+/// says a host serves the same tree at one path over https and over ssh.
+/// Dropping either gave two repositories one cache entry, and the origin check
+/// — which asks this same question — then accepted either one's clone as the
+/// other's source. Two spellings of one transport still agree:
+/// `git@host:repo`, `ssh://git@host/repo` and `git+ssh://git@host/repo` are
+/// one identity. GitHub is the exception it always was — `git@github.com` and
+/// `https://github.com` are the same repository over two transports, which is
+/// a fact about GitHub and not about hosts in general.
 fn remote_identity(git_url: &str) -> Option<String> {
     let Some(url) = parse_remote_url(git_url) else {
         // The bare `owner/repo` shorthand, which is the one shape that parser
@@ -717,10 +726,12 @@ fn remote_identity(git_url: &str) -> Option<String> {
         .userinfo
         .split_once(':')
         .map_or(url.userinfo, |(u, _)| u);
-    match user {
-        "" => Some(format!("{host}/{path}")),
-        user => Some(format!("{user}@{host}/{path}")),
-    }
+    let user = if user.is_empty() {
+        String::new()
+    } else {
+        format!("{user}@")
+    };
+    Some(format!("{}://{user}{host}/{path}", url.transport()))
 }
 
 /// A cache key is exactly one path component made of `[a-z0-9_-]`, so it can
@@ -752,7 +763,19 @@ fn cache_key_for_identity(identity: &str) -> String {
         prefix.push(next);
     }
     let digest = format!("{:016x}", config::fnv1a(identity.as_bytes()));
-    match prefix.trim_matches('_') {
+    let prefix = prefix.trim_matches('_');
+    // The prefix is readability; the digest is the identity. A `file://` or
+    // self-hosted source with a deeply nested path can make the whole
+    // identity longer than a filesystem's 255-byte name limit, at which point
+    // `git clone` fails on a source that is perfectly valid — so the readable
+    // half is bounded and the digest, which is what keeps two repositories
+    // apart, is never truncated.
+    const PREFIX_LIMIT: usize = 96;
+    let prefix = match prefix.char_indices().nth(PREFIX_LIMIT) {
+        Some((end, _)) => prefix[..end].trim_end_matches('_'),
+        None => prefix,
+    };
+    match prefix {
         "" => digest,
         prefix => format!("{prefix}-{digest}"),
     }
@@ -1223,6 +1246,27 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
     Ok(())
 }
 
+/// Set the entry's `origin` to the URL this invocation selected.
+///
+/// Only ever called after [`ensure_cache_entry_is_owned`], so the entry is
+/// already known to be this repository's clone and the URL has already been
+/// through the credential and transport refusals: the write changes which
+/// transport the same repository is reached over, nothing more.
+fn point_cache_origin_at(remote: &RemoteSource) -> Result<()> {
+    let output = hardened_cache_git_command(&remote.cache_dir)
+        .args(["remote", "set-url", "origin", "--", &remote.git_url])
+        .output()
+        .with_context(|| format!("setting origin for cached source {}", remote.display))?;
+    if !output.status.success() {
+        bail!(
+            "setting origin for cached source {}: {}",
+            remote.display,
+            git_output_summary(&output)
+        );
+    }
+    Ok(())
+}
+
 /// The settings `git clone` itself writes, and nothing else.
 ///
 /// A subsection is `*`: `remote.origin.url` normalizes to `remote.*.url`. The
@@ -1329,6 +1373,13 @@ fn git_stdout_line(stdout: &[u8]) -> String {
 pub(crate) fn update_cached_repo(remote: &RemoteSource) -> Result<()> {
     ensure_cache_entry_is_owned(remote)?;
     let display = &remote.display;
+    // The ownership check proved the entry's origin names THIS repository; it
+    // may still name it over a different transport, and the URL a caller
+    // selected is the one to fetch over. Without this the entry keeps
+    // whichever URL first minted it: a user who switches to ssh because their
+    // https credentials stopped working keeps failing over https, and a failed
+    // fetch is tolerated, so the selected transport silently never runs.
+    point_cache_origin_at(remote)?;
     let fetch = hardened_git_network_command(&remote.cache_dir)
         .args(["fetch", "origin", "--quiet"])
         .stdout(std::process::Stdio::null())
@@ -1626,6 +1677,15 @@ impl RemoteUrl<'_> {
         self.scp_like()
             || self.scheme.eq_ignore_ascii_case("ssh")
             || self.scheme.eq_ignore_ascii_case("git+ssh")
+    }
+
+    /// The transport this spelling reaches the host over, in one name per
+    /// transport: the scp-like form and `git+ssh://` are both ssh.
+    fn transport(&self) -> String {
+        if self.allows_bare_username() {
+            return "ssh".to_string();
+        }
+        self.scheme.to_ascii_lowercase()
     }
 }
 
