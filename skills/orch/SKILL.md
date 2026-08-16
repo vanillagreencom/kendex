@@ -81,7 +81,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Launch-only terminal handoff; model, effort, and permission flags come from `--launch-flags`. `--help` |
 | `lanes` | Enumerate harness auth lanes and their live usage; `pick` prints the launch env prefix for the lane with the most headroom, exit 3 when none qualifies. `--help` |
-| `oversee-watch` | Block until the fleet needs the overseer, then print one `EVENT` line: a new pr-watch attention line, a live `--item`'s PR merged, a lane window gone, a lane pane at a question prompt, or a heartbeat. `--help` |
+| `oversee-watch` | Block until the fleet needs the overseer, then print one `EVENT` line: a new pr-watch attention line, a live `--item`'s PR merged, a lane window gone, a lane whose harness exited under a live window, a lane pane at a question prompt, or a heartbeat. `--help` |
 
 The three waiters share a bounded env-first GitHub auth ladder and exit `3` on hard auth failure — [references/gates.md](references/gates.md).
 

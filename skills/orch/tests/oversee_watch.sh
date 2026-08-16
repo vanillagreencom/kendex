@@ -10,13 +10,17 @@
 #       line mid-run is the event; a head-only change is not; GH_REPO reaches
 #       pr-watch; rc≠0 with no lines is a global failure (exit 2); attention
 #       at start does not starve a lane's question; the state file is
-#       rewritten after every pass and an uncreatable state dir exits 2
+#       rewritten after every pass, and an uncreatable state dir or an
+#       unreadable state file exits 2 naming the path
 #   2.  merged: an --item's PR merged at/after --since fires; a PR merged
 #       BEFORE --since, a non-item branch, and a non-item conventional branch
 #       do not; item ids match branches case-insensitively; no --since means
 #       no floor; no --item skips the check with a note; gh stderr noise on
 #       success does not break the JSON parse
 #   3.  a listed lane window that no longer exists
+#   3b. a live window whose pane command is a bare shell — the harness exited
+#       (pane tail follows); a live pane command is not an event; an
+#       unreadable pane command is window-gone
 #   4.  a lane pane showing a question prompt (pane tail follows)
 #   5.  heartbeat after --max-loops with the open PR list
 #   6.  gh auth failure exits 2; a stale env token falls through to the
@@ -129,7 +133,8 @@ printf 'unexpected gh call: %s\n' "$*" >&2
 exit 1
 EOF
 
-# tmux stub: windows.txt lists window names; pane-<lane>.txt is a lane's screen.
+# tmux stub: windows.txt lists window names; pane-<lane>.txt is a lane's screen;
+# cmd-<lane>.txt is the pane's foreground command (#{pane_current_command}).
 cat > "$TMP_ROOT/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -140,6 +145,11 @@ case "${1:-}" in
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; shift; done
     [[ -f "$STUB_DIR/pane-$lane.txt" ]] || { echo "can't find window: $lane" >&2; exit 1; }
     cat "$STUB_DIR/pane-$lane.txt"; exit 0 ;;
+  display-message)
+    lane=""
+    while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; shift; done
+    [[ -f "$STUB_DIR/cmd-$lane.txt" ]] || { echo "can't find window: $lane" >&2; exit 1; }
+    cat "$STUB_DIR/cmd-$lane.txt"; exit 0 ;;
 esac
 printf 'unexpected tmux call: %s\n' "$*" >&2
 exit 1
@@ -175,6 +185,9 @@ new_case() {
   printf 'gh-1\ngh-2\n' > "$STUB_DIR/windows.txt"
   printf '⏺ working on it\n' > "$STUB_DIR/pane-gh-1.txt"
   printf '⏺ working on it\n' > "$STUB_DIR/pane-gh-2.txt"
+  # Default: the harness is the pane's foreground process, so the lane is live.
+  printf 'claude\n' > "$STUB_DIR/cmd-gh-1.txt"
+  printf 'claude\n' > "$STUB_DIR/cmd-gh-2.txt"
 }
 
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)
@@ -329,6 +342,27 @@ assert_eq "$rc" "2" "an uncreatable state dir exits 2" "$err"
 assert_eq "$out" "" "state dir failure prints no EVENT" "$err"
 assert_contains "$(cat "$err")" "$STUB_DIR/blocker/state" "the failure names the state dir path"
 
+# 1j. an unreadable state file is exit 2 naming the path, not a raw `cat`
+# error under set -e. Root reads anything, so the case cannot run there.
+new_case prwatch_state_unreadable
+if [[ "$(id -u)" -eq 0 ]]; then
+  printf '  skip  unreadable state file (running as root)\n'
+else
+  printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
+  printf '1' > "$STUB_DIR/prwatch.rc"
+  err="$TMP_ROOT/e1j1"
+  out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+  state_file="$STATE_DIR/owner_repo__none"
+  chmod 000 "$state_file"
+  err="$TMP_ROOT/e1j2"
+  out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+  chmod 600 "$state_file"
+  assert_eq "$rc" "2" "an unreadable state file exits 2" "$err"
+  assert_eq "$out" "" "an unreadable state file prints no EVENT" "$err"
+  assert_contains "$(cat "$err")" "cannot read the pr-watch state file: $state_file" \
+    "the failure names the state file path"
+fi
+
 # --- 2. merged, with item, since, and case controls -------------------------
 new_case merged
 cat > "$STUB_DIR/merged.json" <<'EOF'
@@ -387,6 +421,48 @@ err="$TMP_ROOT/e3"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "window-gone exits 0" "$err"
 assert_eq "$out" "EVENT window-gone gh-2" "missing lane window is the event" "$err"
+
+# --- 3b. lane-exited: window alive, harness gone ----------------------------
+# open-terminal runs the harness inside a shell, so a session that hit its
+# limit or crashed leaves a live window whose pane matches no question prompt.
+new_case lane_exited
+printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
+{
+  printf '⏺ I will keep going.\n\n'
+  printf "You've hit your session limit · resets 21:00\n"
+  printf '$ \n'
+} > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3b"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "lane-exited exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" "a bare shell in the pane is the event" "$err"
+assert_contains "$out" "session limit" "the pane tail follows, carrying the exit reason" "$err"
+assert_not_contains "$out" "EVENT window-gone" "a live window is not reported gone" "$err"
+
+# a live harness under the same conditions is no event
+new_case lane_live
+printf 'codex\n' > "$STUB_DIR/cmd-gh-2.txt"
+err="$TMP_ROOT/e3c"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a live pane command is not an exit" "$err"
+assert_not_contains "$out" "EVENT lane-exited" "a live lane never fires lane-exited" "$err"
+
+# an exited lane whose pane holds only blank lines still reports the event:
+# the pane tail is a grep miss there, which pipefail would turn into an abort
+new_case lane_exited_blank_pane
+printf 'zsh\n' > "$STUB_DIR/cmd-gh-2.txt"
+printf '   \n\n\t\n' > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e3e"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "an exited lane with a blank pane still exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" "a blank pane does not swallow the event" "$err"
+
+# an unreadable pane command is window-gone, never a silent skip
+new_case lane_cmd_unreadable
+rm -f "$STUB_DIR/cmd-gh-2.txt"
+err="$TMP_ROOT/e3d"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT window-gone gh-2" "an unreadable pane command is window-gone" "$err"
 
 # --- 4. question -----------------------------------------------------------
 new_case question

@@ -18,8 +18,11 @@
 #                 one --head query per item — no listing window to miss)
 #                 merged at or after --since
 #   3. window-gone a listed tmux lane window no longer exists
-#   4. question   a listed lane's pane shows a question/selection prompt
-#   5. heartbeat  after --max-loops passes with no event
+#   4. lane-exited a listed lane's window is alive but its pane's current
+#                 command is a bare shell — the harness under it exited
+#                 (session limit, crash, quit) and the slot is free
+#   5. question   a listed lane's pane shows a question/selection prompt
+#   6. heartbeat  after --max-loops passes with no event
 #
 # Output on the first event: `EVENT <kind> ...` on stdout — one line, except
 # `merged`, which prints one `EVENT merged` line per merged item so the
@@ -36,7 +39,7 @@
 #   0  an EVENT line was printed
 #   2  usage error, or a global failure (gh not authenticated, repo
 #      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
-#      the pr-watch state directory unusable, lanes given outside tmux)
+#      the pr-watch state directory or file unusable, lanes given outside tmux)
 #
 # Environment:
 #   OVERSEE_WATCH_PR_WATCH   path to the pr-watch reducer (default:
@@ -94,6 +97,11 @@ Events, checked in this order every pass:
                              line per PR; the item's head branch is its id,
                              lowercased)
   EVENT window-gone <lane>   a listed tmux window no longer exists
+  EVENT lane-exited <lane>   the window is alive but the pane's current
+                             command is a bare shell (bash/zsh/fish/sh/dash):
+                             the harness under it exited — session limit,
+                             crash, quit — and the lane's slot is free (last
+                             40 non-empty pane lines follow, carrying why)
   EVENT question <lane>      the lane's pane shows a question/selection
                              prompt (last 40 non-empty pane lines follow)
   EVENT heartbeat            --max-loops passes with no event (open PR list
@@ -121,7 +129,7 @@ Exit codes:
   0  an EVENT line was printed
   2  usage error, or a global failure: gh not authenticated, repo
      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
-     the pr-watch state directory unusable, lanes given outside tmux
+     the pr-watch state directory or file unusable, lanes given outside tmux
 
 Environment:
   OVERSEE_WATCH_PR_WATCH   path to pr-watch.sh (default: the review-gate
@@ -245,7 +253,8 @@ if [[ -n "$PR_WATCH" ]]; then
     || die "the pr-watch state directory $PW_STATE_DIR is not writable (set OVERSEE_WATCH_STATE_DIR)"
   PW_STATE_FILE="$PW_STATE_DIR/$(pw_slug "$REPO")__$(pw_slug "${SINCE:-none}")"
   if [[ -f "$PW_STATE_FILE" ]]; then
-    PW_SEEN="$(cat "$PW_STATE_FILE")"
+    PW_SEEN="$(cat "$PW_STATE_FILE" 2>/dev/null)" \
+      || die "cannot read the pr-watch state file: $PW_STATE_FILE (set OVERSEE_WATCH_STATE_DIR)"
     PW_HAD_STATE=1
   fi
 fi
@@ -320,9 +329,13 @@ check_merged() {
   exit 0
 }
 
+# The last 40 non-empty pane lines. `|| true`: an all-blank pane is a grep
+# miss, and under pipefail that would abort the script mid-event.
+pane_tail() { grep -v '^[[:space:]]*$' <<<"$1" | tail -40 || true; }
+
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane
+  local existing lane pane cmd
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     if ! grep -qxF -- "$lane" <<<"$existing"; then
@@ -330,6 +343,27 @@ check_lanes() {
       pr_watch_context
       exit 0
     fi
+  done
+  # A lane window outlives its harness: open-terminal runs claude/codex inside
+  # a shell, so a session that hit its limit, crashed, or quit leaves the
+  # shell in the foreground — a window that exists, a pane that matches no
+  # question prompt, and a slot held until someone looks. A bare shell as the
+  # pane's current command IS that lane, finished; the pane tail carries why.
+  for lane in "${LANES[@]}"; do
+    if ! cmd="$(tmux display-message -p -t "$lane" '#{pane_current_command}' 2>/dev/null)" || [[ -z "$cmd" ]]; then
+      echo "EVENT window-gone $lane"
+      pr_watch_context
+      exit 0
+    fi
+    case "$cmd" in
+      bash|zsh|fish|sh|dash)
+        echo "EVENT lane-exited $lane"
+        pane="$(tmux capture-pane -t "$lane" -p 2>/dev/null || true)"
+        [[ -z "$pane" ]] || pane_tail "$pane"
+        pr_watch_context
+        exit 0
+        ;;
+    esac
   done
   for lane in "${LANES[@]}"; do
     if ! pane="$(tmux capture-pane -t "$lane" -p 2>/dev/null)"; then
@@ -339,7 +373,7 @@ check_lanes() {
     fi
     if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
       echo "EVENT question $lane"
-      grep -v '^[[:space:]]*$' <<<"$pane" | tail -40
+      pane_tail "$pane"
       pr_watch_context
       exit 0
     fi
