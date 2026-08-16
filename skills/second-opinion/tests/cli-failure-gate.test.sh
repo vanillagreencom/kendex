@@ -615,16 +615,21 @@ done
 
 # (b3) a lane artifact belonging to a target the roster no longer names is
 # still a complete, schema-valid review with its own verdict — the guarantee is
-# written without an exception for renamed or retired targets. Bystanders that
-# merely share the prefix must survive: only a middle segment shaped like a
-# legal target name identifies a file as one of ours.
+# written without an exception for renamed or retired targets. But a sibling
+# outside the roster is not a path this run writes, so its NAME cannot authorize
+# deleting it: `<output>.notes.json` is both a legal-looking lane name and an
+# ordinary user file. Only content that is a review this skill emitted qualifies.
 s10e_out="$TMP_ROOT/out/review10e.json"
 s10e_err="$TMP_ROOT/s10e.stderr"
 seed_stale_family "$s10e_out"
 printf '%s\n' "$S10_STALE" > "$s10e_out.retired-model.json"
 printf '%s\n' "$S10_STALE" > "$s10e_out.retired-model.json.failed.json"
 printf '%s\n' "$S10_STALE" > "$s10e_out.orphan-lane.json.raw.txt"   # sidecar with no artifact
-# bystanders: the caller's own files under the same prefix
+# bystanders: the caller's own files under the same prefix. The first two share
+# the exact NAME SHAPE of a lane artifact and differ only in content — the case
+# a name-only rule destroys.
+printf 'MY IMPORTANT NOTES\n'    > "$s10e_out.notes.json"
+printf '{"foo":1,"bar":[2,3]}\n' > "$s10e_out.data.json"
 printf 'MINE\n' > "$s10e_out.bak"
 printf 'MINE\n' > "$s10e_out.notes.md"
 printf 'MINE\n' > "${s10e_out}X"
@@ -634,11 +639,33 @@ STUB_RC=1 STUB_STDERR="$QUOTA_ERR" run_review "$s10e_out" "$s10e_err" || rc10e=$
 assert_eq "$rc10e" "5" "(b3) the run over a retired lane artifact still exits 5"
 assert_file_absent "$s10e_out.retired-model.json" "(b3) a retired target's lane artifact is cleared"
 assert_file_absent "$s10e_out.retired-model.json.failed.json" "(b3) the retired lane's sidecar is cleared"
-assert_file_absent "$s10e_out.orphan-lane.json.raw.txt" "(b3) an orphaned lane sidecar is cleared"
+assert_file_exists "$s10e_out.notes.json" "(b3) a same-shaped name holding non-JSON text survives"
+assert_file_exists "$s10e_out.data.json" "(b3) a same-shaped name holding unrelated JSON survives"
+assert_eq "$(cat "$s10e_out.notes.json")" "MY IMPORTANT NOTES" "(b3) the surviving user file is untouched"
+# An orphaned sidecar has no artifact to prove authorship, and a .raw.txt holds
+# raw model prose rather than a verdict — nothing here can be read as a pass, so
+# it is left alone rather than deleted on the strength of its name.
+assert_file_exists "$s10e_out.orphan-lane.json.raw.txt" "(b3) an orphaned sidecar with no verifying artifact survives"
 assert_file_exists "$s10e_out.bak" "(b3) bystander .bak survives"
 assert_file_exists "$s10e_out.notes.md" "(b3) bystander .notes.md survives"
 assert_file_exists "${s10e_out}X" "(b3) bystander with no separating dot survives"
 assert_file_exists "$s10e_out.two.words.json" "(b3) a middle segment that is not a legal target name survives"
+
+# ...and the sweep runs before argument validation, so an invocation that never
+# gets past a bad flag must not destroy them either.
+s10e2_out="$TMP_ROOT/out/review10e2.json"
+printf 'MY IMPORTANT NOTES\n' > "$s10e2_out.notes.json"
+printf '%s\n' "$S10_STALE"    > "$s10e2_out.retired-model.json"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+  STUB_COUNTER="$COUNTER" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s10e2_out" --bogus \
+    >/dev/null 2>"$TMP_ROOT/s10e2.stderr"
+rc10e2=$?
+set -e
+assert_eq "$rc10e2" "1" "(b3) a bad-flag run still exits 1"
+assert_file_exists "$s10e2_out.notes.json" "(b3) a bad-flag run does not destroy a user's sibling"
+assert_file_absent "$s10e2_out.retired-model.json" "(b3) a bad-flag run still clears a real retired lane artifact"
 
 # (b4) the prefix scan must hold for the two hostile --output shapes the rest of
 # the file already guards: a leading '-' (which rm/mkdir would read as flags —

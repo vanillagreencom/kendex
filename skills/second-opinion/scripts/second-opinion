@@ -301,6 +301,33 @@ roster_entries() {
 # the artifact home and the record writers. rm's own text is the actionable
 # part (which path, which errno), so it is captured and reported INSIDE a named
 # cause rather than discarded or left to stand alone.
+# Is $1 a review artifact THIS SKILL wrote? Content only — a filename proves
+# nothing about authorship. The signature is the shape every artifact it writes
+# must already satisfy before it is allowed to become one: response_incomplete_
+# schema requires verdict plus the three finding arrays, and
+# response_missing_qa_metadata requires the qa_metadata object. An arbitrary
+# JSON file, or a text file, carries none of it.
+#
+# Read through a redirection, never a path operand: the name is built from the
+# caller's --output and may begin with '-'.
+#
+# jq is what parses, and the dependency check below deliberately runs AFTER the
+# clearing (so a missing-jq exit still clears). Without jq nothing is swept:
+# such a run cannot produce a review at all, and the paths the guarantee rests
+# on — the designated output and the roster's own lane names — are cleared
+# unconditionally either way.
+is_own_review_artifact() {
+  command -v jq >/dev/null 2>&1 || return 1
+  jq -e '
+    type == "object"
+    and (.verdict | type) == "string"
+    and (.blockers | type) == "array"
+    and (.suggestions | type) == "array"
+    and (.questions | type) == "array"
+    and ((.qa_metadata | type) == "object")
+  ' >/dev/null 2>&1 < "$1"
+}
+
 clear_output_family() {
   local err
   if ! err=$(rm -f -- "$1" \
@@ -334,41 +361,37 @@ if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" ]]; then
   # run selects, which is nothing at all when the run refuses or resolves to a
   # single lane.
   #
-  # The configured roster is not enough on its own: a target since RENAMED or
-  # REMOVED leaves an artifact no later run's roster names, and the guarantee is
-  # written without that exception. So the directory is scanned for anything
-  # sitting under this artifact's prefix, and each candidate must prove it is
-  # one of ours before anything is removed — its middle segment has to be a
-  # legal target name, the same shape the roster walk enforces. That keeps the
-  # never-glob-a-caller's-prefix rule intact in substance: `report.json.bak`,
-  # `report.json.notes.md` and `report.jsonX` all fail the test and survive.
-  #
-  # "$OUTPUT_PATH". is quoted, so glob metacharacters IN THE CALLER'S PATH
-  # (report[1].json) match literally; only the trailing * is a pattern.
-  for clear_candidate in "$OUTPUT_PATH".*; do
-    [[ -e "$clear_candidate" || -L "$clear_candidate" ]] || continue   # nothing matched
-    clear_name="${clear_candidate#"$OUTPUT_PATH".}"
-    # A lane's own sidecars carry the lane artifact's name plus a managed
-    # suffix; strip one so an orphaned sidecar still identifies its lane.
-    case "$clear_name" in
-      *.raw.txt)         clear_name="${clear_name%.raw.txt}" ;;
-      *.retry.txt)       clear_name="${clear_name%.retry.txt}" ;;
-      *.failed.json)     clear_name="${clear_name%.failed.json}" ;;
-      *.noreview.json)   clear_name="${clear_name%.noreview.json}" ;;
-      *.incomplete.json) clear_name="${clear_name%.incomplete.json}" ;;
-    esac
-    [[ "$clear_name" == *.json ]] || continue
-    clear_name="${clear_name%.json}"
-    [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
-    clear_output_family "$OUTPUT_PATH.$clear_name.json"
-  done
-  # The configured roster and a forced target are cleared unconditionally too:
-  # the scan above only sees what EXISTS, and these are the names this run may
-  # itself write.
+  # The names this run may itself write — the roster and a forced target — are
+  # cleared unconditionally. Those paths are derived from the caller's own
+  # --output and this run is about to write them, so a survivor there would be
+  # both a stale pass and an inode the run writes through.
   while IFS= read -r clear_name; do
     [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
     clear_output_family "$OUTPUT_PATH.$clear_name.json"
   done < <(printf '%s\n' "$FORCED_TARGET"; roster_entries)
+  # A target since RENAMED or REMOVED leaves a lane artifact no later run's
+  # roster names, so the prefix is also swept for siblings outside that set.
+  # These are NOT paths this run would write, so a filename cannot authorize
+  # deleting one: `report.json.notes.json` is both a legal-looking lane name and
+  # an ordinary user file, and destroying something the skill never wrote is
+  # worse than the stale-lane gap the sweep exists to close. A sibling is
+  # removed only when its CONTENT is a review this skill emitted — the shape its
+  # own gates require of every artifact it writes.
+  #
+  # "$OUTPUT_PATH". is quoted, so glob metacharacters IN THE CALLER'S PATH
+  # (report[1].json) match literally; only the trailing * is a pattern. The name
+  # test is a cheap pre-filter that keeps jq off every sibling — it carries no
+  # safety role and no test covers it alone, because the content check is the
+  # only thing authorizing a deletion. Removing it changes no outcome.
+  for clear_candidate in "$OUTPUT_PATH".*; do
+    [[ -f "$clear_candidate" ]] || continue        # nothing matched, or not a file
+    clear_name="${clear_candidate#"$OUTPUT_PATH".}"
+    [[ "$clear_name" == *.json ]] || continue
+    clear_name="${clear_name%.json}"
+    [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+    is_own_review_artifact "$clear_candidate" || continue
+    clear_output_family "$clear_candidate"
+  done
 fi
 
 [[ -z "$PARSE_ERROR" ]] || { echo "Error: $PARSE_ERROR" >&2; exit 1; }
