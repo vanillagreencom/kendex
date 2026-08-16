@@ -124,6 +124,28 @@ OUT=""; RC=0
 OUT="$(unset REVIEW_GATE_TL 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/link.settings.toml" rg_setting REVIEW_GATE_TL "dflt" 2>"$TMP/err")" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "linked" ]] && ok "a RESOLVING symlink reads its target (control)" || bad "a RESOLVING symlink reads its target (control)" "rc=$RC out=$OUT"
 
+echo "=== an UNREADABLE settings source fails loud, never falls back ==="
+# grep exits 0/1 are measurements; anything else means the source could not
+# be read. -f and -e both pass on a mode-000 file, so only the read itself
+# sees it: falling back would resolve every key to its caller default, and
+# an empty default widens the gate (empty trusted-logins = any non-author).
+if [ "$(id -u)" -eq 0 ]; then
+  echo "  skip  unreadable-source pins need a non-root reader (chmod 000 cannot deny root)"
+else
+  printf 'REVIEW_GATE_TU = "configured"\n' >"$TMP/unreadable.settings.toml"
+  chmod 000 "$TMP/unreadable.settings.toml"
+  RC=0
+  rg_settings_grep "^REVIEW_GATE_TU" "$TMP/unreadable.settings.toml" >/dev/null 2>"$TMP/err" || RC=$?
+  [[ "$RC" -eq 2 ]] && grep -q "unreadable while resolving a setting" "$TMP/err" && ok "the read discipline reports 2 for an unreadable source, never 1 (no match)" || bad "the read discipline reports 2 for an unreadable source" "rc=$RC"
+  OUT=""; RC=0
+  OUT="$(unset REVIEW_GATE_TU 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/unreadable.settings.toml" rg_setting REVIEW_GATE_TU "dflt" 2>"$TMP/err")" || RC=$?
+  [[ "$RC" -ne 0 && "$OUT" != "dflt" ]] && grep -q "unreadable.settings.toml: unreadable while resolving a setting" "$TMP/err" && ok "an UNREADABLE settings path is a config error naming the file, not a silent default" || bad "an UNREADABLE settings path is a config error naming the file" "rc=$RC out=$OUT"
+  chmod 600 "$TMP/unreadable.settings.toml"
+  OUT=""; RC=0
+  OUT="$(unset REVIEW_GATE_TU 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/unreadable.settings.toml" rg_setting REVIEW_GATE_TU "dflt" 2>"$TMP/err")" || RC=$?
+  [[ "$RC" -eq 0 && "$OUT" == "configured" ]] && ok "control: the same file, readable, resolves its value" || bad "control: the same file, readable, resolves its value" "rc=$RC out=$OUT"
+fi
+
 # Controls: the two shapes that MUST still resolve to the caller default.
 OUT=""; RC=0
 OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE=/dev/null rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?

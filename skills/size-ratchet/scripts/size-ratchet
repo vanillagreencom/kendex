@@ -186,7 +186,8 @@ is_excluded() { # PATH — 0 when some exclusion glob matches the full path
   # Guarded expansion: an empty array is an unbound variable under Bash 3.2
   # with set -u.
   for pat in ${EXCLUDE_PATTERNS[@]+"${EXCLUDE_PATTERNS[@]}"}; do
-    # shellcheck disable=SC2254 -- $pat must expand unquoted to act as a glob
+    # $pat must expand unquoted to act as a glob.
+    # shellcheck disable=SC2254
     case "$path" in
       $pat) return 0 ;;
     esac
@@ -251,6 +252,64 @@ NL='
 '
 checked=0
 : >"$TMP/counts.raw"
+# Worktree reads are batched: one `wc -l` invocation per bounded group of
+# files instead of one per file (a large repo materializes thousands).
+# wc emits its counts in argument order, so every output row is matched to
+# its input BY POSITION — which also places the `total` row a multi-file
+# invocation appends past the last input, where it is never read as a count.
+# A nonzero status, a short read, a non-numeric count or any positional
+# mismatch discards the whole batch (a partial batch is not a measurement)
+# and re-measures it one file at a time, so an unreadable or vanished file
+# still fails loud naming THAT file.
+BATCH_MAX_FILES=256
+BATCH_MAX_CHARS=60000 # ARG_MAX headroom for the assembled command line
+WT_BATCH=()
+WT_BATCH_CHARS=0
+
+flush_batch() { # — appends one "<path><TAB><count>" row per pending file
+  local status=0 idx=0 line count path n f
+  [ "${#WT_BATCH[@]}" -gt 0 ] || return 0
+  : >"$TMP/batch.tsv"
+  wc -l -- "${WT_BATCH[@]}" >"$TMP/wc.out" || status=$?
+  if [ "$status" -eq 0 ]; then
+    while IFS= read -r line; do
+      [ "$idx" -lt "${#WT_BATCH[@]}" ] || break
+      # wc pads counts with leading blanks (BSD wc does); one space then
+      # separates the count from the path, which may hold spaces but never
+      # a newline or tab (both refused above).
+      line="${line#"${line%%[![:space:]]*}"}"
+      count="${line%% *}"
+      path="${line#* }"
+      case "$count" in "" | *[!0-9]*) idx=-1 ;; esac
+      [ "$idx" -ge 0 ] || break
+      [ "$path" = "${WT_BATCH[$idx]}" ] || { idx=-1; break; }
+      printf '%s\t%s\n' "$path" "$count" >>"$TMP/batch.tsv"
+      idx=$((idx + 1))
+    done <"$TMP/wc.out"
+    if [ "$idx" -eq "${#WT_BATCH[@]}" ]; then
+      cat "$TMP/batch.tsv" >>"$TMP/counts.raw"
+      WT_BATCH=()
+      WT_BATCH_CHARS=0
+      return 0
+    fi
+  fi
+  : >"$TMP/batch.tsv"
+  for f in "${WT_BATCH[@]}"; do
+    # Same contract as the index path: a worktree file that exists but
+    # cannot be read (permissions, I/O error) is a collection failure with
+    # its own diagnostic — not a bare set -e death mid-loop.
+    n="$(wc -l <"$f")" || collection_error "cannot read tracked file '$f' — its size is unmeasurable, refusing to skip it"
+    n="${n#"${n%%[![:space:]]*}"}" # strip wc's leading whitespace (BSD wc pads)
+    case "$n" in
+      "" | *[!0-9]*) collection_error "line count for tracked file '$f' came back as '$n', not a number — its size is unmeasurable, refusing to skip it" ;;
+    esac
+    printf '%s\t%s\n' "$f" "$n" >>"$TMP/batch.tsv"
+  done
+  cat "$TMP/batch.tsv" >>"$TMP/counts.raw"
+  WT_BATCH=()
+  WT_BATCH_CHARS=0
+}
+
 while IFS= read -r -d '' rec; do
   # Record shape: "<mode> <sha> <stage>\t<path>".
   mode="${rec%% *}"
@@ -282,16 +341,23 @@ while IFS= read -r -d '' rec; do
     if ! n="$(git show ":$f" | wc -l)"; then
       collection_error "cannot read index blob for tracked file '$f' — its size is unmeasurable, refusing to skip it"
     fi
+    n=$((n)) # strip wc's leading whitespace (BSD wc pads)
+    printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
   else
-    # Same contract as the index path: a worktree file that exists but
-    # cannot be read (permissions, I/O error) is a collection failure with
-    # its own diagnostic — not a bare set -e death mid-loop.
-    n="$(wc -l <"$f")" || collection_error "cannot read tracked file '$f' — its size is unmeasurable, refusing to skip it"
+    WT_BATCH+=("$f")
+    WT_BATCH_CHARS=$((WT_BATCH_CHARS + ${#f} + 1))
+    if [ "${#WT_BATCH[@]}" -ge "$BATCH_MAX_FILES" ] || [ "$WT_BATCH_CHARS" -ge "$BATCH_MAX_CHARS" ]; then
+      flush_batch
+    fi
   fi
-  n=$((n)) # strip wc's leading whitespace (BSD wc pads)
-  printf '%s\t%s\n' "$f" "$n" >>"$TMP/counts.raw"
   checked=$((checked + 1))
 done <"$TMP/files.z"
+flush_batch
+# Every selected file must have produced exactly one count row. A shortfall
+# means part of the tracked set went unmeasured, and an unmeasured file can
+# hide an offender — refuse rather than report a verdict over a subset.
+counted="$(count_nonempty_lines "$TMP/counts.raw")"
+[ "$counted" -eq "$checked" ] || collection_error "counted $counted of the $checked tracked file(s) selected for measurement — the collection is incomplete, refusing to report a verdict"
 LC_ALL=C sort "$TMP/counts.raw" >"$TMP/counts.tsv"
 
 # --- evaluate a baseline against the counts ----------------------------------

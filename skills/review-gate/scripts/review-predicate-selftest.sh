@@ -36,23 +36,6 @@ predicate="$here/review-predicate.sh"
 [ -x "$predicate" ] || { echo "not executable: $predicate" >&2; exit 1; }
 . "$here/lib/settings.sh"
 
-# A settings override that is unusable — a directory, FIFO, socket, device,
-# or a symlink that does not resolve — is rg_setting's refusal, for the live
-# engine as much as for this run. What rg_setting cannot see is an EXISTING
-# but UNREADABLE file: its grep presence probe just fails and every key
-# quietly resolves to its built-in default, so this run would green-light
-# settings it never read. A plain absent file keeps the documented
-# fall-back-to-defaults behavior.
-case "${REVIEW_GATE_SETTINGS_FILE:-}" in
-  '' | /dev/null) : ;;
-  *)
-    if [ -f "$REVIEW_GATE_SETTINGS_FILE" ] && [ ! -r "$REVIEW_GATE_SETTINGS_FILE" ]; then
-      echo "FATAL: REVIEW_GATE_SETTINGS_FILE ('$REVIEW_GATE_SETTINGS_FILE') exists but is not readable — refusing to test built-in defaults in its place" >&2
-      exit 1
-    fi
-    ;;
-esac
-
 # ------------------------------------------------------------ active config ---
 # Resolved exactly as the predicate resolves it, from the invoking repo's
 # environment/settings. The configured layer generates its cases from these.

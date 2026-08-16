@@ -8,7 +8,11 @@
 #       execution failure into an empty count and a passing verdict.
 # Every other guarded collection site is pinned the same way: the two
 # baseline-hygiene validations (worktree + index copy), the --update row
-# count, and the worktree read guard (wc failure).
+# count, and the worktree read guard (wc failure). Worktree counts are
+# collected in batched wc invocations, so the batch's own integrity is
+# pinned too: every file across several batches keeps its own count, and a
+# file that cannot be measured still fails loud by name rather than
+# vanishing into a partial batch.
 # Each shim scenario carries a shim-free control first, so a green run is
 # evidence, not a check that cannot fail; the shim's own stderr text is
 # asserted in the failing case to pin the cause to the shim.
@@ -76,9 +80,10 @@ exec "$REAL_GIT" "\$@"
 EOF
 chmod +x "$GIT_SHIM/git"
 
-# grep shim: fail any bare `-c` invocation (the engine's line counts; the
-# settings library only ever uses combined flags like -Ec), pass the rest
-# through to the real grep.
+# grep shim: fail any bare `-c` invocation (the engine's line counts), pass
+# the rest through to the real grep. The fixtures below carry no settings
+# file, so the settings library's own bare-`-c` ambiguity count is never
+# reached under this shim.
 GREP_SHIM="$TMP/grep-shim"
 mkdir -p "$GREP_SHIM"
 cat >"$GREP_SHIM/grep" <<EOF
@@ -120,11 +125,11 @@ exit 1
 EOF
 chmod +x "$WC_SHIM/wc"
 
-# wc shim: pass the first two calls through (the collection loop's counts
-# for the fixture's two tracked files), fail from the third on — which in
-# --update is the recount of the candidate baseline. Exit 7 on purpose: a
-# raw tool status escaping instead of the contract's exit 2 must be
-# visible. Reset $TMP/wc-calls before each run.
+# wc shim: pass the first call through (the collection loop's single
+# batched count for the fixture's two tracked files), fail from the second
+# on — which in --update is the recount of the candidate baseline. Exit 7
+# on purpose: a raw tool status escaping instead of the contract's exit 2
+# must be visible. Reset $TMP/wc-calls before each run.
 WC_RECOUNT_SHIM="$TMP/wc-recount-shim"
 mkdir -p "$WC_RECOUNT_SHIM"
 cat >"$WC_RECOUNT_SHIM/wc" <<EOF
@@ -132,13 +137,25 @@ cat >"$WC_RECOUNT_SHIM/wc" <<EOF
 n="\$(cat "$TMP/wc-calls" 2>/dev/null)" || n=0
 n=\$((n + 1))
 printf '%s\n' "\$n" >"$TMP/wc-calls"
-if [ "\$n" -ge 3 ]; then
+if [ "\$n" -ge 2 ]; then
   echo "wc: simulated recount failure" >&2
   exit 7
 fi
 exec "$REAL_WC" "\$@"
 EOF
 chmod +x "$WC_RECOUNT_SHIM/wc"
+
+# wc shim: succeed while printing nothing. The batch invocation then comes
+# back empty (a shortfall, not a measurement) and each single-file re-read
+# yields no count at all — an empty count arithmetically evaluates to 0,
+# which would file every tracked file as a 0-line file and pass.
+WC_EMPTY_SHIM="$TMP/wc-empty-shim"
+mkdir -p "$WC_EMPTY_SHIM"
+cat >"$WC_EMPTY_SHIM/wc" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$WC_EMPTY_SHIM/wc"
 
 # awk shim: die silently with status 1 on the --update counts scan (its
 # program uniquely contains the yes/no verdict print), delegating every
@@ -317,7 +334,7 @@ run_sr_shimmed "$WC_RECOUNT_SHIM" --update
 [ "$RC" -eq 2 ] && case "$OUT" in *"could not recount the updated baseline tools/size-ratchet-baseline.tsv"*) true ;; *) false ;; esac \
   && ok "a wc failure on the recount is a collection error: exit 2 with the update-aborted diagnostic" \
   || bad "a wc failure on the recount is a collection error, exit 2 (never raw status 7)" "rc=$RC out=$OUT"
-case "$OUT" in *"wc: simulated recount failure"*) ok "the shim fired on the recount call (3rd wc), pinning the cause" ;; *) bad "the shim fired on the recount call" "$OUT" ;; esac
+case "$OUT" in *"wc: simulated recount failure"*) ok "the shim fired on the recount call (2nd wc), pinning the cause" ;; *) bad "the shim fired on the recount call" "$OUT" ;; esac
 row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
 [ "$row" = "$(printf 'big.txt\t20')" ] && ok "the aborted recount leaves the original loose row byte-identical" \
   || bad "the aborted recount leaves the original loose row byte-identical" "row=$row"
@@ -396,6 +413,70 @@ run_sr_shimmed "$WC_SHIM"
   && ok "an unreadable worktree file is a collection error: exit 2, diagnostic names small.txt" \
   || bad "an unreadable worktree file is a collection error naming the file" "rc=$RC out=$OUT"
 case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany a worktree read failure" "$OUT" ;; *) ok "no OK verdict accompanies the worktree read failure" ;; esac
+
+echo "=== fail-closed: a wc that succeeds without printing a count is not a measurement ==="
+new_repo wcempty
+mkfile small.txt 5
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 0 ] && ok "shim-free control: the materialized repo passes" \
+  || bad "shim-free control: the materialized repo passes" "rc=$RC out=$OUT"
+run_sr_shimmed "$WC_EMPTY_SHIM"
+[ "$RC" -eq 2 ] && case "$OUT" in *"line count for tracked file 'small.txt' came back as ''"*) true ;; *) false ;; esac \
+  && ok "an empty count is a collection error naming the file, never arithmetic zero" \
+  || bad "an empty count is a collection error naming the file" "rc=$RC out=$OUT"
+case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany an empty count" "$OUT" ;; *) ok "no OK verdict accompanies the empty count" ;; esac
+
+echo "=== batching: every file in every batch keeps its own count ==="
+# The fixture holds more files than one batch carries, so the collection
+# spans several wc invocations: a lost batch, a dropped row or positional
+# drift shows up as a wrong count, a missing offender or a refusal. Names
+# chosen to sit either side of the boundary and to exercise the shapes that
+# make positional parsing load-bearing — a path containing spaces, and a
+# path spelled exactly like the summary row wc appends to every multi-file
+# invocation.
+new_repo batching
+i=0
+while [ "$i" -lt 300 ]; do
+  mkfile "f$i.txt" 2
+  i=$((i + 1))
+done
+mkfile "a file with spaces.txt" 13
+mkfile "aa-offender.txt" 12
+mkfile "total" 14
+mkfile "zz-offender.txt" 11
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 1 ] && ok "the multi-batch fixture reports violations" || bad "the multi-batch fixture reports violations" "rc=$RC out=$OUT"
+for expect in "a file with spaces.txt — 13 lines" "aa-offender.txt — 12 lines" "total — 14 lines" "zz-offender.txt — 11 lines"; do
+  case "$OUT" in
+    *"new offender: $expect"*) ok "$expect is reported with its own count" ;;
+    *) bad "$expect is reported with its own count" "out=$OUT" ;;
+  esac
+done
+case "$OUT" in *"4 violation(s)"*) ok "exactly the four over-threshold files are violations" ;; *) bad "exactly four violations" "out=$OUT" ;; esac
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=100 "$SR" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && case "$OUT" in *"OK — 304 tracked file(s) checked"*) true ;; *) false ;; esac \
+  && ok "all 304 tracked files are counted — no batch is skipped" \
+  || bad "all 304 tracked files are counted" "rc=$RC out=$OUT"
+
+echo "=== batching: one unreadable file fails loud by ITS name, not by batch ==="
+if [ "$(id -u)" -eq 0 ]; then
+  printf '  skip  unreadable-file pin needs a non-root reader (chmod 000 cannot deny root)\n'
+else
+  chmod 000 "$R/f7.txt"
+  run_sr
+  [ "$RC" -eq 2 ] && case "$OUT" in *"cannot read tracked file 'f7.txt'"*) true ;; *) false ;; esac \
+    && ok "an unreadable file inside a batch is exit 2, diagnostic names f7.txt" \
+    || bad "an unreadable file inside a batch names f7.txt" "rc=$RC out=$OUT"
+  case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany an unreadable file" "$OUT" ;; *) ok "no OK verdict accompanies the unreadable file" ;; esac
+  chmod 644 "$R/f7.txt"
+  run_sr
+  [ "$RC" -eq 1 ] && case "$OUT" in *"4 violation(s)"*) true ;; *) false ;; esac \
+    && ok "control: the same file readable, the batch measures the fixture again" \
+    || bad "control: the same file readable, the batch measures again" "rc=$RC out=$OUT"
+fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -403,7 +403,7 @@ replay cyclic "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/cycle-
 replay dangling "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/dangling.settings.toml"
 replay nonregular "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/nonregular.dir"
 # Skipped when the runner can read mode-000 files anyway (privileged CI) —
-# the guard is [ -r ]-based and cannot fire there.
+# the refusal comes from the read itself, which succeeds there.
 unreadable_skip=""
 if [ -r "$work/cyclic/unreadable.settings.toml" ]; then
   unreadable_skip=1
@@ -764,16 +764,16 @@ else
     || note "dangling-override failure does not carry the unresolvable-override diagnostic"
 fi
 
-# An EXISTING but UNREADABLE override must refuse up front too: rg_setting's
-# grep presence probe fails on it and every key silently resolves to its
-# built-in default.
+# An EXISTING but UNREADABLE override must refuse too: -f and -e both pass
+# on it, so only rg_setting's read discipline sees it — without which every
+# key silently resolves to its built-in default.
 if [ -n "$unreadable_skip" ]; then
   echo "skip: unreadable-override fixture (runner reads mode-000 files)"
 elif passed unreadable; then
   note "selftest passed with an UNREADABLE settings override — the silent-defaults guard no longer refuses"
 else
-  grep -q "exists but is not readable" "$work/unreadable.out" \
-    || note "unreadable-override failure does not carry the not-readable diagnostic"
+  grep -q "unreadable while resolving a setting" "$work/unreadable.out" \
+    || note "unreadable-override failure does not carry the unreadable-source diagnostic"
 fi
 
 # An EXISTING NON-REGULAR override (a directory here; a FIFO or socket is

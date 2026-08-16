@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- review-gate/size-ratchet: settings resolution fails closed on a source it
+  cannot read. `-f` and `-e` both pass on an existing mode-000 file, so only
+  the read itself sees it: `grep` failed, the resolver read that as "no
+  match", and resolution fell through to a lower-precedence source or to the
+  built-in default — a configured value silently replaced by another one, on
+  the gate a permissive default nobody set. Every settings probe now treats
+  grep exit >= 2 as an unreadable source and refuses by name (the discipline
+  growth-guards already carried). This retires review-predicate-selftest's
+  own unreadable-settings guard: the resolver refuses first, for the live
+  predicate and writer as much as for the selftest. Repos vendoring
+  review-gate or size-ratchet must re-vendor.
+- size-ratchet: the collection loop measures worktree files in batched `wc`
+  invocations instead of one process per file — 6.3s -> 0.8s on a tree
+  measuring 9,325 files, 0.86s -> 0.09s on one measuring 1,454, with the
+  verdict byte-identical on both. Counts are matched to inputs by position,
+  so a batch that comes back short, out of order or non-numeric is discarded
+  and re-measured one file at a time: an unreadable or vanished file still
+  fails loud naming that file, and a count row is required for every file
+  selected.
 - second-opinion: a multi-lane review run without `--output` no longer keeps
   its lane reviews in shared system temp (VST-241), and the lane umask no
   longer governs the external model CLI's own files (VST-243). Each lane's

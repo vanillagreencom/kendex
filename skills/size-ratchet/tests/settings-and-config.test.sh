@@ -237,6 +237,56 @@ run_raw SIZE_RATCHET_SETTINGS_FILE=absent.settings.toml || true
   && ok "an ABSENT plain file still falls back to the built-in default (control)" \
   || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
 
+echo "=== an UNREADABLE settings source fails loud, never falls through ==="
+# grep exits 0/1 are measurements; anything else means the source could not
+# be read, and continuing to a lower-precedence layer would silently
+# resolve a different value. Every layer carries the same discipline.
+if [ "$(id -u)" -eq 0 ]; then
+  printf '  skip  unreadable-source pins need a non-root reader (chmod 000 cannot deny root)\n'
+else
+  new_repo unreadable
+  mkfile f.txt 20
+  git -C "$R" add -A
+
+  printf '[env]\nSIZE_RATCHET_THRESHOLD = "30"\n' >"$R/vstack.settings.toml"
+  printf 'SIZE_RATCHET_THRESHOLD=15\n' >"$R/.env.local"
+  chmod 000 "$R/.env.local"
+  run_raw || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *".env.local: unreadable while resolving a setting"*) true ;; *) false ;; esac \
+    && ok "an unreadable .env.local is exit 2 (falling through would have read 30 and passed)" \
+    || bad "an unreadable .env.local is exit 2" "rc=$RC out=$OUT"
+  chmod 600 "$R/.env.local"
+  run_raw || true
+  [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 15"*) true ;; *) false ;; esac \
+    && ok "control: the same .env.local, readable, supplies 15 and the 20-line file fails" \
+    || bad "control: readable .env.local supplies the value" "rc=$RC out=$OUT"
+  rm -f "$R/.env.local"
+
+  chmod 000 "$R/vstack.settings.toml"
+  run_raw || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *"vstack.settings.toml: unreadable while resolving a setting"*) true ;; *) false ;; esac \
+    && ok "an unreadable settings file is exit 2 (falling through would have read the built-in 1000)" \
+    || bad "an unreadable settings file is exit 2" "rc=$RC out=$OUT"
+  chmod 600 "$R/vstack.settings.toml"
+  run_raw || true
+  [ "$RC" -eq 0 ] && case "$OUT" in *"threshold 30"*) true ;; *) false ;; esac \
+    && ok "control: the same settings file, readable, supplies 30" \
+    || bad "control: readable settings file supplies the value" "rc=$RC out=$OUT"
+  rm -f "$R/vstack.settings.toml"
+
+  printf 'SIZE_RATCHET_THRESHOLD=12\n' >"$R/.env"
+  chmod 000 "$R/.env"
+  run_raw || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *".env: unreadable while resolving a setting"*) true ;; *) false ;; esac \
+    && ok "an unreadable .env is exit 2 (falling through would have read the built-in 1000)" \
+    || bad "an unreadable .env is exit 2" "rc=$RC out=$OUT"
+  chmod 600 "$R/.env"
+  run_raw || true
+  [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 12"*) true ;; *) false ;; esac \
+    && ok "control: the same .env, readable, supplies 12 and the 20-line file fails" \
+    || bad "control: readable .env supplies the value" "rc=$RC out=$OUT"
+fi
+
 echo "=== option-like configured paths ==="
 new_repo optpath
 mkfile f.txt 20
