@@ -328,17 +328,15 @@ fn resolve_single_source_with(
         return find_vstack_source_from_cwd();
     }
 
-    // Remote shorthand (owner/repo) — update once during top-level source resolution,
-    // then use the cached clone without side effects from pure attribution/hash paths.
-    let cached = config::remote_cache_dir(source)?;
-    if cached.join(".git").exists() {
-        if update_remote {
-            update_cached_repo(&cached);
-        }
-        return Some(cached);
+    // Remote source — update once during top-level source resolution, then use
+    // the cached clone without side effects from pure attribution/hash paths.
+    // A cache whose recorded origin is not this source is never used: it holds
+    // another repository's agents and hooks.
+    let cached = config::usable_remote_cache(source)?;
+    if update_remote {
+        update_cached_repo(&cached);
     }
-
-    None
+    Some(cached)
 }
 
 fn is_explicit_relative_local_source(source: &str) -> bool {
@@ -396,9 +394,20 @@ fn find_vstack_source_from_cwd() -> Option<PathBuf> {
 /// check can never reset the tree the check is reading, and a successful
 /// refresh clears the failure the check would otherwise keep reporting. Runs
 /// unbounded — a user is waiting on this one and expects it to finish.
-fn update_cached_repo(repo_dir: &std::path::Path) {
+pub(crate) fn update_cached_repo(repo_dir: &std::path::Path) {
     eprintln!("Updating cached repo...");
-    match config::fetch_remote_cache(repo_dir, None, false) {
+    report_fetch_outcome(config::fetch_remote_cache(
+        repo_dir,
+        None,
+        config::FetchBound::Unbounded,
+    ));
+}
+
+/// Say what the fetch did, for every outcome. One helper, shared by `refresh`
+/// and `add`, so a variant can never be silently dropped at one call site and
+/// leave a user installing from a stale cache with no marker.
+pub(crate) fn report_fetch_outcome(attempt: config::FetchAttempt) {
+    match attempt {
         config::FetchAttempt::Attempted(true) | config::FetchAttempt::Fresh => {}
         config::FetchAttempt::Attempted(false) => {
             eprintln!("  Warning: git fetch failed — using cached version")
@@ -428,6 +437,13 @@ mod tests {
         crate::test_util::with_home_and_config(&root, &config, || {
             let cache = config::remote_cache_dir("owner/repo").unwrap();
             std::fs::create_dir_all(cache.join(".git")).unwrap();
+            // The recorded origin is what identifies a cache: a clone that
+            // cannot be proven to be this source is never used.
+            std::fs::write(
+                cache.join(".git").join("config"),
+                "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n",
+            )
+            .unwrap();
             for source in [
                 "owner/repo",
                 "https://github.com/owner/repo",

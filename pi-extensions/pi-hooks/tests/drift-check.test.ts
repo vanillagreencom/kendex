@@ -105,6 +105,25 @@ describe("drift-check classification", () => {
 		}
 	});
 
+	test("a cwd that exists but cannot be entered is named too", async () => {
+		if (process.getuid?.() === 0) {
+			// Root ignores the permission bits this fixture relies on.
+			return;
+		}
+		const root = mkdtempSync(join(tmpdir(), "pi-hooks-drift-perm-"));
+		const locked = join(root, "locked");
+		mkdirSync(locked);
+		chmodSync(locked, 0o000);
+		try {
+			const result = await runDriftCheck(locked, { includeAvailable: true, timeoutMs: 5000, binary: "vstack" });
+			expect(result).toEqual({ kind: "unusable-cwd", cwd: locked });
+			expect(driftMessage(result)).toContain("is not accessible; drift status unknown");
+		} finally {
+			chmodSync(locked, 0o700);
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	test("includeAvailable=false passes --no-available", () => {
 		expect(driftCheckArgs({ includeAvailable: false })).toEqual(["check", "--quiet", "--no-available"]);
 		expect(driftCheckArgs({ includeAvailable: true })).toEqual(["check", "--quiet"]);

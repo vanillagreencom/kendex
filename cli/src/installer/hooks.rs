@@ -136,29 +136,63 @@ pub fn install_hook(
     harness: Harness,
     global: bool,
     agents: &[Agent],
-) -> Result<String> {
+) -> Result<HookInstall> {
     crate::path_safety::validate_new_item_name(&hook.name)?;
     if !hook.applies_to(harness.id()) {
-        return Ok(format!(
-            "[hook] {} → {} (skipped: harness not in `harnesses:`)",
-            hook.name,
-            harness.name()
-        ));
+        return Ok(HookInstall {
+            detail: format!(
+                "[hook] {} → {} (skipped: harness not in `harnesses:`)",
+                hook.name,
+                harness.name()
+            ),
+            installed: false,
+        });
     }
-    match harness {
-        Harness::ClaudeCode => install_hook_claude(hook, global)?,
-        Harness::OpenCode => install_hook_opencode(hook, global)?,
+    let installed = match harness {
+        Harness::ClaudeCode => {
+            install_hook_claude(hook, global)?;
+            true
+        }
+        Harness::OpenCode => {
+            install_hook_opencode(hook, global)?;
+            true
+        }
         Harness::Codex => install_hook_codex(hook, global, agents)?,
-        Harness::Cursor => install_hook_cursor(hook, global)?,
-        Harness::Pi => {}
-    }
+        Harness::Cursor => {
+            install_hook_cursor(hook, global)?;
+            true
+        }
+        // Pi has no per-hook artifact by design: the native `pi-hooks`
+        // extension owns the behavior, so there is nothing to write and
+        // nothing for `check` to demand.
+        Harness::Pi => true,
+    };
 
-    Ok(format!(
-        "[hook] {} → {} ({})",
-        hook.name,
-        harness.name(),
-        hook.event
-    ))
+    if !installed {
+        return Ok(HookInstall {
+            detail: format!(
+                "[hook] {} → {} (no artifact yet: this event has no native {} equivalent and the scope has no {} agents to carry the safety prose)",
+                hook.name,
+                harness.name(),
+                harness.name(),
+                harness.name()
+            ),
+            installed,
+        });
+    }
+    Ok(HookInstall {
+        detail: format!("[hook] {} → {} ({})", hook.name, harness.name(), hook.event),
+        installed,
+    })
+}
+
+/// What one hook install actually did. `installed` is false when the harness
+/// produced NO artifact — the Codex prose fallback in a scope with no Codex
+/// agents to write into — so `add` can say so instead of printing plain
+/// success.
+pub struct HookInstall {
+    pub detail: String,
+    pub installed: bool,
 }
 
 /// Claude Code: copy hook script + merge into settings.json
@@ -303,9 +337,10 @@ pub(crate) fn codex_root(global: bool) -> PathBuf {
 /// Codex hook install. Native install (script + hooks.json + features flag)
 /// when codex understands the event; safety-prose appendix to agent TOML
 /// otherwise.
-fn install_hook_codex(hook: &Hook, global: bool, agents: &[Agent]) -> Result<()> {
+/// Returns whether an artifact (native script or prose block) was produced.
+fn install_hook_codex(hook: &Hook, global: bool, agents: &[Agent]) -> Result<bool> {
     match codex_event_for(&hook.event) {
-        Some(codex_event) => install_hook_codex_native(hook, codex_event, global),
+        Some(codex_event) => install_hook_codex_native(hook, codex_event, global).map(|()| true),
         None => install_hook_codex_prose(hook, global, agents),
     }
 }
@@ -636,13 +671,17 @@ fn toml_assignment_value(line: &str) -> Option<&str> {
 /// Fallback path for codex hooks whose event has no codex equivalent — append a
 /// safety advisory to every agent's developer_instructions block. Matches the
 /// original (pre-native) behavior.
-fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Result<()> {
+/// Returns whether any agent TOML now carries this hook's safety block. A
+/// scope with no Codex agents produces nothing at all — there is no artifact
+/// to make, and none for `check` to demand until an agent exists.
+fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Result<bool> {
     validate_item_name(&hook.name)?;
     let agents_dir = Harness::Codex.agents_dir(global);
     if !agents_dir.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
+    let mut wrote = false;
     for agent in agents {
         validate_item_name(&agent.name)?;
         let toml_path = checked_child_path(&agents_dir, &format!("{}.toml", agent.name))?;
@@ -652,6 +691,7 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
 
         let content = std::fs::read_to_string(&toml_path)?;
         if content.contains(&hook.name) {
+            wrote = true;
             continue;
         }
 
@@ -662,10 +702,11 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
             new_content.push('\n');
             new_content.push_str(&content[close_pos..]);
             std::fs::write(&toml_path, new_content)?;
+            wrote = true;
         }
     }
 
-    Ok(())
+    Ok(wrote)
 }
 
 pub fn install_codex_fallback_hooks_for_agents(
@@ -675,7 +716,7 @@ pub fn install_codex_fallback_hooks_for_agents(
 ) -> Result<()> {
     for hook in hooks {
         if hook.applies_to(Harness::Codex.id()) && codex_event_for(&hook.event).is_none() {
-            install_hook_codex_prose(hook, global, agents)?;
+            let _ = install_hook_codex_prose(hook, global, agents)?;
         }
     }
     Ok(())

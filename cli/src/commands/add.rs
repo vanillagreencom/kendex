@@ -2521,8 +2521,13 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         }
 
         for h in &selected_hooks {
-            let detail = installer::install_hook(h, *harness, global, &selected_agents)?;
-            log_lines.push(detail);
+            let result = installer::install_hook(h, *harness, global, &selected_agents)?;
+            // A harness that produced nothing says so: the alternative is a
+            // summary claiming an install that wrote no file anywhere.
+            if !result.installed && h.applies_to(harness.id()) {
+                eprintln!("  Note: {}", result.detail);
+            }
+            log_lines.push(result.detail);
         }
     }
 
@@ -2628,6 +2633,11 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     // hook actually applies to — a hook with `harnesses: [claude-code]` is
     // a no-op for the other harnesses, so the lock must not claim it was
     // installed there (otherwise verify will false-fail).
+    //
+    // A Codex prose fallback that found no agent TOML to write into IS
+    // recorded: the lock is what tells reconciliation to add the safety block
+    // to the first Codex agent installed later, and presence checking knows
+    // that an agent-less Codex scope has no artifact to miss.
     let now = config::now_iso();
     for harness in &harnesses {
         for h in &selected_hooks {
@@ -2831,27 +2841,42 @@ fn looks_like_remote(source: &str) -> bool {
         || source.starts_with("git@")
 }
 
-/// Clone or update a remote repo into ~/.vstack/cache/<owner>/<repo>
+/// Clone or update a remote repo into `~/.vstack/cache/<host>_<owner>_<repo>`
 fn clone_or_update(source: &str) -> Result<PathBuf> {
     let cache_dir = crate::config::global_base_dir()
         .join(".vstack")
         .join("cache");
     std::fs::create_dir_all(&cache_dir)?;
 
-    // Normalize source to a git URL and a cache key. The key comes from the
-    // one slug function `check` and `refresh` also use, so a URL-form source
-    // and its `owner/repo` shorthand land in the SAME cache — otherwise the
-    // lock records a source neither of them can resolve.
+    // Normalize source to a git URL and a cache directory. The directory comes
+    // from the one host-aware slug function `check` and `refresh` also use, so
+    // every accepted form of the same remote lands in the SAME cache and two
+    // different remotes never share one. `http://` is refused: a cache feeds
+    // executable content into a project.
     let git_url = if source.starts_with("https://")
-        || source.starts_with("http://")
         || source.starts_with("ssh://")
         || source.starts_with("git@")
     {
         source.to_string()
+    } else if source.starts_with("http://") {
+        anyhow::bail!(
+            "`{source}` uses cleartext http:// — vstack installs executable content from a source, so use https:// or ssh"
+        );
     } else {
         format!("https://github.com/{source}.git")
     };
-    let Some(repo_dir) = crate::config::remote_cache_dir(source) else {
+    let existing = crate::config::remote_cache_lookup(source);
+    if let crate::config::RemoteCacheLookup::Unverifiable { reason, .. } = &existing {
+        anyhow::bail!(
+            "refusing to install from the cache for `{source}`: {reason}. Remove that directory under ~/.vstack/cache to re-clone."
+        );
+    }
+    let Some(repo_dir) = (match existing {
+        // An existing clone — at the current key or one an earlier release
+        // wrote — is adopted rather than re-cloned.
+        crate::config::RemoteCacheLookup::Usable(dir) => Some(dir),
+        _ => crate::config::remote_cache_dir(source),
+    }) else {
         anyhow::bail!(
             "`{source}` is not a source vstack can fetch: use `owner/repo`, an https:// URL, or git@host:owner/repo"
         );
@@ -2859,14 +2884,8 @@ fn clone_or_update(source: &str) -> Result<PathBuf> {
 
     if repo_dir.join(".git").exists() {
         // Update existing clone (handles force-pushed histories) through the
-        // one guarded fetch, so it cannot reset the tree a concurrent check is
-        // reading and its success clears that check's stale-cache warning.
-        eprintln!("Updating cached repo...");
-        if let crate::config::FetchAttempt::Attempted(false) =
-            crate::config::fetch_remote_cache(&repo_dir, None, false)
-        {
-            eprintln!("  Warning: git fetch failed — using cached version");
-        }
+        // one guarded fetch, reporting every outcome the way `refresh` does.
+        crate::refresh_sources::update_cached_repo(&repo_dir);
     } else {
         // Fresh shallow clone
         eprintln!("Cloning {}...", git_url);

@@ -149,6 +149,21 @@ pub enum CheckOutcome {
 pub struct Item {
     pub name: String,
     pub kind: ItemKind,
+    /// What exactly is wrong with this one, when the section header cannot
+    /// say it — a phantom missing in only some harnesses, for instance,
+    /// where "run `vstack add`" is the remedy for those harnesses alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl Item {
+    pub fn new(name: impl Into<String>, kind: ItemKind) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            detail: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -222,9 +237,12 @@ pub struct ScopeReport {
     /// Lock entries whose source resolves but no longer ships the item —
     /// `vstack remove <name>`.
     pub removed: Vec<Item>,
-    /// Skills present on disk but absent from the lock — `vstack add` recovers.
+    /// Skills present on disk but absent from the lock — `vstack add`
+    /// recovers. Skills only: they are the one kind with a canonical on-disk
+    /// root to scan.
     pub orphaned: Vec<Item>,
-    /// Lock entries whose canonical files are gone from disk.
+    /// Lock entries whose installed files are gone, for every kind that
+    /// records an install path (extras do not).
     pub phantom: Vec<Item>,
     /// Installed agents referencing skills that are not installed.
     pub missing_skill_refs: Vec<MissingSkillRef>,
@@ -281,47 +299,32 @@ impl CheckReport {
     }
 }
 
-/// A name reaches two places that make a hostile one dangerous: the drift
-/// report a session-start hook injects into an agent's context, and the paths
-/// this command joins to find installed files. So a name is trusted only when
-/// it is one short line of a conservative charset AND a single path component
-/// — no separator, no `.`/`..`, no leading dot. Scoped Pi packages
-/// (`@vanillagreen/pi-qol`) are the one shape that legitimately carries a
-/// separator, and only in the `@scope/name` form.
-pub fn is_safe_item_name(kind: ItemKind, name: &str) -> bool {
-    if name.len() > 64 {
-        return false;
-    }
-    if kind == ItemKind::PiExtension
-        && let Some(scoped) = name.strip_prefix('@')
-    {
-        return match scoped.split_once('/') {
-            Some((scope, package)) => is_name_component(scope) && is_name_component(package),
-            None => false,
-        };
-    }
-    is_name_component(name)
-}
+// A name reaches two places that make a hostile one dangerous: the drift
+// report a session-start hook injects into an agent's context, and the paths
+// this command joins to find installed files. Both `check` and `verify` use
+// the ONE predicate defined beside the install-time validators it has to
+// agree with, so a name that installs can never be reported as unsafe.
+use crate::path_safety::is_safe_item_name;
 
-/// One path component that is safe to join: non-empty, ASCII alphanumerics
-/// plus `.`, `_` and `-`, never `.` or `..`, never leading-dot (an item is
-/// not a hidden file).
-fn is_name_component(part: &str) -> bool {
-    !part.is_empty()
-        && !part.starts_with('.')
-        && part
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-}
+/// How much free text (a source string, a parse failure, a name) may reach an
+/// agent's context on one report line.
+const DISPLAY_LIMIT: usize = 120;
 
 /// Defensive rendering of text that did not pass through
-/// [`is_safe_item_name`] (source strings, agent-declared skill references):
-/// control characters become `?` so nothing can start a new line or drive a
-/// terminal.
+/// [`is_safe_item_name`] (source strings, parse failures, agent-declared
+/// skill references): control characters become `?` so nothing can start a
+/// new line or drive a terminal, and anything long is truncated — an item is
+/// never classified on its length, only shortened when shown.
 fn display_text(text: &str) -> String {
-    text.chars()
+    let scrubbed: String = text
+        .chars()
         .map(|c| if c.is_control() { '?' } else { c })
-        .collect()
+        .collect();
+    if scrubbed.chars().count() <= DISPLAY_LIMIT {
+        return scrubbed;
+    }
+    let kept: String = scrubbed.chars().take(DISPLAY_LIMIT).collect();
+    format!("{kept}…")
 }
 
 pub fn run(scope: ScopeFilter, opts: CheckOptions) -> Result<CheckOutcome> {
@@ -357,30 +360,40 @@ pub fn run(scope: ScopeFilter, opts: CheckOptions) -> Result<CheckOutcome> {
     Ok(report.outcome())
 }
 
-/// Compute the report without printing. Refreshes remote source caches
-/// (bounded by [`config::REMOTE_CACHE_TTL`]) unless offline; performs no other
-/// side effect.
+/// Compute the report without printing.
+///
+/// Every read is a local one — the lock, the source trees, the cache stamps —
+/// so this is instant and works offline. Nothing here touches the network: a
+/// cache that is due for a refresh is handed to a detached background process
+/// nobody waits on, and its outcome is read from the stamp by the NEXT check.
+/// That is the whole reason a session start can afford to run this.
 pub fn gather(scope: ScopeFilter, opts: CheckOptions) -> Result<CheckReport> {
     let mut scopes = Vec::new();
     let mut cache_refresh_failures = Vec::new();
     let mut seen_sources: HashSet<String> = HashSet::new();
+    let mut refresh_due = false;
     for &global in scope.globals() {
         let lock_path = config::lock_file_path(global);
         let lock = LockFile::load(&lock_path)
             .with_context(|| format!("loading lock file {}", lock_path.display()))?;
-        if !opts.offline {
-            for problem in
-                config::refresh_remote_caches_older_than(&lock, Some(config::REMOTE_CACHE_TTL))
-            {
-                if !seen_sources.insert(problem.source.clone()) {
-                    continue;
-                }
-                cache_refresh_failures.push(cache_failure(problem));
+        // Recorded failures are read in every mode, `--offline` included:
+        // they are pure disk reads, and offline is exactly the mode a user
+        // reaches for when the network is misbehaving.
+        for problem in config::recorded_remote_cache_problems(&lock) {
+            if !seen_sources.insert(problem.source.clone()) {
+                continue;
             }
+            cache_refresh_failures.push(cache_failure(problem, opts.offline));
         }
+        refresh_due |= config::any_remote_cache_due(&lock, Some(config::REMOTE_CACHE_TTL));
         if let Some(scope_report) = check_scope(global, &lock, opts) {
             scopes.push(scope_report);
         }
+    }
+    if refresh_due && !opts.offline {
+        // Best effort by design: a refresh that cannot even be started is not
+        // a reason to fail a check that has already read everything it needs.
+        let _ = config::spawn_detached_cache_refresh(scope.label());
     }
     cache_refresh_failures.sort_by(|a, b| a.source.cmp(&b.source));
     let drift = scopes.iter().any(ScopeReport::has_drift)
@@ -395,18 +408,21 @@ pub fn gather(scope: ScopeFilter, opts: CheckOptions) -> Result<CheckReport> {
     })
 }
 
-fn cache_failure(problem: config::RemoteCacheProblem) -> CacheRefreshFailure {
+fn cache_failure(problem: config::RemoteCacheProblem, offline: bool) -> CacheRefreshFailure {
     let persistent = problem.kind.is_persistent();
     let (age_secs, reason) = match problem.kind {
         config::RemoteCacheProblemKind::Failing {
             failing_for,
             last_attempt,
+            cause,
         } => (
             failing_for.as_secs(),
             format!(
-                "fetch has been failing for {} (last attempt {} ago)",
+                "{} — failing for {} (last attempt {} ago{})",
+                cause.map_or("the refresh did not complete", |cause| cause.describe()),
                 humanize_age(failing_for.as_secs()),
-                humanize_age(last_attempt.as_secs())
+                humanize_age(last_attempt.as_secs()),
+                if offline { ", not re-checked" } else { "" }
             ),
         ),
         config::RemoteCacheProblemKind::Unwritable { reason } => (
@@ -427,7 +443,7 @@ fn cache_failure(problem: config::RemoteCacheProblem) -> CacheRefreshFailure {
 /// recorded under an old name is neither "removed" nor re-offered.
 #[derive(Default)]
 struct SourceCatalog {
-    kinds: HashMap<ItemKind, crate::catalog::Inventory>,
+    kinds: HashMap<ItemKind, crate::catalog::KindInventory>,
     /// Names known under each kind, including Pi legacy aliases.
     names: HashMap<ItemKind, HashSet<String>>,
     /// `path: reason` for every asset discovery could not parse.
@@ -439,21 +455,21 @@ struct SourceCatalog {
 
 impl SourceCatalog {
     /// Why an entry of `kind` cannot be verified against this source, if it
-    /// cannot. Both cases are layout problems `refresh` cannot repair, so the
-    /// entry must never be reported as outdated or removed.
+    /// cannot. Every case here is a layout or configuration problem `refresh`
+    /// cannot repair, so the entry must never be reported outdated or removed.
     fn unverifiable(&self, kind: ItemKind) -> Option<String> {
         if let Some(error) = &self.config_error {
             return Some(error.clone());
         }
-        self.kinds
-            .get(&kind)
-            .filter(|inventory| inventory.missing_root)
-            .map(|_| {
-                format!(
-                    "{}: no configured source directory exists",
-                    kind.label_plural()
-                )
-            })
+        match self.kinds.get(&kind) {
+            Some(inventory) => inventory.unverifiable(kind),
+            // A kind that was never inventoried cannot answer for its entries.
+            None => Some(format!("{}: not inventoried", kind.label_plural())),
+        }
+    }
+
+    fn readable(&self, kind: ItemKind) -> Option<&crate::catalog::Inventory> {
+        self.kinds.get(&kind).and_then(|kind| kind.readable())
     }
 }
 
@@ -470,31 +486,29 @@ fn load_source_catalog(source_root: &Path) -> SourceCatalog {
     // `[catalog]` decides where every kind lives. Falling back to the default
     // roots when it cannot be read would inventory a layout the source does
     // not use and call the difference drift, so the whole source is
-    // unverifiable until the configuration is fixed.
-    if let Err(err) = crate::mapping::MappingConfig::load_strict(source_root) {
-        catalog.config_error = Some(format!("catalog configuration unreadable: {err:#}"));
-        return catalog;
-    }
+    // unverifiable until the configuration is fixed. Loaded ONCE per source
+    // and threaded into every kind.
+    let config = match crate::mapping::MappingConfig::load_strict(source_root) {
+        Ok(config) => config,
+        Err(err) => {
+            catalog.config_error = Some(format!("catalog configuration unreadable: {err:#}"));
+            return catalog;
+        }
+    };
     for kind in CATALOG_KINDS {
-        let inventory = match crate::catalog::inventory(source_root, kind) {
-            Ok(inventory) => inventory,
-            Err(err) => {
-                catalog
-                    .failures
-                    .push(format!("{}: {err:#}", kind.label_plural()));
-                continue;
-            }
-        };
-        let mut names: HashSet<String> = inventory.names.iter().cloned().collect();
-        if kind == ItemKind::PiExtension {
-            for name in &inventory.names {
-                for legacy in crate::pi_extension::legacy_names_for(name) {
-                    names.insert((*legacy).to_string());
+        let inventory = crate::catalog::inventory(source_root, kind, &config.catalog);
+        if let Some(readable) = inventory.readable() {
+            let mut names: HashSet<String> = readable.names.iter().cloned().collect();
+            if kind == ItemKind::PiExtension {
+                for name in &readable.names {
+                    for legacy in crate::pi_extension::legacy_names_for(name) {
+                        names.insert((*legacy).to_string());
+                    }
                 }
             }
+            catalog.failures.extend(readable.failures.iter().cloned());
+            catalog.names.insert(kind, names);
         }
-        catalog.failures.extend(inventory.failures.iter().cloned());
-        catalog.names.insert(kind, names);
         catalog.kinds.insert(kind, inventory);
     }
     catalog.failures.sort();
@@ -502,10 +516,7 @@ fn load_source_catalog(source_root: &Path) -> SourceCatalog {
 }
 
 fn item(entry: &LockEntry) -> Item {
-    Item {
-        name: entry.name.clone(),
-        kind: entry.kind,
-    }
+    Item::new(entry.name.clone(), entry.kind)
 }
 
 /// Resolve each distinct lock source once. `None` = unresolvable (cache never
@@ -594,18 +605,18 @@ fn classify(
         if catalog.unverifiable(entry.kind).is_some() {
             continue;
         }
-        // "Removed" needs positive evidence: the source still ships other
-        // items of this kind and nothing on disk could be this one. An item
-        // whose files exist but no longer parse falls through to the hash
-        // check instead of being condemned.
+        // "Removed" needs positive evidence: the kind's root was READ (an
+        // empty readable root proves the source ships nothing of this kind)
+        // and nothing in it could be this item. An item whose files exist but
+        // no longer parse falls through to the hash check instead of being
+        // condemned.
         let known = catalog
             .names
             .get(&entry.kind)
             .is_some_and(|names| names.contains(&entry.name));
         let physically_absent = catalog
-            .kinds
-            .get(&entry.kind)
-            .is_some_and(|inv| !inv.names.is_empty() && !inv.may_still_be_present(&entry.name));
+            .readable(entry.kind)
+            .is_some_and(|inv| !inv.may_still_be_present(&entry.name));
         if !known && physically_absent {
             removed.push(item(entry));
         } else if config::is_source_changed(entry) {
@@ -647,10 +658,7 @@ fn missing_skill_refs_for(
         skills.dedup();
         for skill_name in skills {
             if !is_safe_item_name(ItemKind::Skill, &skill_name) {
-                invalid.push(Item {
-                    name: skill_name,
-                    kind: ItemKind::Skill,
-                });
+                invalid.push(Item::new(skill_name, ItemKind::Skill));
                 continue;
             }
             if installed_skill_names.contains(skill_name.as_str())
@@ -692,7 +700,7 @@ fn available_for(
             if kind.add_filter_flag().is_none() || !installed_kinds.contains(&kind) {
                 continue;
             }
-            let Some(inventory) = catalog.kinds.get(&kind) else {
+            let Some(inventory) = catalog.readable(kind) else {
                 continue;
             };
             for name in &inventory.names {
@@ -724,10 +732,7 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
         .filter(|d| {
             !lock_names.contains(d.name.as_str()) && is_safe_item_name(ItemKind::Skill, &d.name)
         })
-        .map(|d| Item {
-            name: d.name.clone(),
-            kind: ItemKind::Skill,
-        })
+        .map(|d| Item::new(d.name.clone(), ItemKind::Skill))
         .collect();
     orphaned.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -742,22 +747,39 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
         .partition(|e| !is_safe_item_name(e.kind, &e.name));
     let mut invalid_names: Vec<Item> = unsafe_entries.iter().map(|e| item(e)).collect();
 
-    // Lock entries whose installed artifacts are gone, for every kind — the
-    // same presence check `vstack verify` runs.
+    // Lock entries whose installed artifacts are gone, for every kind except
+    // extras (which record no single install path) — the same presence check
+    // `vstack verify` runs, over the same disk evidence, so the two commands
+    // cannot disagree about what is installed.
+    let disk_skill_set: HashSet<String> = disk_skills.iter().map(|d| d.name.clone()).collect();
     let phantom: Vec<Item> = entries
         .iter()
-        .filter(|e| crate::commands::verify::missing_install(e, global).is_some())
-        .map(|e| item(e))
+        .filter_map(|e| {
+            crate::commands::verify::missing_install(e, global, &disk_skill_set).map(|note| Item {
+                detail: Some(note),
+                ..item(e)
+            })
+        })
         .collect();
 
     let catalogs = load_catalogs(&entries);
     let source_issues = source_issues_for(&catalogs, &entries);
-    let (outdated, removed, current) = classify(&catalogs, &entries);
+    let (outdated, removed, mut current) = classify(&catalogs, &entries);
+    // An entry whose install is missing is not "current", whatever its hash
+    // says: listing it with a ✓ beside its own phantom line reads as a
+    // contradiction.
+    let phantom_names: HashSet<&str> = phantom.iter().map(|i| i.name.as_str()).collect();
+    current.retain(|i| !phantom_names.contains(i.name.as_str()));
 
     let disk_skill_names: HashSet<&str> = disk_skills.iter().map(|d| d.name.as_str()).collect();
     let (missing_skill_refs, invalid_refs) =
         missing_skill_refs_for(global, &entries, &disk_skill_names);
     invalid_names.extend(invalid_refs);
+    // Two agents can reference the same bad skill name, and a name can be
+    // both a bad lock entry and a bad reference: report each once.
+    invalid_names
+        .sort_by(|a, b| (&a.name, a.kind.label_short()).cmp(&(&b.name, b.kind.label_short())));
+    invalid_names.dedup_by(|a, b| a.name == b.name && a.kind == b.kind);
 
     let available = if opts.no_available {
         Vec::new()
@@ -795,7 +817,7 @@ pub fn render_report(report: &CheckReport, quiet: bool) -> String {
         out.push('\n');
         for failure in &report.cache_refresh_failures {
             out.push_str(&format!(
-                "  source cache {} is not up to date — {}; results may be stale\n",
+                "  source cache {} is not up to date — {}; results may be stale — run `vstack refresh` to retry it now\n",
                 display_text(&failure.source),
                 failure.reason
             ));
@@ -812,14 +834,24 @@ fn humanize_age(secs: u64) -> String {
     }
 }
 
-/// One drift section: a header line and one `glyph name (kind)` line per item.
+/// One drift section: a header line and one `glyph name (kind)` line per
+/// item, with the item's own detail when the header cannot carry it.
 fn section(out: &mut String, header: &str, glyph: char, items: &[Item]) {
     if items.is_empty() {
         return;
     }
     out.push_str(&format!("\n  {} {header}:\n", items.len()));
     for item in items {
-        out.push_str(&format!("    {glyph} {} ({})\n", item.name, item.kind));
+        let detail = item
+            .detail
+            .as_deref()
+            .map(|detail| format!(" — {}", display_text(detail)))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "    {glyph} {} ({}){detail}\n",
+            display_text(&item.name),
+            item.kind
+        ));
     }
 }
 
@@ -838,7 +870,7 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
             report.scope, report.installed
         );
         for item in &report.current {
-            let _ = writeln!(out, "  ✓ {} ({})", item.name, item.kind);
+            let _ = writeln!(out, "  ✓ {} ({})", display_text(&item.name), item.kind);
         }
     }
 
@@ -948,21 +980,30 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
             let Some(flag) = kind.add_filter_flag() else {
                 continue;
             };
-            let names: Vec<&str> = report
-                .available
-                .iter()
-                .filter(|a| a.kind == kind)
-                .map(|a| a.name.as_str())
-                .collect();
-            if names.is_empty() {
+            let offered: Vec<&AvailableItem> =
+                report.available.iter().filter(|a| a.kind == kind).collect();
+            if offered.is_empty() {
                 continue;
             }
-            let _ = writeln!(
-                out,
-                "    + {} (`vstack add {flag} <name>`): {}",
-                kind.label_plural(),
-                names.join(", ")
-            );
+            // Group by source: which repo is offering an item is half of
+            // deciding whether to add it.
+            let mut sources: Vec<&str> = offered.iter().map(|a| a.source.as_str()).collect();
+            sources.sort();
+            sources.dedup();
+            for source in sources {
+                let names: Vec<&str> = offered
+                    .iter()
+                    .filter(|a| a.source == source)
+                    .map(|a| a.name.as_str())
+                    .collect();
+                let _ = writeln!(
+                    out,
+                    "    + {} from {} (`vstack add {flag} <name>`): {}",
+                    kind.label_plural(),
+                    display_text(source),
+                    names.join(", ")
+                );
+            }
         }
     }
 }
@@ -1269,12 +1310,7 @@ mod scope_report_tests {
 
     #[test]
     fn has_drift_is_true_for_each_field_alone_and_available_is_not_drift() {
-        let one = || {
-            vec![Item {
-                name: "x".into(),
-                kind: ItemKind::Skill,
-            }]
-        };
+        let one = || vec![Item::new("x", ItemKind::Skill)];
         let cases: Vec<(&str, ScopeReport)> = vec![
             (
                 "outdated",
@@ -1470,7 +1506,11 @@ mod scope_report_tests {
         assert!(is_safe_item_name(ItemKind::Agent, "reviewer-arch"));
         assert!(!is_safe_item_name(ItemKind::Skill, "a\nb"));
         assert!(!is_safe_item_name(ItemKind::Skill, ""));
-        assert!(!is_safe_item_name(ItemKind::Skill, &"x".repeat(65)));
+        // Length is a RENDERING concern, never a classification one: a long
+        // name installs, so it must not be reported as unsafe drift.
+        let long = "x".repeat(300);
+        assert!(is_safe_item_name(ItemKind::Skill, &long));
+        assert!(display_text(&long).chars().count() <= DISPLAY_LIMIT + 1);
         assert_eq!(display_text("a\x1bb\nc"), "a?b?c");
     }
 
@@ -1482,13 +1522,15 @@ mod scope_report_tests {
             "../x",
             "/tmp/x",
             "a/b",
-            ".hidden",
             ".",
             "..",
             "a/../../etc",
             "@scope/../../etc",
             "@/x",
             "@scope/",
+            // A leading dash would be read as a flag by the very command the
+            // report tells an agent to run.
+            "-rf",
         ] {
             for kind in CATALOG_KINDS {
                 assert!(
@@ -1520,7 +1562,7 @@ mod scope_report_tests {
             install_skill_on_disk(project, "alpha");
             let mut lock = LockFile::default();
             lock.add(locked(source, ItemKind::Skill, "alpha"));
-            for hostile in ["../escape", "/tmp/escape", "a/b", ".hidden"] {
+            for hostile in ["../escape", "/tmp/escape", "a/b", "-escape"] {
                 let mut entry = locked(source, ItemKind::Skill, "alpha");
                 entry.name = hostile.to_string();
                 lock.add(entry);
@@ -1538,7 +1580,7 @@ mod scope_report_tests {
                 .iter()
                 .map(|i| i.name.as_str())
                 .collect();
-            for hostile in ["../escape", "/tmp/escape", "a/b", ".hidden"] {
+            for hostile in ["../escape", "/tmp/escape", "a/b", "-escape"] {
                 assert!(rejected.contains(&hostile), "{hostile}: {rejected:?}");
             }
             // Excluded from every other list, so nothing downstream joins them.
@@ -1602,10 +1644,9 @@ mod scope_report_tests {
     /// Write a Pi package whose directory name deliberately differs from the
     /// scoped name its manifest declares — the real shape of every shipped
     /// package.
-    fn write_pi_package(source: &Path, dir_name: &str, package_name: &str, manifest: &str) {
+    fn write_pi_package(source: &Path, dir_name: &str, manifest: &str) {
         let dir = source.join("pi-extensions").join(dir_name);
         std::fs::create_dir_all(&dir).unwrap();
-        let _ = package_name;
         std::fs::write(dir.join("package.json"), manifest).unwrap();
         std::fs::write(dir.join("ext.ts"), "export default function () {}\n").unwrap();
     }
@@ -1618,13 +1659,8 @@ mod scope_report_tests {
                     "{{\"name\":\"{name}\",\"version\":\"1.0.0\",\"keywords\":[\"pi-package\"],\"pi\":{{\"extensions\":[\"./ext.ts\"]}}}}"
                 )
             };
-            write_pi_package(
-                source,
-                "pi-hooks",
-                "@vg/pi-hooks",
-                &manifest("@vg/pi-hooks"),
-            );
-            write_pi_package(source, "pi-qol", "@vg/pi-qol", &manifest("@vg/pi-qol"));
+            write_pi_package(source, "pi-hooks", &manifest("@vg/pi-hooks"));
+            write_pi_package(source, "pi-qol", &manifest("@vg/pi-qol"));
             let mut lock = LockFile::default();
             lock.add(locked(source, ItemKind::PiExtension, "@vg/pi-hooks"));
             lock.add(locked(source, ItemKind::PiExtension, "@vg/pi-qol"));
@@ -1675,6 +1711,83 @@ mod scope_report_tests {
     }
 
     #[test]
+    fn the_last_item_of_a_kind_is_reported_removed_when_its_root_is_readable_and_empty() {
+        with_sandbox("last-item", |project, source| {
+            write_skill(source, "alpha", "one");
+            install_skill_on_disk(project, "alpha");
+            let mut lock = LockFile::default();
+            let mut entry = locked(source, ItemKind::Skill, "alpha");
+            // A legacy lock with no recorded hash: the hash check cannot
+            // report drift for it, so only a removal verdict can.
+            entry.source_hash = String::new();
+            lock.add(entry);
+
+            // The source deletes its last skill but keeps the root.
+            std::fs::remove_dir_all(source.join("skills").join("alpha")).unwrap();
+            assert!(source.join("skills").is_dir(), "root still readable");
+
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert_eq!(names(&report.removed), vec!["alpha"], "{report:?}");
+            assert!(report.source_issues.is_empty(), "{report:?}");
+
+            // Control: remove the ROOT as well and the verdict must retract —
+            // a moved layout is not proof of removal.
+            std::fs::remove_dir_all(source.join("skills")).unwrap();
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(report.removed.is_empty(), "{report:?}");
+            assert!(!report.source_issues.is_empty(), "{report:?}");
+        });
+    }
+
+    #[test]
+    fn a_skill_the_disk_scan_finds_outside_the_canonical_root_is_not_a_phantom() {
+        // VST-195's class: `scan_installed_skills_on_disk` knows about roots
+        // the canonical path check does not — checkout-anchored roots in a
+        // worktree, and the Codex home root in global scope. Routing phantom
+        // through the canonical path alone reported those installs missing at
+        // every session start. This drives the Codex-home root, which needs no
+        // git fixture, and proves the same wiring: the scan's evidence wins.
+        with_sandbox("second-root", |_project, source| {
+            write_skill(source, "alpha", "one");
+            let anchored = config::codex_home_dir().join("skills").join("alpha");
+            std::fs::create_dir_all(&anchored).unwrap();
+            std::fs::write(anchored.join("SKILL.md"), "installed\n").unwrap();
+            std::fs::write(anchored.join(".vstack-refreshed"), "").unwrap();
+            // Deliberately NOT installed at the canonical global path.
+            assert!(
+                !config::global_state_dir()
+                    .join("skills")
+                    .join("alpha")
+                    .exists()
+            );
+
+            let scanned: Vec<String> = config::scan_installed_skills_on_disk(true)
+                .into_iter()
+                .map(|item| item.name)
+                .collect();
+            assert!(
+                scanned.contains(&"alpha".to_string()),
+                "fixture must be visible to the disk scan: {scanned:?}"
+            );
+
+            let mut lock = LockFile::default();
+            lock.add(locked(source, ItemKind::Skill, "alpha"));
+            let report = check_scope(true, &lock, CheckOptions::default()).unwrap();
+            assert!(
+                report.phantom.is_empty(),
+                "a skill the scan can see is installed: {report:?}"
+            );
+            assert!(report.orphaned.is_empty(), "{report:?}");
+
+            // Inverse control: remove that copy and the same entry IS a phantom.
+            std::fs::remove_dir_all(&anchored).unwrap();
+            let report = check_scope(true, &lock, CheckOptions::default()).unwrap();
+            assert_eq!(names(&report.phantom), vec!["alpha"], "{report:?}");
+            assert!(report.has_drift());
+        });
+    }
+
+    #[test]
     fn a_missing_install_is_phantom_for_every_kind_not_just_skills() {
         with_sandbox("phantom-kinds", |project, source| {
             write_skill(source, "alpha", "one");
@@ -1700,7 +1813,6 @@ mod scope_report_tests {
             write_pi_package(
                 source,
                 "pi-hooks",
-                "@vg/pi-hooks",
                 "{\"name\":\"@vg/pi-hooks\",\"version\":\"1.0.0\",\"keywords\":[\"pi-package\"],\"pi\":{\"extensions\":[\"./ext.ts\"]}}",
             );
             lock.add(locked(source, ItemKind::PiExtension, "@vg/pi-hooks"));
@@ -1752,16 +1864,40 @@ mod scope_report_tests {
     }
 
     #[test]
-    fn gather_offline_never_touches_the_remote_cache_and_online_reports_a_failed_refresh() {
-        with_sandbox("gather-offline", |project, _source| {
+    fn gather_reports_recorded_cache_failures_from_disk_and_never_fetches() {
+        with_sandbox("gather-cache", |project, _source| {
             let cache = config::remote_cache_dir("owner/repo").unwrap();
             std::fs::create_dir_all(cache.join(".git")).unwrap();
+            std::fs::write(
+                cache.join(".git").join("config"),
+                "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n",
+            )
+            .unwrap();
+            // A remote that has been failing for longer than two TTLs: the
+            // stamp is the ONLY evidence gather is allowed to use.
+            let stamp = cache.join(".git").join("vstack-fetch-stamp");
+            let first = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                - (config::REMOTE_CACHE_FAILURE_IS_DRIFT.as_secs() + 3600);
+            std::fs::write(&stamp, format!("failed {first} {first} reset\n")).unwrap();
+            let before = std::fs::read_to_string(&stamp).unwrap();
+
+            // The cache is a real, current source tree, so the SCOPE is
+            // clean: the only thing that can make this report drift is the
+            // recorded cache failure.
+            write_skill(&cache, "alpha", "one");
+            install_skill_on_disk(project, "alpha");
             let mut lock = LockFile::default();
             let mut entry = locked(&cache, ItemKind::Skill, "alpha");
             entry.source = "owner/repo".into();
+            entry.source_hash = config::compute_source_hash(&entry);
             lock.add(entry);
             lock.save(&project.join(".vstack-lock.json")).unwrap();
 
+            // `--offline` still reports it: reading a stamp is a disk read,
+            // and offline is exactly when a user wants to know.
             let offline = gather(
                 ScopeFilter::Project,
                 CheckOptions {
@@ -1770,22 +1906,25 @@ mod scope_report_tests {
                 },
             )
             .unwrap();
-            assert!(offline.cache_refresh_failures.is_empty());
+            assert_eq!(offline.cache_refresh_failures.len(), 1, "{offline:?}");
+            let failure = &offline.cache_refresh_failures[0];
+            assert_eq!(failure.source, "owner/repo");
+            assert!(failure.persistent, "two TTLs of failure is drift");
+            assert!(failure.reason.contains("git reset failed"), "{failure:?}");
+            assert!(failure.reason.contains("not re-checked"), "{failure:?}");
             assert!(
-                config::remote_cache_problem(&cache).is_none(),
-                "offline gather must not attempt a fetch"
+                offline.scopes.iter().all(|scope| !scope.has_drift()),
+                "control: the scope itself is clean, so only the cache can be drift: {offline:?}"
             );
-
-            // Online against a fake .git: the attempt fails and is surfaced.
-            let online = gather(ScopeFilter::Project, CheckOptions::default()).unwrap();
-            assert_eq!(online.cache_refresh_failures.len(), 1);
-            assert_eq!(online.cache_refresh_failures[0].source, "owner/repo");
-            assert!(
-                config::remote_cache_problem(&cache).is_some(),
-                "online gather must attempt and record the fetch"
+            assert!(offline.drift, "a persistent cache failure is drift");
+            assert_eq!(offline.outcome(), CheckOutcome::Drift);
+            let quiet = render_report(&offline, true);
+            assert!(quiet.contains("vstack refresh"), "remedy named: {quiet}");
+            assert_eq!(
+                std::fs::read_to_string(&stamp).unwrap(),
+                before,
+                "gather must not touch the cache"
             );
-            // A first failure is a blip: reported, but not yet drift on its own.
-            assert!(!online.cache_refresh_failures[0].persistent);
         });
     }
 
@@ -1822,12 +1961,15 @@ mod scope_report_tests {
             cli_version: "0.0.0",
             cli_hash: "abc",
             drift: true,
-            cache_refresh_failures: vec![cache_failure(config::RemoteCacheProblem {
-                source: "owner/repo".into(),
-                kind: config::RemoteCacheProblemKind::Unwritable {
-                    reason: "Permission denied (os error 13)".into(),
+            cache_refresh_failures: vec![cache_failure(
+                config::RemoteCacheProblem {
+                    source: "owner/repo".into(),
+                    kind: config::RemoteCacheProblemKind::Unwritable {
+                        reason: "Permission denied (os error 13)".into(),
+                    },
                 },
-            })],
+                false,
+            )],
             scopes: Vec::new(),
         };
         assert!(report.cache_refresh_failures[0].persistent);
@@ -1841,10 +1983,7 @@ mod scope_report_tests {
         let clean = ScopeReport {
             scope: "project",
             installed: 1,
-            current: vec![Item {
-                name: "alpha".into(),
-                kind: ItemKind::Skill,
-            }],
+            current: vec![Item::new("alpha", ItemKind::Skill)],
             ..ScopeReport::default()
         };
         let mut out = String::new();
@@ -1860,14 +1999,8 @@ mod scope_report_tests {
         let drifted = ScopeReport {
             scope: "global",
             installed: 2,
-            outdated: vec![Item {
-                name: "alpha".into(),
-                kind: ItemKind::Skill,
-            }],
-            removed: vec![Item {
-                name: "old".into(),
-                kind: ItemKind::Hook,
-            }],
+            outdated: vec![Item::new("alpha", ItemKind::Skill)],
+            removed: vec![Item::new("old", ItemKind::Hook)],
             available: vec![AvailableItem {
                 name: "beta".into(),
                 kind: ItemKind::Skill,
@@ -1881,7 +2014,7 @@ mod scope_report_tests {
         assert!(out.contains("`vstack refresh`"), "{out}");
         assert!(out.contains("`vstack remove <name>`"), "{out}");
         assert!(
-            out.contains("skills (`vstack add --skill <name>`): beta"),
+            out.contains("skills from owner/repo (`vstack add --skill <name>`): beta"),
             "{out}"
         );
         assert!(
@@ -1929,10 +2062,9 @@ mod scope_report_tests {
         // With drift, quiet output carries them alongside.
         let mut drifted = report.clone();
         drifted.drift = true;
-        drifted.scopes[0].outdated.push(Item {
-            name: "alpha".into(),
-            kind: ItemKind::Skill,
-        });
+        drifted.scopes[0]
+            .outdated
+            .push(Item::new("alpha", ItemKind::Skill));
         let quiet = render_report(&drifted, true);
         assert!(
             quiet.contains("beta") && quiet.contains("is not up to date"),

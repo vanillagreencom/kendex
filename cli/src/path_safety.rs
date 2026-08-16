@@ -24,6 +24,44 @@ pub(crate) fn validate_item_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// One path component that is safe to join and safe to render: non-empty,
+/// never `.` or `..`, never a leading `-` (a rendered `vstack add --skill -x`
+/// would parse as a flag), and limited to the characters every installer
+/// accepts.
+pub(crate) fn is_safe_component(part: &str) -> bool {
+    !part.is_empty()
+        && part != "."
+        && part != ".."
+        && !part.starts_with('-')
+        && part
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '~'))
+}
+
+/// THE name predicate for classification: does this recorded item name name a
+/// single item this scope could have installed, safely joinable into an
+/// install path and safely rendered into an agent's context?
+///
+/// It is deliberately a superset of what [`validate_item_name`] and the Pi
+/// package validator accept at install time, and it is the only such
+/// predicate — `check` and `verify` both call it, so a name that installs can
+/// never be reported as unsafe drift, and a name that is unsafe can never
+/// reach a path join. Length is not part of it: any installable name is
+/// valid, however long, and rendering truncates instead of classifying.
+pub(crate) fn is_safe_item_name(kind: crate::config::ItemKind, name: &str) -> bool {
+    // Scoped npm names are the one shape that legitimately carries a
+    // separator, and only for Pi packages.
+    if kind == crate::config::ItemKind::PiExtension
+        && let Some(scoped) = name.strip_prefix('@')
+    {
+        return match scoped.split_once('/') {
+            Some((scope, package)) => is_safe_component(scope) && is_safe_component(package),
+            None => false,
+        };
+    }
+    is_safe_component(name)
+}
+
 /// Install/add-time validation: path safety plus the reserved shared key.
 /// Only paths that create or regenerate an install reject `all`.
 pub(crate) fn validate_new_item_name(name: &str) -> Result<()> {
@@ -401,6 +439,69 @@ fn temp_sibling_path(path: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The classification predicate must accept everything the installers
+    /// accept: a name that installs fine but reads as "unsafe" would be
+    /// reported as drift at every session start, forever.
+    #[test]
+    fn every_installable_name_passes_the_classification_predicate() {
+        use crate::config::ItemKind;
+        let installable = [
+            "orch",
+            "reviewer-arch",
+            "rust_tooling",
+            "v1.2.3",
+            "a",
+            // No length bound: a long name installs, so it must classify.
+            "x".repeat(200).as_str(),
+        ]
+        .map(String::from);
+        for name in &installable {
+            validate_item_name(name).unwrap_or_else(|err| panic!("{name}: {err}"));
+            for kind in [
+                ItemKind::Agent,
+                ItemKind::Skill,
+                ItemKind::Hook,
+                ItemKind::Extra,
+                ItemKind::PiExtension,
+            ] {
+                assert!(is_safe_item_name(kind, name), "{kind:?} {name}");
+            }
+        }
+        // Pi package names accept shapes the stricter install validator does
+        // not — a leading dot or underscore, and `~` — and the predicate must
+        // accept those too, plus the scoped form.
+        for name in [
+            "@vanillagreen/pi-hooks",
+            "pi-qol",
+            ".hidden",
+            "_internal",
+            "a~b",
+        ] {
+            assert!(
+                is_safe_item_name(ItemKind::PiExtension, name),
+                "{name} installs as a Pi package"
+            );
+        }
+        // And the traversal class is rejected for every kind.
+        for hostile in ["../x", "/tmp/x", "a/b", ".", "..", "-flag", ""] {
+            for kind in [
+                ItemKind::Agent,
+                ItemKind::Skill,
+                ItemKind::Hook,
+                ItemKind::Extra,
+                ItemKind::PiExtension,
+            ] {
+                assert!(
+                    !is_safe_item_name(kind, hostile),
+                    "{kind:?} must reject {hostile:?}"
+                );
+            }
+        }
+        // The scope separator is Pi's alone.
+        assert!(!is_safe_item_name(ItemKind::Skill, "@scope/name"));
+        assert!(!is_safe_item_name(ItemKind::PiExtension, "@scope/../x"));
+    }
 
     #[test]
     fn validate_item_name_rejects_path_like_names() {

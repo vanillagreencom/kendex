@@ -24,6 +24,7 @@
 use crate::config::{self, ItemKind, LockEntry};
 use crate::scope::ScopeFilter;
 use anyhow::Result;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Per-item verification result.
@@ -53,12 +54,13 @@ pub fn run(scope: ScopeFilter, names: &[String]) -> Result<()> {
         let scope_label = if global { "GLOBAL" } else { "PROJECT" };
         eprintln!("\n─ verify ({scope_label}) ─");
 
+        let disk_skills = installed_skill_names(global);
         let mut rows: Vec<VerifyRow> = Vec::new();
         for (entry_name, entry) in &lock.entries {
             if !names.is_empty() && !names.iter().any(|n| n == entry_name) {
                 continue;
             }
-            rows.push(verify_entry(entry, global));
+            rows.push(verify_entry(entry, global, &disk_skills));
         }
         rows.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -111,7 +113,7 @@ pub fn run(scope: ScopeFilter, names: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn verify_entry(entry: &LockEntry, global: bool) -> VerifyRow {
+fn verify_entry(entry: &LockEntry, global: bool, disk_skills: &HashSet<String>) -> VerifyRow {
     let kind = entry.kind.label_short();
     let name = entry.name.clone();
 
@@ -127,7 +129,7 @@ fn verify_entry(entry: &LockEntry, global: bool) -> VerifyRow {
 
     // Per-kind install check: presence first (shared with `check`), then the
     // byte comparison only Pi packages support.
-    let (install_ok, note) = match missing_install(entry, global) {
+    let (install_ok, note) = match missing_install(entry, global, disk_skills) {
         Some(note) => (Some(false), Some(note)),
         None => match entry.kind {
             ItemKind::PiExtension => verify_pi_bytes(&entry.name, global),
@@ -150,9 +152,26 @@ fn verify_entry(entry: &LockEntry, global: bool) -> VerifyRow {
 ///
 /// `check` shares this so its phantom report covers every kind rather than
 /// skills alone — a deleted agent file or Pi package is exactly the incomplete
-/// install a session-start check exists to surface. Callers must validate
-/// `entry.name` before calling: the name is joined into install paths.
-pub(crate) fn missing_install(entry: &LockEntry, global: bool) -> Option<String> {
+/// install a session-start check exists to surface.
+///
+/// The name is validated HERE, before any join, so no caller can break the
+/// contract by forgetting to; an unsafe name is reported as its own note and
+/// never touches the filesystem.
+///
+/// `disk_skills` is the skill inventory from
+/// [`config::scan_installed_skills_on_disk`], which also consults
+/// checkout-anchored roots. A skill reachable only through such a root (a
+/// worktree sharing the main checkout's `.agents`, VST-195) is installed, and
+/// passing that evidence in is what keeps it from reading as a phantom in
+/// every worktree session.
+pub(crate) fn missing_install(
+    entry: &LockEntry,
+    global: bool,
+    disk_skills: &HashSet<String>,
+) -> Option<String> {
+    if !crate::path_safety::is_safe_item_name(entry.kind, &entry.name) {
+        return Some("unsafe name — not resolved on disk".into());
+    }
     let missing = |(ok, note): (Option<bool>, Option<String>)| match ok {
         Some(false) => note.or_else(|| Some("install path missing".into())),
         _ => None,
@@ -160,12 +179,25 @@ pub(crate) fn missing_install(entry: &LockEntry, global: bool) -> Option<String>
     match entry.kind {
         ItemKind::PiExtension => (!config::pi_packages_dir(global).join(&entry.name).is_dir())
             .then(|| "install path missing".to_string()),
-        ItemKind::Skill => missing(verify_skill_install(&entry.name, &entry.harnesses, global)),
+        ItemKind::Skill => {
+            if disk_skills.contains(&entry.name) {
+                return None;
+            }
+            missing(verify_skill_install(&entry.name, &entry.harnesses, global))
+        }
         ItemKind::Agent => missing(verify_agent_install(&entry.name, &entry.harnesses, global)),
         ItemKind::Hook => missing(verify_hook_install(&entry.name, &entry.harnesses, global)),
         // Extras have no single recorded install path to check.
         ItemKind::Extra => None,
     }
+}
+
+/// Skill names the disk scan can see, including through anchored roots.
+pub(crate) fn installed_skill_names(global: bool) -> HashSet<String> {
+    config::scan_installed_skills_on_disk(global)
+        .into_iter()
+        .map(|item| item.name)
+        .collect()
 }
 
 /// Byte comparison of an installed Pi package against its source. Presence is
@@ -273,11 +305,19 @@ fn verify_hook_install(
             crate::harness::Harness::Codex => {
                 // Native install: script under <root>/.codex/hooks/.
                 // Prose-fallback: `## Safety: <name>` block in some agent toml.
+                //
+                // A scope with no Codex agents at all has NO artifact to
+                // miss: an event with no Codex equivalent installs as prose
+                // inside agent TOMLs, so until one exists there is nothing to
+                // write. The lock still records codex — that is what makes
+                // reconciliation add the block to the first agent installed
+                // later — and demanding a file here would report permanent
+                // drift no `add` or `refresh` could ever clear.
                 let root = crate::installer::codex_root(global);
                 let script = root.join("hooks").join(format!("{name}.sh"));
                 let has_script = script.exists();
                 let has_prose = !has_script && codex_agent_has_prose(&root, name);
-                if !has_script && !has_prose {
+                if !has_script && !has_prose && codex_scope_has_agents(&root) {
                     missing.push(format!("{h}: no script and no prose"));
                 }
             }
@@ -294,6 +334,18 @@ fn verify_hook_install(
     } else {
         (Some(false), Some(missing.join("; ")))
     }
+}
+
+/// Does this scope have any Codex agent for a prose fallback to live in?
+fn codex_scope_has_agents(codex_root: &Path) -> bool {
+    std::fs::read_dir(codex_root.join("agents")).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "toml")
+        })
+    })
 }
 
 fn codex_agent_has_prose(codex_root: &Path, hook_name: &str) -> bool {

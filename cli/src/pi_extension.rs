@@ -320,16 +320,9 @@ pub fn legacy_names_for(name: &str) -> &'static [&'static str] {
 }
 
 fn validate_safe_component(kind: &str, value: &str) -> Result<()> {
-    if value.is_empty()
-        || value == "."
-        || value == ".."
-        || value.contains('/')
-        || value.contains('\\')
-        || value.starts_with('-')
-        || !value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
-    {
+    // One rule, shared with `check`/`verify`'s classification predicate, so a
+    // name this accepts can never be reported as an unsafe lock entry.
+    if !crate::path_safety::is_safe_component(value) {
         anyhow::bail!("invalid {kind} `{value}`");
     }
     Ok(())

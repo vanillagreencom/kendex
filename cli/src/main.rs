@@ -215,6 +215,17 @@ enum Commands {
         no_available: bool,
     },
 
+    /// Plumbing: refresh the remote source caches this scope's locks name,
+    /// bounded, and exit. `check` spawns this detached so a session start
+    /// never waits on the network; run it by hand only to force the fetch
+    /// `check` would have backgrounded.
+    #[command(hide = true)]
+    CacheRefresh {
+        /// project | global | all (default: all)
+        #[arg(long)]
+        scope: Option<String>,
+    },
+
     /// Self-update the vstack CLI binary from GitHub releases. Does NOT
     /// update installed packages — use `vstack refresh` for local source
     /// edits or `vstack update-pi` for Pi package version bumps.
@@ -394,6 +405,20 @@ fn main() -> Result<()> {
             let scope =
                 scope::ScopeFilter::resolve(scope.as_deref(), global, scope::ScopeFilter::All)?;
             commands::list::run(scope, harness.as_deref())
+        }
+        Some(Commands::CacheRefresh { scope }) => {
+            let scope =
+                scope::ScopeFilter::resolve(scope.as_deref(), false, scope::ScopeFilter::All)?;
+            for &global in scope.globals() {
+                let lock =
+                    config::LockFile::load(&config::lock_file_path(global)).unwrap_or_default();
+                config::refresh_remote_caches_older_than(
+                    &lock,
+                    Some(config::REMOTE_CACHE_TTL),
+                    config::FetchBound::Bounded,
+                );
+            }
+            Ok(())
         }
         Some(Commands::Check {
             global,

@@ -75,12 +75,16 @@ impl Sandbox {
     }
 
     fn write_hook(&self, name: &str) {
+        self.write_hook_for_event(name, "PreToolUse");
+    }
+
+    fn write_hook_for_event(&self, name: &str, event: &str) {
         let dir = self.source.join("hooks");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join(format!("{name}.sh")),
             format!(
-                "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: PreToolUse\n# matcher: Bash\n# description: {name}\n# ---\nexit 0\n"
+                "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: {event}\n# matcher: Bash\n# description: {name}\n# ---\nexit 0\n"
             ),
         )
         .unwrap();
@@ -130,6 +134,31 @@ impl Sandbox {
             .args(args)
             .output()
             .unwrap()
+    }
+
+    /// `check` WITHOUT `--offline` — the session-start path, which may
+    /// background a cache refresh but must never wait on one.
+    fn check_online(&self, args: &[&str]) -> Output {
+        self.vstack()
+            .arg("check")
+            .args(["--scope", "project"])
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    /// A cache directory shaped like a clone of `origin`, with a `.git` that
+    /// is not a repository: any fetch attempt fails fast, and the recorded
+    /// origin is what makes the cache resolvable at all.
+    fn fake_cache(&self, key: &str, origin: &str) -> PathBuf {
+        let dir = self.home.join(".vstack").join("cache").join(key);
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::write(
+            dir.join(".git").join("config"),
+            format!("[remote \"origin\"]\n\turl = {origin}\n"),
+        )
+        .unwrap();
+        dir
     }
 }
 
@@ -298,7 +327,7 @@ fn a_traversal_lock_name_is_rejected_rather_than_resolved() {
     let raw = fs::read_to_string(lock_path(&sb.project)).unwrap();
     let mut lock: serde_json::Value = serde_json::from_str(&raw).unwrap();
     let entry = lock["entries"]["alpha"].clone();
-    for hostile in ["../escape", "/tmp/escape", "a/b", ".hidden"] {
+    for hostile in ["../escape", "/tmp/escape", "a/b", "-escape"] {
         let mut copy = entry.clone();
         copy["name"] = serde_json::Value::String(hostile.to_string());
         lock["entries"][hostile] = copy;
@@ -322,7 +351,7 @@ fn a_traversal_lock_name_is_rejected_rather_than_resolved() {
     rejected.sort();
     assert_eq!(
         rejected,
-        vec!["../escape", ".hidden", "/tmp/escape", "a/b"],
+        vec!["-escape", "../escape", "/tmp/escape", "a/b"],
         "{parsed}"
     );
     // Control: the valid sibling still classifies normally.
@@ -334,4 +363,252 @@ fn a_traversal_lock_name_is_rejected_rather_than_resolved() {
             .all(|i| i["name"] != "alpha"),
         "{parsed}"
     );
+}
+
+/// VST-258 round 3: the session-start check never touches the network. A
+/// remote source that is due for a refresh and unreachable must not cost the
+/// session anything — the fetch is handed to a detached process and the check
+/// answers from what is on disk.
+#[test]
+fn a_due_but_unreachable_remote_never_delays_the_check() {
+    let sb = Sandbox::new("check-no-network");
+    // A cache that resolves (origin recorded) but can never fetch, holding a
+    // real source tree so the scope itself stays clean.
+    let cache = sb.fake_cache("github.com_owner_repo", "https://github.com/owner/repo.git");
+    let skill = cache.join("skills").join("alpha");
+    fs::create_dir_all(&skill).unwrap();
+    // Two item roots is what makes a directory a vstack source.
+    fs::create_dir_all(cache.join("agents")).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: alpha\ndescription: alpha\n---\nbody\n",
+    )
+    .unwrap();
+    let output = sb
+        .vstack()
+        .args([
+            "add",
+            "owner/repo",
+            "--skill",
+            "alpha",
+            "--harness",
+            "claude",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "add: {}", text(&output.stderr));
+    // No stamp, so the cache is due on the very next check.
+    let stamp = cache.join(".git").join("vstack-fetch-stamp");
+    let _ = fs::remove_file(&stamp);
+
+    let started = std::time::Instant::now();
+    let quiet = sb.check_online(&["--quiet"]);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "session-start check must not wait on the network: took {elapsed:?}"
+    );
+    assert_eq!(
+        quiet.status.code(),
+        Some(0),
+        "nothing local drifted: {}",
+        text(&quiet.stderr)
+    );
+
+    // The refresh was handed off: the detached process writes the stamp.
+    let mut recorded = String::new();
+    for _ in 0..100 {
+        if let Ok(content) = fs::read_to_string(&stamp) {
+            recorded = content;
+            if recorded.starts_with("failed") {
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        recorded.starts_with("failed"),
+        "the detached refresh must record its outcome, got {recorded:?}"
+    );
+
+    // The next check reads that outcome — offline too, since it is a disk
+    // read — and one failure is reported without being drift.
+    let json = sb.check(&["--json"]);
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let failures = parsed["cache_refresh_failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{parsed}");
+    assert_eq!(failures[0]["source"], "owner/repo");
+    assert_eq!(failures[0]["persistent"], false);
+    assert_eq!(parsed["drift"], false);
+    assert_eq!(json.status.code(), Some(0));
+}
+
+/// A hook or agent installed into several harnesses is present only when
+/// every recorded harness still has its artifact.
+#[test]
+fn a_missing_artifact_in_one_harness_of_several_is_drift() {
+    let sb = Sandbox::new("check-multi-harness");
+    sb.write_agent("rust");
+    sb.write_hook("guard");
+    let install = |flag: &str, name: &str| {
+        let output = sb
+            .vstack()
+            .args([
+                "add",
+                sb.source.to_str().unwrap(),
+                flag,
+                name,
+                "--harness",
+                "claude,cursor,opencode",
+                "--no-auto-skills",
+                "-y",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    install("--agent", "rust");
+    install("--hook", "guard");
+
+    let clean = sb.check(&["--quiet"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
+    assert!(clean.stderr.is_empty(), "{}", text(&clean.stderr));
+
+    // Delete the CURSOR artifacts only; the Claude ones stay.
+    let cursor_rule = sb.project.join(".cursor/rules/safety-guard.mdc");
+    let cursor_agent = sb.project.join(".cursor/rules/rust.mdc");
+    assert!(
+        cursor_rule.exists() && cursor_agent.exists(),
+        "add must have written both"
+    );
+    fs::remove_file(&cursor_rule).unwrap();
+    fs::remove_file(&cursor_agent).unwrap();
+
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    let err = text(&quiet.stderr);
+    assert!(err.contains("missing from disk"), "{err}");
+    assert!(err.contains("guard (hook)"), "{err}");
+    assert!(err.contains("rust (agent)"), "{err}");
+    // The per-harness detail rides along, so a partial miss is not read as
+    // "everything is gone".
+    assert!(
+        err.contains("cursor"),
+        "detail must name the harness: {err}"
+    );
+
+    let json = sb.check(&["--json"]);
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let phantom = parsed["scopes"][0]["phantom"].as_array().unwrap();
+    assert_eq!(phantom.len(), 2, "{parsed}");
+    assert!(
+        phantom
+            .iter()
+            .all(|p| p["detail"].as_str().unwrap_or_default().contains("cursor")),
+        "{parsed}"
+    );
+}
+
+/// The JSON contract for an unverifiable source, pinned at the process
+/// boundary: consumers branch on these field names.
+#[test]
+fn an_unreadable_source_reports_a_tagged_json_shape() {
+    let sb = Sandbox::new("check-unreadable-json");
+    sb.write_skill("alpha", "one");
+    sb.install("alpha");
+    // The whole skills root moves away: nothing about the entry can be
+    // verified, and `refresh` cannot fix it.
+    fs::rename(sb.source.join("skills"), sb.source.join("skills-moved")).unwrap();
+
+    let json = sb.check(&["--json"]);
+    assert_eq!(json.status.code(), Some(1), "{}", text(&json.stderr));
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let issues = parsed["scopes"][0]["source_issues"].as_array().unwrap();
+    assert_eq!(issues.len(), 1, "{parsed}");
+    let issue = &issues[0];
+    assert_eq!(issue["problem"], "unreadable");
+    assert_eq!(issue["entries"][0], "alpha");
+    assert!(
+        issue["reasons"][0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("skills"),
+        "{parsed}"
+    );
+    assert!(
+        issue.get("failures").is_none(),
+        "each variant serializes only its own fields: {parsed}"
+    );
+    // And it never prescribes a refresh that cannot help.
+    let quiet = sb.check(&["--quiet"]);
+    let err = text(&quiet.stderr);
+    assert!(err.contains("cannot be inventoried"), "{err}");
+    assert!(!err.contains("vstack refresh"), "{err}");
+}
+
+/// A Codex hook whose event has no native equivalent installs as prose inside
+/// agent TOMLs. In a scope with no Codex agents there is nothing to write —
+/// and nothing to miss, so it must not read as permanent drift no `add` or
+/// `refresh` could ever clear.
+#[test]
+fn a_codex_prose_fallback_hook_is_not_drift_before_an_agent_exists() {
+    let sb = Sandbox::new("check-codex-prose");
+    // TaskCompleted has no Codex equivalent, so this installs as prose only.
+    sb.write_hook_for_event("guard", "TaskCompleted");
+    sb.write_agent("rust");
+    let add = |args: &[&str]| {
+        let output = sb
+            .vstack()
+            .args(["add", sb.source.to_str().unwrap()])
+            .args(args)
+            .args(["--harness", "codex", "--no-auto-skills", "-y"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    // No Codex agent anywhere yet.
+    let log = add(&["--hook", "guard"]);
+    assert!(
+        log.contains("no artifact yet"),
+        "add must say it wrote nothing rather than claim a plain success: {log}"
+    );
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(
+        quiet.status.code(),
+        Some(0),
+        "an unwritable-yet fallback is not drift: {}",
+        text(&quiet.stderr)
+    );
+    assert!(quiet.stderr.is_empty(), "{}", text(&quiet.stderr));
+
+    // Installing a Codex agent gives the fallback somewhere to live; the lock
+    // entry is what drives that, so it must still record codex.
+    add(&["--agent", "rust"]);
+    let toml = sb.project.join(".codex/agents/rust.toml");
+    let content = fs::read_to_string(&toml).unwrap();
+    assert!(content.contains("## Safety: guard"), "{content}");
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(0), "{}", text(&quiet.stderr));
+
+    // Control: with an agent present, losing the prose IS drift.
+    fs::write(
+        &toml,
+        content.replace("## Safety: guard", "## Safety: removed"),
+    )
+    .unwrap();
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    let err = text(&quiet.stderr);
+    assert!(err.contains("guard (hook)"), "{err}");
 }

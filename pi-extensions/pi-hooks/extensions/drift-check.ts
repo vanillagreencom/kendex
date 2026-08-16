@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 
 import { runCommandAsync } from "./process.js";
 
@@ -35,11 +35,13 @@ export function driftCheckArgs(options: Pick<DriftCheckOptions, "includeAvailabl
 
 export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Promise<DriftCheckResult> {
 	const binary = options.binary ?? "vstack";
-	// A spawn into a directory that does not exist fails with the same ENOENT
-	// a missing binary does, so an unreadable cwd would otherwise be reported
-	// as "vstack is not on PATH" — or, worse, read as clean.
+	// A spawn into a directory that does not exist — or one this process
+	// cannot enter — fails with the same ENOENT a missing binary does, so
+	// without this the report would blame PATH, or say nothing at all. The
+	// bash hook names the directory; so does this.
 	try {
 		if (!statSync(cwd).isDirectory()) return { kind: "unusable-cwd", cwd };
+		accessSync(cwd, constants.R_OK | constants.X_OK);
 	} catch {
 		return { kind: "unusable-cwd", cwd };
 	}

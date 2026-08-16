@@ -41,27 +41,52 @@ pub(crate) fn has_catalog_table(source_root: &Path) -> bool {
         .is_some()
 }
 
-fn configured_paths(source_root: &Path, kind: CatalogKind) -> Vec<String> {
-    crate::mapping::MappingConfig::load(source_root)
-        .catalog
-        .paths_for(kind)
+/// The item paths a kind's configured roots expand to, and whether any of
+/// those roots exists at all.
+#[derive(Debug)]
+struct ExpandedRoots {
+    paths: Vec<PathBuf>,
+    /// A configured root is present. A glob whose parent directory exists
+    /// counts: it is a readable root that currently matches nothing, which is
+    /// evidence the source ships no such item — not evidence the layout moved.
+    root_present: bool,
 }
 
-fn expand_configured_paths(source_root: &Path, kind: CatalogKind) -> Result<Vec<PathBuf>> {
-    let mut out = Vec::new();
+fn expand_configured_paths(
+    source_root: &Path,
+    kind: CatalogKind,
+    catalog: &crate::mapping::CatalogConfig,
+) -> Result<ExpandedRoots> {
+    let mut out = ExpandedRoots {
+        paths: Vec::new(),
+        root_present: false,
+    };
     let mut seen = HashSet::new();
-    for raw in configured_paths(source_root, kind) {
-        for path in expand_catalog_entry(source_root, &raw)? {
+    for raw in catalog.paths_for(kind) {
+        let expanded = expand_catalog_entry(source_root, &raw)?;
+        out.root_present |= expanded.root_present;
+        for path in expanded.paths {
             let key = normalize_lexical(&path);
             if seen.insert(key) {
-                out.push(path);
+                out.paths.push(path);
             }
         }
     }
     Ok(out)
 }
 
-fn expand_catalog_entry(source_root: &Path, raw: &str) -> Result<Vec<PathBuf>> {
+/// The forgiving path for the `discover_*` family, which is used by install
+/// paths that must not fail over a mapping table.
+fn expand_paths_forgiving(source_root: &Path, kind: CatalogKind) -> Result<Vec<PathBuf>> {
+    Ok(expand_configured_paths(
+        source_root,
+        kind,
+        &crate::mapping::MappingConfig::load(source_root).catalog,
+    )?
+    .paths)
+}
+
+fn expand_catalog_entry(source_root: &Path, raw: &str) -> Result<ExpandedRoots> {
     let trimmed = raw.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         anyhow::bail!("catalog path must not be empty");
@@ -94,13 +119,21 @@ fn expand_catalog_entry(source_root: &Path, raw: &str) -> Result<Vec<PathBuf>> {
 
     let last = parts.last().expect("non-empty parts");
     if !last.contains('*') {
-        return Ok(vec![source_root.join(parts.iter().collect::<PathBuf>())]);
+        let path = source_root.join(parts.iter().collect::<PathBuf>());
+        let root_present = path.exists();
+        return Ok(ExpandedRoots {
+            paths: vec![path],
+            root_present,
+        });
     }
 
     let parent_rel: PathBuf = parts[..parts.len() - 1].iter().collect();
     let parent = source_root.join(parent_rel);
     if !parent.exists() {
-        return Ok(Vec::new());
+        return Ok(ExpandedRoots {
+            paths: Vec::new(),
+            root_present: false,
+        });
     }
     let mut matches = Vec::new();
     for entry in std::fs::read_dir(&parent)
@@ -116,7 +149,10 @@ fn expand_catalog_entry(source_root: &Path, raw: &str) -> Result<Vec<PathBuf>> {
         }
     }
     matches.sort();
-    Ok(matches)
+    Ok(ExpandedRoots {
+        paths: matches,
+        root_present: true,
+    })
 }
 
 fn wildcard_match(pattern: &str, candidate: &str) -> bool {
@@ -169,8 +205,12 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 }
 
 fn discover_files(source_root: &Path, kind: CatalogKind, extension: &str) -> Result<Vec<PathBuf>> {
+    discover_files_in(expand_paths_forgiving(source_root, kind)?, extension)
+}
+
+fn discover_files_in(roots: Vec<PathBuf>, extension: &str) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    for candidate in expand_configured_paths(source_root, kind)? {
+    for candidate in roots {
         if !candidate.exists() {
             continue;
         }
@@ -201,8 +241,12 @@ fn discover_manifest_dirs(
     kind: CatalogKind,
     manifest: &str,
 ) -> Result<Vec<PathBuf>> {
+    discover_manifest_dirs_in(expand_paths_forgiving(source_root, kind)?, manifest)
+}
+
+fn discover_manifest_dirs_in(roots: Vec<PathBuf>, manifest: &str) -> Result<Vec<PathBuf>> {
     let mut dirs = Vec::new();
-    for candidate in expand_configured_paths(source_root, kind)? {
+    for candidate in roots {
         if !candidate.exists() || !candidate.is_dir() {
             continue;
         }
@@ -328,27 +372,37 @@ pub(crate) struct Inventory {
     /// Every candidate item path (file for agents/hooks, directory for the
     /// packaged kinds), parseable or not.
     pub candidates: Vec<PathBuf>,
-    /// No configured path for this kind exists in the source. Discovery
-    /// returned nothing because the root is gone, not because the source
-    /// stopped shipping the kind — `refresh` cannot fix that.
-    pub missing_root: bool,
 }
 
 impl Inventory {
     /// True when this item may still have a physical footprint in the source,
     /// so "removed upstream" is not proven.
     ///
-    /// Two ways it can be present without appearing in [`names`](Self::names):
-    /// a candidate path named after it whose manifest no longer parses, and —
-    /// because a directory need not be named after the item it declares
-    /// (`pi-extensions/pi-hooks` ships `@vanillagreen/pi-hooks`) — any
-    /// unparseable candidate at all, whose name is by definition unknown.
+    /// Two independent ways it can be present without appearing in
+    /// [`names`](Self::names):
+    ///
+    /// 1. a candidate path named after it whose manifest no longer parses —
+    ///    the name is unknown but the files are right there;
+    /// 2. ANY unparseable candidate, because a directory need not be named
+    ///    after the item it declares (`pi-extensions/pi-hooks` ships
+    ///    `@vanillagreen/pi-hooks`), so an unreadable manifest could be this
+    ///    item's under a directory name that matches nothing.
+    ///
+    /// Each clause is load-bearing on its own; the tests exercise them
+    /// separately so neither can quietly stop mattering.
     pub fn may_still_be_present(&self, name: &str) -> bool {
-        if !self.failures.is_empty() {
-            return true;
-        }
-        // Directories are never named with the npm scope, so compare on the
-        // last component of a scoped package name.
+        self.has_unreadable_candidate() || self.has_candidate_named(name)
+    }
+
+    /// Clause 2: discovery of this kind was incomplete.
+    pub fn has_unreadable_candidate(&self) -> bool {
+        !self.failures.is_empty()
+    }
+
+    /// Clause 1: a candidate path carries this item's name. Directories are
+    /// never named with the npm scope, so a scoped package name compares on
+    /// its last component.
+    pub fn has_candidate_named(&self, name: &str) -> bool {
         let basename = name.rsplit('/').next().unwrap_or(name);
         !basename.is_empty()
             && self.candidates.iter().any(|path| {
@@ -363,22 +417,62 @@ impl Inventory {
     }
 }
 
-/// Discover `kind` in `source_root` without printing. Errors only when the
-/// catalog configuration itself is unusable (bad `[catalog]` path, unreadable
-/// root); per-item parse failures land in [`Inventory::failures`].
-pub(crate) fn inventory(source_root: &Path, kind: crate::config::ItemKind) -> Result<Inventory> {
+/// What a source's configured roots for one kind actually yielded. The three
+/// states answer three different questions, and conflating them is how a
+/// deleted item reads as current or a moved layout reads as "run refresh".
+#[derive(Debug, Clone)]
+pub(crate) enum KindInventory {
+    /// A configured root exists and was read. An EMPTY readable root is
+    /// positive evidence: the source ships no item of this kind, so an entry
+    /// recorded against it was removed upstream.
+    Readable(Inventory),
+    /// No configured root for this kind exists in the source. Discovery
+    /// returned nothing because the layout moved, not because items were
+    /// removed — and `refresh` cannot fix that.
+    MissingRoot,
+    /// A root exists but could not be read, or the catalog configuration is
+    /// unusable. Nothing about this kind can be verified.
+    Error(String),
+}
+
+impl KindInventory {
+    pub fn readable(&self) -> Option<&Inventory> {
+        match self {
+            Self::Readable(inventory) => Some(inventory),
+            _ => None,
+        }
+    }
+
+    /// Why entries of this kind cannot be verified, if they cannot.
+    pub fn unverifiable(&self, kind: crate::config::ItemKind) -> Option<String> {
+        match self {
+            Self::Readable(_) => None,
+            Self::MissingRoot => Some(format!(
+                "{}: no configured source directory exists",
+                kind.label_plural()
+            )),
+            Self::Error(reason) => Some(format!("{}: {reason}", kind.label_plural())),
+        }
+    }
+}
+
+/// Discover `kind` in `source_root` without printing, against an
+/// already-loaded catalog configuration — strictness is the caller's single
+/// boundary and the config is parsed once per source, not once per kind.
+pub(crate) fn inventory(
+    source_root: &Path,
+    kind: crate::config::ItemKind,
+    catalog: &crate::mapping::CatalogConfig,
+) -> KindInventory {
     use crate::config::ItemKind;
-    // Strict: `[catalog]` decides where this kind lives, so scanning the
-    // default roots after a parse failure would inventory a layout the source
-    // does not use and call the difference drift.
-    crate::mapping::MappingConfig::load_strict(source_root)
-        .context("reading catalog configuration")?;
-    let mut inv = Inventory {
-        missing_root: !expand_configured_paths(source_root, catalog_kind_for(kind))?
-            .iter()
-            .any(|path| path.exists()),
-        ..Inventory::default()
+    let roots = match expand_configured_paths(source_root, catalog_kind_for(kind), catalog) {
+        Ok(roots) => roots,
+        Err(err) => return KindInventory::Error(format!("{err:#}")),
     };
+    if !roots.root_present {
+        return KindInventory::MissingRoot;
+    }
+    let mut inv = Inventory::default();
     let mut record = |path: PathBuf, parsed: Result<String>| {
         match parsed {
             Ok(name) => {
@@ -390,42 +484,61 @@ pub(crate) fn inventory(source_root: &Path, kind: crate::config::ItemKind) -> Re
         }
         inv.candidates.push(path);
     };
-    match kind {
-        ItemKind::Agent => {
-            for path in discover_files(source_root, CatalogKind::Agents, "md")? {
-                let parsed = Agent::from_file(&path).map(|a| a.name);
-                record(path, parsed);
-            }
-        }
-        ItemKind::Skill => {
-            for dir in discover_manifest_dirs(source_root, CatalogKind::Skills, "SKILL.md")? {
-                let parsed = Skill::from_file(&dir.join("SKILL.md")).map(|s| s.name);
-                record(dir, parsed);
-            }
-        }
-        ItemKind::Hook => {
-            for path in discover_files(source_root, CatalogKind::Hooks, "sh")? {
-                let parsed = Hook::from_file(&path).map(|h| h.name);
-                record(path, parsed);
-            }
-        }
+    let discovered = match kind {
+        ItemKind::Agent => discover_files_in(roots.paths, "md").map(|paths| {
+            paths
+                .into_iter()
+                .map(|path| {
+                    let parsed = Agent::from_file(&path).map(|a| a.name);
+                    (path, parsed)
+                })
+                .collect::<Vec<_>>()
+        }),
+        ItemKind::Hook => discover_files_in(roots.paths, "sh").map(|paths| {
+            paths
+                .into_iter()
+                .map(|path| {
+                    let parsed = Hook::from_file(&path).map(|h| h.name);
+                    (path, parsed)
+                })
+                .collect::<Vec<_>>()
+        }),
+        ItemKind::Skill => discover_manifest_dirs_in(roots.paths, "SKILL.md").map(|dirs| {
+            dirs.into_iter()
+                .map(|dir| {
+                    let parsed = Skill::from_file(&dir.join("SKILL.md")).map(|s| s.name);
+                    (dir, parsed)
+                })
+                .collect::<Vec<_>>()
+        }),
         ItemKind::PiExtension => {
-            for dir in
-                discover_manifest_dirs(source_root, CatalogKind::PiExtensions, "package.json")?
-            {
-                let parsed = PiExtension::from_dir(&dir).map(|e| e.name);
-                record(dir, parsed);
-            }
+            discover_manifest_dirs_in(roots.paths, "package.json").map(|dirs| {
+                dirs.into_iter()
+                    .map(|dir| {
+                        let parsed = PiExtension::from_dir(&dir).map(|e| e.name);
+                        (dir, parsed)
+                    })
+                    .collect::<Vec<_>>()
+            })
         }
-        ItemKind::Extra => {
-            for dir in discover_manifest_dirs(source_root, CatalogKind::Extras, "extra.toml")? {
-                let parsed = Extra::from_dir(&dir).map(|e| e.name().to_string());
-                record(dir, parsed);
-            }
-        }
+        ItemKind::Extra => discover_manifest_dirs_in(roots.paths, "extra.toml").map(|dirs| {
+            dirs.into_iter()
+                .map(|dir| {
+                    let parsed = Extra::from_dir(&dir).map(|e| e.name().to_string());
+                    (dir, parsed)
+                })
+                .collect::<Vec<_>>()
+        }),
+    };
+    let discovered = match discovered {
+        Ok(discovered) => discovered,
+        Err(err) => return KindInventory::Error(format!("{err:#}")),
+    };
+    for (path, parsed) in discovered {
+        record(path, parsed);
     }
     inv.names.sort();
-    Ok(inv)
+    KindInventory::Readable(inv)
 }
 
 fn catalog_kind_for(kind: crate::config::ItemKind) -> CatalogKind {
@@ -579,6 +692,130 @@ extras = ["theme-packs"]
             "@example/pi-demo"
         );
         assert_eq!(discover_extras(&root).unwrap()[0].name(), "method");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn skill_at(root: &Path, rel: &str, name: &str) {
+        fs::create_dir_all(root.join(rel)).unwrap();
+        fs::write(
+            root.join(rel).join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {name}\n---\nbody\n"),
+        )
+        .unwrap();
+    }
+
+    fn inv(root: &Path, catalog: &crate::mapping::CatalogConfig) -> KindInventory {
+        inventory(root, crate::config::ItemKind::Skill, catalog)
+    }
+
+    #[test]
+    fn kind_states_separate_readable_empty_from_missing_root_and_error() {
+        let root = sandbox("kind-states");
+        let default_catalog = crate::mapping::CatalogConfig::default();
+
+        // No `skills/` at all: the layout moved, nothing can be concluded.
+        assert!(matches!(
+            inv(&root, &default_catalog),
+            KindInventory::MissingRoot
+        ));
+
+        // The root exists but is empty: that is POSITIVE evidence the source
+        // ships no skills — the last one really was removed.
+        fs::create_dir_all(root.join("skills")).unwrap();
+        let empty = inv(&root, &default_catalog);
+        assert!(matches!(&empty, KindInventory::Readable(inv) if inv.names.is_empty()));
+        assert!(
+            !empty.readable().unwrap().may_still_be_present("gone"),
+            "an empty readable root proves absence"
+        );
+
+        // A zero-match glob whose PARENT exists is the same story: readable,
+        // currently shipping nothing.
+        let globbed = crate::mapping::CatalogConfig {
+            skills: Some(vec!["pkgs/skill-*".into()]),
+            ..Default::default()
+        };
+        fs::create_dir_all(root.join("pkgs")).unwrap();
+        assert!(matches!(
+            inv(&root, &globbed),
+            KindInventory::Readable(inv) if inv.names.is_empty()
+        ));
+        // Control: the same glob with no parent directory is a missing root.
+        let elsewhere = crate::mapping::CatalogConfig {
+            skills: Some(vec!["nowhere/skill-*".into()]),
+            ..Default::default()
+        };
+        assert!(matches!(inv(&root, &elsewhere), KindInventory::MissingRoot));
+
+        // A configuration that cannot be expanded at all is an error, never a
+        // silent empty inventory.
+        let bad = crate::mapping::CatalogConfig {
+            skills: Some(vec!["../escape".into()]),
+            ..Default::default()
+        };
+        assert!(matches!(inv(&root, &bad), KindInventory::Error(_)));
+        assert!(
+            inv(&root, &bad)
+                .unverifiable(crate::config::ItemKind::Skill)
+                .is_some()
+        );
+        assert!(
+            inv(&root, &globbed)
+                .unverifiable(crate::config::ItemKind::Skill)
+                .is_none(),
+            "a readable kind is verifiable"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn each_may_still_be_present_clause_is_load_bearing_on_its_own() {
+        let root = sandbox("presence-clauses");
+        // Clause 1 alone: a candidate directory named after the item, whose
+        // manifest parses fine under a DIFFERENT name (so `names` cannot be
+        // what saves it) and no failures anywhere.
+        skill_at(&root, "skills/alpha", "renamed-alpha");
+        let catalog = crate::mapping::CatalogConfig::default();
+        let inventory = inv(&root, &catalog);
+        let readable = inventory.readable().unwrap();
+        assert!(readable.failures.is_empty(), "clause 2 must not apply");
+        assert!(
+            readable.has_candidate_named("alpha"),
+            "clause 1 must carry this case"
+        );
+        assert!(readable.may_still_be_present("alpha"));
+
+        // Clause 2 alone: an unparseable candidate whose directory name
+        // matches NOTHING the lock names, so only "discovery was incomplete"
+        // can save the entry.
+        let root = sandbox("presence-clause-2");
+        skill_at(&root, "skills/keeper", "keeper");
+        fs::create_dir_all(root.join("skills").join("mystery")).unwrap();
+        fs::write(root.join("skills/mystery/SKILL.md"), "no frontmatter\n").unwrap();
+        let inventory = inv(&root, &catalog);
+        let readable = inventory.readable().unwrap();
+        assert!(
+            !readable.has_candidate_named("@scope/pkg"),
+            "clause 1 must not apply"
+        );
+        assert!(
+            readable.has_unreadable_candidate(),
+            "clause 2 must carry this case"
+        );
+        assert!(readable.may_still_be_present("@scope/pkg"));
+
+        // And the same name IS provably absent once discovery is clean and no
+        // directory matches.
+        fs::remove_dir_all(root.join("skills").join("mystery")).unwrap();
+        let inventory = inv(&root, &catalog);
+        assert!(
+            !inventory
+                .readable()
+                .unwrap()
+                .may_still_be_present("@scope/pkg")
+        );
 
         let _ = fs::remove_dir_all(root);
     }
