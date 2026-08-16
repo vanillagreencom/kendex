@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# byte-ceiling — newly added tracked files over the byte ceiling fail
+# (default 200 KB). Growth-oriented like size-ratchet: legacy files already
+# in history are not gated by the default modes — only what a change ADDS —
+# so adoption needs no cleanup first. A full sweep over every tracked file
+# is available for audits.
+#
+# Modes (mutually exclusive):
+#   --staged (default)  files added in the staged diff (pre-commit shim)
+#   --base REF          files added since merge-base with REF (CI on a PR)
+#   --all               every tracked file (full sweep)
+#
+# Sizes are OBJECT sizes (git cat-file -s of the added blob): the bytes
+# that actually enter history, filters applied, independent of worktree
+# state. Renames are detected (-c diff.renames pinned on), so moving an
+# existing large file is not an "addition"; a copy is one — it duplicates
+# the bytes in the tree, and that growth is what the gate is for. Known
+# lockfile
+# basenames are exempt built-in; asset trees are declared in the excludes
+# list with a reason.
+#
+# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error. A
+# blob whose size cannot be read is a collection error — never a skip.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GG_CHECK="byte-ceiling"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+
+usage() {
+  cat <<'EOF'
+usage: byte-ceiling [--staged | --base REF | --all] [--excludes FILE]
+
+Newly added tracked files over the byte ceiling fail. --staged (default)
+checks the staged additions; --base REF checks files added since the
+merge-base with REF; --all sweeps every tracked file. Lockfiles are exempt
+built-in; declared asset trees live in the excludes list.
+
+Configuration (env > .env.local > .vstack/settings.toml >
+vstack.settings.toml [env] > .env > default):
+  GROWTH_GUARDS_BYTE_CEILING_KB   ceiling in KB        (default 200)
+  GROWTH_GUARDS_BYTE_EXCLUDES     exclusion-list path  (default tools/byte-ceiling-excludes)
+Flag --excludes overrides the path setting.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.
+EOF
+}
+
+MODE="staged"
+BASE_REF=""
+EXCLUDES_OPT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --staged) MODE="staged" ;;
+    --all) MODE="all" ;;
+    --base)
+      [ $# -ge 2 ] || gg_config_error "--base requires a ref"
+      shift
+      MODE="base"
+      BASE_REF="$1"
+      ;;
+    --base=*)
+      MODE="base"
+      BASE_REF="${1#--base=}"
+      ;;
+    --excludes)
+      [ $# -ge 2 ] || gg_config_error "--excludes requires a path"
+      shift
+      EXCLUDES_OPT="$1"
+      ;;
+    --excludes=*) EXCLUDES_OPT="${1#--excludes=}" ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) gg_config_error "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+gg_repo_root_cd
+
+CEILING_KB="$(gg_setting GROWTH_GUARDS_BYTE_CEILING_KB 200)" || exit 2
+gg_positive_int "$CEILING_KB" "GROWTH_GUARDS_BYTE_CEILING_KB"
+CEILING_BYTES=$((CEILING_KB * 1024))
+
+if [ -n "$EXCLUDES_OPT" ]; then
+  EXCLUDES_FILE="$EXCLUDES_OPT"
+else
+  EXCLUDES_FILE="$(gg_setting GROWTH_GUARDS_BYTE_EXCLUDES "tools/byte-ceiling-excludes")" || exit 2
+fi
+EXCLUDES_FILE="$(gg_config_path "$EXCLUDES_FILE" "excludes")" || exit 2
+gg_load_excludes "$EXCLUDES_FILE"
+
+# Lockfiles are generated whole-file by package managers; their size is not
+# a design signal. Exempt by exact basename.
+LOCKFILE_BASENAMES="Cargo.lock package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb flake.lock poetry.lock uv.lock Pipfile.lock Gemfile.lock composer.lock go.sum gradle.lockfile packages.lock.json Package.resolved"
+
+is_lockfile() { # PATH
+  local base="${1##*/}" l
+  for l in $LOCKFILE_BASENAMES; do
+    [ "$base" = "$l" ] && return 0
+  done
+  return 1
+}
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# Candidate records land as 'sha<TAB>path' NUL-free per record is
+# impossible for arbitrary paths, so the file holds alternating
+# NUL-terminated fields: sha NUL path NUL. The sha is the added blob
+# itself, so measuring needs no path re-quoting.
+: >"$TMP/candidates.z"
+
+emit_candidate() { # SHA PATH
+  printf '%s\0%s\0' "$1" "$2" >>"$TMP/candidates.z"
+}
+
+case "$MODE" in
+  staged)
+    git -c diff.renames=true diff --cached --raw --no-abbrev -z --diff-filter=A >"$TMP/raw.z" || gg_collection_error "git diff --cached failed collecting staged additions"
+    ;;
+  base)
+    git rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null || gg_config_error "--base ref '$BASE_REF' does not name a commit"
+    git -c diff.renames=true diff --raw --no-abbrev -z --diff-filter=A "$BASE_REF...HEAD" >"$TMP/raw.z" || gg_collection_error "git diff $BASE_REF...HEAD failed collecting added files (no merge base?)"
+    ;;
+  all)
+    git ls-files -sz >"$TMP/files.z" || gg_collection_error "git ls-files failed"
+    while IFS= read -r -d '' rec; do
+      # Record shape: "<mode> <sha> <stage>\t<path>".
+      mode="${rec%% *}"
+      rest="${rec#* }"
+      sha="${rest%% *}"
+      f="${rec#*"$GG_TAB"}"
+      case "$mode" in
+        120000 | 160000) continue ;; # symlink / submodule gitlink — not sized content
+      esac
+      emit_candidate "$sha" "$f"
+    done <"$TMP/files.z"
+    ;;
+esac
+
+if [ "$MODE" != "all" ]; then
+  # --raw -z records alternate "meta NUL path NUL"; meta is
+  # ":srcmode dstmode srcsha dstsha status". Only status A survives the
+  # diff-filter, so each record carries exactly one path.
+  while IFS= read -r -d '' meta && IFS= read -r -d '' f; do
+    set -- $meta
+    dstmode="$2"
+    dstsha="$4"
+    case "$dstmode" in
+      120000 | 160000) continue ;; # symlink / submodule gitlink
+    esac
+    case "$dstsha" in
+      *[!0]*) ;;
+      *) gg_collection_error "added file '$f' has no destination blob in the diff record — cannot measure it" ;;
+    esac
+    emit_candidate "$dstsha" "$f"
+  done <"$TMP/raw.z"
+fi
+
+checked=0
+violations=0
+while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
+  is_lockfile "$f" && continue
+  gg_is_excluded "$f" && continue
+  size="$(git cat-file -s "$sha")" || gg_collection_error "cannot read blob $sha for '$f' — its size is unmeasurable, refusing to skip it"
+  checked=$((checked + 1))
+  if [ "$size" -gt "$CEILING_BYTES" ]; then
+    kb=$(((size + 1023) / 1024))
+    echo "byte-ceiling FAIL oversized file: $f — $size bytes (~$kb KB) > ceiling $CEILING_KB KB"
+    echo "  remedies: keep big artifacts out of the repo (asset store, Git LFS, build-time generation); a file that genuinely belongs gets a row in $EXCLUDES_FILE with its reason"
+    violations=$((violations + 1))
+  fi
+done <"$TMP/candidates.z"
+
+case "$MODE" in
+  staged) SCOPE_DESC="staged addition(s)" ;;
+  base) SCOPE_DESC="file(s) added since $BASE_REF" ;;
+  all) SCOPE_DESC="tracked file(s) (full sweep)" ;;
+esac
+
+if [ "$violations" -gt 0 ]; then
+  echo "byte-ceiling: $violations violation(s) — ceiling $CEILING_KB KB, $checked $SCOPE_DESC checked"
+  exit 1
+fi
+echo "byte-ceiling: OK — $checked $SCOPE_DESC checked, ceiling $CEILING_KB KB"

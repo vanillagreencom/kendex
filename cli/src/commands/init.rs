@@ -103,7 +103,7 @@ fn init_hook(name: &str) -> Result<()> {
     }
     std::fs::create_dir_all("hooks")?;
     let body = format!(
-        "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: PreToolUse       # PreToolUse | PostToolUse | PostCompact | TaskCompleted | Stop | SessionStart | UserPromptSubmit | PermissionRequest\n# matcher: Bash           # Bash | Edit|Write | (empty for all)\n# description: TODO — describe what this hook does and when it fires\n# safety: TODO — explain what risk this hook prevents\n# # harnesses: [claude-code, codex]   # optional allowlist; default = all\n# ---\n\nset -euo pipefail\n\nINPUT=$(cat)\n\n# TODO — implement hook logic. Read tool input from $INPUT (JSON), exit 0 to\n# allow the tool call, exit non-zero with a message on stderr to block it.\n\nexit 0\n",
+        "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: PreToolUse       # PreToolUse | PostToolUse | PostCompact | TaskCompleted | Stop | SessionStart | UserPromptSubmit | PermissionRequest\n# matcher: Bash           # Bash | Edit|Write | (empty for all)\n# description: TODO — describe what this hook does and when it fires\n# safety: TODO — explain what risk this hook prevents\n# # harnesses: [claude-code, codex]   # optional allowlist; default = all\n# ---\n\nset -euo pipefail\n\nINPUT=$(cat)\n\n# Implement the hook logic here: read tool input from $INPUT (JSON), exit 0 to\n# allow the tool call, exit non-zero with a message on stderr to block it.\n\nexit 0\n",
     );
     std::fs::write(&path, body)?;
     #[cfg(unix)]

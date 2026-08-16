@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# growth-guards — dispatcher for the check family. One check by name, or
+# the whole enabled batch:
+#
+#   growth-guards                 run every enabled repo check (same as 'all')
+#   growth-guards all             ditto
+#   growth-guards CHECK [ARGS..]  run one check, flags passed through
+#
+# The batch runs the checks named by GROWTH_GUARDS_CHECKS (default:
+# todo-ban byte-ceiling suppression-ban). commit-msg reads a message, so
+# it never runs in the batch — the commit-msg hook invokes it directly.
+#
+# Batch aggregation fails closed: exit 2 if ANY check could not complete
+# (its own exit 2, or any unexpected status), else exit 1 if any check
+# found violations, else 0. Every check also remains independently
+# invocable as scripts/CHECK for pre-commit shims and CI.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GG_CHECK="growth-guards"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+
+KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban commit-msg"
+BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban"
+
+usage() {
+  cat <<EOF
+usage: growth-guards [all | CHECK [ARGS...]]
+
+Checks: $KNOWN_CHECKS
+
+With no argument (or 'all'), runs every check named by
+GROWTH_GUARDS_CHECKS (default: $BATCH_DEFAULT).
+commit-msg reads a message file/stdin and only runs by name.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error, or
+any check that could not complete.
+EOF
+}
+
+if [ $# -ge 1 ]; then
+  case "$1" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+  esac
+fi
+
+if [ $# -ge 1 ] && [ "$1" != "all" ]; then
+  CHECK="$1"
+  shift
+  case " $KNOWN_CHECKS " in
+    *" $CHECK "*) exec "$SCRIPT_DIR/$CHECK" "$@" ;;
+  esac
+  gg_config_error "unknown check '$CHECK' (known: $KNOWN_CHECKS)"
+fi
+
+[ $# -le 1 ] || gg_config_error "'all' takes no extra arguments; invoke a single check to pass flags"
+
+gg_repo_root_cd
+CHECKS="$(gg_setting GROWTH_GUARDS_CHECKS "$BATCH_DEFAULT")" || exit 2
+case "$CHECKS" in
+  *[!\ ]*) ;;
+  *) gg_config_error "GROWTH_GUARDS_CHECKS resolved empty — name at least one check or unset it" ;;
+esac
+for c in $CHECKS; do
+  case "$c" in
+    commit-msg) gg_config_error "commit-msg reads a message and cannot run in the batch; wire 'growth-guards commit-msg \"\$1\"' into the commit-msg hook instead" ;;
+  esac
+  case " $KNOWN_CHECKS " in
+    *" $c "*) ;;
+    *) gg_config_error "GROWTH_GUARDS_CHECKS names unknown check '$c' (known: $KNOWN_CHECKS)" ;;
+  esac
+done
+
+had_violations=0
+had_errors=0
+for c in $CHECKS; do
+  echo "=== growth-guards: $c"
+  check_status=0
+  "$SCRIPT_DIR/$c" || check_status=$?
+  case "$check_status" in
+    0) ;;
+    1) had_violations=1 ;;
+    *)
+      had_errors=1
+      echo "growth-guards: check '$c' did not complete (exit $check_status)"
+      ;;
+  esac
+done
+
+if [ "$had_errors" -eq 1 ]; then
+  echo "growth-guards: could not complete every check — fix the errors above before trusting any verdict"
+  exit 2
+fi
+if [ "$had_violations" -eq 1 ]; then
+  echo "growth-guards: violations — see the failures above"
+  exit 1
+fi
+echo "growth-guards: OK — enabled checks clean ($CHECKS)"

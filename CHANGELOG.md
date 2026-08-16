@@ -41,6 +41,17 @@
   provenance on their first refresh where the comment still matches the
   template; a pre-ledger comment that already drifted from the incoming
   template stays untouched (indistinguishable from a hand edit) (VST-260).
+- growth-guards: new skill — the shared check family beside size-ratchet
+  (VST-214): `todo-ban` (flat work-marker ban, marker-shape scoped so prose
+  naming a marker never fires), `byte-ceiling` (newly added tracked files
+  over N KB fail, default 200; staged/base/full-sweep modes, lockfiles
+  exempt), `suppression-ban` (blanket lint suppressions fail flat; bare
+  rust dead_code/unused allows ratchet against a tighten-only baseline),
+  and `commit-msg` (conventional gate; uppercase issue keys and
+  git-generated messages pass). Dispatcher `growth-guards [all|CHECK]`,
+  each check independently invocable; exit 2 on anything unmeasurable. The
+  vstack repo seeds its own excludes lists, and the `vstack init` hook
+  scaffold no longer plants a work marker in generated hooks.
 - orch: `queue-wait` default budget is 2400s, sized to the merge-group suite
   (VST-249); the budget-exhausted `queued` verdict now carries `progressing`
   and a `cause` of `still_progressing` vs `stalled` from merge-queue-entry

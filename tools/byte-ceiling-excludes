@@ -1,0 +1,5 @@
+docs/assets/*	documentation screenshots
+pi-extensions/*/assets/*	demo media for extension READMEs (gifs, screenshots)
+pi-extensions/*/bundle/*	generated extension bundles
+skills/iced-rs/examples/*	vendored upstream iced examples (textures, screenshots, gifs)
+skills/iced-rs/iced_wgpu/*	vendored upstream iced_wgpu source

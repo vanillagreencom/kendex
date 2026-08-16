@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# commit-msg — conventional-commit format gate over a commit message,
+# built to sit directly in .git/hooks/commit-msg (it takes the message
+# file git passes, or stdin).
+#
+# The header (first non-blank, non-comment line) must be
+# `type(scope)!: subject` — scope and `!` optional. The scope class
+# accepts uppercase issue keys (fix(ABC-123): ...) and `#`-prefixed issue
+# numbers (fix(#123): ...). Git-generated messages pass unchanged: Merge,
+# Revert, Reapply, fixup!, squash!, amend!.
+#
+# Exit codes: 0 pass; 1 violation; 2 usage/config/collection error (an
+# unreadable message file is a collection error, never a pass).
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GG_CHECK="commit-msg"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+
+usage() {
+  cat <<'EOF'
+usage: commit-msg [FILE]
+
+Checks the commit message in FILE (or on stdin when FILE is absent or '-')
+against the conventional format `type(scope)!: subject`. Scope and '!' are
+optional; uppercase issue keys (fix(ABC-123): ...) are accepted;
+git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!) pass
+unchanged. Wire it as .git/hooks/commit-msg: `commit-msg "$1"`.
+
+Configuration (env > .env.local > .vstack/settings.toml >
+vstack.settings.toml [env] > .env > default):
+  GROWTH_GUARDS_COMMIT_TYPES   space-separated type list
+                               (default "build chore ci docs feat fix perf refactor revert style test")
+
+Exit codes: 0 pass; 1 violation; 2 usage/config/collection error.
+EOF
+}
+
+MSG_FILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --*) gg_config_error "unknown argument '$1' (see --help)" ;;
+    *)
+      [ -z "$MSG_FILE" ] || gg_config_error "at most one message file (see --help)"
+      MSG_FILE="$1"
+      ;;
+  esac
+  shift
+done
+
+# Read the message BEFORE cd-ing to the repo root: the FILE argument (git
+# passes .git/COMMIT_EDITMSG) is relative to the caller's directory.
+if [ -z "$MSG_FILE" ] || [ "$MSG_FILE" = "-" ]; then
+  MSG="$(cat)" || gg_collection_error "could not read the commit message from stdin"
+else
+  [ -f "$MSG_FILE" ] || gg_config_error "no such message file: $MSG_FILE"
+  MSG="$(cat -- "$MSG_FILE")" || gg_collection_error "could not read the commit message file: $MSG_FILE"
+fi
+
+gg_repo_root_cd
+
+TYPES="$(gg_setting GROWTH_GUARDS_COMMIT_TYPES "build chore ci docs feat fix perf refactor revert style test")" || exit 2
+TYPE_ALT=""
+for t in $TYPES; do
+  case "$t" in
+    "" | *[!a-z0-9-]*) gg_config_error "GROWTH_GUARDS_COMMIT_TYPES entry '$t' is not a lowercase type name" ;;
+  esac
+  TYPE_ALT="${TYPE_ALT:+$TYPE_ALT|}$t"
+done
+[ -n "$TYPE_ALT" ] || gg_config_error "GROWTH_GUARDS_COMMIT_TYPES resolved empty — at least one type is required"
+
+# Header = first line that is neither blank nor a '#' comment (git strips
+# comment lines before recording the message).
+HEADER=""
+while IFS= read -r ln || [ -n "$ln" ]; do
+  ln="${ln%$'\r'}"
+  case "$ln" in
+    "" | "#"*) continue ;;
+  esac
+  HEADER="$ln"
+  break
+done <<EOF
+$MSG
+EOF
+
+if [ -z "$HEADER" ]; then
+  echo "commit-msg FAIL empty commit message (no non-comment content)"
+  exit 1
+fi
+
+case "$HEADER" in
+  "Merge "* | "Revert "* | "Reapply "* | "fixup! "* | "squash! "* | "amend! "*)
+    echo "commit-msg: OK — git-generated header accepted: $HEADER"
+    exit 0
+    ;;
+esac
+
+HEADER_ERE="^($TYPE_ALT)(\([#A-Za-z0-9 _.,/-]+\))?!?: [^[:space:]]"
+match_status=0
+printf '%s\n' "$HEADER" | grep -qE "$HEADER_ERE" || match_status=$?
+[ "$match_status" -le 1 ] || gg_collection_error "grep failed matching the header (exit $match_status)"
+
+if [ "$match_status" -eq 0 ]; then
+  echo "commit-msg: OK — conventional header: $HEADER"
+  exit 0
+fi
+
+echo "commit-msg FAIL non-conventional header: $HEADER"
+echo "  expected: type(scope)!: subject — scope and '!' optional; types: $TYPES"
+echo "  scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs"
+echo "  git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
+exit 1
