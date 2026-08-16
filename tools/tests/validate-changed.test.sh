@@ -128,6 +128,7 @@ mkfile pi-extensions/pi-codex-minimal-tools/index.ts 'x'
 mkfile pi-extensions/pi-questions/index.ts 'x'
 mkfile pi-extensions/pi-claude-bridge/index.ts 'x'
 mkfile pi-extensions/pi-nosuite/index.ts 'x'
+mkfile pi-extensions/pi-session-bridge/extensions/child-session-id.ts 'x'
 mkfile pi-extensions/package-policy.test.mjs 'x'
 mkfile docs/guide.md 'x'
 mkfile agents/rust.md 'x'
@@ -277,6 +278,15 @@ for ext in pi-output-policy pi-agents-tmux pi-codex-minimal-tools pi-questions p
   assert_lane "pi $ext" "pi:$ext"
 done
 assert_no_lane "pi five" "pi:pi-qol"
+reset_tree
+
+# pi-session-bridge has no suite of its own, but pi-agents-tmux's suite
+# imports it: the change selects that lane.
+touch_path pi-extensions/pi-session-bridge/extensions/child-session-id.ts
+run --dry-run
+assert_lane "pi-session-bridge" "pi:pi-agents-tmux"
+assert_no_lane "pi-session-bridge" "pi:(pi-qol|pi-output-policy|pi-codex-minimal-tools|pi-questions|pi-claude-bridge)"
+assert_line "pi-session-bridge" "no suite lane: pi-extensions/pi-session-bridge/extensions/child-session-id.ts (CI runs no suite for pi-extensions/pi-session-bridge)"
 reset_tree
 
 # --- 10. tools/** -> tools tests (not --all) -----------------------------------
@@ -442,6 +452,16 @@ run
 assert_rc "exec-bit lint" 1
 assert_line "exec-bit lint" "not executable in git: skills/withtests/tests/a.test.sh"
 assert_line "exec-bit lint" "FAILED LANE: lint:shell"
+reset_tree
+
+# A tracked executable whose bit was dropped only in the working tree (index
+# still 100755) fails too: `git add` would record the missing bit.
+touch_path skills/withtests/SKILL.md
+chmod -x "$REPO/skills/withtests/tests/a.test.sh"
+run
+assert_rc "working-tree exec-bit lint" 1
+assert_line "working-tree exec-bit lint" "not executable in working tree: skills/withtests/tests/a.test.sh"
+assert_no_line "working-tree exec-bit lint" "not executable in git:"
 reset_tree
 
 printf 'no routing here\n' >"$REPO/skills/withtests/SKILL.md"
