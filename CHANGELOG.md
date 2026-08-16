@@ -340,6 +340,8 @@
   authority checks could not see it), and sources starting with `-` are rejected
   before any git runs and never echoed — including in the
   source picker, which used to print a legacy registry entry's token verbatim,
+  and in the sanitized git-output summary, which redacted only tokens carrying
+  `://` and so let an scp-like `user:secret@host:path` through,
   and in the "source not found" line, which reached a credential URL malformed
   enough to be classified as a local path (`https:/user:token@host/repo`);
   ssh usernames are kept, and any control or direction-changing character in a

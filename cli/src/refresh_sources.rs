@@ -1344,9 +1344,6 @@ fn git_output_summary(output: &std::process::Output) -> String {
 /// git's quoting around them) lose userinfo secrets and query/fragment;
 /// anything else is left alone.
 fn redact_token(token: &str) -> String {
-    if !token.contains("://") {
-        return token.to_string();
-    }
     let start = token
         .find(|ch: char| ch.is_ascii_alphanumeric())
         .unwrap_or(0);
@@ -1360,6 +1357,13 @@ fn redact_token(token: &str) -> String {
         .map(|(index, ch)| index + ch.len_utf8())
         .unwrap_or(rest.len());
     let (url, suffix) = rest.split_at(end);
+    // The same grammar every other question about a remote is asked of, rather
+    // than a `://` test: the scp-like `user:secret@host:path` carries its
+    // secret where no scheme separator appears, and git prints the remote it
+    // failed on verbatim.
+    if parse_remote_url(url).is_none() {
+        return token.to_string();
+    }
     format!("{prefix}{}{suffix}", remote_source_display(url))
 }
 
@@ -3888,6 +3892,32 @@ mod tests {
             redact_token("'https://user:tok@github.com/owner/rep\u{00f6}'"),
             "'https://user:<redacted>@github.com/owner/rep\u{00f6}'"
         );
+    }
+
+    /// Git prints the remote it failed on verbatim, and the scp-like spelling
+    /// carries its secret where no `://` appears — so a summary gated on that
+    /// separator leaked the token to stderr.
+    #[test]
+    fn git_output_summary_redacts_an_scp_like_remote() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::default(),
+            stdout: Vec::new(),
+            stderr: b"fatal: could not read from 'user:ghp_SECRET@host.example:owner/repo.git'\n"
+                .to_vec(),
+        };
+
+        let summary = git_output_summary(&output);
+
+        assert!(!summary.contains("ghp_SECRET"), "{summary}");
+        assert!(
+            summary.contains("'user:<redacted>@host.example:owner/repo.git'"),
+            "{summary}"
+        );
+        assert!(summary.contains("fatal: could not read from"), "{summary}");
+        // Prose that merely carries a colon is not a remote and is untouched.
+        for token in ["fatal:", "error:", "2026-08-16T04:51:03Z", "a:b"] {
+            assert_eq!(redact_token(token), token, "{token}");
+        }
     }
 
     /// `git clone` follows a symlink at its destination, so the clone path had
