@@ -203,6 +203,7 @@ fi
 # binary, so it works whether or not the machine has a shell alias per account.
 LANE_AUTO=false
 LANE_HARNESS=""
+CLAIM_WRITE_FAILED=false
 pick_auto_lane() { "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT"; }
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
@@ -415,8 +416,12 @@ open_tmux() {
   # identity — and never fatal: a launch that worked is not a failure because
   # its bookkeeping did not.
   if [[ -n "$LANE_ENV" && -n "$server" ]]; then
-    lane_claim_write "$(lane_claims_dir "$PROJECT_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" \
-      || echo "Warning: could not record the lane claim for '$title'; lanes pick will not count it (set OVERSEE_WATCH_STATE_DIR)" >&2
+    if ! lane_claim_write "$(lane_claims_dir "$PROJECT_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title"; then
+      # This launch stands, but the next `auto` pick cannot see it: the batch
+      # stops at the top of the next item rather than stacking blind.
+      CLAIM_WRITE_FAILED=true
+      echo "Warning: could not record the lane claim for '$title'; lanes pick will not count it (set OVERSEE_WATCH_STATE_DIR)" >&2
+    fi
   fi
   if ! tmux send-keys -t "$pane" "clear" Enter ||
      ! tmux send-keys -t "$pane" -l "$cmd" ||
@@ -510,6 +515,11 @@ for raw in "${ITEMS[@]}"; do
   # surface a re-pick would re-read numbers nothing has moved.
   attempted=$((attempted + 1))
   if [[ "$LANE_AUTO" == true && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]]; then
+    if [[ "$CLAIM_WRITE_FAILED" == true ]]; then
+      echo "Error: the previous lane's claim was not recorded, so this pick cannot see it; stopping after $launched launch(es) rather than stacking $item blind." >&2
+      failed=$((failed + 1))
+      break
+    fi
     lane_rc=0
     next_lane="$(pick_auto_lane)" || lane_rc=$?
     if [[ "$lane_rc" -ne 0 ]]; then

@@ -372,6 +372,18 @@ else
   assert_eq "$([[ -f "$CLAIM_STATE/claims/keepme.claim" ]] && echo yes || echo no)" "yes" \
     "an unreadable claim store is never emptied"
 
+  # `list` reports what it measured; `pick` DECIDES, so it refuses rather
+  # than reading an unreadable store as "nothing in flight".
+  chmod 000 "$CLAIM_STATE/claims"
+  run_lanes_claims list --harness claude --json >/dev/null 2>&1
+  list_rc=$?
+  PICK_ERR="$(run_lanes_claims pick --harness claude 2>&1 >/dev/null)"
+  pick_rc=$?
+  chmod 755 "$CLAIM_STATE/claims"
+  assert_eq "$list_rc" "0" "list still reports the lanes it could measure"
+  assert_eq "$pick_rc" "1" "pick refuses when in-flight claims cannot be read"
+  assert_contains "$PICK_ERR" "refusing to pick" "the refusal says what it refused to do"
+
   # An unreadable claim FILE is left in place too, and never leaves the
   # previous record's fields standing in for it.
   chmod 000 "$CLAIM_STATE/claims/keepme.claim"
@@ -613,6 +625,21 @@ three_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-12 CC-13 CC
 set -e
 assert_contains "$three_out" "across 2 lanes" \
   "a third item returning to a used lane still reports two distinct lanes"
+
+# A claim that could not be written is a batch that can no longer be spread:
+# the launch stands, the next item does not go out blind.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+mkdir -p "$OT_STATE"
+: > "$OT_STATE/claims"          # a FILE where the claims dir must be created
+set +e
+blind_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-15 CC-16 2>&1)
+blind_rc=$?
+set -e
+rm -f "$OT_STATE/claims"
+assert_eq "$blind_rc" "1" "a batch whose claim could not be recorded exits nonzero"
+assert_contains "$blind_out" "could not record the lane claim" "the failed write is reported"
+assert_contains "$blind_out" "stopping after 1 launch(es)" \
+  "the batch stops instead of stacking the next item blind"
 
 # A GUI launch has no pane to keep a claim alive, so a GUI batch records
 # nothing and stays on the lane resolved up front — as `--help` says.

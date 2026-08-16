@@ -450,7 +450,7 @@ check_lanes() {
       shell_now+="$i"$'\n'
       if grep -qxF -- "$i" <<<"$LANE_SHELL_SEEN"; then
         echo "EVENT lane-exited $lane"
-        pane="$(cat "$(lane_pane_file "$i")")"
+        pane="$(cat -- "$(lane_pane_file "$i")")"
         [[ -z "$pane" ]] || pane_tail "$pane"
         pr_watch_context
         exit 0
@@ -467,9 +467,11 @@ check_lanes() {
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
-    pane="$(cat "$(lane_pane_file "$i")")"
+    pane="$(cat -- "$(lane_pane_file "$i")")"
     if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$pane"; then
-      claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")")"
+      # The detail is a nicety; a claim store this process cannot read must
+      # not take down the event that carries the pane tail.
+      claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
       # Claims from every live tmux server are kept, and window names are not
       # unique across servers: only a claim recorded on the server that owns
       # the watched pane can name this lane's account.
@@ -488,7 +490,7 @@ check_lanes() {
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
-    pane="$(cat "$(lane_pane_file "$i")")"
+    pane="$(cat -- "$(lane_pane_file "$i")")"
     if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
       echo "EVENT question $lane"
       pane_tail "$pane"
@@ -503,7 +505,7 @@ check_lanes() {
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
-    pane="$(cat "$(lane_pane_file "$i")")"
+    pane="$(cat -- "$(lane_pane_file "$i")")"
     if grep -Eq -- "$WORKING_RE" <<<"$pane"; then continue; fi
     if ! grep -Eq -- "$IDLE_PROMPT_RE" <<<"$pane"; then continue; fi
     idle_now+="$i"$'\n'

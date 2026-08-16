@@ -43,7 +43,9 @@ lane_claims_canon() {
 }
 
 # Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
-# pid>` lines. $1: claims directory.
+# pid>` lines. $1: claims directory. Exits 2 when the store cannot be read at
+# all: a caller deciding where to launch must fail closed on that, and only
+# the caller knows whether it is deciding or reporting.
 lane_claims_read() {
   local dir="$1" live this_server f server pane cfg window created
   [[ -d "$dir" ]] || return 0
@@ -51,7 +53,7 @@ lane_claims_read() {
   # report every busy account as free.
   if [[ ! -r "$dir" || ! -x "$dir" ]]; then
     echo "lane-claims: claims directory $dir is not readable; launches already in flight are invisible" >&2
-    return 0
+    return 2
   fi
   live="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || live=""
   # The enumerated server's pid, empty when nothing could be enumerated.

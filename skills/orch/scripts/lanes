@@ -422,10 +422,20 @@ emit_lane() {
 # read is what keeps the store bounded, and one snapshot keeps every lane's
 # count taken against the same instant.
 LANE_CLAIMS_LIVE=""
+# Non-zero when the claim store could not be read: `list` still reports what
+# it measured, `pick` refuses rather than deciding on an unknown.
+LANE_CLAIMS_RC=0
+
+# Called before `collect_lanes`, never inside it: collect_lanes runs in a
+# command substitution, and a read failure recorded there would die with the
+# subshell instead of reaching the decision.
+load_lane_claims() {
+	LANE_CLAIMS_RC=0
+	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")")" || LANE_CLAIMS_RC=$?
+}
 
 collect_lanes() {
 	local harness_filter="$1" allow_refresh="$2" d
-	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")")"
 	{
 		if [[ "$harness_filter" == "all" || "$harness_filter" == "claude" ]]; then
 			while IFS= read -r d; do
@@ -467,7 +477,12 @@ render_table() {
 # --max-pct is out before this ordering runs.
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" allow_refresh="$4" lanes chosen
+	load_lane_claims
 	lanes="$(collect_lanes "$harness" "$allow_refresh")"
+	# An unreadable claim store reads as "no launches in flight", which is the
+	# one thing it must not read as: picking on it can stack a second session
+	# onto an account already running one.
+	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die "in-flight lane claims could not be read; refusing to pick (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
 	chosen="$(jq -c --argjson max "$max_pct" '
 		[ .[] | select(.status == "ok" and .headroom_pct != null and (100 - .headroom_pct) < $max) ]
 		| sort_by([(.claims // 0), -.headroom_pct]) | first // null
@@ -520,6 +535,7 @@ case "$SUB" in
 	list)
 		HARNESS="${HARNESS:-all}"
 		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die "--harness must be claude, codex, or all"
+		load_lane_claims
 		out="$(collect_lanes "$HARNESS" "$ALLOW_REFRESH")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
 		;;
