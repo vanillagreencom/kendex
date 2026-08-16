@@ -22,6 +22,16 @@ case "$INPUT" in
   *) exit 0 ;;
 esac
 
+# Both decode paths lean on the text tools under set -e — segmenting and
+# flag folding run either way — so an rm-bearing payload on a PATH missing
+# any of them refuses up front instead of dying mid-scan or slipping through.
+if ! command -v grep >/dev/null 2>&1 || ! command -v sed >/dev/null 2>&1 \
+  || ! command -v head >/dev/null 2>&1 || ! command -v awk >/dev/null 2>&1 \
+  || ! command -v tr >/dev/null 2>&1; then
+  echo "block-unsafe-rm: text tools (grep/sed/head/awk/tr) unavailable to scan the payload; refusing rather than skipping the guard" >&2
+  exit 2
+fi
+
 if command -v jq >/dev/null 2>&1; then
   # A payload that does not parse is refused, not skipped: an unreadable
   # command cannot be proven safe, and this guard is fail-closed by design.
@@ -29,13 +39,6 @@ if command -v jq >/dev/null 2>&1; then
     echo "block-unsafe-rm: hook payload is not valid JSON; refusing rather than skipping the guard" >&2
     exit 2
   fi
-elif ! command -v grep >/dev/null 2>&1 || ! command -v sed >/dev/null 2>&1 \
-  || ! command -v head >/dev/null 2>&1 || ! command -v awk >/dev/null 2>&1 \
-  || ! command -v tr >/dev/null 2>&1; then
-  # An rm-bearing payload reached this point (the fast exit above passed it),
-  # and with neither jq nor the text tools nothing can decode it.
-  echo "block-unsafe-rm: no jq and no usable text tools to decode the payload; refusing rather than skipping the guard" >&2
-  exit 2
 else
   # Escape-aware fallback: the value may carry \" and \\ inside it.
   COMMAND=$(printf '%s' "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"\([^"\\]\|\\.\)*"' | head -1 \
@@ -67,8 +70,10 @@ SEGMENTS=$(printf '%s\n' "$COMMAND" \
         # folds to a space before the separator split.
         gsub(/\\\n/, " ", blob)
         # Every ; | & separates commands — the doubled forms collapse into
-        # an empty segment between two newlines, which matches nothing.
-        gsub(/[;|&]/, "\n", blob)
+        # an empty segment between two newlines, which matches nothing. A
+        # closing paren separates too, so a case-arm body (`x) rm …;;`) and
+        # a subshell tail become their own segments.
+        gsub(/[;|&)]/, "\n", blob)
         printf "%s", blob
       }')
 
@@ -90,14 +95,15 @@ while IFS= read -r seg; do
     *) continue ;;
   esac
   # Recursive form: -r/-R anywhere in a short-option cluster, or --recursive.
-  # Quotes do not change what rm receives — `rm "-rf"` and `rm -r""f` both
-  # pass -rf — so the flag scan reads a quote-folded copy of the segment.
-  flat=$(printf '%s' "$seg" | tr -d "\"'")
+  # Quoting and escaping do not change what rm receives — `rm "-rf"`,
+  # `rm -r""f`, and `rm -\rf` all pass -rf — so the flag scan reads a copy
+  # with quotes and backslashes folded away.
+  flat=$(printf '%s' "$seg" | tr -d "\"'\\\\")
   printf '%s' "$flat" | grep -Eq '(^|[[:space:]])(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)([[:space:]]|$)' || continue
   # A redirection target belongs to the shell, never to rm: the operator and
   # its target drop out before operand classification, so `> $LOG` on a
   # literal-path rm is not a variable root.
-  seg=$(printf '%s' "$seg" | sed -E 's/[0-9]*(>>?|<<?)[[:space:]]*[^[:space:]]+//g')
+  seg=$(printf '%s' "$seg" | sed -E 's/[0-9]*(>>?|<<<|<<|<)[[:space:]]*[^[:space:]]+//g')
   # Any operand (not an option) that begins with a variable expansion whose
   # value can be empty: $NAME, ${NAME}, "$NAME/…", ${NAME:-…}. The one form
   # that cannot expand empty is ${NAME:?…}, which the harness accepts.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- hooks: `block-unsafe-rm` scans harder shapes — backslash-escaped flags
+  (`rm -\rf`), case-arm bodies (`x) rm -rf …;;`), and here-string targets
+  classify correctly, and a PATH missing the text tools refuses up front on
+  both decode paths instead of dying mid-scan.
 - New `block-unsafe-rm` hook (`PreToolUse`/`Bash`): a recursive `rm` whose
   path starts with a variable that may expand empty is refused with the
   accepted rewrite (`rm -rf -- "${NAME:?}/sub"` or a literal absolute path)
