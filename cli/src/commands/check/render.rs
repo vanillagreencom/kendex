@@ -258,6 +258,15 @@ pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) 
         &report.phantom,
         quiet,
     );
+    // Deliberately its own section: reinstalling repairs nothing here, and
+    // the detail names the file whose repair does.
+    section(
+        out,
+        "installed, but the install could not be verified — repair the file named below",
+        '?',
+        &report.unverifiable,
+        quiet,
+    );
 
     if !report.missing_skill_refs.is_empty() {
         let agents: HashSet<&str> = report

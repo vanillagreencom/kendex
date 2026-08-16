@@ -12,7 +12,7 @@
 //!    relative-path/content pairs. A mismatch means refresh didn't fully
 //!    copy, or something modified the install. Skills, agents, and hooks
 //!    have per-harness translation, so they aren't directly byte-comparable
-//!    — for those, [`missing_install`] confirms instead that every artifact
+//!    — for those, [`install_gap`] confirms instead that every artifact
 //!    the harness needs to RUN the item is on disk.
 //!
 //! This command is the answer to "did my last refresh actually take?".
@@ -128,8 +128,11 @@ fn verify_entry(entry: &LockEntry, global: bool, disk_skills: &HashSet<String>) 
 
     // Per-kind install check: presence first (shared with `check`), then the
     // byte comparison only Pi packages support.
-    let (install_ok, note) = match missing_install(entry, global, disk_skills) {
-        Some(note) => (Some(false), Some(note)),
+    // Either gap fails the row: `verify` asserts the install is correct, and
+    // an install it cannot read the evidence for is not one it can pass. The
+    // note is what tells the two apart.
+    let (install_ok, note) = match install_gap(entry, global, disk_skills) {
+        Some(gap) => (Some(false), Some(gap.note().to_string())),
         None => match entry.kind {
             ItemKind::PiExtension => verify_pi_bytes(&entry.name, global),
             ItemKind::Extra => (None, None),
@@ -146,8 +149,31 @@ fn verify_entry(entry: &LockEntry, global: bool, disk_skills: &HashSet<String>) 
     }
 }
 
+/// What stands between a lock entry and a complete install. The two variants
+/// carry different remedies, and conflating them is how a user gets told to
+/// reinstall something that is fine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InstallGap {
+    /// A recorded artifact is not on disk. `vstack add` re-creates it.
+    Missing(String),
+    /// The install could not be DETERMINED: the evidence a presence check
+    /// reads is itself unreadable. The note names the file to fix; reinstalling
+    /// would not touch the real fault.
+    Unverifiable(String),
+}
+
+impl InstallGap {
+    /// The human note, whichever gap it is.
+    pub(crate) fn note(&self) -> &str {
+        match self {
+            Self::Missing(note) | Self::Unverifiable(note) => note,
+        }
+    }
+}
+
 /// Is every artifact this lock entry claims to have installed still on disk?
-/// `None` when nothing is missing, otherwise the human note naming what is.
+/// `None` when nothing is missing, otherwise the gap naming what is — or
+/// naming what made the answer unknowable.
 ///
 /// `check` shares this so its phantom report covers every kind rather than
 /// skills alone — a deleted agent file or Pi package is exactly the incomplete
@@ -163,16 +189,20 @@ fn verify_entry(entry: &LockEntry, global: bool, disk_skills: &HashSet<String>) 
 /// worktree sharing the main checkout's `.agents`, VST-195) is installed, and
 /// passing that evidence in is what keeps it from reading as a phantom in
 /// every worktree session.
-pub(crate) fn missing_install(
+pub(crate) fn install_gap(
     entry: &LockEntry,
     global: bool,
     disk_skills: &HashSet<String>,
-) -> Option<String> {
+) -> Option<InstallGap> {
     if !crate::path_safety::is_safe_item_name(entry.kind, &entry.name) {
-        return Some("unsafe name — not resolved on disk".into());
+        return Some(InstallGap::Missing(
+            "unsafe name — not resolved on disk".into(),
+        ));
     }
     let missing = |(ok, note): (Option<bool>, Option<String>)| match ok {
-        Some(false) => note.or_else(|| Some("install path missing".into())),
+        Some(false) => Some(InstallGap::Missing(
+            note.unwrap_or_else(|| "install path missing".into()),
+        )),
         _ => None,
     };
     match entry.kind {
@@ -181,11 +211,21 @@ pub(crate) fn missing_install(
         // points at it. A copy nothing registers never loads.
         ItemKind::PiExtension => {
             if !config::pi_packages_dir(global).join(&entry.name).is_dir() {
-                Some("install path missing".to_string())
-            } else if !crate::pi_extension::package_is_registered(&entry.name, global) {
-                Some("package present but not registered".to_string())
-            } else {
-                None
+                return Some(InstallGap::Missing("install path missing".to_string()));
+            }
+            match crate::pi_extension::package_registration(&entry.name, global) {
+                crate::pi_extension::PackageRegistration::Registered => None,
+                crate::pi_extension::PackageRegistration::Absent => Some(InstallGap::Missing(
+                    "package present but not registered".to_string(),
+                )),
+                // The package may well be registered; nothing here can say.
+                // Reporting it missing would send the user to reinstall a
+                // package whose only fault is a settings file they must fix.
+                crate::pi_extension::PackageRegistration::Unreadable { reason } => {
+                    Some(InstallGap::Unverifiable(format!(
+                        "registration unknown — Pi settings unreadable: {reason}"
+                    )))
+                }
             }
         }
         ItemKind::Skill => {

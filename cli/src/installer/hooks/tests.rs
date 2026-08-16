@@ -392,6 +392,80 @@ fn merge_codex_hooks_json_preserves_user_handler_with_same_basename() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+fn agent_fixture(name: &str) -> Agent {
+    Agent {
+        name: name.into(),
+        description: format!("{name} agent"),
+        model: "sonnet".into(),
+        role: crate::agent::AgentRole::Engineer,
+        color: None,
+        effort: None,
+        body: "Body\n".into(),
+        source_path: PathBuf::new(),
+    }
+}
+
+/// Fallback prose is installed for EVERY Codex agent or not claimed at all.
+/// Accumulating success across agents let one agent that already carried the
+/// marker report the whole install done while a newly added agent whose TOML
+/// has no `developer_instructions` block silently got no safety prose.
+#[test]
+fn codex_prose_install_fails_on_an_agent_it_cannot_write_and_names_it() {
+    let dir = tmpdir("codex_prose_partial");
+    let agents_dir = dir.join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    let well_formed =
+        |name: &str| format!("name = \"{name}\"\ndeveloper_instructions = '''\nBody\n'''\n");
+    std::fs::write(agents_dir.join("first.toml"), well_formed("first")).unwrap();
+    // Second agent's TOML has no closing ''' — nowhere to put the block.
+    std::fs::write(
+        agents_dir.join("second.toml"),
+        "name = \"second\"\ndescription = \"no instructions block\"\n",
+    )
+    .unwrap();
+    let hook = hook_fixture("post-edit-lint", "TaskCompleted", None);
+    let agents = [agent_fixture("first"), agent_fixture("second")];
+
+    let err = crate::test_util::with_codex_home(&dir, || {
+        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
+            .expect_err("an agent that cannot receive the block must not report success")
+    });
+    let message = format!("{err:#}");
+    assert!(message.contains("second"), "names the agent: {message}");
+    assert!(
+        message.contains(&agents_dir.join("second.toml").display().to_string()),
+        "names the file: {message}"
+    );
+
+    // Control: both well-formed → success, and both files carry the block.
+    std::fs::write(agents_dir.join("second.toml"), well_formed("second")).unwrap();
+    crate::test_util::with_codex_home(&dir, || {
+        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
+            .unwrap();
+    });
+    let marker = "## Safety: post-edit-lint";
+    for name in ["first", "second"] {
+        let body = std::fs::read_to_string(agents_dir.join(format!("{name}.toml"))).unwrap();
+        assert!(body.contains(marker), "{name} must carry the block: {body}");
+    }
+
+    // Control: a rerun over agents that already carry it is still success and
+    // writes no second copy.
+    crate::test_util::with_codex_home(&dir, || {
+        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
+            .unwrap();
+    });
+    for name in ["first", "second"] {
+        let body = std::fs::read_to_string(agents_dir.join(format!("{name}.toml"))).unwrap();
+        assert_eq!(
+            body.matches(marker).count(),
+            1,
+            "no duplicate block: {body}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn remove_hook_install_codex_strips_script_json_and_legacy_prose() {
     let dir = tmpdir("codex_remove_strip");

@@ -37,6 +37,15 @@ fn phantom_note(report: &ScopeReport) -> String {
         .join("; ")
 }
 
+fn unverifiable_note(report: &ScopeReport) -> String {
+    report
+        .unverifiable
+        .iter()
+        .filter_map(|item| item.detail.clone())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn write_packages(settings: &Path, entries: &[&str]) {
     let json = serde_json::json!({ "packages": entries });
     std::fs::write(settings, serde_json::to_string_pretty(&json).unwrap()).unwrap();
@@ -91,6 +100,72 @@ fn a_pi_package_needs_its_settings_registration_not_just_its_directory() {
         write_packages(&settings, &[&package.to_string_lossy()]);
         let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
         assert!(report.phantom.is_empty(), "{report:?}");
+    });
+}
+
+/// A `settings.json` that cannot be read says nothing about any package's
+/// registration. Collapsing that into "not registered" reported correctly
+/// installed packages as missing and sent users to reinstall them, when the
+/// only broken thing was the settings file.
+#[test]
+fn an_unreadable_pi_settings_file_is_reported_as_itself_not_as_a_missing_package() {
+    with_sandbox("pi-settings-unreadable", |_project, source| {
+        let (lock, package, settings) = installed(source);
+        let registered = std::fs::read_to_string(&settings).unwrap();
+
+        std::fs::write(&settings, "{ not json").unwrap();
+        assert!(
+            package.is_dir(),
+            "the copy must survive, or this proves nothing"
+        );
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(
+            report.phantom.is_empty(),
+            "an unreadable settings file is not a missing install: {report:?}"
+        );
+        assert_eq!(
+            names(&report.unverifiable),
+            vec!["@vg/pi-hooks"],
+            "{report:?}"
+        );
+        let note = unverifiable_note(&report);
+        assert!(
+            note.contains(&settings.display().to_string()),
+            "the note names the settings file: {note}"
+        );
+        assert!(
+            note.contains("Pi settings unreadable"),
+            "the note names the fault: {note}"
+        );
+        assert!(
+            !note.contains("not registered"),
+            "the missing-registration remedy points at the wrong fault: {note}"
+        );
+        assert!(
+            report.has_drift(),
+            "an install nothing can verify is not clean either: {report:?}"
+        );
+        assert!(
+            !report.current.iter().any(|i| i.name == "@vg/pi-hooks"),
+            "it must not also be listed as current: {report:?}"
+        );
+
+        // Control: a settings file that READS fine and lacks the entry is
+        // still the missing-registration report.
+        write_packages(&settings, &[]);
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(report.unverifiable.is_empty(), "{report:?}");
+        assert!(
+            phantom_note(&report).contains("package present but not registered"),
+            "{report:?}"
+        );
+
+        // Control: the registration restored, everything is clean again.
+        std::fs::write(&settings, registered).unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(report.unverifiable.is_empty(), "{report:?}");
+        assert!(report.phantom.is_empty(), "{report:?}");
+        assert!(!report.has_drift(), "{report:?}");
     });
 }
 

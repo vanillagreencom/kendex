@@ -257,6 +257,12 @@ pub struct ScopeReport {
     /// Lock entries whose installed files are gone, for every kind that
     /// records an install path (extras do not).
     pub phantom: Vec<Item>,
+    /// Lock entries whose install could not be DETERMINED — the evidence a
+    /// presence check reads is itself unreadable. Deliberately not phantom:
+    /// telling a user to reinstall a Pi package whose registration merely
+    /// could not be read points them at the wrong fault, so each detail names
+    /// the file to fix instead.
+    pub unverifiable: Vec<Item>,
     /// Installed agents referencing skills that are not installed.
     pub missing_skill_refs: Vec<MissingSkillRef>,
     /// Sources that could not be resolved or fully discovered.
@@ -282,6 +288,7 @@ impl ScopeReport {
             && self.removed.is_empty()
             && self.orphaned.is_empty()
             && self.phantom.is_empty()
+            && self.unverifiable.is_empty()
             && self.missing_skill_refs.is_empty()
             && self.source_issues.is_empty()
             && self.invalid_names.is_empty())
@@ -460,8 +467,10 @@ struct SourceCatalog {
     kinds: HashMap<ItemKind, crate::catalog::KindInventory>,
     /// Names known under each kind, including Pi legacy aliases.
     names: HashMap<ItemKind, HashSet<String>>,
-    /// `path: reason` for every asset discovery could not parse.
-    failures: Vec<String>,
+    /// `path: reason` for every asset discovery could not parse, kept under
+    /// the kind it was discovered as. A scope only answers for the kinds it
+    /// installs, so the aggregate is never reported as one.
+    failures: HashMap<ItemKind, Vec<String>>,
     /// Set when the source's own catalog configuration could not be read, so
     /// nothing about it can be inventoried.
     config_error: Option<String>,
@@ -520,12 +529,15 @@ fn load_source_catalog(source_root: &Path) -> SourceCatalog {
                     }
                 }
             }
-            catalog.failures.extend(readable.failures.iter().cloned());
+            if !readable.failures.is_empty() {
+                let mut failures = readable.failures.clone();
+                failures.sort();
+                catalog.failures.insert(kind, failures);
+            }
             catalog.names.insert(kind, names);
         }
         catalog.kinds.insert(kind, inventory);
     }
-    catalog.failures.sort();
     catalog
 }
 
@@ -607,12 +619,30 @@ fn source_issues_for(
                 },
             });
         }
-        if !catalog.failures.is_empty() {
+        // A malformed asset in a source is only THIS scope's drift when the
+        // scope installs that KIND from that source — at least as tight as the
+        // limit `available_for` already puts on its offers, and per source
+        // rather than per scope because that is what the entries prove. A
+        // broken Pi package in a source a scope draws nothing but a skill from
+        // breaks nothing the scope has, and exiting 1 for it at every session
+        // start is a false alarm no vstack command run here can clear.
+        let installed_kinds: HashSet<ItemKind> = entries
+            .iter()
+            .filter(|e| e.source == source)
+            .map(|e| e.kind)
+            .collect();
+        let mut failures: Vec<String> = CATALOG_KINDS
+            .iter()
+            .filter(|kind| installed_kinds.contains(kind))
+            .filter_map(|kind| catalog.failures.get(kind))
+            .flatten()
+            .cloned()
+            .collect();
+        failures.sort();
+        if !failures.is_empty() {
             issues.push(SourceIssue {
                 source: scrub_source_credentials(source),
-                problem: SourceProblem::Discovery {
-                    failures: catalog.failures.clone(),
-                },
+                problem: SourceProblem::Discovery { failures },
             });
         }
     }
@@ -792,24 +822,34 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
     // `vstack verify` runs, over the same disk evidence, so the two commands
     // cannot disagree about what is installed.
     let disk_skill_set: HashSet<String> = disk_skills.iter().map(|d| d.name.clone()).collect();
-    let phantom: Vec<Item> = entries
-        .iter()
-        .filter_map(|e| {
-            crate::commands::verify::missing_install(e, global, &disk_skill_set).map(|note| Item {
-                detail: Some(note),
-                ..item(e)
-            })
-        })
-        .collect();
+    let mut phantom: Vec<Item> = Vec::new();
+    let mut unverifiable: Vec<Item> = Vec::new();
+    for entry in &entries {
+        let Some(gap) = crate::commands::verify::install_gap(entry, global, &disk_skill_set) else {
+            continue;
+        };
+        let reported = Item {
+            detail: Some(gap.note().to_string()),
+            ..item(entry)
+        };
+        match gap {
+            crate::commands::verify::InstallGap::Missing(_) => phantom.push(reported),
+            crate::commands::verify::InstallGap::Unverifiable(_) => unverifiable.push(reported),
+        }
+    }
 
     let catalogs = load_catalogs(&entries);
     let source_issues = source_issues_for(&catalogs, &entries);
     let (outdated, removed, mut current) = classify(&catalogs, &entries);
-    // An entry whose install is missing is not "current", whatever its hash
-    // says: listing it with a ✓ beside its own phantom line reads as a
-    // contradiction.
-    let phantom_names: HashSet<&str> = phantom.iter().map(|i| i.name.as_str()).collect();
-    current.retain(|i| !phantom_names.contains(i.name.as_str()));
+    // An entry whose install is missing — or whose install nothing could
+    // read — is not "current", whatever its hash says: listing it with a ✓
+    // beside its own problem line reads as a contradiction.
+    let reported_names: HashSet<&str> = phantom
+        .iter()
+        .chain(unverifiable.iter())
+        .map(|i| i.name.as_str())
+        .collect();
+    current.retain(|i| !reported_names.contains(i.name.as_str()));
 
     let disk_skill_names: HashSet<&str> = disk_skills.iter().map(|d| d.name.as_str()).collect();
     let (missing_skill_refs, invalid_refs) =
@@ -834,6 +874,7 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
         removed,
         orphaned,
         phantom,
+        unverifiable,
         missing_skill_refs,
         source_issues,
         invalid_names,

@@ -226,6 +226,67 @@ fn fetch_guard_is_exclusive_and_released_when_its_holder_goes_away() {
     });
 }
 
+/// The guard platforms without `flock` use, compiled and RUN here. It is a
+/// plain type rather than a `cfg` arm precisely so this test can exist — no CI
+/// lane builds for a non-unix target, so nothing else would ever type-check it.
+#[test]
+fn the_portable_guard_is_exclusive_recovers_a_dead_holders_lock_and_reports_an_unusable_path() {
+    let root = cache_root("portable-guard");
+    let dir = root.join("cache");
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    let lock = remote_cache_fetch_lock(&dir);
+
+    let held = match PortableFetchLock::acquire(&dir) {
+        GuardAcquire::Held(guard) => guard,
+        _ => panic!("first acquire must win"),
+    };
+    assert!(lock.exists(), "taking the lock IS creating the file");
+    assert!(
+        matches!(PortableFetchLock::acquire(&dir), GuardAcquire::Busy),
+        "a second acquire must be refused while the first is held"
+    );
+    drop(held);
+    assert!(!lock.exists(), "Drop unlinks the lock it still owns");
+
+    // A lock left behind by a holder that is provably dead: fresh, it is
+    // still nobody else's to take; past the staleness gate it is.
+    std::fs::write(&lock, format!("{} {}\n", dead_pid(), epoch_now())).unwrap();
+    assert!(
+        matches!(PortableFetchLock::acquire(&dir), GuardAcquire::Busy),
+        "a lock whose mtime is fresh is never taken over"
+    );
+    backdate_lock(&lock);
+    let taken = match PortableFetchLock::acquire(&dir) {
+        GuardAcquire::Held(guard) => guard,
+        other => panic!(
+            "a dead holder's stale lock must be recoverable: {}",
+            match other {
+                GuardAcquire::Busy => "busy",
+                _ => "unusable",
+            }
+        ),
+    };
+    assert!(
+        std::fs::read_to_string(&lock)
+            .unwrap()
+            .starts_with(&std::process::id().to_string()),
+        "the successor records ITS OWN ownership"
+    );
+    drop(taken);
+    assert!(!lock.exists());
+
+    // A lock file that cannot be created at all is neither held nor busy.
+    let no_such_cache = root.join("absent");
+    assert!(
+        matches!(
+            PortableFetchLock::acquire(&no_such_cache),
+            GuardAcquire::Unusable(_)
+        ),
+        "an uncreatable lock path must report itself, not read as free"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn a_second_caller_behind_a_fetch_sees_the_fresh_stamp_and_skips() {
     with_sandboxed_cache("re-due", |dir| {

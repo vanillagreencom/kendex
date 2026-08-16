@@ -59,7 +59,7 @@ pub fn write_source_index(global: bool, index: &SourceIndex) -> Result<()> {
 mod settings;
 
 pub use settings::list_npm_packages;
-pub(crate) use settings::package_is_registered;
+pub(crate) use settings::{PackageRegistration, package_is_registered, package_registration};
 use settings::{register_in_pi_settings, unregister_from_pi_settings};
 
 /// List vstack-copied packages installed in the chosen scope by reading the

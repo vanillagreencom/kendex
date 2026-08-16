@@ -10,7 +10,7 @@ use super::{
     remote_cache_problem, write_fetch_stamp,
 };
 use crate::config::LockFile;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Exclusive guard over one cache's stamp → fetch → reset.
 ///
@@ -19,35 +19,38 @@ use std::path::Path;
 /// tree. The initial clone is not covered (there is no `.git` to lock yet),
 /// and readers do not take it.
 ///
-/// On unix the exclusion is a `flock(LOCK_EX | LOCK_NB)` on a lock file inside
-/// `.git/`: the kernel releases it when the holder exits, so a crashed holder
-/// leaves nothing stale behind and there is no staleness heuristic for two
-/// contenders to race on. The lock file is never unlinked — unlinking a
-/// flocked path lets a second waiter lock a file nobody else can see.
-/// Elsewhere the lock file's `create_new` IS the lock, and Drop removes it.
-pub(super) struct RemoteCacheFetchGuard {
-    #[cfg(unix)]
-    #[allow(dead_code)]
-    file: std::fs::File,
-    #[cfg(not(unix))]
-    path: PathBuf,
-    /// The record written into the lock file; Drop's proof it is still ours.
-    #[cfg(not(unix))]
-    owner: LockOwner,
-}
+/// Two independent implementations, and the platform picks one. They are
+/// separate types rather than `cfg` arms of a single struct so that the
+/// portable one is COMPILED AND RUN by `cargo test` on unix: a branch no
+/// build here ever type-checks is a branch nobody can trust.
+#[cfg(unix)]
+pub(super) type RemoteCacheFetchGuard = FlockGuard;
+#[cfg(not(unix))]
+pub(super) type RemoteCacheFetchGuard = PortableFetchLock;
 
-/// Result of trying to take the guard.
-pub(super) enum GuardAcquire {
-    Held(RemoteCacheFetchGuard),
+/// Result of trying to take a guard.
+pub(super) enum GuardAcquire<G> {
+    Held(G),
     /// Another process is fetching this cache right now.
     Busy,
     /// The lock file itself cannot be created (permissions).
     Unusable(String),
 }
 
-impl RemoteCacheFetchGuard {
-    #[cfg(unix)]
-    pub(super) fn acquire(cache_dir: &Path) -> GuardAcquire {
+/// `flock(LOCK_EX | LOCK_NB)` on a lock file inside `.git/`: the kernel
+/// releases it when the holder exits, so a crashed holder leaves nothing stale
+/// behind and there is no staleness heuristic for two contenders to race on.
+/// The lock file is never unlinked — unlinking a flocked path lets a second
+/// waiter lock a file nobody else can see.
+#[cfg(unix)]
+pub(super) struct FlockGuard {
+    #[allow(dead_code)]
+    file: std::fs::File,
+}
+
+#[cfg(unix)]
+impl FlockGuard {
+    pub(super) fn acquire(cache_dir: &Path) -> GuardAcquire<Self> {
         use std::os::unix::io::AsRawFd;
         let path = remote_cache_fetch_lock(cache_dir);
         let file = match std::fs::OpenOptions::new()
@@ -84,14 +87,23 @@ impl RemoteCacheFetchGuard {
         }
         GuardAcquire::Busy
     }
+}
 
-    /// Without `flock`, creating the lock file IS taking the lock, so it must
-    /// not be pre-created: `create_new` is the whole mechanism. A holder that
-    /// is killed leaves its file behind, and nothing else would ever remove
-    /// it — so a lock whose holder is provably gone is taken over, by exactly
-    /// one contender.
-    #[cfg(not(unix))]
-    pub(super) fn acquire(cache_dir: &Path) -> GuardAcquire {
+/// Without `flock`, creating the lock file IS taking the lock, so it must not
+/// be pre-created: `create_new` is the whole mechanism. Drop unlinks it, and
+/// only while it still records this holder. A holder that is killed leaves its
+/// file behind, and nothing else would ever remove it — so a lock whose holder
+/// is provably gone is taken over, by exactly one contender.
+#[allow(dead_code)]
+pub(super) struct PortableFetchLock {
+    path: PathBuf,
+    /// The record written into the lock file; Drop's proof it is still ours.
+    owner: LockOwner,
+}
+
+#[allow(dead_code)]
+impl PortableFetchLock {
+    pub(super) fn acquire(cache_dir: &Path) -> GuardAcquire<Self> {
         let path = remote_cache_fetch_lock(cache_dir);
         match create_lock_file(&path) {
             Ok(owner) => GuardAcquire::Held(Self { path, owner }),
@@ -110,8 +122,7 @@ impl RemoteCacheFetchGuard {
     }
 }
 
-#[cfg(not(unix))]
-impl Drop for RemoteCacheFetchGuard {
+impl Drop for PortableFetchLock {
     fn drop(&mut self) {
         remove_lock_if_owned(&self.path, self.owner);
     }
@@ -121,8 +132,8 @@ impl Drop for RemoteCacheFetchGuard {
 /// ([`LOCK_HEARTBEAT`] refreshes it while a fetch runs, bounded or not), so
 /// its holder is presumed dead — and the ownership record is still read back
 /// before takeover, so a live holder whose heartbeat is merely late keeps its
-/// lock. Only the platforms without `flock` need any of this; elsewhere the
-/// kernel releases the lock when its holder dies.
+/// lock. Only [`PortableFetchLock`] needs any of this; where `flock` exists
+/// the kernel releases the lock when its holder dies.
 #[allow(dead_code)]
 const STALE_LOCK_AFTER: std::time::Duration =
     std::time::Duration::from_secs(REMOTE_CACHE_FETCH_DEADLINE.as_secs() * 2);

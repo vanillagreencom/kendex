@@ -247,6 +247,10 @@ fn populated_scope(scope: &'static str) -> ScopeReport {
         removed: vec![Item::new("beta", ItemKind::Skill)],
         orphaned: vec![Item::new("gamma", ItemKind::Skill)],
         phantom: vec![Item::new("delta", ItemKind::Agent)],
+        unverifiable: vec![Item {
+            detail: Some("registration unknown — Pi settings unreadable: broken".into()),
+            ..Item::new("theta", ItemKind::PiExtension)
+        }],
         missing_skill_refs: vec![MissingSkillRef {
             agent: "rust".into(),
             skill: "epsilon".into(),

@@ -46,15 +46,50 @@ pub fn list_npm_packages(global: bool) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Will Pi LOAD this package? The copied directory alone proves nothing: Pi
-/// loads what its `settings.json` points at, so a package whose entry was
-/// deleted or repointed sits on disk and never loads — `@vanillagreen/pi-hooks`
-/// included, whose session drift check then cannot report its own absence.
+/// Will Pi LOAD this package — and, when `settings.json` cannot answer, why.
 ///
-/// Unreadable or unparseable settings answer `false`: Pi loads no packages
-/// from a file it cannot read either.
+/// The copied directory alone proves nothing: Pi loads what its
+/// `settings.json` points at, so a package whose entry was deleted or
+/// repointed sits on disk and never loads — `@vanillagreen/pi-hooks` included,
+/// whose session drift check then cannot report its own absence.
+///
+/// "The file says no" and "the file could not be read" are different faults
+/// with different remedies, so they are different answers. Collapsing them
+/// into `false` made an unreadable `settings.json` report every correctly
+/// installed package as missing, sending users to reinstall packages that
+/// were fine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PackageRegistration {
+    /// `settings.json` points Pi at our copy of this package.
+    Registered,
+    /// `settings.json` was read and holds no entry naming our copy.
+    Absent,
+    /// `settings.json` could not be read or parsed, so NO package's
+    /// registration can be determined from it. Names the file and the error.
+    Unreadable { reason: String },
+}
+
+pub(crate) fn package_registration(name: &str, global: bool) -> PackageRegistration {
+    match registered_entry_exists(name, global) {
+        Ok(true) => PackageRegistration::Registered,
+        Ok(false) => PackageRegistration::Absent,
+        Err(err) => PackageRegistration::Unreadable {
+            reason: format!("{err:#}"),
+        },
+    }
+}
+
+/// The bool collapse, for the one caller that asks "is there anything of this
+/// package to act on?" rather than "is it correctly installed?". An unreadable
+/// settings file answers `false` there because the conservative action is to
+/// leave it alone. Anything REPORTING on an install must use
+/// [`package_registration`] instead, so an unreadable file cannot masquerade
+/// as a missing package.
 pub(crate) fn package_is_registered(name: &str, global: bool) -> bool {
-    registered_entry_exists(name, global).unwrap_or(false)
+    matches!(
+        package_registration(name, global),
+        PackageRegistration::Registered
+    )
 }
 
 fn registered_entry_exists(name: &str, global: bool) -> Result<bool> {

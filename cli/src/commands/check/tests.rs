@@ -365,6 +365,73 @@ fn malformed_installed_asset_with_valid_sibling_is_not_removed() {
     });
 }
 
+/// A source's malformed asset is this scope's drift only for a KIND this
+/// scope installs from that source — at least as tight as the limit
+/// availability already puts on its offers. Otherwise a scope holding one
+/// skill exits 1 at every session start over a broken Pi package it never
+/// installed and no command run in that scope can repair.
+#[test]
+fn a_malformed_asset_of_a_kind_this_scope_never_installs_is_not_its_drift() {
+    with_sandbox("kind-scoped-discovery", |project, source| {
+        write_skill(source, "alpha", "one");
+        install_skill_on_disk(project, "alpha");
+        write_pi_package(source, "pi-hooks", "{ not json");
+        let mut skills_only = LockFile::default();
+        skills_only.add(locked(source, ItemKind::Skill, "alpha"));
+
+        let report = check_scope(false, &skills_only, CheckOptions::default()).unwrap();
+        assert!(
+            report.source_issues.is_empty(),
+            "a broken Pi package is not a skill-only scope's problem: {report:?}"
+        );
+        assert!(!report.has_drift(), "{report:?}");
+
+        // Control: the SAME broken package is drift for a scope that does
+        // install Pi packages from this source.
+        write_pi_package(
+            source,
+            "pi-qol",
+            "{\"name\":\"@vg/pi-qol\",\"version\":\"1.0.0\",\"keywords\":[\"pi-package\"],\"pi\":{\"extensions\":[\"./ext.ts\"]}}",
+        );
+        let mut with_pi = LockFile::default();
+        with_pi.add(locked(source, ItemKind::Skill, "alpha"));
+        with_pi.add(locked(source, ItemKind::PiExtension, "@vg/pi-qol"));
+        let report = check_scope(false, &with_pi, CheckOptions::default()).unwrap();
+        assert!(
+            report.source_issues.iter().any(|i| matches!(
+                &i.problem,
+                SourceProblem::Discovery { failures } if failures.iter().any(|f| f.contains("pi-hooks"))
+            )),
+            "{report:?}"
+        );
+        assert!(report.has_drift(), "{report:?}");
+
+        // Control: a malformed SKILL is still this skill-only scope's drift.
+        write_skill(source, "beta", "two");
+        std::fs::write(
+            source.join("skills").join("beta").join("SKILL.md"),
+            "no frontmatter here\n",
+        )
+        .unwrap();
+        let report = check_scope(false, &skills_only, CheckOptions::default()).unwrap();
+        assert!(
+            report.source_issues.iter().any(|i| matches!(
+                &i.problem,
+                SourceProblem::Discovery { failures } if failures.iter().any(|f| f.contains("beta"))
+            )),
+            "{report:?}"
+        );
+        assert!(
+            report.source_issues.iter().all(|i| !matches!(
+                &i.problem,
+                SourceProblem::Discovery { failures } if failures.iter().any(|f| f.contains("pi-hooks"))
+            )),
+            "the unrelated kind stays out of it: {report:?}"
+        );
+        assert!(report.has_drift(), "{report:?}");
+    });
+}
+
 #[test]
 fn names_that_would_escape_the_install_roots_are_rejected_for_every_kind() {
     // A crafted lock must not make the session-start check probe outside

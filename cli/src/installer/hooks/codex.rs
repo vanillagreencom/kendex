@@ -461,9 +461,18 @@ fn toml_assignment_value(line: &str) -> Option<&str> {
 /// Fallback path for codex hooks whose event has no codex equivalent — append a
 /// safety advisory to every agent's developer_instructions block. Matches the
 /// original (pre-native) behavior.
-/// Returns whether any agent TOML now carries this hook's safety block. A
-/// scope with no Codex agents produces nothing at all — there is no artifact
-/// to make, and none for `check` to demand until an agent exists.
+///
+/// `Ok(true)` means EVERY eligible agent carries this hook's safety block. An
+/// agent whose TOML exists but offers no `developer_instructions` string to
+/// append to is an `Err` naming the agent and its file, never a skipped entry:
+/// accumulating success across agents let one agent that already carried the
+/// marker report the install done while a newly added agent silently received
+/// no safety prose at all. A malformed agent TOML is a real condition a user
+/// must fix, and every caller propagates the error.
+///
+/// A scope with no Codex agent TOMLs produces nothing at all, and `Ok(false)`
+/// says so — there is no artifact to make, and none for `check` to demand
+/// until an agent exists.
 fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Result<bool> {
     validate_item_name(&hook.name)?;
     let agents_dir = Harness::Codex.agents_dir(global);
@@ -471,6 +480,7 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
         return Ok(false);
     }
 
+    let marker = codex_hook_safety_marker(&hook.name);
     let mut wrote = false;
     for agent in agents {
         validate_item_name(&agent.name)?;
@@ -480,22 +490,36 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
         }
 
         let content = std::fs::read_to_string(&toml_path)?;
-        if content.contains(&codex_hook_safety_marker(&hook.name)) {
+        if content.contains(&marker) {
             wrote = true;
             continue;
         }
 
-        if let Some(close_pos) = content.rfind("'''") {
-            let mut new_content = content[..close_pos].to_string();
-            new_content.push('\n');
-            new_content.push_str(&codex_hook_safety_block(hook));
-            new_content.push('\n');
-            new_content.push_str(&content[close_pos..]);
-            // Only claim the install when the marker presence checking looks
-            // for is actually in the bytes we wrote.
-            wrote |= new_content.contains(&codex_hook_safety_marker(&hook.name));
-            std::fs::write(&toml_path, new_content)?;
+        let Some(close_pos) = content.rfind("'''") else {
+            anyhow::bail!(
+                "Codex agent `{}` has no developer_instructions block to carry the `{}` hook's safety prose: {}",
+                agent.name,
+                hook.name,
+                toml_path.display()
+            );
+        };
+        let mut new_content = content[..close_pos].to_string();
+        new_content.push('\n');
+        new_content.push_str(&codex_hook_safety_block(hook));
+        new_content.push('\n');
+        new_content.push_str(&content[close_pos..]);
+        // Only claim the install when the marker presence checking looks for
+        // is actually in the bytes about to be written.
+        if !new_content.contains(&marker) {
+            anyhow::bail!(
+                "the `{}` hook's safety block carries no `{marker}` marker for Codex agent `{}`: {}",
+                hook.name,
+                agent.name,
+                toml_path.display()
+            );
         }
+        std::fs::write(&toml_path, new_content)?;
+        wrote = true;
     }
 
     Ok(wrote)
