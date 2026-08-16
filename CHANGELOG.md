@@ -95,6 +95,9 @@
   session (create exit 75) and launches the rest, instead of aborting the
   batch; the summary line reports launched/skipped/failed, exit 75 when every
   item was owned.
+- tools/ci: vstack adopts its own size-ratchet — tracked baseline + excludes
+  under `tools/`, enforced PR-time in the preflight job and locally by the
+  pre-commit lane; the 1000-line bar has a machine enforcer again (VST-248).
 - orch: `PR_REVIEW_QUORUM` — approval-wait's multi-bot enqueue gate. When a
   repo lists its reviewer logins, no success emits (either mode) until every
   listed login has a non-dismissed review pinned to the current head AND

@@ -325,6 +325,10 @@ jobs:
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: skills/preflight/scripts/preflight --base "origin/$BASE_REF"
+      # Tighten-only file-size gate against tools/size-ratchet-baseline.tsv +
+      # tools/size-ratchet-excludes; reads tracked files at HEAD only.
+      - name: size-ratchet (tighten-only file-size gate)
+        run: skills/size-ratchet/scripts/size-ratchet
 
   cli-tests:
     name: CLI (cargo test + integration check)
