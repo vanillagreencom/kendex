@@ -34,6 +34,11 @@
   sides of an in-place rewrite of one line and, across a release rotation,
   lands a rebased bullet under the new heading: read the Unreleased list after
   a rebase, and rotate a release only with no PR open.
+- orch: pruning a lane claim re-enumerates the tmux server once per pass
+  before deleting a same-server miss, and keeps the snapshot it already had
+  when that re-enumeration fails — a claim another launcher wrote after the
+  first `list-panes` looked dead on this server and was deleted, handing a
+  running account straight back out (VST-296).
 - review-gate/size-ratchet: settings resolution fails closed on a source it
   cannot read. `-f` and `-e` both pass on an existing mode-000 file, so only
   the read itself sees it: `grep` failed, the resolver read that as "no
