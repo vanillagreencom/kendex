@@ -54,7 +54,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
 # shellcheck source=lib/vstack-env.sh
 source "$SCRIPT_DIR/lib/vstack-env.sh"
@@ -208,7 +208,7 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 orch_sanitize_gh_env
 if ! orch_github_auth_status; then
   unset GH_TOKEN GITHUB_TOKEN
-  { [[ -n "$PROJECT_ROOT" ]] && orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } \
+  { orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } \
     || die "no working GitHub auth path (tried env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN). Run: gh auth login"
 fi
 
