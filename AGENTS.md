@@ -42,7 +42,7 @@ pi-extensions/           Default Pi extension packages dir (npm-shaped). package
 skill-templates/         Templates for new skills
 ```
 
-Seam map and sequenced split plan for the two largest modules (`project_config.rs`, `installer.rs`): [docs/cli-module-decomposition.md](docs/cli-module-decomposition.md).
+Seam map and sequenced split plan for `project_config.rs` and `installer.rs`: [docs/cli-module-decomposition.md](docs/cli-module-decomposition.md).
 
 ## Key Design Decisions
 

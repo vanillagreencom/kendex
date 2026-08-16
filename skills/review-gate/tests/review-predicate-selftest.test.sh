@@ -30,18 +30,41 @@ work="$(mktemp -d)"
 # the scratch dir out from under the replays still running against it.
 # Each replay leads its own process group (see replay()), so signalling the
 # GROUP reaches the selftest and its gh-shim/jq descendants; signalling the
-# recorded pid alone reaches only the subshell.
-replay_pids=""
+# leader alone reaches only the subshell.
 torn_down=""
-teardown() {
-  if [ -n "$torn_down" ]; then
-    return 0
-  fi
-  torn_down=1
-  for p in $replay_pids; do
-    kill -TERM "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true
+# The targets come from bash's own job table, never from a list we keep:
+# bash reaps exited background children on SIGCHLD, long before any wait, so
+# a remembered pid can be a number the OS has already handed to someone else
+# — and TERM to a recycled leader hits that whole unrelated group. `jobs -pr`
+# lists running jobs only, and lists them from the moment of the fork, so it
+# also cannot miss a replay signalled between its launch and its bookkeeping.
+signal_replays() {
+  local p
+  for p in $(jobs -pr); do
+    kill "-$1" "-$p" 2>/dev/null || kill "-$1" "$p" 2>/dev/null || true
   done
-  wait 2>/dev/null || true
+}
+# settle — wait for the replay jobs to clear, but only for a budget: a member
+# that ignores TERM must not hang the run's exit.
+settle() {
+  local i=0
+  while [ -n "$(jobs -pr)" ]; do
+    i=$((i + 1))
+    if [ "$i" -gt 100 ]; then
+      return 1
+    fi
+    sleep 0.05
+  done
+  return 0
+}
+teardown() {
+  if [ -z "$torn_down" ]; then
+    torn_down=1
+    signal_replays TERM
+    settle || { signal_replays KILL; settle || true; }
+  fi
+  # Outside the guard: a second signal during the settle above re-enters
+  # here, and the scratch dir has to go on that path too.
   rm -rf "$work"
 }
 # EXIT keeps the run's own status; only the signal paths exit 130.
@@ -79,7 +102,6 @@ replay() {
     wait "$child" || rc=$?
     echo "$rc" >"$work/$label.rc"
   ) </dev/null >"$work/$label.out" 2>&1 &
-  replay_pids="$replay_pids $!"
   set +m
 }
 # passed LABEL — the recorded exit status of that replay was 0. A missing
@@ -389,11 +411,6 @@ replay deadglob "$work/deadglob"
 # Bare `wait` returns 0 regardless of the children's statuses; each replay's
 # own status is in its .rc file.
 wait
-# Every replay has exited, so nothing here is teardown's to signal any more.
-# Dropping the pids keeps the exit path from sending TERM to whatever the OS
-# has since handed those numbers to — this battery forks tens of thousands
-# of times, so recycled pids are not hypothetical.
-replay_pids=""
 chmod 644 "$work/cyclic/unreadable.settings.toml"
 
 # --- layer 1: built-in defaults ---------------------------------------------

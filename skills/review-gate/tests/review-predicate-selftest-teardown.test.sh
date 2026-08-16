@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # The wrapper launches its full-decision-table replays from inside the
 # fixture blocks, so an early exit from a later block leaves replays running.
-# This proves the wrapper's teardown owns the whole replay TREE: after a
-# forced early exit, no replay descendant survives — not the selftest, and
-# not the layer below it that a per-pid kill cannot reach.
+# This proves the wrapper's teardown owns the whole replay TREE — the
+# selftest and the layer below it that a per-pid kill cannot reach — on both
+# arms that reach teardown: an early exit, and a signal.
 #
-# Both variants are the wrapper itself, edited by exact line, so what is
-# proven is the shipped teardown and not a copy of its shape. The second
-# variant removes teardown's pid tracking and its wait — the pre-fix
-# behaviour — and must leave survivors, so the first variant's green is
-# never a check that cannot fail.
+# Every variant is the wrapper itself, edited by exact line, so what is
+# proven is the shipped teardown and not a copy of its shape. Three of them
+# exist to make the other two falsifiable: with teardown's signalling
+# removed, with its group kill narrowed to a per-pid kill, and with the
+# post-launch `set +m` removed, the assertions below must go red.
 #
-# Deterministic by construction: the injected abort blocks until the probe
-# tree has recorded itself, and teardown waits for every replay before it
-# returns, so survivors are counted after the last descendant is reaped,
-# never in a race with it.
+# The abort fires after TWO replays are outstanding, so teardown's loop is
+# proven past n=1, and survivors are polled to zero against a deadline
+# rather than sampled once — bash's own wait reaps only the replay subshell,
+# never the descendant being counted.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,28 +30,54 @@ marker="rg-teardown-$$"
 export RG_TEARDOWN_PIDS="$work/pids"
 export RG_TEARDOWN_READY="$work/ready"
 export RG_TEARDOWN_TIMEOUT="$work/timeout"
+# Two replays, each a probe plus its descendant.
+export RG_TEARDOWN_EXPECT=4
 : >"$RG_TEARDOWN_PIDS"
+JOBCONTROL_MARK="JOBCONTROL-LEFT-ENABLED"
 
-# Recorded pids that are still running AS THIS PROBE TREE. Matching the
-# marker in argv as well as the pid means a reused pid cannot read as a
-# survivor.
+# is_ours PID — still running AND still carrying our marker in argv. Every
+# read and every kill goes through this, so a recycled number can neither
+# read as a survivor nor be killed by this test's own cleanup.
+is_ours() {
+  case "$(ps -p "$1" -o args= 2>/dev/null || true)" in
+    *"$marker"*) return 0 ;;
+  esac
+  return 1
+}
+
 alive() {
-  local n=0 p args
+  local n=0 p
   while read -r p; do
     [ -n "$p" ] || continue
-    args="$(ps -p "$p" -o args= 2>/dev/null || true)"
-    case "$args" in
-      *"$marker"*) n=$((n + 1)) ;;
-    esac
+    if is_ours "$p"; then
+      n=$((n + 1))
+    fi
   done <"$RG_TEARDOWN_PIDS"
+  echo "$n"
+}
+
+# alive_settled — alive() polled to zero against a deadline, echoing what
+# remained. kill(2) queues the signal to every group member before it
+# returns, but the members still have to run; sampling once would race that.
+alive_settled() {
+  local i=0 n
+  n="$(alive)"
+  while [ "$n" -ne 0 ] && [ "$i" -lt 60 ]; do
+    i=$((i + 1))
+    sleep 0.05
+    n="$(alive)"
+  done
   echo "$n"
 }
 
 reap() {
   [ -f "$RG_TEARDOWN_PIDS" ] || return 0
+  local p
   while read -r p; do
     [ -n "$p" ] || continue
-    kill -KILL "$p" 2>/dev/null || true
+    if is_ours "$p"; then
+      kill -KILL "$p" 2>/dev/null || true
+    fi
   done <"$RG_TEARDOWN_PIDS"
 }
 trap 'reap; rm -rf "$work"' EXIT
@@ -62,7 +88,7 @@ descendant="$work/bin/$marker-descendant"
 waiter="$work/bin/$marker-wait"
 
 # The selftest stand-in. Its descendant stands for the gh-shim/jq layer:
-# a child of the selftest, two levels below the pid the wrapper records.
+# a child of the selftest, two levels below the job the wrapper signals.
 cat >"$probe" <<PROBE
 #!/usr/bin/env bash
 echo \$\$ >>"\$RG_TEARDOWN_PIDS"
@@ -70,20 +96,19 @@ echo \$\$ >>"\$RG_TEARDOWN_PIDS"
 wait
 PROBE
 # The loop keeps this alive without leaving a long sleep behind when the
-# leaking variant's survivors are reaped by pid.
+# leaking variants' survivors are reaped by pid.
 cat >"$descendant" <<'DESCENDANT'
 #!/usr/bin/env bash
 echo $$ >>"$RG_TEARDOWN_PIDS"
-: >"$RG_TEARDOWN_READY"
 while :; do sleep 1; done
 DESCENDANT
-# Ready means BOTH pids are recorded, so the abort below always fires
-# against a fully-up tree. A timeout leaves a marker instead of letting the
-# survivor count pass on a tree that never started.
+# Both replay trees must be fully recorded before the abort fires, or the
+# survivor counts would be measuring a tree that never started. A timeout
+# leaves a marker rather than letting that pass quietly.
 cat >"$waiter" <<'WAITER'
 #!/usr/bin/env bash
 i=0
-while [ ! -f "$RG_TEARDOWN_READY" ]; do
+while [ "$(grep -c . "$RG_TEARDOWN_PIDS" || true)" -lt "$RG_TEARDOWN_EXPECT" ]; do
   i=$((i + 1))
   if [ "$i" -gt 400 ]; then
     : >"$RG_TEARDOWN_TIMEOUT"
@@ -95,82 +120,158 @@ WAITER
 chmod +x "$probe" "$descendant" "$waiter"
 
 # The exact wrapper lines each edit rewrites. A miss is not silent: awk
-# records how many times each fired and the counts are asserted below.
+# records how many times each fired and the counts are asserted per variant.
 L_SELFTEST='SELFTEST="$(cd "$TEST_DIR/../scripts" && pwd)/review-predicate-selftest.sh"'
-L_ABORT='replay defaults "$work/defaults"'
-L_RECORD='  replay_pids="$replay_pids $!"'
-L_WAIT='  wait 2>/dev/null || true'
+L_ABORT='replay modetypo "$work/modetypo" REVIEW_GATE_MODE=offf'
+L_SIGNAL='    signal_replays TERM'
+L_SETTLE='    settle || { signal_replays KILL; settle || true; }'
+L_KILL='    kill "-$1" "-$p" 2>/dev/null || kill "-$1" "$p" 2>/dev/null || true'
+L_SETPLUSM='  set +m'
 
-# variant OUT NEUTER — the wrapper with its selftest replaced by the probe
-# and an abort injected right after the first replay launch; NEUTER=1 also
-# strips teardown's pid tracking and its wait.
+# variant OUT MODE LEAK PERPID NOJC — the wrapper with its selftest replaced
+# by the probe and an abort injected once two replays are outstanding. MODE
+# exit takes the early-exit arm, MODE signal takes the INT/TERM arm. The
+# three flags neuter, in turn, teardown's signalling, its group kill, and
+# the post-launch `set +m`.
 variant() {
-  local out="$1" neuter="$2"
-  awk -v stub="$probe" -v waiter="$waiter" -v neuter="$neuter" \
-      -v l_self="$L_SELFTEST" -v l_abort="$L_ABORT" \
-      -v l_rec="$L_RECORD" -v l_wait="$L_WAIT" -v counts="$out.counts" '
+  local out="$1" mode="$2" leak="$3" perpid="$4" nojc="$5"
+  awk -v stub="$probe" -v waiter="$waiter" -v mark="$JOBCONTROL_MARK" \
+      -v mode="$mode" -v leak="$leak" -v perpid="$perpid" -v nojc="$nojc" \
+      -v l_self="$L_SELFTEST" -v l_abort="$L_ABORT" -v l_signal="$L_SIGNAL" \
+      -v l_settle="$L_SETTLE" -v l_kill="$L_KILL" -v l_setplusm="$L_SETPLUSM" \
+      -v counts="$out.counts" '
     $0 == l_self { print "SELFTEST=\"" stub "\""; n_self++; next }
-    $0 == l_abort { print; print "\"" waiter "\""; print "exit 9"; n_abort++; next }
-    neuter == "1" && $0 == l_rec { print "  :"; n_rec++; next }
-    neuter == "1" && $0 == l_wait { print "  :"; n_wait++; next }
+    $0 == l_abort {
+      print
+      print "\"" waiter "\""
+      # Job control must be off again the moment replay() returns; the
+      # variant with `set +m` removed is what proves this can fail.
+      print "case \"$-\" in *m*) echo \"" mark "\" ;; esac"
+      if (mode == "signal") { print "kill -TERM $$"; print "exit 99" }
+      else { print "exit 9" }
+      n_abort++
+      next
+    }
+    leak == "1" && $0 == l_signal { print "    :"; n_leak1++; next }
+    leak == "1" && $0 == l_settle { print "    :"; n_leak2++; next }
+    perpid == "1" && $0 == l_kill { print "    kill \"-$1\" \"$p\" 2>/dev/null || true"; n_perpid++; next }
+    nojc == "1" && $0 == l_setplusm { print "  :"; n_nojc++; next }
     { print }
-    END { print (n_self + 0) " " (n_abort + 0) " " (n_rec + 0) " " (n_wait + 0) > counts }
+    END {
+      print (n_self + 0) " " (n_abort + 0) " " (n_leak1 + 0) " " (n_leak2 + 0) \
+        " " (n_perpid + 0) " " (n_nojc + 0) > counts
+    }
   ' "$WRAPPER" >"$out"
   chmod +x "$out"
 }
 
 # run VARIANT — a fresh probe tree per run; echoes the variant's exit status.
+# TMPDIR is a private empty dir so the variant's own scratch dir is the only
+# thing in it, which is what lets the caller assert teardown removed it.
 run_variant() {
   local script="$1" rc=0
   : >"$RG_TEARDOWN_PIDS"
   rm -f "$RG_TEARDOWN_READY" "$RG_TEARDOWN_TIMEOUT"
-  bash "$script" >"$script.out" 2>&1 || rc=$?
+  rm -rf "$script.tmpdir"
+  mkdir -p "$script.tmpdir"
+  TMPDIR="$script.tmpdir" bash "$script" >"$script.out" 2>&1 || rc=$?
   echo "$rc"
 }
 
-owning="$work/owning.test.sh"
-leaking="$work/leaking.test.sh"
-variant "$owning" 0
-variant "$leaking" 1
-owning_counts="$(cat "$owning.counts")"
-leaking_counts="$(cat "$leaking.counts")"
-[ "$owning_counts" = "1 1 0 0" ] \
-  || note "the owning variant's edits did not apply as expected (self abort record wait = $owning_counts) — the wrapper's lines moved"
-[ "$leaking_counts" = "1 1 1 1" ] \
-  || note "the leaking variant's edits did not apply as expected (self abort record wait = $leaking_counts) — the wrapper's lines moved"
+# started VARIANT — the run reached its abort with both trees up. Anything
+# else makes the survivor count below meaningless, so it is named, not
+# swallowed.
+started() {
+  local script="$1" rc="$2" want="$3" recorded left
+  if [ -f "$RG_TEARDOWN_TIMEOUT" ]; then
+    note "$(basename "$script"): the probe trees never came up within the abort's wait"
+    return 1
+  fi
+  if [ "$rc" != "$want" ]; then
+    cat "$script.out"
+    note "$(basename "$script"): expected exit $want, got $rc"
+    return 1
+  fi
+  recorded="$(grep -c . "$RG_TEARDOWN_PIDS" || true)"
+  if [ "$recorded" -lt "$RG_TEARDOWN_EXPECT" ]; then
+    note "$(basename "$script"): expected $RG_TEARDOWN_EXPECT recorded pids across two replay trees, got $recorded"
+    return 1
+  fi
+  # Teardown removes the scratch dir on every arm it reaches, re-entered or
+  # not, so the private TMPDIR must come back empty.
+  left="$(ls -A "$script.tmpdir" 2>/dev/null | wc -l)"
+  if [ "$left" -ne 0 ]; then
+    note "$(basename "$script"): teardown left its scratch dir behind"
+    return 1
+  fi
+  return 0
+}
+
+#       out                            mode    leak perpid nojc
+variant "$work/owning.test.sh"          exit    0    0      0
+variant "$work/signal.test.sh"          signal  0    0      0
+variant "$work/leaking.test.sh"         exit    1    0      0
+variant "$work/perpid.test.sh"          exit    0    1      0
+variant "$work/nojobcontrol.test.sh"    exit    0    0      1
+for spec in "owning 1 1 0 0 0 0" "signal 1 1 0 0 0 0" "leaking 1 1 1 1 0 0" \
+            "perpid 1 1 0 0 1 0" "nojobcontrol 1 1 0 0 0 1"; do
+  name="${spec%% *}"
+  want="${spec#* }"
+  got="$(cat "$work/$name.test.sh.counts")"
+  [ "$got" = "$want" ] \
+    || note "$name variant's edits did not apply as expected (got '$got', want '$want') — the wrapper's lines moved"
+done
 
 if [ "$fail" -eq 0 ]; then
-  # --- the assertion: an early exit leaves no replay descendant behind ----
-  rc="$(run_variant "$owning")"
-  recorded="$(grep -c . "$RG_TEARDOWN_PIDS" || true)"
-  survivors="$(alive)"
-  if [ -f "$RG_TEARDOWN_TIMEOUT" ]; then
-    note "the probe tree never came up within the abort's wait — the survivor count below would prove nothing"
-  elif [ "$rc" != "9" ]; then
-    cat "$owning.out"
-    note "the owning variant did not reach its injected abort (exit $rc)"
-  elif [ "$recorded" -lt 2 ]; then
-    note "expected the probe and its descendant to record 2 pids, got $recorded"
-  elif [ "$survivors" -ne 0 ]; then
-    note "teardown left $survivors replay descendant(s) running after an early exit"
+  # --- the early-exit arm: no replay descendant survives ------------------
+  rc="$(run_variant "$work/owning.test.sh")"
+  if started "$work/owning.test.sh" "$rc" 9; then
+    survivors="$(alive_settled)"
+    [ "$survivors" -eq 0 ] \
+      || note "teardown left $survivors replay descendant(s) running after an early exit"
+    if grep -q "$JOBCONTROL_MARK" "$work/owning.test.sh.out"; then
+      note "the wrapper left job control enabled after a replay launch — a terminal signal would reach the foreground command instead of teardown"
+    fi
   fi
 
-  # --- the control: the same check must SEE a leaked tree ----------------
-  rc="$(run_variant "$leaking")"
-  survivors="$(alive)"
-  if [ -f "$RG_TEARDOWN_TIMEOUT" ]; then
-    note "the probe tree never came up for the leaking variant"
-  elif [ "$rc" != "9" ]; then
-    cat "$leaking.out"
-    note "the leaking variant did not reach its injected abort (exit $rc)"
-  elif [ "$survivors" -eq 0 ]; then
-    note "a wrapper with teardown's pid tracking removed left no survivors — the survivor check cannot fail, so the assertion above is vacuous"
+  # --- the signal arm: the same, reached through the INT/TERM trap --------
+  rc="$(run_variant "$work/signal.test.sh")"
+  if started "$work/signal.test.sh" "$rc" 130; then
+    survivors="$(alive_settled)"
+    [ "$survivors" -eq 0 ] \
+      || note "teardown left $survivors replay descendant(s) running after a SIGTERM"
   fi
-  reap
+
+  # --- control: the survivor check must SEE a leaked tree -----------------
+  rc="$(run_variant "$work/leaking.test.sh")"
+  if started "$work/leaking.test.sh" "$rc" 9; then
+    survivors="$(alive)"
+    [ "$survivors" -eq "$RG_TEARDOWN_EXPECT" ] \
+      || note "a wrapper with teardown's signalling removed left $survivors of $RG_TEARDOWN_EXPECT descendants — the survivor check cannot fail across both trees, so the assertions above are vacuous"
+    reap
+  fi
+
+  # --- control: group semantics, not per-pid ------------------------------
+  rc="$(run_variant "$work/perpid.test.sh")"
+  if started "$work/perpid.test.sh" "$rc" 9; then
+    survivors="$(alive)"
+    [ "$survivors" -gt 0 ] \
+      || note "a wrapper signalling each replay's pid instead of its process group left no survivors — the group kill is no longer what reaches the descendants"
+    reap
+  fi
+
+  # --- control: the job-control probe must SEE a left-on -m ---------------
+  rc="$(run_variant "$work/nojobcontrol.test.sh")"
+  if started "$work/nojobcontrol.test.sh" "$rc" 9; then
+    grep -q "$JOBCONTROL_MARK" "$work/nojobcontrol.test.sh.out" \
+      || note "a wrapper with the post-launch 'set +m' removed did not trip the job-control probe — the probe cannot fail, so the check above is vacuous"
+    survivors="$(alive_settled)"
+    [ "$survivors" -eq 0 ] || reap
+  fi
 fi
 
 if [ "$fail" -ne 0 ]; then
   echo "review-predicate-selftest-teardown.test: FAIL"
   exit 1
 fi
-echo "pass: review-predicate-selftest teardown owns the replay tree"
+echo "pass: review-predicate-selftest teardown owns the replay tree (early-exit and signal arms)"
