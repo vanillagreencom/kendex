@@ -2888,7 +2888,13 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
 /// source over the ones already installed — the same refused-is-not-absent
 /// fail-open the refresh side closed.
 fn resolve_remembered_source(source: &str) -> Result<Option<PathBuf>> {
-    if Path::new(source).exists() {
+    // Ordered as `refresh` orders it: an absolute path that exists is that
+    // path, then the remote reading, then a relative one. A remote-shaped
+    // spelling that ALSO names a directory under the current working
+    // directory is the remote — otherwise a project holding an `owner/repo`
+    // subdirectory would silently install from it.
+    let path = Path::new(source);
+    if path.is_absolute() && path.exists() {
         return Ok(Some(std::fs::canonicalize(source)?));
     }
     if crate::refresh_sources::looks_like_remote_source(source) {
@@ -2898,6 +2904,9 @@ fn resolve_remembered_source(source: &str) -> Result<Option<PathBuf>> {
                 crate::refresh_sources::remote_source_display(source)
             )
         });
+    }
+    if path.exists() {
+        return Ok(Some(std::fs::canonicalize(source)?));
     }
     // A spelling that opens with a scheme is an attempt at a URL, so it names
     // something even when the strict parser cannot read it. Walking on would
@@ -2919,8 +2928,9 @@ fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
         }
         Some(source) => {
             anyhow::bail!(
-                "Source not found: {source}\n\
-                 Use a local path or GitHub shorthand (owner/repo)"
+                "Source not found: {}\n\
+                 Use a local path or GitHub shorthand (owner/repo)",
+                crate::refresh_sources::remote_source_display(source)
             );
         }
         None => {

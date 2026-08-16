@@ -882,6 +882,14 @@ fn hardened_cache_git_command(dir: &Path) -> std::process::Command {
     for key in GIT_CACHE_ONLY_ENV_VARS {
         command.env_remove(key);
     }
+    // A repository's `.git/hooks/` is a directory of programs git runs on its
+    // own behalf — `reference-transaction` on every ref a fetch writes,
+    // `post-checkout` on a reset — and unlike `core.hooksPath` it is not
+    // configuration any check can inspect. Command-line `-c` outranks the
+    // repository's config, so pointing the hook directory at a path that holds
+    // no hooks is what makes the whole class unreachable. vstack's own clone
+    // has no use for a hook.
+    command.args(["-c", "core.hooksPath=/dev/null"]);
     command
 }
 
@@ -1548,14 +1556,32 @@ fn spelling_allows_bare_username(source: &str) -> bool {
     })
 }
 
+/// The scheme names git could be handed, supported or refused. A refused one
+/// still names a transport — `git://` is a URL vstack will not use, not a
+/// directory.
+const TRANSPORT_SCHEMES: &[&str] = &[
+    "https", "http", "ssh", "git+ssh", "git", "file", "ftp", "ftps", "rsync",
+];
+
 /// Whether `source` is spelled as if it names a transport, however malformed.
 ///
-/// A string that opens with a scheme is an attempt at a URL, so it names
-/// SOMETHING: a caller walking past it because the strict parser could not
-/// read it would install from a different source than the one recorded — the
-/// same refused-is-not-absent fail-open closed everywhere else.
+/// A string that opens with a transport's scheme is an attempt at a URL, so it
+/// names SOMETHING: a caller walking past it because the strict parser could
+/// not read it would install from a different source than the one recorded —
+/// the same refused-is-not-absent fail-open closed everywhere else. The scheme
+/// must be a real one, because `:` is an ordinary character in a POSIX path
+/// and a missing local directory called `foo:bar` is a local candidate that
+/// names nothing, which is the one outcome the chain may walk past.
+///
+/// Deliberately stricter than the check [`spelling_allows_bare_username`]
+/// makes: over-redacting a diagnostic costs nothing, over-refusing a source
+/// costs the user their install.
 pub(crate) fn names_a_transport(source: &str) -> bool {
-    scheme_prefix(source.trim()).is_some()
+    scheme_prefix(source.trim()).is_some_and(|scheme| {
+        TRANSPORT_SCHEMES
+            .iter()
+            .any(|t| scheme.eq_ignore_ascii_case(t))
+    })
 }
 
 /// The `scheme:` a string opens with. A one-character scheme is a Windows

@@ -300,7 +300,11 @@
   but the settings `git clone` writes — checked as an allowlist, because the
   keys naming a program git runs on a repository's behalf (`core.fsmonitor`,
   `core.hooksPath`, a `filter.<driver>.smudge`) grow with git while the set a
-  clone writes does not, and `fetch`/`reset --hard` run them. A cache whose
+  clone writes does not, and `fetch`/`reset --hard` run them. Every cache
+  command additionally runs with `core.hooksPath` pinned at a directory holding
+  no hooks: an entry's own `.git/hooks/` is a directory of programs — git runs
+  `reference-transaction` for every ref a fetch writes — that no check on its
+  config or its location can see. A cache whose
   `core.worktree` pointed at a user checkout used to have that checkout's
   tracked files overwritten (VST-256). A
   Reading an entry asks every one of those questions too, not just the
@@ -325,8 +329,14 @@
   `src:!`. `add` no longer walks past a refused source to a different one: a
   credential, transport, ownership or clone failure on the source a project
   selected is an error naming it, not a silent fall-back that installs from
-  somewhere else — and a remembered source spelled as a URL is refused rather
-  than walked past when it is too malformed to parse as one. A failed fetch keeps the stale clone
+  somewhere else — and a remembered source spelled with a transport's scheme is
+  refused rather than walked past when it is too malformed to parse as a URL,
+  while a missing local path stays a candidate the chain may walk past, `:`
+  being an ordinary character in one. A remembered source that is remote-shaped
+  is read as the remote even when a directory of that name exists under the
+  current working directory, matching how `refresh` reads the same string.
+  `Source not found` goes through the redacting display like every other source
+  diagnostic. A failed fetch keeps the stale clone
   (warned once per source and message, not once per resolve); a failed reset is
   an error. Remote
   sources resolve to one cache entry per repository identity — every spelling

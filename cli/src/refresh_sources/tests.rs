@@ -2388,7 +2388,8 @@ fn a_malformed_url_still_names_a_transport() {
         assert!(names_a_transport(source), "{source}");
     }
     // A path names no transport, whatever it contains — a Windows drive letter
-    // is not a scheme.
+    // is not a scheme, and `:` is an ordinary character in a POSIX path, so a
+    // missing local directory stays a local candidate that names nothing.
     for source in [
         "/srv/checkouts/repo",
         "./vendor",
@@ -2397,9 +2398,61 @@ fn a_malformed_url_still_names_a_transport() {
         "",
         "C:/src/vstack",
         "owner/repo",
+        "foo:bar",
+        "notes:2026/vstack",
     ] {
         assert!(!names_a_transport(source), "{source}");
     }
+}
+
+/// A cache entry's `.git/hooks/` is a directory of programs git runs on its own
+/// behalf, and no check on the entry's config or location sees it: a fetch runs
+/// `reference-transaction` for every ref it writes.
+#[cfg(unix)]
+#[test]
+fn a_cache_entrys_own_git_hooks_never_run() {
+    let root = tmpdir("cache-hooks");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+    let cache = root.join("cache").join("owner_repo");
+    clone_into(&origin, &cache);
+    std::fs::write(origin.join("README.md"), "newer\n").unwrap();
+    git(&origin, &["commit", "-q", "-am", "update"]);
+
+    let marker = root.join("hook-ran");
+    for hook in ["reference-transaction", "post-checkout"] {
+        write_marker_program(&cache.join(".git/hooks").join(hook), &marker);
+    }
+
+    // Control: an unhardened fetch in this entry really does run the hook. Not
+    // asserted for success — running it is the point, and this hook aborts the
+    // ref transaction, which is exactly what a planted one can do.
+    let mut control = std::process::Command::new("git");
+    for key in GIT_INHERITED_ENV_VARS.iter().chain(GIT_CACHE_ONLY_ENV_VARS) {
+        control.env_remove(key);
+    }
+    let _ = control
+        .args(["fetch", "origin", "--quiet"])
+        .current_dir(&cache)
+        .output()
+        .unwrap();
+    assert!(
+        marker.exists(),
+        "the fixture must reproduce the execution for the assertion below to mean anything"
+    );
+    std::fs::remove_file(&marker).unwrap();
+    // And the entry is otherwise entirely ordinary: nothing else refuses it.
+    ensure_cache_entry_is_owned(&remote_at(&cache, &origin)).unwrap();
+
+    update_cached_repo(&remote_at(&cache, &origin)).unwrap();
+
+    assert!(!marker.exists(), "the cache entry's own git hook ran");
+    // The update still did its work.
+    assert_eq!(
+        std::fs::read_to_string(cache.join("README.md")).unwrap(),
+        "newer\n"
+    );
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// A bare `user@host` is an ssh remote's spelling and a token-only
