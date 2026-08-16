@@ -1334,6 +1334,35 @@ assert_eq "$rc33r" "1" "control: a padded bystander name is still not a harness"
 grep -q "harness not detected" "$TMP_ROOT/last.stderr" \
   || fail "control: the bystander session is not reported as undetected"
 
+echo "=== scenario 33g: a padded identity is still the same model ==="
+# Identities come from settings files where a stray space is invisible, and the
+# canonicalization patterns anchor on the first character: untrimmed, a LEADING
+# space makes " claude" compare unequal to the session's "claude" and leaves the
+# session's own model eligible — the cross-model guarantee off. A TRAILING space
+# is absorbed by those patterns, so the failure looks arbitrary rather than
+# absent; both spellings are asserted so neither can regress alone.
+for so_pad in " claude" "claude " "  claude  " "$(printf '\tclaude')"; do
+  reset_counts
+  rc33v=0
+  run_multi "$TMP_ROOT/out33v.json" SECOND_OPINION_CURRENT_MODEL=claude \
+    SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 \
+    SECOND_OPINION_CLAUDE_MODEL="$so_pad" || rc33v=$?
+  assert_eq "$rc33v" "0" "[$so_pad] the run proceeds on the cross-model lane"
+  assert_eq "$(count lane-claude)" "0" "[$so_pad] a padded per-target identity is still excluded as same-model"
+  assert_eq "$(count lane-codex)" "1" "[$so_pad] the cross-model target is the one that runs"
+done
+# ...and a padded SECOND_OPINION_CURRENT_MODEL behaves exactly like its
+# unpadded form, rather than falling through as an unknown identity.
+reset_counts
+rc33w=0
+run_multi "$TMP_ROOT/out33w.json" SECOND_OPINION_CURRENT_MODEL=" codex " \
+  SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33w=$?
+assert_eq "$rc33w" "0" "a padded session identity resolves instead of refusing"
+assert_eq "$(count lane-codex)" "0" "a padded session identity still excludes its own model"
+assert_eq "$(count lane-claude)" "1" "a padded session identity gets the cross-model target"
+grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" \
+  && fail "a padded session identity is wrongly treated as unspelled"
+
 echo "=== scenario 34: an explicitly empty roster refuses instead of silently defaulting ==="
 # `${VAR:-default}` would treat an emptied roster as unset and dispatch to the
 # very models the operator just removed.

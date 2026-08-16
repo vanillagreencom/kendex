@@ -554,7 +554,16 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 canon_identity() {
   local id
-  id=$(lower "$1")
+  # Trim FIRST. Identities arrive from settings files where a stray space is
+  # invisible, and the prefix patterns below anchor on the first character: a
+  # leading space makes ` claude` match no arm, fall through as itself, compare
+  # unequal to the session's `claude`, and leave the session's OWN model
+  # eligible — the cross-model guarantee silently off. (A trailing space is
+  # absorbed by the patterns' `*`, so untrimmed the failure looks arbitrary
+  # rather than absent.) Every identity passes through here — declared,
+  # detected, per-target and roster-derived — so trimming once covers them all.
+  id=$(vstack_trim "$1")
+  id=$(lower "$id")
   # Provider-qualified ids — openai-codex/gpt-5.6-sol, openai/gpt-5.6-sol,
   # anthropic/claude-opus-4 — are exactly what Pi and OpenCode show an operator,
   # and those are the operators REQUIRED to declare an identity. Canonicalize on

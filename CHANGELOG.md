@@ -202,7 +202,9 @@
   `vstack.settings.toml`, `.env`, `.vstack/settings.toml`, `.env.local` and any
   `.env.local.example` — and export it in the sessions that need it.
   Model ids also canonicalize with their provider prefix
-  (`openai-codex/gpt-5.6-sol` → codex, `anthropic/claude-opus-4` → claude). The
+  (`openai-codex/gpt-5.6-sol` → codex, `anthropic/claude-opus-4` → claude), and
+  surrounding whitespace is ignored — a stray space in a settings file no longer
+  makes an identity compare unequal and leave the session's own model eligible. The
   roster-spelling refusal applies only to DECLARED identities: a detected
   identity the roster does not name excludes nothing, so `SECOND_OPINION_MODELS`
   may name only the cross-model target. Set that roster to the empty string and
