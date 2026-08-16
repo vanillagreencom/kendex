@@ -394,10 +394,16 @@ detect_current_harness() {
   # harness that refuses until an identity is declared, and `codex*`/`claude*`
   # claim any wrapper script or monitor that happens to share the prefix. The
   # Cursor agent's own binary is `cursor-agent`.
+  #
+  # Exact matching makes the padding some `ps` implementations add (macOS among
+  # them) load-bearing, so the name is trimmed before it is compared: untrimmed,
+  # a padded "  claude  " matches nothing, falls through to `unknown`, and turns
+  # a formatting quirk into a hard refusal on that platform.
   local pid=$$
   local ancestor_cmd
   while pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') && [[ -n "$pid" && "$pid" != "0" && "$pid" != "1" ]]; do
     ancestor_cmd=$(ps -o comm= -p "$pid" 2>/dev/null || echo "")
+    ancestor_cmd="$(vstack_trim "$ancestor_cmd")"
     ancestor_cmd="${ancestor_cmd##*/}"
     case "$ancestor_cmd" in
       claude)       echo "claude"; return ;;
@@ -509,16 +515,48 @@ resolve_current_model() {
   esac
 }
 
+# Does $1 declare SECOND_OPINION_CURRENT_MODEL the way the LOADER would read it?
+# $2 is `toml` for a settings file, `env` for a shell env file. Naming a file
+# that did not actually supply the value sends the operator to edit the wrong
+# line, so this mirrors vstack_load_settings_file rather than grepping the whole
+# file: comments are skipped, and in a settings file only the [env] table counts
+# — vstack_load_settings_file reads no other table, so a same-named key under
+# one never became this value.
+file_declares_current_model() {
+  local file="$1" kind="$2" line trimmed in_env=1
+  [[ "$kind" != "toml" ]] || in_env=0
+  # `|| [[ -n "$line" ]]` so a final line with no trailing newline is still read.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="$(vstack_trim "$line")"
+    # Blank and comment lines. No test covers the comment arm on its own: the
+    # anchored match below already rejects anything starting with `#`, so this
+    # is the guard that keeps that true if the match ever loosens.
+    case "$trimmed" in ""|\#*) continue ;; esac
+    if [[ "$kind" == "toml" && "$trimmed" == \[*\] ]]; then
+      if [[ "$trimmed" == "[env]" ]]; then in_env=1; else in_env=0; fi
+      continue
+    fi
+    [[ $in_env -eq 1 ]] || continue
+    trimmed="${trimmed#export }"
+    trimmed="$(vstack_trim "$trimmed")"
+    case "$trimmed" in
+      SECOND_OPINION_CURRENT_MODEL=*|SECOND_OPINION_CURRENT_MODEL[[:space:]]*=*) return 0 ;;
+    esac
+  done < "$file"
+  return 1
+}
+
 # The project settings file(s) that define SECOND_OPINION_CURRENT_MODEL, for the
 # refusal message — an operator cannot remove a value whose file they were not
 # told. Same set vstack_load_project_env reads, in its load order. Only ever
 # called on a refusal path.
 declaring_project_files() {
-  local f found=""
+  local f kind found=""
   for f in "$PROJECT_ROOT/.env" "$PROJECT_ROOT/vstack.settings.toml" \
            "$PROJECT_ROOT/.vstack/settings.toml" "$PROJECT_ROOT/.env.local"; do
     [[ -f "$f" ]] || continue
-    if grep -Eq '^[[:space:]]*(export[[:space:]]+)?SECOND_OPINION_CURRENT_MODEL[[:space:]]*=' "$f" 2>/dev/null; then
+    case "$f" in *.toml) kind="toml" ;; *) kind="env" ;; esac
+    if file_declares_current_model "$f" "$kind"; then
       found="${found:+$found, }$f"
     fi
   done
@@ -704,6 +742,14 @@ SESSION_REFUSED=false
 SESSION_SKIP_REASON=""
 SESSION_DECLARING_FILES=""
 [[ "$CURRENT_MODEL_SOURCE" != "project" ]] || SESSION_DECLARING_FILES="$(declaring_project_files)"
+# Where the value came from, in the refusal's own words. When no file can be
+# shown to have supplied it, say that rather than naming one on suspicion — the
+# operator would edit a line that is not the cause.
+if [[ -n "$SESSION_DECLARING_FILES" ]]; then
+  SESSION_DECLARED_IN="project settings ($SESSION_DECLARING_FILES)"
+else
+  SESSION_DECLARED_IN="outside this session's environment (no project settings file was found to declare it)"
+fi
 if [[ -z "$CURRENT_MODEL" ]]; then
   # No identity to compare against: no target can be shown to be a different
   # model, so none can be taken.
@@ -717,10 +763,10 @@ elif [[ "$CURRENT_MODEL_SOURCE" == "project" ]]; then
     claude|codex)
       # Only a CONTRADICTION reaches here: a project value agreeing with
       # detection was reclassified as detected in resolve_current_model.
-      SESSION_SKIP_REASON="project settings declare model $CURRENT_MODEL but this session is a detected $CURRENT_HARNESS harness${SESSION_DECLARING_FILES:+ (declared in $SESSION_DECLARING_FILES)} — SECOND_OPINION_CURRENT_MODEL is session-scoped and cannot be right for every session in one repo; remove it there and export it in the environment of the sessions that need it (Pi, OpenCode, Cursor)"
+      SESSION_SKIP_REASON="model $CURRENT_MODEL is declared in $SESSION_DECLARED_IN but this session is a detected $CURRENT_HARNESS harness — SECOND_OPINION_CURRENT_MODEL is session-scoped and cannot be right for every session in one repo; remove it there and export it in the environment of the sessions that need it (Pi, OpenCode, Cursor)"
       ;;
     *)
-      SESSION_SKIP_REASON="model $CURRENT_MODEL comes from project settings${SESSION_DECLARING_FILES:+ ($SESSION_DECLARING_FILES)}, not from this session, and $CURRENT_HARNESS fronts a selectable model that detection cannot check it against — remove it there and export SECOND_OPINION_CURRENT_MODEL in this session's environment"
+      SESSION_SKIP_REASON="model $CURRENT_MODEL is declared in $SESSION_DECLARED_IN rather than in this session, and $CURRENT_HARNESS fronts a selectable model that detection cannot check it against — remove it there and export SECOND_OPINION_CURRENT_MODEL in this session's environment"
       ;;
   esac
 fi
@@ -775,9 +821,9 @@ if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
   if $SKIPPED_UNAVAILABLE && ! $SKIPPED_SAME_MODEL && ! $SESSION_REFUSED; then
     echo "→ every candidate was skipped for availability, not identity — install the CLI or set its SECOND_OPINION_<NAME>_CMD; SECOND_OPINION_CURRENT_MODEL is not the setting to change here" >&2
   fi
-  # A force that came from project settings rather than the command line is a
-  # seeded value nobody typed today: name what the roster would have picked so
-  # the settings fix is one edit. Only when the force is what refused — a
+  # A force from project settings rather than the command line is a repo-wide
+  # value, not a choice made for this invocation: name what the roster would
+  # have picked so the settings fix is one edit. Only when the force is what refused — a
   # session whose own identity is undeclared or unspelled is fixed by a
   # different key, and the pick this walk would name is computed from that same
   # untrustworthy identity.

@@ -980,7 +980,7 @@ if $ANCESTOR_VISIBLE; then
   assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "the contradiction invokes no CLI"
   assert_file_absent "$TMP_ROOT/out33.json" "the contradiction writes no artifact"
   grep -q "detected claude harness" "$TMP_ROOT/last.stderr" || fail "the refusal does not name the detected harness"
-  grep -q "declare model codex" "$TMP_ROOT/last.stderr" || fail "the refusal does not name the declared model"
+  grep -q "model codex is declared in" "$TMP_ROOT/last.stderr" || fail "the refusal does not name the declared model"
   # `none` is a contradiction too: in a detected Claude session it would make
   # claude eligible, which is the whole failure mode
   reset_counts
@@ -1060,7 +1060,7 @@ if $ANCESTOR_VISIBLE; then
     assert_eq "$rc33g" "1" "($s33_h) a project-sourced identity exits 1"
     assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "($s33_h) a project-sourced identity invokes no CLI"
     assert_file_absent "$TMP_ROOT/out33.json" "($s33_h) a project-sourced identity writes no artifact"
-    grep -q "comes from project settings" "$TMP_ROOT/last.stderr" \
+    grep -q "is declared in project settings" "$TMP_ROOT/last.stderr" \
       || fail "($s33_h) the refusal does not say the value came from project settings"
     grep -q "$s33_proj/vstack.settings.toml" "$TMP_ROOT/last.stderr" \
       || fail "($s33_h) the refusal does not name the file the value came from"
@@ -1103,7 +1103,7 @@ if $ANCESTOR_VISIBLE; then
   assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "an empty caller value invokes no CLI"
   grep -q "model undeclared" "$TMP_ROOT/last.stderr" \
     || fail "an empty caller value is not reported as undeclared"
-  grep -q "comes from project settings" "$TMP_ROOT/last.stderr" \
+  grep -q "is declared in project settings" "$TMP_ROOT/last.stderr" \
     && fail "an empty caller value is wrongly treated as the project file's declaration"
   # control: the same session with the value actually exported proceeds
   reset_counts
@@ -1137,6 +1137,117 @@ if $ANCESTOR_VISIBLE; then
 else
   echo "  skip  scenario 33: ps hides script ancestors on this platform"
 fi
+
+echo "=== scenario 33c: only the [env] table of a settings file declares the key ==="
+# vstack_load_settings_file reads no other table and skips comments, so naming a
+# file on a bare textual match sends the operator to edit a line that never
+# supplied the value.
+if $ANCESTOR_VISIBLE; then
+  # .env really supplies the value (it is sourced wholesale), while the settings
+  # file only MENTIONS the key — commented under [env], and under a table the
+  # loader never reads. The refusal must name .env and only .env.
+  reset_counts
+  rm -f "$TMP_ROOT/out33.json" "$s33_proj/.env.local"
+  printf 'export SECOND_OPINION_CURRENT_MODEL=codex\n' > "$s33_proj/.env"
+  printf '[env]\n# SECOND_OPINION_CURRENT_MODEL = "claude"\nUNRELATED = "1"\n\n[notes]\nSECOND_OPINION_CURRENT_MODEL = "claude"\n' \
+    > "$s33_proj/vstack.settings.toml"
+  rc33p=0
+  run_s33 pi SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33p=$?
+  assert_eq "$rc33p" "1" "a project-sourced value from .env still refuses the Pi session"
+  grep -q "$s33_proj/.env" "$TMP_ROOT/last.stderr" \
+    || fail "the refusal does not name the file that really declared the key"
+  grep -q "vstack.settings.toml" "$TMP_ROOT/last.stderr" \
+    && fail "the refusal names a file whose only mentions are a comment and a non-[env] table"
+  rm -f "$s33_proj/.env"
+
+  # And a key that is only mentioned, never loaded, leaves the session plainly
+  # undeclared — no file named at all.
+  for s33_shape in comment other-table; do
+    reset_counts
+    rm -f "$TMP_ROOT/out33.json" "$s33_proj/.env" "$s33_proj/.env.local"
+    case "$s33_shape" in
+      comment)     printf '[env]\n# SECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$s33_proj/vstack.settings.toml" ;;
+      other-table) printf '[env]\nUNRELATED = "1"\n\n[notes]\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$s33_proj/vstack.settings.toml" ;;
+    esac
+    rc33p=0
+    run_s33 pi SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33p=$?
+    assert_eq "$rc33p" "1" "($s33_shape) an unloaded key still refuses the undeclared Pi session"
+    grep -q "model undeclared" "$TMP_ROOT/last.stderr" \
+      || fail "($s33_shape) the refusal is not the plain undeclared one"
+    grep -q "vstack.settings.toml" "$TMP_ROOT/last.stderr" \
+      && fail "($s33_shape) the refusal names a file that did not supply the value"
+  done
+  # control: the same key under [env], uncommented, IS named
+  reset_counts
+  write_s33_settings codex
+  run_s33 pi SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || true
+  grep -q "$s33_proj/vstack.settings.toml" "$TMP_ROOT/last.stderr" \
+    || fail "control: a real [env] declaration is not named"
+else
+  echo "  skip  scenario 33c: ps hides script ancestors on this platform"
+fi
+
+echo "=== scenario 33d: a padded ps result still resolves to the harness ==="
+# Exact name matching makes `ps` padding (macOS among others) load-bearing:
+# untrimmed, "  claude  " matches nothing and the session falls through to
+# `unknown`, which now refuses. A stubbed `ps` earlier on PATH supplies the
+# padding this platform's real ps does not.
+mkdir -p "$TMP_ROOT/psbin"
+cat > "$TMP_ROOT/psbin/ps" <<'SH'
+#!/usr/bin/env bash
+# Minimal ps stand-in: one ancestor (pid 999) whose comm is padded, then init.
+mode=""; pid=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) mode="$2"; shift 2 ;;
+    -p) pid="$2"; shift 2 ;;
+    *)  shift ;;
+  esac
+done
+case "$mode" in
+  ppid=) if [[ "$pid" == "999" ]]; then printf ' 1\n'; else printf ' 999\n'; fi ;;
+  comm=) if [[ "$pid" == "999" ]]; then printf '   %s   \n' "${PS_FAKE_COMM:-bash}"; else printf '   bash   \n'; fi ;;
+esac
+SH
+chmod +x "$TMP_ROOT/psbin/ps"
+reset_counts
+rc33q=0
+set +e
+env -u SECOND_OPINION_CURRENT_MODEL -u CLAUDECODE -u CLAUDE_CODE -u CLAUDE_PROJECT_DIR \
+  -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED -u PI_CODING_AGENT_DIR \
+  -u OPENCODE -u CURSOR_AGENT -u CURSOR_TRACE_ID \
+  PATH="$TMP_ROOT/psbin:$PATH" PS_FAKE_COMM=claude \
+  SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 \
+  SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$TMP_ROOT/out33q.json" \
+  >/dev/null 2>"$TMP_ROOT/last.stderr"
+rc33q=$?
+set -e
+assert_eq "$rc33q" "0" "a padded ps ancestor name still resolves to a harness"
+assert_eq "$(count lane-claude)" "0" "the padded-name session never dispatches to its own model"
+assert_eq "$(count lane-codex)" "1" "the padded-name session gets the cross-model target"
+grep -q "harness not detected" "$TMP_ROOT/last.stderr" \
+  && fail "a padded ps name falls through to the undetected refusal"
+# control: the stub itself is what the script reads — a name it should NOT match
+# still leaves the session undetected
+reset_counts
+rc33r=0
+set +e
+env -u SECOND_OPINION_CURRENT_MODEL -u CLAUDECODE -u CLAUDE_CODE -u CLAUDE_PROJECT_DIR \
+  -u CODEX_SANDBOX -u CODEX_SANDBOX_NETWORK_DISABLED -u PI_CODING_AGENT_DIR \
+  -u OPENCODE -u CURSOR_AGENT -u CURSOR_TRACE_ID \
+  PATH="$TMP_ROOT/psbin:$PATH" PS_FAKE_COMM=codex-wrapper \
+  SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 \
+  SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$TMP_ROOT/out33r.json" \
+  >/dev/null 2>"$TMP_ROOT/last.stderr"
+rc33r=$?
+set -e
+assert_eq "$rc33r" "1" "control: a padded bystander name is still not a harness"
+grep -q "harness not detected" "$TMP_ROOT/last.stderr" \
+  || fail "control: the bystander session is not reported as undetected"
 
 echo "=== scenario 34: an explicitly empty roster refuses instead of silently defaulting ==="
 # `${VAR:-default}` would treat an emptied roster as unset and dispatch to the
