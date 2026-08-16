@@ -161,7 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: fine
-        run: echo "${{ github.sha }}"
+        run: echo "${{ github.sha }}" ${{ format('{{Hello {0}!}}', github.actor) }}
       - name: broken
         run: |
           set -euo pipefail

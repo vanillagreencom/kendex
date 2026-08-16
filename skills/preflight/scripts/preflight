@@ -345,6 +345,42 @@ def shell_of(node):
 def interpreter_of(shell):
     m = re.match(r"^(?:.*/)?(bash|sh)(?:\s|$)", shell.strip())
     return m.group(1) if m else None
+# GitHub expressions are replaced by a placeholder before parsing. Their
+# string literals are single-quoted with a doubled quote as the escape, so a
+# closing brace pair inside a literal (format with braces) does not end the
+# expression; a naive shortest-match regex would leave the tail of the
+# literal behind as shell text.
+def strip_expressions(text):
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        j = text.find("${{", i)
+        if j < 0:
+            out.append(text[i:])
+            break
+        out.append(text[i:j])
+        k = j + 3
+        while k < n:
+            c = text[k]
+            if c == "\x27":
+                k += 1
+                while k < n:
+                    if text[k] == "\x27":
+                        if k + 1 < n and text[k + 1] == "\x27":
+                            k += 2
+                            continue
+                        break
+                    k += 1
+                k += 1
+                continue
+            if text.startswith("}}", k):
+                k += 2
+                break
+            k += 1
+        out.append("X")
+        i = k
+    return "".join(out)
 # With no shell declared anywhere, GitHub runs bash on Linux/macOS runners and
 # PowerShell on Windows ones. An implicit shell is bash only when every
 # runs-on label is a plain ubuntu-* or macos-* label; an expression, a
@@ -403,7 +439,7 @@ for _, job in jobs.items():
         if run.style in ("|", ">"):
             first += 1
         folded = run.style == ">"
-        body = re.sub(r"\$\{\{.*?\}\}", "X", run.value, flags=re.S)
+        body = strip_expressions(run.value)
         with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as t:
             t.write(body)
             tmp = t.name

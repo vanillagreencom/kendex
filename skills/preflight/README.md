@@ -15,6 +15,7 @@ preflight: 1 finding(s) across 3 changed file(s)
 
 Exit codes: `0` clean, `1` findings, `2` usage or environment error.
 Requirements: `git`, `awk`, and the usual POSIX userland; `shellcheck`,
-`jq`, `taplo` and `python3` are each optional and each enable one lane.
+`jq`, `taplo` and `python3` (with PyYAML for the workflow lane) are each
+optional and each enable one lane.
 Bash 3.2 compatible. Lane table, scope rules, and wiring into validation,
 hooks and CI: [SKILL.md](SKILL.md).
