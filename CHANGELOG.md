@@ -19,11 +19,12 @@
 - size-ratchet: the collection loop measures worktree files in batched `wc`
   invocations instead of one process per file — 6.3s -> 0.8s on a tree
   measuring 9,325 files, 0.86s -> 0.09s on one measuring 1,454, with the
-  verdict byte-identical on both. Counts are matched to inputs by position,
-  so a batch that comes back short, out of order or non-numeric is discarded
-  and re-measured one file at a time: an unreadable or vanished file still
-  fails loud naming that file, and a count row is required for every file
-  selected.
+  verdict byte-identical on both. Counts are matched to inputs by position
+  and the summary row a multi-file `wc` appends is counted rather than
+  parsed, so a batch that comes back short, out of order or non-numeric is
+  discarded and re-measured one file at a time: an unreadable or vanished
+  file still fails loud naming that file, and a count row is required for
+  every file selected.
 - second-opinion: a multi-lane review run without `--output` no longer keeps
   its lane reviews in shared system temp (VST-241), and the lane umask no
   longer governs the external model CLI's own files (VST-243). Each lane's

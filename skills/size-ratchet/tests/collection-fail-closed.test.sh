@@ -157,6 +157,31 @@ exit 0
 EOF
 chmod +x "$WC_EMPTY_SHIM/wc"
 
+# wc shim: on a multi-file invocation drop the LAST file's row while still
+# printing the summary row and exiting 0 — the shape in which the summary
+# slides into the final input's slot. Single-file reads pass through, so
+# the per-file re-measurement still works.
+WC_DROPLAST_SHIM="$TMP/wc-droplast-shim"
+mkdir -p "$WC_DROPLAST_SHIM"
+cat >"$WC_DROPLAST_SHIM/wc" <<EOF
+#!/usr/bin/env bash
+files=0
+seen_sep=0
+for a in "\$@"; do
+  if [ "\$seen_sep" = 1 ]; then
+    files=\$((files + 1))
+    continue
+  fi
+  if [ "\$a" = "--" ]; then seen_sep=1; fi
+done
+if [ "\$files" -gt 1 ]; then
+  "$REAL_WC" "\$@" | "$REAL_AWK" '{ a[NR] = \$0 } END { for (i = 1; i <= NR; i++) if (i != NR - 1) print a[i] }'
+  exit 0
+fi
+exec "$REAL_WC" "\$@"
+EOF
+chmod +x "$WC_DROPLAST_SHIM/wc"
+
 # awk shim: die silently with status 1 on the --update counts scan (its
 # program uniquely contains the yes/no verdict print), delegating every
 # other awk. Exit 1 on purpose: awk reserves no status for "not found",
@@ -426,6 +451,27 @@ run_sr_shimmed "$WC_EMPTY_SHIM"
   && ok "an empty count is a collection error naming the file, never arithmetic zero" \
   || bad "an empty count is a collection error naming the file" "rc=$RC out=$OUT"
 case "$OUT" in *"size-ratchet: OK"*) bad "no OK verdict may accompany an empty count" "$OUT" ;; *) ok "no OK verdict accompanies the empty count" ;; esac
+
+echo "=== batching: the summary row is never read as a file's count ==="
+# A tracked file named exactly like the summary row wc appends, positioned
+# last in its batch: the one arrangement in which a lost final row lands
+# the batch SUM (12) in that file's slot and reports it as an offender.
+new_repo wctotal
+mkfile a.txt 8
+mkfile total 4
+git -C "$R" add -A
+run_sr
+[ "$RC" -eq 0 ] && case "$OUT" in *"OK — 2 tracked file(s) checked"*) true ;; *) false ;; esac \
+  && ok "shim-free control: both files pass at threshold 10" \
+  || bad "shim-free control: both files pass at threshold 10" "rc=$RC out=$OUT"
+run_sr_shimmed "$WC_DROPLAST_SHIM"
+[ "$RC" -eq 0 ] && case "$OUT" in *"OK — 2 tracked file(s) checked"*) true ;; *) false ;; esac \
+  && ok "a batch missing its last row is re-measured per file, never completed with the summary" \
+  || bad "a batch missing its last row is re-measured per file" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"new offender: total"*) bad "the batch sum must never become the count of the file named total" "$OUT" ;;
+  *) ok "the batch sum never becomes the count of the file named total" ;;
+esac
 
 echo "=== batching: every file in every batch keeps its own count ==="
 # The fixture holds more files than one batch carries, so the collection
