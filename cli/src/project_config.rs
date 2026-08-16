@@ -2689,37 +2689,26 @@ fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
     out = ensure_value_section_entry_spacing(&out);
     out = ensure_agent_frontmatter_scaffold(&out);
 
-    // Only write if content actually changed to avoid bumping mtime,
-    // which would make staleness checks flag everything as outdated.
+    // Only write if content actually changed — a no-op rewrite would dirty
+    // a consumer's tracked vstack.toml for nothing.
     write_if_changed(path, out, &existing);
 }
 
 /// Write `out` to `path` only when it differs from `existing`, so an
-/// unchanged config never has its mtime bumped (staleness checks key on it).
-/// The written text always ends in a line terminator — `\r\n` when the
-/// content is CRLF throughout, `\n` otherwise — so a file that lost its
+/// unchanged config is never rewritten (no needless working-tree churn).
+/// The written text always ends in a newline: a file that lost its
 /// terminator is repaired by the first pass that reads it, and every later
 /// pass sees identical content and skips the write. A failed write is
 /// reported, never swallowed — the caller's update would otherwise vanish
 /// behind a successful exit.
 fn write_if_changed(path: &Path, mut out: String, existing: &str) {
     if !out.is_empty() && !out.ends_with('\n') {
-        out.push_str(line_terminator(&out));
+        out.push('\n');
     }
     if out != existing
         && let Err(e) = std::fs::write(path, out)
     {
         eprintln!("warning: could not write {}: {e}", path.display());
-    }
-}
-
-/// `"\r\n"` when every line of `text` ends in CRLF, else `"\n"`.
-fn line_terminator(text: &str) -> &'static str {
-    let crlf = text.matches("\r\n").count();
-    if crlf > 0 && crlf == text.matches('\n').count() {
-        "\r\n"
-    } else {
-        "\n"
     }
 }
 
@@ -4719,31 +4708,6 @@ command = \"./scripts/x.sh\"\n";
             std::fs::metadata(&path).unwrap().modified().unwrap(),
             past,
             "identical content must not be rewritten"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn write_if_changed_heals_crlf_file_with_crlf() {
-        let dir = std::env::temp_dir().join(format!(
-            "vstack_test_write_if_changed_crlf_{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("vstack.toml");
-
-        let existing = "[a]\r\nx = 1";
-        std::fs::write(&path, existing).unwrap();
-        write_if_changed(&path, "[a]\r\nx = 2".to_string(), existing);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[a]\r\nx = 2\r\n");
-
-        // Mixed endings are not CRLF-throughout: plain LF is appended.
-        write_if_changed(&path, "[a]\r\nx = 3\ny = 4".to_string(), "");
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            "[a]\r\nx = 3\ny = 4\n"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
