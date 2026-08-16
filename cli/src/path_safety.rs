@@ -140,12 +140,10 @@ fn git_output_path(bytes: &[u8]) -> Option<PathBuf> {
 /// is not inside a Git repository or the answer cannot be resolved — callers
 /// fail closed.
 pub(crate) fn git_toplevel(dir: &Path) -> Option<PathBuf> {
-    // `.arg(dir)` passes the path as raw OS bytes — a non-UTF-8 path must
-    // not silently skip repository detection (to_str() would return None
-    // and defeat anchoring on a perfectly valid Unix path).
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    // The hardened constructor pins the working directory and drops the
+    // `GIT_DIR`/`GIT_WORK_TREE` family: an inherited override would answer for
+    // a different repository than the one being anchored against.
+    let output = crate::refresh_sources::hardened_git_command(dir)
         .args(["rev-parse", "--show-toplevel"])
         .output()
         .ok()?;
@@ -159,9 +157,7 @@ pub(crate) fn git_toplevel(dir: &Path) -> Option<PathBuf> {
 /// is not inside a Git repository, when git is unavailable, or when the answer
 /// cannot be resolved — every one of which must fail closed at the call site.
 pub(crate) fn git_common_dir(dir: &Path) -> Option<PathBuf> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let output = crate::refresh_sources::hardened_git_command(dir)
         .args(["rev-parse", "--git-common-dir"])
         .output()
         .ok()?;
@@ -186,9 +182,7 @@ pub(crate) fn git_common_dir(dir: &Path) -> Option<PathBuf> {
 /// git is unavailable, or when either answer cannot be resolved — callers
 /// must fail closed.
 pub(crate) fn git_repo_identity(dir: &Path) -> Option<(PathBuf, PathBuf)> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let output = crate::refresh_sources::hardened_git_command(dir)
         .args(["rev-parse", "--git-common-dir", "--show-toplevel"])
         .output()
         .ok()?;
@@ -700,5 +694,109 @@ mod tests {
         ensure_agents_dir_within_project(&root).unwrap();
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The name of the helper below, as libtest filters it.
+    const OVERRIDE_HELPER: &str = "path_safety::tests::git_location_override_helper";
+
+    fn temp_repo_root(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "vstack_{label}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    fn init_repo(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git init failed in {}", dir.display());
+    }
+
+    /// These three reads decide which repository an ownership boundary is
+    /// judged against, and git answers an inherited `GIT_DIR`/`GIT_WORK_TREE`
+    /// in preference to the directory it is pointed at — so an override
+    /// exported by whatever invoked vstack (a git hook, a shell) would anchor
+    /// every check to a repository the user never named.
+    ///
+    /// Proving that needs the override in a process's environment, and
+    /// mutating this one's would leak into every test running beside it. The
+    /// assertions therefore run in a child: this same test binary, re-invoked
+    /// for the ignored helper below with the overrides set.
+    #[test]
+    fn identity_reads_ignore_an_inherited_git_location_override() {
+        let root = temp_repo_root("git_location_override");
+        let anchored = root.join("anchored");
+        let elsewhere = root.join("elsewhere");
+        init_repo(&anchored);
+        init_repo(&elsewhere);
+
+        crate::test_util::run_test_helper(
+            OVERRIDE_HELPER,
+            &[
+                ("GIT_DIR", elsewhere.join(".git").as_os_str()),
+                ("GIT_WORK_TREE", elsewhere.as_os_str()),
+                // Answers `--git-common-dir` on its own, with the other two
+                // cleared, so the reads below bite for it too.
+                ("GIT_COMMON_DIR", elsewhere.join(".git").as_os_str()),
+                ("VSTACK_TEST_ANCHORED_REPO", anchored.as_os_str()),
+                ("VSTACK_TEST_ELSEWHERE_REPO", elsewhere.as_os_str()),
+            ],
+            None,
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[ignore = "driven by identity_reads_ignore_an_inherited_git_location_override, which supplies the repositories and the overrides"]
+    fn git_location_override_helper() {
+        // `None` only when run directly (`--ignored` with no driver); a
+        // driver that lost an env entry panics rather than asserting nothing.
+        let Some(anchored) = crate::test_util::helper_fixture("VSTACK_TEST_ANCHORED_REPO") else {
+            return;
+        };
+        let elsewhere = crate::test_util::helper_fixture("VSTACK_TEST_ELSEWHERE_REPO").unwrap();
+        let anchored = std::fs::canonicalize(PathBuf::from(anchored)).unwrap();
+        let elsewhere = std::fs::canonicalize(PathBuf::from(elsewhere)).unwrap();
+
+        // Control: an unhardened `git` in `anchored` answers for `elsewhere`,
+        // so the assertions below are about the hardening and not about an
+        // override that never took effect.
+        let unhardened = std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(&anchored)
+            .output()
+            .unwrap();
+        let unhardened = git_output_path(&unhardened.stdout)
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        assert_eq!(
+            unhardened, elsewhere,
+            "the fixture must actually redirect git for this test to prove anything"
+        );
+
+        assert_eq!(git_toplevel(&anchored), Some(anchored.clone()));
+        assert_eq!(
+            git_common_dir(&anchored),
+            Some(anchored.join(".git").canonicalize().unwrap())
+        );
+        assert_eq!(
+            git_repo_identity(&anchored),
+            Some((
+                anchored.join(".git").canonicalize().unwrap(),
+                anchored.clone()
+            ))
+        );
     }
 }

@@ -349,8 +349,15 @@ fn refresh_items_use_lock_source_for_colliding_names_and_mapping() {
 
     crate::test_util::with_project_root(&project, || {
         let mut project_config = ProjectConfig::default();
-        let stats =
-            refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+        let stats = refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        );
         assert_eq!(stats.agents_refreshed, 1);
         assert_eq!(stats.skills_refreshed, 1);
         assert_eq!(stats.hooks_refreshed, 1);
@@ -426,8 +433,15 @@ fn refresh_counts_content_changes_when_source_hashes_are_unchanged() {
     crate::test_util::with_project_root(&project, || {
         // First refresh: baseline install, no project instructions.
         let mut project_config = ProjectConfig::default();
-        let first =
-            refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+        let first = refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        );
         assert_eq!(first.agents_refreshed, 1);
         assert_eq!(first.skills_refreshed, 1);
 
@@ -450,8 +464,15 @@ fn refresh_counts_content_changes_when_source_hashes_are_unchanged() {
             .skill_instructions
             .insert("shared".into(), "Project-specific skill note.".into());
 
-        let second =
-            refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+        let second = refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        );
 
         // The generated artifacts actually changed on disk.
         let agent_after = std::fs::read_to_string(&agent_path).unwrap();
@@ -519,10 +540,25 @@ fn refresh_reports_no_content_change_on_idempotent_refresh() {
     crate::test_util::with_project_root(&project, || {
         let mut project_config = ProjectConfig::default();
         // Prime the install once.
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+        refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        );
         // Second refresh with identical inputs must detect no content change.
-        let again =
-            refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+        let again = refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        );
         assert!(
             again.content_changed.is_empty(),
             "idempotent refresh reported content changes: {:?}",
@@ -563,7 +599,15 @@ fn refresh_manages_project_owned_skill_instructions_without_a_lock_entry() {
         .skill_instructions
         .insert("unrelated".into(), "   ".into());
 
-    let first = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let first = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     let first_content = std::fs::read_to_string(&benchmark_path).unwrap();
     assert!(first.project_owned_skills.contains("benchmark"));
     assert!(first.content_changed.contains("benchmark"));
@@ -576,7 +620,15 @@ fn refresh_manages_project_owned_skill_instructions_without_a_lock_entry() {
         unrelated_config
     );
 
-    let again = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let again = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     assert!(again.project_owned_skills.contains("benchmark"));
     let again_content = std::fs::read_to_string(&benchmark_path).unwrap();
     assert_eq!(again_content, first_content);
@@ -589,8 +641,15 @@ fn refresh_manages_project_owned_skill_instructions_without_a_lock_entry() {
     project_config
         .skill_instructions
         .insert("benchmark".into(), "Updated project rule.".into());
-    let updated =
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let updated = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     let updated_content = std::fs::read_to_string(&benchmark_path).unwrap();
     assert!(updated.content_changed.contains("benchmark"));
     assert!(updated_content.contains("Updated project rule."));
@@ -602,13 +661,27 @@ fn refresh_manages_project_owned_skill_instructions_without_a_lock_entry() {
     );
 
     project_config.skill_instructions.remove("benchmark");
-    let removed =
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let removed = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     assert!(removed.content_changed.contains("benchmark"));
     assert_eq!(std::fs::read_to_string(&benchmark_path).unwrap(), original);
 
-    let removed_again =
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let removed_again = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     assert!(removed_again.project_owned_skills.is_empty());
     assert!(removed_again.content_changed.is_empty());
     assert_eq!(std::fs::read_to_string(&unrelated_path).unwrap(), unrelated);
@@ -731,7 +804,15 @@ fn refresh_rejects_symlinked_agents_ancestor_before_reading_outside_skill() {
     let lock = LockFile::default();
     let sources = Vec::new();
     let mut project_config = ProjectConfig::load_strict(&project).unwrap();
-    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let stats = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
 
     assert_eq!(stats.failures.len(), 1);
     assert_eq!(stats.failures[0].item, ".agents/skills");
@@ -801,8 +882,15 @@ fn refresh_accepts_agents_symlink_into_a_sibling_worktree_of_the_same_repo() {
     let lock = LockFile::default();
     let sources = Vec::new();
     let mut project_config = ProjectConfig::load_strict(&worktree).unwrap();
-    let stats =
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &worktree, None);
+    let stats = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &worktree,
+        None,
+        &Default::default(),
+    );
 
     assert!(
         stats.failures.is_empty(),
@@ -850,7 +938,15 @@ fn refresh_still_rejects_agents_symlink_into_a_different_repository() {
     let lock = LockFile::default();
     let sources = Vec::new();
     let mut project_config = ProjectConfig::load_strict(&project).unwrap();
-    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let stats = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
 
     assert_eq!(stats.failures.len(), 1);
     assert_eq!(stats.failures[0].item, ".agents/skills");
@@ -924,7 +1020,15 @@ fn refresh_items_reports_agent_write_failure_without_success() {
 
     let stats = crate::test_util::with_project_root(&project, || {
         let mut project_config = ProjectConfig::default();
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+        refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        )
     });
 
     assert_eq!(stats.agents_refreshed, 0);
@@ -973,7 +1077,15 @@ fn refresh_reports_items_missing_from_their_source_instead_of_skipping() {
 
     let stats = crate::test_util::with_project_root(&project, || {
         let mut project_config = ProjectConfig::default();
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+        refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        )
     });
 
     assert!(stats.has_missing());
@@ -1036,7 +1148,15 @@ fn refresh_fails_loud_when_a_lock_entry_yields_no_harness_install() {
 
     let stats = crate::test_util::with_project_root(&project, || {
         let mut project_config = ProjectConfig::default();
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+        refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        )
     });
 
     assert!(
@@ -1093,7 +1213,15 @@ fn prune_preserves_arrived_empty_hook_entry_for_loud_refresh_failure() {
 
     let stats = crate::test_util::with_project_root(&project, || {
         let mut project_config = ProjectConfig::default();
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+        refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        )
     });
     assert!(
         stats.failures.iter().any(|failure| failure.item == "guard"),
@@ -1172,7 +1300,15 @@ fn refresh_reports_missing_when_the_recorded_source_is_not_loaded() {
 
     let stats = crate::test_util::with_project_root(&project, || {
         let mut project_config = ProjectConfig::default();
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+        refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        )
     });
 
     assert_eq!(stats.skills_refreshed, 0);
@@ -1212,7 +1348,15 @@ fn refresh_reports_missing_instead_of_rebinding_a_vanished_source() {
 
     let stats = crate::test_util::with_project_root(&project, || {
         let mut project_config = ProjectConfig::default();
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+        refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        )
     });
 
     assert_eq!(stats.skills_refreshed, 0);
@@ -1318,7 +1462,15 @@ fn refresh_rejects_agent_name_that_escapes_output_dir() {
 
     let stats = crate::test_util::with_project_root(&project, || {
         let mut project_config = ProjectConfig::default();
-        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+        refresh_items_in_scope(
+            false,
+            &lock,
+            &sources,
+            &mut project_config,
+            &project,
+            None,
+            &Default::default(),
+        )
     });
 
     assert_eq!(stats.agents_refreshed, 0);
@@ -1365,7 +1517,15 @@ fn refresh_links_relocated_project_skills_into_agents() {
         .insert("benchmark".into(), "Project rule.".into());
 
     let link = project.join(".agents/skills/benchmark");
-    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let stats = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     assert!(
         stats.failures.is_empty(),
         "relocate-and-link refresh failed: {:?}",
@@ -1385,7 +1545,15 @@ fn refresh_links_relocated_project_skills_into_agents() {
     assert!(stats.project_owned_skills.contains("benchmark"));
 
     // Idempotent: an already-correct link is left exactly as it is.
-    let again = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let again = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     assert!(again.failures.is_empty());
     assert_eq!(
         std::fs::read_link(&link).unwrap(),
@@ -1422,7 +1590,15 @@ fn refresh_refuses_to_replace_a_real_directory_with_a_project_skills_link() {
         ..ProjectConfig::default()
     };
 
-    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let stats = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     assert!(
         stats.failures.iter().any(|f| f
             .error
@@ -1463,7 +1639,15 @@ fn refresh_still_refuses_an_unconfigured_link_out_of_the_skills_root() {
     let sources = Vec::new();
     let mut project_config = ProjectConfig::default(); // no project-skills-dir
 
-    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let stats = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     assert!(
         stats
             .failures
@@ -1491,7 +1675,15 @@ fn refresh_rejects_project_skills_dir_inside_agents() {
         ..ProjectConfig::default()
     };
 
-    let stats = refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None);
+    let stats = refresh_items_in_scope(
+        false,
+        &lock,
+        &sources,
+        &mut project_config,
+        &project,
+        None,
+        &Default::default(),
+    );
     assert!(
         stats
             .failures
@@ -1582,4 +1774,316 @@ fn seed_installed_skill_settings_seeds_consumer_projects() {
     assert!(lock.settings_seeds.contains_key("TUNER_MODE"));
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// A refused remote cache is a source that exists. The entry it backs is
+/// reported as not refreshed with the refusal as its reason, is never
+/// reinstalled from another loaded source, keeps its recorded source, and the
+/// run exits non-zero.
+#[test]
+fn refresh_reports_a_refused_remote_cache_instead_of_substituting_another_source() {
+    let root = tmpdir("refused-remote-cache");
+    let project = root.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let home = root.join("home");
+    let cache_root = home.join(".vstack").join("cache");
+
+    // The remote's cache entry: a real clone whose `core.worktree` names a
+    // victim directory holding a same-named tracked file.
+    let origin = root.join("origin");
+    std::fs::create_dir_all(origin.join("skills/demo")).unwrap();
+    std::fs::write(
+        origin.join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Remote demo\n---\n# Demo\n\nRemote body.\n",
+    )
+    .unwrap();
+    assert!(init_repo_with_commit(&origin));
+    let victim = root.join("victim");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join(".vstack-test-base"), "precious\n").unwrap();
+    let cache = crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        crate::refresh_sources::RemoteSource::parse("owner/repo")
+            .unwrap()
+            .unwrap()
+            .cache_dir
+    });
+    std::fs::create_dir_all(&cache_root).unwrap();
+    // Cloned from the local origin, then pointed at the URL the recorded
+    // source derives, as a clone made by `vstack add owner/repo` would be.
+    assert!(git_ok(
+        &cache_root,
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            cache.to_str().unwrap()
+        ]
+    ));
+    assert!(git_ok(
+        &cache,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/owner/repo.git"
+        ]
+    ));
+    assert!(git_ok(
+        &cache,
+        &["config", "core.worktree", victim.to_str().unwrap()]
+    ));
+
+    // A local source carrying a same-named skill, plus one of its own.
+    let local = root.join("local");
+    for name in ["demo", "other"] {
+        std::fs::create_dir_all(local.join("skills").join(name)).unwrap();
+        std::fs::write(
+            local.join("skills").join(name).join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Local {name}\n---\n# {name}\n\nLocal body.\n"),
+        )
+        .unwrap();
+    }
+
+    let mut lock = LockFile::default();
+    lock.add(LockEntry {
+        name: "demo".into(),
+        kind: ItemKind::Skill,
+        source: "owner/repo".into(),
+        source_repo: None,
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    lock.add(lock_entry(
+        "other",
+        ItemKind::Skill,
+        &local,
+        vec!["claude-code"],
+    ));
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+    // Both are installed already (a lock entry with no files is pruned).
+    let installed_demo =
+        "---\nname: demo\ndescription: Installed demo\n---\n# Demo\n\nInstalled body.\n";
+    for name in ["demo", "other"] {
+        for root in [".agents/skills", ".claude/skills"] {
+            let dir = project.join(root).join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("SKILL.md"), installed_demo).unwrap();
+        }
+    }
+
+    let err = crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        crate::test_util::with_project_root(&project, || {
+            let err = run(crate::scope::ScopeFilter::Project, false).unwrap_err();
+
+            // The reason the user is shown for this item, not just the run's
+            // exit: "source not found" would name the wrong cause and send
+            // them to re-add a source that is present.
+            let lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+            let records = crate::refresh_sources::resolve_source_records(&lock);
+            let sources = crate::refresh_sources::load_refresh_sources(&records.sources);
+            let mut project_config = ProjectConfig::default();
+            let stats = refresh_items_in_scope(
+                false,
+                &lock,
+                &sources,
+                &mut project_config,
+                &project,
+                None,
+                &records.refused,
+            );
+            assert!(
+                stats.missing["demo"].contains("does not resolve to its cache entry"),
+                "{:?}",
+                stats.missing
+            );
+            // Control: an entry whose source carries nothing still reads as
+            // absent, so the assertion above is about the refusal and not
+            // about every missing item carrying the same text.
+            let empty = root.join("empty-source");
+            std::fs::create_dir_all(&empty).unwrap();
+            let mut gone = LockFile::default();
+            gone.add(lock_entry(
+                "demo",
+                ItemKind::Skill,
+                &empty,
+                vec!["claude-code"],
+            ));
+            let absent = refresh_items_in_scope(
+                false,
+                &gone,
+                &sources,
+                &mut project_config,
+                &project,
+                None,
+                &records.refused,
+            );
+            assert_eq!(
+                absent.missing["demo"],
+                format!("source not found: {}", empty.display())
+            );
+            err
+        })
+    });
+
+    let message = format!("{err:#}");
+    assert!(message.contains("missing from their source"), "{message}");
+    for root in [".agents/skills", ".claude/skills"] {
+        assert_eq!(
+            std::fs::read_to_string(project.join(root).join("demo/SKILL.md")).unwrap(),
+            installed_demo,
+            "the refused entry must not be reinstalled from the local source ({root})"
+        );
+    }
+    assert!(
+        std::fs::read_to_string(project.join(".claude/skills/other/SKILL.md"))
+            .unwrap()
+            .contains("Local body."),
+        "the local entry still refreshes"
+    );
+    let saved = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert_eq!(
+        saved.entries["demo"].source, "owner/repo",
+        "the refused entry keeps its recorded source"
+    );
+    assert_eq!(
+        std::fs::read_to_string(victim.join(".vstack-test-base")).unwrap(),
+        "precious\n",
+        "the redirected worktree must be untouched"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A remote source vstack refuses to use, and one whose clone is not on this
+/// machine, are both sources that exist. Neither may be quietly stood in for
+/// by another loaded source, and neither may have its lock record rewritten to
+/// one — that is the substitution the ownership checks exist to prevent,
+/// reached by a different route.
+#[test]
+fn a_remote_entry_is_never_rebound_when_its_clone_is_refused_or_absent() {
+    // The secret is bound per case: only the credential URL carries one, and a
+    // leak assertion on the others would pass on a string that never held it.
+    for (label, source, expected_reason, secret) in [
+        (
+            "legacy-credential-url",
+            "https://user:token@github.com/owner/repo.git",
+            "credential-bearing",
+            Some("token"),
+        ),
+        (
+            "legacy-plaintext-url",
+            "http://github.com/owner/repo.git",
+            "plaintext HTTP",
+            None,
+        ),
+        ("no-cache", "owner/repo", "remote cache not present", None),
+    ] {
+        let root = tmpdir(label);
+        let project = root.join("project");
+        let home = root.join("home");
+        std::fs::create_dir_all(&project).unwrap();
+
+        // A local source carrying a same-named skill, plus one of its own —
+        // the sole other source an entry could be rebound to.
+        let local = root.join("local");
+        for name in ["demo", "other"] {
+            std::fs::create_dir_all(local.join("skills").join(name)).unwrap();
+            std::fs::write(
+                local.join("skills").join(name).join("SKILL.md"),
+                format!(
+                    "---\nname: {name}\ndescription: Local {name}\n---\n# {name}\n\nLocal body.\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "demo".into(),
+            kind: ItemKind::Skill,
+            source: source.into(),
+            source_repo: None,
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.add(lock_entry(
+            "other",
+            ItemKind::Skill,
+            &local,
+            vec!["claude-code"],
+        ));
+        lock.save(&project.join(".vstack-lock.json")).unwrap();
+        let installed =
+            "---\nname: demo\ndescription: Installed demo\n---\n# Demo\n\nInstalled body.\n";
+        for name in ["demo", "other"] {
+            for dir in [".agents/skills", ".claude/skills"] {
+                let dir = project.join(dir).join(name);
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(dir.join("SKILL.md"), installed).unwrap();
+            }
+        }
+
+        let err = crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            crate::test_util::with_project_root(&project, || {
+                let err = run(crate::scope::ScopeFilter::Project, false).unwrap_err();
+
+                let lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+                let records = crate::refresh_sources::resolve_source_records(&lock);
+                let sources = crate::refresh_sources::load_refresh_sources(&records.sources);
+                let mut project_config = ProjectConfig::default();
+                let stats = refresh_items_in_scope(
+                    false,
+                    &lock,
+                    &sources,
+                    &mut project_config,
+                    &project,
+                    None,
+                    &records.refused,
+                );
+                assert!(
+                    stats.missing["demo"].contains(expected_reason),
+                    "{label}: {:?}",
+                    stats.missing
+                );
+                if let Some(secret) = secret {
+                    assert!(source.contains(secret), "{label}: fixture");
+                    assert!(
+                        !stats.missing["demo"].contains(secret),
+                        "{label}: {:?}",
+                        stats.missing
+                    );
+                }
+                err
+            })
+        });
+
+        assert!(
+            format!("{err:#}").contains("missing from their source"),
+            "{label}: {err:#}"
+        );
+        for dir in [".agents/skills", ".claude/skills"] {
+            assert_eq!(
+                std::fs::read_to_string(project.join(dir).join("demo/SKILL.md")).unwrap(),
+                installed,
+                "{label}: the entry must not be reinstalled from the local source ({dir})"
+            );
+        }
+        assert!(
+            std::fs::read_to_string(project.join(".claude/skills/other/SKILL.md"))
+                .unwrap()
+                .contains("Local body."),
+            "{label}: the local entry still refreshes"
+        );
+        let saved = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+        assert_eq!(
+            saved.entries["demo"].source, source,
+            "{label}: the recorded source must survive"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

@@ -887,15 +887,8 @@ pub fn parse_github_slug(url: &str) -> Option<String> {
         }
         let bare = url.strip_suffix(".git").unwrap_or(url);
         let mut parts = bare.split('/');
-        if let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next())
-            && !owner.is_empty()
-            && !repo.is_empty()
-        {
-            return Some(format!(
-                "{}/{}",
-                owner.to_ascii_lowercase(),
-                repo.to_ascii_lowercase()
-            ));
+        if let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) {
+            return github_slug_from(owner, repo);
         }
         return None;
     }
@@ -919,14 +912,38 @@ pub fn parse_github_slug(url: &str) -> Option<String> {
     let mut parts = after.split('/');
     let owner = parts.next()?;
     let repo = parts.next()?;
-    if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
+    if parts.next().is_some() {
         return None;
     }
-    Some(format!(
-        "{}/{}",
-        owner.to_ascii_lowercase(),
-        repo.to_ascii_lowercase()
-    ))
+    github_slug_from(owner, repo)
+}
+
+/// The one place a slug is minted, so every caller gets a name GitHub could
+/// actually have.
+///
+/// The charset is the gate, not a tidy-up. A slug is pasted straight into
+/// `https://github.com/{slug}.git` for the bare `owner/repo` shorthand, which
+/// is not URL-shaped and so never reaches the credential refusal: without
+/// this, `owner/repo?access_token=secret.git` handed the token to `git clone`
+/// and to every diagnostic the URL appears in. Reserved URL characters — `?`,
+/// `#`, `@`, `:`, `%` — are therefore not owner or repository name characters
+/// here, and `.`/`..` are not names at all.
+fn github_slug_from(owner: &str, repo: &str) -> Option<String> {
+    fn is_name(part: &str) -> bool {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    }
+    (is_name(owner) && is_name(repo)).then(|| {
+        format!(
+            "{}/{}",
+            owner.to_ascii_lowercase(),
+            repo.to_ascii_lowercase()
+        )
+    })
 }
 
 pub fn github_slug_eq(left: &str, right: &str) -> bool {
@@ -936,20 +953,13 @@ pub fn github_slug_eq(left: &str, right: &str) -> bool {
 }
 
 fn source_repo_from_git_origin(source_root: &Path) -> Option<String> {
-    // A cached source is read from its own `.git/config`: asking git would
-    // let discovery walk up out of a half-written cache and answer with the
-    // ENCLOSING repository's origin, which is then stamped into the lock as
-    // this source's identity and routes `vstack report` at the wrong repo.
-    if is_under_remote_cache_root(source_root) {
-        return cache_origin_url(source_root)
-            .as_deref()
-            .and_then(parse_github_slug);
-    }
-    // Local sources still ask git, but the answer must belong to THIS root:
-    // a directory that merely sits inside a repository is not that repository.
-    let root = source_root.to_str()?;
-    let toplevel = git_command_for_cache()
-        .args(["-C", root, "rev-parse", "--show-toplevel"])
+    // The answer must belong to THIS root: a directory that merely sits inside
+    // a repository is not that repository, and git discovery walks up out of
+    // one that is not — a half-written cache entry inside a checkout would
+    // otherwise be stamped into the lock with the ENCLOSING repository's
+    // identity, and `vstack report` would file issues against it.
+    let toplevel = crate::refresh_sources::hardened_git_command(source_root)
+        .args(["rev-parse", "--show-toplevel"])
         .output()
         .ok()?;
     if !toplevel.status.success() {
@@ -963,8 +973,8 @@ fn source_repo_from_git_origin(source_root: &Path) -> Option<String> {
     if !same {
         return None;
     }
-    let output = git_command_for_cache()
-        .args(["-C", root, "remote", "get-url", "origin"])
+    let output = crate::refresh_sources::hardened_git_command(source_root)
+        .args(["remote", "get-url", "origin"])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -985,10 +995,18 @@ pub fn source_repo_for_source(source_root: Option<&Path>, recorded_source: &str)
 
 /// Compute source hash for a lock entry based on its kind.
 pub fn compute_source_hash(entry: &LockEntry) -> String {
-    let source_root = match resolve_source_path(&entry.source) {
-        Some(p) => p,
-        None => return String::new(),
-    };
+    match resolve_source_path(&entry.source) {
+        Some(root) => compute_source_hash_in(entry, &root),
+        None => String::new(),
+    }
+}
+
+/// [`compute_source_hash`] against an already-resolved source root, for a
+/// caller that resolved it itself — `check` and `verify` resolve once to
+/// report the cause when there is no root, and would otherwise resolve a
+/// second time here.
+pub fn compute_source_hash_in(entry: &LockEntry, source_root: &Path) -> String {
+    let source_root = source_root.to_path_buf();
     let proj_root = project_root();
 
     let mut state = FNV_OFFSET;
@@ -1094,8 +1112,18 @@ pub fn is_source_changed(entry: &LockEntry) -> bool {
     if entry.source_hash.is_empty() {
         return false; // No hash stored — assume fresh (legacy lock)
     }
-    let current = compute_source_hash(entry);
-    current != entry.source_hash
+    // An unresolved source hashes to nothing, which reads as changed — that is
+    // what puts a vanished-source entry in the TUI's Updates list, where
+    // picking it reports the source as gone.
+    compute_source_hash(entry) != entry.source_hash
+}
+
+/// [`is_source_changed`] against an already-resolved source root.
+pub fn is_source_changed_in(entry: &LockEntry, source_root: &Path) -> bool {
+    if entry.source_hash.is_empty() {
+        return false; // No hash stored — assume fresh (legacy lock)
+    }
+    compute_source_hash_in(entry, source_root) != entry.source_hash
 }
 
 /// Discovered item on disk that was installed by vstack.

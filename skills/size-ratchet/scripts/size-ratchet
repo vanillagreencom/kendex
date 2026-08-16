@@ -267,13 +267,23 @@ WT_BATCH=()
 WT_BATCH_CHARS=0
 
 flush_batch() { # — appends one "<path><TAB><count>" row per pending file
-  local status=0 idx=0 line count path n f
+  local status=0 idx=0 extra=0 want_extra=0 line count path n f
   [ "${#WT_BATCH[@]}" -gt 0 ] || return 0
   : >"$TMP/batch.tsv"
   wc -l -- "${WT_BATCH[@]}" >"$TMP/wc.out" || status=$?
+  # A multi-file invocation appends exactly one summary row and a
+  # single-file one appends none, so the whole output is accounted for:
+  # rows past the last input are counted, never parsed. Without that count
+  # a batch whose LAST row went missing would slide its summary into the
+  # final input's slot — and for an input named `total` the slot would even
+  # match, banking the batch sum as that file's size.
+  if [ "${#WT_BATCH[@]}" -gt 1 ]; then want_extra=1; fi
   if [ "$status" -eq 0 ]; then
     while IFS= read -r line; do
-      [ "$idx" -lt "${#WT_BATCH[@]}" ] || break
+      if [ "$idx" -ge "${#WT_BATCH[@]}" ]; then
+        extra=$((extra + 1))
+        continue
+      fi
       # wc pads counts with leading blanks (BSD wc does); one space then
       # separates the count from the path, which may hold spaces but never
       # a newline or tab (both refused above).
@@ -286,7 +296,7 @@ flush_batch() { # — appends one "<path><TAB><count>" row per pending file
       printf '%s\t%s\n' "$path" "$count" >>"$TMP/batch.tsv"
       idx=$((idx + 1))
     done <"$TMP/wc.out"
-    if [ "$idx" -eq "${#WT_BATCH[@]}" ]; then
+    if [ "$idx" -eq "${#WT_BATCH[@]}" ] && [ "$extra" -eq "$want_extra" ]; then
       cat "$TMP/batch.tsv" >>"$TMP/counts.raw"
       WT_BATCH=()
       WT_BATCH_CHARS=0

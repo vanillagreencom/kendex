@@ -18,12 +18,13 @@
 #   lanes list [--harness claude|codex|all] [--refresh] [--json]
 #   lanes pick [--harness claude|codex] [--max-pct N] [--json]
 #
-#   list  Print every lane found, measured. Table by default, --json for the
-#         structured record.
-#   pick  Print the launch env prefix for the lane with the most headroom
-#         (e.g. `CLAUDE_CONFIG_DIR=/home/me/.eclaude`). Exit 3 when no lane is
-#         under --max-pct, so a caller can fail closed rather than launch into
-#         a wall.
+#   list  Print every lane found, measured, with its live claim count. Table
+#         by default, --json for the structured record.
+#   pick  Print the launch env prefix for the lane to launch on (e.g.
+#         `CLAUDE_CONFIG_DIR=/home/me/.eclaude`): among the lanes under
+#         --max-pct, the one with the fewest launches already in flight,
+#         headroom breaking the tie. Exit 3 when no lane is under --max-pct,
+#         so a caller can fail closed rather than launch into a wall.
 #
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
@@ -42,6 +43,14 @@
 #                      not reach. Replaces claude discovery entirely.
 # Both read through the vstack settings ladder (process env > .env.local >
 # vstack.settings.toml [env] > .env).
+#
+# CLAIMS are the launches already in flight on a lane: `open-terminal` records
+# one per tmux lane it launches under a resolved lane, and a claim is live
+# while its pane is (stored under $OVERSEE_WATCH_STATE_DIR/claims, else
+# <project root>/tmp/oversee-watch/claims; a claim whose pane is gone is
+# pruned on read). Usage numbers lag a launch by minutes, so `pick` called
+# twice in a row would hand the same account both lanes; the claim count is
+# the correction, and it orders `pick` ahead of headroom.
 #
 # Headroom is `100 - max(session_5h, weekly, model_weekly)`: the BINDING
 # constraint, not an average. An account at 5% session but 95% weekly has 5%
@@ -68,9 +77,16 @@ set -uo pipefail
 PROG="lanes"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/vstack-env.sh
 source "$SCRIPT_DIR/lib/vstack-env.sh"
-vstack_load_project_env "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+vstack_load_project_env "$PROJECT_ROOT"
+# shellcheck source=lib/lane-claims.sh
+source "$SCRIPT_DIR/lib/lane-claims.sh"
+# The lib carries the strict mode its other callers run under. This one is
+# deliberately errexit-free — one unreadable lane must not fail the whole
+# inventory — so restore that posture at the seam.
+set +e
 
 CLAUDE_USAGE_URL="${ORCH_LANES_CLAUDE_USAGE_URL:-https://api.anthropic.com/api/oauth/usage}"
 CLAUDE_TOKEN_URL="${ORCH_LANES_CLAUDE_TOKEN_URL:-https://platform.claude.com/v1/oauth/token}"
@@ -373,9 +389,14 @@ refresh_claude_token() {
 # which is the one thing it must not read as.
 emit_lane() {
 	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7"
+	# `null`, never 0, when the store could not be read: "we could not see the
+	# launches in flight" must not read as "there are none".
+	local claims="null"
+	[[ "$LANE_CLAIMS_RC" -ne 0 ]] || claims="$(lane_claims_count "$LANE_CLAIMS_LIVE" "$dir")"
 	jq -nc \
 		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" \
 		--arg status "$status" --arg detail "$detail" --arg plan "$plan" \
+		--argjson claims "$claims" \
 		--argjson b "$buckets" '
 		($b // {}) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct] | map(select(. != null)) as $known
@@ -390,12 +411,29 @@ emit_lane() {
 		    weekly_pct: ($b.weekly_pct // null),
 		    model_pct: ($b.model_pct // null),
 		    model_label: ($b.model_label // null),
+		    claims: $claims,
 		    headroom_pct: (if ($st == "ok") then (100 - ($known | max)) else null end),
 		    resets: ($b.resets // {session: null, weekly: null, model: null}),
 		    detail: (if $st == "no_usage_data" and $detail == ""
 		             then "authenticated, but the usage response carried no session/weekly window"
 		             elif $detail == "" then null else $detail end)
 		  }'
+}
+
+# Live claims are read ONCE per run, before any lane is measured: the pruning
+# read is what keeps the store bounded, and one snapshot keeps every lane's
+# count taken against the same instant.
+LANE_CLAIMS_LIVE=""
+# Non-zero when the claim store could not be read: `list` still reports what
+# it measured, `pick` refuses rather than deciding on an unknown.
+LANE_CLAIMS_RC=0
+
+# Called before `collect_lanes`, never inside it: collect_lanes runs in a
+# command substitution, and a read failure recorded there would die with the
+# subshell instead of reaching the decision.
+load_lane_claims() {
+	LANE_CLAIMS_RC=0
+	LANE_CLAIMS_LIVE="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")")" || LANE_CLAIMS_RC=$?
 }
 
 collect_lanes() {
@@ -421,10 +459,11 @@ render_table() {
 		def col($s; $n): ($s | tostring) as $t
 		  | if ($t | length) >= $n then $t else $t + (" " * ($n - ($t | length))) end;
 		def num($v): if $v == null then "-" else ($v | tostring) + "%" end;
-		(["LANE","HARNESS","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM"] | @tsv),
+		(["LANE","HARNESS","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM","CLAIMS"] | @tsv),
 		(.[] | [ .alias, .harness, .status, (.plan // "-"),
 		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct),
-		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end)
+		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
+		         (if .claims == null then "?" else .claims end)
 		       ] | @tsv)
 	' | column -t -s "$(printf '\t')"
 }
@@ -432,12 +471,23 @@ render_table() {
 # `pick` fails closed. Exit 3 when nothing qualifies, so a caller can tell
 # "every lane is full" (actionable: wait, or raise the threshold) apart from
 # "the helper broke" (exit 1).
+#
+# Among the lanes under the threshold, the fewest live claims wins and
+# headroom only breaks the tie: back-to-back picks measure usage that has not
+# moved yet, so ordering by headroom alone hands one account the whole fleet.
+# The threshold is never traded away for a claim count — a lane at or above
+# --max-pct is out before this ordering runs.
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" allow_refresh="$4" lanes chosen
+	load_lane_claims
 	lanes="$(collect_lanes "$harness" "$allow_refresh")"
+	# An unreadable claim store reads as "no launches in flight", which is the
+	# one thing it must not read as: picking on it can stack a second session
+	# onto an account already running one.
+	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die "in-flight lane claims could not be read; refusing to pick (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
 	chosen="$(jq -c --argjson max "$max_pct" '
 		[ .[] | select(.status == "ok" and .headroom_pct != null and (100 - .headroom_pct) < $max) ]
-		| sort_by(-.headroom_pct) | first // null
+		| sort_by([(.claims // 0), -.headroom_pct]) | first // null
 	' <<<"$lanes")"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
 		{
@@ -487,6 +537,7 @@ case "$SUB" in
 	list)
 		HARNESS="${HARNESS:-all}"
 		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die "--harness must be claude, codex, or all"
+		load_lane_claims
 		out="$(collect_lanes "$HARNESS" "$ALLOW_REFRESH")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
 		;;

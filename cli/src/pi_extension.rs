@@ -515,9 +515,8 @@ fn find_vstack_repo_root(source_dir: &Path) -> Option<PathBuf> {
 
 /// Read current HEAD sha of a git repo (best-effort, optional).
 fn read_git_head(repo: &Path) -> Option<String> {
-    let out = std::process::Command::new("git")
+    let out = crate::refresh_sources::hardened_git_command(repo)
         .args(["rev-parse", "HEAD"])
-        .current_dir(repo)
         .output()
         .ok()?;
     if !out.status.success() {

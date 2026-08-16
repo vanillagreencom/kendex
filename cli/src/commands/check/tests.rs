@@ -256,6 +256,7 @@ fn has_drift_is_true_for_each_field_alone_and_available_is_not_drift() {
                     source: "owner/repo".into(),
                     problem: SourceProblem::Unresolvable {
                         entries: vec!["x".into()],
+                        reason: "source not found".into(),
                     },
                 }],
                 ..ScopeReport::default()
@@ -303,11 +304,14 @@ fn unresolvable_source_is_reported_with_its_entries_not_as_outdated() {
         assert_eq!(report.source_issues.len(), 1);
         let issue = &report.source_issues[0];
         assert_eq!(issue.source, source.to_string_lossy());
-        assert_eq!(
-            issue.problem,
-            SourceProblem::Unresolvable {
-                entries: vec!["alpha".to_string()]
-            }
+        assert!(
+            matches!(
+                &issue.problem,
+                SourceProblem::Unresolvable { entries, reason }
+                    if entries == &vec!["alpha".to_string()]
+                        && reason.starts_with("source not found:")
+            ),
+            "{issue:?}"
         );
         assert!(report.has_drift());
         let mut out = String::new();
@@ -815,13 +819,7 @@ fn pi_legacy_lock_name_is_neither_removed_nor_offered_again() {
 #[test]
 fn gather_reports_recorded_cache_failures_from_disk_and_never_fetches() {
     with_sandbox("gather-cache", |project, _source| {
-        let cache = config::remote_cache_dir("owner/repo").unwrap();
-        std::fs::create_dir_all(cache.join(".git")).unwrap();
-        std::fs::write(
-            cache.join(".git").join("config"),
-            "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n",
-        )
-        .unwrap();
+        let cache = clone_at_cache_key("owner/repo", "https://github.com/owner/repo.git");
         // A remote that has been failing for longer than two TTLs: the
         // stamp is the ONLY evidence gather is allowed to use.
         let stamp = cache.join(".git").join("vstack-fetch-stamp");

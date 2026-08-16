@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 mod render;
 
-pub(crate) use render::{command_arg, display_text};
+pub(crate) use render::display_text;
 use render::{humanize_age, render_report, scrub_source_credentials};
 
 fn skill_disk_path(global: bool, name: &str) -> PathBuf {
@@ -193,7 +193,13 @@ pub struct MissingSkillRef {
 pub enum SourceProblem {
     /// The source path does not resolve at all — the cache was never cloned
     /// or the directory is gone. Its `entries` cannot be verified.
-    Unresolvable { entries: Vec<String> },
+    ///
+    /// `reason` comes from resolution itself, so `check`, `verify` and
+    /// `refresh` name the same cause and the same remedy for the same state.
+    Unresolvable {
+        entries: Vec<String>,
+        reason: String,
+    },
     /// The source resolves but cannot be inventoried: its catalog
     /// configuration is unusable, or a whole kind root is missing. `refresh`
     /// fixes neither, so `entries` are reported here instead of as outdated.
@@ -205,8 +211,8 @@ pub enum SourceProblem {
     Discovery { failures: Vec<String> },
     /// A cache for this source exists but cannot be proven to belong to it,
     /// so nothing may be installed or verified from it. Distinct from
-    /// `unresolvable`: the remedy is to remove that directory, not to add the
-    /// source again.
+    /// `unresolvable`: `reason` is the refusal itself, which already names the
+    /// entry and the next step — re-adding a refused source refuses again.
     Unverifiable {
         entries: Vec<String>,
         reason: String,
@@ -449,6 +455,9 @@ fn cache_failure(problem: config::RemoteCacheProblem, offline: bool) -> CacheRef
             0,
             format!("cache cannot be written: {}", display_text(&reason)),
         ),
+        // The refusal already names the entry and the next step; it is
+        // repeated verbatim rather than reworded into a second vocabulary.
+        config::RemoteCacheProblemKind::Refused { reason } => (0, render::display_reason(&reason)),
     };
     CacheRefreshFailure {
         // Scrubbed at construction so `--json` never carries a token either.
@@ -545,16 +554,48 @@ fn item(entry: &LockEntry) -> Item {
     Item::new(entry.name.clone(), entry.kind)
 }
 
-/// Resolve each distinct lock source once. `None` = unresolvable (cache never
-/// cloned, path gone): reported as a source issue with its entries, which are
-/// then neither hashed nor offered against.
-fn load_catalogs<'a>(entries: &[&'a LockEntry]) -> HashMap<&'a str, Option<SourceCatalog>> {
-    let mut catalogs: HashMap<&str, Option<SourceCatalog>> = HashMap::new();
+/// One recorded source, resolved exactly once: what resolution said, and the
+/// catalog of the root it gave. Every later question — the source issue, the
+/// hash comparison, what the source has available — is answered from this,
+/// so nothing resolves the same source a second time and no two answers can
+/// disagree about it.
+struct ResolvedSourceCatalog {
+    resolution: crate::refresh_sources::SourceResolution,
+    catalog: Option<SourceCatalog>,
+}
+
+impl ResolvedSourceCatalog {
+    fn root(&self) -> Option<&Path> {
+        match &self.resolution {
+            crate::refresh_sources::SourceResolution::Resolved(root) => Some(root),
+            _ => None,
+        }
+    }
+}
+
+type Catalogs<'a> = HashMap<&'a str, ResolvedSourceCatalog>;
+
+/// Resolve each distinct lock source once. A source with no catalog is
+/// reported as a source issue with its entries, which are then neither hashed
+/// nor offered against — and the resolution says WHY, because a refused cache
+/// entry and a source that was never cloned are repaired differently.
+fn load_catalogs<'a>(entries: &[&'a LockEntry]) -> Catalogs<'a> {
+    let mut catalogs: Catalogs<'a> = HashMap::new();
     for entry in entries {
         catalogs.entry(entry.source.as_str()).or_insert_with(|| {
-            config::resolve_source_path(&entry.source)
-                .as_deref()
-                .map(load_source_catalog)
+            // The read-only resolution: it reports a refusal instead of
+            // discarding it, and never fetches.
+            let resolution = crate::refresh_sources::source_path_resolution(&entry.source);
+            let catalog = match &resolution {
+                crate::refresh_sources::SourceResolution::Resolved(root) => {
+                    Some(load_source_catalog(root))
+                }
+                _ => None,
+            };
+            ResolvedSourceCatalog {
+                resolution,
+                catalog,
+            }
         });
     }
     catalogs
@@ -562,10 +603,7 @@ fn load_catalogs<'a>(entries: &[&'a LockEntry]) -> HashMap<&'a str, Option<Sourc
 
 /// Every source-level problem in this scope, sorted by source. Pure over its
 /// inputs.
-fn source_issues_for(
-    catalogs: &HashMap<&str, Option<SourceCatalog>>,
-    entries: &[&LockEntry],
-) -> Vec<SourceIssue> {
+fn source_issues_for(catalogs: &Catalogs<'_>, entries: &[&LockEntry]) -> Vec<SourceIssue> {
     let mut issues = Vec::new();
     let mut sources: Vec<&str> = catalogs.keys().copied().collect();
     sources.sort();
@@ -579,22 +617,33 @@ fn source_issues_for(
             names.sort();
             names
         };
-        let Some(catalog) = &catalogs[source] else {
+        let Some(catalog) = &catalogs[source].catalog else {
             // A source can fail to resolve for two very different reasons,
             // and telling a user to re-add a source whose cache holds another
-            // repository sends them in a circle.
-            let problem = match config::remote_cache_lookup(source) {
-                config::RemoteCacheLookup::Unverifiable { reason, .. } => {
-                    SourceProblem::Unverifiable {
+            // repository sends them in a circle. The resolution itself says
+            // which — never a second guess from the source string, which is
+            // how the two states got confused in the first place.
+            use crate::refresh_sources::SourceResolution;
+            let problem = match &catalogs[source].resolution {
+                SourceResolution::Refused(reason) => SourceProblem::Unverifiable {
+                    entries: named(&|_| true),
+                    // The reason quotes the cache's recorded origin URL,
+                    // which can carry a cloned-with token.
+                    reason: scrub_source_credentials(reason),
+                },
+                // Exhaustive: `Resolved` cannot reach here (a resolved source
+                // has a catalog), and a new resolution state must be
+                // classified on purpose rather than absorbed by a wildcard.
+                resolution @ (SourceResolution::Absent | SourceResolution::Resolved(_)) => {
+                    SourceProblem::Unresolvable {
                         entries: named(&|_| true),
-                        // The reason quotes the cache's recorded origin URL,
-                        // which can carry a cloned-with token.
-                        reason: scrub_source_credentials(&reason),
+                        reason: scrub_source_credentials(
+                            &resolution
+                                .unresolved_note(source)
+                                .unwrap_or_else(|| "source not found".to_string()),
+                        ),
                     }
                 }
-                _ => SourceProblem::Unresolvable {
-                    entries: named(&|_| true),
-                },
             };
             issues.push(SourceIssue {
                 source: scrub_source_credentials(source),
@@ -650,14 +699,12 @@ fn source_issues_for(
 }
 
 /// Split every verifiable entry into outdated / removed / current.
-fn classify(
-    catalogs: &HashMap<&str, Option<SourceCatalog>>,
-    entries: &[&LockEntry],
-) -> (Vec<Item>, Vec<Item>, Vec<Item>) {
+fn classify(catalogs: &Catalogs<'_>, entries: &[&LockEntry]) -> (Vec<Item>, Vec<Item>, Vec<Item>) {
     let (mut outdated, mut removed, mut current) = (Vec::new(), Vec::new(), Vec::new());
     for entry in entries {
+        let state = &catalogs[entry.source.as_str()];
         // Reported under source_issues; the source cannot answer for it.
-        let Some(catalog) = &catalogs[entry.source.as_str()] else {
+        let (Some(catalog), Some(root)) = (&state.catalog, state.root()) else {
             continue;
         };
         if catalog.unverifiable(entry.kind).is_some() {
@@ -678,7 +725,7 @@ fn classify(
             .is_some_and(|inv| inv.names_are_complete());
         if !known && discovery_complete {
             removed.push(item(entry));
-        } else if config::is_source_changed(entry) {
+        } else if config::is_source_changed_in(entry, root) {
             outdated.push(item(entry));
         } else {
             current.push(item(entry));
@@ -742,7 +789,7 @@ fn missing_skill_refs_for(
 /// scope holding nothing but Pi packages is not asking for agents, and a
 /// project without Pi packages is not asking for them.
 fn available_for(
-    catalogs: &HashMap<&str, Option<SourceCatalog>>,
+    catalogs: &Catalogs<'_>,
     entries: &[&LockEntry],
     lock_names: &HashSet<&str>,
 ) -> Vec<AvailableItem> {
@@ -755,7 +802,7 @@ fn available_for(
     // source-qualified precisely so the user picks which one.
     let mut seen: HashSet<(&str, ItemKind, &str)> = HashSet::new();
     for source in sources {
-        let Some(catalog) = &catalogs[source] else {
+        let Some(catalog) = &catalogs[source].catalog else {
             continue;
         };
         for kind in CATALOG_KINDS {

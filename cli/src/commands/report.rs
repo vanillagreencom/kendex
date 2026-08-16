@@ -764,7 +764,7 @@ fn print_failure_guidance(
 
 /// Best-effort resolution of the local repo's issues URL from `origin`.
 fn local_repo_issues_url() -> Option<String> {
-    let output = std::process::Command::new("git")
+    let output = crate::refresh_sources::hardened_git_command(&std::env::current_dir().ok()?)
         .args(["remote", "get-url", "origin"])
         .output()
         .ok()?;

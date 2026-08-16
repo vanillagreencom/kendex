@@ -82,3 +82,60 @@ fn with_path_override<R>(
         Err(payload) => resume_unwind(payload),
     }
 }
+
+/// Run one `#[ignore]`d helper test in a child process — this same test binary,
+/// filtered to `helper` — with `env` set and, optionally, a working directory.
+///
+/// Some properties are about the environment or working directory a process
+/// starts with: an inherited `GIT_DIR`, a `GIT_CONFIG_PARAMETERS` injection, a
+/// CWD outside any vstack source. Mutating this process's would leak into every
+/// test running beside it, several of which spawn git.
+///
+/// Asserts the helper actually RAN. libtest exits 0 having run nothing when a
+/// filter matches no test, so a renamed or moved helper — nothing references it
+/// by symbol — would disarm the guard silently and permanently.
+pub(crate) fn run_test_helper(
+    helper: &str,
+    env: &[(&str, &std::ffi::OsStr)],
+    current_dir: Option<&Path>,
+) {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command.args([helper, "--exact", "--ignored", "--nocapture"]);
+    command.env(DRIVEN, "1");
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    if let Some(dir) = current_dir {
+        command.current_dir(dir);
+    }
+    let output = command.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "{helper} failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("1 passed"),
+        "{helper} did not run — the filter matched no test\nstdout:\n{stdout}"
+    );
+}
+
+/// Set on every child [`run_test_helper`] starts, so a helper can tell a driven
+/// run from the bare `cargo test -- --ignored` one.
+const DRIVEN: &str = "VSTACK_TEST_DRIVEN";
+
+/// A fixture value the driver was supposed to supply.
+///
+/// `None` only when this helper was not driven at all — the bare `--ignored`
+/// run, where there is nothing to assert. When a driver DID start it, a missing
+/// variable means the driver's env table lost an entry, which would otherwise
+/// leave the helper asserting nothing, reporting `1 passed`, and the guard
+/// disarmed.
+pub(crate) fn helper_fixture(name: &str) -> Option<String> {
+    std::env::var_os(DRIVEN)?;
+    Some(
+        std::env::var(name)
+            .unwrap_or_else(|_| panic!("{name} was not supplied by the driver that started this")),
+    )
+}

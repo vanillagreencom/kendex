@@ -116,8 +116,16 @@ fn verify_entry(entry: &LockEntry, global: bool, disk_skills: &HashSet<String>) 
     let kind = entry.kind.label_short();
     let name = entry.name.clone();
 
-    // Source hash check (covers all kinds).
-    let current = config::compute_source_hash(entry);
+    // Source hash check (covers all kinds). Resolved once here: the row needs
+    // the root to hash against AND, when there is none, the cause to report.
+    use crate::refresh_sources::SourceResolution;
+    let resolution = crate::refresh_sources::source_path_resolution(&entry.source);
+    // Exhaustive: a new resolution state must decide here whether it has a
+    // root to hash, rather than be hashed as empty because a wildcard said so.
+    let current = match &resolution {
+        SourceResolution::Resolved(root) => config::compute_source_hash_in(entry, root),
+        SourceResolution::Absent | SourceResolution::Refused(_) => String::new(),
+    };
     let source_ok = if entry.source_hash.is_empty() {
         // Legacy lock without recorded hash — best effort: just confirm
         // we could resolve a source at all.
@@ -138,6 +146,16 @@ fn verify_entry(entry: &LockEntry, global: bool, disk_skills: &HashSet<String>) 
             ItemKind::Extra => (None, None),
             _ => (Some(true), None),
         },
+    };
+
+    // A source that did not resolve has no hash to compare; saying only `src:!`
+    // leaves the user to guess between changed content, a cache that is not on
+    // this machine, and a source vstack refused — each fixed by a different
+    // command, and only one of them by `vstack add`.
+    let note = match (resolution.unresolved_note(&entry.source), note) {
+        (Some(cause), Some(note)) => Some(format!("{cause}; {note}")),
+        (Some(cause), None) => Some(cause),
+        (None, note) => note,
     };
 
     VerifyRow {

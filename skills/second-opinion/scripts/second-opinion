@@ -1148,7 +1148,7 @@ ARTIFACT_HOME=""
 ARTIFACT_HOME_RESOLVED=false
 
 artifact_home() {
-  local dir rel reason phys_root phys_dir home_probe home_created=false
+  local dir rel reason phys_root phys_dir home_created=false
   if $ARTIFACT_HOME_RESOLVED; then return 0; fi
   ARTIFACT_HOME_RESOLVED=true
   dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
@@ -1211,21 +1211,22 @@ artifact_home() {
       dir=""
     fi
   fi
-  # A home is only a home if this run can create in it. `mkdir -p` succeeds on a
-  # directory that already exists and denies writes, and every consumer would
-  # then choose it and fail at its own write — a lane after the model call it
-  # has already paid for, leaving a run that spent twice and published no union.
-  # So the home proves itself the way the records do, with an exclusive create,
-  # before anything is placed in it.
-  if [[ -n "$dir" ]]; then
-    if home_probe=$(mktemp "$dir/.probe.XXXXXX" 2>/dev/null); then
-      rm -f -- "$home_probe" 2>/dev/null || true
-    else
-      echo "→ artifact home not writable: $dir" >&2
-      dir=""
-    fi
-  fi
+  # `mkdir -p` succeeds on a directory that already exists and denies writes, so
+  # resolving a home is not the same as being able to create in one. Every
+  # consumer allocates with mktemp and reports its own fallback, so the refusal
+  # lands there — at allocation, before any model call is placed against it.
   ARTIFACT_HOME="$dir"
+}
+
+# The home resolved but will not hold a file — it ran out of space, its
+# permissions changed, or it was never writable and `mkdir -p` said nothing
+# because it already existed. Stated once and then forgotten, so every later allocation
+# goes straight to the fallback rather than retrying the same refusal and
+# repeating the line. One wording for both consumers: an operator reading this
+# has one condition to act on, not two spellings of it.
+artifact_home_unusable() {
+  echo "→ artifact home unusable, falling back to system temp: $ARTIFACT_HOME" >&2
+  ARTIFACT_HOME=""
 }
 
 artifact_file() {
@@ -1238,7 +1239,10 @@ artifact_file() {
     # case via the canonicalized $CWD), so the template can never begin with
     # `-`. That also avoids relying on `--` in mktemp, whose support for it is
     # not uniform across the BSD/macOS target.
-    ARTIFACT_PATH=$(mktemp "$ARTIFACT_HOME/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || ARTIFACT_PATH=""
+    ARTIFACT_PATH=$(mktemp "$ARTIFACT_HOME/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || {
+      artifact_home_unusable
+      ARTIFACT_PATH=""
+    }
   fi
   if [[ -z "$ARTIFACT_PATH" ]]; then
     # System temp is the last resort, and it can refuse too (a read-only or
@@ -1260,21 +1264,23 @@ artifact_file() {
 # this run owns is unlinked and then CREATED, never written through whatever is
 # found at the name: umask governs creation only, so a plain redirection would
 # truncate a survivor and keep that survivor's mode, and would follow a symlink
-# planted at the name into a file of somebody else's. The window is as long as
-# a model call, and the artifact name is derived rather than random.
+# planted at the name into a file of somebody else's. A sidecar sits at a name
+# the caller chose and anyone can derive, and the window between the clear
+# before the spawn and this write is as long as a model call.
 #
 # noclobber is what makes the create exclusive — O_EXCL refuses an existing
-# file AND refuses to follow a symlink — so between them the review reaches a
-# path this run made, at a mode this run chose, or it does not get written at
-# all. Refusing is the right end of that: a caller reading a review out of a
-# file someone else controls is worse than a caller told the record could not
-# be stored, which every caller of this already handles.
+# file AND refuses to follow a symlink — so the review reaches a path this run
+# made, at a mode this run chose, or it does not get written at all. Refusing
+# is the right end of that: a caller reading a review out of a file someone
+# else controls is worse than a caller told the record could not be stored,
+# which every caller of this already handles.
 #
 # rm's own failure is not fatal on its own; the exclusive create is what
-# decides, and it fails loudly through the shell's own message. That layer is
-# unreachable while the clear before each lane spawns holds — it fails the run
-# on a path it cannot remove — so no test drives it alone; the fixtures that
-# put an inode back at an artifact path prove the PAIR.
+# decides, and its cause is reported by the caller. The exclusivity is a second
+# layer everywhere it can be reached: the --output family is cleared before a
+# lane spawns, and a stdout lane artifact is created at a name that did not
+# exist. So no test drives it alone; the fixtures that put an inode back at an
+# artifact path prove the PAIR.
 write_owned() {
   if $SCRATCH_OUTPUT; then
     rm -f -- "$1" 2>/dev/null || true
@@ -1661,11 +1667,19 @@ if $MULTI_LANE; then
       # writes it.
       lane_out=""
       if [[ -n "$ARTIFACT_HOME" ]]; then
-        lane_out=$(mktemp "$ARTIFACT_HOME/${MODE}-lane-${lane}.XXXXXX" 2>/dev/null) || lane_out=""
+        # The one place the home is put to the test, and the reason it is tested
+        # here: this runs before the lane spawns, so a home that cannot hold the
+        # artifact is found before the model call rather than by the child that
+        # already paid for one. Said once — forgetting the home keeps every
+        # later lane from retrying it and from repeating the line.
+        lane_out=$(mktemp "$ARTIFACT_HOME/${MODE}-lane-${lane}.XXXXXX" 2>/dev/null) || {
+          artifact_home_unusable
+          lane_out=""
+        }
       fi
-      # No home, or one that stopped accepting files after it proved itself:
-      # placement can never decide whether the review happens, so the lane falls
-      # back to a temp file and the reason is already on stderr.
+      # Placement can never decide whether the review happens, so a lane with no
+      # home falls back to a temp file — named on stderr above, so an operator
+      # knows that lane traded the home's durability for a temp one.
       [[ -n "$lane_out" ]] || lane_out=$(mktemp)
       LANE_TMP_FILES+=("$lane_out")
     fi

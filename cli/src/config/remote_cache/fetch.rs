@@ -1,15 +1,22 @@
 //! Mutating one remote source cache: the exclusion guard, the bounded
 //! `git fetch` + `reset`, and the drivers that run them over a lock file.
 //!
-//! Identity, location and stamp reading live in the parent module.
+//! Stamp reading lives in the parent module. Every git process here is built
+//! by [`crate::refresh_sources`], and every ownership question about the entry
+//! is answered there too — this module owns the exclusion, the bound and the
+//! record of what happened, and nothing else.
 
 use super::{
     FetchFailure, FetchStamp, REMOTE_CACHE_FETCH_DEADLINE, REMOTE_CACHE_LOW_SPEED_SECS,
     REMOTE_CACHE_TTL, RemoteCacheProblem, RemoteCacheProblemKind, cached_remote_sources, epoch_now,
-    is_under_remote_cache_root, read_fetch_stamp, remote_cache_fetch_due, remote_cache_fetch_lock,
-    remote_cache_problem, write_fetch_stamp,
+    read_fetch_stamp, remote_cache_fetch_due, remote_cache_fetch_lock, remote_cache_problem,
+    write_fetch_stamp,
 };
 use crate::config::LockFile;
+use crate::refresh_sources::{
+    RemoteSource, ensure_cache_entry_is_owned, git_error_summary, hardened_cache_git_command,
+    hardened_git_network_command, point_cache_origin_at,
+};
 use std::path::{Path, PathBuf};
 
 /// Exclusive guard over one cache's stamp → fetch → reset.
@@ -282,48 +289,85 @@ impl FetchBound {
     }
 }
 
-/// What one call to [`fetch_remote_cache`] did.
+/// What one call to [`fetch_remote_cache`] did. A refusal, a failed reset and
+/// a failed origin write are not outcomes here — they are errors, because the
+/// entry is then not known to hold this source at any revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchAttempt {
-    /// The fetch ran; `true` when the cache now matches its remote.
-    Attempted(bool),
+    /// The fetch and reset ran; the cache now matches its remote.
+    Updated,
+    /// The fetch ran and failed. The clone is still the requested source at an
+    /// older revision, so it is kept; carries git's sanitized output.
+    FetchFailed(String),
     /// The cache was already fresh enough for the caller's bound.
     Fresh,
     /// Another process holds the guard; nothing was done.
     Busy,
     /// The cache cannot be locked or stamped.
     Unwritable(String),
-    /// The path is not a cache directory. Nothing was run.
-    OutOfCacheRoot,
+}
+
+impl FetchAttempt {
+    /// Say what the fetch did, for every outcome its caller tolerates. One
+    /// place, so a variant can never be silently dropped at one call site and
+    /// leave a user installing from a stale cache with no marker.
+    ///
+    /// Deduped per source: an offline run resolves the same source from the
+    /// TUI's startup refresh and again from the top-level resolve.
+    pub fn report(self, remote: &RemoteSource) {
+        let display = &remote.display;
+        let message = match self {
+            Self::Updated | Self::Fresh => return,
+            Self::FetchFailed(summary) => format!(
+                "git fetch failed for cached source {display}: {summary}; using cached version"
+            ),
+            Self::Busy => format!(
+                "another vstack process is refreshing cached source {display} — using cached version"
+            ),
+            Self::Unwritable(reason) => format!(
+                "cached source {display} cannot be refreshed ({reason}) — using cached version"
+            ),
+        };
+        crate::refresh_sources::warn_once(&remote.cache_key, &message);
+    }
 }
 
 /// Fetch + reset one cache under the guard, recording the outcome in the
 /// stamp. This is the only place an EXISTING cache is mutated: `add`,
 /// `refresh`, the TUI and the background `cache-refresh` all route through
-/// it, so the guard, the bound and the stamp are one mechanism rather than
-/// four. (The initial clone in `add` creates a cache rather than mutating
-/// one, and runs before there is a `.git` to lock.)
+/// it, so the ownership proof, the guard, the bound and the stamp are one
+/// mechanism rather than four. (The initial clone in `add` creates a cache
+/// rather than mutating one, and runs before there is a `.git` to lock.)
 ///
-/// `max_age` is re-checked INSIDE the guard, so a second caller that queued
-/// behind a fetch sees its fresh stamp and skips instead of fetching again.
+/// Which directory is mutated, which URL is fetched and which revision the
+/// reset lands on are all `remote`'s — the caller cannot name a path of its
+/// own, so nothing outside [`crate::refresh_sources::remote_cache_root`] is
+/// reachable from here at all.
+///
+/// `max_age` is checked before the ownership proof — a cache still inside its
+/// TTL costs no git process at all — and again INSIDE the guard, so a second
+/// caller that queued behind a fetch sees its fresh stamp and skips instead of
+/// fetching again.
 pub fn fetch_remote_cache(
-    cache_dir: &Path,
+    remote: &RemoteSource,
     max_age: Option<std::time::Duration>,
     bound: FetchBound,
-) -> FetchAttempt {
-    // Nothing outside the cache root is ever fetched or reset — see
-    // [`is_under_remote_cache_root`]. This runs before any git process
-    // exists, so a mistaken caller cannot mutate anything at all.
-    if !is_under_remote_cache_root(cache_dir) {
-        return FetchAttempt::OutOfCacheRoot;
+) -> anyhow::Result<FetchAttempt> {
+    let cache_dir = remote.cache_dir.as_path();
+    if !remote_cache_fetch_due(cache_dir, max_age) {
+        return Ok(FetchAttempt::Fresh);
     }
+    // Before anything is written: this entry must be vstack's own clone of
+    // THIS repository. Reads only, and it refuses rather than repairs.
+    ensure_cache_entry_is_owned(remote)?;
+
     let guard = match RemoteCacheFetchGuard::acquire(cache_dir) {
         GuardAcquire::Held(guard) => guard,
-        GuardAcquire::Busy => return FetchAttempt::Busy,
-        GuardAcquire::Unusable(reason) => return FetchAttempt::Unwritable(reason),
+        GuardAcquire::Busy => return Ok(FetchAttempt::Busy),
+        GuardAcquire::Unusable(reason) => return Ok(FetchAttempt::Unwritable(reason)),
     };
     if !remote_cache_fetch_due(cache_dir, max_age) {
-        return FetchAttempt::Fresh;
+        return Ok(FetchAttempt::Fresh);
     }
     // Mark the attempt in flight before running it: the mtime rate-limits a
     // holder that crashes mid-fetch, and readers know not to call it failed.
@@ -333,13 +377,28 @@ pub fn fetch_remote_cache(
         _ => None,
     };
     if let Err(err) = write_fetch_stamp(cache_dir, FetchStamp::Pending { first_failure }) {
-        return FetchAttempt::Unwritable(err.to_string());
+        return Ok(FetchAttempt::Unwritable(err.to_string()));
     }
+    let record = |cause: Option<FetchFailure>| {
+        let now = epoch_now();
+        let stamp = match cause {
+            None => FetchStamp::Ok,
+            Some(cause) => FetchStamp::Failed {
+                first: first_failure.unwrap_or(now),
+                last: now,
+                cause: Some(cause),
+            },
+        };
+        write_fetch_stamp(cache_dir, stamp)
+    };
 
-    let mut command = git_in_cache(cache_dir);
+    // The URL this invocation selected is the one to fetch over. A write, so
+    // it happens under the guard and only once the entry has proved to be
+    // vstack's own clone of this repository.
+    point_cache_origin_at(remote)?;
+
+    let mut command = hardened_git_network_command(cache_dir)?;
     if let Some(deadline) = bound.deadline() {
-        // A bounded fetch has nobody available to answer a prompt.
-        suppress_git_prompts(&mut command);
         // Strictly inside the wall-clock kill, or the knob could never fire.
         let low_speed = REMOTE_CACHE_LOW_SPEED_SECS
             .min(deadline.as_secs().saturating_sub(1))
@@ -351,10 +410,33 @@ pub fn fetch_remote_cache(
             &format!("http.lowSpeedTime={low_speed}"),
         ]);
     }
+    // The remote's own `HEAD`, into a ref only vstack writes — never the
+    // entry's stored refspec or its clone-time `origin/HEAD`.
     command
-        .args(["fetch", "origin", "--quiet"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .args([
+            "fetch",
+            "origin",
+            "--quiet",
+            "--force",
+            crate::refresh_sources::CACHE_HEAD_REFSPEC,
+        ])
+        .stdout(std::process::Stdio::null());
+    // Captured to a file rather than a pipe: nothing reads a pipe while the
+    // deadline is being waited out, and a full pipe buffer would wedge the
+    // very fetch this is bounding.
+    let stderr_path = cache_dir.join(".git").join("vstack-fetch.err");
+    let stderr = std::fs::File::create(&stderr_path).ok();
+    match &stderr {
+        Some(file) => {
+            command.stderr(
+                file.try_clone()
+                    .map_or_else(|_| std::process::Stdio::null(), std::process::Stdio::from),
+            );
+        }
+        None => {
+            command.stderr(std::process::Stdio::null());
+        }
+    }
     #[cfg(unix)]
     if bound.deadline().is_some() {
         use std::os::unix::process::CommandExt;
@@ -381,102 +463,42 @@ pub fn fetch_remote_cache(
             FetchWait::TimedOut => Some(FetchFailure::TimedOut),
         },
     };
-    let failure = failure.or_else(|| {
-        // Local, fast, and pointless to bound: the network is already done.
-        git_in_cache(cache_dir)
-            .args(["reset", "--hard", "origin/HEAD", "--quiet"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
-            .then_some(())
-            .map_or(Some(FetchFailure::Reset), |()| None)
-    });
+    let stderr = std::fs::read(&stderr_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&stderr_path);
+    if let Some(cause) = failure {
+        if let Err(err) = record(Some(cause)) {
+            return Ok(FetchAttempt::Unwritable(err.to_string()));
+        }
+        drop(guard);
+        // A failed fetch is tolerated: the clone is still the requested source
+        // at an older revision.
+        return Ok(FetchAttempt::FetchFailed(git_error_summary(&stderr, &[])));
+    }
 
-    let now = epoch_now();
-    let stamp = match failure {
-        None => FetchStamp::Ok,
-        Some(cause) => FetchStamp::Failed {
-            first: first_failure.unwrap_or(now),
-            last: now,
-            cause: Some(cause),
-        },
+    // Local, fast, and pointless to bound: the network is already done. A
+    // failed reset IS an error — the entry no longer matches any revision.
+    let reset = hardened_cache_git_command(cache_dir)?
+        .args(["reset", "--hard", crate::refresh_sources::CACHE_HEAD_REF])
+        .stdout(std::process::Stdio::null())
+        .output();
+    let reset_failure = match &reset {
+        Ok(output) if output.status.success() => None,
+        Ok(output) => Some(git_error_summary(&output.stderr, &output.stdout)),
+        Err(err) => Some(err.to_string()),
     };
-    if let Err(err) = write_fetch_stamp(cache_dir, stamp) {
-        return FetchAttempt::Unwritable(err.to_string());
+    if let Some(summary) = reset_failure {
+        let _ = record(Some(FetchFailure::Reset));
+        drop(guard);
+        anyhow::bail!(
+            "git reset failed for cached source {}: {summary}",
+            remote.display
+        );
+    }
+    if let Err(err) = record(None) {
+        return Ok(FetchAttempt::Unwritable(err.to_string()));
     }
     drop(guard);
-    FetchAttempt::Attempted(failure.is_none())
-}
-
-/// Every environment variable that can point git at a repository, an index,
-/// an object store, or injected configuration. A vstack process inherits its
-/// caller's environment, and the detached refresh child inherits vstack's, so
-/// any of these silently redirects a cache mutation at somebody else's data —
-/// `GIT_INDEX_FILE` alone is enough to write a cache's tree into another
-/// repository's index and leave it unusable.
-const INHERITED_GIT_REPOSITORY_ENV: [&str; 12] = [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_CEILING_DIRECTORIES",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-    "GIT_NAMESPACE",
-    "GIT_GRAFT_FILE",
-    "GIT_CONFIG",
-    "GIT_CONFIG_COUNT",
-    "GIT_CONFIG_PARAMETERS",
-];
-
-/// A git invocation for cache work: nothing inherited may redirect it at
-/// another repository.
-///
-/// Prompting is NOT decided here: an unbounded `add`/`refresh` is a user at a
-/// terminal who may well want to type a credential, while a bounded fetch has
-/// nobody to answer one — [`suppress_git_prompts`] is applied per call site.
-pub(crate) fn git_command_for_cache() -> std::process::Command {
-    let mut command = std::process::Command::new("git");
-    for key in INHERITED_GIT_REPOSITORY_ENV {
-        command.env_remove(key);
-    }
-    command
-}
-
-/// Forbid this git invocation from stopping to ask a human anything.
-///
-/// Applied to every BOUNDED fetch: the detached refresh child has no terminal
-/// and would otherwise raise a GUI askpass dialog at session start or block
-/// on a prompt nobody can answer, and the TUI's short fetch runs under a raw
-/// terminal a prompt would corrupt. Unbounded interactive fetches keep git's
-/// normal prompting.
-fn suppress_git_prompts(command: &mut std::process::Command) {
-    command
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("SSH_ASKPASS_REQUIRE", "never")
-        .env_remove("GIT_ASKPASS")
-        .env_remove("SSH_ASKPASS")
-        .env_remove("DISPLAY");
-}
-
-/// A cache git invocation PINNED to this cache.
-///
-/// Without `GIT_DIR`/`GIT_WORK_TREE`, git walks up from its working
-/// directory looking for a repository: a cache whose `.git` is damaged (or
-/// merely not a repository yet) would silently resolve to whatever repo
-/// encloses the cache root, and `reset --hard origin/HEAD` would then rewrite
-/// THAT working tree. Pinning both makes a broken cache fail as a broken
-/// cache. `GIT_CEILING_DIRECTORIES` is belt and braces for any git that still
-/// tries to discover.
-fn git_in_cache(cache_dir: &Path) -> std::process::Command {
-    let mut command = git_command_for_cache();
-    command
-        .current_dir(cache_dir)
-        .env("GIT_DIR", cache_dir.join(".git"))
-        .env("GIT_WORK_TREE", cache_dir)
-        .env("GIT_CEILING_DIRECTORIES", cache_dir);
-    command
+    Ok(FetchAttempt::Updated)
 }
 
 enum FetchWait {
@@ -577,17 +599,22 @@ pub fn refresh_remote_caches_older_than(
     bound: FetchBound,
 ) -> Vec<RemoteCacheProblem> {
     let mut problems = Vec::new();
-    for (source, cache_dir) in cached_remote_sources(lock) {
-        let kind = match fetch_remote_cache(&cache_dir, max_age, bound) {
-            // A fetch in flight elsewhere is not a failure; stay quiet.
-            FetchAttempt::Busy => None,
-            FetchAttempt::Unwritable(reason) => Some(RemoteCacheProblemKind::Unwritable { reason }),
-            // Unreachable for a directory this function itself resolved, but
-            // reported rather than swallowed if the invariant ever breaks.
-            FetchAttempt::OutOfCacheRoot => Some(RemoteCacheProblemKind::Unwritable {
-                reason: format!("{} is not a cache directory", cache_dir.display()),
+    for (source, remote) in cached_remote_sources(lock) {
+        let kind = match fetch_remote_cache(&remote, max_age, bound) {
+            // A cache entry that is not vstack's own, an origin that cannot be
+            // written, a reset that did not land: the entry is not known to
+            // hold this source, and no later run repairs itself.
+            Err(err) => Some(RemoteCacheProblemKind::Refused {
+                reason: format!("{err:#}"),
             }),
-            FetchAttempt::Attempted(_) | FetchAttempt::Fresh => remote_cache_problem(&cache_dir),
+            // A fetch in flight elsewhere is not a failure; stay quiet.
+            Ok(FetchAttempt::Busy) => None,
+            Ok(FetchAttempt::Unwritable(reason)) => {
+                Some(RemoteCacheProblemKind::Unwritable { reason })
+            }
+            Ok(FetchAttempt::Updated | FetchAttempt::FetchFailed(_) | FetchAttempt::Fresh) => {
+                remote_cache_problem(&remote.cache_dir)
+            }
         };
         if let Some(kind) = kind {
             problems.push(RemoteCacheProblem { source, kind });

@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# Live launch claims per auth lane: one file per lane window launched under a
+# resolved lane, so `lanes pick` sees the launches already in flight on an
+# account instead of only its usage numbers, which lag a launch by minutes.
+#
+# Home: $OVERSEE_WATCH_STATE_DIR/claims, else <project root>/tmp/oversee-watch/
+# claims — the directory oversee-watch keeps its own state in.
+#
+# A claim is live while its tmux pane is. The liveness key is
+# `<server pid> <pane id>`: pane ids restart at %0 on a new tmux server, so the
+# pid keeps a claim that outlived its server from matching an unrelated pane.
+#
+# `tmux list-panes -a` sees ONE server — the current client's. It is authority
+# over claims carrying that server's pid, and says nothing about the rest: a
+# claim on another socket, or one this process could not enumerate at all, is
+# judged by whether its server process still runs. Deleting a claim we could
+# not measure would report a busy account as free, so it is kept and counted
+# until its server is provably gone. Claims are recorded for tmux lanes only —
+# a launch with no pane handle would leave a claim nothing can prune.
+#
+# Record: `<server pid>\t<pane id>\t<config dir>\t<window>\t<created at>`.
+set -euo pipefail
+
+# Directory holding the claim files. $1: project root (may be empty).
+lane_claims_dir() {
+  if [[ -n "${OVERSEE_WATCH_STATE_DIR:-}" ]]; then
+    printf '%s/claims\n' "$OVERSEE_WATCH_STATE_DIR"
+  else
+    printf '%s/tmp/oversee-watch/claims\n' "${1:-$PWD}"
+  fi
+}
+
+# One spelling per account: config dirs are compared as strings, so a lane
+# given as `~/.claude/`, through a symlink, or relative to somewhere else must
+# reduce to what discovery reports or its claims count against nothing. A path
+# that cannot be resolved keeps its own spelling, trailing slashes off.
+lane_claims_canon() {
+  local p="$1"
+  [[ -n "$p" ]] || return 0
+  ( cd -- "$p" 2>/dev/null && pwd -P ) && return 0
+  while [[ "$p" == */ && "$p" != "/" ]]; do p="${p%/}"; done
+  printf '%s\n' "$p"
+}
+
+# Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
+# pid>\t<pane id>` lines. $1: claims directory. Exits 2 when the store cannot be read at
+# all: a caller deciding where to launch must fail closed on that, and only
+# the caller knows whether it is deciding or reporting.
+lane_claims_read() {
+  local dir="$1" live this_server f server pane cfg window created rc=0
+  local rechecked=0 live_now
+  # Absent is genuinely empty; anything else that is not a directory is a
+  # misconfiguration, and an unreadable store is not an empty one. Reporting
+  # no claims for either would report every busy account as free.
+  if [[ ! -e "$dir" ]]; then
+    return 0
+  fi
+  if [[ ! -d "$dir" ]]; then
+    echo "lane-claims: claims path $dir is not a directory; launches already in flight cannot be read" >&2
+    return 2
+  fi
+  if [[ ! -r "$dir" || ! -x "$dir" ]]; then
+    echo "lane-claims: claims directory $dir is not readable; launches already in flight are invisible" >&2
+    return 2
+  fi
+  live="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || live=""
+  # The enumerated server's pid, empty when nothing could be enumerated.
+  this_server="${live%%$'\n'*}"
+  this_server="${this_server%% *}"
+  for f in "$dir"/*.claim; do
+    [[ -f "$f" ]] || continue
+    # Cleared every iteration: a failed read must never leave the previous
+    # record's fields standing in for this one.
+    server=""; pane=""; cfg=""; window=""; created=""
+    if [[ ! -r "$f" ]]; then
+      # A claim that cannot be read is a launch that cannot be seen: reported,
+      # left in place, and carried out as a failure so a caller deciding where
+      # to launch refuses rather than counting it as absent.
+      echo "lane-claims: cannot read claim $f; leaving it in place" >&2
+      rc=2
+      continue
+    fi
+    IFS=$'\t' read -r server pane cfg window created < "$f" || true
+    if [[ -z "$pane" ]] || [[ ! "$server" =~ ^[0-9]+$ ]]; then
+      rm -f -- "$f"
+      continue
+    fi
+    live_now=0
+    if grep -qxF -- "$server $pane" <<<"$live"; then
+      live_now=1
+    elif [[ "$server" == "$this_server" ]]; then
+      # The pane list predates this record: another launcher can create its
+      # window and write its claim in between, and deleting that record would
+      # hand a running account straight back out. One re-enumeration settles
+      # every same-server miss in this pass.
+      if [[ "$rechecked" -eq 0 ]]; then
+        rechecked=1
+        live="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || live=""
+      fi
+      if grep -qxF -- "$server $pane" <<<"$live"; then live_now=1; fi
+    elif kill -0 "$server" 2>/dev/null; then
+      # A server this process cannot enumerate, still running.
+      live_now=1
+    fi
+    if [[ "$live_now" -eq 0 ]]; then
+      rm -f -- "$f"
+      continue
+    fi
+    # Canonical on the way out, whatever spelling the record carries: the
+    # count compares strings, and a hand-written or older record must still
+    # land on the account discovery reports.
+    printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
+  done
+  return "$rc"
+}
+
+# Live claims against one config dir. $1: `lane_claims_read` output, $2: dir.
+lane_claims_count() {
+  # Through the environment, never `awk -v`: that form expands backslash
+  # escapes, and a config dir carrying a backslash would then match no record
+  # and report a busy account as free.
+  LANE_CLAIMS_DIR_Q="$(lane_claims_canon "$2")" \
+    awk -F'\t' '$1 == ENVIRON["LANE_CLAIMS_DIR_Q"] { n++ } END { print n + 0 }' <<<"$1"
+}
+
+# Config dir claimed for one pane, empty when no live claim names it. The key
+# is `<server pid> <pane id>` — the same key liveness uses — because a window
+# NAME is unique to a session, not to a server or across servers, so two lanes
+# can carry one name and the wrong account would answer for a pane.
+# $1: `lane_claims_read` output, $2: server pid, $3: pane id.
+lane_claims_config_dir() {
+  [[ -n "${2:-}" && -n "${3:-}" ]] || return 0
+  awk -F'\t' -v s="$2" -v p="$3" '$3 == s && $4 == p { print $1; exit }' <<<"$1"
+}
+
+# Record one claim. $1: claims dir, $2: server pid, $3: pane id, $4: config
+# dir, $5: window. A missing pane handle or config dir records nothing.
+lane_claim_write() {
+  local dir="$1" server="$2" pane="$3" cfg="$4" window="$5" tmp
+  [[ -n "$server" && -n "$pane" && -n "$cfg" ]] || return 0
+  cfg="$(lane_claims_canon "$cfg")"
+  mkdir -p -- "$dir" || return 1
+  tmp="$(mktemp -- "$dir/claim.XXXXXX")" || return 1
+  # Named .claim only once complete: a reader must never see a half-written
+  # record and prune a live lane over it.
+  printf '%s\t%s\t%s\t%s\t%s\n' "$server" "$pane" "$cfg" "$window" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$tmp.claim" || { rm -f -- "$tmp"; return 1; }
+}

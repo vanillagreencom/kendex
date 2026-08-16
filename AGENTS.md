@@ -18,8 +18,9 @@ cli/src/
 ├── pi_extension.rs      Pi extension discovery, install/remove
 ├── pi_extension/settings.rs  Pi settings.json `packages` array — registration write, removal, and matching
 ├── config.rs            Lock file (JSON), project root detection, staleness/mtime helpers
-├── config/remote_cache.rs  Remote source cache identity, location, lookup, fetch stamps
+├── config/remote_cache.rs  Remote source cache fetch stamps and recorded refresh outcomes
 ├── config/remote_cache/fetch.rs  Fetch guard, bounded git fetch/reset, refresh drivers
+├── refresh_sources.rs   Source resolution; RemoteSource (display/URL/cache key), hardened git commands, cache-entry ownership
 ├── scope.rs             Scope enum (project | global | all); uniform `--scope`/`-g` parsing
 ├── catalog.rs           Source catalog discovery from default dirs or vstack.toml `[catalog]`
 ├── mapping.rs           Source vstack.toml — MappingConfig (catalog, agent-skills, role-skills, hook-events)

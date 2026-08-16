@@ -9,45 +9,23 @@ use std::collections::HashSet;
 /// agent's context on one report line.
 const DISPLAY_LIMIT: usize = 120;
 
-/// Remove credentials from a source string, keeping it FUNCTIONAL. Applied
-/// at report construction, so every consumer — human report, quiet hook
-/// line, `--json` on stdout, CI logs quoting either — sees credential-free
-/// strings.
+/// [`DISPLAY_LIMIT`] for a diagnostic that IS the remedy — a refusal names the
+/// cache entry and the next step, and a cache root is a full path, so the
+/// prose bound cut the instruction off. Still bounded by construction, just
+/// wide enough to carry a sentence with a path in it.
+const REASON_LIMIT: usize = DISPLAY_LIMIT * 4;
+
+/// Remove credentials from a source string. Applied at report construction,
+/// so every consumer — human report, quiet hook line, `--json` on stdout, CI
+/// logs quoting either — sees credential-free strings.
 ///
-/// For `ssh://` URLs and scp-style `user@host:path` sources the username is
-/// kept and only a `:password` is dropped: `git@` is how the endpoint picks
-/// the key, not a secret, and stripping it turns a working remedy command
-/// into one that dies on publickey. For every other scheme (https) the whole
-/// userinfo goes — a bare user field is exactly where tokens like
-/// `ghp_…@github.com` live.
+/// One redaction, shared with every source diagnostic vstack prints: a token
+/// shape that one implementation handled and another did not is a token in a
+/// CI log. Which half of a userinfo is a secret is a question about the
+/// transport's grammar, and [`crate::refresh_sources::remote_source_display`]
+/// is where that grammar lives.
 pub(super) fn scrub_source_credentials(text: &str) -> String {
-    if let Some(rest) = text.strip_prefix("ssh://") {
-        let host_end = rest.find('/').unwrap_or(rest.len());
-        if let Some(at) = rest[..host_end].rfind('@') {
-            let user = rest[..at].split(':').next().unwrap_or_default();
-            return format!("ssh://{user}@{}", &rest[at + 1..]);
-        }
-        return text.to_string();
-    }
-    if let Some(scheme_end) = text.find("://") {
-        let after = &text[scheme_end + 3..];
-        // Userinfo ends at the last `@` before the path starts.
-        let host_end = after.find('/').unwrap_or(after.len());
-        return match after[..host_end].rfind('@') {
-            Some(at) => format!("{}{}", &text[..scheme_end + 3], &after[at + 1..]),
-            None => text.to_string(),
-        };
-    }
-    // scp-style `user@host:path` has no scheme; a pasted `user:pass@` form
-    // must still lose the password while the user survives.
-    let head_end = text.find('/').unwrap_or(text.len());
-    if let Some(at) = text[..head_end].find('@') {
-        let user = text[..at].split(':').next().unwrap_or_default();
-        if user.len() != at {
-            return format!("{user}@{}", &text[at + 1..]);
-        }
-    }
-    text.to_string()
+    crate::refresh_sources::remote_source_display(text)
 }
 
 /// Characters a shell passes through untouched, so an argument built only
@@ -81,14 +59,23 @@ pub(crate) fn command_arg(text: &str) -> String {
 /// terminal, and anything long is truncated — an item is never classified on
 /// its length, only shortened when shown.
 pub(crate) fn display_text(text: &str) -> String {
+    display_bounded(text, DISPLAY_LIMIT)
+}
+
+/// [`display_text`] for a cause-and-remedy sentence; see [`REASON_LIMIT`].
+pub(crate) fn display_reason(text: &str) -> String {
+    display_bounded(text, REASON_LIMIT)
+}
+
+fn display_bounded(text: &str, limit: usize) -> String {
     let scrubbed: String = scrub_source_credentials(text)
         .chars()
         .map(|c| if c.is_control() { '?' } else { c })
         .collect();
-    if scrubbed.chars().count() <= DISPLAY_LIMIT {
+    if scrubbed.chars().count() <= limit {
         return scrubbed;
     }
-    let kept: String = scrubbed.chars().take(DISPLAY_LIMIT).collect();
+    let kept: String = scrubbed.chars().take(limit).collect();
     format!("{kept}…")
 }
 
@@ -295,10 +282,11 @@ pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) 
     for issue in &report.source_issues {
         let source = display_text(&issue.source);
         match &issue.problem {
-            SourceProblem::Unresolvable { entries } => {
+            SourceProblem::Unresolvable { entries, reason } => {
                 let _ = writeln!(
                     out,
-                    "\n  source {source} is unreachable (cache not cloned or path missing) — {} item(s) cannot be verified; run `vstack add{g} {}` to restore it, or `vstack remove{g} <name>` if it is gone for good:",
+                    "\n  source {source} is unreachable — {} — {} item(s) cannot be verified; run `vstack add{g} {}` to restore it, or `vstack remove{g} <name>` if it is gone for good:",
+                    display_reason(reason),
                     entries.len(),
                     command_arg(&issue.source),
                 );
@@ -317,13 +305,16 @@ pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) 
                 overflow_line(out, "    ", shown, reasons.len());
                 render_entry_names(out, entries, quiet);
             }
+            // The refusal already names the entry, the cause and the next
+            // step. It is relayed rather than reworded, and no `vstack add` is
+            // prescribed on top of it: a source vstack REFUSED refuses again
+            // when re-added, which sends the user in a circle.
             SourceProblem::Unverifiable { entries, reason } => {
                 let _ = writeln!(
                     out,
-                    "\n  source {source} has a cache that is not provably its own ({}) — {} item(s) cannot be verified; remove that directory under ~/.vstack/cache and run `vstack add{g} {}` to re-clone it:",
-                    display_text(reason),
+                    "\n  source {source} — {} item(s) cannot be verified: {}",
                     entries.len(),
-                    command_arg(&issue.source),
+                    display_reason(reason),
                 );
                 render_entry_names(out, entries, quiet);
             }

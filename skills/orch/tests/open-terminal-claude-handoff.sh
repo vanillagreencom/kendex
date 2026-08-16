@@ -30,7 +30,7 @@ TC=" — complete means the PR is MERGED and the worktree cleaned up, not merely
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
-SRC_LIB="$SCRIPTS_DIR/lib/vstack-env.sh"
+SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -131,13 +131,13 @@ exit 1
 EOF
 chmod +x "$STUB"
 
-# Build a temp git repo containing a copy of open-terminal + its lib, so the
+# Build a temp git repo containing a copy of open-terminal + its libs, so the
 # script's PROJECT_ROOT resolves to this repo. $2 optional settings body.
 make_ot_repo() {
   local repo="$1" settings="${2:-}"
   mkdir -p "$repo/scripts/lib"
   cp "$SRC_OT" "$repo/scripts/open-terminal"
-  cp "$SRC_LIB" "$repo/scripts/lib/vstack-env.sh"
+  cp "$SRC_LIB_DIR"/*.sh "$repo/scripts/lib/"
   chmod +x "$repo/scripts/open-terminal"
   git -C "$repo" init -q
   if [[ -n "$settings" ]]; then

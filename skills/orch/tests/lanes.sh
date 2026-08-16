@@ -232,6 +232,222 @@ assert_eq "$(jq -r '.[0].session_5h_pct' <<<"$OUT6")" "30" "a 5h window fills th
 assert_eq "$(jq -r '.[0].weekly_pct' <<<"$OUT6")" "70" "a 7d window fills the weekly slot"
 assert_eq "$(jq -r '.[0].headroom_pct' <<<"$OUT6")" "30" "the larger bucket binds"
 
+echo "=== in-flight lane claims ==="
+
+# `open-terminal` records one claim per lane window it launches under a
+# resolved lane; a claim is live while its pane is. Usage numbers lag a launch
+# by minutes, so without this a second `pick` re-reads the same numbers and
+# hands one account the whole fleet.
+CLAIM_BIN="$TMP_ROOT/claim-bin"; mkdir -p "$CLAIM_BIN"
+cat > "$CLAIM_BIN/tmux" <<'STUBEOF'
+#!/usr/bin/env bash
+# list-panes -a -F '<server pid> <pane id>' → the lines of $TMUX_PANES_FILE,
+# or of $TMUX_PANES_FILE.<N> on the Nth call when that file exists, so a case
+# can change what the server reports between two enumerations.
+[[ "${1:-}" == "list-panes" ]] || exit 0
+n=0; [[ -f "${TMUX_PANES_FILE:-}.calls" ]] && n="$(cat "$TMUX_PANES_FILE.calls")"
+n=$((n + 1)); [[ -z "${TMUX_PANES_FILE:-}" ]] || printf '%s' "$n" > "$TMUX_PANES_FILE.calls"
+src="$TMUX_PANES_FILE.$n"; [[ -f "$src" ]] || src="$TMUX_PANES_FILE"
+[[ -f "$src" ]] && cat "$src"
+exit 0
+STUBEOF
+chmod +x "$CLAIM_BIN/tmux"
+
+CLAIM_STATE="$TMP_ROOT/claim-state"
+PANES="$TMP_ROOT/panes.txt"
+LIVE_PID="$$"
+# Above pid_max on every platform this runs on (2^22 on Linux, 99999 on
+# macOS), so `kill -0` can never find it: a tmux server provably gone.
+DEAD_PID=2147483647
+printf '%s %%1\n%s %%2\n' "$LIVE_PID" "$LIVE_PID" > "$PANES"
+export FIXTURE_DIR="$TMP_ROOT/fix1"
+
+write_claim() { # <name> <server pid> <pane id> <config dir> <window>
+  mkdir -p "$CLAIM_STATE/claims"
+  printf '%s\t%s\t%s\t%s\t2026-08-16T00:00:00Z\n' "$2" "$3" "$4" "$5" > "$CLAIM_STATE/claims/$1.claim"
+}
+run_lanes_claims() {
+  LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$CLAIM_STATE" \
+    TMUX_PANES_FILE="$PANES" PATH="$CLAIM_BIN:$PATH" "$LANES" "$@"
+}
+
+rm -rf "$CLAIM_STATE"
+NOCLAIMS="$(run_lanes_claims list --harness claude --json)"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$NOCLAIMS")" "0" \
+  "a lane with no live claim counts 0"
+assert_eq "$(run_lanes_claims pick --harness claude)" "CLAUDE_CONFIG_DIR=$H/.claude" \
+  "with nothing in flight, pick still takes the most headroom"
+
+write_claim one "$LIVE_PID" "%1" "$H/.claude" "vst-1"
+CLAIMED="$(run_lanes_claims list --harness claude --json)"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$CLAIMED")" "1" \
+  "a live claim is counted against its lane"
+assert_eq "$(jq -r '.[] | select(.alias=="eclaude") | .claims' <<<"$CLAIMED")" "0" \
+  "a claim counts against one lane only"
+assert_contains "$(run_lanes_claims list --harness claude)" "CLAIMS" \
+  "the table reports the claim count"
+
+# The behaviour this exists for: a launch already in flight moves pick off the
+# account with the most headroom, whose numbers have not caught up with it.
+assert_eq "$(run_lanes_claims pick --harness claude)" "CLAUDE_CONFIG_DIR=$H/.eclaude" \
+  "pick prefers the lane with nothing in flight over the one with more headroom"
+
+# Claims only order the lanes that already qualify; they never buy one past
+# the usage threshold.
+run_lanes_claims pick --harness claude --max-pct 15 >/dev/null 2>&1
+assert_eq "$?" "3" "a claimed lane does not lower the threshold for the rest"
+
+write_claim two "$LIVE_PID" "%2" "$H/.eclaude" "vst-2"
+assert_eq "$(run_lanes_claims pick --harness claude)" "CLAUDE_CONFIG_DIR=$H/.claude" \
+  "with claims tied, headroom breaks the tie"
+
+# A claim whose pane is gone is pruned on read: a finished lane must not hold
+# its account out of the fleet forever.
+printf '%s %%2\n' "$LIVE_PID" > "$PANES"
+PRUNED="$(run_lanes_claims list --harness claude --json)"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$PRUNED")" "0" \
+  "a claim whose pane is gone stops counting"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/one.claim" ]] && echo yes || echo no)" "no" \
+  "the dead claim file is removed, not merely ignored"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/two.claim" ]] && echo yes || echo no)" "yes" \
+  "a live claim survives the prune"
+
+# Pane ids restart at %0 on a new tmux server, so the server pid is half the
+# liveness key: without it a claim outliving its server matches a stranger.
+rm -f "$CLAIM_STATE"/claims/*.claim
+write_claim stale "$DEAD_PID" "%2" "$H/.eclaude" "vst-2"
+assert_eq "$(jq -r '.[] | select(.alias=="eclaude") | .claims' <<<"$(run_lanes_claims list --harness claude --json)")" "0" \
+  "a claim from a dead tmux server never matches a reused pane id"
+
+# `tmux list-panes` sees one server. A claim on another socket — or one this
+# process could not enumerate at all — is judged by whether its server still
+# runs: deleting what could not be measured would report a busy account free.
+rm -f "$CLAIM_STATE"/claims/*.claim
+: > "$PANES"
+write_claim foreign "$LIVE_PID" "%5" "$H/.claude" "vst-3"
+UNSEEN="$(run_lanes_claims list --harness claude --json)"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$UNSEEN")" "1" \
+  "a claim this enumeration cannot see still counts while its server runs"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/foreign.claim" ]] && echo yes || echo no)" "yes" \
+  "an unmeasurable claim is kept, not deleted"
+
+# The same read with the enumeration itself failing, not merely empty.
+FAIL_BIN="$TMP_ROOT/fail-bin"; mkdir -p "$FAIL_BIN"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$FAIL_BIN/tmux"; chmod +x "$FAIL_BIN/tmux"
+BROKEN="$(LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$CLAIM_STATE" \
+  PATH="$FAIL_BIN:$PATH" "$LANES" list --harness claude --json)"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$BROKEN")" "1" \
+  "a failed pane enumeration does not empty the claim store"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/foreign.claim" ]] && echo yes || echo no)" "yes" \
+  "a failed enumeration deletes nothing"
+
+# ...and a claim whose server is gone is still pruned when nothing enumerates.
+write_claim gone "$DEAD_PID" "%6" "$H/.eclaude" "vst-4"
+GONE="$(run_lanes_claims list --harness claude --json)"
+assert_eq "$(jq -r '.[] | select(.alias=="eclaude") | .claims' <<<"$GONE")" "0" \
+  "a claim whose server is gone is pruned even with nothing to enumerate"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/gone.claim" ]] && echo yes || echo no)" "no" \
+  "the gone-server claim file is removed"
+
+# One spelling per account: a lane given with a trailing slash, or through a
+# symlink, is the same account the inventory discovered — an exact string
+# compare would count zero claims for it and stack a second session there.
+rm -f "$CLAIM_STATE"/claims/*.claim
+printf '%s %%7\n' "$LIVE_PID" > "$PANES"
+write_claim slashed "$LIVE_PID" "%7" "$H/.claude/" "vst-5"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$(run_lanes_claims list --harness claude --json)")" "1" \
+  "a claim written with a trailing slash counts against the discovered lane"
+rm -f "$CLAIM_STATE"/claims/*.claim
+ln -sfn "$H/.claude" "$TMP_ROOT/claude-link"
+write_claim linked "$LIVE_PID" "%7" "$TMP_ROOT/claude-link" "vst-6"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$(run_lanes_claims list --harness claude --json)")" "1" \
+  "a claim written through a symlink counts against the lane it points at"
+
+# An unreadable claim store is not an empty one. Root reads anything, so the
+# case cannot run there.
+rm -f "$CLAIM_STATE"/claims/*.claim
+write_claim keepme "$LIVE_PID" "%7" "$H/.claude" "vst-7"
+if [[ "$(id -u)" -eq 0 ]]; then
+  printf '  skip  unreadable claim store (running as root)\n'
+else
+  chmod 000 "$CLAIM_STATE/claims"
+  UNREADABLE_ERR="$(run_lanes_claims list --harness claude --json 2>&1 >/dev/null)"
+  chmod 755 "$CLAIM_STATE/claims"
+  assert_contains "$UNREADABLE_ERR" "is not readable" \
+    "an unreadable claim store says so rather than reporting every account free"
+  assert_eq "$([[ -f "$CLAIM_STATE/claims/keepme.claim" ]] && echo yes || echo no)" "yes" \
+    "an unreadable claim store is never emptied"
+
+  # `list` reports what it measured; `pick` DECIDES, so it refuses rather
+  # than reading an unreadable store as "nothing in flight".
+  chmod 000 "$CLAIM_STATE/claims"
+  UNKNOWN_JSON="$(run_lanes_claims list --harness claude --json 2>/dev/null)"
+  UNKNOWN_TABLE="$(run_lanes_claims list --harness claude 2>/dev/null)"
+  run_lanes_claims list --harness claude --json >/dev/null 2>&1
+  list_rc=$?
+  PICK_ERR="$(run_lanes_claims pick --harness claude 2>&1 >/dev/null)"
+  pick_rc=$?
+  chmod 755 "$CLAIM_STATE/claims"
+  assert_eq "$list_rc" "0" "list still reports the lanes it could measure"
+  assert_eq "$(jq -r '.[0].claims' <<<"$UNKNOWN_JSON")" "null" \
+    "an unreadable store reports claims as unknown, never as zero"
+  assert_contains "$UNKNOWN_TABLE" "?" "the table shows the unknown claim count as ?"
+
+  # A single unreadable claim FILE is the same unknown, not an absent claim.
+  chmod 755 "$CLAIM_STATE/claims"; chmod 000 "$CLAIM_STATE/claims/keepme.claim"
+  ONEBAD_PICK="$(run_lanes_claims pick --harness claude 2>&1 >/dev/null)"
+  onebad_rc=$?
+  chmod 644 "$CLAIM_STATE/claims/keepme.claim"
+  assert_eq "$onebad_rc" "1" "one unreadable claim file is enough for pick to refuse"
+  assert_contains "$ONEBAD_PICK" "refusing to pick" "the single-file refusal says what it refused"
+  assert_eq "$pick_rc" "1" "pick refuses when in-flight claims cannot be read"
+  assert_contains "$PICK_ERR" "refusing to pick" "the refusal says what it refused to do"
+
+  # An unreadable claim FILE is left in place too, and never leaves the
+  # previous record's fields standing in for it.
+  chmod 000 "$CLAIM_STATE/claims/keepme.claim"
+  FILE_ERR="$(run_lanes_claims list --harness claude --json 2>&1 >/dev/null)"
+  chmod 644 "$CLAIM_STATE/claims/keepme.claim"
+  assert_contains "$FILE_ERR" "cannot read claim" "an unreadable claim file is named on stderr"
+  assert_eq "$([[ -f "$CLAIM_STATE/claims/keepme.claim" ]] && echo yes || echo no)" "yes" \
+    "an unreadable claim file is left in place"
+fi
+
+# A claim written between the pane snapshot and the read that would prune it
+# must survive: another launcher's window is exactly what this store exists to
+# see. The first enumeration misses it, the second finds it.
+rm -f "$CLAIM_STATE"/claims/*.claim "$PANES.calls"
+printf '%s %%1\n' "$LIVE_PID" > "$PANES.1"        # snapshot: this server, not that pane
+printf '%s %%1\n%s %%4\n' "$LIVE_PID" "$LIVE_PID" > "$PANES.2"   # re-check: the window is up
+printf '%s %%4\n' "$LIVE_PID" > "$PANES"
+write_claim racer "$LIVE_PID" "%4" "$H/.claude" "vst-8"
+RACED="$(run_lanes_claims list --harness claude --json)"
+rm -f "$PANES.1" "$PANES.2" "$PANES.calls"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$RACED")" "1" \
+  "a claim written after the pane snapshot is not pruned by it"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/racer.claim" ]] && echo yes || echo no)" "yes" \
+  "the raced claim file survives"
+
+# A config dir carrying a backslash is a real path, and the count must see it:
+# `awk -v` would expand the escape and match nothing.
+rm -f "$CLAIM_STATE"/claims/*.claim
+BSDIR="$H/.back\tclaude"
+mkdir -p "$BSDIR"
+cp "$H/.claude/.credentials.json" "$BSDIR/.credentials.json"
+claude_usage 10 20 5 "Opus" > "$FIXTURE_DIR/$(basename "$BSDIR").json"
+printf '%s %%5\n' "$LIVE_PID" > "$PANES"
+write_claim backslash "$LIVE_PID" "%5" "$BSDIR" "vst-9"
+BS_OUT="$(run_lanes_claims list --harness claude --json)"
+assert_eq "$(jq -r --arg d "$BSDIR" '.[] | select(.config_dir==$d) | .claims' <<<"$BS_OUT")" "1" \
+  "a backslash-bearing config dir still counts its live claim"
+rm -rf "$BSDIR"; rm -f "$CLAIM_STATE"/claims/*.claim
+
+# A malformed record is not a lane: it is dropped rather than counted forever.
+printf 'not-a-pid\t\tstuff\n' > "$CLAIM_STATE/claims/junk.claim"
+run_lanes_claims list --harness claude --json >/dev/null
+assert_eq "$([[ -f "$CLAIM_STATE/claims/junk.claim" ]] && echo yes || echo no)" "no" \
+  "a malformed claim record is dropped on read"
+
 echo "=== argument handling ==="
 
 "$LANES" pick --harness bogus >/dev/null 2>&1
@@ -264,15 +480,35 @@ OT_TMUX_LOG="$TMP_ROOT/lanes.tmux-log"
 cat > "$OT_STUB_BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
+# $OT_TMUX_FAIL names one tmux subcommand that fails after logging, so a case
+# can leave a window created and claimed while the launch itself fails.
+if [[ -n "${OT_TMUX_FAIL:-}" && "${1:-}" == "$OT_TMUX_FAIL" ]]; then
+  exit 1
+fi
+# A server whose pid is this test process: claims recorded against it are
+# genuinely live, so `lanes pick` sees them the way it would on a real server.
+# $OT_TMUX_PANES counts the windows created; every one is reported by
+# list-panes, giving each launch its own pane id.
+n=0; [[ -f "${OT_TMUX_PANES:-}" ]] && n="$(cat "$OT_TMUX_PANES")"
 case "${1:-}" in
-  new-window) echo "%7" ;;
+  # `-P -F '#{pid} #{pane_id}'`: the server pid and pane id of the new window,
+  # the two halves of a lane claim's liveness key.
+  new-window)
+    n=$((n + 1)); [[ -z "${OT_TMUX_PANES:-}" ]] || printf '%s' "$n" > "$OT_TMUX_PANES"
+    echo "$OT_TMUX_SERVER_PID %$n" ;;
+  list-panes)
+    i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
   list-windows) echo "1" ;;
   display-message) echo "stub" ;;
 esac
 exit 0
 STUBEOF
 chmod +x "$OT_STUB_BIN/worktree" "$OT_STUB_BIN/gh" "$OT_STUB_BIN/tmux"
-run_ot() { TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
+# Every open-terminal launch below runs with the claim store redirected out of
+# the repository: a test must never write into the checkout it is testing.
+OT_STATE="$TMP_ROOT/ot-state"
+OT_TMUX_PANES="$TMP_ROOT/ot-panes"
+run_ot() { TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
 
 # Assert against what a user actually sees, not against a parse of the source.
 # --help must work with no git repository in sight. It used to die with git's
@@ -320,7 +556,7 @@ fi
 # GH_ISSUE_PATTERN is pinned here so the assertion tests lane resolution rather
 # than whatever issue convention the surrounding checkout happens to configure.
 run_ot_aliased() { LANES_HOME="$H" ORCH_LANE_ALIASES="$1" ORCH_LANES_FETCH_CMD="$FETCHER" \
-  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
   PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "${@:2}"; }
 
 set +e
@@ -347,7 +583,7 @@ git -C "$COLLIDE" init -q -b main
 set +e
 collide_out=$( (cd "$COLLIDE" && LANES_HOME="$H" ORCH_LANE_ALIASES="eclaude=work" \
   ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
   PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$OPEN_TERMINAL" --harness claude --lane work --cmd "true" CC-1) 2>&1 )
 collide_rc=$?
@@ -368,7 +604,7 @@ git -C "$BARE" init -q -b main
 set +e
 bare_out=$( (cd "$BARE" && LANES_HOME="$H" ORCH_LANE_ALIASES="eclaude=work" \
   ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
   PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$OPEN_TERMINAL" --harness claude --lane somelane --cmd "true" CC-1) 2>&1 )
 bare_rc=$?
@@ -376,6 +612,240 @@ set -e
 assert_eq "$bare_rc" "0" "a bare directory name with no matching alias still resolves"
 assert_contains "$bare_out" "CLAUDE_CONFIG_DIR=somelane" \
   "the unclaimed bare word falls back to the directory"
+
+# A tmux lane launched under a resolved lane records its claim, so the next
+# pick counts the launch before the account's usage numbers move.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+run_ot_aliased "eclaude=work" --harness claude --lane work --cmd "true" CC-2 >/dev/null 2>&1
+assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f3)" "$H/.eclaude" \
+  "a tmux launch under a lane records a claim naming that lane's config dir"
+assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f4)" "CC-2" \
+  "the claim names the tmux window it belongs to"
+assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f2)" "%1" \
+  "the claim carries the pane id that keeps it prunable"
+
+# A launch with no lane resolved records nothing: there is no account to claim.
+rm -rf "$OT_STATE"
+noclaim_out=$(OVERSEE_WATCH_STATE_DIR="$OT_STATE" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" \
+  PATH="$OT_STUB_BIN:$PATH" \
+  WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" --harness claude --cmd "true" CC-3 2>&1)
+assert_contains "$noclaim_out" "Opened tmux window" "the laneless launch still opened its window"
+assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "0" \
+  "a launch with no --lane records no claim"
+
+# `--lane auto` over a batch: the claim each launch records must move the next
+# item off that account, or one invocation puts the whole fleet on one lane —
+# the failure the claims exist to prevent.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+run_ot_auto() { LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
+set +e
+auto_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-4 CC-5 2>&1)
+auto_rc=$?
+set -e
+assert_eq "$auto_rc" "0" "a two-item --lane auto batch launches both items"
+assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f3 | sort -u | wc -l | tr -d '[:space:]')" "2" \
+  "a two-item --lane auto batch spreads across two accounts"
+assert_contains "$auto_out" "CLAUDE_CONFIG_DIR=$H/.claude" "the first item takes the lane with the most headroom"
+assert_contains "$auto_out" "CLAUDE_CONFIG_DIR=$H/.eclaude" "the second item is re-picked onto the unclaimed lane"
+assert_contains "$auto_out" "across 2 lanes" \
+  "the summary reports the spread rather than attributing every session to the last lane"
+
+# A window that was created and then failed its launch still holds that
+# account: the re-pick trigger is an attempted item, never a successful one.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+set +e
+partial_out=$(OT_TMUX_FAIL=send-keys run_ot_auto --harness claude --lane auto --cmd "true" CC-8 CC-9 2>&1)
+set -e
+assert_contains "$partial_out" "CLAUDE_CONFIG_DIR=$H/.eclaude" \
+  "a claimed window whose launch failed still moves the next item off that lane"
+assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f3 | sort -u | wc -l | tr -d '[:space:]')" "2" \
+  "the failed launch's claim is one of two distinct accounts, not a repeat"
+
+# The summary counts DISTINCT lanes: a batch that returns to a lane it already
+# used must not inflate the spread it reports.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+set +e
+three_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-12 CC-13 CC-14 2>&1)
+set -e
+assert_contains "$three_out" "across 2 lanes" \
+  "a third item returning to a used lane still reports two distinct lanes"
+
+# A claim that could not be written is a batch that can no longer be spread:
+# the launch stands, the next item does not go out blind.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+mkdir -p "$OT_STATE/claims"
+if [[ "$(id -u)" -eq 0 ]]; then
+  printf '  skip  unwritable claim store (running as root)\n'
+else
+  chmod 555 "$OT_STATE/claims"   # readable (so the pick works), not writable
+  set +e
+  blind_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-15 CC-16 2>&1)
+  blind_rc=$?
+  set -e
+  chmod 755 "$OT_STATE/claims"
+  assert_eq "$blind_rc" "1" "a batch whose claim could not be recorded exits nonzero"
+  assert_contains "$blind_out" "could not record the lane claim" "the failed write is reported"
+  assert_contains "$blind_out" "stopping after 1 launch(es)" \
+    "the batch stops instead of stacking the next item blind"
+fi
+
+# A claims path that is not a directory at all is a misconfiguration, not an
+# empty store: the pick refuses before anything launches.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+mkdir -p "$OT_STATE"
+: > "$OT_STATE/claims"
+set +e
+notdir_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-19 2>&1)
+notdir_rc=$?
+set -e
+rm -f "$OT_STATE/claims"
+assert_eq "$notdir_rc" "1" "a non-directory claims path refuses the launch"
+assert_contains "$notdir_out" "is not a directory" "the refusal names what is wrong"
+assert_contains "$notdir_out" "nothing was launched" "nothing is launched on an unreadable store"
+
+# A lane picked for an item that turns out to be owned by another session
+# never carried a session, and must not appear in the spread the summary
+# reports. The worktree stub refuses the second item the way `create` does.
+OWNED_STUB="$TMP_ROOT/worktree-owned"
+cat > "$OWNED_STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# `create <item>`: the first item gets a tree, every later one is owned.
+[[ "${1:-}" == "create" ]] || exit 0
+n=0; [[ -f "$OWNED_COUNT" ]] && n="$(cat "$OWNED_COUNT")"
+n=$((n + 1)); printf '%s' "$n" > "$OWNED_COUNT"
+[[ "$n" -eq 1 ]] || exit 75
+# Under the suite's own root, which its trap removes.
+d="$(mktemp -d "$OWNED_ROOT/wt.XXXXXX")"; printf '%s\n' "$d"
+STUBEOF
+chmod +x "$OWNED_STUB"
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES" "$TMP_ROOT/owned-count"
+set +e
+owned_out=$(LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OWNED_COUNT="$TMP_ROOT/owned-count" \
+  OWNED_ROOT="$TMP_ROOT" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OWNED_STUB" \
+  "$OPEN_TERMINAL" --harness claude --lane auto --cmd "true" CC-17 CC-18 2>&1)
+set -e
+assert_contains "$owned_out" "on lane CLAUDE_CONFIG_DIR=$H/.claude" \
+  "a lane picked for an owned item is not counted as one the batch ran on"
+assert_contains "$owned_out" "skipped 1 (owned by another session)" "the owned item is still skipped"
+
+# A config dir carrying the claim record's field separator is refused at lane
+# resolution, like a quote-bearing one: a claim nobody can count is worse than
+# no launch.
+TABBED="$TMP_ROOT/tab	lane"; mkdir -p "$TABBED"
+set +e
+tab_out=$(GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' run_ot --harness claude --lane "$TABBED" --cmd "true" CC-21 2>&1)
+tab_rc=$?
+set -e
+assert_eq "$tab_rc" "1" "a tab-bearing lane config dir is refused"
+assert_contains "$tab_out" "tab or newline" "the refusal names what it cannot record"
+if grep -qF "Opened" <<<"$tab_out"; then
+  fail "a refused tab-bearing lane launches nothing"
+else
+  pass "a refused tab-bearing lane launches nothing"
+fi
+
+# ...and the same guard covers a lane a BATCH re-picks, not only the one
+# resolved up front: discovery, not just `--lane`, can hand back such a path.
+H9="$TMP_ROOT/home9"; mkdir -p "$H9"
+TABDIR="$H9/.tab	claude"
+mkdir -p "$H9/.aclaude" "$TABDIR"
+jq -n '{claudeAiOauth: {accessToken: "t", refreshToken: "r", expiresAt: 99999999999999, subscriptionType: "max"}}' \
+  > "$H9/.aclaude/.credentials.json"
+cp "$H9/.aclaude/.credentials.json" "$TABDIR/.credentials.json"
+TABFIX="$TMP_ROOT/fix9"; mkdir -p "$TABFIX"
+claude_usage 10 20 5  "Opus" > "$TABFIX/.aclaude.json"
+claude_usage 30 30 30 "Opus" > "$TABFIX/.tab	claude.json"
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+set +e
+tabpick_out=$(LANES_HOME="$H9" FIXTURE_DIR="$TABFIX" ORCH_LANES_FETCH_CMD="$FETCHER" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  "$OPEN_TERMINAL" --harness claude --lane auto --cmd "true" CC-22 CC-23 2>&1)
+tabpick_rc=$?
+set -e
+assert_eq "$tabpick_rc" "1" "a re-picked lane carrying a separator stops the batch"
+assert_contains "$tabpick_out" "tab or newline" "the re-pick refusal names what it cannot record"
+assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "1" \
+  "only the first item launched; the unusable lane recorded nothing"
+
+# The claim store belongs to the CALLER's checkout, not the one the script is
+# installed in: `.agents` in a worktree points back at the main checkout, so a
+# script-derived root would write where `lanes` never looks.
+SCRIPTREPO="$TMP_ROOT/scriptrepo"; CALLERREPO="$TMP_ROOT/callerrepo"
+mkdir -p "$SCRIPTREPO/scripts/lib" "$CALLERREPO"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTREPO/scripts/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$SCRIPTREPO/scripts/lib/"
+chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes"
+git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q
+rm -f "$OT_TMUX_PANES"
+set +e
+( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto --cmd "true" CC-20 ) >/dev/null 2>&1
+set -e
+assert_eq "$(ls -1 "$CALLERREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]')" "1" \
+  "the claim lands in the caller checkout, where lanes reads it"
+assert_eq "$(ls -1 "$SCRIPTREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]')" "0" \
+  "nothing is written under the checkout the script is installed in"
+
+# A GUI launch has no pane to keep a claim alive, so a GUI batch records
+# nothing and stays on the lane resolved up front — as `--help` says.
+cat > "$OT_STUB_BIN/ghostty" <<'STUBEOF'
+#!/usr/bin/env bash
+exit 0
+STUBEOF
+chmod +x "$OT_STUB_BIN/ghostty"
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+set +e
+gui_out=$(run_ot_auto --ghostty --harness claude --lane auto --cmd "true" CC-10 CC-11 2>&1)
+gui_rc=$?
+set -e
+assert_eq "$gui_rc" "0" "a GUI batch launches"
+assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "0" \
+  "a GUI launch records no claim: nothing could ever prune it"
+assert_contains "$gui_out" "on lane CLAUDE_CONFIG_DIR=$H/.claude" \
+  "a GUI batch reports the single lane it resolved up front"
+
+# The re-pick refuses on the same terms as the first: a batch whose remaining
+# items cannot be placed stops instead of launching onto an unvouched account.
+# The lanes go unmeasurable between the two picks (every usage query fails),
+# which is exactly the state `pick` refuses on.
+cat > "$TMP_ROOT/fetch-flaky" <<'STUB'
+#!/usr/bin/env bash
+# Serves $FLAKY_OK usage queries, then fails every one after that.
+n=0; [[ -f "$FLAKY_COUNT" ]] && n="$(cat "$FLAKY_COUNT")"
+n=$((n + 1)); printf '%s' "$n" > "$FLAKY_COUNT"
+[[ "$n" -le "${FLAKY_OK:-3}" ]] || exit 1
+f="$FIXTURE_DIR/$(basename "$2").json"
+[[ -f "$f" ]] || exit 1
+cat "$f"
+STUB
+chmod +x "$TMP_ROOT/fetch-flaky"
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES" "$TMP_ROOT/flaky-count"
+set +e
+stop_out=$(LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch-flaky" \
+  FLAKY_COUNT="$TMP_ROOT/flaky-count" FLAKY_OK=3 \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  "$OPEN_TERMINAL" --harness claude --lane auto --cmd "true" CC-6 CC-7 2>&1)
+stop_rc=$?
+set -e
+assert_eq "$stop_rc" "1" "a batch that cannot place its next item exits nonzero"
+assert_contains "$stop_out" "stopping after 1 launch(es)" "the refusal says how far the batch got"
+assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "1" \
+  "the item that could not be placed was never launched"
 
 # Hermeticity proof: every window the launch-success cases created must have
 # gone through the stub. An empty log means a real tmux server took the call.

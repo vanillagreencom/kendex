@@ -178,7 +178,11 @@ fn an_abandoned_pending_attempt_becomes_a_failure_instead_of_silence() {
 /// as failing.
 #[test]
 fn a_waiting_checker_never_clobbers_a_fetch_that_just_succeeded() {
-    with_sandboxed_cache("no-clobber", |dir| {
+    // The guard and the stamp are all this exercises — no git runs, so the
+    // entry needs no clone.
+    let dir = cache_with_git_dir("no-clobber");
+    {
+        let dir = dir.as_path();
         // An attempt that looks abandoned: Pending, older than the
         // deadline, so a checker would normally promote it to Failed.
         write_fetch_stamp(
@@ -225,7 +229,8 @@ fn a_waiting_checker_never_clobbers_a_fetch_that_just_succeeded() {
             Some(FetchStamp::Ok),
             "the winner's verdict must survive"
         );
-    });
+    }
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -270,298 +275,6 @@ fn a_failure_run_is_drift_only_after_it_outlives_two_ttls() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-#[test]
-fn remote_slug_keys_on_host_and_normalizes_every_accepted_form() {
-    // Shorthand IS GitHub, and says so.
-    assert_eq!(
-        remote_source_slug("owner/repo").as_deref(),
-        Some("github.com/owner/repo")
-    );
-    for url in [
-        "https://github.com/owner/repo",
-        "https://github.com/owner/repo.git",
-        "https://github.com/owner/repo/",
-        "git@github.com:owner/repo.git",
-        "ssh://git@github.com/owner/repo.git",
-    ] {
-        assert_eq!(
-            remote_source_slug(url).as_deref(),
-            Some("github.com/owner/repo"),
-            "{url}"
-        );
-    }
-    // Cross-host control: the SAME owner/repo on another host is a
-    // different source and must never share a cache.
-    assert_eq!(
-        remote_source_slug("https://gitlab.example/owner/repo").as_deref(),
-        Some("gitlab.example/owner/repo")
-    );
-    assert_ne!(
-        remote_cache_dir("https://gitlab.example/owner/repo"),
-        remote_cache_dir("owner/repo")
-    );
-    // Subgroups are kept, not collapsed onto the last two segments.
-    assert_eq!(
-        remote_source_slug("https://gitlab.com/group/sub/repo.git").as_deref(),
-        Some("gitlab.com/group/sub/repo")
-    );
-    assert_ne!(
-        remote_cache_dir("https://gitlab.com/group/sub/repo"),
-        remote_cache_dir("https://gitlab.com/sub/repo")
-    );
-    // The HOST is case-insensitive, so it normalizes...
-    assert_eq!(
-        remote_source_slug("https://GitHub.com/owner/repo").as_deref(),
-        Some("github.com/owner/repo")
-    );
-    // ...but the PATH is not: two repositories that differ only in case
-    // are two repositories on a case-sensitive forge, and must not share
-    // one cache.
-    assert_eq!(
-        remote_source_slug("https://github.com/Owner/Repo").as_deref(),
-        Some("github.com/Owner/Repo")
-    );
-    assert_ne!(
-        remote_cache_dir("https://github.com/Owner/Repo"),
-        remote_cache_dir("owner/repo")
-    );
-    // A nonstandard port is part of the endpoint's identity.
-    assert_eq!(
-        remote_source_slug("ssh://git@example.com:2222/owner/repo.git").as_deref(),
-        Some("example.com:2222/owner/repo")
-    );
-    assert_ne!(
-        remote_cache_dir("ssh://git@example.com:2222/owner/repo.git"),
-        remote_cache_dir("ssh://git@example.com/owner/repo.git")
-    );
-    // …and the key stays a single path component.
-    let ported = remote_cache_dir("ssh://git@example.com:2222/owner/repo.git").unwrap();
-    assert_eq!(ported.parent(), Some(remote_cache_root().as_path()));
-    assert_eq!(
-        ported.file_name().unwrap(),
-        "example.com%3A2222%2Fowner%2Frepo"
-    );
-    // Cleartext transport is refused outright.
-    assert!(remote_source_slug("http://github.com/owner/repo").is_none());
-    for bad in [
-        "",
-        "owner",
-        "/abs/path",
-        "./rel",
-        "../up/x",
-        "owner/..",
-        "../repo",
-        "owner\\..\\..\\etc",
-        "https://github.com/owner/repo with space",
-        "owner/re\npo",
-        "file:///etc/passwd",
-    ] {
-        assert!(remote_source_slug(bad).is_none(), "{bad:?}");
-        assert!(remote_cache_dir(bad).is_none(), "{bad:?}");
-    }
-    assert!(!is_remote_source_slug("owner/repo/extra"));
-}
-
-#[test]
-fn the_clone_url_names_the_endpoint_the_cache_key_names() {
-    // An scp-style source with a non-`git` SSH user is a git URL already:
-    // rewriting it against github.com would clone an unrelated repository
-    // into the cache keyed on gitlab.example.
-    assert_eq!(
-        remote_git_url("alice@gitlab.example:team/repo").as_deref(),
-        Some("alice@gitlab.example:team/repo")
-    );
-    assert_eq!(
-        remote_source_slug("alice@gitlab.example:team/repo").as_deref(),
-        Some("gitlab.example/team/repo")
-    );
-    // Every form that keys a cache is cloned from that same host.
-    for source in [
-        "owner/repo",
-        "https://github.com/owner/repo.git",
-        "git@github.com:owner/repo",
-        "ssh://git@example.com:2222/owner/repo.git",
-        "https://gitlab.example/group/sub/repo",
-        "alice@gitlab.example:team/repo",
-    ] {
-        let url = remote_git_url(source).unwrap_or_else(|| panic!("{source} must be fetchable"));
-        assert_eq!(
-            remote_source_slug(&url),
-            remote_source_slug(source),
-            "{source} must clone from the endpoint its cache is keyed on"
-        );
-    }
-    // Only the shorthand is rewritten; everything else passes through
-    // verbatim, port, `.git` suffix and credentials included.
-    assert_eq!(
-        remote_git_url("owner/repo").as_deref(),
-        Some("https://github.com/owner/repo.git")
-    );
-    assert_eq!(
-        remote_git_url("owner/repo/").as_deref(),
-        Some("https://github.com/owner/repo.git")
-    );
-    for url in [
-        "git@github.com:owner/repo",
-        "https://github.com/owner/repo",
-        "ssh://git@example.com:2222/owner/repo.git",
-        "https://user:token@github.com/owner/repo.git",
-    ] {
-        assert_eq!(remote_git_url(url).as_deref(), Some(url), "{url}");
-    }
-    // A source vstack cannot key is a source it cannot fetch — cleartext
-    // transport and local paths alike.
-    for bad in [
-        "http://github.com/owner/repo",
-        "/abs/path",
-        "./rel",
-        "a/b/c",
-        "owner",
-        "",
-    ] {
-        assert!(remote_git_url(bad).is_none(), "{bad:?}");
-    }
-}
-
-#[test]
-fn remote_cache_dir_stays_directly_under_the_cache_root() {
-    let dir = remote_cache_dir("owner/repo").unwrap();
-    let root = global_base_dir().join(".vstack").join("cache");
-    assert_eq!(dir.parent(), Some(root.as_path()));
-    assert_eq!(dir.file_name().unwrap(), "github.com%2Fowner%2Frepo");
-}
-
-#[test]
-fn distinct_sources_never_share_a_cache_directory() {
-    // `_` is legal inside a slug segment, so flattening `/` to `_` mapped
-    // these two valid, DIFFERENT repositories onto one directory.
-    let underscore_owner = remote_cache_dir("https://github.com/a_b/c").unwrap();
-    let underscore_repo = remote_cache_dir("https://github.com/a/b_c").unwrap();
-    assert_ne!(underscore_owner, underscore_repo);
-    // Both still sit directly under the cache root, which is what keeps
-    // every cache mutation inside the containment check.
-    let root = remote_cache_root();
-    for dir in [&underscore_owner, &underscore_repo] {
-        assert_eq!(dir.parent(), Some(root.as_path()));
-        assert!(is_under_remote_cache_root(dir), "{dir:?}");
-    }
-    // And nothing escapes the root through the key itself.
-    assert!(remote_cache_dir("https://github.com/../../etc").is_none());
-}
-
-#[test]
-fn a_cache_is_only_used_when_its_recorded_origin_is_this_source() {
-    let root = cache_root("origin");
-    let config = root.join("config");
-    std::fs::create_dir_all(&config).unwrap();
-    crate::test_util::with_home_and_config(&root, &config, || {
-        let dir = remote_cache_dir("owner/repo").unwrap();
-        assert_eq!(remote_cache_lookup("owner/repo"), RemoteCacheLookup::Absent);
-
-        write_fake_clone(&dir, "https://github.com/owner/repo.git");
-        assert_eq!(
-            remote_cache_lookup("owner/repo"),
-            RemoteCacheLookup::Usable(dir.clone())
-        );
-        assert_eq!(usable_remote_cache("owner/repo").as_ref(), Some(&dir));
-
-        // Another repository's clone sitting at this key is never used:
-        // installing from it would install its agents and hooks.
-        write_fake_clone(&dir, "https://github.com/attacker/repo.git");
-        assert!(matches!(
-            remote_cache_lookup("owner/repo"),
-            RemoteCacheLookup::Unverifiable { .. }
-        ));
-        assert!(usable_remote_cache("owner/repo").is_none());
-
-        // A clone with no recorded origin cannot be proven either.
-        std::fs::write(dir.join(".git").join("config"), "[core]\n").unwrap();
-        assert!(matches!(
-            remote_cache_lookup("owner/repo"),
-            RemoteCacheLookup::Unverifiable { .. }
-        ));
-    });
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn a_legacy_cache_directory_is_adopted_instead_of_re_cloned() {
-    let root = cache_root("legacy");
-    let config = root.join("config");
-    std::fs::create_dir_all(&config).unwrap();
-    crate::test_util::with_home_and_config(&root, &config, || {
-        // What releases before the host-aware key wrote.
-        let legacy = global_base_dir()
-            .join(".vstack")
-            .join("cache")
-            .join("owner_repo");
-        write_fake_clone(&legacy, "git@github.com:owner/repo.git");
-        assert_eq!(
-            remote_cache_lookup("owner/repo"),
-            RemoteCacheLookup::Usable(legacy.clone()),
-            "an existing clone must be adopted, not abandoned"
-        );
-
-        // Control: a legacy directory holding a DIFFERENT repo is not
-        // adopted just because its name matches. It is not refused
-        // either — a legacy key is lossy, so a mismatch means the
-        // directory belongs to somebody else, and this source simply has
-        // no cache yet.
-        write_fake_clone(&legacy, "https://github.com/other/repo.git");
-        assert_eq!(remote_cache_lookup("owner/repo"), RemoteCacheLookup::Absent);
-        assert!(usable_remote_cache("owner/repo").is_none());
-    });
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn a_pre_encoding_cache_is_adopted_and_never_blocks_its_colliding_twin() {
-    let root = cache_root("legacy-flat");
-    let config = root.join("config");
-    std::fs::create_dir_all(&config).unwrap();
-    crate::test_util::with_home_and_config(&root, &config, || {
-        // What the `_`-flattened key wrote for `github.com/a_b/c`.
-        let legacy = remote_cache_root().join("github.com_a_b_c");
-        write_fake_clone(&legacy, "https://github.com/a_b/c.git");
-        assert_eq!(
-            remote_cache_lookup("https://github.com/a_b/c"),
-            RemoteCacheLookup::Usable(legacy.clone()),
-            "an existing clone must be adopted, not re-cloned"
-        );
-        // The other source the flattened key maps onto that same directory
-        // has no cache of its own — and is free to clone one, rather than
-        // being refused forever because somebody else's directory sits
-        // under the key it once shared.
-        assert_eq!(
-            remote_cache_lookup("https://github.com/a/b_c"),
-            RemoteCacheLookup::Absent
-        );
-    });
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn a_legacy_scp_shaped_cache_directory_is_adopted_too() {
-    let root = cache_root("legacy-scp");
-    let config = root.join("config");
-    std::fs::create_dir_all(&config).unwrap();
-    crate::test_util::with_home_and_config(&root, &config, || {
-        // The other shape earlier releases wrote: the scp URL flattened.
-        let legacy = remote_cache_root().join("git@github.com:owner_repo");
-        write_fake_clone(&legacy, "git@github.com:owner/repo.git");
-        assert_eq!(
-            remote_cache_lookup("owner/repo"),
-            RemoteCacheLookup::Usable(legacy.clone()),
-            "an scp-shaped clone must be adopted, not abandoned"
-        );
-        // Control: same directory name, different repository — not ours,
-        // and not a refusal either (see the legacy adoption test).
-        write_fake_clone(&legacy, "git@github.com:someone/else.git");
-        assert_eq!(remote_cache_lookup("owner/repo"), RemoteCacheLookup::Absent);
-    });
-    let _ = std::fs::remove_dir_all(root);
-}
-
 /// A read-only stamp or lock under a WRITABLE `.git` lets every refresh
 /// run and then fail to record anything, so a stale `ok` is trusted
 /// forever. The read path must probe the files the refresh actually
@@ -579,7 +292,10 @@ fn a_read_only_stamp_or_lock_surfaces_as_unwritable_when_due() {
     let config = root.join("config");
     std::fs::create_dir_all(&config).unwrap();
     crate::test_util::with_home_and_config(&root, &config, || {
-        let cache = remote_cache_dir("owner/repo").unwrap();
+        let cache = RemoteSource::parse("owner/repo")
+            .unwrap()
+            .unwrap()
+            .cache_dir;
         write_fake_clone(&cache, "https://github.com/owner/repo.git");
         let lock = demo_lock("owner/repo");
 
@@ -643,19 +359,50 @@ fn a_read_only_stamp_or_lock_surfaces_as_unwritable_when_due() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A cache entry holding another repository's clone must never be fetched or
+/// reset — its contents would be installed as this source. The refresh driver
+/// reports the refusal rather than swallowing it, and nothing in the entry is
+/// written on the way.
 #[test]
 fn a_cache_whose_origin_does_not_match_is_neither_fetched_nor_read() {
-    let root = cache_root("mismatch-refresh");
-    let config = root.join("config");
-    std::fs::create_dir_all(&config).unwrap();
-    crate::test_util::with_home_and_config(&root, &config, || {
-        let cache = remote_cache_dir("owner/repo").unwrap();
-        write_fake_clone(&cache, "https://github.com/someone-else/repo.git");
-        let lock = demo_lock("owner/repo");
-        assert!(cached_remote_sources(&lock).is_empty());
-        assert!(recorded_remote_cache_problems(&lock).is_empty());
-        assert!(!any_remote_cache_due(&lock, Some(Duration::ZERO)));
-        assert!(read_fetch_stamp(&cache).is_none(), "never touched");
+    with_sandboxed_cache("mismatch-refresh", |cache| {
+        let intruder = cache.origin.parent().unwrap().join("someone-else");
+        init_git_repo(&intruder);
+        git(
+            cache.dir(),
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                &format!("file://{}", intruder.display()),
+            ],
+        );
+        let head_before = std::fs::read(cache.dir().join(".git").join("HEAD")).unwrap();
+
+        let problems = refresh_remote_caches_older_than(
+            &cache.lock(),
+            Some(Duration::ZERO),
+            FetchBound::BACKGROUND,
+        );
+        assert!(
+            matches!(
+                problems.as_slice(),
+                [RemoteCacheProblem {
+                    kind: RemoteCacheProblemKind::Refused { reason },
+                    ..
+                }] if reason.contains("its origin is")
+            ),
+            "a foreign clone must be reported as refused: {problems:?}"
+        );
+        assert!(
+            problems[0].kind.is_persistent(),
+            "only a human removing the entry clears this, so it is drift"
+        );
+        assert_eq!(
+            std::fs::read(cache.dir().join(".git").join("HEAD")).unwrap(),
+            head_before,
+            "the refused entry must not be touched"
+        );
+        assert!(read_fetch_stamp(cache.dir()).is_none(), "never stamped");
     });
-    let _ = std::fs::remove_dir_all(root);
 }

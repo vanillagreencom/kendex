@@ -182,8 +182,8 @@ assert_owner_only() {
 }
 
 # The paired direction, and the control for every owner-only assertion: a file
-# this tool did not write must come out at the CALLER's umask, or a restriction
-# leaking past its own artifacts reads as "merely more restrictive".
+# this tool did not write must come out at the CALLER's umask, or a leaked
+# restriction reads as "merely more restrictive" and nothing goes red.
 assert_group_other_readable() {
   local path="$1" name="$2"
   if [[ -n "$(find "$path" -maxdepth 0 -perm -g+r -perm -o+r 2>/dev/null)" ]]; then
@@ -245,8 +245,7 @@ mkdir -p "$TMP_ROOT/bin"
 
 # Blocks until a lane review lands in the artifact home and prints its path —
 # $1 an exact agent name, empty for any lane. A handshake that gave up quietly
-# would leave its scenario green having exercised nothing, so a timeout fails
-# the stub that called it, and its lane.
+# would leave its scenario green having exercised nothing, so a timeout fails it.
 cat > "$TMP_ROOT/bin/lane-wait-review" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
@@ -444,10 +443,9 @@ find "\$2" -type f -exec rm -f -- {} + 2>/dev/null || true
 SH
 
 # Lane stub that creates the session file and cache directory an external model
-# CLI keeps for itself — under $2, prefixed $3 — and then answers with $1.
-# Those belong to the CLI, not to this tool, and live outside temp space. $4,
-# when given, puts an inode back at an artifact path the parent already cleared:
-# the window a mode taken from a survivor leaks through.
+# CLI keeps for itself — under $2, prefixed $3 — and then answers with $1. Those
+# belong to the CLI, not to this tool, and live outside temp space. $4, when
+# given, puts an inode back at an artifact path the parent already cleared.
 cat > "$TMP_ROOT/bin/lane-cli-state" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -779,7 +777,7 @@ assert_jq "$TMP_ROOT/out-nul-tail.json" '.agent' "external-union(codex)" \
 # this suite cannot construct portably, so the guard is verified here by the
 # path it shares with that case, not by the case itself.
 # The plant rests on a directory reporting a non-zero size, a filesystem
-# property: ext4 gives 4096, btrfs and some tmpfs give 0. Where it gives 0 it is
+# property: ext4 gives 4096, btrfs and some tmpfs give 0. At 0 it is
 # indistinguishable from an artifact never written, so the case is skipped.
 unread_probe="$TMP_ROOT/unread-probe"
 mkdir -p "$unread_probe"
@@ -915,8 +913,7 @@ assert_stderr_has "capture could not be opened" "the lost capture is reported on
 
 # --- Scenario 17: a reaper that removes temp FILES ---------------------------
 # The stdout-mode residual: while a lane's review sat in shared temp space, an
-# actor unlinking temp FILES — not just the one directory the run creates there
-# — cost that lane its findings. In the artifact home it costs the log replay.
+# actor unlinking temp FILES cost that lane its findings, not just the log.
 echo "=== scenario 17: temp FILES removed mid-run (stdout) -> union intact ==="
 rc17=0
 run_lanes "$ANSWER_CLAUDE" \
@@ -930,8 +927,7 @@ assert_no_leftovers "the run still leaves nothing behind"
 
 # --- Scenario 18: the same reaper, pointed at the artifact home --------------
 # The control for 17: an actor that reaches the home DOES cost that lane, which
-# proves the reaper removes files at all — without it, 17 passes for a reaper
-# that never worked.
+# proves the reaper removes files at all — without it, 17 passes for free.
 echo "=== scenario 18: the artifact home reaped -> that lane is lost, loudly ==="
 rc18=0
 run_lanes "$ANSWER_CLAUDE" \
@@ -946,8 +942,8 @@ assert_stderr_has "without a usable artifact" "the loss is named on stderr"
 # for the life of that lane — the session and cache state it keeps outside temp
 # space included, where whichever mode created a shared one fixes its
 # permissions permanently. Lane artifacts stay owner-only, through a reappeared
-# inode too; the CLI's own files come out as they do single-lane. Each half is
-# the other's control.
+# inode too; the CLI's own files come out as single-lane. Each half is the
+# other's control.
 echo "=== scenario 19: lane artifacts owner-only, the CLI's own files are not ==="
 STATE="$TMP_ROOT/cli-state"
 rm -rf "$STATE"
@@ -979,8 +975,9 @@ assert_group_other_readable "$single19" "a caller's own --output follows the cal
 
 # --- Scenario 20: a home that exists but denies writes ----------------------
 # `mkdir -p` succeeds on a directory that already exists and refuses writes, so
-# a home chosen on that alone sends every lane to a path it cannot create, after
-# the model calls are paid for, with no union at all.
+# resolving a home is not being able to create in one. Allocating before a lane
+# spawns keeps that from being discovered by a child that already paid for a
+# model call, and the home is dropped after the first refusal.
 echo "=== scenario 20: an unwritable artifact home -> lanes fall back, union ships ==="
 ro_home="$TMP_ROOT/ro-home"
 mkdir -p "$ro_home" && chmod 555 "$ro_home"
@@ -991,7 +988,10 @@ else
   ( export SECOND_OPINION_ARTIFACT_DIR="$ro_home"; run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" ) || rc20=$?
   assert_eq "$rc20" "0" "an unwritable home does not cost the run"
   assert_jq "$TMP_ROOT/last.stdout" '.qa_metadata.coverage' "full" "both lanes still answered"
-  assert_stderr_has "artifact home not writable" "the fallback names its reason"
+  assert_stderr_has "artifact home unusable" "the fallback names its reason"
+  assert_eq "$(grep -c "artifact home unusable" "$TMP_ROOT/last.stderr" | tr -d ' ')" "1" \
+    "the home is dropped after the first refusal, not retried by every lane"
+  assert_no_leftovers "the fallback lanes still clean up after themselves"
 fi
 
 echo

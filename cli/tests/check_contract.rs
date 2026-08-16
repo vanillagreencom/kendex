@@ -188,18 +188,64 @@ impl Sandbox {
             .unwrap()
     }
 
-    /// A cache directory shaped like a clone of `origin`, with a `.git` that
-    /// is not a repository: any fetch attempt fails fast, and the recorded
-    /// origin is what makes the cache resolvable at all.
-    fn fake_cache(&self, key: &str, origin: &str) -> PathBuf {
-        let dir = self.home.join(".vstack").join("cache").join(key);
-        fs::create_dir_all(dir.join(".git")).unwrap();
+    /// A committed vstack source repository carrying one skill, and the
+    /// `file://` URL that names it.
+    ///
+    /// A real repository, because every path that reads a remote source's
+    /// cache entry proves the entry is vstack's own clone of that repository
+    /// before using it — a `.git` marker is refused before the state under
+    /// test is reached.
+    fn remote_source_repo(&self) -> String {
+        let origin = self.root.join("origin");
+        let skill = origin.join("skills").join("alpha");
+        fs::create_dir_all(&skill).unwrap();
         fs::write(
-            dir.join(".git").join("config"),
-            format!("[remote \"origin\"]\n\turl = {origin}\n"),
+            skill.join("SKILL.md"),
+            "---\nname: alpha\ndescription: alpha\n---\nbody\n",
         )
         .unwrap();
-        dir
+        // Two item roots is what makes a directory a vstack source — and git
+        // tracks no empty directory, so the second root needs a file in it or
+        // the clone would not look like a source at all.
+        fs::create_dir_all(origin.join("agents")).unwrap();
+        fs::write(
+            origin.join("agents").join("scout.md"),
+            "---\nname: scout\ndescription: scout\nmodel: sonnet\nrole: analyst\n---\nbody\n",
+        )
+        .unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&origin)
+                .output()
+                .expect("git is required to run this regression test");
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                text(&output.stderr)
+            );
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "commit.gpgsign", "false"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "init"]);
+        format!("file://{}", origin.display())
+    }
+
+    /// The sandbox's one source cache entry. Discovered, not guessed: its name
+    /// is the repository-identity cache key, which only vstack derives.
+    fn cache_entry(&self) -> PathBuf {
+        let root = self.home.join(".vstack").join("cache");
+        let mut entries: Vec<PathBuf> = fs::read_dir(&root)
+            .unwrap_or_else(|err| panic!("reading {}: {err}", root.display()))
+            .map(|entry| entry.unwrap().path())
+            // A cache key is never dot-prefixed; the hooks sentinel is.
+            .filter(|path| !path.file_name().unwrap().to_string_lossy().starts_with('.'))
+            .collect();
+        assert_eq!(entries.len(), 1, "expected one cache entry: {entries:?}");
+        entries.pop().unwrap()
     }
 }
 
@@ -413,23 +459,13 @@ fn a_traversal_lock_name_is_rejected_rather_than_resolved() {
 #[test]
 fn a_due_but_unreachable_remote_never_delays_the_check() {
     let sb = Sandbox::new("check-no-network");
-    // A cache that resolves (origin recorded) but can never fetch, holding a
-    // real source tree so the scope itself stays clean.
-    let cache = sb.fake_cache("github.com_owner_repo", "https://github.com/owner/repo.git");
-    let skill = cache.join("skills").join("alpha");
-    fs::create_dir_all(&skill).unwrap();
-    // Two item roots is what makes a directory a vstack source.
-    fs::create_dir_all(cache.join("agents")).unwrap();
-    fs::write(
-        skill.join("SKILL.md"),
-        "---\nname: alpha\ndescription: alpha\n---\nbody\n",
-    )
-    .unwrap();
+    // A cache holding a real source tree, so the scope itself stays clean.
+    let source = sb.remote_source_repo();
     let output = sb
         .vstack()
         .args([
             "add",
-            "owner/repo",
+            &source,
             "--skill",
             "alpha",
             "--harness",
@@ -439,6 +475,7 @@ fn a_due_but_unreachable_remote_never_delays_the_check() {
         .output()
         .unwrap();
     assert!(output.status.success(), "add: {}", text(&output.stderr));
+    let cache = sb.cache_entry();
     // No stamp, so the cache is due on the very next check.
     let stamp = cache.join(".git").join("vstack-fetch-stamp");
     let _ = fs::remove_file(&stamp);
@@ -489,7 +526,7 @@ fn a_due_but_unreachable_remote_never_delays_the_check() {
     if recorded.starts_with("failed") {
         let failures = parsed["cache_refresh_failures"].as_array().unwrap();
         assert_eq!(failures.len(), 1, "{parsed}");
-        assert_eq!(failures[0]["source"], "owner/repo");
+        assert_eq!(failures[0]["source"], source);
         assert_eq!(failures[0]["persistent"], false);
     }
 }
@@ -838,20 +875,12 @@ fn a_cache_that_cannot_be_written_is_named_in_the_report() {
         return; // root ignores the permission bits this test relies on
     }
     let sb = Sandbox::new("check-unwritable-cache");
-    let cache = sb.fake_cache("github.com_owner_repo", "https://github.com/owner/repo.git");
-    let skill = cache.join("skills").join("alpha");
-    fs::create_dir_all(&skill).unwrap();
-    fs::create_dir_all(cache.join("agents")).unwrap();
-    fs::write(
-        skill.join("SKILL.md"),
-        "---\nname: alpha\ndescription: alpha\n---\nbody\n",
-    )
-    .unwrap();
+    let source = sb.remote_source_repo();
     let output = sb
         .vstack()
         .args([
             "add",
-            "owner/repo",
+            &source,
             "--skill",
             "alpha",
             "--harness",
@@ -862,6 +891,7 @@ fn a_cache_that_cannot_be_written_is_named_in_the_report() {
         .unwrap();
     assert!(output.status.success(), "add: {}", text(&output.stderr));
 
+    let cache = sb.cache_entry();
     let git = cache.join(".git");
     let _ = fs::remove_file(git.join("vstack-fetch-stamp"));
     fs::set_permissions(&git, fs::Permissions::from_mode(0o500)).unwrap();
@@ -872,7 +902,7 @@ fn a_cache_that_cannot_be_written_is_named_in_the_report() {
     let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     let failures = parsed["cache_refresh_failures"].as_array().unwrap();
     assert_eq!(failures.len(), 1, "{parsed}");
-    assert_eq!(failures[0]["source"], "owner/repo");
+    assert_eq!(failures[0]["source"], source);
     assert_eq!(
         failures[0]["persistent"], true,
         "a cache that can never refresh cannot resolve itself: {parsed}"
@@ -885,8 +915,10 @@ fn a_cache_that_cannot_be_written_is_named_in_the_report() {
         "{parsed}"
     );
     assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    // The quiet report is length-bounded, so a long `file://` source is
+    // elided at the tail — it still has to be named.
     assert!(
-        text(&quiet.stderr).contains("owner/repo"),
+        text(&quiet.stderr).contains(&source[..60.min(source.len())]),
         "the quiet path must name it: {}",
         text(&quiet.stderr)
     );

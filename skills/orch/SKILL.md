@@ -72,7 +72,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `base-freshness` | Gate the review cycle on a current base; an unverifiable result is treated as stale. Contract: `--help` |
 | `review-artifact-check` | Validate a reviewer's on-disk JSON artifact; prints `{ok, path, reason}`. The sole reviewer completion condition. Contract: `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `dev-return-write` | Write a dev agent's round-scoped completion artifact deterministically; never hand-author the JSON. `--help`; schema `schemas/dev-return.md` |
-| `worktree-claim` | Take or verify this session's possession of an issue worktree over the session-guard lease; exits 75 when the worktree is already claimed under a different lease generation. `--help` |
+| `worktree-claim` | Take or verify this session's possession of an issue worktree over the session-guard lease; exits 75 when a foreign owner or lock holds it, or when the token it is bound to no longer matches the lease; a first claim takes the tree instead. `--help` |
 | `dev-round-write` | Persist a fix round's delegated item set at stamp time — the on-disk source for `--expect-items-from-round` and for a respawned agent. `--help`; schema `schemas/dev-round.md` |
 | `dev-artifact-check` | Validate a dev round's completion artifact by round-id identity; prints `{ok, path, reason}`. `--help` + [references/artifact-checks.md](references/artifact-checks.md) |
 | `approval-wait` | Poll the reviewer gate (verdict + unresolved threads); `--resolve-mode` prints the effective gate mode. Contract: [references/gates.md](references/gates.md) |
@@ -81,8 +81,8 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `orch-env` | Effective value of a vstack `[env]` setting (process env > `vstack.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Launch-only terminal handoff; model, effort, and permission flags come from `--launch-flags`. `--help` |
-| `lanes` | Enumerate harness auth lanes and their live usage; `pick` prints the launch env prefix for the lane with the most headroom, exit 3 when none qualifies. `--help` |
-| `oversee-watch` | Block until the fleet needs the overseer, then print one `EVENT` line: a new pr-watch attention line, a live `--item`'s PR merged, a lane window gone, a lane whose harness exited under a live window, a lane pane at a question prompt, or a heartbeat. `--help` |
+| `lanes` | Enumerate harness auth lanes, their live usage, and the launches already in flight on each; `pick` prints the launch env prefix for the qualifying lane with the fewest in-flight claims, headroom breaking the tie, exit 3 when none qualifies. `--help` |
+| `oversee-watch` | Block until the fleet needs the overseer, then print one `EVENT` line: a new pr-watch attention line, a live `--item`'s PR merged, a lane window gone, a lane whose harness exited under a live window, a lane whose account hit its limit with the harness still up, a lane pane at a question prompt, a lane idle at its prompt after a round, or a heartbeat. `--help` |
 
 The three waiters share a bounded env-first GitHub auth ladder and exit `3` on hard auth failure — [references/gates.md](references/gates.md).
 
@@ -182,7 +182,7 @@ QA agents spawn and shut down per agent.
 
 The orchestrator owns round closure. A correct dev or QA agent may background a long validation and end its turn with no further wake, so every dev/QA delegation carries three mechanics:
 
-1. **Possession and round token** — immediately before delegating: `worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]` → the delegation's `Worktree Lease:` line, with exit 75 aborting the delegation when the worktree is already claimed under a different lease generation; then `workflow-state new-round-id [ISSUE_ID] dev_round_id` → the delegation's `Round ID:` line, re-stamp `dev_delegated_at`; a fix round also persists its delegated item set (`dev-round-write`) so a respawned agent reads its items from disk.
+1. **Possession and round token** — immediately before delegating: `worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]` → the delegation's `Worktree Lease:` line, with exit 75 aborting the delegation when a foreign holder has the worktree or the round's recorded lease generation no longer matches; then `workflow-state new-round-id [ISSUE_ID] dev_round_id` → the delegation's `Round ID:` line, re-stamp `dev_delegated_at`; a fix round also persists its delegated item set (`dev-round-write`) so a respawned agent reads its items from disk.
 2. **Arm a single-shot wall-clock watchdog** at the same moment — one backgrounded `dev-artifact-check --wait 600 --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]` (fix rounds add `--expect-items-from-round`): it returns the instant the artifact lands (verdict `accept`/`retry`), or at the deadline with `wait`, so round closure never depends on a return message being delivered. Run A/B on its return; re-arm only on entering a new escalation step — never an orchestrator poll loop. Harness mechanisms: [references/artifact-checks.md](references/artifact-checks.md).
 3. **Run the check on every wake and at the deadline** — never classify from wording or elapsed time, and a `finished`/`idle` wake is not evidence. `dev-artifact-check --worktree [WORKTREE] --issue [ISSUE_ID] --round-id [dev_round_id]` (fix rounds add `--expect-items-from-round`) prints `verdict`; act on it.
 

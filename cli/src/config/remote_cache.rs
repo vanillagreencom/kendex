@@ -1,21 +1,26 @@
-//! Remote source caches: which directory belongs to a source, whether it
-//! provably belongs to that source, and what the last fetch attempt left
-//! behind. Everything here reads disk; nothing here mutates a cache.
+//! What the last fetch attempt on a remote source cache left behind, and
+//! which of this machine's caches a lock file names. Everything here reads
+//! disk; nothing here mutates a cache.
+//!
+//! WHICH directory a source's cache is, whether git may be pointed at it, and
+//! what URL it is fetched from are [`crate::refresh_sources::RemoteSource`]'s
+//! answers, never this module's — a source becomes a display string, a git URL
+//! and a cache key in exactly one place.
 //!
 //! Fetching, the exclusion guard around it, and the refresh drivers live in
 //! [`fetch`].
 
-use super::{LockFile, global_base_dir};
+use super::LockFile;
+use crate::refresh_sources::{RemoteSource, cache_entry_present};
 use std::path::{Path, PathBuf};
 
 mod fetch;
 #[cfg(test)]
 mod test_support;
 
-pub(crate) use fetch::git_command_for_cache;
 pub use fetch::{
-    FetchAttempt, FetchBound, fetch_remote_cache, refresh_remote_caches,
-    refresh_remote_caches_older_than, spawn_detached_cache_refresh,
+    FetchBound, fetch_remote_cache, refresh_remote_caches, refresh_remote_caches_older_than,
+    spawn_detached_cache_refresh,
 };
 use fetch::{GuardAcquire, RemoteCacheFetchGuard};
 
@@ -40,342 +45,6 @@ const REMOTE_CACHE_FETCH_DEADLINE: std::time::Duration = std::time::Duration::fr
 /// git aborts a transfer that stays under `lowSpeedLimit` bytes/s for this
 /// long. Strictly below the wall-clock deadline, or it could never fire.
 const REMOTE_CACHE_LOW_SPEED_SECS: u64 = 30;
-
-/// True for the `owner/repo` GitHub shorthand: two non-empty segments of
-/// `[A-Za-z0-9._-]`, neither `.` nor `..`. Anything else — paths, URLs,
-/// backslashes, extra segments — is not shorthand; [`remote_source_slug`]
-/// normalizes every accepted form, shorthand included.
-pub fn is_remote_source_slug(source: &str) -> bool {
-    let mut parts = source.split('/');
-    let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) else {
-        return false;
-    };
-    is_slug_segment(owner) && is_slug_segment(repo)
-}
-
-fn is_slug_segment(segment: &str) -> bool {
-    !segment.is_empty()
-        && segment != "."
-        && segment != ".."
-        && segment
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-}
-
-/// The shape of an accepted remote source.
-enum RemoteSourceForm<'a> {
-    /// Already a git URL — `https://host/path`, `ssh://[user@]host/path`, or
-    /// scp-style `[user@]host:path`. `host` may still carry `user@` and
-    /// `:port`.
-    GitUrl { host: &'a str, path: &'a str },
-    /// `owner/repo`, which means github.com.
-    GitHubShorthand,
-}
-
-/// The ONE definition of what each remote form looks like. The cache key
-/// ([`remote_source_slug`]) and the URL git is handed ([`remote_git_url`])
-/// both derive from it, so a source can never be keyed as one endpoint and
-/// cloned from another.
-fn remote_source_form(trimmed: &str) -> Option<RemoteSourceForm<'_>> {
-    if let Some(rest) = trimmed
-        .strip_prefix("https://")
-        .or_else(|| trimmed.strip_prefix("ssh://"))
-    {
-        let (host, path) = rest.split_once('/')?;
-        return Some(RemoteSourceForm::GitUrl { host, path });
-    }
-    if trimmed.contains("://") {
-        // Includes http:// — see [`remote_source_slug`].
-        return None;
-    }
-    if let Some((user_host, path)) = trimmed.split_once(':') {
-        // scp-style `[user@]host:owner/repo`; shorthand has no colon. A `/`
-        // before the colon means the colon sits inside a path, not after a
-        // host.
-        if user_host.contains('/') {
-            return None;
-        }
-        return Some(RemoteSourceForm::GitUrl {
-            host: user_host,
-            path,
-        });
-    }
-    // No transport: the only remaining remote form is GitHub shorthand,
-    // which is exactly two segments. A local path — absolute, `./x`,
-    // `a/b/c` — is not a remote source and must never key a cache.
-    is_remote_source_slug(trimmed).then_some(RemoteSourceForm::GitHubShorthand)
-}
-
-/// The URL git is handed for a remote source, or None when the source is not
-/// one vstack can fetch — the same answer [`remote_source_slug`] gives, since
-/// vstack only ever clones into a cache it can key.
-///
-/// The GitHub shorthand is the only form rewritten. Every other accepted form
-/// is already a git URL and passes through verbatim, credentials, port and
-/// `.git` suffix included: rewriting `alice@gitlab.example:team/repo` into a
-/// github.com URL would clone an unrelated repository into the cache the slug
-/// says belongs to gitlab.example.
-pub fn remote_git_url(source: &str) -> Option<String> {
-    let trimmed = source.trim_end_matches('/');
-    remote_source_slug(trimmed)?;
-    match remote_source_form(trimmed)? {
-        RemoteSourceForm::GitUrl { .. } => Some(trimmed.to_string()),
-        RemoteSourceForm::GitHubShorthand => Some(format!("https://github.com/{trimmed}.git")),
-    }
-}
-
-/// The canonical identity of a remote source: `host/path…`, lowercased.
-///
-/// Every accepted form maps here — `owner/repo` shorthand (GitHub),
-/// `https://host/path`, `ssh://[user@]host/path`, `[user@]host:path` — so the
-/// clone, `check` and `refresh` agree on which cache belongs to which source.
-/// The HOST is part of the identity: without it `gitlab.example/acme/kit` and
-/// the GitHub shorthand `acme/kit` would share one cache and whichever cloned
-/// first would silently supply the other's agents and hooks. `http://` is
-/// rejected outright — a cache feeds executable content into a project, and
-/// cleartext transport is not an acceptable way to receive it. None when
-/// `source` is not a remote form.
-pub fn remote_source_slug(source: &str) -> Option<String> {
-    let trimmed = source.trim_end_matches('/');
-    let (host, path) = match remote_source_form(trimmed)? {
-        RemoteSourceForm::GitUrl { host, path } => (host, path),
-        RemoteSourceForm::GitHubShorthand => ("github.com", trimmed),
-    };
-
-    let host = host.rsplit('@').next()?; // drop any `user@`
-    // A nonstandard port is part of the endpoint's identity: two services on
-    // one host are two sources, not one cache.
-    let (host, port) = match host.split_once(':') {
-        Some((host, port)) if !port.is_empty() => (host, Some(port)),
-        _ => (host, None),
-    };
-    // Hostnames are case-insensitive, paths are NOT: lowercasing the path
-    // would alias two distinct repositories on a case-sensitive forge.
-    let host = host.to_ascii_lowercase();
-    if !is_slug_segment(&host) || port.is_some_and(|port| !port.chars().all(|c| c.is_ascii_digit()))
-    {
-        return None;
-    }
-    let host = match port {
-        Some(port) => format!("{host}:{port}"),
-        None => host,
-    };
-
-    let path = path.trim_start_matches('/').trim_end_matches(".git");
-    let mut segments = Vec::new();
-    for segment in path.split('/') {
-        // Subgroups are kept, not collapsed: `group/sub/repo` is not
-        // `sub/repo`.
-        if !is_slug_segment(segment) {
-            return None;
-        }
-        segments.push(segment.to_string());
-    }
-    if segments.is_empty() {
-        return None;
-    }
-    Some(format!("{host}/{}", segments.join("/")))
-}
-
-/// Cache directory key for a source: its slug flattened to ONE path
-/// component, so a cache always sits directly under the cache root.
-fn remote_cache_key(source: &str) -> Option<String> {
-    Some(encode_remote_cache_key(&remote_source_slug(source)?))
-}
-
-/// Flatten a slug to ONE path component, INJECTIVELY. Percent-encoding is
-/// what makes it injective: `_` is a legal character inside a slug segment,
-/// so the old `/`→`_` flattening mapped `github.com/a_b/c` and
-/// `github.com/a/b_c` onto one directory, and whichever cloned first left the
-/// other unverifiable — two valid sources that could not coexist on one
-/// machine. `%` is escaped first so the escapes themselves cannot collide,
-/// and `:` (a port) goes too, which every filesystem accepts and Windows
-/// requires.
-fn encode_remote_cache_key(slug: &str) -> String {
-    let mut key = String::with_capacity(slug.len());
-    for ch in slug.chars() {
-        match ch {
-            '%' => key.push_str("%25"),
-            '/' => key.push_str("%2F"),
-            ':' => key.push_str("%3A"),
-            other => key.push(other),
-        }
-    }
-    key
-}
-
-fn remote_cache_root() -> PathBuf {
-    global_base_dir().join(".vstack").join("cache")
-}
-
-/// Is this directory one vstack may fetch into and reset?
-///
-/// Containment, not caller discipline: a cache is ALWAYS a direct child of the
-/// cache root (current key or a legacy one), so anything else — a local source
-/// path, a project root, the checkout vstack is running from — is structurally
-/// unable to reach a mutation, whatever a caller passes. Compared lexically
-/// after normalization so a missing directory still answers.
-pub(crate) fn is_under_remote_cache_root(dir: &Path) -> bool {
-    // A symlink AT the cache directory or at its `.git` passes every path
-    // comparison while the mutation follows it into somebody else's clone —
-    // `reset --hard` would then destroy that working tree's local changes.
-    // The link itself is rejected, before any resolution.
-    let is_symlink = |path: &Path| {
-        std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
-    };
-    if is_symlink(dir) || is_symlink(&dir.join(".git")) {
-        return false;
-    }
-    let normalize = |path: &Path| -> PathBuf {
-        std::fs::canonicalize(path).unwrap_or_else(|_| {
-            let mut normalized = PathBuf::new();
-            for component in path.components() {
-                match component {
-                    std::path::Component::CurDir => {}
-                    std::path::Component::ParentDir => {
-                        normalized.pop();
-                    }
-                    other => normalized.push(other.as_os_str()),
-                }
-            }
-            normalized
-        })
-    };
-    let root = normalize(&remote_cache_root());
-    if dir.parent().is_none_or(|parent| normalize(parent) != root) {
-        return false;
-    }
-    // With the dir itself proven non-symlink and its parent canonicalized,
-    // an existing dir's canonical self must agree — the belt-and-braces
-    // answer to any resolution path the two checks above did not cover.
-    match std::fs::canonicalize(dir) {
-        Ok(canonical) => canonical.parent().is_some_and(|parent| parent == root),
-        // Missing is fine: there is nothing to mutate through yet.
-        Err(_) => true,
-    }
-}
-
-/// Where a fresh clone of `source` belongs. Existing clones are found with
-/// [`remote_cache_lookup`], which also adopts pre-host-key directories.
-pub fn remote_cache_dir(source: &str) -> Option<PathBuf> {
-    Some(remote_cache_root().join(remote_cache_key(source)?))
-}
-
-/// Cache directories written by earlier releases, which keyed on the last two
-/// path segments only. Adopted (never re-cloned) when their recorded origin
-/// matches the source being resolved.
-fn legacy_remote_cache_dirs(source: &str) -> Vec<PathBuf> {
-    let Some(slug) = remote_source_slug(source) else {
-        return Vec::new();
-    };
-    let mut segments = slug.split('/');
-    let Some(host) = segments.next() else {
-        return Vec::new();
-    };
-    let tail: Vec<&str> = segments.collect();
-    let Some((repo, owner)) = tail.last().zip(tail.get(tail.len().wrapping_sub(2))) else {
-        return Vec::new();
-    };
-    let root = remote_cache_root();
-    vec![
-        // Pre-percent-encoding: the whole slug flattened with `_`.
-        root.join(slug.replace(['/', ':'], "_")),
-        root.join(format!("{owner}_{repo}")),
-        root.join(format!("git@{host}:{owner}_{repo}")),
-    ]
-}
-
-/// What `.git/config` records as this clone's origin, read as a file so the
-/// session-start path never spawns git.
-pub(super) fn cache_origin_url(cache_dir: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(cache_dir.join(".git").join("config")).ok()?;
-    let mut in_origin = false;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_origin = line.replace(char::is_whitespace, "") == "[remote\"origin\"]";
-            continue;
-        }
-        if in_origin && let Some(url) = line.strip_prefix("url") {
-            let url = url.trim_start();
-            if let Some(url) = url.strip_prefix('=') {
-                return Some(url.trim().to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Where a source's cache actually is, and whether it may be used.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RemoteCacheLookup {
-    /// Not a remote source at all.
-    NotRemote,
-    /// Remote, but nothing is cloned yet.
-    Absent,
-    /// A clone whose recorded origin is this source.
-    Usable(PathBuf),
-    /// A clone exists but cannot be proven to be this source's. Never used:
-    /// installing from it would install another repository's executables.
-    Unverifiable { dir: PathBuf, reason: String },
-}
-
-pub fn remote_cache_lookup(source: &str) -> RemoteCacheLookup {
-    let Some(canonical) = remote_cache_dir(source) else {
-        return RemoteCacheLookup::NotRemote;
-    };
-    // Only the CANONICAL directory can be unverifiable. A legacy-key
-    // directory that does not prove out simply belongs to somebody else —
-    // its key is lossy by construction, so refusing on it would let one
-    // source's old cache permanently block a different source that merely
-    // flattens to the same legacy name.
-    let mut candidates = vec![(canonical, true)];
-    candidates.extend(
-        legacy_remote_cache_dirs(source)
-            .into_iter()
-            .map(|dir| (dir, false)),
-    );
-    let mut first_problem = None;
-    for (dir, canonical) in candidates {
-        if !dir.join(".git").exists() {
-            continue;
-        }
-        match cache_origin_url(&dir) {
-            Some(origin) if remote_source_slug(&origin) == remote_source_slug(source) => {
-                return RemoteCacheLookup::Usable(dir);
-            }
-            Some(origin) if canonical => {
-                first_problem.get_or_insert(RemoteCacheLookup::Unverifiable {
-                    reason: format!(
-                        "cache {} was cloned from {origin}",
-                        dir.file_name().unwrap_or_default().to_string_lossy()
-                    ),
-                    dir,
-                });
-            }
-            None if canonical => {
-                first_problem.get_or_insert(RemoteCacheLookup::Unverifiable {
-                    reason: format!(
-                        "cache {} records no origin URL",
-                        dir.file_name().unwrap_or_default().to_string_lossy()
-                    ),
-                    dir,
-                });
-            }
-            _ => {}
-        }
-    }
-    first_problem.unwrap_or(RemoteCacheLookup::Absent)
-}
-
-/// The cache directory to read this source from, or None when there is none
-/// that provably belongs to it.
-pub fn usable_remote_cache(source: &str) -> Option<PathBuf> {
-    match remote_cache_lookup(source) {
-        RemoteCacheLookup::Usable(dir) => Some(dir),
-        _ => None,
-    }
-}
 
 /// Stamp file recording the last fetch ATTEMPT for a cached remote source.
 /// It lives inside `.git/` so `reset --hard` and `clean` never touch it, and
@@ -551,6 +220,9 @@ pub enum RemoteCacheProblemKind {
     /// The cache cannot be locked or stamped at all (permissions on `.git`).
     /// It can never refresh itself, so this is reported the first time.
     Unwritable { reason: String },
+    /// The entry is not vstack's own clone of this source, so it was neither
+    /// fetched nor reset. Only a human removing the entry clears it.
+    Refused { reason: String },
 }
 
 impl RemoteCacheProblemKind {
@@ -559,7 +231,7 @@ impl RemoteCacheProblemKind {
     pub fn is_persistent(&self) -> bool {
         match self {
             Self::Failing { failing_for, .. } => *failing_for >= REMOTE_CACHE_FAILURE_IS_DRIFT,
-            Self::Unwritable { .. } => true,
+            Self::Unwritable { .. } | Self::Refused { .. } => true,
         }
     }
 }
@@ -716,30 +388,40 @@ fn cache_refresh_unwritable_reason(cache_dir: &Path) -> Option<String> {
     cache_unwritable_reason(cache_dir)
 }
 
-/// Every distinct lock source that has a usable cache on disk, with its
-/// directory. Pure disk reads.
-pub fn cached_remote_sources(lock: &LockFile) -> Vec<(String, PathBuf)> {
+/// Every distinct lock source whose clone is on this machine, as the remote
+/// it names. Pure disk reads — no git process, so the session-start report
+/// never starts one.
+///
+/// Which entry belongs to a source is [`RemoteSource::parse`]'s answer, not
+/// this module's, so an entry a fetch mutates and an entry a report reads can
+/// never be two different directories. A source that parse REFUSES is not
+/// listed: it has no entry vstack would use, and the refusal is reported by
+/// the resolution path that names it.
+pub(crate) fn cached_remote_sources(lock: &LockFile) -> Vec<(String, RemoteSource)> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for entry in lock.entries.values() {
         if !seen.insert(entry.source.clone()) {
             continue;
         }
-        if let Some(dir) = usable_remote_cache(&entry.source) {
-            out.push((entry.source.clone(), dir));
+        if let Ok(Some(remote)) = RemoteSource::parse(&entry.source)
+            && cache_entry_present(&remote)
+        {
+            out.push((entry.source.clone(), remote));
         }
     }
-    out.sort();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
 
 /// Problems recorded on disk for this lock's caches, without fetching
 /// anything. This is what the session-start check reports: the news is at
 /// most one refresh late, and a permanently broken remote still surfaces.
-pub fn recorded_remote_cache_problems(lock: &LockFile) -> Vec<RemoteCacheProblem> {
+pub(crate) fn recorded_remote_cache_problems(lock: &LockFile) -> Vec<RemoteCacheProblem> {
     let mut problems: Vec<RemoteCacheProblem> = cached_remote_sources(lock)
         .into_iter()
-        .filter_map(|(source, dir)| {
+        .filter_map(|(source, remote)| {
+            let dir = remote.cache_dir;
             let kind = remote_cache_problem(&dir).or_else(|| {
                 // Nothing recorded as failing. When a refresh is DUE, the
                 // stamp and lock are about to be needed — and a cache whose
@@ -762,10 +444,10 @@ pub fn recorded_remote_cache_problems(lock: &LockFile) -> Vec<RemoteCacheProblem
 }
 
 /// True when any of this lock's caches is due for a refresh.
-pub fn any_remote_cache_due(lock: &LockFile, max_age: Option<std::time::Duration>) -> bool {
+pub(crate) fn any_remote_cache_due(lock: &LockFile, max_age: Option<std::time::Duration>) -> bool {
     cached_remote_sources(lock)
         .iter()
-        .any(|(_, dir)| remote_cache_fetch_due(dir, max_age))
+        .any(|(_, remote)| remote_cache_fetch_due(&remote.cache_dir, max_age))
 }
 
 #[cfg(test)]

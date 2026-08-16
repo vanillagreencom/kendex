@@ -185,8 +185,12 @@ done
 # Paired with the absence checks: deleting the rows entirely would satisfy them
 # while losing the contract, so the accurate condition must be present in both
 # places that state it.
-assert_eq "$(grep -c 'already claimed under a different lease generation' "$SKILL_DIR/SKILL.md")" "2" \
-  "SKILL.md states the real refusal condition in both the scripts table and Round Closure"
+assert_file_contains "$SKILL_DIR/SKILL.md" \
+  'or when the token it is bound to no longer matches the lease' \
+  "SKILL.md's scripts table states what actually exits 75"
+assert_file_contains "$SKILL_DIR/SKILL.md" \
+  "the round's recorded lease generation no longer matches" \
+  "SKILL.md's Round Closure step states what actually exits 75"
 
 # The delegated agent re-verifies the same lease, so a delegation that lands in
 # a tree another session has taken fails closed instead of clobbering it. The

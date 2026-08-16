@@ -87,6 +87,57 @@ fn source_registry_save_terminates_with_exactly_one_newline() {
     let _ = fs::remove_dir_all(dir);
 }
 
+/// `check` and `verify` resolve a recorded source once — to report the
+/// cause when there is none — and hash against the root they got. Hashing
+/// through the resolving entry point would resolve the same source a
+/// second time, including a second pass through the refusal paths.
+#[test]
+fn hashing_against_a_resolved_root_does_not_consult_the_recorded_source() {
+    let root = std::env::temp_dir().join(format!(
+        "vstack-hash-in-root-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let source = root.join("source");
+    fs::create_dir_all(source.join("skills/demo")).unwrap();
+    fs::write(
+        source.join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+    )
+    .unwrap();
+
+    // The entry records a source that names nothing on this machine.
+    let entry = LockEntry {
+        name: "demo".into(),
+        kind: ItemKind::Skill,
+        source: "owner/no-such-repo".into(),
+        source_repo: None,
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    };
+
+    let home = root.join("home");
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        assert_eq!(
+            compute_source_hash(&entry),
+            String::new(),
+            "control: resolving that source yields no root, so no hash"
+        );
+        assert_ne!(
+            compute_source_hash_in(&entry, &source),
+            String::new(),
+            "the caller's resolved root is what is hashed"
+        );
+    });
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn lock_entry_deserializes_legacy_without_source_repo() {
     let raw = r#"{

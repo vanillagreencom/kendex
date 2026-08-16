@@ -12,9 +12,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # need one already check $WORKTREE_CLI and report it by name.
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
 SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
+# The claim store is shared with `lanes` and `oversee-watch`, which resolve it
+# from the CALLER's checkout — and this script's own root is the checkout it
+# is installed in, which a worktree's `.agents` symlink makes a different one.
+# Writing where the readers do not look would silently defeat the claims.
+CLAIM_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/vstack-env.sh
 source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
+# shellcheck source=lib/lane-claims.sh
+source "$SCRIPT_DIR/lib/lane-claims.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -48,11 +55,22 @@ Options:
   --ghostty         Open Ghostty/GUI terminals
   --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
-                    account with the most headroom for --harness; `auto:<h>`
-                    picks for harness <h>; a config dir is used literally; any
-                    other value is looked up as a lane alias. Refuses to launch
-                    when no lane is under the usage threshold, rather than
-                    launching into a wall.
+                    qualifying account with the fewest launches in flight for
+                    --harness; `auto:<h>` picks for harness <h>; a config dir
+                    is used literally; any other value is looked up as a lane
+                    alias. Refuses to launch when no lane is under the usage
+                    threshold, rather than launching into a wall. On tmux
+                    lanes only: every window launched under a lane records a
+                    claim (see `lanes --help`), live while its pane is, and
+                    `auto` re-picks before each further item, so a batch
+                    spreads across accounts instead of stacking on one. A
+                    re-pick that qualifies no lane stops the batch, leaving
+                    the items already launched alone. A GUI launch has no
+                    pane to keep a claim alive, so a GUI batch stays on the
+                    lane resolved up front. Claims line up only while this
+                    command, `lanes` and `oversee-watch` resolve the same
+                    $OVERSEE_WATCH_STATE_DIR; set it explicitly when they do
+                    not share one project configuration.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -191,6 +209,25 @@ fi
 #
 # The lane becomes an env prefix on the launched command rather than a different
 # binary, so it works whether or not the machine has a shell alias per account.
+LANE_AUTO=false
+LANE_HARNESS=""
+CLAIM_WRITE_FAILED=false
+
+# One home for what a lane value may not contain, applied to the lane resolved
+# up front AND to every one a batch re-picks. Prints the reason and returns 0
+# when the value is unusable.
+lane_value_error() {
+  if [[ "$1" == *"'"* ]]; then
+    echo "Error: lane config dir contains a single quote; cannot render a safe launch command: $1" >&2
+    return 0
+  fi
+  if [[ "$1" == *$'\t'* || "$1" == *$'\n'* ]]; then
+    echo "Error: lane config dir contains a tab or newline; its in-flight claim could not be recorded: $1" >&2
+    return 0
+  fi
+  return 1
+}
+pick_auto_lane() { "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT"; }
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
     auto|auto:*)
@@ -199,8 +236,10 @@ if [[ -n "$LANE" ]]; then
       [[ -n "$lane_harness" ]] || lane_harness="$HARNESS"
       [[ -n "$lane_harness" ]] || { echo "Error: --lane auto needs --harness, or use --lane auto:<harness>" >&2; exit 1; }
       [[ -x "$LANES_CLI" ]] || { echo "Error: lanes helper not found at $LANES_CLI" >&2; exit 1; }
+      LANE_AUTO=true
+      LANE_HARNESS="$lane_harness"
       lane_rc=0
-      LANE_ENV="$("$LANES_CLI" pick --harness "$lane_harness" --max-pct "$LANE_MAX_PCT")" || lane_rc=$?
+      LANE_ENV="$(pick_auto_lane)" || lane_rc=$?
       if [[ "$lane_rc" -ne 0 ]]; then
         # lanes exits 3 for "every lane is over the threshold" and 1 for a real
         # failure. Both stop the launch; only the first is the operator's call.
@@ -242,11 +281,10 @@ if [[ -n "$LANE" ]]; then
   # Refused here, before any worktree is created (vstack#894: resolve the lane
   # before mutating anything). The value is single-quoted in the rendered
   # launch command, and a single quote inside the path cannot be embedded
-  # safely.
-  if [[ "$LANE_ENV" == *"'"* ]]; then
-    echo "Error: lane config dir contains a single quote; cannot render a safe launch command: $LANE_ENV" >&2
-    exit 1
-  fi
+  # safely; a tab or newline cannot survive the claim record's field
+  # separator, and a lane whose claim nobody can count is a lane that stacks
+  # sessions silently.
+  if lane_value_error "$LANE_ENV"; then exit 1; fi
   echo "Lane: $LANE_ENV"
 fi
 
@@ -379,14 +417,33 @@ open_tmux() {
   # return (most visibly on briefless lanes, whose early return would
   # otherwise count a broken window as launched).
   [[ -n "${TMUX:-}" ]] || { echo "Error: not inside tmux" >&2; return 1; }
-  local last_idx pane
+  local last_idx pane spec server
   if ! last_idx=$(tmux list-windows -F '#{window_index}' | tail -1) || [[ -z "$last_idx" ]]; then
     echo "Error: tmux list-windows failed; cannot place window '$title'" >&2
     return 1
   fi
-  if ! pane=$(tmux new-window -a -t ":${last_idx}" -n "$title" -c "$dir" -P -F '#{pane_id}') || [[ -z "$pane" ]]; then
+  # The server pid rides along with the pane id: it is the other half of a
+  # lane claim's liveness key, and taking both from the creating call means no
+  # second tmux round trip and no window between them.
+  if ! spec=$(tmux new-window -a -t ":${last_idx}" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}') || [[ -z "$spec" ]]; then
     echo "Error: tmux new-window failed for '$title'" >&2
     return 1
+  fi
+  pane="${spec##* }"
+  server="${spec% *}"
+  [[ "$server" != "$spec" ]] || server=""
+  # A lane launch is in flight the moment its window exists: `lanes pick`
+  # counts it from here, minutes before the account's usage numbers move.
+  # Recorded only under a resolved lane — the config dir is the account's
+  # identity — and never fatal: a launch that worked is not a failure because
+  # its bookkeeping did not.
+  if [[ -n "$LANE_ENV" && -n "$server" ]]; then
+    if ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title"; then
+      # This launch stands, but the next `auto` pick cannot see it: the batch
+      # stops at the top of the next item rather than stacking blind.
+      CLAIM_WRITE_FAILED=true
+      echo "Warning: could not record the lane claim for '$title'; lanes pick will not count it (set OVERSEE_WATCH_STATE_DIR)" >&2
+    fi
   fi
   if ! tmux send-keys -t "$pane" "clear" Enter ||
      ! tmux send-keys -t "$pane" -l "$cmd" ||
@@ -437,6 +494,12 @@ repo="$(resolve_repo)"
 launched=0
 failed=0
 skipped=0
+attempted=0
+# The DISTINCT lanes this run LAUNCHED on, so the summary cannot attribute a
+# spread batch to whichever lane happened to be last, inflate the count when a
+# re-pick returns to a lane already used, or count a lane picked for an item
+# that turned out to be owned by another session.
+lanes_seen=""
 for raw in "${ITEMS[@]}"; do
   item="$raw"
   if [[ "$TRACKER" == "linear" ]]; then
@@ -461,6 +524,43 @@ for raw in "${ITEMS[@]}"; do
     [[ -n "$repo" ]] || { echo "Error: --repo OWNER/REPO required when gh repo cannot resolve" >&2; exit 1; }
     wt_id="issue-$item"
     title="gh-$item"
+  fi
+  # `--lane auto` is re-resolved for every item after the first: the claim the
+  # previous window recorded is what moves this item off that account, and a
+  # single upfront pick puts a whole batch on one lane. The trigger is "an
+  # earlier item was attempted", never "an earlier item succeeded" — a window
+  # that was created and then failed its brief still holds that account, and
+  # its claim must still be read. Still ahead of this item's worktree, so a
+  # stopped batch leaves no orphan tree behind. A pick that can no longer
+  # prove a lane stops the batch rather than launching onto an account nothing
+  # vouched for. tmux only: a claim's liveness handle is a pane, so on a GUI
+  # surface a re-pick would re-read numbers nothing has moved.
+  attempted=$((attempted + 1))
+  if [[ "$LANE_AUTO" == true && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]]; then
+    if [[ "$CLAIM_WRITE_FAILED" == true ]]; then
+      echo "Error: the previous lane's claim was not recorded, so this pick cannot see it; stopping after $launched launch(es) rather than stacking $item blind." >&2
+      failed=$((failed + 1))
+      break
+    fi
+    lane_rc=0
+    next_lane="$(pick_auto_lane)" || lane_rc=$?
+    if [[ "$lane_rc" -ne 0 ]]; then
+      if [[ "$lane_rc" -eq 3 ]]; then
+        echo "Error: no $LANE_HARNESS lane under ${LANE_MAX_PCT}% used for $item; stopping after $launched launch(es)." >&2
+      else
+        echo "Error: could not re-resolve a lane for $item (lanes exited $lane_rc); stopping after $launched launch(es)." >&2
+      fi
+      failed=$((failed + 1))
+      break
+    fi
+    if lane_value_error "$next_lane"; then
+      failed=$((failed + 1))
+      break
+    fi
+    if [[ "$next_lane" != "$LANE_ENV" ]]; then
+      LANE_ENV="$next_lane"
+      echo "Lane: $LANE_ENV"
+    fi
   fi
   # The worktree create is the ownership claim: exit 75 means another session
   # holds this item, which skips it without touching its siblings. Any other
@@ -509,6 +609,9 @@ for raw in "${ITEMS[@]}"; do
     open_gui "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
   fi
   launched=$((launched + 1))
+  # Recorded here, after the window exists: a lane picked for an item that
+  # turned out to be owned elsewhere never carried a session.
+  [[ -z "$LANE_ENV" ]] || grep -qxF -- "$LANE_ENV" <<<"$lanes_seen" || lanes_seen+="$LANE_ENV"$'\n'
 done
 
 skipped_note=""
@@ -521,7 +624,15 @@ if [[ "$launched" -eq 0 && "$skipped" -gt 0 ]]; then
   echo "Done: launched 0 handoff session(s)$skipped_note." >&2
   exit 75
 fi
-if [[ -n "$LANE_ENV" ]]; then
+# The lanes that carried a session, never $LANE_ENV: a re-pick for an item
+# that turned out to be owned elsewhere leaves that variable naming an account
+# this run never launched on.
+lanes_used="$(grep -c . <<<"$lanes_seen" || true)"
+if [[ "$lanes_used" -gt 1 ]]; then
+  echo "Done: launched $launched handoff session(s)$skipped_note across $lanes_used lanes (see the Lane: lines above)."
+elif [[ "$lanes_used" -eq 1 ]]; then
+  echo "Done: launched $launched handoff session(s)$skipped_note on lane ${lanes_seen%$'\n'}."
+elif [[ -n "$LANE_ENV" ]]; then
   echo "Done: launched $launched handoff session(s)$skipped_note on lane $LANE_ENV."
 else
   echo "Done: launched $launched handoff session(s)$skipped_note."

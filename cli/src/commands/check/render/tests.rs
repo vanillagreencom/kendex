@@ -47,7 +47,10 @@ fn hostile_names_are_rejected_and_never_rendered_verbatim() {
     let long = "x".repeat(300);
     assert!(is_safe_item_name(ItemKind::Skill, &long));
     assert!(display_text(&long).chars().count() <= DISPLAY_LIMIT + 1);
-    assert_eq!(display_text("a\x1bb\nc"), "a?b?c");
+    // A control character is escaped rather than dropped: nothing can start
+    // a new line or drive a terminal, and the reader still sees what was
+    // there.
+    assert_eq!(display_text("a\x1bb\nc"), r"a\u{1b}b\u{a}c");
 }
 
 #[test]
@@ -56,12 +59,17 @@ fn a_credential_in_a_source_url_is_never_rendered_into_the_report() {
     // context and every transcript that quotes it.
     assert_eq!(
         display_text("https://user:ghp_secret@github.com/owner/repo"),
-        "https://github.com/owner/repo"
+        "https://user:<redacted>@github.com/owner/repo"
     );
     // A bare https user field is where tokens live too.
     assert_eq!(
         display_text("https://ghp_secret@github.com/owner/repo"),
-        "https://github.com/owner/repo"
+        "https://<redacted>@github.com/owner/repo"
+    );
+    // A query string carries them as well.
+    assert_eq!(
+        display_text("https://github.com/owner/repo?access_token=ghp_secret"),
+        "https://github.com/owner/repo?<redacted>"
     );
     // ssh KEEPS its user — `git@` picks the key, it is not a secret, and
     // a remedy command without it dies on publickey — while a password
@@ -72,7 +80,7 @@ fn a_credential_in_a_source_url_is_never_rendered_into_the_report() {
     );
     assert_eq!(
         display_text("ssh://git:hunter2@example.com/owner/repo"),
-        "ssh://git@example.com/owner/repo"
+        "ssh://git:<redacted>@example.com/owner/repo"
     );
     // scp-style: same rule, schemeless.
     assert_eq!(
@@ -81,17 +89,20 @@ fn a_credential_in_a_source_url_is_never_rendered_into_the_report() {
     );
     assert_eq!(
         display_text("git:hunter2@github.com:owner/repo"),
-        "git@github.com:owner/repo"
+        "git:<redacted>@github.com:owner/repo"
     );
-    // Controls: nothing else is touched, and an `@` in the PATH is not
-    // userinfo.
+    // Controls: a URL carrying no secret is untouched, so a remedy command
+    // built from it still pastes.
     assert_eq!(
         display_text("https://github.com/owner/repo"),
         "https://github.com/owner/repo"
     );
+    // A stray `@` outside the authority is redacted rather than trusted: a
+    // URL malformed enough to put a token there is exactly the shape a
+    // permissive reading leaks.
     assert_eq!(
         display_text("https://github.com/owner/re@po"),
-        "https://github.com/owner/re@po"
+        "https://github.com/owner/<redacted>@po"
     );
     assert_eq!(display_text("/local/path"), "/local/path");
     assert_eq!(display_text("owner/repo"), "owner/repo");
@@ -200,14 +211,8 @@ fn a_quoted_command_argument_survives_a_real_shell() {
 #[test]
 fn an_unverifiable_cache_is_reported_with_its_own_remedy() {
     with_sandbox("unverifiable-source", |project, _source| {
-        let cache = config::remote_cache_dir("owner/repo").unwrap();
-        std::fs::create_dir_all(cache.join(".git")).unwrap();
         // Somebody else's clone sitting at this source's cache key.
-        std::fs::write(
-            cache.join(".git").join("config"),
-            "[remote \"origin\"]\n\turl = https://github.com/other/repo.git\n",
-        )
-        .unwrap();
+        let cache = clone_at_cache_key("owner/repo", "https://github.com/other/repo.git");
         install_skill_on_disk(project, "alpha");
         let mut lock = LockFile::default();
         let mut entry = locked(&cache, ItemKind::Skill, "alpha");
@@ -227,11 +232,17 @@ fn an_unverifiable_cache_is_reported_with_its_own_remedy() {
         );
         let mut out = String::new();
         render_scope(&mut out, &report, true);
-        assert!(out.contains("not provably its own"), "{out}");
-        assert!(out.contains("remove that directory"), "{out}");
+        // The refusal's own remedy is relayed verbatim, and no second one
+        // is invented: `vstack add` on a refused source refuses again.
+        assert!(out.contains("cannot be verified"), "{out}");
+        assert!(out.contains("Remove its cache entry"), "{out}");
         assert!(
             !out.contains("is unreachable"),
             "the wrong remedy must not appear: {out}"
+        );
+        assert!(
+            !out.contains("vstack add"),
+            "re-adding a refused source sends the user in a circle: {out}"
         );
     });
 }
@@ -260,6 +271,7 @@ fn populated_scope(scope: &'static str) -> ScopeReport {
                 source: "/sources/one".into(),
                 problem: SourceProblem::Unresolvable {
                     entries: vec!["zeta".into()],
+                    reason: "source not found".into(),
                 },
             },
             SourceIssue {
@@ -333,7 +345,7 @@ fn every_global_remediation_command_carries_the_scope_flag() {
             .filter(|(sub, _)| sub == "add" || sub == "remove")
             .collect();
         assert!(
-            scoped.len() >= 11,
+            scoped.len() >= 10,
             "the fixture must reach every remediation command, saw {scoped:?} in:\n{global}"
         );
         for (sub, next) in &scoped {
@@ -386,6 +398,7 @@ fn remedy_commands_are_pasteable_for_ssh_and_long_sources() {
         source: scrub_source_credentials(ssh),
         problem: SourceProblem::Unresolvable {
             entries: vec!["alpha".into()],
+            reason: "source not found".into(),
         },
     });
     let mut out = String::new();
@@ -405,6 +418,7 @@ fn remedy_commands_are_pasteable_for_ssh_and_long_sources() {
         source: long.clone(),
         problem: SourceProblem::Unresolvable {
             entries: vec!["alpha".into()],
+            reason: "source not found".into(),
         },
     });
     let mut out = String::new();
@@ -470,23 +484,28 @@ fn a_background_refresh_error_is_reported_but_never_drift() {
 #[test]
 fn json_serialization_carries_no_credentials() {
     with_sandbox("json-credentials", |project, _source| {
+        // A lock written before the credential refusal records the URL
+        // verbatim, token and all. Resolution refuses it, and the refusal is
+        // one of the strings that lands in the report.
         let source = "https://user:ghp_supersecret@github.com/owner/repo";
-        let cache = config::remote_cache_dir(source).unwrap();
-        std::fs::create_dir_all(cache.join(".git")).unwrap();
-        // The cache's recorded origin carries a token of its own, which
-        // the unverifiable reason quotes.
-        std::fs::write(
-            cache.join(".git").join("config"),
-            "[remote \"origin\"]\n\turl = https://other:ghp_othersecret@github.com/other/repo.git\n",
-        )
-        .unwrap();
+        // …and a source that IS usable, whose cache entry was cloned with a
+        // token in its origin — the ownership refusal quotes that origin.
+        let cache = clone_at_cache_key(
+            "owner/repo",
+            "https://other:ghp_othersecret@github.com/owner/repo.git",
+        );
         install_skill_on_disk(project, "alpha");
+        install_skill_on_disk(project, "beta");
         let mut lock = LockFile::default();
         let mut entry = locked(&cache, ItemKind::Skill, "alpha");
         entry.source = source.into();
         lock.add(entry);
+        let mut entry = locked(&cache, ItemKind::Skill, "beta");
+        entry.source = "owner/repo".into();
+        lock.add(entry);
 
         let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert_eq!(report.source_issues.len(), 2, "{report:?}");
         let json = serde_json::to_string(&report).unwrap();
         assert!(
             !json.contains("ghp_supersecret") && !json.contains("ghp_othersecret"),

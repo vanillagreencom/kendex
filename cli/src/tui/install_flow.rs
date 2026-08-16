@@ -670,7 +670,8 @@ fn cache_problem_warning(problem: &crate::config::RemoteCacheProblem) -> String 
         crate::config::RemoteCacheProblemKind::Failing { cause, .. } => cause
             .map_or("the refresh did not complete", |cause| cause.describe())
             .to_string(),
-        crate::config::RemoteCacheProblemKind::Unwritable { reason } => reason.clone(),
+        crate::config::RemoteCacheProblemKind::Unwritable { reason }
+        | crate::config::RemoteCacheProblemKind::Refused { reason } => reason.clone(),
     };
     format!(
         "Warning: source {} cache is not up to date ({}) — using cached content",
@@ -2519,7 +2520,7 @@ mod tests {
         };
         let line = cache_problem_warning(&problem);
         assert!(!line.contains("ghp_secrettoken"), "{line}");
-        assert!(!line.contains("user:"), "{line}");
+        assert!(line.contains("<redacted>"), "{line}");
         assert!(line.contains("github.com/owner/repo"), "{line}");
         assert!(line.contains("read-only"), "{line}");
     }

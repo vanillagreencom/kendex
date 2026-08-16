@@ -44,6 +44,19 @@ pub struct RefreshStats {
     /// report can never fall through to "unchanged" with the stored hash —
     /// that silently masked an entry whose source had stopped providing it.
     pub missing: BTreeMap<String, String>,
+    /// What source resolution refused, and whether it ran. Handed in once by
+    /// the caller so an entry backed by a refused source is reported as
+    /// refused rather than as absent.
+    refused_sources: crate::refresh_sources::SourceRefusals,
+}
+
+/// A locked hook the run could not read, and why. Every agent installed for
+/// one of its harnesses is left exactly as installed rather than regenerated
+/// without it.
+struct UndeterminedHook {
+    name: String,
+    harnesses: Vec<String>,
+    reason: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,6 +96,14 @@ impl RefreshStats {
         });
     }
 
+    /// Record that `item` was left exactly as installed because this run could
+    /// not determine what to write. Reported like a missing item — the run
+    /// exits non-zero naming it — because the installed file no longer matches
+    /// what a successful refresh would produce.
+    fn mark_undetermined(&mut self, item: &str, reason: String) {
+        self.missing.insert(item.to_string(), reason);
+    }
+
     /// Record that `item` has no asset to refresh from: its source resolved
     /// to `root` but does not carry the asset.
     fn mark_missing(&mut self, item: &str, root: &Path) {
@@ -93,15 +114,21 @@ impl RefreshStats {
     }
 
     /// Record that `item`'s recorded source did not resolve to any loaded
-    /// source. The reason names what the lock recorded so the user can see
-    /// which source vanished (or that none was ever recorded).
+    /// source.
     fn mark_source_missing(&mut self, item: &str, recorded_source: &str) {
-        let reason = if recorded_source.trim().is_empty() {
-            "source not found (none recorded)".to_string()
-        } else {
-            format!("source not found: {recorded_source}")
-        };
+        let reason = self.unresolved_source_reason(recorded_source);
         self.missing.insert(item.to_string(), reason);
+    }
+
+    /// Why a recorded source produced nothing. A refused source and a remote
+    /// whose clone is not on this machine are both sources that exist — saying
+    /// "source not found" for either is the wrong cause, and it is the cause
+    /// that tells the user whether to clear a cache entry or run `vstack add`.
+    fn unresolved_source_reason(&self, recorded_source: &str) -> String {
+        if let Some(refusal) = self.refused_sources.reason(recorded_source) {
+            return refusal.to_string();
+        }
+        crate::refresh_sources::absent_source_reason(recorded_source)
     }
 
     pub fn has_failures(&self) -> bool {
@@ -222,8 +249,12 @@ pub fn refresh_items_in_scope(
     project_config: &mut ProjectConfig,
     project_root: &Path,
     name_filter: Option<&[String]>,
+    refused_sources: &crate::refresh_sources::SourceRefusals,
 ) -> RefreshStats {
-    let mut stats = RefreshStats::default();
+    let mut stats = RefreshStats {
+        refused_sources: refused_sources.clone(),
+        ..RefreshStats::default()
+    };
     let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
     let all_hooks = all_source_hooks(sources);
 
@@ -283,6 +314,44 @@ pub fn refresh_items_in_scope(
         .collect();
     let mut regenerated_codex_agents = Vec::new();
 
+    // Hook entries this run cannot read. Asked of the same function the agent
+    // frontmatter is built from, so the two can never disagree about which
+    // entries have no hook: a narrower proxy for it missed a source that
+    // resolved but no longer carries the hook, and a bare source name that
+    // resolves to an unrelated ancestor — and the agent was then regenerated
+    // with the hook silently dropped while its script, its settings.json
+    // registration and its lock entry all survived.
+    let undetermined_hooks: Vec<UndeterminedHook> = lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == ItemKind::Hook)
+        .filter(|entry| crate::resolve::source_hook_for_lock_entry(&all_hooks, entry).is_none())
+        .map(|entry| UndeterminedHook {
+            name: entry.name.clone(),
+            harnesses: entry.harnesses.clone(),
+            // Three states reach here, and each is repaired differently. The
+            // middle one used to be reported as the last, telling the operator
+            // a source no longer carries a hook that it plainly does.
+            reason: match config::resolve_source_path(&entry.source) {
+                None => stats.unresolved_source_reason(&entry.source),
+                Some(root)
+                    if !sources
+                        .iter()
+                        .any(|source| crate::resolve::same_path(&source.root, &root)) =>
+                {
+                    format!(
+                        "its source resolved to {} but this run did not load it — check the source recorded for it",
+                        root.display()
+                    )
+                }
+                Some(_) => format!(
+                    "its source no longer carries it — restore it there, or `vstack remove {}` the entry",
+                    entry.name
+                ),
+            },
+        })
+        .collect();
+
     // ── Agents ───────────────────────────────────────────────
     for (name, entry) in lock
         .entries
@@ -302,6 +371,25 @@ pub fn refresh_items_in_scope(
             stats.mark_missing(name, &source.root);
             continue;
         };
+        let undetermined: Vec<String> = undetermined_hooks
+            .iter()
+            .filter(|hook| {
+                hook.harnesses
+                    .iter()
+                    .any(|harness| entry.harnesses.contains(harness))
+            })
+            .map(|hook| format!("{} ({})", hook.name, hook.reason))
+            .collect();
+        if !undetermined.is_empty() {
+            stats.mark_undetermined(
+                name,
+                format!(
+                    "left as installed: this agent's hook set is not known this run — {}",
+                    undetermined.join(", ")
+                ),
+            );
+            continue;
+        }
 
         // Required skills: project list (if present) merged with source additions.
         let source_skills =
@@ -1054,10 +1142,16 @@ pub fn regenerate_agents_after_hook_removal(
         return Ok(());
     }
 
-    let source_records = resolve_source_records(lock);
-    let sources = load_refresh_sources(&source_records);
+    let records = resolve_source_records(lock);
+    let sources = load_refresh_sources(&records.sources);
     if sources.is_empty() {
-        return Ok(());
+        // The caller has already removed the hook artifact and its lock entry.
+        // Reporting success here left every agent carrying the removed hook's
+        // frontmatter and fallback instructions.
+        anyhow::bail!(
+            "failed to regenerate agents after hook removal: no source resolved for {}",
+            agent_names.join(", ")
+        );
     }
 
     let stats = refresh_items_in_scope(
@@ -1067,14 +1161,34 @@ pub fn regenerate_agents_after_hook_removal(
         project_config,
         project_root,
         Some(&agent_names),
+        &records.refused,
     );
     if !global {
         stats.persist_upstream(project_root);
     }
-    if stats.has_failures() {
+    if stats.has_failures() || stats.has_missing() {
+        // Whichever list is non-empty leads: a `0 failure(s)` prefix put the
+        // real cause behind a contradiction.
+        let mut causes = Vec::new();
+        if !stats.missing.is_empty() {
+            causes.push(format!(
+                "not regenerated: {}",
+                stats
+                    .missing
+                    .iter()
+                    .map(|(item, reason)| format!("{item} ({reason})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !stats.failures.is_empty() {
+            causes.push(format!("{} failure(s)", stats.failures.len()));
+        }
         anyhow::bail!(
-            "failed to regenerate agents after hook removal: {} failure(s)",
-            stats.failures.len()
+            "failed to regenerate agents after hook removal: {}. \
+             The hook and its lock entry are already removed; \
+             act on the cause above, then re-run `vstack refresh`",
+            causes.join("; ")
         );
     }
 
@@ -1178,7 +1292,9 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     // Resolve source directories once per refresh. Cached remote sources update
     // during resolution; reusing this list avoids duplicate git fetch/reset
     // cycles for pruning and aggregation.
-    let source_records = resolve_source_records(&lock);
+    let records = resolve_source_records(&lock);
+    let source_records = records.sources;
+    let refused_sources = records.refused;
     let source_dirs: Vec<_> = source_records
         .iter()
         .map(|source| source.root.clone())
@@ -1272,6 +1388,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         &mut project_config,
         &project_root,
         None,
+        &refused_sources,
     );
 
     if !global {

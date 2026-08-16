@@ -68,29 +68,40 @@ pub fn source_hook_for_lock_entry<'a>(
     source_hooks: &'a [crate::hook::Hook],
     entry: &crate::config::LockEntry,
 ) -> Option<&'a crate::hook::Hook> {
-    if should_match_entry_source(&entry.source)
-        && let Some(root) = crate::config::resolve_source_path(&entry.source)
-    {
+    // Resolution is attempted for every recorded shape, exactly as
+    // `refresh_source_for_entry` attempts it. A narrower predicate here left
+    // `./`-relative sources out of the ownership branch entirely: such an entry
+    // borrowed whichever same-named hook sorted first across all loaded
+    // sources, and prune then judged it against that foreign hook's
+    // `harnesses:` list — deleting the installed artifact and the lock entry,
+    // with a success exit, while its own source resolved perfectly well.
+    let resolved = crate::config::resolve_source_path(&entry.source);
+    if let Some(root) = &resolved {
         for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
-            if hook_path_is_from_source(hook, &root) {
+            if hook_path_is_from_source(hook, root) {
                 return Some(hook);
             }
         }
-        return None;
     }
 
+    // A hook carrying no source path belongs to no source — the pre-lock and
+    // selected-set shape — so matching it by name substitutes nothing.
     for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
         if hook.source_path.as_os_str().is_empty() {
             return Some(hook);
         }
     }
 
-    source_hooks.iter().find(|hook| hook.name == entry.name)
-}
+    // Its own source resolved (and holds no such hook), or it exists and did
+    // not resolve — a remote whose clone is absent or refused. Either way the
+    // entry is owned, and no other source's hook stands in for it.
+    if resolved.is_some() || crate::refresh_sources::recorded_source_exists(&entry.source) {
+        return None;
+    }
 
-fn should_match_entry_source(source: &str) -> bool {
-    let path = Path::new(source);
-    source == "." || path.is_absolute() || (source.contains('/') && !source.starts_with('.'))
+    // Only a source string that names nothing at all — a legacy or moved local
+    // source — falls back to matching by name.
+    source_hooks.iter().find(|hook| hook.name == entry.name)
 }
 
 fn hook_path_is_from_source(hook: &crate::hook::Hook, source_root: &Path) -> bool {
@@ -576,6 +587,39 @@ all = "Shared extra."
             )
             .is_empty()
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The gate has two directions and both are load-bearing. A recorded source
+    /// that names NOTHING — a local source directory moved or deleted since the
+    /// install — may still borrow a same-named hook from another loaded source,
+    /// which is what keeps an old lock matching its hooks at all. Only a source
+    /// that exists but did not resolve is refused.
+    #[test]
+    fn a_hook_entry_whose_recorded_source_is_gone_still_matches_by_name() {
+        let root = tmpdir("hook-source-gone");
+        let gone = root.join("moved-away");
+        let other = root.join("other");
+        std::fs::create_dir_all(other.join("hooks")).unwrap();
+        let hooks = vec![hook_from_path(
+            "guard",
+            Some(vec!["claude-code"]),
+            other.join("hooks/guard.sh"),
+        )];
+        let entry = lock_hook("guard", &gone, vec!["claude-code"]);
+        assert!(!gone.exists(), "fixture: the recorded source must be gone");
+
+        assert_eq!(
+            source_hook_for_lock_entry(&hooks, &entry).map(|hook| hook.source_path.clone()),
+            Some(other.join("hooks/guard.sh")),
+            "a source that names nothing must still match by name"
+        );
+
+        // Control: once that directory exists it owns the entry again, and
+        // another source's hook is no longer substituted for it.
+        std::fs::create_dir_all(gone.join("hooks")).unwrap();
+        assert!(source_hook_for_lock_entry(&hooks, &entry).is_none());
 
         let _ = std::fs::remove_dir_all(root);
     }

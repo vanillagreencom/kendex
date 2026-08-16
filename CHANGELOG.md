@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- orch: `oversee-watch` gains `usage-limit` (the harness is still running but
+  its account's limit banner is up — one pass, ahead of `question`, naming the
+  config dir when a live lane claim covers the pane it read) and
+  `idle-after-return` (the lane sits at its input prompt with nothing in
+  flight on two consecutive passes). Both kinds were previously invisible: a
+  spent account read as a working lane, and a finished lane held its slot
+  until a heartbeat. `open-terminal` now records a claim per tmux lane it
+  launches under a resolved lane, and `lanes pick` takes the lane with the
+  fewest live claims before the one with the most headroom — usage numbers lag
+  a launch by minutes, so back-to-back picks were handing one account the
+  whole fleet. `lanes list`/`--json` report the count, `null` when the store
+  could not be read. `pick` refuses (exit 1) rather than deciding on a claim
+  store that exists but cannot be read — consumers delegating lane selection
+  see a misconfigured `OVERSEE_WATCH_STATE_DIR` as a launch failure instead
+  of a fleet stacked on one account (VST-296).
 - review-gate/size-ratchet: settings resolution fails closed on a source it
   cannot read. `-f` and `-e` both pass on an existing mode-000 file, so only
   the read itself sees it: `grep` failed, the resolver read that as "no
@@ -19,17 +34,20 @@
 - size-ratchet: the collection loop measures worktree files in batched `wc`
   invocations instead of one process per file — 6.3s -> 0.8s on a tree
   measuring 9,325 files, 0.86s -> 0.09s on one measuring 1,454, with the
-  verdict byte-identical on both. Counts are matched to inputs by position,
-  so a batch that comes back short, out of order or non-numeric is discarded
-  and re-measured one file at a time: an unreadable or vanished file still
-  fails loud naming that file, and a count row is required for every file
-  selected.
+  verdict byte-identical on both. Counts are matched to inputs by position
+  and the summary row a multi-file `wc` appends is counted rather than
+  parsed, so a batch that comes back short, out of order or non-numeric is
+  discarded and re-measured one file at a time: an unreadable or vanished
+  file still fails loud naming that file, and a count row is required for
+  every file selected.
 - second-opinion: a multi-lane review run without `--output` no longer keeps
   its lane reviews in shared system temp (VST-241), and the lane umask no
   longer governs the external model CLI's own files (VST-243). Each lane's
   review is now a per-run file in `SECOND_OPINION_ARTIFACT_DIR` (default
   `tmp/second-opinion` under `--cwd`), created there exclusively and removed at
-  exit, so an actor clearing temp *files* — not only the one
+  exit — a home that cannot be created, vetted or written sends that lane back
+  to a temp file with the reason on stderr — so an actor clearing temp *files*
+  — not only the one
   directory the run creates there — can no longer cost a blocker-carrying lane
   its findings, and the durability guarantee now holds in both modes. Owner-
   only is applied by whoever writes the file instead of by a umask wrapped
@@ -425,7 +443,155 @@
     requirement and states the concrete reason the triage-then-re-enqueue
     route cannot churn-loop; the worktree live-lease suite's check count is
     corrected (35, not 20).
-
+- cli: every git process vstack runs — cache clone/fetch/reset, the cache's
+  work-tree, origin and ssh-config reads, the repository-identity reads the
+  `.agents/skills` ownership boundary is judged against, a Pi package's HEAD
+  read, and the source-repository reads behind `vstack report` — is built by one
+  hardened constructor: the `GIT_DIR`/`GIT_WORK_TREE` family dropped, and with
+  it every way an environment hands git configuration to the process it starts
+  (`GIT_CONFIG_PARAMETERS` — which git sets ITSELF for every subprocess of a
+  `git -c key=value` invocation — `GIT_CONFIG`, `GIT_CONFIG_GLOBAL`/`_SYSTEM`/
+  `_NOSYSTEM` and the indexed `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` pairs), since
+  an injected `core.fsmonitor`, `core.hooksPath` or `core.sshCommand` names a
+  program git RUNS — the last of those was read back and re-exported to the
+  fetch. The programs an environment can name directly go with them:
+  `GIT_EXEC_PATH`, whose directory supplies the `git-remote-<transport>` helper
+  a fetch executes; `GIT_TEMPLATE_DIR`, whose `hooks/` a clone copies into the
+  new repository and whose `post-checkout` the clone then runs; and
+  `GIT_ASKPASS`/`SSH_ASKPASS`, which are used INSTEAD of
+  the terminal and so are not covered by `GIT_TERMINAL_PROMPT=0` — which is set
+  too.
+  Cache commands additionally drop `GIT_CEILING_DIRECTORIES` and
+  `GIT_DISCOVERY_ACROSS_FILESYSTEM`, which are hostile only where vstack owns
+  the repository — for the user's own project they are configuration, and
+  clearing them changed the answer the anchoring callers fail closed on.
+  Network commands take the ssh program the USER named (`GIT_SSH_COMMAND`,
+  `GIT_SSH`, then `core.sshCommand` in their global or system config) with its
+  own variant's noninteractive flag APPENDED — `-o BatchMode=yes` for OpenSSH,
+  `-batch` for plink/putty/tortoiseplink, nothing for `simple`, honouring
+  `GIT_SSH_VARIANT` then `ssh.variant`. Git puts
+  the host and upload-pack arguments after the whole string, so a trailing
+  option still applies and a command carrying arguments of its own
+  (`ssh -i key`, `env FOO=bar ssh`) keeps working AND stops prompting — the one
+  prompt `GIT_TERMINAL_PROMPT=0` cannot suppress is ssh's own. An explicit
+  `-o BatchMode=no` the user wrote earlier in their command still wins. A
+  `GIT_SSH` program, and a plink-family command with arguments, keep the
+  argument list they expect — but `GIT_SSH_COMMAND` is always SET, never left
+  for git to resolve, and the cache entry's own `.git/config` is never read for
+  either key: `core.sshCommand` there names a program git RUNS, so a cache that
+  passed every ownership check could still execute one.
+  `reset --hard` runs only after the cache entry
+  proves to be vstack's own clone: not a symlink, not a redirected `.git`,
+  `rev-parse --show-toplevel` is the entry itself, `rev-parse
+  --git-common-dir` resolves inside it — a `commondir` file redirects refs and
+  objects at another repository while the work tree still answers as the cache,
+  so a fetch advanced the victim's remote-tracking refs — and `origin` is this
+  source with no credential in it. Its own `.git/config` must also hold nothing
+  but the settings `git clone` writes — checked as an allowlist, because the
+  keys naming a program git runs on a repository's behalf (`core.fsmonitor`,
+  `core.hooksPath`, a `filter.<driver>.smudge`) grow with git while the set a
+  clone writes does not, and `fetch`/`reset --hard` run them. Nothing anywhere
+  under its `.git` may be a symlink, nor (on Unix, where a link count is
+  readable) a hard link to another file, and its `.git/config` must be a plain
+  file that is present: git follows a link at any depth, so a redirected
+  `config` answered every check for another repository and then had its
+  `origin` rewritten, a redirected `refs` or `objects` took what the fetch
+  wrote, and a hard-linked `config` or reflog is the same file under two names,
+  with no link to follow. `--git-common-dir` answers for the `.git` root alone,
+  which is why the check is a walk. Every cache
+  command runs with `core.hooksPath` pinned at a regular file vstack maintains
+  under the cache root, so no `<hooksPath>/<name>` resolves on any platform:
+  an entry's own `.git/hooks/` is a directory of programs — git runs
+  `reference-transaction` for every ref a fetch writes — that no check on its
+  config or its location can see. That sentinel is fail-closed: if it cannot be
+  created, or something other than a plain file is at its path, no cache
+  command runs at all. A cache whose
+  `core.worktree` pointed at a user checkout used to have that checkout's
+  tracked files overwritten (VST-256). A
+  Reading an entry asks every one of those questions too, not just the
+  filesystem ones: reading is how a cache entry's content becomes the installed
+  asset, so an entry that is a real clone of a different repository is refused
+  on the read-only path as well as the updating one. A
+  remote source is a source whether or not its clone is present or usable:
+  `add` fails, `refresh` reports the entry as not refreshed naming the real
+  cause — the refusal, or a cache that is not on this machine — and exits
+  non-zero, never rebinding the entry to another source (hooks included) or
+  repairing its lock record; the TUI's startup cache refresh skips it, and a
+  hook removal that cannot regenerate the affected agents fails instead of
+  leaving them carrying the removed hook. Neither `refresh` nor `add` rewrites
+  an agent with a hook set the run could not determine — whether the hook's
+  source did not resolve, was refused, or no longer carries it, the agent file
+  is left exactly as installed and named in the report, rather than silently
+  losing that hook's frontmatter while its script and its settings.json
+  registration stay; `add`'s end-of-install reconciliation now reads hooks from
+  every recorded source rather than only the one being installed from. `check` and
+  `verify` name the same cause and the same command as `refresh` for a source
+  that did not resolve, instead of calling it outdated or reporting a bare
+  `src:!`. `add` no longer walks past a refused source to a different one: a
+  credential, transport, ownership or clone failure on the source a project
+  selected is an error naming it, not a silent fall-back that installs from
+  somewhere else — and a remembered source spelled with a transport's scheme is
+  refused rather than walked past when it is too malformed to parse as a URL —
+  and a lock entry recording one is owned by it, so no same-named asset from
+  another loaded source stands in for it either —
+  while a missing local path stays a candidate the chain may walk past, `:`
+  being an ordinary character in one. A remembered source that is remote-shaped
+  is read as the remote even when a directory of that name exists under the
+  current working directory, matching how `refresh` reads the same string.
+  `Source not found` goes through the redacting display like every other source
+  diagnostic. A failed fetch keeps the stale clone
+  (warned once per source and message, not once per resolve); a failed reset is
+  an error. Remote
+  sources resolve to one cache entry per repository identity — every spelling
+  of a GitHub repo shares one, two repositories never do — so URL-added sources
+  refresh from the clone `add` made. On a non-GitHub host the ssh account and
+  the transport are both part of that identity — an scp-like path resolves
+  relative to the account's home, and nothing says an arbitrary host serves the
+  same tree at one path over https and over ssh — so `alice@host:repo` and
+  `bob@host:repo`, and the https and ssh spellings of one path, no longer share
+  a cache entry and pass each other's origin check. The three spellings of one
+  ssh transport (`git@host:repo`, `ssh://`, `git+ssh://`) still do, and GitHub
+  remains the documented exception. The readable half of a cache key is bounded
+  so a deeply nested `file://` or self-hosted path cannot push the directory
+  name past a filesystem's 255-byte limit; the digest that separates two
+  repositories is never truncated. An update points the entry's `origin` at the
+  URL the invocation selected before fetching, so switching transport because
+  the first one stopped authenticating actually takes effect instead of failing
+  over the old URL into a tolerated stale cache. The revision it moves to comes
+  from the REMOTE's own `HEAD` on every fetch, into a ref only vstack writes:
+  an entry's stored refspec and its `origin/HEAD` are values inside the entry,
+  and an altered refspec mapped another branch onto `origin/main` and had that
+  branch's content installed. An accepted URL reaches git in git's own
+  lowercase spelling, since `SSH://` is a request for a `git-remote-SSH`
+  helper.
+  **Breaking:** cache entries written by earlier vstack versions are not
+  reused, because the cache key now derives from the repository identity. The
+  first `vstack refresh` after upgrading reports each remote source as not
+  present and names the `vstack add <source>` that re-clones it; the stale
+  directory under `~/.vstack/cache/` can be deleted.
+  Only https, ssh, git+ssh and file transports are handed to git: `git://` is
+  unauthenticated and unencrypted and an unknown scheme makes git run a
+  `git-remote-<scheme>` helper, so both are refused — as is a cached entry
+  whose own `origin` uses one. Credential-bearing
+  or plaintext-HTTP source URLs (userinfo token, `user:pass@` in any spelling
+  including `user:pass@host:path`, query or fragment, `http://`), URLs whose
+  authority carries whitespace or control characters, URLs naming no host
+  (`https:///user:token@host/repo` put its credential in the path, where the
+  authority checks could not see it), and sources starting with `-` are rejected
+  before any git runs and never echoed — including in the
+  source picker, which used to print a legacy registry entry's token verbatim,
+  and in the sanitized git-output summary, which redacted only tokens carrying
+  `://` and so let an scp-like `user:secret@host:path` through,
+  and in the "source not found" line, which reached a credential URL malformed
+  enough to be classified as a local path (`https:/user:token@host/repo`);
+  an ssh remote's username is kept — but only where the spelling names ssh, so
+  a token-only `https:///TOKEN@host/repo` is redacted rather than read as an
+  account name — and any control or direction-changing character in a
+  source string is escaped before it reaches a terminal. The bare `owner/repo`
+  shorthand is not URL-shaped and so never reached those refusals: an owner or
+  repository segment now accepts only characters GitHub allows, so
+  `owner/repo?access_token=…` is no longer expanded into an HTTPS URL carrying
+  the token.
 - decider: index rows are append-only, never re-sorted — the template's
   "date order" clause contradicted its own example and the CLI reads rows
   positionally (VST-263); the schema carries the placement rule.
