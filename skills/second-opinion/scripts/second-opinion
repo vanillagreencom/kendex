@@ -356,24 +356,28 @@ clear_output_family() {
   fi
 }
 
-# Clear exactly what THIS MODE can write, and nothing more. Deleting a path the
-# run will not itself write is the shape behind three separate findings on this
-# change — a sibling claimed by its name, a mode that writes no artifact, a lane
-# family a mode never produces — so the gate is stated as a capability rather
-# than a list of exclusions:
+# Clear exactly what THIS MODE can write, and nothing more.
 #
-#   review   the artifact, its sidecars, and the per-lane families
-#   audit    the artifact and its sidecars; audit never fans out, so it can
-#            produce no <output>.<target>.json and must not remove one
-#   others   nothing. challenge/quick write free text with no verdict contract,
-#            no sidecars and no lanes — clearing buys them nothing and costs the
-#            caller their file whenever the run fails before the write. detect
-#            and a run with no mode write nothing at all.
+# The line is DESIGNATED vs INFERRED, not verdict vs free text. --output is a
+# path the caller handed this run to write: whatever sits there is the run's own
+# output slot, so clearing it is the caller's instruction, and leaving it means a
+# caller who continues past the advisory non-zero exit reads the PREVIOUS run's
+# answer as this one's. Every mode that reaches the output tail writes there —
+# challenge and quick included — so every one of them clears it. A SIBLING
+# (<output>.<name>.json) is a path nobody designated and this run inferred; that
+# is where authorship has to be proven, and it is proven by content.
+#
+#   review                  the artifact, its sidecars, and the lane families
+#   audit|challenge|quick   the artifact and its sidecars. None of the three
+#                           fans out, so none can produce an
+#                           <output>.<target>.json and none may remove one
+#   detect, or no mode      nothing: neither reaches the output tail, so neither
+#                           has an output slot to clear
 CLEAR_ARTIFACT=false
 CLEAR_LANES=false
 case "$MODE" in
-  review) CLEAR_ARTIFACT=true; CLEAR_LANES=true ;;
-  audit)  CLEAR_ARTIFACT=true ;;
+  review)                CLEAR_ARTIFACT=true; CLEAR_LANES=true ;;
+  audit|challenge|quick) CLEAR_ARTIFACT=true ;;
 esac
 
 # Validation, not deletion, so it covers every mode that could write there: a

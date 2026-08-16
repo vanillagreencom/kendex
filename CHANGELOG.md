@@ -161,24 +161,24 @@
   (default `tmp/second-opinion` under `--cwd`, owner-only) is the home for
   review/audit records written without `--output`. `detect` prints the
   target(s) a review would run.
-- second-opinion: no run can hand a caller a stale pass. `--output`, every
-  `<output>.<target>.json` lane artifact beside it, and the managed sidecars of
-  both (`.raw.txt`, `.retry.txt`, `.failed.json`, `.noreview.json`,
-  `.incomplete.json`) are DELETED at startup, before target selection and before
-  any CLI runs, so no exit past the argument loop leaves a previous run's
-  artifact standing — external review is advisory, and callers are told to
-  continue past its non-zero exits. The roster's own lane names are cleared
-  unconditionally; a lane artifact left by a target since renamed or removed
-  from `SECOND_OPINION_MODELS` is cleared too, but only when the file's CONTENT
-  proves this skill wrote it — the review schema AND an `external-…` agent
-  marker, which only this skill's own pipeline produces. A sibling sharing the
-  name shape (`<output>.notes.json`), or sharing the review schema under another
-  agent (an internal `reviewer-*` artifact — that schema is a shared contract,
-  not a signature), is never removed, and nothing outside `--output`'s own name
-  space is ever touched. `--help` and
-  `detect` are excluded; neither writes anything. Reusing one `--output` path
-  across runs is now safe, and pointing `--output` at a file you want to keep is
-  not.
+- second-opinion: no run can hand a caller a stale result. Every mode that
+  writes `--output` — `review`, `audit`, `challenge`, `quick` — DELETES that
+  path and its managed sidecars (`.raw.txt`, `.retry.txt`, `.failed.json`,
+  `.noreview.json`, `.incomplete.json`) at startup, before target selection and
+  before any CLI runs, so no exit past the argument loop leaves a previous run's
+  output standing — external review is advisory, and callers are told to
+  continue past its non-zero exits. `--help` and `detect` never reach the write
+  and clear nothing. `review` additionally clears the `<output>.<target>.json`
+  lane artifacts only it can produce: the roster's own names unconditionally,
+  and one left by a target since renamed or removed from
+  `SECOND_OPINION_MODELS` only when the file's CONTENT proves this skill wrote
+  it — the review schema AND an `external-…` agent marker, which only this
+  skill's own pipeline produces. A sibling sharing the name shape
+  (`<output>.notes.json`), or sharing the review schema under another agent (an
+  internal `reviewer-*` artifact — that schema is a shared contract, not a
+  signature), is never removed, and nothing outside `--output`'s own name space
+  is ever touched. Reusing one `--output` path across runs is now safe, and
+  pointing `--output` at a file you want to keep is not.
 - second-opinion: `SECOND_OPINION_CURRENT_MODEL` is SESSION-scoped and must be
   exported in the environment of the session that needs it. **A value reaching
   a run from any project file — `.env`, `vstack.settings.toml`,

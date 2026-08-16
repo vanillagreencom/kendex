@@ -729,14 +729,19 @@ assert_eq "$rc10g" "5" "(b5) a dash-leading TMPDIR still exits 5"
 assert_eq "$(find "$s10g_base/-dashtmp" -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
   "(b5) the cleanup traps leave no temp files behind under a dash-leading TMPDIR"
 
-# (b6) clearing is scoped to what the MODE can write. challenge and quick emit
-# free text with no verdict contract, no sidecars and no lanes — clearing buys
-# them nothing and costs the caller their file every time the run fails before
-# the write, which is the same delete-what-we-never-write shape as the sibling
-# case above, reached through a mode instead of a filename.
+# (b6) EVERY mode that writes --output clears it, challenge and quick included.
+# Both write their answer to that path on success, so a failed run that left the
+# previous answer standing would hand a caller continuing past the advisory
+# non-zero exit a stale answer as the current one. --output is the run's own
+# output slot, designated by the caller — unlike an inferred sibling, no
+# authorship question arises.
 for s10h_mode in quick challenge; do
   s10h_out="$TMP_ROOT/out/review10h-$s10h_mode.txt"
-  printf 'MY IMPORTANT FILE\n' > "$s10h_out"
+  printf 'PREVIOUS ANSWER\n' > "$s10h_out"
+  # ...but neither fans out, so neither may touch a lane family, exactly as
+  # audit may not. Seeded under a name the roster DOES carry, so only the mode
+  # scoping can be what spares it.
+  printf '%s\n' "$S10_STALE" > "$s10h_out.claude.json"
   printf '0' > "$COUNTER"
   set +e
   PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
@@ -746,19 +751,46 @@ for s10h_mode in quick challenge; do
   rc10h=$?
   set -e
   assert_eq "$rc10h" "1" "($s10h_mode) a failing run still exits 1"
-  assert_file_exists "$s10h_out" "($s10h_mode) --output is not deleted by a mode that may write nothing there"
-  assert_eq "$(cat "$s10h_out")" "MY IMPORTANT FILE" "($s10h_mode) the caller's file is byte-identical"
+  assert_file_absent "$s10h_out" "($s10h_mode) a failing run leaves no stale answer at --output"
+  assert_file_exists "$s10h_out.claude.json" "($s10h_mode) leaves a lane family it can never produce"
+  rm -f -- "$s10h_out.claude.json"
 done
-# control: a successful quick run still replaces it, so nothing was broken
+# ...and a refusal, which never reaches the CLI at all, clears it too
+for s10h_mode in quick challenge; do
+  s10h_out="$TMP_ROOT/out/review10h-refuse-$s10h_mode.txt"
+  printf 'PREVIOUS ANSWER\n' > "$s10h_out"
+  printf '0' > "$COUNTER"
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" \
+    SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude" \
+    SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+    "$SECOND_OPINION" "$s10h_mode" "is this safe?" --cwd "$WORK" --output "$s10h_out" \
+      >/dev/null 2>"$TMP_ROOT/s10h.stderr"
+  rc10h=$?
+  set -e
+  assert_eq "$rc10h" "1" "($s10h_mode) a same-model refusal exits 1"
+  assert_eq "$(cat "$COUNTER")" "0" "($s10h_mode) the refusal invokes no CLI"
+  assert_file_absent "$s10h_out" "($s10h_mode) a refusal leaves no stale answer at --output"
+done
+# control: a successful run still writes the fresh answer there
 s10h_out="$TMP_ROOT/out/review10h-quick.txt"
-printf 'MY IMPORTANT FILE\n' > "$s10h_out"
+printf 'PREVIOUS ANSWER\n' > "$s10h_out"
 set +e
 PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
   STUB_COUNTER="$COUNTER" STUB_RC=0 STUB_STDOUT="ANSWER" \
   "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" --output "$s10h_out" \
     >/dev/null 2>"$TMP_ROOT/s10h.stderr"
 set -e
-assert_eq "$(cat "$s10h_out")" "ANSWER" "control: a successful quick run still writes --output"
+assert_eq "$(cat "$s10h_out")" "ANSWER" "control: a successful quick run writes the fresh answer to --output"
+# detect has no output slot: it never reaches the write, so it clears nothing
+s10h_out="$TMP_ROOT/out/review10h-detect.txt"
+printf 'PREVIOUS ANSWER\n' > "$s10h_out"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+  STUB_COUNTER="$COUNTER" \
+  "$SECOND_OPINION" detect --cwd "$WORK" --output "$s10h_out" >/dev/null 2>&1
+set -e
+assert_eq "$(cat "$s10h_out")" "PREVIOUS ANSWER" "detect writes nothing, so it clears nothing"
 
 # audit writes the artifact and its sidecars but never fans out, so it must
 # clear the one and leave the other alone.
