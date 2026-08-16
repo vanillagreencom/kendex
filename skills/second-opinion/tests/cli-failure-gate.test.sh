@@ -964,7 +964,9 @@ assert_eq "$(cat "$COUNTER")" "0" "a directory at --output invokes no CLI"
 rmdir "$s11d"
 
 # (b8) caller-supplied paths that BEGIN with '-' must not be re-parsed as
-# options by anything they reach. --prompt lands in `cat`, and --cwd is the
+# options by anything they reach. Passed in the `=` form, which is how such a
+# value is supplied: the split form rejects a flag-shaped token so a following
+# option can never be swallowed as a value (see b8b). --prompt lands in `cat`, and --cwd is the
 # prefix of nearly every other path the script builds, so it is canonicalized to
 # an absolute path once rather than hardened at each consumer. Relative names
 # from a scratch cwd, because an absolute path can never start with a dash.
@@ -979,7 +981,7 @@ chmod +x "$TMP_ROOT/bin/echo-cli"
 set +e
 s10k_out=$( cd "$s10k_dir" && PATH="$TMP_ROOT/bin:$PATH" \
   SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/echo-cli" \
-  "$SECOND_OPINION" quick --prompt -dash-prompt.txt --cwd -dashcwd 2>"$TMP_ROOT/s10k.stderr" )
+  "$SECOND_OPINION" quick --prompt=-dash-prompt.txt --cwd=-dashcwd 2>"$TMP_ROOT/s10k.stderr" )
 rc10k=$?
 set -e
 assert_eq "$rc10k" "0" "(b8) dash-leading --prompt and --cwd are accepted"
@@ -1029,6 +1031,46 @@ else
   assert_file_absent "$s10n_out" "the designated output is cleared regardless — it needs no proof"
   assert_file_exists "$s10n_out.retired.json" "a sibling is left alone when ownership cannot be checked"
 fi
+
+# (b8b) a split-form option must not swallow the following FLAG as its value.
+# `--timeout --output report.json` otherwise takes `--output` as the timeout:
+# the designated output is then never recorded, so it is neither written nor
+# cleared, and the caller's file is silently ignored while the run complains
+# about an unrelated timeout. Callers here are agents assembling flags.
+s10o_keep="$TMP_ROOT/out/review10o.json"
+printf 'MY REPORT\n' > "$s10o_keep"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+  STUB_COUNTER="$COUNTER" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --timeout --output "$s10o_keep" \
+    >/dev/null 2>"$TMP_ROOT/s10o.stderr"
+rc10o=$?
+set -e
+assert_eq "$rc10o" "1" "a flag-shaped value for --timeout is a parse error"
+assert_file_contains "$TMP_ROOT/s10o.stderr" "--timeout requires a value" "the error names the option missing its value"
+assert_file_exists "$s10o_keep" "the swallowed --output is not silently accepted, so its file is untouched"
+assert_eq "$(cat -- "$s10o_keep")" "MY REPORT" "that file is byte-identical"
+# every split-form option, not just the one reported
+for s10o_opt in --prompt --output --target --provider --range --cwd --timeout; do
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+    STUB_COUNTER="$COUNTER" \
+    "$SECOND_OPINION" review --cwd "$WORK" "$s10o_opt" --range HEAD \
+      >/dev/null 2>"$TMP_ROOT/s10o.stderr"
+  rc10o=$?
+  set -e
+  assert_eq "$rc10o" "1" "($s10o_opt) a following flag is rejected, not consumed"
+  assert_file_contains "$TMP_ROOT/s10o.stderr" "$s10o_opt requires a value" "($s10o_opt) the error names it"
+  # ...and the same option with no token at all after it
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+    STUB_COUNTER="$COUNTER" \
+    "$SECOND_OPINION" review --cwd "$WORK" "$s10o_opt" >/dev/null 2>"$TMP_ROOT/s10o.stderr"
+  rc10o=$?
+  set -e
+  assert_eq "$rc10o" "1" "($s10o_opt) a missing value at the end of argv is rejected"
+  assert_file_contains "$TMP_ROOT/s10o.stderr" "$s10o_opt requires a value" "($s10o_opt) that error names it too"
+done
 
 echo "=== scenario 11b: an unclearable previous artifact is a named cause, not a bare rm error ==="
 # The clearing runs before anything else, so a directory that denies write makes

@@ -791,10 +791,13 @@ fi
 #
 # A bare `-dashed.json` — no `./` to hide the leading dash — has to work end to
 # end: the parent's own preflight, and every path the recursive lane child
-# derives from the same value while writing its artifact and sidecars.
+# derives from the same value while writing its artifact and sidecars. Passed in
+# the `=` form, which is how a dash-leading value is supplied now that the split
+# form refuses a flag-shaped token; the parent hands its children the same form
+# for exactly that reason.
 echo "=== scenario 15: a dashed --output works end to end ==="
 rc15=0
-( cd "$TMP_ROOT" && run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" --output -dashed.json ) || rc15=$?
+( cd "$TMP_ROOT" && run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" --output=-dashed.json ) || rc15=$?
 dashed="$TMP_ROOT/-dashed.json"
 assert_eq "$rc15" "0" "a dashed --output value does not fail the run"
 assert_stderr_has "[codex] " "lanes still run when --output begins with a dash"

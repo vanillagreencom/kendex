@@ -236,22 +236,29 @@ HELP
 # in-loop exit — a help request must never delete anything.
 
 PARSE_ERROR=""
+# A split-form option must be followed by a VALUE, not the next flag.
+# `review --timeout --output report.json` otherwise takes `--output` as the
+# timeout and the designated output is silently lost: never written, never
+# cleared, and the failure surfaces as an unrelated timeout complaint. Callers
+# here are agents assembling flags programmatically, so a swallowed option is
+# the worst possible shape. A value that genuinely begins with `-` is passed
+# with the `=` form, which every one of these options also accepts.
 while [[ $# -gt 0 ]]; do
   case "$1" in
     review|challenge|audit|quick|detect)
       MODE="$1"; shift ;;
-    --prompt)    [[ $# -ge 2 ]] || { PARSE_ERROR="--prompt requires a value"; break; }; PROMPT_FILE="$2"; shift 2 ;;
+    --prompt)    [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--prompt requires a value (use --prompt=VALUE for a value beginning with '-')"; break; }; PROMPT_FILE="$2"; shift 2 ;;
     --prompt=*)  PROMPT_FILE="${1#--prompt=}"; shift ;;
-    --output)    [[ $# -ge 2 ]] || { PARSE_ERROR="--output requires a value"; break; }; OUTPUT_PATH="$2"; shift 2 ;;
+    --output)    [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--output requires a value (use --output=VALUE for a value beginning with '-')"; break; }; OUTPUT_PATH="$2"; shift 2 ;;
     --output=*)  OUTPUT_PATH="${1#--output=}"; shift ;;
-    --target|--provider)  [[ $# -ge 2 ]] || { PARSE_ERROR="$1 requires a value"; break; }; TARGET="$2"; shift 2 ;;
+    --target|--provider)  [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="$1 requires a value (use $1=VALUE for a value beginning with '-')"; break; }; TARGET="$2"; shift 2 ;;
     --target=*)  TARGET="${1#--target=}"; shift ;;
     --provider=*) TARGET="${1#--provider=}"; shift ;;
-    --range)     [[ $# -ge 2 ]] || { PARSE_ERROR="--range requires a value"; break; }; RANGE="$2"; shift 2 ;;
+    --range)     [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--range requires a value (use --range=VALUE for a value beginning with '-')"; break; }; RANGE="$2"; shift 2 ;;
     --range=*)   RANGE="${1#--range=}"; shift ;;
-    --cwd)       [[ $# -ge 2 ]] || { PARSE_ERROR="--cwd requires a value"; break; }; CWD="$2"; shift 2 ;;
+    --cwd)       [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--cwd requires a value (use --cwd=VALUE for a value beginning with '-')"; break; }; CWD="$2"; shift 2 ;;
     --cwd=*)     CWD="${1#--cwd=}"; shift ;;
-    --timeout)   [[ $# -ge 2 ]] || { PARSE_ERROR="--timeout requires a value"; break; }; TIMEOUT="$2"; shift 2 ;;
+    --timeout)   [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--timeout requires a value (use --timeout=VALUE for a value beginning with '-')"; break; }; TIMEOUT="$2"; shift 2 ;;
     --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
     -h|--help)   show_help; exit 0 ;;
     --*)
@@ -1593,8 +1600,12 @@ if $MULTI_LANE; then
         exec 3>/dev/null 2>&4 4>&-
         echo "→ lane stderr capture could not be opened — log replay lost: $lane" >&2
       fi
-      exec "$SELF" review --target "$lane" --range "$REVIEW_RANGE" --cwd "$CWD" \
-        --timeout "$TIMEOUT" --output "$lane_out" >/dev/null 2>&3 3>&-
+      # `=` form throughout: a split-form option now refuses a flag-shaped
+      # value, and every one of these is derived from caller input that may
+      # legitimately begin with '-' (--output above all). The child would
+      # otherwise reject its own lane path.
+      exec "$SELF" review --target="$lane" --range="$REVIEW_RANGE" --cwd="$CWD" \
+        --timeout="$TIMEOUT" --output="$lane_out" >/dev/null 2>&3 3>&-
     ) &
     LANE_PIDS+=($!)
     LANE_OUTS+=("$lane_out")

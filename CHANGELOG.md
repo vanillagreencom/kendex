@@ -161,6 +161,10 @@
   (default `tmp/second-opinion` under `--cwd`, owner-only) is the home for
   review/audit records written without `--output`. `detect` prints the
   target(s) a review would run.
+- second-opinion: a split-form option refuses a flag-shaped value —
+  `review --timeout --output report.json` is now a named parse error instead of
+  taking `--output` as the timeout and silently dropping the designated output.
+  Pass a value that legitimately begins with `-` as `--output=-report.json`.
 - second-opinion: no run can hand a caller a stale result. Every mode that
   writes `--output` — `review`, `audit`, `challenge`, `quick` — DELETES that
   path at startup, plus exactly the sidecar records that mode can produce
