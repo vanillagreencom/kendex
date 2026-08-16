@@ -42,6 +42,8 @@ pi-extensions/           Default Pi extension packages dir (npm-shaped). package
 skill-templates/         Templates for new skills
 ```
 
+Seam map and sequenced split plan for the two largest modules (`project_config.rs`, `installer.rs`): [docs/cli-module-decomposition.md](docs/cli-module-decomposition.md).
+
 ## Key Design Decisions
 
 - **Discovered dynamically.** CLI scans source catalog roots at runtime. Default roots are `agents/`, `skills/`, `hooks/`, `pi-extensions/`, and `extras/`; a source `vstack.toml` `[catalog]` table can override each item kind's roots.

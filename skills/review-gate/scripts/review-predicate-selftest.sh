@@ -84,8 +84,17 @@ ACTIVE_ERROR_PATTERNS="$(rg_setting REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS "en
 ACTIVE_GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 1
 ACTIVE_THREADS="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 1
 ACTIVE_API_ATTEMPTS="$(rg_setting REVIEW_GATE_API_ATTEMPTS "1")" || exit 1
-# Read for the fail-loud parse only — reset() pins the delay to 0.
-rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2" >/dev/null || exit 1
+# The repo's ACTIVE delay is validated here but NEVER copied into behavior
+# cases (reset() pins 0 — the delay paces production retries and decides no
+# verdict). This standalone check is what catches a committed non-integer
+# pre-merge: the predicate would exit 2 on every live evaluation.
+ACTIVE_API_DELAY_CHECK="$(rg_setting REVIEW_GATE_API_RETRY_DELAY_SECONDS "2")" || exit 1
+case "$ACTIVE_API_DELAY_CHECK" in
+  ''|*[!0-9]*)
+    echo "review-predicate selftest: FAIL — committed REVIEW_GATE_API_RETRY_DELAY_SECONDS is '$ACTIVE_API_DELAY_CHECK' (must be a non-negative integer); the live predicate will exit 2 on every evaluation" >&2
+    exit 1
+    ;;
+esac
 ACTIVE_CARRY="$(rg_setting REVIEW_GATE_CARRY_FORWARD "")" || exit 1
 ACTIVE_CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 1
 ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 1

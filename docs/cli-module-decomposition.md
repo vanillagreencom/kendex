@@ -22,19 +22,20 @@ without touching it.
 
 ## `installer.rs`
 
-Impl 1–1348, tests 1349–3697 (64% of the file). No module-level state; the
-couplers are two path helpers (`normalize_absolute_path`, 9 internal
+Impl 1–1348, tests 1349–3697 (64% of the file). Cluster line counts span
+from an item's leading doc comment to the line before the next item's. No
+module-level state; the couplers are two path helpers (`normalize_absolute_path`, 9 internal
 callers; `canonicalize_allowing_missing`, 6).
 
 | Cluster | Lines | Members | Inbound (same file) | External callers |
 |---|---|---|---|---|
 | Hooks facade | 21 | `mod hooks`, re-exports, `codex_hook_safety_block` | remove_item | add, refresh, verify, harness/codex, config |
-| Agent install | 45 | `InstallResult`, `install_agent` | none | commands/add |
-| `install_skill` | 437 (one fn) | `install_skill` | none | add, refresh, harness/mod, tui/disk_mutations |
-| `remove_item` | 366 | `RemoveOutcome`, `remove_item`, `ExpectedArtifact`, `remove_expected_path` | none | commands/remove, tui/disk_mutations |
+| Agent install | 44 | `InstallResult`, `install_agent` | none | commands/add |
+| `install_skill` | 436 (one fn) | `install_skill` | none | add, refresh, harness/mod, tui/disk_mutations |
+| `remove_item` | 367 | `RemoveOutcome`, `remove_item`, `ExpectedArtifact`, `remove_expected_path` | none | commands/remove, tui/disk_mutations |
 | Lock bookkeeping | 36 | `record_install` | none | commands/add |
 | fs/path primitives | 183 | `remove_existing`, `normalize_absolute_path`, `canonicalize_allowing_missing`, `relative_path`, `lexical_relative`, `copy_dir` | install_skill, remove_item, anchoring | none (private) |
-| Worktree anchoring | 259 | `AnchorEvidence`, `AnchorSharing`, `anchored_canonical_skill_roots`, `child_level_anchored_roots`, `corresponding_project_root_in`, `is_recognized_skills_surface`, `LinkHome`, `same_repo_link_home`, `skill_link_home`, `anchored_link_home` | install_skill, remove_item | config (`prune_broken_skill_symlinks`, `reconcile_lock_with_disk`, `scan_installed_skills_on_disk`) |
+| Worktree anchoring | 260 | `AnchorEvidence`, `AnchorSharing`, `anchored_canonical_skill_roots`, `child_level_anchored_roots`, `corresponding_project_root_in`, `is_recognized_skills_surface`, `LinkHome`, `same_repo_link_home`, `skill_link_home`, `anchored_link_home` | install_skill, remove_item | config (`prune_broken_skill_symlinks`, `reconcile_lock_with_disk`, `scan_installed_skills_on_disk`) |
 
 ### Target layout
 
@@ -121,10 +122,10 @@ goes before `writers.rs`.
 
 ## Owner decision this depends on
 
-`~/dev/vstack2` is a ground-up rebuild with its own architecture invariants.
-Before steps 4–6 of either plan, decide whether this layout informs vstack2's
-module map or whether v1 stays the working system long enough to justify the
-moves. Steps 1–3 (test hoist, leaf extraction) are cheap enough to do
+A ground-up rebuild of the CLI is in progress with its own architecture
+invariants. Before steps 4–6 of either plan, decide whether this layout
+informs the rebuild's module map or whether v1 stays the working system long
+enough to justify the moves. Steps 1–3 (test hoist, leaf extraction) are cheap enough to do
 regardless — they shrink the review surface for every later change to these
 files. Size-ratchet adoption (VST-248, VST-215) holds the line after the
 seams exist; it does not choose them.

@@ -11,8 +11,8 @@
 #
 # Every fixture replays the FULL decision table, and the replays are
 # independent (own cwd, own settings, own scratch dir), so they run
-# concurrently: fixtures are built first, every replay is launched, and the
-# assertions read the recorded outputs after `wait`.
+# concurrently: each fixture block launches its replay as soon as it is
+# built, and the assertions read the recorded outputs after `wait`.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,20 +25,34 @@ note() { echo "FAIL: $1"; fail=1; }
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# An interrupted run tears down its background replays too (their PIDs
+# accumulate in replay_pids as each is launched).
+replay_pids=""
+trap 'kill $replay_pids 2>/dev/null || true; wait; exit 130' INT TERM
 
 # replay LABEL DIR [VAR=value ...] — run the selftest in DIR with the given
 # environment, in the background; stdout+stderr land in $work/LABEL.out and
-# the exit status in $work/LABEL.rc.
+# the exit status in $work/LABEL.rc. Fixtures are built sequentially and
+# each block launches its own replay(s) as soon as it is complete.
 replay() {
   local label="$1" dir="$2"
   shift 2
   (
-    # errexit is inherited here: capture the status via `||` so a failing
-    # replay still records it instead of exiting before the write.
+    # The redirect is on the subshell, so a failed cd still leaves a .out
+    # naming the missing fixture; the selftest runs as a child the subshell
+    # forwards TERM/INT to, so an interrupted wrapper takes it down too.
+    if ! cd "$dir"; then
+      echo 1 >"$work/$label.rc"
+      exit 1
+    fi
+    env "$@" "$SELFTEST" &
+    child=$!
+    trap 'kill "$child" 2>/dev/null' TERM INT
     rc=0
-    cd "$dir" && env "$@" "$SELFTEST" >"$work/$label.out" 2>&1 || rc=$?
+    wait "$child" || rc=$?
     echo "$rc" >"$work/$label.rc"
-  ) &
+  ) >"$work/$label.out" 2>&1 &
+  replay_pids="$replay_pids $!"
 }
 # passed LABEL — the recorded exit status of that replay was 0. A missing
 # record (the subshell never wrote one) reads as failure, never as pass.
@@ -53,9 +67,17 @@ real_mktemp="$(command -v mktemp)"
 
 # --- layer 1: built-in defaults (no settings file resolvable) ---------------
 mkdir -p "$work/defaults"
+replay defaults "$work/defaults"
 
 # --- layer 1b: the committed-mode-typo guard must itself be falsifiable -----
 mkdir -p "$work/modetypo"
+replay modetypo "$work/modetypo" REVIEW_GATE_MODE=offf
+# --- layer 1c: the committed-delay-typo guard must itself be falsifiable ----
+# A settings FILE, not env: the delay is pinned to 0 inside every case, so
+# only the standalone active-value check can see the planted value.
+mkdir -p "$work/delaytypo"
+printf '[env]\nREVIEW_GATE_API_RETRY_DELAY_SECONDS = "two"\n' >"$work/delaytypo/vstack.settings.toml"
+replay delaytypo "$work/delaytypo"
 
 # --- layer 2: the selftest must exercise CONFIGURED values ------------------
 mkdir -p "$work/configured"
@@ -73,6 +95,7 @@ REVIEW_GATE_THREADS = "off"
 REVIEW_GATE_API_ATTEMPTS = "2"
 REVIEW_GATE_CARRY_FORWARD = "docs"
 EOF
+replay configured "$work/configured"
 
 # --- layer 2b: EVERY committed carry-exclude glob is exercised --------------
 mkdir -p "$work/excludes"
@@ -82,6 +105,7 @@ grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" 
   >"$work/excludes/vstack.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;guides/*"\n' \
   >>"$work/excludes/vstack.settings.toml"
+replay excludes "$work/excludes"
 
 # --- layer 2c: a broken ls-files fails loud, never a hermetic fallback ------
 # A git shim delegates everything except `ls-files` (which fails).
@@ -113,6 +137,7 @@ chmod +x "$work/brokengit/bin/git"
 # The tracked-probe battery only runs under an ACTIVE carry-exclude list —
 # reuse the committed-glob fixture settings.
 cp "$work/excludes/vstack.settings.toml" "$work/brokengit/repo/vstack.settings.toml"
+replay brokengit "$work/brokengit/repo" PATH="$work/brokengit/bin:$PATH"
 
 # --- layer 2c2: rev-parse's STATUS decides the root, never its stdout ------
 # A git shim fails `rev-parse --show-toplevel` (exit 128) while PLANTING a
@@ -144,6 +169,7 @@ BROKENROOT
 chmod +x "$work/brokenroot/bin/git"
 (cd "$work/brokenroot/repo" && "$real_git" init -q .)
 cp "$work/excludes/vstack.settings.toml" "$work/brokenroot/repo/vstack.settings.toml"
+replay brokenroot "$work/brokenroot/repo" PATH="$work/brokenroot/bin:$PATH"
 
 # --- layer 2d: a failed mktemp is unverifiable, same refuse-to-degrade -----
 # A PATH shim fails only the NO-ARGUMENT mktemp (the staging-file call in
@@ -161,6 +187,7 @@ BROKENMKTEMP
 chmod +x "$work/brokenmktemp/bin/mktemp"
 (cd "$work/brokenmktemp/repo" && git init -q .)
 cp "$work/excludes/vstack.settings.toml" "$work/brokenmktemp/repo/vstack.settings.toml"
+replay brokenmktemp "$work/brokenmktemp/repo" PATH="$work/brokenmktemp/bin:$PATH"
 
 # --- layer 2e: the harness namespace is not the over-broad namespace --------
 # Hermetic fixture with `carry-probe*` as the ONLY exclusion.
@@ -169,6 +196,7 @@ grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" 
   >"$work/probeglob/vstack.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "carry-probe*"\n' \
   >>"$work/probeglob/vstack.settings.toml"
+replay probeglob "$work/probeglob"
 
 # --- layer 2g: tracked evidence is ROOT-relative and dead globs fail -------
 # One fixture repo, several settings files. The tracked tree carries a docs
@@ -210,6 +238,12 @@ printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = 
   >"$work/rooted/repo/falsified.settings.toml"
 grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" \
   >>"$work/rooted/repo/falsified.settings.toml"
+replay rooted "$work/rooted/repo/sub" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/vstack.settings.toml"
+replay rootedtypo "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/typo.settings.toml"
+replay rooteddecl "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/declared.settings.toml"
+replay rootedinert "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/inert.settings.toml"
+replay rootedorphan "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/orphan.settings.toml"
+replay rootedfalsified "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/falsified.settings.toml"
 
 # A SYMLINKED override anchors evidence at its TARGET's repository. The
 # symlink lives in a non-repository directory (the common install shape:
@@ -219,6 +253,8 @@ grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" 
 mkdir -p "$work/symlinked/outside"
 ln -s ../../rooted/repo/vstack.settings.toml "$work/symlinked/outside/settings.toml"
 ln -s "$work/rooted/repo/vstack.settings.toml" "$work/symlinked/outside/-settings"
+replay symlinked "$work/symlinked/outside" REVIEW_GATE_SETTINGS_FILE="$work/symlinked/outside/settings.toml"
+replay symlinkdash "$work/symlinked/outside" REVIEW_GATE_SETTINGS_FILE="-settings"
 
 # A BROKEN readlink must refuse, never resolve partially.
 mkdir -p "$work/brokenreadlink/bin"
@@ -228,6 +264,7 @@ echo "readlink: planted failure" >&2
 exit 1
 BROKENREADLINK
 chmod +x "$work/brokenreadlink/bin/readlink"
+replay brokenreadlink "$work/symlinked/outside" PATH="$work/brokenreadlink/bin:$PATH" REVIEW_GATE_SETTINGS_FILE="$work/symlinked/outside/settings.toml"
 
 # CYCLIC, DANGLING, and UNREADABLE settings overrides.
 mkdir -p "$work/cyclic"
@@ -236,11 +273,22 @@ ln -s cycle-a.settings.toml "$work/cyclic/cycle-b.settings.toml"
 ln -s does-not-exist.toml "$work/cyclic/dangling.settings.toml"
 cp "$work/rooted/repo/vstack.settings.toml" "$work/cyclic/unreadable.settings.toml"
 chmod 000 "$work/cyclic/unreadable.settings.toml"
+replay cyclic "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/cycle-a.settings.toml"
+replay dangling "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/dangling.settings.toml"
+# Skipped when the runner can read mode-000 files anyway (privileged CI) —
+# the guard is [ -r ]-based and cannot fire there.
+unreadable_skip=""
+if [ -r "$work/cyclic/unreadable.settings.toml" ]; then
+  unreadable_skip=1
+else
+  replay unreadable "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/unreadable.settings.toml"
+fi
 
 # A BROKEN WORKTREE (a .git file naming a missing gitdir).
 mkdir -p "$work/brokengitfile"
 printf 'gitdir: /nonexistent/pruned-away/.git/worktrees/gone\n' >"$work/brokengitfile/.git"
 cp "$work/excludes/vstack.settings.toml" "$work/brokengitfile/vstack.settings.toml"
+replay brokengitfile "$work/brokengitfile"
 
 # A repository-probe failure inside a REAL repository: a git shim failing
 # --is-inside-work-tree.
@@ -258,6 +306,7 @@ BROKENPROBE
 chmod +x "$work/brokenprobe/bin/git"
 (cd "$work/brokenprobe/repo" && "$real_git" init -q .)
 cp "$work/excludes/vstack.settings.toml" "$work/brokenprobe/repo/vstack.settings.toml"
+replay brokenprobe "$work/brokenprobe/repo" PATH="$work/brokenprobe/bin:$PATH"
 
 # A repository with ZERO tracked files.
 mkdir -p "$work/emptyrepo/repo"
@@ -267,6 +316,7 @@ grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" 
   >"$work/emptyrepo/repo/vstack.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "guides/*"\n' \
   >>"$work/emptyrepo/repo/vstack.settings.toml"
+replay emptyrepo "$work/emptyrepo/repo"
 
 # A structurally universal exclusion inside a real repository with a
 # tracked carry-class file.
@@ -279,6 +329,7 @@ grep -v '^REVIEW_GATE_CARRY_FORWARD = ' "$work/configured/vstack.settings.toml" 
   >"$work/trackeduniv/repo/vstack.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*"\n' \
   >>"$work/trackeduniv/repo/vstack.settings.toml"
+replay trackeduniv "$work/trackeduniv/repo"
 
 # --- layer 2f: probe exhaustion without a structurally universal glob ------
 # Hermetic fixtures: both harness namespaces excluded (UNPROVEN, must pass);
@@ -300,52 +351,17 @@ printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = 
   >>"$work/twoq/vstack.settings.toml"
 printf 'REVIEW_GATE_CARRY_FORWARD = "docs"\nREVIEW_GATE_CARRY_FORWARD_EXCLUDE = "/docs/*;*"\n' \
   >>"$work/deadglob/vstack.settings.toml"
-
-# ============================================================ replays ======
-# Every replay is independent — its own cwd, settings, and scratch dir — so
-# all of them run at once and the assertions below read the recorded
-# outputs. Bare `wait` returns 0 regardless of the children's statuses;
-# each replay's own status is in its .rc file.
-replay defaults      "$work/defaults"
-replay modetypo      "$work/modetypo"      REVIEW_GATE_MODE=offf
-replay configured    "$work/configured"
-replay excludes      "$work/excludes"
-replay brokengit     "$work/brokengit/repo"    PATH="$work/brokengit/bin:$PATH"
-replay brokenroot    "$work/brokenroot/repo"   PATH="$work/brokenroot/bin:$PATH"
-replay brokenmktemp  "$work/brokenmktemp/repo" PATH="$work/brokenmktemp/bin:$PATH"
-replay probeglob     "$work/probeglob"
-replay rooted        "$work/rooted/repo/sub" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/vstack.settings.toml"
-replay rootedtypo    "$work/rooted/repo"     REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/typo.settings.toml"
-replay rooteddecl    "$work/rooted/repo"     REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/declared.settings.toml"
-replay rootedinert   "$work/rooted/repo"     REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/inert.settings.toml"
-replay symlinked     "$work/symlinked/outside" REVIEW_GATE_SETTINGS_FILE="$work/symlinked/outside/settings.toml"
-replay symlinkdash   "$work/symlinked/outside" REVIEW_GATE_SETTINGS_FILE="-settings"
-replay brokenreadlink "$work/symlinked/outside" PATH="$work/brokenreadlink/bin:$PATH" REVIEW_GATE_SETTINGS_FILE="$work/symlinked/outside/settings.toml"
-replay cyclic        "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/cycle-a.settings.toml"
-replay dangling      "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/dangling.settings.toml"
-# Skipped when the runner can read mode-000 files anyway (privileged CI) —
-# the guard is [ -r ]-based and cannot fire there.
-unreadable_skip=""
-if [ -r "$work/cyclic/unreadable.settings.toml" ]; then
-  unreadable_skip=1
-else
-  replay unreadable  "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/cyclic/unreadable.settings.toml"
-fi
-replay brokengitfile "$work/brokengitfile"
-replay brokenprobe   "$work/brokenprobe/repo" PATH="$work/brokenprobe/bin:$PATH"
-replay rootedorphan  "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/orphan.settings.toml"
-replay rootedfalsified "$work/rooted/repo" REVIEW_GATE_SETTINGS_FILE="$work/rooted/repo/falsified.settings.toml"
-replay emptyrepo     "$work/emptyrepo/repo"
-replay trackeduniv   "$work/trackeduniv/repo"
-replay bothns        "$work/bothns"
-replay allstars      "$work/allstars"
-replay oneq          "$work/oneq"
-replay twoq          "$work/twoq"
-replay deadglob      "$work/deadglob"
-wait
-chmod 644 "$work/cyclic/unreadable.settings.toml"
+replay bothns "$work/bothns"
+replay allstars "$work/allstars"
+replay oneq "$work/oneq"
+replay twoq "$work/twoq"
+replay deadglob "$work/deadglob"
 
 # ========================================================= assertions ======
+# Bare `wait` returns 0 regardless of the children's statuses; each replay's
+# own status is in its .rc file.
+wait
+chmod 644 "$work/cyclic/unreadable.settings.toml"
 
 # --- layer 1: built-in defaults ---------------------------------------------
 if ! passed defaults; then
@@ -382,6 +398,16 @@ if passed modetypo; then
   note "selftest passed with a planted invalid REVIEW_GATE_MODE — the committed-typo guard no longer fires"
 else
   grep -q "REVIEW_GATE_MODE" "$work/modetypo.out"     || note "the planted-invalid-mode failure does not name REVIEW_GATE_MODE"
+fi
+
+# --- layer 1c: the committed-delay-typo guard must itself be falsifiable ----
+# reset() pins the delay to 0 for every case, so a committed non-integer
+# would otherwise pass the battery while the live predicate exits 2 on
+# every evaluation. The standalone check must fail naming the key.
+if passed delaytypo; then
+  note "selftest passed with a planted non-integer REVIEW_GATE_API_RETRY_DELAY_SECONDS — the committed-delay guard no longer fires"
+else
+  grep -q "REVIEW_GATE_API_RETRY_DELAY_SECONDS" "$work/delaytypo.out" || note "the planted-invalid-delay failure does not name REVIEW_GATE_API_RETRY_DELAY_SECONDS"
 fi
 
 # --- layer 2: the selftest must exercise CONFIGURED values ------------------
