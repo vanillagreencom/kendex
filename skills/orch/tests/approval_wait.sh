@@ -1514,6 +1514,10 @@ output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
   env PR_REVIEW_QUORUM="$(printf 'bot-a\n\tbot-b\n')" STUB_REVIEWS_MODE=two_bots_at_head \
     .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
 assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: newline and tab separate logins too" "$stderr"
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="$(printf 'bot-a\fbot-b\v')" STUB_REVIEWS_MODE=two_bots_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 30 --json --mode review) 2>"$stderr" || true)
+assert_eq "$(json_field "$output" '.status')" "reviewed" "quorum: form feed and vertical tab separate logins too" "$stderr"
 
 # A PARTIAL quorum is reviewer ENGAGEMENT: the bot that reviewed this head is
 # demonstrably alive, so the reviewer-down degrade must not fire past it.

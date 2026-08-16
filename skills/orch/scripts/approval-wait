@@ -254,7 +254,7 @@ NUDGE_BODY="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE "")"
 QUORUM_RAW="$("$SCRIPT_DIR/orch-env" PR_REVIEW_QUORUM "")"
 QUORUM_LOGINS=""
 if [ -n "$QUORUM_RAW" ]; then
-  QUORUM_LOGINS="$(printf '%s' "$QUORUM_RAW" | tr ',\t\n\r' '    ' | tr -s ' ' | sed 's/^ //; s/ $//')"
+  QUORUM_LOGINS="$(printf '%s' "$QUORUM_RAW" | tr -s ',\t\n\r\f\v' ' ' | sed 's/^ //; s/ $//')"
 fi
 last_quorum_missing=""
 

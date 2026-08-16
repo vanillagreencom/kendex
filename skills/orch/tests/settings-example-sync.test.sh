@@ -14,7 +14,7 @@ ROOT_TEMPLATE="$SCRIPT_DIR/../../../vstack.settings.toml.example"
 # REVIEW_GATE_MODE's owning skill is review-gate (its settings-example-sync
 # test pins the same key); orch lists it too because orch consumes the
 # one-switch gate disable even where the review-gate engine is not installed.
-ORCH_KEYS="PR_REVIEW_GATE REVIEW_GATE_MODE PR_REVIEW_WAIT_SECS PR_REVIEW_NUDGE_SECS PR_REVIEW_NUDGE PR_REVIEW_CHECK PR_REVIEW_ON_TIMEOUT CI_WAIT_NO_CHECKS_GRACE CI_FIX_MAX_CYCLES REVIEWER_SLOT_BUDGET ORCH_DECISION_MODE ORCH_MERGE_AUTONOMY ORCH_OVERSEER_LANES ORCH_TMUX_VERIFY_SECS"
+ORCH_KEYS="PR_REVIEW_GATE REVIEW_GATE_MODE PR_REVIEW_WAIT_SECS PR_REVIEW_NUDGE_SECS PR_REVIEW_NUDGE PR_REVIEW_CHECK PR_REVIEW_QUORUM PR_REVIEW_ON_TIMEOUT CI_WAIT_NO_CHECKS_GRACE CI_FIX_MAX_CYCLES REVIEWER_SLOT_BUDGET ORCH_DECISION_MODE ORCH_MERGE_AUTONOMY ORCH_OVERSEER_LANES ORCH_TMUX_VERIFY_SECS"
 
 # Opt-in keys with no shipped default: the skill template carries a COMMENTED
 # example (nothing to merge, so no uncommented assignment) so the option is

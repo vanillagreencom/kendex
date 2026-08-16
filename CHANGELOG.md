@@ -158,13 +158,16 @@
     the issue ID no longer skips the liveness gate — two sessions on one issue
     export the same string, so it proves nothing the argument did not. And the
     liveness verdict is now bound to the lease it was made on:
-    `worktree-session-guard release --expect-pid` re-reads the pid under the
-    same lock that serializes claim/refresh/release, so a sibling that claimed
-    or refreshed between the check and the release is refused instead of
-    unlocked. The compare token is a per-claim GENERATION (`gen=` in the lease,
-    `generation` in `status` JSON), minted at claim and carried across
-    refreshes: a pid is reused by the OS, so a replacement claim landing on the
-    recorded pid would have passed a pid compare and unlocked a live lease.
+    `worktree-session-guard release --expect-gen` re-reads the lease
+    generation under the same lock that serializes claim/refresh/release, so a
+    sibling that claimed between the check and the release is refused instead
+    of unlocked. The compare token is a per-claim GENERATION (`gen=` in the
+    lease, `generation` in `status` JSON): every claim mints one — including a
+    same-owner claim landing on a live lease, which is a replacement session —
+    while a refresh continues the same claim and carries it across, so a slow
+    decision still releases. A pid is reused by the OS, so a replacement claim
+    landing on the recorded pid would have passed a pid compare and unlocked a
+    live lease.
   - orch `queue-wait`: an `errors` field that is present but not an array is a
     malformed body, not an empty error set — `{}` and `""` both measure zero
     length and would have been counted as a clean page.

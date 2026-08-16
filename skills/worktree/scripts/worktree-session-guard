@@ -609,18 +609,21 @@ lease_age_seconds() {
 # Shared by claim's same-owner branch and refresh, so the lease format has one
 # writer.
 rewrite_lease() {
-	local registration="$1" owner="$2" existing="$3" now="$4"
-	local lock_file="$1/locked" tmp_file lease claimed_epoch generation
+	local registration="$1" owner="$2" existing="$3" now="$4" generation="${5:-}"
+	local lock_file="$1/locked" tmp_file lease claimed_epoch
 
 	[[ -f "$lock_file" ]] || fail "worktree is not locked: $registration"
 	# A corrupted claim time is replaced rather than carried forward, so it
 	# cannot reach iso_from_epoch and abort the refresh with a date(1) error.
 	claimed_epoch="$(lease_field "$existing" claimed_epoch || true)"
 	epoch_is_sane "$claimed_epoch" || claimed_epoch="$now"
-	# A refresh continues the SAME claim, so the generation is carried across
-	# unchanged: a compare token that rotated on every heartbeat would refuse
-	# every release that took more than one heartbeat to decide.
-	generation="$(lease_generation_or_new "$existing")"
+	# A refresh continues the SAME claim, so by default the generation is
+	# carried across unchanged: a compare token that rotated on every heartbeat
+	# would refuse every release that took more than one heartbeat to decide.
+	# A claim landing on an existing lease passes a freshly minted token
+	# instead — it is a REPLACEMENT session, and `release --expect-gen` must
+	# refuse a decision made against the lease it replaced.
+	[[ -n "$generation" ]] || generation="$(lease_generation_or_new "$existing")"
 	lease="$(lease_line "$owner" "$(sanitize_host)" "$claimed_epoch" "$now" "$generation")"
 
 	tmp_file="$lock_file.ht-tmp.$$"
@@ -836,7 +839,10 @@ cmd_claim() {
 				"$GUARD_SELF" "$worktree" >&2
 			exit "$EXIT_OWNED"
 		fi
-		rewrite_lease "$registration" "$owner" "$LEASE_TEXT" "$now"
+		# A same-owner claim is a REPLACEMENT session for the issue, not a
+		# heartbeat: mint a new generation so a release decided against the
+		# previous session's lease refuses instead of unlocking this one.
+		rewrite_lease "$registration" "$owner" "$LEASE_TEXT" "$now" "$(new_lease_generation)"
 		printf 'refreshed %s\n' "$worktree"
 		return 0
 	fi

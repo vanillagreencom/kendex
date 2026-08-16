@@ -299,6 +299,31 @@ assert_eq "$(guard_status_code "$CAS_WT" "$CAS_ROOT/main" --owner issue-cas)" "0
 kill "$CAS_SLEEPER" 2>/dev/null || true
 wait "$CAS_SLEEPER" 2>/dev/null || true
 
+# THE SAME-OWNER RE-CLAIM CASE. A second session for the same issue claims
+# while the lease is still LOCKED, which routes through claim's same-owner
+# branch rather than a fresh lock. That claim is a replacement session, not a
+# heartbeat: it must mint a new generation, or a release decided against the
+# previous session's lease would unlock the replacement's live claim.
+cas_live_gen="$(lease_gen "$CAS_LOCK")"
+"$GUARD_SCRIPT" claim "$CAS_WT" --owner issue-cas >/dev/null
+cas_reclaim_gen="$(lease_gen "$CAS_LOCK")"
+if [[ -n "$cas_reclaim_gen" && "$cas_reclaim_gen" != "$cas_live_gen" ]]; then
+  pass "a same-owner claim on a live lease mints a new generation"
+else
+  fail "a same-owner claim on a live lease mints a new generation"
+fi
+set +e
+"$GUARD_SCRIPT" release "$CAS_WT" --owner issue-cas --repo "$CAS_ROOT/main" \
+  --expect-gen "$cas_live_gen" >/dev/null 2>"$CAS_ROOT/cas-reclaim.err"
+cas_reclaim_code=$?
+set -e
+assert_eq "$cas_reclaim_code" "75" \
+  "--expect-gen from before a same-owner re-claim refuses to release"
+assert_contains "$(cat "$CAS_ROOT/cas-reclaim.err")" "re-claimed since it was checked" \
+  "the same-owner refusal says the lease was re-claimed"
+assert_eq "$(guard_status_code "$CAS_WT" "$CAS_ROOT/main" --owner issue-cas)" "0" \
+  "the replacement session's lease survives the stale release"
+
 echo "=== a dead recorded pid proceeds as before ==="
 
 DEAD_ROOT="$TMP_ROOT/dead"
