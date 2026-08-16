@@ -367,7 +367,13 @@
   repositories is never truncated. An update points the entry's `origin` at the
   URL the invocation selected before fetching, so switching transport because
   the first one stopped authenticating actually takes effect instead of failing
-  over the old URL into a tolerated stale cache.
+  over the old URL into a tolerated stale cache. The revision it moves to comes
+  from the REMOTE's own `HEAD` on every fetch, into a ref only vstack writes:
+  an entry's stored refspec and its `origin/HEAD` are values inside the entry,
+  and an altered refspec mapped another branch onto `origin/main` and had that
+  branch's content installed. An accepted URL reaches git in git's own
+  lowercase spelling, since `SSH://` is a request for a `git-remote-SSH`
+  helper.
   **Breaking:** cache entries written by earlier vstack versions are not
   reused, because the cache key now derives from the repository identity. The
   first `vstack refresh` after upgrading reports each remote source as not

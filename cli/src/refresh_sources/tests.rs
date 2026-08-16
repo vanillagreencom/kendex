@@ -2609,6 +2609,98 @@ fn a_cache_entrys_own_git_hooks_never_run() {
     );
 }
 
+/// The revision an update installs is a fact about the SOURCE. An entry's
+/// stored `remote.origin.fetch` and its `origin/HEAD` are values inside the
+/// entry: a refspec mapping another branch onto `origin/main` passed every
+/// name-based check and had its content installed.
+#[test]
+fn an_update_takes_its_revision_from_the_remote_not_from_the_entry() {
+    let root = tmpdir("refspec-tamper");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+    git(&origin, &["checkout", "-q", "-b", "other"]);
+    std::fs::write(origin.join("README.md"), "other branch\n").unwrap();
+    git(&origin, &["commit", "-q", "-am", "other"]);
+    git(&origin, &["checkout", "-q", "main"]);
+    let cache = root.join("cache").join("owner_repo");
+    clone_into(&origin, &cache);
+    std::fs::write(origin.join("README.md"), "newer\n").unwrap();
+    git(&origin, &["commit", "-q", "-am", "update"]);
+
+    // Both values an entry could carry, pointed at the other branch.
+    git(
+        &cache,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/other:refs/remotes/origin/main",
+        ],
+    );
+    git(
+        &cache,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+
+    update_cached_repo(&remote_at(&cache, &origin)).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(cache.join("README.md")).unwrap(),
+        "newer\n",
+        "the entry chose which revision it was updated to"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// URL schemes are case-insensitive and the transport checks read them that
+/// way; git does not — it reads `SSH://` as a request for a `git-remote-SSH`
+/// helper and fails to clone.
+#[test]
+fn an_uppercase_scheme_reaches_git_in_the_spelling_git_knows() {
+    let root = tmpdir("scheme-case");
+    let home = root.join("home");
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        for (source, expected) in [
+            (
+                "SSH://git@host.example/owner/repo.git",
+                "ssh://git@host.example/owner/repo.git",
+            ),
+            (
+                "GIT+SSH://git@host.example/owner/repo.git",
+                "ssh://git@host.example/owner/repo.git",
+            ),
+            (
+                "git+ssh://git@host.example/owner/repo.git",
+                "ssh://git@host.example/owner/repo.git",
+            ),
+            (
+                "HTTPS://host.example/owner/repo.git",
+                "https://host.example/owner/repo.git",
+            ),
+            (
+                "https://host.example/owner/repo.git",
+                "https://host.example/owner/repo.git",
+            ),
+        ] {
+            assert_eq!(
+                RemoteSource::parse(source).unwrap().unwrap().git_url,
+                expected,
+                "{source}"
+            );
+        }
+        // Case is a spelling, not an identity: one repository, one entry.
+        let key = |source: &str| RemoteSource::parse(source).unwrap().unwrap().cache_key;
+        assert_eq!(
+            key("SSH://git@host.example/owner/repo.git"),
+            key("ssh://git@host.example/owner/repo.git")
+        );
+    });
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// The disabled-hooks sentinel is what keeps a cache command from running the
 /// entry's own hooks, so a directory in its place is not something to work
 /// around: every cache command refuses to run at all.

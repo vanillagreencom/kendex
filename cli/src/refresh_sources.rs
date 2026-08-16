@@ -641,10 +641,18 @@ impl RemoteSource {
             }
             reject_unsupported_transport(source)?;
             reject_credential_bearing_git_url(source)?;
-            source
-                .strip_prefix("git+ssh://")
-                .map(|rest| format!("ssh://{rest}"))
-                .unwrap_or_else(|| source.to_string())
+            // Lowercased: the transport checks are case-insensitive, as URL
+            // schemes are, but git is not — it reads `SSH://` as a request for
+            // a `git-remote-SSH` helper. `git+ssh` is git's own alias for
+            // `ssh`, so it collapses here too.
+            match parse_remote_url(source) {
+                Some(url) if !url.scheme.is_empty() => {
+                    let scheme = url.scheme.to_ascii_lowercase();
+                    let scheme = if scheme == "git+ssh" { "ssh" } else { &scheme };
+                    format!("{scheme}://{}", &source[url.scheme.len() + 3..])
+                }
+                _ => source.to_string(),
+            }
         } else if let Some(slug) = slug {
             // GitHub shorthand: built from the canonical slug, never from the
             // raw spelling — `owner/repo.git` would otherwise clone
@@ -1264,6 +1272,18 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
     Ok(())
 }
 
+/// The revision an update brings a cache entry to, and the refspec that writes
+/// it, both named on the command line.
+///
+/// Neither the entry's stored `remote.<name>.fetch` nor its `origin/HEAD` is
+/// consulted: both are values inside the entry, and an altered refspec mapped
+/// another branch onto `origin/main` while `origin/HEAD` is written once at
+/// clone time and never updated by a fetch. Asking the REMOTE for its `HEAD`
+/// on every fetch, into a ref only vstack writes, is what makes the revision a
+/// fact about the source rather than about the cache.
+const CACHE_HEAD_REF: &str = "refs/vstack/head";
+const CACHE_HEAD_REFSPEC: &str = "+HEAD:refs/vstack/head";
+
 /// Set the entry's `origin` to the URL this invocation selected.
 ///
 /// Only ever called after [`ensure_cache_entry_is_owned`], so the entry is
@@ -1534,7 +1554,7 @@ pub(crate) fn update_cached_repo(remote: &RemoteSource) -> Result<()> {
     // fetch is tolerated, so the selected transport silently never runs.
     point_cache_origin_at(remote)?;
     let fetch = hardened_git_network_command(&remote.cache_dir)?
-        .args(["fetch", "origin", "--quiet"])
+        .args(["fetch", "origin", "--quiet", "--force", CACHE_HEAD_REFSPEC])
         .stdout(std::process::Stdio::null())
         .output()
         .with_context(|| format!("running git fetch for cached source {display}"))?;
@@ -1551,7 +1571,7 @@ pub(crate) fn update_cached_repo(remote: &RemoteSource) -> Result<()> {
         return Ok(());
     }
     let reset = hardened_cache_git_command(&remote.cache_dir)?
-        .args(["reset", "--hard", "origin/HEAD"])
+        .args(["reset", "--hard", CACHE_HEAD_REF])
         .stdout(std::process::Stdio::null())
         .output()
         .with_context(|| format!("running git reset for cached source {display}"))?;
