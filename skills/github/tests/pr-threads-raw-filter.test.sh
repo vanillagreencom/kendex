@@ -65,6 +65,20 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
 
+# Shim jq to record every program it is handed, then run the real one. Raw
+# output must reach the caller as the API returned it, so the unfiltered path
+# has to skip the filter pass rather than re-serialize through it.
+REAL_JQ="$(command -v jq)"
+jq_log="$TMP_ROOT/jq-programs.log"
+cat >"$TMP_ROOT/bin/jq" <<EOF
+#!/usr/bin/env bash
+if [ -n "\${STUB_JQ_LOG:-}" ]; then
+    printf '%s\n' "\$*" >>"\$STUB_JQ_LOG"
+fi
+exec "$REAL_JQ" "\$@"
+EOF
+chmod +x "$TMP_ROOT/bin/jq"
+
 mk_thread() { # id isResolved
     jq -cn --arg id "$1" --argjson resolved "$2" \
         '{id:$id,isResolved:$resolved,isOutdated:false,path:"src/lib.rs",line:7,
@@ -77,9 +91,15 @@ threads=$(jq -sc '.' \
     <(mk_thread PRRT_open false))
 
 run_threads() {
+    : >"$jq_log"
     (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN \
-        STUB_THREADS_JSON="$threads" "${STUB_PAGE2_ENV[@]+"${STUB_PAGE2_ENV[@]}"}" \
+        STUB_THREADS_JSON="$threads" STUB_JQ_LOG="$jq_log" \
+        "${STUB_PAGE2_ENV[@]+"${STUB_PAGE2_ENV[@]}"}" \
         "$PR_THREADS" 123 "$@")
+}
+
+filter_passes() { # count jq runs that rewrite the thread node array
+    grep -c -- 'reviewThreads.nodes |=' "$jq_log" || true
 }
 
 STUB_PAGE2_ENV=()
@@ -100,9 +120,16 @@ assert_eq "$(jq '.repository.pullRequest.reviewThreads.nodes | length' <<<"$out"
 assert_eq "$(jq '[.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' <<<"$out")" "0" \
     "raw --resolved emits no unresolved node"
 
+assert_eq "$(filter_passes)" "1" "raw --resolved runs exactly one filter pass"
+
 out=$(run_threads --format=raw)
 assert_eq "$(jq '.repository.pullRequest.reviewThreads.nodes | length' <<<"$out")" "3" \
     "raw without a filter still returns every thread"
+assert_eq "$out" \
+    "$("$REAL_JQ" -cn --argjson nodes "$threads" \
+        '{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}')" \
+    "unfiltered raw is the API payload byte for byte"
+assert_eq "$(filter_passes)" "0" "unfiltered raw is never re-serialized through a filter pass"
 
 echo
 echo "=== raw structure is preserved for callers that walk it ==="

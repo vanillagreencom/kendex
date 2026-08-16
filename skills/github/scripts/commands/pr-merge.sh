@@ -88,10 +88,22 @@ Examples:
 EOF
 }
 
-# One authoritative read of the PR's lifecycle state. Also validates that the
-# PR exists — a bare number does not.
-pr_state_json() {
-    gh pr view "$1" --json state,mergedAt 2>/dev/null
+# One authoritative read of the PR's lifecycle state, published in
+# PR_STATE_JSON. Also validates that the PR exists — a bare number does not.
+# Every caller shares the single fetch; a failed read is not cached, so the
+# next caller retries rather than inheriting an empty state.
+PR_STATE_JSON=""
+PR_STATE_JSON_PR=""
+load_pr_state_json() {
+    local pr_num="$1"
+    if [ -n "$PR_STATE_JSON_PR" ] && [ "$PR_STATE_JSON_PR" = "$pr_num" ]; then
+        return 0
+    fi
+
+    local state_json
+    state_json=$(gh pr view "$pr_num" --json state,mergedAt 2>/dev/null) || return 1
+    PR_STATE_JSON="$state_json"
+    PR_STATE_JSON_PR="$pr_num"
 }
 
 # Run safety checks, output JSON
@@ -105,12 +117,12 @@ run_checks() {
     local issues=()
     local warnings=()
 
-    local state_json pr_state
-    if ! state_json=$(pr_state_json "$pr_num"); then
+    local pr_state
+    if ! load_pr_state_json "$pr_num"; then
         jq -n '{can_merge: false, issues: ["not_found: PR #'"$pr_num"' not found"], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN"}'
         return 0 # Return 0 so JSON is output, caller checks can_merge
     fi
-    pr_state=$(jq -r '.state // "UNKNOWN"' <<<"$state_json")
+    pr_state=$(jq -r '.state // "UNKNOWN"' <<<"$PR_STATE_JSON")
 
     # A terminal PR is unmergeable for a reason no caller can act on, and its
     # check data is meaningless: `mergeable` is permanently UNKNOWN, post-merge
@@ -421,13 +433,13 @@ main() {
     # mutation. Retrying a merge on a PR that already left OPEN can only
     # produce false diagnostics, and there is nothing left to mutate.
     # An unreadable state is not terminal — fall through to the normal path.
-    local terminal_state_json terminal_state
-    if terminal_state_json=$(pr_state_json "$pr_num"); then
-        terminal_state=$(jq -r '.state // ""' <<<"$terminal_state_json")
+    local terminal_state
+    if load_pr_state_json "$pr_num"; then
+        terminal_state=$(jq -r '.state // ""' <<<"$PR_STATE_JSON")
         case "$terminal_state" in
         MERGED)
             local merged_at
-            merged_at=$(jq -r '.mergedAt // ""' <<<"$terminal_state_json")
+            merged_at=$(jq -r '.mergedAt // ""' <<<"$PR_STATE_JSON")
             if [ -n "$merged_at" ]; then
                 echo "ALREADY MERGED PR #$pr_num $merged_at" >&2
             else
@@ -436,8 +448,8 @@ main() {
             exit 0
             ;;
         CLOSED)
-            echo "CLOSED (not merged) PR #$pr_num — no merge attempted, none queued" >&2
-            echo "  Reopen the PR or supersede it; merge flags cannot act on a closed PR." >&2
+            echo "CLOSED (not merged) PR #$pr_num" >&2
+            echo "  No merge attempted, none queued. Reopen the PR or supersede it." >&2
             exit 1
             ;;
         esac

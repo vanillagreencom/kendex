@@ -245,11 +245,15 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
     # Apply format and filters
     case "$FORMAT" in
         raw)
-            # Filter the thread nodes in place. Raw callers walk the GitHub
-            # response shape, and it carries no count field to keep in sync.
-            echo "$result" | jq -c '
-                .repository.pullRequest.reviewThreads.nodes |= [.[] | '"$jq_filter"']
-            '
+            if [ "$filter_unresolved" = "true" ] || [ "$filter_resolved" = "true" ]; then
+                # Filter the thread nodes in place. Raw callers walk the GitHub
+                # response shape, and it carries no count field to keep in sync.
+                echo "$result" | jq -c '
+                    .repository.pullRequest.reviewThreads.nodes |= [.[] | '"$jq_filter"']
+                '
+            else
+                echo "$result"
+            fi
             ;;
         safe)
             echo "$result" | jq '{

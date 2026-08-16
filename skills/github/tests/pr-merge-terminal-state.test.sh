@@ -86,6 +86,11 @@ case "${1:-}" in
                     '{data:{repository:{pullRequest:{state:$state,headRefOid:$head,headRefName:"issue-123",mergeCommit:null,autoMergeRequest:null,isInMergeQueue:false,mergeQueueEntry:null}}}}'
                 exit 0
             fi
+            if [[ -n "${STUB_THREADS_JSON:-}" ]]; then
+                jq -cn --argjson nodes "$STUB_THREADS_JSON" \
+                    '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
+                exit 0
+            fi
             jq -cn '{data:{repository:{pullRequest:{reviewThreads:{
                 nodes:[{id:"PRRT_post_merge_bot",isResolved:false,isOutdated:false,path:"src/lib.rs",line:3,
                         comments:{nodes:[{author:{login:"review-bot"},body:"post-merge nit"}]}}],
@@ -194,7 +199,8 @@ out=$(STUB_STATE=CLOSED run_pr_merge --auto --keep-branch)
 status=$?
 set -e
 assert_eq "$status" "1" "--auto on a closed PR exits 1"
-assert_contains "$out" "CLOSED (not merged) PR #123" "closed PR names its state"
+assert_eq "$(head -1 <<<"$out")" "CLOSED (not merged) PR #123" \
+    "closed PR's first line is exactly the machine-readable state line"
 assert_not_contains "$out" "unknown:" "closed PR reports no mergeable-UNKNOWN issue"
 assert_not_contains "$out" "ci_pending:" "closed PR reports no CI issue"
 assert_not_contains "$out" "unresolved_threads" "closed PR reports no thread issue"
@@ -239,6 +245,18 @@ assert_eq "$status" "0" "an open PR still merges"
 assert_contains "$out" "MERGED PR #123" "open PR reports the live merge outcome"
 assert_not_contains "$out" "ALREADY MERGED" "a live merge is not reported as already merged"
 assert_contains "$(cat "$call_log")" "pr merge" "open PR still reaches gh pr merge"
+
+# The state read is shared: the terminal-state guard and the readiness checks
+# must not each spend a round trip on the same field.
+set +e
+out=$(STUB_STATE=OPEN STUB_POST_STATE=MERGED STUB_MERGEABLE=MERGEABLE \
+    STUB_THREADS_JSON='[]' STUB_CHECKS="$checks" STUB_CHECKS_EXIT=0 \
+    run_pr_merge --keep-branch)
+status=$?
+set -e
+assert_eq "$status" "0" "a checked open PR still merges"
+assert_eq "$(grep -c -- '--json state,mergedAt' "$call_log")" "1" \
+    "an open PR reads its state exactly once"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
