@@ -2,6 +2,9 @@ use super::render::render_scope;
 use super::test_support::*;
 use super::*;
 
+mod hooks;
+use hooks::install_claude_hook;
+
 #[test]
 fn comma_separated_inline() {
     // Real-world shape from .claude/agents/<name>.md.
@@ -680,9 +683,10 @@ fn a_missing_install_is_phantom_for_every_kind_not_just_skills() {
         let agents = project.join(".claude").join("agents");
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(agents.join("rust.md"), "---\nname: rust\n---\nbody\n").unwrap();
+        // Installed as `vstack add` installs it — script AND settings.json
+        // registration — because presence now demands both.
+        install_claude_hook(source, "guard");
         let hooks = project.join(".claude").join("hooks");
-        std::fs::create_dir_all(&hooks).unwrap();
-        std::fs::write(hooks.join("guard.sh"), "exit 0\n").unwrap();
 
         let package = config::pi_packages_dir(false).join("@vg/pi-hooks");
         std::fs::create_dir_all(&package).unwrap();
@@ -708,106 +712,6 @@ fn a_missing_install_is_phantom_for_every_kind_not_just_skills() {
         phantom.sort();
         assert_eq!(phantom, vec!["@vg/pi-hooks", "guard", "rust"], "{report:?}");
         assert!(report.has_drift());
-    });
-}
-
-/// Install a codex-native hook exactly as `vstack add` does, so presence
-/// is checked against the artifacts the installer really writes.
-fn install_codex_hook(source: &Path, name: &str) {
-    let hook =
-        crate::hook::Hook::from_file(&source.join("hooks").join(format!("{name}.sh"))).unwrap();
-    crate::installer::install_hook(&hook, crate::harness::Harness::Codex, false, &[]).unwrap();
-}
-
-fn codex_hook_lock(source: &Path, name: &str) -> LockFile {
-    let mut entry = locked(source, ItemKind::Hook, name);
-    entry.harnesses = vec!["codex".into()];
-    let mut lock = LockFile::default();
-    lock.add(entry);
-    lock
-}
-
-fn phantom_note(report: &ScopeReport) -> String {
-    report
-        .phantom
-        .iter()
-        .filter_map(|item| item.detail.clone())
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-#[test]
-fn a_codex_native_hook_needs_its_registration_not_just_its_script() {
-    with_sandbox("codex-registration", |project, source| {
-        write_hook(source, "guard");
-        install_codex_hook(source, "guard");
-        let lock = codex_hook_lock(source, "guard");
-
-        // Control: the full native install is clean.
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert!(report.phantom.is_empty(), "control: {report:?}");
-
-        // The script survives, the registration does not — codex will
-        // never run this hook, so it is drift.
-        let hooks_json = project.join(".codex").join("hooks.json");
-        assert!(hooks_json.exists(), "installer must register the hook");
-        std::fs::remove_file(&hooks_json).unwrap();
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert_eq!(names(&report.phantom), vec!["guard"], "{report:?}");
-        assert!(
-            phantom_note(&report).contains("script present but not registered"),
-            "{report:?}"
-        );
-        assert!(report.has_drift());
-    });
-}
-
-#[test]
-fn a_codex_hooks_json_naming_another_script_is_not_this_hook() {
-    with_sandbox("codex-other-script", |project, source| {
-        write_hook(source, "guard");
-        install_codex_hook(source, "guard");
-        let lock = codex_hook_lock(source, "guard");
-
-        // A registration for `pre-guard.sh` must not answer for
-        // `guard.sh`: presence parses the JSON and compares file names,
-        // never a substring of the file body.
-        let hooks_json = project.join(".codex").join("hooks.json");
-        let content = std::fs::read_to_string(&hooks_json).unwrap();
-        std::fs::write(&hooks_json, content.replace("guard.sh", "pre-guard.sh")).unwrap();
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert!(
-            phantom_note(&report).contains("script present but not registered"),
-            "{report:?}"
-        );
-    });
-}
-
-#[test]
-fn a_disabled_codex_hooks_feature_is_drift() {
-    with_sandbox("codex-feature-off", |project, source| {
-        write_hook(source, "guard");
-        install_codex_hook(source, "guard");
-        let lock = codex_hook_lock(source, "guard");
-
-        let config = project.join(".codex").join("config.toml");
-        let content = std::fs::read_to_string(&config).unwrap();
-        assert!(content.contains("hooks = true"), "control: {content}");
-        std::fs::write(&config, content.replace("hooks = true", "hooks = false")).unwrap();
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert_eq!(names(&report.phantom), vec!["guard"], "{report:?}");
-        assert!(
-            phantom_note(&report).contains("hooks feature disabled"),
-            "{report:?}"
-        );
-
-        // And a config file that never mentions the feature at all.
-        std::fs::remove_file(&config).unwrap();
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert!(
-            phantom_note(&report).contains("hooks feature disabled"),
-            "{report:?}"
-        );
     });
 }
 

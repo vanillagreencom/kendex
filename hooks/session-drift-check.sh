@@ -2,7 +2,7 @@
 # ---
 # name: session-drift-check
 # event: SessionStart
-# description: On a fresh session start (not resume or compact), runs `vstack check --quiet` and surfaces vstack drift to the agent — outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`), unreachable sources — plus, alongside drift, items available in the source but not installed (`vstack add --<kind> <name>`, pending user approval). Prints nothing when the install is current. VSTACK_DRIFT_HOOK=off disables it; VSTACK_DRIFT_HOOK_AVAILABLE=off hides the available-but-not-installed suggestions.
+# description: On a fresh session start (not resume or compact), runs `vstack check --quiet` and surfaces vstack drift to the agent — outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`, `-g` in a global section), unreachable sources — plus, alongside drift, items available in the source but not installed (`vstack add --<kind> <name>`, pending user approval). Prints nothing when the install is current. VSTACK_DRIFT_HOOK=off disables it; VSTACK_DRIFT_HOOK_AVAILABLE=off hides the available-but-not-installed suggestions.
 # safety: Informational only — never installs or removes anything and never touches the project's git state. The check never waits on the network; the only thing it may write is vstack's own cache bookkeeping under ~/.vstack/cache (fetch stamps), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting.
 # timeout: 30
 # harnesses: [claude-code, codex]

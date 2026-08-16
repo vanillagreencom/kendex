@@ -236,6 +236,137 @@ fn an_unverifiable_cache_is_reported_with_its_own_remedy() {
     });
 }
 
+/// One scope report with every section that renders a remediation command
+/// populated, so a command missing its scope flag cannot hide in a section
+/// the fixture forgot.
+fn populated_scope(scope: &'static str) -> ScopeReport {
+    ScopeReport {
+        scope,
+        installed: 1,
+        outdated: vec![Item::new("alpha", ItemKind::Skill)],
+        removed: vec![Item::new("beta", ItemKind::Skill)],
+        orphaned: vec![Item::new("gamma", ItemKind::Skill)],
+        phantom: vec![Item::new("delta", ItemKind::Agent)],
+        missing_skill_refs: vec![MissingSkillRef {
+            agent: "rust".into(),
+            skill: "epsilon".into(),
+        }],
+        source_issues: vec![
+            SourceIssue {
+                source: "/sources/one".into(),
+                problem: SourceProblem::Unresolvable {
+                    entries: vec!["zeta".into()],
+                },
+            },
+            SourceIssue {
+                source: "/sources/two".into(),
+                problem: SourceProblem::Unreadable {
+                    entries: vec!["eta".into()],
+                    reasons: vec!["no skills root".into()],
+                },
+            },
+            SourceIssue {
+                source: "/sources/three".into(),
+                problem: SourceProblem::Unverifiable {
+                    entries: vec!["theta".into()],
+                    reason: "origin mismatch".into(),
+                },
+            },
+            SourceIssue {
+                source: "/sources/four".into(),
+                problem: SourceProblem::Discovery {
+                    failures: vec!["iota: bad frontmatter".into()],
+                },
+            },
+        ],
+        invalid_names: vec![Item::new("bad\nname", ItemKind::Hook)],
+        available: vec![
+            AvailableItem {
+                name: "kappa".into(),
+                kind: ItemKind::Skill,
+                source: "/sources/one".into(),
+            },
+            AvailableItem {
+                name: "lambda".into(),
+                kind: ItemKind::Agent,
+                source: "/sources/one".into(),
+            },
+        ],
+        current: vec![Item::new("mu", ItemKind::Skill)],
+    }
+}
+
+/// Every `vstack <subcommand>` the report printed, paired with the token
+/// that follows it, backticks trimmed.
+fn rendered_commands(out: &str) -> Vec<(String, String)> {
+    let trim = |word: &str| word.trim_matches('`').to_string();
+    let mut found = Vec::new();
+    let mut rest = out;
+    while let Some(at) = rest.find("vstack ") {
+        rest = &rest[at + "vstack ".len()..];
+        let mut words = rest.split_whitespace();
+        found.push((
+            trim(words.next().unwrap_or_default()),
+            trim(words.next().unwrap_or_default()),
+        ));
+    }
+    found
+}
+
+/// `add` and `remove` default to PROJECT scope, so a global section's
+/// remediation commands must carry `-g` or they act on the wrong install —
+/// silently, when a project item shares the name. Asserted per command by
+/// scanning the rendered report, so a command added to `render_scope` later
+/// cannot silently miss the flag.
+#[test]
+fn every_global_remediation_command_carries_the_scope_flag() {
+    for quiet in [false, true] {
+        let mut global = String::new();
+        render_scope(&mut global, &populated_scope("global"), quiet);
+        let commands = rendered_commands(&global);
+        let scoped: Vec<&(String, String)> = commands
+            .iter()
+            .filter(|(sub, _)| sub == "add" || sub == "remove")
+            .collect();
+        assert!(
+            scoped.len() >= 11,
+            "the fixture must reach every remediation command, saw {scoped:?} in:\n{global}"
+        );
+        for (sub, next) in &scoped {
+            assert_eq!(
+                next, "-g",
+                "`vstack {sub}` ran unscoped in a global report:\n{global}"
+            );
+        }
+        // `refresh` is correct unflagged: it reinstalls at every scope an
+        // item is locked at.
+        assert!(
+            commands
+                .iter()
+                .any(|(sub, next)| sub == "refresh" && next != "-g"),
+            "the outdated remedy must stay scope-less:\n{global}"
+        );
+
+        // Control: the project rendering is byte-identical to today —
+        // proven by transforming it into the global one, so the flag is the
+        // ONLY difference between the two.
+        let mut project = String::new();
+        render_scope(&mut project, &populated_scope("project"), quiet);
+        assert!(
+            !project.contains(" -g"),
+            "the project report must stay unflagged:\n{project}"
+        );
+        assert_eq!(
+            global,
+            project
+                .replace("vstack add", "vstack add -g")
+                .replace("vstack remove", "vstack remove -g")
+                .replace("project scope", "global scope"),
+            "scope must change nothing but the flag and the header"
+        );
+    }
+}
+
 /// A remedy command has to WORK when pasted: an ssh source keeps its
 /// `git@` (the round-4 scrub dropped it and the suggested command died on
 /// publickey), and a long local path is never truncated inside backticks.
@@ -536,9 +667,9 @@ fn quiet_render_is_empty_for_a_clean_scope_and_names_the_scope_on_drift() {
     render_scope(&mut out, &drifted, true);
     assert!(out.starts_with("vstack drift — global scope:"), "{out}");
     assert!(out.contains("`vstack refresh`"), "{out}");
-    assert!(out.contains("`vstack remove <name>`"), "{out}");
+    assert!(out.contains("`vstack remove -g <name>`"), "{out}");
     assert!(
-        out.contains("skills (`vstack add owner/repo --skill <name>`): beta"),
+        out.contains("skills (`vstack add -g owner/repo --skill <name>`): beta"),
         "the suggestion must name the source it came from: {out}"
     );
     assert!(

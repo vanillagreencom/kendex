@@ -280,11 +280,23 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> (Option<bool>, Option
         };
         match harness {
             crate::harness::Harness::ClaudeCode => {
+                // A hook is installed only when claude will RUN it: the
+                // script AND a settings registration under the hook's own
+                // event. Script-only presence reported a hook whose
+                // registration had been deleted as installed — including
+                // `session-drift-check`, which could then no longer diagnose
+                // its own absence.
                 let path = harness
                     .hooks_dir(global)
                     .map(|d| d.join(format!("{name}.sh")));
                 if path.is_none_or(|p| !p.exists()) {
                     missing.push(format!("{h}: script missing"));
+                } else if !crate::installer::claude_hook_is_registered(
+                    global,
+                    name,
+                    hook_source_event(entry).as_deref(),
+                ) {
+                    missing.push(format!("{h}: script present but not registered"));
                 }
             }
             crate::harness::Harness::Cursor => {
@@ -356,22 +368,31 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> (Option<bool>, Option
     }
 }
 
-/// The Codex event this hook installs natively under, read from the hook
-/// definition in its resolved source. The INSTALLED artifacts cannot answer
-/// whether a hook is native: a deleted `hooks.json` takes the registration's
-/// evidence with it, while the event in the source definition is exactly what
-/// decided native vs prose at install time — and it also names the key the
-/// registration must sit under.
+/// The event this hook declares in its resolved source — the key its
+/// registration has to sit under in every harness that registers hooks by
+/// event. The INSTALLED artifacts cannot answer it: a deleted registration
+/// takes its own evidence with it, while the source definition is exactly what
+/// decided the key at install time.
 ///
-/// `None` when the source cannot be resolved (the source problem is reported
-/// in its own right, and presence then falls back to the prose rule so an
-/// unanswerable question cannot invent unclearable drift); `Some(None)` when
-/// the source is readable and the event has no Codex equivalent.
-fn codex_hook_native_event(entry: &LockEntry) -> Option<Option<&'static str>> {
+/// `None` when the source cannot be resolved or read; the source problem is
+/// reported in its own right, and each caller decides what an unanswerable
+/// question means for presence.
+fn hook_source_event(entry: &LockEntry) -> Option<String> {
     let root = config::resolve_source_path(&entry.source)?;
     let path = crate::catalog::find_item_path(&root, ItemKind::Hook, &entry.name)?;
-    let hook = crate::hook::Hook::from_file(&path).ok()?;
-    Some(crate::installer::codex_event_for(&hook.event))
+    Some(crate::hook::Hook::from_file(&path).ok()?.event)
+}
+
+/// The Codex event this hook installs natively under. The event in the source
+/// definition is what decided native vs prose at install time.
+///
+/// `None` when the source cannot be resolved (presence then falls back to the
+/// prose rule so an unanswerable question cannot invent unclearable drift);
+/// `Some(None)` when the source is readable and the event has no Codex
+/// equivalent.
+fn codex_hook_native_event(entry: &LockEntry) -> Option<Option<&'static str>> {
+    let event = hook_source_event(entry)?;
+    Some(crate::installer::codex_event_for(&event))
 }
 
 /// Does this scope have any Codex agent for a prose fallback to live in?

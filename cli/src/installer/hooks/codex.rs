@@ -4,8 +4,7 @@
 //! equivalent for.
 
 use super::{
-    checked_child_path, command_matches_owned_hook_command, is_toml_table_header,
-    remove_hook_entries_from_hooks_object, shell_quote,
+    checked_child_path, is_toml_table_header, remove_hook_entries_from_hooks_object, shell_quote,
 };
 use crate::agent::Agent;
 use crate::harness::Harness;
@@ -136,11 +135,11 @@ pub(crate) fn codex_native_hook_gaps(
     // Only the project-scope command defers the repo root to run time.
     let git_root = (!global).then(|| root.parent()).flatten();
     let mut gaps = Vec::new();
-    if !codex_hook_is_registered(
+    if !super::hooks_config_registers_script(
         &root.join("hooks.json"),
-        codex_event,
+        Some(codex_event),
         &script_path,
-        git_root,
+        git_root.map(|root| (CODEX_GIT_TOPLEVEL, root)),
         &owned,
     ) {
         gaps.push(CodexNativeGap::NotRegistered);
@@ -151,80 +150,10 @@ pub(crate) fn codex_native_hook_gaps(
     gaps
 }
 
-/// Is this hook's script registered under `codex_event` in `hooks.json`?
-///
-/// The file is PARSED, never substring-searched: `hooks.json` naming
-/// `pre-check.sh` must not answer for `check.sh`. A handler counts when its
-/// command is one vstack itself renders, or — for a command a user reshaped
-/// by hand around OUR script — when one of its tokens resolves to
-/// `script_path`. A same-named script elsewhere on disk is somebody else's
-/// handler, and letting it answer would mask a deleted managed entry.
-fn codex_hook_is_registered(
-    hooks_json: &Path,
-    codex_event: &str,
-    script_path: &Path,
-    git_root: Option<&Path>,
-    owned_commands: &[String],
-) -> bool {
-    let Ok(content) = std::fs::read_to_string(hooks_json) else {
-        return false;
-    };
-    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
-    };
-    doc.get("hooks")
-        .and_then(|hooks| hooks.get(codex_event))
-        .and_then(|entries| entries.as_array())
-        .is_some_and(|entries| {
-            entries.iter().any(|entry| {
-                entry
-                    .get("hooks")
-                    .and_then(|handlers| handlers.as_array())
-                    .is_some_and(|handlers| {
-                        handlers.iter().any(|handler| {
-                            handler
-                                .get("command")
-                                .and_then(|command| command.as_str())
-                                .is_some_and(|command| {
-                                    command_matches_owned_hook_command(command, owned_commands)
-                                        || command_targets_hook_script(
-                                            command,
-                                            script_path,
-                                            git_root,
-                                        )
-                                })
-                        })
-                    })
-            })
-        })
-}
-
 /// The repo-root substitution the project-scope command defers to run time.
 /// A user who reshapes that command keeps it, so registration checking has to
 /// read the command the same way the shell codex hands it to will.
 const CODEX_GIT_TOPLEVEL: &str = "$(git rev-parse --show-toplevel)";
-
-/// Does this command run the managed script? Path equality on each
-/// whitespace-delimited token, so neither `notfoo.sh` nor an unrelated
-/// `foo.sh` elsewhere on disk answers for `<root>/hooks/foo.sh`.
-fn command_targets_hook_script(command: &str, script_path: &Path, git_root: Option<&Path>) -> bool {
-    let expanded = match git_root {
-        Some(root) => command.replace(CODEX_GIT_TOPLEVEL, &root.to_string_lossy()),
-        None => command.to_string(),
-    };
-    let wanted = resolved_path(script_path);
-    let quotes = |c: char| c == '"' || c == '\'';
-    expanded
-        .split_whitespace()
-        .any(|token| resolved_path(Path::new(token.trim_matches(quotes))) == wanted)
-}
-
-/// Path identity for comparison: the canonical path when it exists, so a
-/// symlinked or `..`-spelled command still names the same script, and the
-/// path exactly as written when it does not.
-fn resolved_path(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
 
 /// Is `[features] hooks` the boolean `true`? Read with a real TOML parser,
 /// because that is what codex reads it with: a line scanner answers `true`

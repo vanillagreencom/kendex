@@ -194,8 +194,23 @@ fn render_entry_names(out: &mut String, entries: &[String], quiet: bool) {
     overflow_line(out, "    ", shown, entries.len());
 }
 
+/// The scope flag every remediation command in a section carries. A section
+/// belongs to exactly one scope while `add` and `remove` default to PROJECT
+/// scope, so a global section printing a bare `vstack remove <name>` either
+/// clears nothing or — when a project install shares the name — removes the
+/// wrong one. `vstack refresh` deliberately never takes it: unflagged, it
+/// reinstalls at every scope an item is locked at.
+fn scope_flag(scope: &str) -> &'static str {
+    match scope {
+        "global" => " -g",
+        _ => "",
+    }
+}
+
 pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
     use std::fmt::Write as _;
+
+    let g = scope_flag(report.scope);
 
     if quiet {
         if !report.has_drift() {
@@ -222,21 +237,23 @@ pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) 
     );
     section(
         out,
-        "no longer in source — run `vstack remove <name>`",
+        &format!("no longer in source — run `vstack remove{g} <name>`"),
         '✗',
         &report.removed,
         quiet,
     );
     section(
         out,
-        "installed on disk but missing from lock — run `vstack add` to recover",
+        &format!("installed on disk but missing from lock — run `vstack add{g}` to recover"),
         '?',
         &report.orphaned,
         quiet,
     );
     section(
         out,
-        "in lock but missing from disk — run `vstack add` to clean up, or `vstack remove <name>`",
+        &format!(
+            "in lock but missing from disk — run `vstack add{g}` to clean up, or `vstack remove{g} <name>`"
+        ),
         '✗',
         &report.phantom,
         quiet,
@@ -257,7 +274,7 @@ pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) 
         for r in &report.missing_skill_refs[..shown] {
             let _ = writeln!(
                 out,
-                "    ✗ agent {} references skill {} but it's not installed; run `vstack add --skill {} .` or `vstack add` to auto-install dependent skills.",
+                "    ✗ agent {} references skill {} but it's not installed; run `vstack add{g} --skill {} .` or `vstack add{g}` to auto-install dependent skills.",
                 display_text(&r.agent),
                 display_text(&r.skill),
                 command_arg(&r.skill),
@@ -272,7 +289,7 @@ pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) 
             SourceProblem::Unresolvable { entries } => {
                 let _ = writeln!(
                     out,
-                    "\n  source {source} is unreachable (cache not cloned or path missing) — {} item(s) cannot be verified; run `vstack add {}` to restore it, or `vstack remove <name>` if it is gone for good:",
+                    "\n  source {source} is unreachable (cache not cloned or path missing) — {} item(s) cannot be verified; run `vstack add{g} {}` to restore it, or `vstack remove{g} <name>` if it is gone for good:",
                     entries.len(),
                     command_arg(&issue.source),
                 );
@@ -294,7 +311,7 @@ pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) 
             SourceProblem::Unverifiable { entries, reason } => {
                 let _ = writeln!(
                     out,
-                    "\n  source {source} has a cache that is not provably its own ({}) — {} item(s) cannot be verified; remove that directory under ~/.vstack/cache and run `vstack add {}` to re-clone it:",
+                    "\n  source {source} has a cache that is not provably its own ({}) — {} item(s) cannot be verified; remove that directory under ~/.vstack/cache and run `vstack add{g} {}` to re-clone it:",
                     display_text(reason),
                     entries.len(),
                     command_arg(&issue.source),
@@ -367,7 +384,7 @@ pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) 
                 // happens to pick.
                 let _ = writeln!(
                     out,
-                    "    + {} (`vstack add {} {flag} <name>`): {}{overflow}",
+                    "    + {} (`vstack add{g} {} {flag} <name>`): {}{overflow}",
                     kind.label_plural(),
                     command_arg(source),
                     names[..shown].join(", ")

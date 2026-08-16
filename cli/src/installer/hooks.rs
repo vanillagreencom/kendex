@@ -73,6 +73,95 @@ fn command_matches_owned_hook_command(command: &str, owned_commands: &[String]) 
     owned_commands.iter().any(|owned| command == owned)
 }
 
+/// Path identity for comparison: the canonical path when it exists, so a
+/// symlinked or `..`-spelled command still names the same script, and the
+/// path exactly as written when it does not.
+fn resolved_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Does this command run the managed script? Path equality on each
+/// whitespace-delimited token, so neither `notfoo.sh` nor an unrelated
+/// `foo.sh` elsewhere on disk answers for `<root>/hooks/foo.sh`.
+///
+/// `deferred_root` is the placeholder a project-scope command leaves for run
+/// time and what the harness expands it to — `$(git rev-parse
+/// --show-toplevel)` for codex, `$CLAUDE_PROJECT_DIR` for claude — so a
+/// command a user reshaped by hand is read the way the shell running it will.
+fn command_targets_hook_script(
+    command: &str,
+    script_path: &Path,
+    deferred_root: Option<(&str, &Path)>,
+) -> bool {
+    let expanded = match deferred_root {
+        Some((placeholder, root)) => command.replace(placeholder, &root.to_string_lossy()),
+        None => command.to_string(),
+    };
+    let wanted = resolved_path(script_path);
+    let quotes = |c: char| c == '"' || c == '\'';
+    expanded
+        .split_whitespace()
+        .any(|token| resolved_path(Path::new(token.trim_matches(quotes))) == wanted)
+}
+
+/// Does the harness config at `path` register `script_path` as a command
+/// handler? `event` pins the key it must sit under; `None` accepts any event.
+///
+/// The file is PARSED, never substring-searched: a config naming `pre-check.sh`
+/// must not answer for `check.sh`. A handler counts when its command is one
+/// vstack itself renders, or — for a command a user reshaped by hand around OUR
+/// script — when one of its tokens resolves to `script_path`. A same-named
+/// script elsewhere on disk is somebody else's handler, and letting it answer
+/// would mask a deleted managed entry.
+///
+/// Claude's `settings.json` and codex's `hooks.json` share this
+/// `hooks → event → [{hooks: [{command}]}]` shape, so both harnesses answer
+/// presence from one matcher.
+fn hooks_config_registers_script(
+    path: &Path,
+    event: Option<&str>,
+    script_path: &Path,
+    deferred_root: Option<(&str, &Path)>,
+    owned_commands: &[String],
+) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let Some(hooks) = doc.get("hooks").and_then(|hooks| hooks.as_object()) else {
+        return false;
+    };
+    hooks
+        .iter()
+        .filter(|(key, _)| event.is_none_or(|want| key.as_str() == want))
+        .any(|(_, entries)| {
+            entries.as_array().is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    entry
+                        .get("hooks")
+                        .and_then(|handlers| handlers.as_array())
+                        .is_some_and(|handlers| {
+                            handlers.iter().any(|handler| {
+                                handler
+                                    .get("command")
+                                    .and_then(|command| command.as_str())
+                                    .is_some_and(|command| {
+                                        command_matches_owned_hook_command(command, owned_commands)
+                                            || command_targets_hook_script(
+                                                command,
+                                                script_path,
+                                                deferred_root,
+                                            )
+                                    })
+                            })
+                        })
+                })
+            })
+        })
+}
+
 fn hook_entry_mentions_owned_command(entry: &serde_json::Value, owned_commands: &[String]) -> bool {
     entry
         .get("hooks")
@@ -111,11 +200,15 @@ fn remove_hook_entries_from_hooks_object(
     changed
 }
 
+/// The project-root substitution the project-scope command defers to run
+/// time; claude expands it from the session's project dir.
+const CLAUDE_PROJECT_DIR: &str = "$CLAUDE_PROJECT_DIR";
+
 fn claude_hook_command(global: bool, hook_name: &str, script_path: &Path) -> String {
     if global {
         format!("bash {}", shell_quote(&script_path.to_string_lossy()))
     } else {
-        format!("bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/{hook_name}.sh\"")
+        format!("bash \"{CLAUDE_PROJECT_DIR}/.claude/hooks/{hook_name}.sh\"")
     }
 }
 
@@ -124,9 +217,65 @@ fn claude_owned_hook_commands(global: bool, hook_name: &str, script_path: &Path)
     if global {
         commands.push(script_path.to_string_lossy().into_owned());
     } else {
-        commands.push(format!("$CLAUDE_PROJECT_DIR/.claude/hooks/{hook_name}.sh"));
+        commands.push(format!("{CLAUDE_PROJECT_DIR}/.claude/hooks/{hook_name}.sh"));
     }
     commands
+}
+
+/// The `settings.json` [`install_hook_claude`] registers into.
+fn claude_settings_path(global: bool) -> PathBuf {
+    claude_settings_dir(global).join("settings.json")
+}
+
+fn claude_settings_dir(global: bool) -> PathBuf {
+    if global {
+        crate::config::claude_global_dir()
+    } else {
+        crate::config::project_root().join(".claude")
+    }
+}
+
+/// Every settings file claude merges hooks from for this scope. vstack writes
+/// only `settings.json`, but claude runs what `settings.local.json` registers
+/// just the same — reporting a hook a user keeps there as missing would
+/// prescribe a second registration that fires the hook twice.
+fn claude_settings_candidates(global: bool) -> Vec<PathBuf> {
+    let dir = claude_settings_dir(global);
+    vec![dir.join("settings.json"), dir.join("settings.local.json")]
+}
+
+/// The script path claude's hooks dir holds for this hook.
+fn claude_hook_script_path(global: bool, hook_name: &str) -> Option<PathBuf> {
+    Harness::ClaudeCode
+        .hooks_dir(global)
+        .map(|dir| dir.join(format!("{hook_name}.sh")))
+}
+
+/// Will claude RUN this hook? The script alone proves nothing: claude executes
+/// what its settings register under the hook's event, so a registration deleted
+/// beside a live script is a hook that silently never fires — including
+/// `session-drift-check`, which then cannot report its own absence.
+///
+/// `event` is the hook's own event. `None` — its source could not be read to
+/// name one — accepts a registration under any event rather than inventing
+/// drift that naming the wrong key would make unclearable.
+pub(crate) fn claude_hook_is_registered(
+    global: bool,
+    hook_name: &str,
+    event: Option<&str>,
+) -> bool {
+    let Some(script_path) = claude_hook_script_path(global, hook_name) else {
+        return false;
+    };
+    let owned = claude_owned_hook_commands(global, hook_name, &script_path);
+    // Only the project-scope command defers the project root to run time.
+    let project_root = (!global).then(crate::config::project_root);
+    let deferred_root = project_root
+        .as_deref()
+        .map(|root| (CLAUDE_PROJECT_DIR, root));
+    claude_settings_candidates(global).iter().any(|settings| {
+        hooks_config_registers_script(settings, event, &script_path, deferred_root, &owned)
+    })
 }
 
 fn shell_quote(s: &str) -> String {
@@ -237,13 +386,7 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
     }
 
     // Merge into settings.json
-    let settings_path = if global {
-        crate::config::claude_global_dir().join("settings.json")
-    } else {
-        crate::config::project_root()
-            .join(".claude")
-            .join("settings.json")
-    };
+    let settings_path = claude_settings_path(global);
     let mut settings: serde_json::Value = if settings_path.exists() {
         let content = std::fs::read_to_string(&settings_path)?;
         serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
@@ -383,13 +526,7 @@ pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result
 /// Remove a hook entry from Claude Code settings.json
 fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path) -> Result<()> {
     validate_item_name(name)?;
-    let settings_path = if global {
-        crate::config::claude_global_dir().join("settings.json")
-    } else {
-        crate::config::project_root()
-            .join(".claude")
-            .join("settings.json")
-    };
+    let settings_path = claude_settings_path(global);
     if !settings_path.exists() {
         return Ok(());
     }

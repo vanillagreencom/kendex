@@ -10,10 +10,10 @@ mod hooks;
 
 pub(crate) use crate::path_safety::{validate_item_name, validate_new_item_name};
 pub(crate) use hooks::{
-    codex_event_for, codex_native_hook_gaps, codex_root, cursor_hook_rule_contents,
-    cursor_hook_rule_path, install_codex_fallback_hooks_for_agents, install_hook,
-    migrate_codex_config, opencode_hook_instruction_contents, opencode_hook_instruction_path,
-    remove_hook_install,
+    claude_hook_is_registered, codex_event_for, codex_native_hook_gaps, codex_root,
+    cursor_hook_rule_contents, cursor_hook_rule_path, install_codex_fallback_hooks_for_agents,
+    install_hook, migrate_codex_config, opencode_hook_instruction_contents,
+    opencode_hook_instruction_path, remove_hook_install,
 };
 
 pub(crate) fn codex_hook_safety_block(hook: &Hook) -> String {
