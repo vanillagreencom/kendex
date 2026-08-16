@@ -79,6 +79,18 @@
   and merge-pr routes it to comment triage and re-enqueue. Default on;
   `--no-guard` opts out. Failed reads are never quiet; failed dequeues are
   loud and distinct.
+- cli: the TUI's Updates tab lists every stale install in either scope —
+  the same set `vstack check` reports — whatever source is selected, and
+  updating from it refreshes each item from its own recorded source (per
+  scope, as `vstack refresh` does), recording that source's identity; an
+  item whose source is gone is reported instead of silently skipped, and a
+  recorded source that vanished is reported missing rather than silently
+  rebound to the only other source (in `vstack refresh` too, whose lock
+  repair now applies only to entries that never recorded a usable source);
+  a stale extra picked there is reported as re-applied via `vstack apply`,
+  not silently skipped. The source registry also drops per-project choices
+  whose project root no longer exists, including Windows drive-letter and
+  UNC roots (#1310).
 - orch oversee: unattended by default (#1290). Minted briefs route blocking
   questions to the overseer via harness session-messaging where available
   (local question tool still used); the watch checks tmux lanes for pending

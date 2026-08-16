@@ -160,7 +160,13 @@ fn observed_source_repo_for_lock_entry(
     config::parse_github_slug(&entry.source).map(Some)
 }
 
-fn sync_lock_entry_source_repo(source_records: &[ResolvedSource], entry: &mut config::LockEntry) {
+/// Record the durable repo identity of the source `entry` was just refreshed
+/// from — its own source, never whichever source a caller happened to have
+/// selected.
+pub(crate) fn sync_lock_entry_source_repo(
+    source_records: &[ResolvedSource],
+    entry: &mut config::LockEntry,
+) {
     if let Some(source_repo) = observed_source_repo_for_lock_entry(source_records, entry) {
         entry.source_repo = source_repo;
     }

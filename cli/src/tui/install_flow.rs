@@ -2056,7 +2056,6 @@ fn execute_action(
                 return run_cli_update_inline().map(|_| None);
             }
             let n = content_names.len();
-            let items_clone = state.items.clone();
             let label = format!("Updating {n} item(s)…");
             spawn_disk_work(
                 state,
@@ -2065,7 +2064,7 @@ fn execute_action(
                 String::new(),
                 has_cli,
                 None,
-                move || perform_inline_update(&content_names, &items_clone),
+                move || perform_inline_update(&content_names),
             );
             Ok(None)
         }

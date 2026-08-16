@@ -321,21 +321,7 @@ pub(super) fn build_item_tabs(
         tabs.push(installed_tab);
     }
 
-    let mut update_items: Vec<SelectItem> = Vec::new();
-    for tab in &tabs {
-        if tab.kind != TabKind::Source {
-            continue;
-        }
-        for group in &tab.groups {
-            for item in &group.items {
-                if item.outdated {
-                    let mut clone = item.clone();
-                    clone.selected = false;
-                    update_items.push(clone);
-                }
-            }
-        }
-    }
+    let mut update_items = build_update_items(&tabs, installed);
 
     if let Some(info) = cli_update {
         update_items.push(SelectItem {
@@ -433,6 +419,54 @@ fn kind_bucket(kind: Option<crate::config::ItemKind>) -> &'static str {
 
 const KIND_ORDER: &[&str] = &["Agents", "Skills", "Hooks", "Pi Packages", "Extras"];
 
+/// Row for an installed entry that has no source-tab counterpart: the lock
+/// record is all that is known about it.
+fn installed_row(name: &str, info: &InstalledInfo) -> SelectItem {
+    SelectItem {
+        label: name.to_string(),
+        description: format!("[{}]", info.harnesses.join(", ")),
+        selected: false,
+        suffix: None,
+        locked: false,
+        installed: true,
+        installed_scope: Some(info.scope),
+        outdated: info.outdated,
+        kind: info.kind,
+        search_haystack: String::new(),
+    }
+}
+
+/// One row per stale install in either scope, whatever source is selected —
+/// the same set `vstack check` reports. A name the selected source also
+/// lists reuses that source row (it carries the description and kind); every
+/// other stale entry is synthesized from its lock record.
+fn build_update_items(tabs: &[Tab], installed: &InstalledState) -> Vec<SelectItem> {
+    let mut source_rows: HashMap<&str, &SelectItem> = HashMap::new();
+    for item in tabs
+        .iter()
+        .filter(|tab| tab.kind == TabKind::Source)
+        .flat_map(|tab| &tab.groups)
+        .flat_map(|group| &group.items)
+    {
+        source_rows.entry(item.label.as_str()).or_insert(item);
+    }
+
+    let mut stale: Vec<(&String, &InstalledInfo)> =
+        installed.iter().filter(|(_, info)| info.outdated).collect();
+    stale.sort_by_key(|(name, _)| name.as_str());
+    stale
+        .into_iter()
+        .map(|(name, info)| {
+            let mut row = source_rows
+                .get(name.as_str())
+                .map(|item| (*item).clone())
+                .unwrap_or_else(|| installed_row(name, info));
+            row.selected = false;
+            row
+        })
+        .collect()
+}
+
 fn build_installed_tab(installed: &InstalledState) -> Option<Tab> {
     if installed.is_empty() {
         return None;
@@ -444,24 +478,10 @@ fn build_installed_tab(installed: &InstalledState) -> Option<Tab> {
     sorted.sort_by_key(|(name, _)| name.as_str());
 
     for (name, info) in sorted {
-        let h = info.harnesses.join(", ");
-        let scope_str = info.scope.title_label();
-        let item = SelectItem {
-            label: name.clone(),
-            description: format!("[{h}]"),
-            selected: false,
-            suffix: None,
-            locked: false,
-            installed: true,
-            installed_scope: Some(info.scope),
-            outdated: info.outdated,
-            kind: info.kind,
-            search_haystack: String::new(),
-        };
         buckets
-            .entry((scope_str, kind_bucket(info.kind)))
+            .entry((info.scope.title_label(), kind_bucket(info.kind)))
             .or_default()
-            .push(item);
+            .push(installed_row(name, info));
     }
 
     let mut groups = Vec::new();
@@ -660,6 +680,105 @@ mod tests {
             },
             source_dir: std::path::PathBuf::from("/tmp/vanillagreen-themes"),
         }
+    }
+
+    fn installed_info(
+        name: &str,
+        kind: crate::config::ItemKind,
+        source: &str,
+        outdated: bool,
+    ) -> InstalledInfo {
+        let entry = crate::config::LockEntry {
+            name: name.into(),
+            kind,
+            source: source.into(),
+            source_repo: None,
+            harnesses: vec!["claude-code".into(), "codex".into()],
+            method: crate::config::InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: "abc".into(),
+        };
+        InstalledInfo {
+            scope: Scope::Project,
+            harnesses: entry.harnesses.clone(),
+            kind: Some(kind),
+            installed_at: entry.installed_at.clone(),
+            lock_entry: entry.clone(),
+            project_entry: Some(entry),
+            global_entry: None,
+            outdated,
+        }
+    }
+
+    fn skill_fixture(name: &str, description: &str) -> Skill {
+        Skill {
+            name: name.into(),
+            description: description.into(),
+            license: None,
+            user_invocable: None,
+            dependencies: None,
+            body: String::new(),
+            source_dir: std::path::PathBuf::from("/tmp/selected-source/skills").join(name),
+            resolved_deps: Vec::new(),
+        }
+    }
+
+    /// The Updates tab is the set `vstack check` reports: every stale install
+    /// in either scope, not just the ones the selected source happens to list.
+    #[test]
+    fn updates_tab_lists_stale_installs_recorded_from_other_sources() {
+        let mut items = discovered(Vec::new());
+        items.skills = vec![skill_fixture("alpha", "Alpha from the selected source")];
+
+        let mut installed = InstalledState::new();
+        installed.insert(
+            "alpha".into(),
+            installed_info(
+                "alpha",
+                crate::config::ItemKind::Skill,
+                "/tmp/selected-source",
+                true,
+            ),
+        );
+        installed.insert(
+            "beta".into(),
+            installed_info(
+                "beta",
+                crate::config::ItemKind::Agent,
+                "/tmp/other-source",
+                true,
+            ),
+        );
+        installed.insert(
+            "gamma".into(),
+            installed_info(
+                "gamma",
+                crate::config::ItemKind::Hook,
+                "/tmp/other-source",
+                false,
+            ),
+        );
+
+        let tabs = build_item_tabs(&items, &HashMap::new(), &installed, None);
+        let updates = tabs
+            .iter()
+            .find(|tab| tab.kind == TabKind::Updates)
+            .expect("updates tab present");
+        let rows: Vec<&SelectItem> = updates.groups.iter().flat_map(|g| &g.items).collect();
+        let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
+
+        assert_eq!(updates.name, "Updates (2)");
+        assert_eq!(labels, vec!["alpha", "beta"]);
+
+        let alpha = rows[0];
+        assert_eq!(alpha.description, "Alpha from the selected source");
+        assert_eq!(alpha.kind, Some(crate::config::ItemKind::Skill));
+
+        let beta = rows[1];
+        assert_eq!(beta.description, "[claude-code, codex]");
+        assert_eq!(beta.kind, Some(crate::config::ItemKind::Agent));
+        assert_eq!(beta.installed_scope, Some(Scope::Project));
+        assert!(beta.installed && beta.outdated && !beta.selected);
     }
 
     #[test]

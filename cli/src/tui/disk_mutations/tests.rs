@@ -710,13 +710,56 @@ fn perform_remove_plans_reports_corrupt_lock() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// Write `hook` into `source/hooks/<name>.sh` in the on-disk hook format, so
+/// the update path discovers it from the source the way `vstack refresh` does.
+fn write_source_hook(source: &std::path::Path, hook: &crate::hook::Hook) {
+    let matcher = hook
+        .matcher
+        .as_deref()
+        .map(|m| format!("# matcher: {m}\n"))
+        .unwrap_or_default();
+    std::fs::create_dir_all(source.join("hooks")).unwrap();
+    std::fs::write(
+        source.join("hooks").join(format!("{}.sh", hook.name)),
+        format!(
+            "#!/usr/bin/env bash\n# ---\n# name: {}\n# event: {}\n{matcher}# description: {} hook\n# ---\nexit 0\n",
+            hook.name, hook.event, hook.name
+        ),
+    )
+    .unwrap();
+}
+
+fn write_source_agent(source: &std::path::Path, agent: &Agent) {
+    std::fs::create_dir_all(source.join("agents")).unwrap();
+    std::fs::write(
+        source.join("agents").join(format!("{}.md", agent.name)),
+        format!(
+            "---\nname: {}\ndescription: {}\nmodel: {}\nrole: engineer\n---\n# {}\n",
+            agent.name, agent.description, agent.model, agent.name
+        ),
+    )
+    .unwrap();
+}
+
+fn hook_lock_entry(name: &str, source: &std::path::Path) -> LockEntry {
+    LockEntry {
+        name: name.into(),
+        kind: ItemKind::Hook,
+        source: source.to_string_lossy().into_owned(),
+        source_repo: None,
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    }
+}
+
 #[test]
 fn inline_update_refreshes_hook_config_and_agents() {
     let root = tmpdir("inline-update-hook");
     let project = root.join("project");
     let source = root.join("source");
-    std::fs::create_dir_all(source.join("agents")).unwrap();
-    std::fs::create_dir_all(source.join("hooks")).unwrap();
+    std::fs::create_dir_all(&source).unwrap();
     std::fs::create_dir_all(&project).unwrap();
     init_git_origin(&source, "git@github.com:vanillagreencom/vstack.git");
     std::fs::write(
@@ -727,12 +770,14 @@ fn inline_update_refreshes_hook_config_and_agents() {
 
     let mut agent = agent_fixture("rust");
     agent.source_path = source.join("agents/rust.md");
+    write_source_agent(&source, &agent);
     let mut old_hook = hook_fixture("guard", None);
     old_hook.source_path = source.join("hooks/guard.sh");
     old_hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
     let mut new_hook = old_hook.clone();
     new_hook.event = "PostCompact".into();
     new_hook.matcher = None;
+    write_source_hook(&source, &new_hook);
 
     let mut lock = LockFile::default();
     lock.add(LockEntry {
@@ -745,25 +790,8 @@ fn inline_update_refreshes_hook_config_and_agents() {
         installed_at: "2026-07-03T00:00:00Z".into(),
         source_hash: String::new(),
     });
-    lock.add(LockEntry {
-        name: "guard".into(),
-        kind: ItemKind::Hook,
-        source: source.to_string_lossy().into_owned(),
-        source_repo: None,
-        harnesses: vec!["claude-code".into()],
-        method: InstallMethod::Copy,
-        installed_at: "2026-07-03T00:00:00Z".into(),
-        source_hash: String::new(),
-    });
+    lock.add(hook_lock_entry("guard", &source));
     lock.save(&project.join(".vstack-lock.json")).unwrap();
-
-    let items = DiscoveredItems {
-        agents: vec![agent.clone()],
-        skills: Vec::new(),
-        hooks: vec![new_hook],
-        pi_extensions: Vec::new(),
-        extras: Vec::new(),
-    };
 
     crate::test_util::with_project_root(&project, || {
         crate::installer::install_hook(&old_hook, Harness::ClaudeCode, false, &[]).unwrap();
@@ -777,7 +805,7 @@ fn inline_update_refreshes_hook_config_and_agents() {
             )
             .unwrap();
 
-        let report = perform_inline_update(&["guard".to_string()], &items);
+        let report = perform_inline_update(&["guard".to_string()]);
         assert_eq!(report.completed, 1, "report: {report:?}");
         assert!(report.failed.is_empty(), "report: {report:?}");
     });
@@ -821,43 +849,145 @@ fn inline_update_clears_stale_source_repo_for_local_source_without_origin() {
     let root = tmpdir("inline-update-source-repo-clear");
     let project = root.join("project");
     let source = root.join("source");
-    std::fs::create_dir_all(source.join("hooks")).unwrap();
     std::fs::create_dir_all(&project).unwrap();
 
     let mut hook = hook_fixture("guard", None);
     hook.source_path = source.join("hooks/guard.sh");
     hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+    write_source_hook(&source, &hook);
 
     let mut lock = LockFile::default();
-    lock.add(LockEntry {
-        name: "guard".into(),
-        kind: ItemKind::Hook,
-        source: source.to_string_lossy().into_owned(),
-        source_repo: Some("vanillagreencom/vstack".to_string()),
-        harnesses: vec!["claude-code".into()],
-        method: InstallMethod::Copy,
-        installed_at: "2026-07-03T00:00:00Z".into(),
-        source_hash: String::new(),
-    });
+    let mut entry = hook_lock_entry("guard", &source);
+    entry.source_repo = Some("vanillagreencom/vstack".to_string());
+    lock.add(entry);
     lock.save(&project.join(".vstack-lock.json")).unwrap();
-
-    let items = DiscoveredItems {
-        agents: Vec::new(),
-        skills: Vec::new(),
-        hooks: vec![hook.clone()],
-        pi_extensions: Vec::new(),
-        extras: Vec::new(),
-    };
 
     crate::test_util::with_project_root(&project, || {
         crate::installer::install_hook(&hook, Harness::ClaudeCode, false, &[]).unwrap();
-        let report = perform_inline_update(&["guard".to_string()], &items);
+        let report = perform_inline_update(&["guard".to_string()]);
         assert_eq!(report.completed, 1, "report: {report:?}");
         assert!(report.failed.is_empty(), "report: {report:?}");
     });
 
     let lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
     assert_eq!(lock.entries.get("guard").unwrap().source_repo, None);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Two stale installs recorded from two different sources, updated together:
+/// each refreshes from its own source and records that source's identity —
+/// whichever source the picker has selected.
+#[test]
+fn inline_update_refreshes_each_entry_from_its_own_source() {
+    let root = tmpdir("inline-update-two-sources");
+    let project = root.join("project");
+    let source_a = root.join("source-a");
+    let source_b = root.join("source-b");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&source_a).unwrap();
+    std::fs::create_dir_all(&source_b).unwrap();
+    init_git_origin(&source_a, "git@github.com:example/alpha.git");
+    init_git_origin(&source_b, "git@github.com:example/beta.git");
+
+    // Installed copies carry the old event; each source now publishes a new one.
+    let mut old_a = hook_fixture("guard-a", None);
+    old_a.script = "#!/usr/bin/env bash\nexit 0\n".into();
+    old_a.source_path = source_a.join("hooks/guard-a.sh");
+    let mut old_b = hook_fixture("guard-b", None);
+    old_b.script = "#!/usr/bin/env bash\nexit 0\n".into();
+    old_b.source_path = source_b.join("hooks/guard-b.sh");
+    let mut new_a = old_a.clone();
+    new_a.event = "PostCompact".into();
+    new_a.matcher = None;
+    let mut new_b = old_b.clone();
+    new_b.event = "SessionStart".into();
+    new_b.matcher = None;
+    write_source_hook(&source_a, &new_a);
+    write_source_hook(&source_b, &new_b);
+
+    let mut lock = LockFile::default();
+    lock.add(hook_lock_entry("guard-a", &source_a));
+    lock.add(hook_lock_entry("guard-b", &source_b));
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    crate::test_util::with_project_root(&project, || {
+        crate::installer::install_hook(&old_a, Harness::ClaudeCode, false, &[]).unwrap();
+        crate::installer::install_hook(&old_b, Harness::ClaudeCode, false, &[]).unwrap();
+
+        let names = vec!["guard-a".to_string(), "guard-b".to_string()];
+        let report = perform_inline_update(&names);
+        assert_eq!(report.completed, 2, "report: {report:?}");
+        assert!(report.failed.is_empty(), "report: {report:?}");
+    });
+
+    let settings = std::fs::read_to_string(project.join(".claude/settings.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&settings).unwrap();
+    assert!(
+        parsed.pointer("/hooks/PreToolUse").is_none(),
+        "stale PreToolUse settings: {settings}"
+    );
+    assert!(
+        parsed.pointer("/hooks/PostCompact").is_some(),
+        "guard-a not refreshed from source-a: {settings}"
+    );
+    assert!(
+        parsed.pointer("/hooks/SessionStart").is_some(),
+        "guard-b not refreshed from source-b: {settings}"
+    );
+
+    let lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert_eq!(
+        lock.entries["guard-a"].source_repo.as_deref(),
+        Some("example/alpha")
+    );
+    assert_eq!(
+        lock.entries["guard-b"].source_repo.as_deref(),
+        Some("example/beta")
+    );
+    assert!(
+        !lock.entries["guard-a"].source_hash.is_empty()
+            && !lock.entries["guard-b"].source_hash.is_empty(),
+        "both entries re-hashed against their own source"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A stale entry whose source has vanished cannot refresh; the report must
+/// say so instead of counting it as neither done nor failed.
+#[test]
+fn inline_update_reports_an_entry_whose_source_is_gone() {
+    let root = tmpdir("inline-update-source-gone");
+    let project = root.join("project");
+    let live = root.join("live-source");
+    let gone = root.join("gone-source");
+    std::fs::create_dir_all(&project).unwrap();
+
+    let mut live_hook = hook_fixture("guard-live", None);
+    live_hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+    live_hook.source_path = live.join("hooks/guard-live.sh");
+    write_source_hook(&live, &live_hook);
+    let mut gone_hook = hook_fixture("guard-gone", None);
+    gone_hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+
+    let mut lock = LockFile::default();
+    lock.add(hook_lock_entry("guard-live", &live));
+    lock.add(hook_lock_entry("guard-gone", &gone));
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    let report = crate::test_util::with_project_root(&project, || {
+        crate::installer::install_hook(&live_hook, Harness::ClaudeCode, false, &[]).unwrap();
+        crate::installer::install_hook(&gone_hook, Harness::ClaudeCode, false, &[]).unwrap();
+        perform_inline_update(&["guard-live".to_string(), "guard-gone".to_string()])
+    });
+
+    assert_eq!(report.completed, 1, "report: {report:?}");
+    assert_eq!(report.failed.len(), 1, "report: {report:?}");
+    assert!(
+        report.failed[0].starts_with("guard-gone: not refreshed:"),
+        "report: {report:?}"
+    );
 
     let _ = std::fs::remove_dir_all(root);
 }

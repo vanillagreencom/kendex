@@ -184,8 +184,9 @@ impl SourceRegistry {
 
     /// Drop entries that look like local filesystem paths but no longer exist.
     /// Remote shorthand entries (e.g. "owner/repo", "https://...") are
-    /// preserved unconditionally — they're not paths to check. Returns the
-    /// number of entries removed.
+    /// preserved unconditionally — they're not paths to check. A per-project
+    /// choice is dropped when either side is a dead path: its source, or the
+    /// project root it was recorded for. Returns the number of entries removed.
     pub fn prune_dead_paths(&mut self) -> usize {
         let before = self.entries.len();
         self.entries.retain(|entry| !is_dead_local_path(entry));
@@ -196,7 +197,7 @@ impl SourceRegistry {
         }
         let before_project = self.project_current.len();
         self.project_current
-            .retain(|_, source| !is_dead_local_path(source));
+            .retain(|project, source| !is_dead_local_path(project) && !is_dead_local_path(source));
         before - self.entries.len() + before_project - self.project_current.len()
     }
 
@@ -2388,6 +2389,42 @@ mod source_registry_tests {
         assert!(reg.entries.contains(&"owner/b".to_string()));
         let _ = fs::remove_dir_all(&project_a);
         let _ = fs::remove_dir_all(&project_b);
+    }
+
+    /// A per-project source choice outlives its project (deleted worktree,
+    /// vanished temp checkout): the KEY is a dead path even when the value is
+    /// a remote shorthand that never dies. Both sides are checked; a live
+    /// project keeps its remote choice untouched.
+    #[test]
+    fn prune_drops_project_current_keys_for_vanished_projects() {
+        let dir = sandbox("prune_project_current_keys");
+        let live_project = dir.join("live-project");
+        fs::create_dir_all(&live_project).unwrap();
+        let dead_project = dir.join("dead-project");
+        // dead_project is intentionally not created.
+
+        let mut reg = SourceRegistry::default();
+        reg.remember_for_project(&live_project, "vanillagreencom/vstack");
+        reg.project_current.insert(
+            dead_project.display().to_string(),
+            "vanillagreencom/vstack".to_string(),
+        );
+
+        let pruned = reg.prune_dead_paths();
+
+        assert_eq!(pruned, 1);
+        assert_eq!(
+            reg.current_for_project(&live_project),
+            Some("vanillagreencom/vstack")
+        );
+        assert!(
+            !reg.project_current
+                .contains_key(&dead_project.display().to_string()),
+            "vanished project key must be dropped: {:?}",
+            reg.project_current
+        );
+        assert_eq!(reg.entries, vec!["vanillagreencom/vstack".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
