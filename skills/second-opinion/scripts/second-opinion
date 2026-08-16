@@ -210,7 +210,8 @@ export it in the environment of the session that needs it:
   SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 300)
   SECOND_OPINION_ARTIFACT_DIR
                              Home for review/audit records written without
-                             --output (default: tmp/second-opinion under --cwd)
+                             --output, and for a multi-lane stdout run's lane
+                             artifacts (default: tmp/second-opinion under --cwd)
   SECOND_OPINION_REVIEW_INSTRUCTIONS
                              Repo instruction-file globs appended to the review
                              prompt, resolved inside --cwd (default:
@@ -1126,10 +1127,19 @@ seed_artifact_home_ignore() {
   ( set -C; printf '*\n' > "$1/.gitignore" ) 2>/dev/null || true
 }
 
-artifact_file() {
-  local kind="$1" dir rel reason phys_root phys_dir home_created=false
+# Resolved at most once per run: the home is a property of the run, not of an
+# individual record, so a rejection is stated once and every consumer — the
+# record writers and a multi-lane run's stdout-mode lane artifacts — lands in
+# the same place. Sets ARTIFACT_HOME to an absolute directory, empty when there
+# is none; never exits.
+ARTIFACT_HOME=""
+ARTIFACT_HOME_RESOLVED=false
+
+artifact_home() {
+  local dir rel reason phys_root phys_dir home_created=false
+  if $ARTIFACT_HOME_RESOLVED; then return 0; fi
+  ARTIFACT_HOME_RESOLVED=true
   dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
-  ARTIFACT_PATH=""
   # `~/...` is the spelling vstack's other path settings accept (WORKTREE_BASE_DIR
   # among them), and a settings file is not shell input, so nothing expanded it.
   # Expand before the absolute test, or the tilde passes the component vet and a
@@ -1189,13 +1199,20 @@ artifact_file() {
       dir=""
     fi
   fi
-  if [[ -n "$dir" ]]; then
-    # No `--` here, and none needed: every branch above leaves $dir ABSOLUTE
-    # (the `/*` case by definition, `~` via $HOME, the relative case via the
-    # canonicalized $CWD), so the template can never begin with `-`. That also
-    # avoids relying on `--` in mktemp, whose support for it is not uniform
-    # across the BSD/macOS target.
-    ARTIFACT_PATH=$(mktemp "$dir/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || ARTIFACT_PATH=""
+  ARTIFACT_HOME="$dir"
+}
+
+artifact_file() {
+  local kind="$1"
+  artifact_home
+  ARTIFACT_PATH=""
+  if [[ -n "$ARTIFACT_HOME" ]]; then
+    # No `--` here, and none needed: every branch of the resolution leaves the
+    # home ABSOLUTE (the `/*` case by definition, `~` via $HOME, the relative
+    # case via the canonicalized $CWD), so the template can never begin with
+    # `-`. That also avoids relying on `--` in mktemp, whose support for it is
+    # not uniform across the BSD/macOS target.
+    ARTIFACT_PATH=$(mktemp "$ARTIFACT_HOME/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || ARTIFACT_PATH=""
   fi
   if [[ -z "$ARTIFACT_PATH" ]]; then
     # System temp is the last resort, and it can refuse too (a read-only or
@@ -1213,6 +1230,27 @@ artifact_file() {
   fi
 }
 
+# The mode of a file belongs to whoever writes it. SECOND_OPINION_SCRATCH_OUTPUT
+# marks the output path as one the tool owns rather than the caller — the lane
+# artifact a multi-lane parent hands this child — so that artifact and the
+# sidecar records beside it are created owner-only whatever the caller's umask:
+# the model's raw review of the reviewed repository is never left readable by
+# every local user. A caller's own --output keeps the caller's umask.
+SCRATCH_OUTPUT=false
+if [[ "${SECOND_OPINION_SCRATCH_OUTPUT:-}" == "1" ]]; then SCRATCH_OUTPUT=true; fi
+
+# write_owned <path> <content> — the one write that carries that policy. umask
+# governs creation only, so every path written through here is cleared before
+# the write rather than truncated through a surviving inode that would keep its
+# old mode.
+write_owned() {
+  if $SCRATCH_OUTPUT; then
+    ( umask 077 && printf '%s\n' "$2" > "$1" )
+  else
+    printf '%s\n' "$2" > "$1"
+  fi
+}
+
 # Write a record, or report that it could not be stored. Never fails the run:
 # a record is a diagnostic, and losing it must not change the exit class the
 # caller is on its way to. Echoes the stored path, empty when nothing was
@@ -1220,7 +1258,7 @@ artifact_file() {
 store_record() {
   local path="$1" content="$2"
   [[ -n "$path" ]] || return 0
-  printf '%s\n' "$content" > "$path" 2>/dev/null || return 0
+  write_owned "$path" "$content" 2>/dev/null || return 0
   printf '%s' "$path"
 }
 
@@ -1503,15 +1541,15 @@ if $MULTI_LANE; then
   # is empty, and pins the SAME resolved range for every lane.
   derive_review_scope "$CWD" "$RANGE"
 
-  # Lane scratch has one owner and one rule (VST-221): LANE_TMP_DIR is the only
-  # directory this run creates, and it holds nothing but the per-lane stderr
-  # captures — so removing it, by the cleanup below at exit or by an outsider
-  # mid-run, can only ever cost a log replay. A lane's REVIEW is never in it:
-  # with --output it is the durable sibling <output>.<lane>.json, without one it
-  # is a plain temp file this parent creates and removes, on the same footing as
-  # every other mktemp file here. And the parent holds each lane's review in
-  # memory from the moment that lane is reaped, so nothing it still needs is on
-  # disk after the reap either.
+  # Lane scratch has one owner and one rule: LANE_TMP_DIR is the only directory
+  # this run creates in shared temp space, and it holds nothing but the per-lane
+  # stderr captures — so removing it, by the cleanup below at exit or by an
+  # outsider mid-run, can only ever cost a log replay. A lane's REVIEW is never
+  # in temp space at all: with --output it is the durable sibling
+  # <output>.<lane>.json, without one it is a named file in the artifact home
+  # this tool owns. And the parent holds each lane's review in memory from the
+  # moment that lane is reaped, so nothing it still needs is on disk after the
+  # reap either.
   LANE_TMP_DIR=$(mktemp -d)
   LANE_TMP_FILES=()
   LANE_PIDS=()
@@ -1534,8 +1572,9 @@ if $MULTI_LANE; then
     # guarded for that reason.
     rm -rf -- "$LANE_TMP_DIR" || true
     # Stdout-mode lane artifacts plus each child's own sidecar family
-    # (<art>.noreview.json, <art>.raw.txt, …): the mktemp name makes the glob
-    # unambiguous, and a glob that matches nothing is a no-op for rm -f.
+    # (<art>.noreview.json, <art>.raw.txt, …): the per-lane name is this run's
+    # alone, so the glob is unambiguous, and a glob that matches nothing is a
+    # no-op for rm -f.
     for art in ${LANE_TMP_FILES[@]+"${LANE_TMP_FILES[@]}"}; do
       rm -f -- "$art" "$art".* || true
     done
@@ -1550,30 +1589,41 @@ if $MULTI_LANE; then
   SELF="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
   LANE_OUTS=()
   LANE_ERRS=()
-  # Lane children write their sidecar families (.raw.txt, .retry.txt,
-  # .noreview.json, .failed.json) beside the artifact path they are handed,
-  # with plain `printf > path`, so they carry the ambient umask — and in stdout
-  # mode that path is in the TMPDIR root, where 0644 leaves the model's raw
-  # review of the reviewed repository readable by every local user for the life
-  # of the run. Spawn the children owner-only; restored before the union write
-  # so the caller's own --output artifact keeps the caller's umask.
-  LANE_UMASK_PREV=$(umask)
-  umask 077
+  # A lane artifact and the sidecar family a child writes beside it hold the
+  # model's raw review of the reviewed repository, and both are this tool's
+  # files rather than the caller's. The child creates them owner-only, told so
+  # per artifact (see the child's marker below) instead of through a umask on
+  # the lane process — a process umask is inherited by the external model CLI
+  # too and would silently fix the mode of its own session and cache state.
+  #
+  # Clearing before the spawn is the other half: owner-only applies to files the
+  # child CREATES, and writing through a surviving inode keeps that inode's old
+  # mode, so a family that reappeared at 0644 would stay world-readable through
+  # every later run against the same path. With --output the pre-flight pass has
+  # already cleared every roster name's family, so this normally removes
+  # nothing. Unremovable means the artifact family cannot be guaranteed clean,
+  # which is worth failing on before any model spend — through the same named
+  # cause as the pre-flight pass, not a bare rm error.
   for lane in "${REVIEW_LANES[@]}"; do
     if [[ -n "$OUTPUT_PATH" ]]; then
       lane_out="${OUTPUT_PATH}.${lane}.json"
-      # Belt for the lane this run actually selected. The pre-flight pass
-      # already cleared every roster name's family, so this normally removes
-      # nothing; it re-runs here because the umask only governs files the child
-      # CREATES — writing through a surviving inode keeps that inode's old mode,
-      # so a family that reappeared at 0644 between the two points would stay
-      # world-readable through every later run. Unremovable means the artifact
-      # family cannot be guaranteed clean, which is worth failing on before any
-      # model spend — through the same named cause as the pre-flight pass, not a
-      # bare rm error.
       clear_output_family "$lane_out" "${ALL_RECORD_SUFFIXES[@]}"
     else
-      lane_out=$(mktemp)
+      artifact_home
+      if [[ -n "$ARTIFACT_HOME" ]]; then
+        # One name per lane per run in the home this tool owns. The review is
+        # out of shared temp space, so an actor clearing temp FILES cannot cost
+        # the lane; the run's own pid keeps concurrent runs in one checkout off
+        # each other's artifacts; and a run killed before its trap leaves one
+        # file per lane rather than an unbounded set of random names.
+        lane_out="$ARTIFACT_HOME/${MODE}-lane-${lane}.$$.json"
+        clear_output_family "$lane_out" "${ALL_RECORD_SUFFIXES[@]}"
+      else
+        # No home — placement can never decide whether the review happens, so
+        # the lane falls back to a temp file and the resolution has already
+        # named the reason on stderr.
+        lane_out=$(mktemp)
+      fi
       LANE_TMP_FILES+=("$lane_out")
     fi
     lane_err="$LANE_TMP_DIR/lane-${lane}.stderr"
@@ -1613,6 +1663,15 @@ if $MULTI_LANE; then
       if ! $CURRENT_MODEL_IN_CALLER_ENV; then
         unset SECOND_OPINION_CURRENT_MODEL
       fi
+      # The artifact this child is handed is the tool's, not the caller's: it
+      # and its sidecars are written owner-only. A marker on the path, so the
+      # restriction reaches those writes and nothing else the lane creates.
+      export SECOND_OPINION_SCRATCH_OUTPUT=1
+      # The capture carries the lane's own log, so it is owner-only too —
+      # restrictive for the open, restored before the exec so the external CLI
+      # this child runs starts from the caller's umask like any other program.
+      lane_umask_prev=$(umask)
+      umask 077
       exec 4>&2 2>/dev/null
       if exec 3>"$lane_err"; then
         exec 2>&4 4>&-
@@ -1620,6 +1679,7 @@ if $MULTI_LANE; then
         exec 3>/dev/null 2>&4 4>&-
         echo "→ lane stderr capture could not be opened — log replay lost: $lane" >&2
       fi
+      umask "$lane_umask_prev"
       # `=` form throughout: a split-form option now refuses a flag-shaped
       # value, and every one of these is derived from caller input that may
       # legitimately begin with '-' (--output above all). The child would
@@ -1631,7 +1691,6 @@ if $MULTI_LANE; then
     LANE_OUTS+=("$lane_out")
     LANE_ERRS+=("$lane_err")
   done
-  umask "$LANE_UMASK_PREV"
 
   # Gate every lane artifact on the shape the union merge actually consumes.
   # A zero exit and a parse are not enough: the merge adds `{source: …}` to
@@ -2382,7 +2441,7 @@ fi
 
 if [[ -n "$OUTPUT_PATH" ]]; then
   mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
-  printf '%s\n' "$RESULT" > "$OUTPUT_PATH"
+  write_owned "$OUTPUT_PATH" "$RESULT"
   echo "→ Written: $OUTPUT_PATH" >&2
   echo "$OUTPUT_PATH"
 else

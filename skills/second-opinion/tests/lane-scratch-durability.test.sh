@@ -148,19 +148,21 @@ assert_stderr_lacks() {
   fi
 }
 
-# Nothing the run caused to be written may survive in temp space — not the
-# lane artifact, not the sidecar family a lane child writes beside it. The
-# parent's promise is "leaves nothing behind", so the predicate is any regular
-# file at all; the jq probe only enriches the failure message.
+# Nothing the run caused to be written may survive in temp space or in the
+# artifact home — not the lane artifact, not the sidecar family a lane child
+# writes beside it. The parent's promise is "leaves nothing behind", so the
+# predicate is any regular file at all; the jq probe only enriches the failure
+# message. The home's own `*` ignore file is the tool's marker for the
+# directory, not something a run wrote, and is excluded by name.
 assert_no_leftovers() {
   local name="$1" leftover detail=""
-  leftover="$(find "$SCRATCH" -type f 2>/dev/null | head -1 || true)"
+  leftover="$(find "$SCRATCH" "$ARTIFACT_HOME_DIR" -type f ! -name .gitignore 2>/dev/null | head -1 || true)"
   if [[ -n "$leftover" ]]; then
     if jq -e '.agent // "" | startswith("external-")' "$leftover" >/dev/null 2>&1; then
       detail=" (a lane review)"
     fi
     fail "$name"
-    printf '        left behind in temp space%s: %s\n' "$detail" "$leftover" >&2
+    printf '        left behind%s: %s\n' "$detail" "$leftover" >&2
   else
     pass "$name"
   fi
@@ -176,6 +178,20 @@ assert_owner_only() {
     printf '        readable beyond the owner: %s\n' "$(ls -l "$file" 2>/dev/null)" >&2
   else
     pass "$name"
+  fi
+}
+
+# The paired direction, and the control for every owner-only assertion: a file
+# this tool did not write must come out at the CALLER's umask, or a restriction
+# leaking past the tool's own artifacts reads as "merely more restrictive" and
+# nothing goes red. `find -perm`, not `stat`, whose flags differ GNU/BSD.
+assert_world_readable() {
+  local path="$1" name="$2"
+  if [[ -n "$(find "$path" -maxdepth 0 -perm -g+r -perm -o+r 2>/dev/null)" ]]; then
+    pass "$name"
+  else
+    fail "$name"
+    printf '        expected group- and other-readable: %s\n' "$(ls -ld "$path" 2>/dev/null)" >&2
   fi
 }
 
@@ -221,6 +237,10 @@ printf 'world\n' >> "$WORK/file.txt"
 SCRATCH="$TMP_ROOT/scratch"
 mkdir -p "$SCRATCH"
 PERM_PROBE="$TMP_ROOT/perm-probe"
+# Lane reviews and the sidecars beside them live in the home the tool owns
+# inside the reviewed project, not in shared temp space, so every check about
+# what a run leaves behind or exposes has two roots to look at.
+ARTIFACT_HOME_DIR="$WORK/tmp/second-opinion"
 
 mkdir -p "$TMP_ROOT/bin"
 
@@ -340,10 +360,10 @@ cat "$resp"
 SH
 
 # Lane stub that waits until the sibling lane's child has written its raw-
-# response sidecar family into temp space, records every file there that is
-# readable beyond its owner, and only then answers. The recording happens while
-# both lanes are still live, which is exactly the window in which those files
-# are exposed on a shared host.
+# response sidecar family into the artifact home, records every file across the
+# home and temp space that is readable beyond its owner, and only then answers.
+# The recording happens while both lanes are still live, which is exactly the
+# window in which those files are exposed on a shared host.
 #
 # It also records HOW MANY files it saw, and fails outright if the handshake
 # times out. An empty "loose files" recording otherwise means either "nothing
@@ -356,7 +376,7 @@ cat >/dev/null
 waited=0
 seen=""
 while [[ \$waited -lt 300 ]]; do
-  if [[ -n "\$(find "$SCRATCH" -type f -name '*.raw.txt' 2>/dev/null)" ]]; then
+  if [[ -n "\$(find "$ARTIFACT_HOME_DIR" -type f -name '*.raw.txt' 2>/dev/null)" ]]; then
     seen=1
     break
   fi
@@ -364,11 +384,11 @@ while [[ \$waited -lt 300 ]]; do
   waited=\$((waited + 1))
 done
 if [[ -z "\$seen" ]]; then
-  echo "probe stub: no *.raw.txt appeared in temp space — handshake never happened" >&2
+  echo "probe stub: no *.raw.txt appeared in the artifact home — handshake never happened" >&2
   exit 1
 fi
-find "$SCRATCH" -type f 2>/dev/null | wc -l > "$PERM_PROBE.count"
-find "$SCRATCH" -type f \( -perm -g+r -o -perm -o+r \) > "$PERM_PROBE" 2>/dev/null || true
+find "$SCRATCH" "$ARTIFACT_HOME_DIR" -type f 2>/dev/null | wc -l > "$PERM_PROBE.count"
+find "$SCRATCH" "$ARTIFACT_HOME_DIR" -type f ! -name .gitignore \( -perm -g+r -o -perm -o+r \) > "$PERM_PROBE" 2>/dev/null || true
 cat "\$1"
 SH
 
@@ -414,9 +434,47 @@ done
 [[ -n "\$target" ]] && mkdir -p "\${target}.evil"
 cat "\$1"
 SH
+# Lane stub that answers with $1 and then removes every regular FILE under $2 —
+# a tmp reaper unlinking files rather than the directories `lane-reap` takes,
+# the actor a lane review sitting in shared temp space could not survive. $3 is
+# the sibling lane's agent name: the stub holds until that lane's review lands
+# in the artifact home, so the clearing is a handshake rather than a race.
+cat > "$TMP_ROOT/bin/lane-reap-files" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+cat "\$1"
+waited=0
+found=""
+while [[ -z "\$found" && \$waited -lt 300 ]]; do
+  for f in \$(find "$ARTIFACT_HOME_DIR" -type f 2>/dev/null); do
+    if jq -e --arg a "\$3" '.agent == \$a' "\$f" >/dev/null 2>&1; then
+      found=1
+      break
+    fi
+  done
+  [[ -n "\$found" ]] && break
+  sleep 0.1
+  waited=\$((waited + 1))
+done
+find "\$2" -type f -exec rm -f -- {} + 2>/dev/null || true
+SH
+
+# Lane stub that creates the session file and cache directory an external model
+# CLI keeps for itself — under $2, prefixed $3 — and then answers with $1.
+# Those belong to the CLI, not to this tool, and live outside temp space.
+cat > "$TMP_ROOT/bin/lane-cli-state" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+mkdir -p -- "$2/$3.cache"
+printf 'session\n' > "$2/$3.session"
+cat "$1"
+SH
 chmod +x "$TMP_ROOT/bin/lane-answer" "$TMP_ROOT/bin/lane-fail" "$TMP_ROOT/bin/lane-reap" \
   "$TMP_ROOT/bin/lane-sabotage" "$TMP_ROOT/bin/lane-probe-perms" "$TMP_ROOT/bin/lane-plant-dir" \
-  "$TMP_ROOT/bin/lane-plant-locked"
+  "$TMP_ROOT/bin/lane-plant-locked" "$TMP_ROOT/bin/lane-reap-files" \
+  "$TMP_ROOT/bin/lane-cli-state"
 
 cat > "$TMP_ROOT/resp-claude.json" <<'JSON'
 {"agent":"external-claude","timestamp":"2026-01-01T00:00:00Z","verdict":"action_required",
@@ -728,9 +786,20 @@ assert_jq "$TMP_ROOT/out-nul-tail.json" '.agent' "external-union(codex)" \
 # prefix which parses on its own before failing — needs a mid-read I/O error
 # this suite cannot construct portably, so the guard is verified here by the
 # path it shares with that case, not by the case itself.
-assert_gate_rejects "unread" unread "Invalid numeric literal"
-assert_jq "$TMP_ROOT/out-unread.json" '.agent' "external-union(codex)" \
-  "unread: an artifact nobody could read is not a healthy lane"
+# The plant rests on a directory reporting a non-zero size, a filesystem
+# property: ext4 gives 4096, btrfs and some tmpfs give 0. Where it gives 0 the
+# plant is indistinguishable from an artifact the lane never wrote, so this
+# runner cannot build the shape and the case is skipped with its reason.
+unread_probe="$TMP_ROOT/unread-probe"
+mkdir -p "$unread_probe"
+if [[ -s "$unread_probe" ]]; then
+  assert_gate_rejects "unread" unread "Invalid numeric literal"
+  assert_jq "$TMP_ROOT/out-unread.json" '.agent' "external-union(codex)" \
+    "unread: an artifact nobody could read is not a healthy lane"
+else
+  skip "unread: a directory reports size 0 on this filesystem, so a path that passes the size test yet can never be read cannot be built here"
+fi
+rmdir "$unread_probe"
 # Bash 4.4+ warns about NUL bytes it dropped from a command substitution. No
 # NUL now reaches a shell string, so the warning has no occasion to fire — and
 # it never named a lane or told an operator anything they could act on, while
@@ -852,6 +921,72 @@ assert_jq "$out16" '[.qa_metadata.lanes[] | select(.target == "claude")][0].stat
   "the affected lane answered — not recorded as failed"
 assert_jq "$out16" '.blockers | length' "1" "the affected lane's blocker reaches the union"
 assert_stderr_has "capture could not be opened" "the lost capture is reported on stderr"
+
+# --- Scenario 17: a reaper that removes temp FILES ---------------------------
+# The stdout-mode residual: while a lane's review sat in shared temp space, an
+# actor unlinking temp FILES — rather than the one directory the run creates
+# there — still cost that lane its findings. The review is in the artifact home
+# now, so the same actor costs the log replay and nothing else.
+echo "=== scenario 17: temp FILES removed mid-run (stdout) -> union intact ==="
+rc17=0
+run_lanes "$ANSWER_CLAUDE" \
+  "$TMP_ROOT/bin/lane-reap-files $TMP_ROOT/resp-codex.json $SCRATCH external-claude" || rc17=$?
+assert_eq "$rc17" "0" "a temp-file reaper does not fail the run"
+assert_jq "$TMP_ROOT/last.stdout" '.agent' "external-union(codex+claude)" "both lanes reach the union"
+assert_jq "$TMP_ROOT/last.stdout" '.qa_metadata.coverage' "full" "no lane is lost to a temp-file reaper"
+assert_jq "$TMP_ROOT/last.stdout" '.blockers | length' "1" "the reaped-past lane's blocker survives"
+assert_stderr_has "lane stderr replay unavailable" "the reaper did land — the replay is what it cost"
+assert_no_leftovers "the run still leaves nothing behind"
+
+# --- Scenario 18: the same reaper, pointed at the artifact home --------------
+# The control for 17: an actor that reaches the home DOES cost that lane, which
+# is what proves the reaper removes files at all and that the review is in the
+# home — without it, 17 passes for a reaper that never worked.
+echo "=== scenario 18: the artifact home reaped -> that lane is lost, loudly ==="
+rc18=0
+run_lanes "$ANSWER_CLAUDE" \
+  "$TMP_ROOT/bin/lane-reap-files $TMP_ROOT/resp-codex.json $ARTIFACT_HOME_DIR external-claude" || rc18=$?
+assert_eq "$rc18" "0" "the surviving lane keeps the run at exit 0"
+assert_jq "$TMP_ROOT/last.stdout" '.qa_metadata.coverage' "degraded" "the lost lane degrades coverage"
+assert_jq "$TMP_ROOT/last.stdout" '.blockers | length' "0" "its findings go with it"
+assert_stderr_has "without a usable artifact" "the loss is named on stderr"
+
+# --- Scenario 19: the restriction rides on the writes, not on the lane -------
+# A umask on the lane process governs everything the external model CLI creates
+# for the life of that lane, including the session and cache state it keeps
+# outside temp space, and whichever mode first creates a shared one fixes its
+# permissions permanently. Lane artifacts and their sidecars stay owner-only;
+# the CLI's own files come out as they do single-lane. Each half is the other's
+# control: a blanket umask fails the CLI-state assertions, dropping it without
+# moving the restriction to the writer fails the artifact ones.
+echo "=== scenario 19: lane artifacts owner-only, the CLI's own files are not ==="
+STATE="$TMP_ROOT/cli-state"
+rm -rf "$STATE"
+mkdir -p "$STATE"
+out19="$TMP_ROOT/out19.json"
+rc19=0
+( umask 022
+  run_lanes "$TMP_ROOT/bin/lane-cli-state $TMP_ROOT/resp-claude.json $STATE multi-claude" \
+    "$TMP_ROOT/bin/lane-cli-state $TMP_ROOT/resp-codex.json $STATE multi-codex" \
+    --output "$out19" ) || rc19=$?
+assert_eq "$rc19" "0" "both lanes answered"
+assert_owner_only "$out19.claude.json" "the claude lane artifact is still owner-only"
+assert_owner_only "$out19.codex.json" "the codex lane artifact is still owner-only"
+assert_world_readable "$STATE/multi-claude.session" "the claude CLI's own session file keeps the caller's umask"
+assert_world_readable "$STATE/multi-claude.cache" "the claude CLI's own cache directory keeps the caller's umask"
+assert_world_readable "$STATE/multi-codex.session" "the codex CLI's own session file keeps the caller's umask"
+assert_world_readable "$STATE/multi-codex.cache" "the codex CLI's own cache directory keeps the caller's umask"
+# The comparison the report was made with: single-lane never had a process
+# umask, so its result is what the CLI's own files are supposed to look like.
+# The caller's --output is theirs too, in either mode.
+single19="$TMP_ROOT/out19-single.json"
+( umask 022
+  env TMPDIR="$SCRATCH" SECOND_OPINION_MODELS="codex" SECOND_OPINION_COUNT=1 \
+    SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-cli-state $TMP_ROOT/resp-codex.json $STATE single" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$single19" ) >/dev/null 2>&1
+assert_world_readable "$STATE/single.session" "single-lane leaves the CLI's session file the same way"
+assert_world_readable "$STATE/single.cache" "single-lane leaves the CLI's cache directory the same way"
+assert_world_readable "$single19" "a caller's own --output follows the caller's umask"
 
 echo
 printf 'pass: %d   fail: %d   skip: %d\n' "$PASS" "$FAIL" "$SKIP"

@@ -75,8 +75,10 @@ With `--output`, the union is written there and each lane's own artifact is
 kept beside it as `<output>.<target>.json`, with that lane's sidecar family
 (`.raw.txt`, `.retry.txt`, `.failed.json`, `.noreview.json`, `.incomplete.json`)
 next to it.
-Without `--output` the union goes to stdout and the per-lane artifacts are
-temp files the parent removes.
+Without `--output` the union goes to stdout and each lane's artifact is a
+per-run file in `SECOND_OPINION_ARTIFACT_DIR` (default `tmp/second-opinion`
+under `--cwd`), with the same sidecar family beside it; the parent removes both
+at exit.
 
 Stale files at those paths are removed before lanes spawn — the union artifact,
 and each lane's artifact and those exact sidecar suffixes. A previous run's
@@ -86,9 +88,12 @@ not the current run overwrites it. The suffixes are enumerated, never globbed:
 the output path belongs to the caller, and anything else of theirs sitting
 under the same prefix is not this tool's to delete.
 
-Lane children run under a restrictive umask, so every file they write — lane
-artifacts and sidecars alike — is owner-only. The union artifact is written by
-the parent after the umask is restored, so it follows the caller's umask.
+A lane artifact and the sidecars beside it are written owner-only by the child
+that writes them, whatever the caller's umask. The restriction rides on those
+writes rather than on a umask around the lane, so nothing else the lane creates
+inherits it — the session and cache state the external model CLI keeps for
+itself comes out exactly as it does on a single-lane run. The union artifact
+follows the caller's umask.
 
 ## Scratch and durability
 
@@ -104,7 +109,13 @@ the mode:
 | Mode | Lane review lives in | Effect of a temp-space actor |
 |---|---|---|
 | `--output` | The durable sibling beside the union | None — it is not in temp space |
-| stdout | An ordinary temp file | That lane is lost, but loudly: coverage `degraded`, the lane recorded at exit 5, the loss named on stderr |
+| stdout | A per-run file in the artifact home | None — it is not in temp space |
+
+An actor clearing temp space — files as well as directories — therefore costs
+the log replay and never a lane's findings. The one exception is a home that
+cannot be created or vetted: the lane falls back to a temp file, with the
+reason on stderr, and losing it degrades coverage, records that lane at exit 5
+and names the loss — never a silent pass.
 
 ## Failure classes
 

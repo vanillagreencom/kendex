@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- second-opinion: a multi-lane review run without `--output` no longer keeps
+  its lane reviews in shared system temp (VST-241), and the lane umask no
+  longer governs the external model CLI's own files (VST-243). Each lane's
+  review is now a per-run file in `SECOND_OPINION_ARTIFACT_DIR` (default
+  `tmp/second-opinion` under `--cwd`), cleared before the lane writes it and
+  removed at exit, so an actor clearing temp *files* — not only the one
+  directory the run creates there — can no longer cost a blocker-carrying lane
+  its findings, and the durability guarantee now holds in both modes. Owner-
+  only is applied by whoever writes the file instead of by a umask wrapped
+  around the lane process: lane artifacts and their sidecars are still
+  owner-only whatever the caller's umask, while the session and cache state the
+  external CLI keeps for itself comes out exactly as it does on a single-lane
+  run, rather than being fixed at `0600`/`0700` by whichever lane mode happened
+  to create it first.
 - review-gate/size-ratchet/growth-guards: settings resolution fails closed
   on an unusable settings path. A directory, FIFO, socket or device at
   `*_SETTINGS_FILE` (or at the default `vstack.settings.toml`) failed `-f`
@@ -1036,14 +1050,11 @@
   never read back from that directory. Losing that directory costs the log
   replay (reported as such) and never a verdict. Where a lane's review sits
   until it is reaped depends on the mode: with `--output` it is the durable
-  sibling `<output>.<target>.json`, beyond the reach of any temp-space actor;
-  without `--output` it is an ordinary temp file, so an actor that removes
-  temp *files* still costs that lane — but loudly, with coverage `"degraded"`,
-  the lane recorded at exit 5, and the loss named on stderr, never as a silent
-  pass. Lane children now run under a restrictive umask, so every file they
-  write — the sidecars in temp space and the `<output>.<target>.json` lane
-  artifacts alike — is owner-only; the union artifact at `--output` is written
-  by the parent and still follows the caller's umask.
+  sibling `<output>.<target>.json`, without one a per-run file in the artifact
+  home (VST-241 below) — neither is in temp space. A lane artifact and the
+  sidecars beside it are written owner-only by the child that writes them,
+  whatever the caller's umask; the union artifact at `--output` follows the
+  caller's.
 
   Artifact handling got stricter in the same pass. An artifact is accepted
   only if it holds exactly one JSON object carrying the shape the union merge
