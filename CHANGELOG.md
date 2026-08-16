@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- New `block-unsafe-rm` hook (`PreToolUse`/`Bash`): a recursive `rm` whose
+  path starts with a variable that may expand empty is refused with the
+  accepted rewrite (`rm -rf -- "${NAME:?}/sub"` or a literal absolute path)
+  — that shape halts the whole session on the harness's "Dangerous rm
+  operation on possibly-empty variable path" prompt even with permissions
+  bypassed, and lanes stalled on it. Consumers pick it up with
+  `vstack add --hook block-unsafe-rm -y`.
 - ci: the merge-queue ejection alert's comment/intake step never ran — an
   apostrophe in a comment inside its single-quoted jq program ended the
   quote and the step died on a bash syntax error. Fixed, and preflight

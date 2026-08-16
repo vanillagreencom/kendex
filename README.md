@@ -240,6 +240,7 @@ Windows: CLI runs natively; symlink mode falls back to copy.
 | Hook | Event | Brief |
 |---|---|---|
 | `block-bare-cd` | `PreToolUse` | Blocks unsafe bare `cd` usage and nudges toward subshell-safe patterns. |
+| `block-unsafe-rm` | `PreToolUse` | Refuses a recursive `rm` whose path starts with a variable that may expand empty (`rm -rf $DIR/$NAME`, `"$P/x"`, `${X:-}`) — the shape the harness halts the whole session on with a "Dangerous rm operation on possibly-empty variable path" prompt, even with permissions bypassed. Names the accepted rewrite: `rm -rf -- "${NAME:?}/sub"` or a literal absolute path. |
 | `block-repo-copy` | `PreToolUse` | Refuses a recursive copy (`cp -r`/`-R`/`-a`, recursive or archive `rsync`, local `git clone`, `tar` create-to-extract pipe) when the source carries repository history or a build tree AND the destination resolves under a temp/scratch root. Temp roots are commonly RAM-backed tmpfs, where such a copy fills the filesystem and every process writing there fails with ENOSPC. |
 | `pre-commit-check` | `PreToolUse` | Validates formatting and lint before commits. Rust Clippy lane is scoped to staged packages and configurable via `VSTACK_PRE_COMMIT_RUST_CLIPPY` (custom command or `off`). |
 | `post-edit-lint` | `PostToolUse` | Runs lint checks after source edits. |
