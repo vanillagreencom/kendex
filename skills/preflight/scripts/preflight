@@ -323,12 +323,16 @@ def shell_of(node):
     m = mapping(node)
     s = scalar(m.get("shell"))
     return s
-def is_bash(shell):
-    return re.match(r"^(bash|sh)(\s|$)", shell.strip()) is not None
+# The interpreter that will parse the block: bash or sh, given as a bare name
+# or an executable path (`/bin/bash {0}`); anything else is out of scope.
+def interpreter_of(shell):
+    m = re.match(r"^(?:.*/)?(bash|sh)(?:\s|$)", shell.strip())
+    return m.group(1) if m else None
 # With no shell declared anywhere, GitHub runs bash on Linux/macOS runners and
 # PowerShell on Windows ones. An implicit shell is bash only when every
-# runs-on label is a plain, non-Windows string; an expression or a Windows
-# label leaves the default unresolved and the step is skipped.
+# runs-on label is a plain ubuntu-* or macos-* label; an expression, a
+# Windows label, or a custom/self-hosted label leaves the default unresolved
+# and the step is skipped.
 def implicit_shell_is_bash(jm):
     ro = jm.get("runs-on")
     labels = []
@@ -345,7 +349,7 @@ def implicit_shell_is_bash(jm):
     if not labels:
         return False
     for label in labels:
-        if "${{" in label or "windows" in label.lower():
+        if "${{" in label or not re.match(r"^(ubuntu|macos)([-_]|$)", label.lower()):
             return False
     return True
 top = mapping(root)
@@ -353,7 +357,7 @@ default_shell = shell_of(mapping(top.get("defaults")).get("run")) if "defaults" 
 jobs = mapping(top.get("jobs"))
 for _, job in jobs.items():
     jm = mapping(job)
-    job_shell = shell_of(mapping(jm.get("defaults")).get("run")) if "defaults" in jm else default_shell
+    job_shell = (shell_of(mapping(jm.get("defaults")).get("run")) or default_shell) if "defaults" in jm else default_shell
     steps = jm.get("steps")
     if not isinstance(steps, yaml.SequenceNode):
         continue
@@ -367,8 +371,11 @@ for _, job in jobs.items():
         if effective is None:
             if not implicit_shell_is_bash(jm):
                 continue
-        elif not is_bash(effective):
-            continue
+            interp = "bash"
+        else:
+            interp = interpreter_of(effective)
+            if interp is None:
+                continue
         # Block scalars (| >) start their content on the line after the key;
         # flow/plain scalars start on the key line itself. A folded scalar
         # (>) has had its newlines collapsed before bash sees it, so its
@@ -384,7 +391,7 @@ for _, job in jobs.items():
             t.write(body)
             tmp = t.name
         try:
-            res = subprocess.run(["bash", "-n", tmp], capture_output=True, text=True)
+            res = subprocess.run([interp, "-n", tmp], capture_output=True, text=True)
         finally:
             os.unlink(tmp)
         if res.returncode == 0:
@@ -559,10 +566,13 @@ while IFS= read -r f; do
       ;;
     .github/workflows/*.yml | .github/workflows/*.yaml)
       if [ "$HAVE_WORKFLOW_PY" = 1 ]; then
+        # The tool is present, so a crash is an environment error, never an
+        # empty (clean-looking) result.
+        wf_out="$(python3 -c "$WORKFLOW_PY" "$cpath" 2>"$TMP/wf.err")" || env_error "workflow-run-syntax lane failed on $f: $(first_line "$(cat "$TMP/wf.err")")"
         while IFS="$TAB" read -r n msg; do
           [ -n "$msg" ] || continue
           emit "$f" "$n" workflow-run-syntax "$msg"
-        done <<<"$(python3 -c "$WORKFLOW_PY" "$cpath" 2>/dev/null)"
+        done <<<"$wf_out"
       fi
       ;;
   esac
