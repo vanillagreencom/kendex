@@ -40,7 +40,7 @@ echo "=== pr-merge exit 75 is documented as volatile, in the script and the SKIL
 
 script_src=$(cat "$PR_MERGE")
 # Both 75 exits route through the one note (queued and classic auto-merge).
-assert_count "$script_src" '^[[:space:]]*volatile_note "\$pr_num" "\$token"$' 2 \
+assert_count "$script_src" '^[[:space:]]*volatile_note "\$pr_num"$' 2 \
   "both exit-75 paths emit the volatility note"
 assert_matches "$script_src" 'VOLATILE.*an ejection or a failed protection check disarms it silently' \
   "the note states an ejection or a failed protection check disarms silently"
@@ -48,8 +48,13 @@ assert_matches "$script_src" '\.agents/skills/orch/scripts/queue-wait \$pr_num' 
   "the note names queue-wait by its runnable path"
 assert_matches "$script_src" 'GH_REPO=\$\{repo:-<owner/repo — repository read failed>\} \.agents/skills/review-gate/scripts/pr-watch\.sh' \
   "the note names the pr-watch reducer by its runnable path, with the GH_REPO it requires (failure named, never a bare placeholder)"
-assert_matches "$script_src" 'gh_with_token "\$auth_token" repo view' \
-  "the repository read runs under the merge identity"
+assert_matches "$script_src" 'remote\.origin\.url' \
+  "the repository is resolved locally (origin remote), never by a network read on the exit path"
+if grep -qE 'gh(_with_token[^\n]*)? repo view' <<<"$(sed -n '/^volatile_note() {/,/^}/p' "$PR_MERGE")"; then
+  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "volatile_note makes no gh request"
+else
+  PASS=$((PASS + 1)); printf '  ok    %s\n' "volatile_note makes no gh request"
+fi
 
 table=$(sed -n '/^### PR Merge Outcomes$/,/^### /p' "$SKILL_MD")
 assert_count "$table" '^\| `75` \| MERGE PENDING \(volatile\)' 2 \
