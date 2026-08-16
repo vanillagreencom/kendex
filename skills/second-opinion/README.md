@@ -33,6 +33,23 @@ From the shell:
 ./scripts/second-opinion review --target claude --range HEAD~3..HEAD --cwd .
 ```
 
+## Setup
+
+By default the skill runs exactly ONE reviewer: the highest-priority entry in `SECOND_OPINION_MODELS` that is available and is not the model your session runs. A Claude Code session gets Codex, a Codex session gets Claude, and nothing needs configuring beyond having the other CLI installed and logged in. Everything else is one key in `vstack.settings.toml` under `[env]`:
+
+| Key | Working example | What it does |
+|-----|-----------------|--------------|
+| `SECOND_OPINION_MODELS` | `"claude codex"` | Priority order. First eligible entry wins; an entry with no command still names a known model identity |
+| `SECOND_OPINION_<NAME>_CMD` | `SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --model deepseek/deepseek-v4-pro"` | Full command for roster entry `pi-deepseek` (`claude` and `codex` have built-in commands) |
+| `SECOND_OPINION_<NAME>_MODEL` | `SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"` | The model that entry fronts, when it is not the entry's own name |
+| `SECOND_OPINION_COUNT` | `"2"` | Opinions a `review` collects; 2+ runs up to that many distinct models and unions the findings |
+| `SECOND_OPINION_CURRENT_MODEL` | `"claude"` (or `"opus"`, `"gpt-5.6-sol"`, `"none"`) | The model your session runs. Detected for Claude Code and Codex; required in Pi, OpenCode, Cursor and undetected shells — `none` says there is no session model (CI, plain terminal) |
+| `SECOND_OPINION_ARTIFACT_DIR` | `"tmp/second-opinion"` | Where records land when you pass no `--output` (relative to `--cwd`) |
+| `SECOND_OPINION_REVIEW_INSTRUCTIONS` | `"AGENTS.md review-bots.md .github/instructions/*.instructions.md"` | Repo instruction files appended to the review prompt; empty disables |
+| `SECOND_OPINION_TIMEOUT` | `"300"` | Seconds to wait for the external CLI |
+
+`vstack add`/`refresh` seed these keys from this skill's `vstack.settings.toml.example` when the file is missing and add absent keys to an existing file. Run `scripts/second-opinion detect` to see which target a review would use from your current session.
+
 ## Configuration
 
 All optional — defaults work out of the box. Set shared, non-sensitive defaults in `vstack.settings.toml` under `[env]`. Existing `.env.local` values still work and should be reserved for personal overrides.
@@ -43,7 +60,7 @@ Project installs seed `vstack.settings.toml` from this skill's `vstack.settings.
 |----------|---------|---------|
 | `SECOND_OPINION_MODELS` | `claude codex` | Priority-ordered roster; the first available entry that is not your session's model wins |
 | `SECOND_OPINION_COUNT` | `1` | Opinions a `review` collects; 2+ runs up to that many distinct models and unions the findings, deduped by location (a shortfall is reported and marked degraded) |
-| `SECOND_OPINION_CURRENT_MODEL` | (unset) | The model your session runs, when the CLI cannot tell (Pi, OpenCode — required there); Claude Code and Codex are detected |
+| `SECOND_OPINION_CURRENT_MODEL` | (unset) | The model your session runs, when the CLI cannot tell (Pi, OpenCode, Cursor, undetected — required there; `none` = no session model); Claude Code and Codex are detected. Model ids normalize (`opus` → claude, `gpt-*` → codex); a value the roster does not know is refused |
 | `SECOND_OPINION_<NAME>_MODEL` | `<name>` | The model a roster entry runs, when it differs from its name (a Pi lane fronting Claude: `claude`) |
 | `SECOND_OPINION_<NAME>_CMD` | (none) | Full command for a roster entry — another model CLI is a settings entry, not new code |
 | `SECOND_OPINION_TARGET` | (unset) | Force one target; refused if it is your session's model |

@@ -1,33 +1,44 @@
 [env]
 
 # SECOND OPINION
+#
+# One reviewer by default: the highest-priority entry in SECOND_OPINION_MODELS
+# that is available and is NOT the model this session runs (a Claude Code
+# session gets codex, a Codex session gets claude). Every mode enforces that;
+# a run with no eligible cross-model target refuses and says why.
 
-# Used by: second-opinion.
-SECOND_OPINION_TIMEOUT = "300"
-
-# Used by: second-opinion.
-SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
-
-# Used by: second-opinion.
-SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
-
-# Used by: second-opinion. Priority-ordered target roster, space- or
-# comma-separated. Every mode takes the first entry that is available and
-# runs a model other than this session's; a target that runs the session's own
-# model is never dispatched to. Adding a model CLI is one entry here plus its
-# SECOND_OPINION_<NAME>_CMD (name uppercased, hyphens as underscores), and
-# SECOND_OPINION_<NAME>_MODEL when the CLI fronts a model other than its name.
+# Used by: second-opinion. Priority-ordered roster, space/comma separated. Per
+# entry: SECOND_OPINION_<NAME>_CMD (full command; claude and codex have defaults)
+# and SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
+# An entry without a command still names a KNOWN identity, so a session running
+# that model is recognized and excluded.
 SECOND_OPINION_MODELS = "claude codex"
 
-# Used by: second-opinion (review mode). Opinions to collect: 2 or more runs up
-# to that many distinct models on the same diff and unions the findings; a
-# shortfall is reported and stamped as degraded coverage.
+# Used by: second-opinion (review mode). Opinions to collect; 2+ unions up to
+# that many distinct models on the same diff (a shortfall is reported and
+# stamped as degraded coverage).
 SECOND_OPINION_COUNT = "1"
 
-# Used by: second-opinion. The model THIS session runs, for front ends where
-# the CLI does not say (Pi, OpenCode — required there; the run refuses without
-# it). Claude Code and Codex are detected.
+# Used by: second-opinion. The model THIS session runs. Claude Code and Codex
+# are detected; Pi, OpenCode, Cursor and undetected shells REQUIRE it (the run
+# refuses otherwise). Model ids work: "opus", "claude-opus-5" -> claude;
+# "gpt-5.6-sol" -> codex. "none" declares there is no session model (CI, a
+# plain terminal): every roster entry is then cross-model.
 # SECOND_OPINION_CURRENT_MODEL = "claude"
+
+# Used by: second-opinion. Roster entry claude (identity claude).
+SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+
+# Used by: second-opinion. Roster entry codex (identity codex).
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+
+# Used by: second-opinion. Example of another roster entry: add "pi-deepseek" to
+# SECOND_OPINION_MODELS, give it a command, and declare the model it fronts.
+# SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --model deepseek/deepseek-v4-pro"
+# SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"
+
+# Used by: second-opinion. Seconds to wait for the external CLI.
+SECOND_OPINION_TIMEOUT = "300"
 
 # Used by: second-opinion. Home for review/audit records written without
 # --output, relative to --cwd (absolute paths are taken as-is).
@@ -38,6 +49,7 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # inside the reviewed repo (--cwd). Set empty to disable.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 
-# Uncomment only when this project must force one target instead of walking the
-# roster. A forced target that runs this session's model is refused.
+# Used by: second-opinion. Force one target instead of walking the roster. A
+# forced target that runs this session's model is refused. Uncomment only when
+# this project must pin one.
 # SECOND_OPINION_TARGET = "claude"

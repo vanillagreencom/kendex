@@ -143,7 +143,9 @@ Environment (set in vstack.settings.toml [env] or .env.local):
   SECOND_OPINION_CURRENT_MODEL
                              Model identity of THIS session; overrides harness
                              detection. Required in a multi-model front end
-                             (Pi, OpenCode) — refused until set
+                             (Pi, OpenCode, Cursor) or an undetected shell —
+                             refused until set; "none" = no session model.
+                             Model ids normalize (opus -> claude, gpt-* -> codex)
   SECOND_OPINION_<NAME>_MODEL
                              Model identity of target <NAME> (default: <NAME>)
   SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
@@ -240,6 +242,7 @@ detect_current_harness() {
       codex*)  echo "codex"; return ;;
       pi|pi-*) echo "pi"; return ;;
       opencode*) echo "opencode"; return ;;
+      cursor*) echo "cursor"; return ;;
     esac
   done
   if [[ -n "${CODEX_SANDBOX:-}" ]]; then
@@ -258,33 +261,51 @@ detect_current_harness() {
     echo "opencode"
     return
   fi
+  if [[ -n "${CURSOR_AGENT:-}" ]] || [[ -n "${CURSOR_TRACE_ID:-}" ]]; then
+    echo "cursor"
+    return
+  fi
   echo "unknown"
 }
 
 # --- Model identity -----------------------------------------------------------
-# The guarantee is cross-MODEL, and a CLI is not a model: Pi and OpenCode front
-# whichever model the session selected, and a session cannot be probed for it
-# from outside. Identity is therefore DECLARED and compared: the current
-# session's identity is SECOND_OPINION_CURRENT_MODEL when set, else the model
-# the detected harness is known to run (claude, codex). A multi-model front end
-# with no declaration has NO identity — the run refuses rather than guess. An
-# undetected harness is "unknown": nothing can be excluded, so the run says so
-# and proceeds. A target's identity is SECOND_OPINION_<NAME>_MODEL, defaulting
-# to the target name. Identities are lowercase tokens; the built-in ones are
-# "claude" and "codex".
+# The guarantee is cross-MODEL, and a CLI is not a model: Pi, OpenCode and
+# Cursor front whichever model the session selected, and a session cannot be
+# probed for it from outside. Identity is therefore DECLARED and compared: the
+# current session's identity is SECOND_OPINION_CURRENT_MODEL when set, else the
+# model the detected harness is known to run (claude, codex). Anything else —
+# a multi-model front end with no declaration, or a harness that was not
+# detected at all — has NO identity, and the run refuses rather than guess;
+# SECOND_OPINION_CURRENT_MODEL=none is the operator's statement that there is
+# no session model (CI, a plain terminal) and every roster entry is
+# cross-model. A target's identity is SECOND_OPINION_<NAME>_MODEL, defaulting
+# to the target name. Identities are lowercase tokens canonicalized from the
+# obvious model-id forms — a Claude model id (claude-*, opus, sonnet, haiku) is
+# "claude", an OpenAI one (gpt-*, o3, codex) is "codex" — so the natural value
+# of the one mandatory key compares equal to the built-in roster identities.
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+canon_identity() {
+  local id
+  id=$(lower "$1")
+  case "$id" in
+    claude*|opus*|sonnet*|haiku*) printf 'claude' ;;
+    gpt*|o[0-9]*|codex*)          printf 'codex' ;;
+    *)                            printf '%s' "$id" ;;
+  esac
+}
 
 CURRENT_HARNESS=""
 CURRENT_MODEL=""
 resolve_current_model() {
   CURRENT_HARNESS=$(detect_current_harness)
   if [[ -n "${SECOND_OPINION_CURRENT_MODEL:-}" ]]; then
-    CURRENT_MODEL=$(lower "$SECOND_OPINION_CURRENT_MODEL")
+    CURRENT_MODEL=$(canon_identity "$SECOND_OPINION_CURRENT_MODEL")
     return
   fi
   case "$CURRENT_HARNESS" in
-    claude|codex|unknown) CURRENT_MODEL="$CURRENT_HARNESS" ;;
+    claude|codex) CURRENT_MODEL="$CURRENT_HARNESS" ;;
     *) CURRENT_MODEL="" ;;
   esac
 }
@@ -301,7 +322,7 @@ target_cmd_var() { target_var "$1" CMD; }
 target_model() {
   local var
   var="$(target_var "$1" MODEL)"
-  if [[ -n "${!var:-}" ]]; then lower "${!var}"; else lower "$1"; fi
+  if [[ -n "${!var:-}" ]]; then canon_identity "${!var}"; else canon_identity "$1"; fi
 }
 
 # --- Pluggable target commands ------------------------------------------------
@@ -362,8 +383,34 @@ WANT=1
 
 resolve_current_model
 
+# The roster, one entry per line, split with globbing off: an entry is a name,
+# never a pattern.
+roster_entries() {
+  local raw t
+  raw="${SECOND_OPINION_MODELS:-$DEFAULT_MODELS}"
+  raw="${raw//,/ }"
+  set -f
+  for t in $raw; do printf '%s\n' "$t"; done
+  set +f
+}
+
 REVIEW_LANES=()
 SELECTED_MODELS=()
+# Env-var namespaces already considered: `my-model` and `my_model` are distinct
+# names but one SECOND_OPINION_MY_MODEL_* configuration, so the second is the
+# first again.
+SEEN_NAMESPACES=()
+# Whether any roster entry carries the session's identity — the check that a
+# declared identity is spelled the way the roster spells it. A full pass over
+# valid names, independent of where the walk stops.
+roster_has_current() {
+  local t
+  while IFS= read -r t; do
+    [[ "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+    [[ "$(target_model "$t")" == "$CURRENT_MODEL" ]] && return 0
+  done < <(roster_entries)
+  return 1
+}
 # One "target: reason" line per roster entry that was NOT taken — the refusal
 # body, and stderr detail on every run.
 SKIP_REASONS=()
@@ -377,13 +424,18 @@ skip_target() {
 # two names fronting one model are one opinion — either way a second child on
 # the same lane would race on its artifact paths and duplicate its provenance.
 consider_target() {
-  local t="$1" model existing
+  local t="$1" model existing ns
   if [[ ! "$t" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
     # An arbitrary token would otherwise reach indirect variable expansion and
     # per-lane file paths.
     skip_target "$t" "invalid target name"
     return 1
   fi
+  ns="$(target_var "$t" "")"
+  for existing in ${SEEN_NAMESPACES[@]+"${SEEN_NAMESPACES[@]}"}; do
+    [[ "$existing" == "$ns" ]] && { skip_target "$t" "same configuration namespace (${ns}CMD) as an earlier entry"; return 1; }
+  done
+  SEEN_NAMESPACES+=("$ns")
   model="$(target_model "$t")"
   if [[ "$model" == "$CURRENT_MODEL" ]]; then
     skip_target "$t" "runs the same model as this session ($model) — a second opinion must be cross-model"
@@ -401,47 +453,41 @@ consider_target() {
   return 0
 }
 
-# Walk the roster, taking up to $1 targets. Splits with globbing off: an
-# entry is a name, never a pattern.
+# Walk the roster, taking up to $1 targets.
 walk_roster() {
-  local want="$1" raw t
-  raw="${SECOND_OPINION_MODELS:-$DEFAULT_MODELS}"
-  raw="${raw//,/ }"
-  set -f
-  for t in $raw; do
+  local want="$1" t
+  while IFS= read -r t; do
     [[ ${#REVIEW_LANES[@]} -lt "$want" ]] || break
     consider_target "$t" || true
-  done
-  set +f
+  done < <(roster_entries)
 }
 
 FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
 if [[ -z "$CURRENT_MODEL" ]]; then
   # No identity to compare against: no target can be shown to be a different
   # model, so none is taken. The refusal below carries the one reason.
-  skip_target "session" "model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
+  if [[ "$CURRENT_HARNESS" == "unknown" ]]; then
+    skip_target "session" "harness not detected and model undeclared — set SECOND_OPINION_CURRENT_MODEL to the model this session runs, or to none when there is no session model (CI, plain terminal)"
+  else
+    skip_target "session" "model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
+  fi
 elif [[ -n "$FORCED_TARGET" ]]; then
   # A force asks for exactly one opinion.
   WANT=1
   consider_target "$FORCED_TARGET" || true
 else
   walk_roster "$WANT"
-fi
-
-if [[ "$CURRENT_MODEL" == "unknown" ]]; then
-  echo "→ this session's harness was not detected: nothing is excluded — set SECOND_OPINION_CURRENT_MODEL to the model this session runs so exclusion is model-level" >&2
-elif [[ -n "$CURRENT_MODEL" && -z "$FORCED_TARGET" ]]; then
-  # A declared identity that matches no roster entry excludes nothing, which is
-  # exactly what a typo looks like.
-  roster_has_current=false
-  roster_raw="${SECOND_OPINION_MODELS:-$DEFAULT_MODELS}"
-  roster_raw="${roster_raw//,/ }"
-  set -f
-  for t in $roster_raw; do
-    [[ "$(target_model "$t")" == "$CURRENT_MODEL" ]] && roster_has_current=true
-  done
-  set +f
-  $roster_has_current || echo "→ session model $CURRENT_MODEL matches no roster identity in SECOND_OPINION_MODELS — nothing is excluded; check SECOND_OPINION_CURRENT_MODEL" >&2
+  # A declared identity the roster does not spell excludes nothing, which is
+  # what a typo looks like — and what a session running a model the roster
+  # does not know looks like. Either way the operator decides: name the model
+  # in SECOND_OPINION_MODELS (a command is optional; it is then a known
+  # identity and excluded) or fix the declaration. `none` is the declared
+  # absence of a session model and matches nothing by design.
+  if [[ "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then
+    REVIEW_LANES=()
+    SELECTED_MODELS=()
+    skip_target "session" "model $CURRENT_MODEL matches no roster identity — add it to SECOND_OPINION_MODELS (a command is optional) or fix SECOND_OPINION_CURRENT_MODEL; none declares that this session has no model"
+  fi
 fi
 
 if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
@@ -453,8 +499,9 @@ if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
     '{error: "no eligible cross-model target — refusing to run a second opinion", current_model: $current, candidates: $candidates}' >&2
   # A force that came from project settings rather than the command line is a
   # seeded value nobody typed today: name what the roster would have picked so
-  # the settings fix is one edit.
-  if [[ -z "$TARGET" && -n "${SECOND_OPINION_TARGET:-}" ]]; then
+  # the settings fix is one edit. Only when the force is what refused — an
+  # undeclared session is fixed by a different key.
+  if [[ -n "$CURRENT_MODEL" && -z "$TARGET" && -n "${SECOND_OPINION_TARGET:-}" ]]; then
     SKIP_REASONS=()
     walk_roster 1 2>/dev/null
     if [[ ${#REVIEW_LANES[@]} -gt 0 ]]; then
@@ -502,35 +549,70 @@ fi
 # raw/failed/rejected responses of a stdout-mode review or audit — live under
 # SECOND_OPINION_ARTIFACT_DIR (default tmp/second-opinion inside the reviewed
 # project), not in shared system temp. Placement can never change the run's
-# outcome: when the home cannot be created, or a relative home resolves through
-# a symlink or outside --cwd (the reviewed checkout is untrusted, same rule as
-# its instruction files; an absolute setting is the operator's own and exempt),
-# the record falls back to a plain temp file and the fallback is named on
-# stderr — the exit code and the diagnostic the record exists to carry survive.
-# Sets ARTIFACT_PATH; never exits.
+# outcome: when the home cannot be created, or a relative home does not
+# resolve to exactly <physical --cwd>/<setting> — a `.`/`..` component, a
+# symlink anywhere along it, anything that leaves the reviewed checkout, which
+# is untrusted here as it is for its instruction files (an absolute setting is
+# the operator's own and exempt) — the record falls back to a plain temp file
+# and the fallback is named on stderr; the exit code and the diagnostic the
+# record exists to carry survive. Nothing is created before the path is known
+# to be safe: the pre-checks refuse a symlink component or an escaping name
+# BEFORE mkdir, and the one rule after mkdir is the physical equality. Sets
+# ARTIFACT_PATH; never exits.
 ARTIFACT_PATH=""
+
+# Relative-home vetting, before anything is created. Prints the rejection
+# reason and returns 1; silent 0 when the path is safe to create.
+vet_relative_home() {
+  local rel="$1" rest comp prefix="$CWD"
+  local -a comps=()
+  # Lexical: no empty, `.` or `..` components — the name must stay under --cwd
+  # by construction, not by luck.
+  rest="$rel"
+  while :; do
+    comp="${rest%%/*}"
+    case "$comp" in
+      ""|.|..) printf 'escapes the reviewed repo (component "%s")' "$comp"; return 1 ;;
+    esac
+    comps+=("$comp")
+    [[ "$rest" == */* ]] || break
+    rest="${rest#*/}"
+  done
+  # Symlink walk over the components that exist: the first symlink is the
+  # first place mkdir -p would leave the checkout.
+  for comp in "${comps[@]}"; do
+    prefix="$prefix/$comp"
+    [[ -e "$prefix" || -L "$prefix" ]] || break
+    [[ -L "$prefix" ]] && { printf 'symlink inside the reviewed repo at %s' "$prefix"; return 1; }
+  done
+  return 0
+}
+
 artifact_file() {
-  local kind="$1" dir phys_root phys_dir
+  local kind="$1" dir reason phys_root phys_dir
   dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
   ARTIFACT_PATH=""
   if [[ "$dir" == /* ]]; then
     (umask 077 && mkdir -p -- "$dir") 2>/dev/null \
-      || echo "→ artifact home not creatable: $dir" >&2
-  else
+      || { echo "→ artifact home not creatable: $dir" >&2; dir=""; }
+  elif reason=$(vet_relative_home "$dir"); then
     dir="$CWD/$dir"
     if ! (umask 077 && mkdir -p -- "$dir") 2>/dev/null; then
       echo "→ artifact home not creatable: $dir" >&2
-    elif [[ -L "$dir" || -L "${dir%/*}" ]]; then
-      echo "→ artifact home rejected (symlink inside the reviewed repo): $dir" >&2
       dir=""
     else
+      # The one rule: what was created is exactly the named path under the
+      # reviewed checkout's physical root.
       phys_root="$(cd "$CWD" 2>/dev/null && pwd -P)" || phys_root=""
       phys_dir="$(cd "$dir" 2>/dev/null && pwd -P)" || phys_dir=""
-      if [[ -z "$phys_root" || -z "$phys_dir" || ( "$phys_dir" != "$phys_root" && "$phys_dir" != "$phys_root"/* ) ]]; then
+      if [[ -z "$phys_root" || "$phys_dir" != "$phys_root/${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}" ]]; then
         echo "→ artifact home rejected (resolves outside the reviewed repo): $dir -> ${phys_dir:-?}" >&2
         dir=""
       fi
     fi
+  else
+    echo "→ artifact home rejected ($reason): $CWD/$dir" >&2
+    dir=""
   fi
   if [[ -n "$dir" ]]; then
     ARTIFACT_PATH=$(mktemp "$dir/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || ARTIFACT_PATH=""

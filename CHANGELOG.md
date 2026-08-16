@@ -149,8 +149,10 @@
   read (a set value is named on stderr). Migration for settings seeded from
   the old top-level example: a `SECOND_OPINION_TARGET` that names the
   session's own model is now refused rather than honoured — remove the key
-  (the refusal names what the roster would pick). Pi/OpenCode sessions must
-  set `SECOND_OPINION_CURRENT_MODEL` or are refused. A shortfall against
+  (the refusal names what the roster would pick). Pi/OpenCode/Cursor and undetected
+  sessions must set `SECOND_OPINION_CURRENT_MODEL` (model ids normalize;
+  `none` = no session model) or are refused; a declared identity the roster
+  does not spell is refused too. A shortfall against
   `SECOND_OPINION_COUNT` is stamped as `qa_metadata.requested_count` /
   `selected_count` with `coverage: "degraded"`. `SECOND_OPINION_ARTIFACT_DIR`
   (default `tmp/second-opinion` under `--cwd`, owner-only) is the home for

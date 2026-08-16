@@ -13,9 +13,9 @@ walked in order and a target is taken when all of these hold:
 | Check | Skipped when |
 |---|---|
 | Name shape | Not `^[A-Za-z][A-Za-z0-9_-]*$` — an arbitrary token would otherwise reach indirect variable expansion and per-lane file paths |
-| Not a repeat | The name is already taken — a duplicate would launch concurrent children racing on one lane's artifact and stderr paths |
-| Cross-model | Its declared identity (`SECOND_OPINION_<NAME>_MODEL`, default the name) equals the session's (`SECOND_OPINION_CURRENT_MODEL`, else the detected harness's model — nearest harness ancestor in the process tree, then environment markers). A Pi/OpenCode session with no declaration has no identity and every target is refused |
-| Distinct model | Its identity is already covered by a taken lane — a repeated name, or two names fronting one model, is one opinion |
+| One configuration | Its `SECOND_OPINION_<NAME>_*` namespace was already considered — `my-model` and `my_model` are one configuration |
+| Cross-model | Its declared identity (`SECOND_OPINION_<NAME>_MODEL`, default the name, model ids normalized) equals the session's (`SECOND_OPINION_CURRENT_MODEL`, else the detected harness's model — nearest harness ancestor in the process tree, then environment markers). A session with no identity (Pi/OpenCode/Cursor/undetected, undeclared), or one whose declared identity the roster does not spell, refuses every target; `none` declares no session model |
+| Distinct model | Its identity is already covered by a taken lane — two names fronting one model are one opinion |
 | Available | Its configured command's first word does not resolve — the first word is what gets executed, and an override may point it away from the target's own name |
 
 Every skip is one line on stderr naming the target and the reason. Review mode

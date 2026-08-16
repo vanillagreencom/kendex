@@ -20,9 +20,9 @@
 
 set -euo pipefail
 
-# Pin this session's model identity to one no lane declares, so the cross-model
+# Declare this session as having no model (none), so the cross-model
 # guard neither depends on nor is defeated by the harness running the tests.
-export SECOND_OPINION_CURRENT_MODEL=test-harness
+export SECOND_OPINION_CURRENT_MODEL=none
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -305,38 +305,77 @@ assert_file_contains "$s8_err" "hit your usage limit" "the CLI's cause text stil
 s8_rec=$(ls "$s8_tmp" 2>/dev/null | head -1 || true)
 [[ -n "$s8_rec" ]] && pass "record fell back to TMPDIR" || fail "no fallback record in TMPDIR"
 
-echo "=== scenario 9: symlinked artifact home inside the reviewed repo is rejected ==="
+echo "=== scenario 9: a relative artifact home must be exactly <cwd>/<setting> — nothing is created elsewhere ==="
+# run9 <artifact-dir-setting>: stdout-mode review whose CLI fails, so a record
+# is written; both streams captured. reset9 gives each case a clean tmp/.
 s9_err="$TMP_ROOT/s9.stderr"
 s9_tmp="$TMP_ROOT/tmpdir9"
-s9_evil="$TMP_ROOT/evil"
-mkdir -p "$s9_tmp" "$s9_evil" "$WORK/tmp"
-rm -rf "$WORK/tmp/second-opinion"
-ln -s "$s9_evil" "$WORK/tmp/second-opinion"
-rc9=0
+reset9() {
+  rm -rf "$WORK/tmp" "$s9_tmp"
+  mkdir -p "$s9_tmp" "$WORK/tmp"
+}
+run9() {
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" \
+    SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+    SECOND_OPINION_ARTIFACT_DIR="$1" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s9_err"
+  rc9=$?
+  set -e
+}
+fallback_used() { [[ -n "$(ls "$s9_tmp" 2>/dev/null | head -1 || true)" ]]; }
+
+# (a) symlink whose target is INSIDE the repo: still not the named path
+mkdir -p "$WORK/elsewhere"
+reset9
+ln -s "$WORK/elsewhere" "$WORK/tmp/second-opinion"
+run9 tmp/second-opinion
+assert_eq "$rc9" "5" "(a) symlink-to-inside keeps EXIT_CLI_FAILED (5)"
+assert_file_contains "$s9_err" "artifact home rejected (symlink inside the reviewed repo" "(a) symlink-to-inside is rejected loudly"
+assert_eq "$(find "$WORK/elsewhere" | wc -l | tr -d ' ')" "1" "(a) nothing lands under the symlink target"
+fallback_used && pass "(a) record fell back to TMPDIR" || fail "(a) no fallback record in TMPDIR"
+rm -rf "$WORK/elsewhere"
+
+# (b) a plain relative path escaping --cwd
+s9_out="$TMP_ROOT/outside-b"
+rm -rf "$s9_out"
+reset9
+run9 "../$(basename "$s9_out")/second-opinion"
+assert_eq "$rc9" "5" "(b) escaping path keeps EXIT_CLI_FAILED (5)"
+assert_file_contains "$s9_err" 'artifact home rejected (escapes the reviewed repo (component "..")' "(b) .. component is rejected lexically"
+assert_file_absent "$s9_out" "(b) no directory is created outside --cwd"
+fallback_used && pass "(b) record fell back to TMPDIR" || fail "(b) no fallback record in TMPDIR"
+
+# (c) symlinked parent pointing at a NOT-YET-EXISTING outside path: mkdir -p
+# would have created it through the link
+s9_ghost="$TMP_ROOT/ghost-c"
+rm -rf "$s9_ghost"
+reset9
+ln -s "$s9_ghost" "$WORK/tmp/link-parent"
+run9 tmp/link-parent/second-opinion
+assert_eq "$rc9" "5" "(c) symlinked parent keeps EXIT_CLI_FAILED (5)"
+assert_file_contains "$s9_err" "artifact home rejected (symlink inside the reviewed repo at $WORK/tmp/link-parent)" "(c) symlinked parent is rejected loudly"
+assert_file_absent "$s9_ghost" "(c) no external directory is created through the symlinked parent"
+fallback_used && pass "(c) record fell back to TMPDIR" || fail "(c) no fallback record in TMPDIR"
+
+# (d) the post-creation rule: --cwd itself reached through a symlink still
+# resolves the home under the PHYSICAL root and is accepted
+s9_link_cwd="$TMP_ROOT/work-link"
+rm -f "$s9_link_cwd"
+ln -s "$WORK" "$s9_link_cwd"
+rm -rf "$WORK/tmp" "$s9_tmp"; mkdir -p "$s9_tmp"
 set +e
 PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" \
   SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
   STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
-  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s9_err"
-rc9=$?
+  "$SECOND_OPINION" review --range HEAD --cwd "$s9_link_cwd" >/dev/null 2>"$s9_err"
 set -e
-assert_eq "$rc9" "5" "symlinked home keeps EXIT_CLI_FAILED (5)"
-assert_file_contains "$s9_err" "artifact home rejected" "symlinked home is rejected loudly"
-assert_eq "$(ls "$s9_evil" | wc -l | tr -d ' ')" "0" "nothing is written through the symlink"
-[[ -n "$(ls "$s9_tmp" 2>/dev/null | head -1 || true)" ]] && pass "record fell back to TMPDIR" || fail "no fallback record in TMPDIR"
-rm -f "$WORK/tmp/second-opinion"
-# control: a symlinked PARENT (tmp itself) is caught the same way
-ln -s "$s9_evil" "$WORK/tmp/link-parent"
-set +e
-PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" \
-  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
-  SECOND_OPINION_ARTIFACT_DIR="tmp/link-parent/second-opinion" \
-  STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
-  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s9_err"
-set -e
-assert_file_contains "$s9_err" "artifact home rejected" "symlinked parent is rejected too"
-assert_eq "$(find "$s9_evil" -type f | wc -l | tr -d ' ')" "0" "nothing is written through the symlinked parent"
-rm -rf "$s9_evil/second-opinion" "$WORK/tmp/link-parent"
+[[ -n "$(ls "$WORK"/tmp/second-opinion/review-claude-failed.* 2>/dev/null | head -1 || true)" ]] \
+  && pass "(d) control: symlinked --cwd resolves the home under the physical root" \
+  || fail "(d) control: symlinked --cwd wrongly rejected"
+grep -q "artifact home rejected" "$s9_err" && fail "(d) control: symlinked --cwd produced a rejection"
+rm -f "$s9_link_cwd"
+rm -rf "$WORK/tmp"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
