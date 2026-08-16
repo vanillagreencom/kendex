@@ -286,7 +286,7 @@ for name in "${PI_SUITES[@]}"; do
     pi-agents-tmux) add_lane "pi:pi-agents-tmux" "npm install (pinned pi 0.84.1) && bun test ./tests ./extensions/subagent/__tests__  [pi-extensions/pi-agents-tmux]" ;;
     pi-codex-minimal-tools) add_lane "pi:pi-codex-minimal-tools" "npm install (pinned pi 0.84.1, undici@^7.25.0) && npm test  [pi-extensions/pi-codex-minimal-tools]" ;;
     pi-questions) add_lane "pi:pi-questions" "bun test ./extensions/__tests__  [pi-extensions/pi-questions]" ;;
-    pi-claude-bridge) add_lane "pi:pi-claude-bridge" "npm ci && npm run build && npm run test:unit && git diff --exit-code -- bundle/  [pi-extensions/pi-claude-bridge]" ;;
+    pi-claude-bridge) add_lane "pi:pi-claude-bridge" "npm ci && npm run build && npm run test:unit && bundle/ matches a fresh build  [pi-extensions/pi-claude-bridge]" ;;
   esac
 done
 
@@ -450,11 +450,20 @@ run_lane() { # id -> exit status of the lane
       run_in pi-extensions/pi-questions bun test ./extensions/__tests__
       ;;
     pi:pi-claude-bridge)
+      # The bundle the author is about to commit — the working-tree bytes,
+      # not the index — must equal a fresh build. `git diff -- bundle/` would
+      # compare against the index and reject a legitimately rebuilt, not yet
+      # staged bundle; CI's clean checkout makes the two identical.
       run_in pi-extensions/pi-claude-bridge bash -c '
-        npm ci --no-audit --no-fund &&
-        npm run build &&
-        npm run test:unit &&
-        git diff --exit-code -- bundle/'
+        before="$(mktemp -d)" || exit 1
+        cp -R bundle/. "$before"/ || { rm -rf "$before"; exit 1; }
+        rc=0
+        { npm ci --no-audit --no-fund &&
+          npm run build &&
+          npm run test:unit &&
+          { diff -r "$before" bundle || { echo "bundle/ does not match a fresh build — rebuild and stage it"; false; }; }; } || rc=$?
+        rm -rf "$before"
+        exit "$rc"'
       ;;
     *)
       echo "FAILED: unknown lane id '$id' (derivation/runner desync)"

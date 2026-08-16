@@ -496,6 +496,36 @@ assert_rc "untracked lint fixed" 0
 assert_no_line "untracked lint fixed" "not executable"
 reset_tree
 
+# --- 19b. runner: the bridge bundle check judges the pending bytes ------------
+# A rebuilt-but-unstaged bundle is exactly what the dev flow validates before
+# its `git add -A`: the working-tree bundle must equal a fresh build, and the
+# index is not consulted. `npm` is stubbed; `build` rewrites the bundle only
+# when BUNDLE_DRIFT is set.
+STUBBIN="$TMP/stubbin"
+mkdir -p "$STUBBIN"
+cat >"$STUBBIN/npm" <<'NPM'
+#!/usr/bin/env bash
+case "$*" in
+  "run build") [ -n "${BUNDLE_DRIFT:-}" ] && printf 'drifted\n' >bundle/index.js ;;
+esac
+exit 0
+NPM
+chmod +x "$STUBBIN/npm"
+mkfile pi-extensions/pi-claude-bridge/bundle/index.js 'old build'
+git -C "$REPO" add pi-extensions/pi-claude-bridge/bundle/index.js
+git -C "$REPO" commit -qm bundle
+printf 'new build\n' >"$REPO/pi-extensions/pi-claude-bridge/bundle/index.js"
+touch_path pi-extensions/pi-claude-bridge/index.ts
+PATH="$STUBBIN:$PATH" run
+assert_rc "pending bundle equals a fresh build" 0
+assert_no_line "pending bundle equals a fresh build" "does not match a fresh build"
+BUNDLE_DRIFT=1 PATH="$STUBBIN:$PATH" run
+assert_rc "bundle drifting from a fresh build" 1
+assert_line "bundle drifting from a fresh build" "bundle/ does not match a fresh build"
+assert_line "bundle drifting from a fresh build" "FAILED LANE: pi:pi-claude-bridge"
+reset_tree
+git -C "$REPO" reset -q --hard HEAD~1
+
 # --- 20. --help ------------------------------------------------------------------
 run --help
 assert_rc "--help" 0
