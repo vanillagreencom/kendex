@@ -1571,7 +1571,7 @@ fn opencode_hook_artifact_exists(
     })
 }
 
-fn normalize_path_lexical(path: &Path) -> PathBuf {
+pub(crate) fn normalize_path_lexical(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {

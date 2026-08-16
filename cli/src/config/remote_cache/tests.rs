@@ -467,9 +467,10 @@ fn a_pre_encoding_cache_is_adopted_and_never_blocks_its_colliding_twin() {
             RemoteCacheLookup::Usable(legacy.clone()),
             "an existing clone must be adopted, not re-cloned"
         );
-        // The source that used to collide with it now has no cache of
-        // its own — and is free to clone one, rather than being refused
-        // forever because somebody else's directory shares the old key.
+        // The other source the flattened key maps onto that same directory
+        // has no cache of its own — and is free to clone one, rather than
+        // being refused forever because somebody else's directory sits
+        // under the key it once shared.
         assert_eq!(
             remote_cache_lookup("https://github.com/a/b_c"),
             RemoteCacheLookup::Absent

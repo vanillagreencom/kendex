@@ -7,7 +7,7 @@ cli/src/commands/report.rs	1872
 cli/src/config.rs	2041
 cli/src/config/tests.rs	1869
 cli/src/installer.rs	3785
-cli/src/pi_extension.rs	2851
+cli/src/pi_extension.rs	2633
 cli/src/project_config.rs	4892
 cli/src/tui/disk_mutations/tests.rs	1327
 cli/src/tui/install_flow.rs	2709

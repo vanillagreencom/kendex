@@ -12,11 +12,10 @@
 //!    relative-path/content pairs. A mismatch means refresh didn't fully
 //!    copy, or something modified the install. Skills, agents, and hooks
 //!    have per-harness translation, so they aren't directly byte-comparable
-//!    — we just confirm the expected install path exists for each harness
-//!    the lock claims it was installed into.
+//!    — for those, [`missing_install`] confirms instead that every artifact
+//!    the harness needs to RUN the item is on disk.
 //!
-//! This command is the answer to "did my last refresh actually take?" — a
-//! gap that previously required `md5sum` plumbing by hand.
+//! This command is the answer to "did my last refresh actually take?".
 //!
 //! Exit code is non-zero if any item fails verification, so this composes
 //! with shell pipelines (`vstack verify -g && pi`).
@@ -177,8 +176,18 @@ pub(crate) fn missing_install(
         _ => None,
     };
     match entry.kind {
-        ItemKind::PiExtension => (!config::pi_packages_dir(global).join(&entry.name).is_dir())
-            .then(|| "install path missing".to_string()),
+        // A Pi package is installed only when Pi will LOAD it: the copied
+        // directory AND the `packages` entry in the scope's Pi settings that
+        // points at it. A copy nothing registers never loads.
+        ItemKind::PiExtension => {
+            if !config::pi_packages_dir(global).join(&entry.name).is_dir() {
+                Some("install path missing".to_string())
+            } else if !crate::pi_extension::package_is_registered(&entry.name, global) {
+                Some("package present but not registered".to_string())
+            } else {
+                None
+            }
+        }
         ItemKind::Skill => {
             if disk_skills.contains(&entry.name) {
                 return None;
@@ -282,9 +291,8 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> (Option<bool>, Option
             crate::harness::Harness::ClaudeCode => {
                 // A hook is installed only when claude will RUN it: the
                 // script AND a settings registration under the hook's own
-                // event. Script-only presence reported a hook whose
-                // registration had been deleted as installed — including
-                // `session-drift-check`, which could then no longer diagnose
+                // event. A script whose registration is gone never fires —
+                // `session-drift-check` included, which cannot then diagnose
                 // its own absence.
                 let path = harness
                     .hooks_dir(global)

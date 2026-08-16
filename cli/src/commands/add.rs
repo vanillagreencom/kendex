@@ -3003,7 +3003,7 @@ fn reconcile_agents(
 
     for (name, entry) in &agent_entries {
         // Same reservation refresh enforces: never regenerate (or
-        // save_extracted under) a name that now collides with the shared
+        // save_extracted under) a name that collides with the shared
         // instruction key — a legacy `all` agent would render as both shared
         // and item-specific text.
         if let Err(err) = crate::path_safety::validate_new_item_name(name) {

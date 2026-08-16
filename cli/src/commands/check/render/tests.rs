@@ -347,9 +347,9 @@ fn every_global_remediation_command_carries_the_scope_flag() {
             "the outdated remedy must stay scope-less:\n{global}"
         );
 
-        // Control: the project rendering is byte-identical to today —
-        // proven by transforming it into the global one, so the flag is the
-        // ONLY difference between the two.
+        // Control: the project rendering carries no flag, and transforming
+        // it into the global one takes nothing but the flag and the header,
+        // so scope is the ONLY difference between the two.
         let mut project = String::new();
         render_scope(&mut project, &populated_scope("project"), quiet);
         assert!(

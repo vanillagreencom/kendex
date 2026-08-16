@@ -3,7 +3,9 @@ use super::test_support::*;
 use super::*;
 
 mod hooks;
+mod pi;
 use hooks::install_claude_hook;
+use pi::install_pi_package;
 
 #[test]
 fn comma_separated_inline() {
@@ -684,18 +686,17 @@ fn a_missing_install_is_phantom_for_every_kind_not_just_skills() {
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(agents.join("rust.md"), "---\nname: rust\n---\nbody\n").unwrap();
         // Installed as `vstack add` installs it — script AND settings.json
-        // registration — because presence now demands both.
+        // registration — because presence demands both.
         install_claude_hook(source, "guard");
         let hooks = project.join(".claude").join("hooks");
 
-        let package = config::pi_packages_dir(false).join("@vg/pi-hooks");
-        std::fs::create_dir_all(&package).unwrap();
-        std::fs::write(package.join("package.json"), "{}").unwrap();
         write_pi_package(
             source,
             "pi-hooks",
             "{\"name\":\"@vg/pi-hooks\",\"version\":\"1.0.0\",\"keywords\":[\"pi-package\"],\"pi\":{\"extensions\":[\"./ext.ts\"]}}",
         );
+        install_pi_package(source, "pi-hooks");
+        let package = config::pi_packages_dir(false).join("@vg/pi-hooks");
         lock.add(locked(source, ItemKind::PiExtension, "@vg/pi-hooks"));
 
         let clean = check_scope(false, &lock, CheckOptions::default()).unwrap();
