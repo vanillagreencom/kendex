@@ -20,8 +20,10 @@ test("transcript records land in call order when an earlier write finishes late"
 	const appender = createTranscriptAppender("/dev/null", appendFile);
 	appender.append({ n: 1 });
 	appender.append({ n: 2 });
-	// No wall-clock wait: a non-serialized appender issues write 2 synchronously
-	// inside append(), so it has already landed by the time write 1 is released.
+	// A macrotask boundary drains every queued promise callback deterministically:
+	// the ordered appender has now issued write 1 (and only write 1); a
+	// non-serialized one issued both synchronously and write 2 already landed.
+	await new Promise((resolve) => setImmediate(resolve));
 	for (const r of release) r();
 	await appender.settled();
 	const order = landed.trim().split("\n").map((line) => JSON.parse(line).n);
