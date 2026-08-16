@@ -1325,3 +1325,163 @@ fn tui_hook_removal_keeps_state_on_malformed_project_config() {
 fn tui_hook_removal_keeps_state_on_unreadable_project_config() {
     assert_tui_hook_removal_rejects_broken_config(BrokenRemovalConfig::Unreadable);
 }
+
+/// The wizard's completed count is a claim about the items the user selected.
+/// An entry whose source has nothing to refresh from is not a failed install
+/// attempt, but reporting it as neither left the count short with no reason —
+/// and each cause has its own remedy, so each is named.
+#[test]
+fn inline_update_reports_items_that_had_no_source_to_refresh_from() {
+    let root = tmpdir("inline-update-missing");
+    let project = root.join("project");
+    let source = root.join("source");
+    std::fs::create_dir_all(source.join("agents")).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        source.join("agents/rust.md"),
+        "---\nname: rust\ndescription: rust agent\nmodel: sonnet\nrole: engineer\n---\n# Rust\n",
+    )
+    .unwrap();
+
+    let mut lock = LockFile::default();
+    for (name, entry_source) in [
+        ("dev", source.to_string_lossy().into_owned()),
+        ("scout", "owner/repo".to_string()),
+    ] {
+        lock.add(LockEntry {
+            name: name.into(),
+            kind: ItemKind::Skill,
+            source: entry_source,
+            source_repo: None,
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+    }
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    let home = root.join("home");
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        crate::test_util::with_project_root(&project, || {
+            let report = perform_inline_update(&["dev".to_string(), "scout".to_string()]);
+            assert_eq!(report.completed, 0, "report: {report:?}");
+            assert_eq!(report.attempted, 2, "report: {report:?}");
+            assert!(
+                report.failed.iter().any(|line| line.starts_with("dev:")),
+                "an item with no asset in the source must be named: {report:?}"
+            );
+            let scout = report
+                .failed
+                .iter()
+                .find(|line| line.starts_with("scout:"))
+                .unwrap_or_else(|| panic!("scout not reported: {report:?}"));
+            // This path resolves each entry's own source from the lock, so a
+            // remote whose clone is not on this machine is named as exactly
+            // that, with the command that fetches it.
+            assert!(
+                scout.contains("remote cache not present — run `vstack add owner/repo`"),
+                "wrong cause reported: {scout}"
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The hook artifact and its lock entry are gone by the time the agents are
+/// regenerated, so a regeneration that cannot run must be an error: reporting
+/// success left every agent carrying the removed hook.
+#[test]
+fn tui_remove_hook_fails_when_the_agent_source_cannot_be_resolved() {
+    for agent_source_is_remote_only in [false, true] {
+        let root = tmpdir("remove-hook-unresolved-source");
+        let project = root.join("project");
+        let source = root.join("source");
+        std::fs::create_dir_all(source.join("agents")).unwrap();
+        std::fs::create_dir_all(source.join("hooks")).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            source.join("vstack.toml"),
+            "[hook-events]\n\"PreToolUse:Bash\" = \"all\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("agents/rust.md"),
+            "---\nname: rust\ndescription: rust agent\nmodel: sonnet\nrole: engineer\n---\n# Rust\n",
+        )
+        .unwrap();
+        std::fs::write(
+            source.join("hooks/guard.sh"),
+            "# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: guard\n# ---\n#!/usr/bin/env bash\nexit 0\n",
+        )
+        .unwrap();
+
+        let mut agent = agent_fixture("rust");
+        agent.source_path = source.join("agents/rust.md");
+        let mut hook = hook_fixture("guard", None);
+        hook.source_path = source.join("hooks/guard.sh");
+        hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+
+        // The agent's source is a remote with no clone on this machine. With
+        // the hook's source remote too, nothing resolves at all.
+        let hook_source = if agent_source_is_remote_only {
+            "owner/repo".to_string()
+        } else {
+            source.to_string_lossy().into_owned()
+        };
+        let mut lock = LockFile::default();
+        lock.add(LockEntry {
+            name: "rust".into(),
+            kind: ItemKind::Agent,
+            source: "owner/repo".into(),
+            source_repo: None,
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.add(LockEntry {
+            name: "guard".into(),
+            kind: ItemKind::Hook,
+            source: hook_source,
+            source_repo: None,
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        });
+        lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+        let home = root.join("home");
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            crate::test_util::with_project_root(&project, || {
+                crate::installer::install_hook(&hook, Harness::ClaudeCode, false, &[]).unwrap();
+                Harness::ClaudeCode
+                    .generate_agent(
+                        &agent,
+                        false,
+                        &[],
+                        &[hook.clone()],
+                        &crate::agent::AgentExtras::default(),
+                    )
+                    .unwrap();
+
+                let err = remove_one("guard", false, &mut Vec::new())
+                    .expect_err("removal must not report success with agents left stale");
+                let err = format!("{err:#}");
+                assert!(err.contains("regenerate agents"), "{err}");
+                assert!(err.contains("rust"), "{err}");
+            });
+        });
+
+        // The stale frontmatter the error is about.
+        let agent_body = std::fs::read_to_string(project.join(".claude/agents/rust.md")).unwrap();
+        assert!(
+            agent_body.contains(".claude/hooks/guard.sh"),
+            "{agent_body}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

@@ -44,10 +44,10 @@ pub struct RefreshStats {
     /// report can never fall through to "unchanged" with the stored hash —
     /// that silently masked an entry whose source had stopped providing it.
     pub missing: BTreeMap<String, String>,
-    /// Recorded source string → why source resolution refused it. Handed in
-    /// once by the caller so an entry backed by a refused source is reported
-    /// as refused rather than as absent.
-    refused_sources: BTreeMap<String, String>,
+    /// What source resolution refused, and whether it ran. Handed in once by
+    /// the caller so an entry backed by a refused source is reported as
+    /// refused rather than as absent.
+    refused_sources: crate::refresh_sources::SourceRefusals,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,10 +108,14 @@ impl RefreshStats {
     /// "source not found" for either is the wrong cause, and it is the cause
     /// that tells the user whether to clear a cache entry or run `vstack add`.
     fn unresolved_source_reason(&self, recorded_source: &str) -> String {
-        if let Some(refusal) = self.refused_sources.get(recorded_source) {
-            return refusal.clone();
+        if let Some(refusal) = self.refused_sources.reason(recorded_source) {
+            return refusal.to_string();
         }
-        if crate::refresh_sources::looks_like_remote_source(recorded_source) {
+        // Only a pass that resolved sources can say a clone is not on this
+        // machine; a caller that brought its own source never looked.
+        if self.refused_sources.attempted_resolution()
+            && crate::refresh_sources::looks_like_remote_source(recorded_source)
+        {
             return format!(
                 "remote cache not present — run `vstack add {}`",
                 crate::refresh_sources::remote_source_display(recorded_source)
@@ -241,7 +245,7 @@ pub fn refresh_items_in_scope(
     project_config: &mut ProjectConfig,
     project_root: &Path,
     name_filter: Option<&[String]>,
-    refused_sources: &BTreeMap<String, String>,
+    refused_sources: &crate::refresh_sources::SourceRefusals,
 ) -> RefreshStats {
     let mut stats = RefreshStats {
         refused_sources: refused_sources.clone(),
@@ -1080,7 +1084,13 @@ pub fn regenerate_agents_after_hook_removal(
     let records = resolve_source_records(lock);
     let sources = load_refresh_sources(&records.sources);
     if sources.is_empty() {
-        return Ok(());
+        // The caller has already removed the hook artifact and its lock entry.
+        // Reporting success here left every agent carrying the removed hook's
+        // frontmatter and fallback instructions.
+        anyhow::bail!(
+            "failed to regenerate agents after hook removal: no source resolved for {}",
+            agent_names.join(", ")
+        );
     }
 
     let stats = refresh_items_in_scope(
@@ -1095,10 +1105,20 @@ pub fn regenerate_agents_after_hook_removal(
     if !global {
         stats.persist_upstream(project_root);
     }
-    if stats.has_failures() {
+    if stats.has_failures() || stats.has_missing() {
+        let missing = stats
+            .missing
+            .iter()
+            .map(|(item, reason)| format!("{item} ({reason})"))
+            .collect::<Vec<_>>();
         anyhow::bail!(
-            "failed to regenerate agents after hook removal: {} failure(s)",
-            stats.failures.len()
+            "failed to regenerate agents after hook removal: {} failure(s){}",
+            stats.failures.len(),
+            if missing.is_empty() {
+                String::new()
+            } else {
+                format!("; not regenerated: {}", missing.join(", "))
+            }
         );
     }
 

@@ -68,15 +68,23 @@ pub fn source_hook_for_lock_entry<'a>(
     source_hooks: &'a [crate::hook::Hook],
     entry: &crate::config::LockEntry,
 ) -> Option<&'a crate::hook::Hook> {
-    if should_match_entry_source(&entry.source)
-        && let Some(root) = crate::config::resolve_source_path(&entry.source)
-    {
-        for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
-            if hook_path_is_from_source(hook, &root) {
-                return Some(hook);
+    if should_match_entry_source(&entry.source) {
+        if let Some(root) = crate::config::resolve_source_path(&entry.source) {
+            for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
+                if hook_path_is_from_source(hook, &root) {
+                    return Some(hook);
+                }
             }
+            return None;
         }
-        return None;
+        // A source that exists but did not resolve — a remote whose clone is
+        // absent or refused — must not fall through to a same-named hook from
+        // a different source: prune judged the entry against that hook's
+        // `harnesses:` list and uninstalled the difference, and generated agent
+        // frontmatter took its event and matcher.
+        if crate::refresh_sources::recorded_source_exists(&entry.source) {
+            return None;
+        }
     }
 
     for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
