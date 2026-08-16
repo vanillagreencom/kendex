@@ -1126,7 +1126,7 @@ role: engineer
 
     #[cfg(unix)]
     #[test]
-    fn project_add_skips_project_settings_when_source_is_same_checkout_via_symlink() {
+    fn project_add_seeds_settings_but_not_config_when_source_is_same_checkout_via_symlink() {
         use std::os::unix::fs::symlink;
 
         let root = tmpdir("source-alias");
@@ -1165,9 +1165,11 @@ role: engineer
             std::fs::read_to_string(source.join("vstack.toml")).unwrap(),
             "[role-skills]\n"
         );
+        let settings = std::fs::read_to_string(source.join("vstack.settings.toml"))
+            .expect("settings seeding runs for a repo that is its own source");
         assert!(
-            !source.join("vstack.settings.toml").exists(),
-            "installing a source into itself through a symlink alias must not seed project settings"
+            settings.contains("DEMO_TIMEOUT"),
+            "the installed skill's settings keys are seeded: {settings}"
         );
 
         let _ = std::fs::remove_dir_all(root);
@@ -2570,13 +2572,18 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     // make every item appear outdated on next launch).
     if writes_project_config {
         crate::project_config::write_agent_skills(&project_root, &agent_skill_map);
-        if let Some(result) = crate::project_settings::ensure_skill_settings(
+    }
+    // Settings seeding is per-checkout runtime state with no catalog
+    // counterpart, so it runs for self-source repos too — same rule as
+    // refresh.
+    if !global
+        && let Some(result) = crate::project_settings::ensure_skill_settings(
             &project_root,
             &selected_skills,
             &mut lock.settings_seeds,
-        )? {
-            settings_note = Some(format!("Project settings: {}", result.summary()));
-        }
+        )?
+    {
+        settings_note = Some(format!("Project settings: {}", result.summary()));
     }
 
     // Update lock file

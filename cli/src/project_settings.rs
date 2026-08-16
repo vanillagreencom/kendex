@@ -125,8 +125,10 @@ pub fn ensure_skill_settings(
 
 fn record_seeds(seeds: &mut BTreeMap<String, String>, entries: &[EnvEntry]) {
     for entry in entries {
-        let comment = trim_blank_edges(&entry.lines[..entry.lines.len() - 1]);
-        seeds.insert(entry.key.clone(), comment_hash(comment));
+        let Some((_, comment)) = entry.lines.split_last() else {
+            continue;
+        };
+        seeds.insert(entry.key.clone(), comment_hash(trim_blank_edges(comment)));
     }
 }
 
@@ -200,7 +202,10 @@ fn refresh_seeded_comments(
             hi -= 1;
         }
         let current: Vec<String> = block[lo..hi].iter().map(|&i| lines[i].clone()).collect();
-        let incoming = trim_blank_edges(&template.lines[..template.lines.len() - 1]);
+        let Some((_, incoming)) = template.lines.split_last() else {
+            continue;
+        };
+        let incoming = trim_blank_edges(incoming);
         if current == incoming {
             seeds.insert(key, comment_hash(&current));
             continue;
@@ -448,7 +453,10 @@ fn assignment_key(line: &str) -> Option<String> {
     if key.is_empty() {
         return None;
     }
-    Some(key.trim_matches('"').to_string())
+    if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(key.to_string())
 }
 
 #[cfg(test)]
@@ -730,10 +738,10 @@ TUNER_MODE = "ask"
 
     #[test]
     fn matching_comment_without_ledger_gains_provenance_then_updates() {
-        // Installs that predate the settings_seeds ledger: the first refresh
-        // finds the comment still matching its template and records
-        // provenance without touching the file; the next template revision
-        // then propagates.
+        // Installs that predate the settings_seeds ledger: a refresh that
+        // finds the comment still matching its template records provenance
+        // without touching the file, and template revisions from that point
+        // propagate.
         let root = temp_root("comment_bootstrap");
         let skill_dir = root.join("source").join("skills").join("tuner");
         write_template(&skill_dir, TUNER_V1);

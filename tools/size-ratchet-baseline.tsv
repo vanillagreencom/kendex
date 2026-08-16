@@ -1,5 +1,5 @@
 cli/src/agent.rs	1074
-cli/src/commands/add.rs	3006
+cli/src/commands/add.rs	3013
 cli/src/commands/apply.rs	2778
 cli/src/commands/refresh.rs	1505
 cli/src/commands/refresh/tests.rs	1585
