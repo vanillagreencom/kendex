@@ -134,12 +134,14 @@ parsing stderr:
 
 Exit `75` is not a resting state. A merge-group failure ejects the queue entry
 and GitHub disarms auto-merge with it — the PR sits open, gate-clear, and
-merges nothing. The caller that armed it keeps a watcher running until the PR
-is `MERGED`: `.agents/skills/orch/scripts/queue-wait <N>` (returns
-`ejected`/`disarmed` with its cause) or the review-gate reducer
-`.agents/skills/review-gate/scripts/pr-watch.sh` (`disarmed … (re-arm)` lines),
-then re-arms with `pr-merge <N> --auto`. `await-mergeable` is not that
-watcher — it returns as soon as GitHub computes a merge state.
+merges nothing. The caller that armed it keeps watching until the PR is
+`MERGED`, re-running the watcher because neither call is durable:
+`.agents/skills/orch/scripts/queue-wait <N>` polls to a bounded budget and
+returns `ejected`/`disarmed` with its cause (or `queued` — run it again); the
+review-gate reducer `.agents/skills/review-gate/scripts/pr-watch.sh` is one
+pass that prints `disarmed … (re-arm)` lines. On a disarm, re-arm with
+`pr-merge <N> --auto`. `await-mergeable` is not that watcher — it returns as
+soon as GitHub computes a merge state.
 
 A PR that has left `OPEN` is terminal and short-circuits every mode before any
 check, auth, or mutation: `mergeable` is permanently `UNKNOWN` after a merge,

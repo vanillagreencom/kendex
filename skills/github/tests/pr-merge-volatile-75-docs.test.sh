@@ -54,6 +54,10 @@ assert_count "$table" '^\| `75` \| MERGE PENDING \(volatile\)' 2 \
   "both 75 rows of the outcomes table are marked volatile"
 assert_matches "$table" 'keep watching until MERGED' \
   "the 75 rows say the caller keeps watching until MERGED"
+assert_matches "$table" 're-running the watcher because neither call is durable' \
+  "the outcomes section states the watcher must be re-run (no durable watcher)"
+assert_matches "$script_src" 're-running until MERGED' \
+  "the note says to re-run the watcher until MERGED"
 assert_matches "$table" 'queue-wait <N>' \
   "the outcomes section names queue-wait as the required follow-up"
 assert_matches "$table" 'await-mergeable` is not that' \

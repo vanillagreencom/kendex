@@ -372,7 +372,7 @@ gh_with_token() {
 volatile_note() {
     local pr_num="$1"
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; keep watching until MERGED" >&2
-    echo "  Watch with: .agents/skills/orch/scripts/queue-wait $pr_num (verdict ejected/disarmed) or .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines); re-arm with github.sh pr-merge $pr_num --auto" >&2
+    echo "  Watch, re-running until MERGED (neither call is durable — queue-wait exits at its poll budget, pr-watch.sh is one pass): .agents/skills/orch/scripts/queue-wait $pr_num (verdict ejected/disarmed) or .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines); re-arm with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
 }
 
 # Read one authoritative post-mutation snapshot. `gh pr view --json` does not

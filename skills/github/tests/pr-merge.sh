@@ -458,7 +458,7 @@ assert_contains "$out" "QUEUED IN MERGE QUEUE PR #123" "merge-queue outcome is e
 assert_contains "$out" "queueState=QUEUED" "merge-queue state is preserved"
 assert_contains "$out" "VOLATILE" "queued exit 75 states the state is volatile"
 assert_contains "$out" ".agents/skills/orch/scripts/queue-wait 123" "queued exit 75 names the ejection watcher by runnable path"
-assert_contains "$out" "github.sh pr-merge 123 --auto" "queued exit 75 names the re-arm"
+assert_contains "$out" ".agents/skills/github/scripts/github.sh pr-merge 123 --auto" "queued exit 75 names the re-arm by runnable path"
 
 set +e
 out=$(STUB_CHECKS="$checks" \
