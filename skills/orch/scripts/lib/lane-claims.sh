@@ -43,7 +43,7 @@ lane_claims_canon() {
 }
 
 # Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
-# pid>` lines. $1: claims directory. Exits 2 when the store cannot be read at
+# pid>\t<pane id>` lines. $1: claims directory. Exits 2 when the store cannot be read at
 # all: a caller deciding where to launch must fail closed on that, and only
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
@@ -94,7 +94,7 @@ lane_claims_read() {
     # Canonical on the way out, whatever spelling the record carries: the
     # count compares strings, and a hand-written or older record must still
     # land on the account discovery reports.
-    printf '%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server"
+    printf '%s\t%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server" "$pane"
   done
   return "$rc"
 }
@@ -104,14 +104,14 @@ lane_claims_count() {
   awk -F'\t' -v d="$(lane_claims_canon "$2")" '$1 == d { n++ } END { print n + 0 }' <<<"$1"
 }
 
-# Config dir claimed by a tmux window on one server, empty when no live claim
-# names it. Window names are unique to a server, not across servers, so the
-# server pid is required: without it a same-named window on another socket
-# would answer for this lane's account.
-# $1: `lane_claims_read` output, $2: window name, $3: server pid.
+# Config dir claimed for one pane, empty when no live claim names it. The key
+# is `<server pid> <pane id>` — the same key liveness uses — because a window
+# NAME is unique to a session, not to a server or across servers, so two lanes
+# can carry one name and the wrong account would answer for a pane.
+# $1: `lane_claims_read` output, $2: server pid, $3: pane id.
 lane_claims_config_dir() {
-  [[ -n "${3:-}" ]] || return 0
-  awk -F'\t' -v w="$2" -v s="$3" '$2 == w && $3 == s { print $1; exit }' <<<"$1"
+  [[ -n "${2:-}" && -n "${3:-}" ]] || return 0
+  awk -F'\t' -v s="$2" -v p="$3" '$3 == s && $4 == p { print $1; exit }' <<<"$1"
 }
 
 # Record one claim. $1: claims dir, $2: server pid, $3: pane id, $4: config

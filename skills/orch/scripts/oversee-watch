@@ -410,7 +410,7 @@ lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane cmd i cmds="" shell_now="" idle_now="" claims="" claimed this_server
+  local existing lane pane cmd i cmds="" shell_now="" idle_now="" claims="" claimed pane_key
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     if ! grep -qxF -- "$lane" <<<"$existing"; then
@@ -472,13 +472,14 @@ check_lanes() {
       # The detail is a nicety; a claim store this process cannot read must
       # not take down the event that carries the pane tail.
       claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
-      # Claims from every live tmux server are kept, and window names are not
-      # unique across servers: only a claim recorded on the server that owns
-      # the watched pane can name this lane's account.
-      this_server="$(tmux display-message -p -t "$lane" '#{pid}' 2>/dev/null || true)"
-      claimed="$(lane_claims_config_dir "$claims" "$lane" "$this_server")"
+      # Claims are kept for every live tmux server, and a window NAME is
+      # unique only within a session: the account is resolved on the pane
+      # actually captured here — `<server pid> <pane id>`, the same key the
+      # claim's liveness uses — so no other lane can answer for it.
+      pane_key="$(tmux display-message -p -t "$lane" '#{pid} #{pane_id}' 2>/dev/null || true)"
+      claimed="$(lane_claims_config_dir "$claims" "${pane_key%% *}" "${pane_key##* }")"
       if [[ -z "$claimed" && -n "$claims" ]]; then
-        echo "oversee-watch: no live lane claim for window '$lane' on this tmux server; the usage-limit event names no account" >&2
+        echo "oversee-watch: no live lane claim for the pane behind '$lane'; the usage-limit event names no account" >&2
       fi
       echo "EVENT usage-limit $lane${claimed:+ $claimed}"
       [[ -z "$pane" ]] || pane_tail "$pane"

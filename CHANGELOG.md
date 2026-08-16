@@ -4,7 +4,7 @@
 
 - orch: `oversee-watch` gains `usage-limit` (the harness is still running but
   its account's limit banner is up — one pass, ahead of `question`, naming the
-  config dir when a live lane claim maps the window to one) and
+  config dir when a live lane claim covers the pane it read) and
   `idle-after-return` (the lane sits at its input prompt with nothing in
   flight on two consecutive passes). Both kinds were previously invisible: a
   spent account read as a working lane, and a finished lane held its slot
@@ -17,7 +17,6 @@
   store that exists but cannot be read — consumers delegating lane selection
   see a misconfigured `OVERSEE_WATCH_STATE_DIR` as a launch failure instead
   of a fleet stacked on one account (VST-296).
-  whole fleet. `lanes list`/`--json` report the count (VST-296).
 - review-gate/size-ratchet: settings resolution fails closed on a source it
   cannot read. `-f` and `-e` both pass on an existing mode-000 file, so only
   the read itself sees it: `grep` failed, the resolver read that as "no

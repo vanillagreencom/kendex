@@ -157,6 +157,7 @@ EOF
 cat > "$TMP_ROOT/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
+prev=""
 case "${1:-}" in
   list-windows) cat "$STUB_DIR/windows.txt"; exit 0 ;;
   list-panes)
@@ -171,10 +172,13 @@ case "${1:-}" in
     [[ -f "$src" ]] || { echo "can't find window: $lane" >&2; exit 1; }
     cat "$src"; exit 0 ;;
   display-message)
-    # `-p '#{pid}'` with no target asks for the server pid.
+    # `-p -t <lane> '#{pid} #{pane_id}'` asks for the pane's liveness key.
     for a in "$@"; do
-      [[ "$a" == '#{pid}' ]] || continue
-      [[ -f "$STUB_DIR/server-pid.txt" ]] && cat "$STUB_DIR/server-pid.txt"
+      [[ "$a" == *'#{pane_id}'* ]] || continue
+      lane=""
+      for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
+      key="$STUB_DIR/pane-key-$lane.txt"
+      [[ -f "$key" ]] && cat "$key"
       exit 0
     done
     lane=""
@@ -597,12 +601,15 @@ assert_not_contains "$out" "EVENT usage-limit" "a healthy lane never fires usage
 # The account is the actionable part: a live claim maps the window to it
 new_case usage_limit_claim
 printf '900 %%3\n' > "$STUB_DIR/panes.txt"
-printf '900\n' > "$STUB_DIR/server-pid.txt"
+printf '900 %%3\n' > "$STUB_DIR/pane-key-gh-2.txt"
 mkdir -p "$STATE_DIR/claims"
-# A same-named window on ANOTHER live server must not answer for this lane —
-# read first by glob order, so name resolution alone would return it.
+# Read first by glob order, so anything matching on the window NAME alone
+# would answer with one of these instead of the pane actually captured: one
+# claim from another live server, one from THIS server on another pane —
+# window names repeat across sessions as well as across servers.
 printf '%s\t%%3\t/home/me/.otherclaude\tgh-2\t2026-08-16T00:00:00Z\n' "$$" > "$STATE_DIR/claims/a.claim"
-printf '900\t%%3\t/home/me/.eclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/b.claim"
+printf '900\t%%9\t/home/me/.thirdclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/b.claim"
+printf '900\t%%3\t/home/me/.eclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/c.claim"
 printf "You've hit your weekly limit\n" > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3i"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
@@ -610,11 +617,13 @@ assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 /home/me/.eclaude" \
   "the event names the config dir the lane was claimed on" "$err"
 assert_not_contains "$out" "otherclaude" \
   "a same-named window on another tmux server never answers for this lane" "$err"
+assert_not_contains "$out" "thirdclaude" \
+  "a same-named window on another pane of this server never answers either" "$err"
 
 # ... and a claim whose pane is gone is pruned rather than reported
 new_case usage_limit_claim_stale
 printf '900 %%9\n' > "$STUB_DIR/panes.txt"
-printf '900\n' > "$STUB_DIR/server-pid.txt"
+printf '900 %%3\n' > "$STUB_DIR/pane-key-gh-2.txt"
 mkdir -p "$STATE_DIR/claims"
 printf '900\t%%3\t/home/me/.eclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/a.claim"
 printf "You've hit your weekly limit\n" > "$STUB_DIR/pane-gh-2.txt"
