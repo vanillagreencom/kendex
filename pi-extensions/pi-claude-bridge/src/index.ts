@@ -1342,6 +1342,13 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 
 // --- Extension registration ---
 
+// The lane each session started in, keyed by its SessionManager. An in-memory
+// session (`pi --no-session`) forks by mutating the SAME SessionManager's id
+// before session_shutdown fires, so the live id there names the fork, not the
+// session being torn down. Keyed per manager (not one slot) so overlapping
+// parent/child session_start events keep their own entries.
+const startedLanes = new WeakMap<object, string>();
+
 export default function (pi: ExtensionAPI) {
 	setExtensionApi(pi);
 	// Disable non-essential Claude Code traffic (update checks, MCP registry, telemetry)
@@ -1376,16 +1383,8 @@ export default function (pi: ExtensionAPI) {
 		setSharedSession(null);
 	};
 
-	// The lane this session started in. An in-memory session (`pi --no-session`)
-	// forks by mutating the SAME SessionManager's id before session_shutdown
-	// fires, so the live id there names the fork, not the session being torn
-	// down; the manager identity tells the two apart.
-	let startedLane: { manager: unknown; sessionId: string } | undefined;
-	const shutdownLaneId = (ctx: { sessionManager: { getSessionId(): string } }): string =>
-		startedLane && startedLane.manager === ctx.sessionManager ? startedLane.sessionId : ctx.sessionManager.getSessionId();
-
 	pi.on("session_start", (event, ctx) => runInRequestLane(ctx.sessionManager.getSessionId(), () => {
-		startedLane = { manager: ctx.sessionManager, sessionId: ctx.sessionManager.getSessionId() };
+		startedLanes.set(ctx.sessionManager, ctx.sessionManager.getSessionId());
 		recordProjectTrust(ctx);
 		setPiUI(ctx.ui);
 		if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
@@ -1401,8 +1400,8 @@ export default function (pi: ExtensionAPI) {
 		applyProviderRegistration(`session_start:${event.reason}`);
 	}));
 	pi.on("session_shutdown", (_event, ctx) => {
-		const sessionId = shutdownLaneId(ctx);
-		startedLane = undefined;
+		const sessionId = startedLanes.get(ctx.sessionManager) ?? ctx.sessionManager.getSessionId();
+		startedLanes.delete(ctx.sessionManager);
 		runInRequestLane(sessionId, () => {
 			cancelScheduledSessionPersistence();
 			clearSession("session_shutdown");

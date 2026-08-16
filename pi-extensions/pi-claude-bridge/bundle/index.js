@@ -46931,6 +46931,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   }).finally(releaseEphemeralLane);
   return stream;
 }
+var startedLanes = /* @__PURE__ */ new WeakMap();
 function index_default(pi) {
   setExtensionApi(pi);
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
@@ -46951,10 +46952,8 @@ function index_default(pi) {
     debug(`${event}: clearing session ${activeSession?.sessionId?.slice(0, 8) ?? "none"}`);
     setSharedSession(null);
   };
-  let startedLane;
-  const shutdownLaneId = (ctx2) => startedLane && startedLane.manager === ctx2.sessionManager ? startedLane.sessionId : ctx2.sessionManager.getSessionId();
   pi.on("session_start", (event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => {
-    startedLane = { manager: ctx2.sessionManager, sessionId: ctx2.sessionManager.getSessionId() };
+    startedLanes.set(ctx2.sessionManager, ctx2.sessionManager.getSessionId());
     recordProjectTrust(ctx2);
     setPiUI(ctx2.ui);
     if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
@@ -46964,8 +46963,8 @@ function index_default(pi) {
     applyProviderRegistration(`session_start:${event.reason}`);
   }));
   pi.on("session_shutdown", (_event, ctx2) => {
-    const sessionId = shutdownLaneId(ctx2);
-    startedLane = void 0;
+    const sessionId = startedLanes.get(ctx2.sessionManager) ?? ctx2.sessionManager.getSessionId();
+    startedLanes.delete(ctx2.sessionManager);
     runInRequestLane(sessionId, () => {
       cancelScheduledSessionPersistence();
       clearSession("session_shutdown");

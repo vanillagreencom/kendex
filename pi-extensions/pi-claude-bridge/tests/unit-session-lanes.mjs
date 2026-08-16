@@ -411,27 +411,46 @@ describe("provider request session lanes", () => {
 			claudeBridge(pi);
 			// In-memory sessions (pi --no-session) fork by mutating the SAME
 			// SessionManager's id before session_shutdown fires.
-			let sessionId = "original";
-			const sessionManager = {
-				getSessionId: () => sessionId,
-				getEntries: () => [],
-				getCwd: () => process.cwd(),
-				buildSessionContext: () => ({ messages: [] }),
+			const makeSession = (initialId) => {
+				let sessionId = initialId;
+				const sessionManager = {
+					getSessionId: () => sessionId,
+					getEntries: () => [],
+					getCwd: () => process.cwd(),
+					buildSessionContext: () => ({ messages: [] }),
+				};
+				return {
+					ctxLike: { sessionManager, ui: { notify: () => {} }, cwd: process.cwd() },
+					fork: (nextId) => { sessionId = nextId; },
+				};
 			};
-			const ctxLike = { sessionManager, ui: { notify: () => {} }, cwd: process.cwd() };
-			handlers.get("session_start")({ reason: "startup" }, ctxLike);
-			runInRequestLane("original", () => {
-				ctx().activeQuery = { id: "original-query" };
-				__testSetBridgeIntegrityState({ sharedSession: { sessionId: "original-session", cursor: 1, cwd: "/original" } });
+			const seedLane = (sessionId) => runInRequestLane(sessionId, () => {
+				ctx().activeQuery = { id: `${sessionId}-query` };
+				__testSetBridgeIntegrityState({ sharedSession: { sessionId: `${sessionId}-session`, cursor: 1, cwd: `/${sessionId}` } });
 			});
-			assert.equal(__testQueryLaneCount(), 1);
-			assert.equal(__testSharedSessionLaneCount(), 1);
 
-			sessionId = "forked";
-			handlers.get("session_shutdown")({ reason: "fork" }, ctxLike);
-			assert.equal(__testQueryLaneCount(), 0, "the original session's query lane is pruned");
-			assert.equal(__testSharedSessionLaneCount(), 0, "the original session's record is pruned");
-			assert.equal(runInRequestLane("original", () => __testGetBridgeIntegrityState().sharedSession), null);
+			// Two sessions start through the same handlers, the child AFTER the
+			// parent: the parent's fork protection must survive the later start.
+			const parent = makeSession("original");
+			const child = makeSession("child");
+			handlers.get("session_start")({ reason: "startup" }, parent.ctxLike);
+			seedLane("original");
+			handlers.get("session_start")({ reason: "new" }, child.ctxLike);
+			seedLane("child");
+			assert.equal(__testQueryLaneCount(), 2);
+			assert.equal(__testSharedSessionLaneCount(), 2);
+
+			parent.fork("forked");
+			handlers.get("session_shutdown")({ reason: "fork" }, parent.ctxLike);
+			assert.equal(runInRequestLane("original", () => __testGetBridgeIntegrityState().sharedSession), null, "the original session's record is pruned");
+			assert.equal(__testQueryLaneCount(), 1, "only the child's query lane remains");
+			assert.equal(__testSharedSessionLaneCount(), 1, "only the child's record remains");
+			assert.equal(runInRequestLane("child", () => __testGetBridgeIntegrityState().sharedSession?.sessionId), "child-session", "a concurrent sibling is untouched");
+			assert.equal(runInRequestLane("child", () => ctx().activeQuery?.id), "child-query");
+
+			handlers.get("session_shutdown")({ reason: "quit" }, child.ctxLike);
+			assert.equal(__testQueryLaneCount(), 0);
+			assert.equal(__testSharedSessionLaneCount(), 0);
 		} finally {
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
