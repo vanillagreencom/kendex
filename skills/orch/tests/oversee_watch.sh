@@ -628,6 +628,21 @@ assert_not_contains "$out" "gh-1" "a working lane is not reported" "$err"
 assert_not_contains "$out" "EVENT idle-after-return" \
   "a selection prompt is a question, never an idle prompt" "$err"
 
+# A tmux window name carries any character, so two lanes can differ only
+# outside a filename-safe set. Their pane snapshots must stay separate or each
+# lane is classified on the other's screen.
+new_case pane_snapshot_per_lane
+printf 'a+b\na:b\n' > "$STUB_DIR/windows.txt"
+printf 'claude\n' > "$STUB_DIR/cmd-a+b.txt"
+printf 'claude\n' > "$STUB_DIR/cmd-a:b.txt"
+printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n' > "$STUB_DIR/pane-a+b.txt"
+printf '⏺ working on it\n' > "$STUB_DIR/pane-a:b.txt"
+err="$TMP_ROOT/e4a2"
+out="$(run_watch -- --max-loops 1 'a+b' 'a:b' 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "colliding lane names exit 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT question a+b" \
+  "lanes whose names flatten to one slug keep separate pane snapshots" "$err"
+
 # --- 4b. idle-after-return: the round is over and nobody is driving ---------
 new_case idle_after_return
 {

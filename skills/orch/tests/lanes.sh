@@ -343,6 +343,45 @@ assert_eq "$(jq -r '.[] | select(.alias=="eclaude") | .claims' <<<"$GONE")" "0" 
 assert_eq "$([[ -f "$CLAIM_STATE/claims/gone.claim" ]] && echo yes || echo no)" "no" \
   "the gone-server claim file is removed"
 
+# One spelling per account: a lane given with a trailing slash, or through a
+# symlink, is the same account the inventory discovered — an exact string
+# compare would count zero claims for it and stack a second session there.
+rm -f "$CLAIM_STATE"/claims/*.claim
+printf '%s %%7\n' "$LIVE_PID" > "$PANES"
+write_claim slashed "$LIVE_PID" "%7" "$H/.claude/" "vst-5"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$(run_lanes_claims list --harness claude --json)")" "1" \
+  "a claim written with a trailing slash counts against the discovered lane"
+rm -f "$CLAIM_STATE"/claims/*.claim
+ln -sfn "$H/.claude" "$TMP_ROOT/claude-link"
+write_claim linked "$LIVE_PID" "%7" "$TMP_ROOT/claude-link" "vst-6"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$(run_lanes_claims list --harness claude --json)")" "1" \
+  "a claim written through a symlink counts against the lane it points at"
+
+# An unreadable claim store is not an empty one. Root reads anything, so the
+# case cannot run there.
+rm -f "$CLAIM_STATE"/claims/*.claim
+write_claim keepme "$LIVE_PID" "%7" "$H/.claude" "vst-7"
+if [[ "$(id -u)" -eq 0 ]]; then
+  printf '  skip  unreadable claim store (running as root)\n'
+else
+  chmod 000 "$CLAIM_STATE/claims"
+  UNREADABLE_ERR="$(run_lanes_claims list --harness claude --json 2>&1 >/dev/null)"
+  chmod 755 "$CLAIM_STATE/claims"
+  assert_contains "$UNREADABLE_ERR" "is not readable" \
+    "an unreadable claim store says so rather than reporting every account free"
+  assert_eq "$([[ -f "$CLAIM_STATE/claims/keepme.claim" ]] && echo yes || echo no)" "yes" \
+    "an unreadable claim store is never emptied"
+
+  # An unreadable claim FILE is left in place too, and never leaves the
+  # previous record's fields standing in for it.
+  chmod 000 "$CLAIM_STATE/claims/keepme.claim"
+  FILE_ERR="$(run_lanes_claims list --harness claude --json 2>&1 >/dev/null)"
+  chmod 644 "$CLAIM_STATE/claims/keepme.claim"
+  assert_contains "$FILE_ERR" "cannot read claim" "an unreadable claim file is named on stderr"
+  assert_eq "$([[ -f "$CLAIM_STATE/claims/keepme.claim" ]] && echo yes || echo no)" "yes" \
+    "an unreadable claim file is left in place"
+fi
+
 # A malformed record is not a lane: it is dropped rather than counted forever.
 printf 'not-a-pid\t\tstuff\n' > "$CLAIM_STATE/claims/junk.claim"
 run_lanes_claims list --harness claude --json >/dev/null

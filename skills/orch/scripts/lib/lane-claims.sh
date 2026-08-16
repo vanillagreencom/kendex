@@ -30,17 +30,42 @@ lane_claims_dir() {
   fi
 }
 
+# One spelling per account: config dirs are compared as strings, so a lane
+# given as `~/.claude/`, through a symlink, or relative to somewhere else must
+# reduce to what discovery reports or its claims count against nothing. A path
+# that cannot be resolved keeps its own spelling, trailing slashes off.
+lane_claims_canon() {
+  local p="$1"
+  [[ -n "$p" ]] || return 0
+  ( cd -- "$p" 2>/dev/null && pwd -P ) && return 0
+  while [[ "$p" == */ && "$p" != "/" ]]; do p="${p%/}"; done
+  printf '%s\n' "$p"
+}
+
 # Prune dead claims, print the live ones as `<config dir>\t<window>` lines.
 # $1: claims directory.
 lane_claims_read() {
   local dir="$1" live this_server f server pane cfg window created
   [[ -d "$dir" ]] || return 0
+  # An unreadable store is not an empty one: reporting no claims here would
+  # report every busy account as free.
+  if [[ ! -r "$dir" || ! -x "$dir" ]]; then
+    echo "lane-claims: claims directory $dir is not readable; launches already in flight are invisible" >&2
+    return 0
+  fi
   live="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || live=""
   # The enumerated server's pid, empty when nothing could be enumerated.
   this_server="${live%%$'\n'*}"
   this_server="${this_server%% *}"
   for f in "$dir"/*.claim; do
     [[ -f "$f" ]] || continue
+    # Cleared every iteration: a failed read must never leave the previous
+    # record's fields standing in for this one.
+    server=""; pane=""; cfg=""; window=""; created=""
+    if [[ ! -r "$f" ]]; then
+      echo "lane-claims: cannot read claim $f; leaving it in place" >&2
+      continue
+    fi
     IFS=$'\t' read -r server pane cfg window created < "$f" || true
     if [[ -z "$pane" ]] || [[ ! "$server" =~ ^[0-9]+$ ]]; then
       rm -f -- "$f"
@@ -53,13 +78,16 @@ lane_claims_read() {
         continue
       fi
     fi
-    printf '%s\t%s\n' "$cfg" "$window"
+    # Canonical on the way out, whatever spelling the record carries: the
+    # count compares strings, and a hand-written or older record must still
+    # land on the account discovery reports.
+    printf '%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window"
   done
 }
 
 # Live claims against one config dir. $1: `lane_claims_read` output, $2: dir.
 lane_claims_count() {
-  awk -F'\t' -v d="$2" '$1 == d { n++ } END { print n + 0 }' <<<"$1"
+  awk -F'\t' -v d="$(lane_claims_canon "$2")" '$1 == d { n++ } END { print n + 0 }' <<<"$1"
 }
 
 # Config dir claimed by a tmux window, empty when no live claim names it.
@@ -73,6 +101,7 @@ lane_claims_config_dir() {
 lane_claim_write() {
   local dir="$1" server="$2" pane="$3" cfg="$4" window="$5" tmp
   [[ -n "$server" && -n "$pane" && -n "$cfg" ]] || return 0
+  cfg="$(lane_claims_canon "$cfg")"
   mkdir -p -- "$dir" || return 1
   tmp="$(mktemp -- "$dir/claim.XXXXXX")" || return 1
   # Named .claim only once complete: a reader must never see a half-written

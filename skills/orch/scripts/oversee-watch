@@ -395,19 +395,22 @@ is_bare_shell() {
   return 1
 }
 
-# Lanes whose pane held a bare shell on the previous pass.
+# Watch-list positions whose pane held a bare shell on the previous pass.
 LANE_SHELL_SEEN=""
-# Lanes whose pane sat at an idle harness prompt on the previous pass.
+# Watch-list positions that sat at an idle harness prompt on the previous pass.
 LANE_IDLE_SEEN=""
 
 # The pass's snapshot of one lane: its pane's current command, and the file
-# holding its pane capture. Every check reads the same observation.
-lane_cmd() { awk -F'\t' -v l="$2" '$1 == l { print $2 }' <<<"$1"; }
-lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$(pw_slug "$1")"; }
+# holding its pane capture. Every check reads the same observation, keyed on
+# the lane's position in the watch list — a tmux window name can carry any
+# character, and two names that differ only outside a filename-safe set would
+# otherwise share one snapshot and classify each other's screens.
+lane_cmd() { awk -F'\t' -v i="$2" '$1 == i { print $2 }' <<<"$1"; }
+lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane cmd cmds="" shell_now="" idle_now="" claims="" claimed
+  local existing lane pane cmd i cmds="" shell_now="" idle_now="" claims="" claimed
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     if ! grep -qxF -- "$lane" <<<"$existing"; then
@@ -418,18 +421,20 @@ check_lanes() {
   done
   # One command read and one pane capture per lane per pass: a lane's kind is
   # decided from a single observation, never from two screens taken apart.
+  i=0
   for lane in "${LANES[@]}"; do
+    i=$((i + 1))
     if ! cmd="$(tmux display-message -p -t "$lane" '#{pane_current_command}' 2>/dev/null)" || [[ -z "$cmd" ]]; then
       echo "EVENT window-gone $lane"
       pr_watch_context
       exit 0
     fi
-    if ! tmux capture-pane -t "$lane" -p >"$(lane_pane_file "$lane")" 2>/dev/null; then
+    if ! tmux capture-pane -t "$lane" -p >"$(lane_pane_file "$i")" 2>/dev/null; then
       echo "EVENT window-gone $lane"
       pr_watch_context
       exit 0
     fi
-    cmds+="$lane"$'\t'"$cmd"$'\n'
+    cmds+="$i"$'\t'"$cmd"$'\n'
   done
   # A lane window outlives its harness: open-terminal runs claude/codex inside
   # a shell, so a session that hit its limit, crashed, or quit leaves the
@@ -438,12 +443,14 @@ check_lanes() {
   # pane's current command IS that lane, finished; the pane tail carries why.
   # Two consecutive passes: a live harness can hold a shell in the foreground
   # for one poll, and relaunching a working lane costs more than one interval.
+  i=0
   for lane in "${LANES[@]}"; do
-    if is_bare_shell "$(lane_cmd "$cmds" "$lane")"; then
-      shell_now+="$lane"$'\n'
-      if grep -qxF -- "$lane" <<<"$LANE_SHELL_SEEN"; then
+    i=$((i + 1))
+    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then
+      shell_now+="$i"$'\n'
+      if grep -qxF -- "$i" <<<"$LANE_SHELL_SEEN"; then
         echo "EVENT lane-exited $lane"
-        pane="$(cat "$(lane_pane_file "$lane")")"
+        pane="$(cat "$(lane_pane_file "$i")")"
         [[ -z "$pane" ]] || pane_tail "$pane"
         pr_watch_context
         exit 0
@@ -456,9 +463,11 @@ check_lanes() {
   # claim is where it is recorded. Before `question` — a limit banner can sit
   # above a stale prompt, and the account is the news. One pass: a banner is
   # terminal for that account window, not a screen a poll can catch mid-draw.
+  i=0
   for lane in "${LANES[@]}"; do
-    if is_bare_shell "$(lane_cmd "$cmds" "$lane")"; then continue; fi
-    pane="$(cat "$(lane_pane_file "$lane")")"
+    i=$((i + 1))
+    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
+    pane="$(cat "$(lane_pane_file "$i")")"
     if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$pane"; then
       claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")")"
       claimed="$(lane_claims_config_dir "$claims" "$lane")"
@@ -468,8 +477,10 @@ check_lanes() {
       exit 0
     fi
   done
+  i=0
   for lane in "${LANES[@]}"; do
-    pane="$(cat "$(lane_pane_file "$lane")")"
+    i=$((i + 1))
+    pane="$(cat "$(lane_pane_file "$i")")"
     if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
       echo "EVENT question $lane"
       pane_tail "$pane"
@@ -480,13 +491,15 @@ check_lanes() {
   # The round is over and nobody is driving: the harness is up, at its input
   # prompt, with nothing in flight. Two consecutive passes, because the screen
   # between a finished tool call and the next one reads the same.
+  i=0
   for lane in "${LANES[@]}"; do
-    if is_bare_shell "$(lane_cmd "$cmds" "$lane")"; then continue; fi
-    pane="$(cat "$(lane_pane_file "$lane")")"
+    i=$((i + 1))
+    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
+    pane="$(cat "$(lane_pane_file "$i")")"
     if grep -Eq -- "$WORKING_RE" <<<"$pane"; then continue; fi
     if ! grep -Eq -- "$IDLE_PROMPT_RE" <<<"$pane"; then continue; fi
-    idle_now+="$lane"$'\n'
-    if grep -qxF -- "$lane" <<<"$LANE_IDLE_SEEN"; then
+    idle_now+="$i"$'\n'
+    if grep -qxF -- "$i" <<<"$LANE_IDLE_SEEN"; then
       echo "EVENT idle-after-return $lane"
       pane_tail "$pane"
       pr_watch_context
