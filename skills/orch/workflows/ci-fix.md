@@ -62,7 +62,7 @@ Stamp the round as separate tool calls immediately before delegating, and arm th
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
-`worktree-claim` exit 75 aborts the delegation: another session holds this worktree, and its stderr names the holder. Its printed token is the delegation's `Worktree Lease:` line.
+`worktree-claim` exit 75 aborts the delegation — another session holds this worktree, and its stderr names the holder; exit 1 is an unverifiable guard, which stops the workflow and is reported. Its printed token is the delegation's `Worktree Lease:` line.
 
 This agent pushes its fix directly and writes **no** dev-return artifact, so the round-mode check for this fresh token is *expected* to report `ok == false`. The fresh token is still what guarantees a leftover artifact from an earlier round — on disk under the previous token — can never be mis-accepted here. Accept this round on the agent's return message plus the pushed fix commit, and on a genuinely absent return follow the escalation ladder.
 
