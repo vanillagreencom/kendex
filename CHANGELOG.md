@@ -294,9 +294,13 @@
   --git-common-dir` resolves inside it — a `commondir` file redirects refs and
   objects at another repository while the work tree still answers as the cache,
   so a fetch advanced the victim's remote-tracking refs — and `origin` is this
-  source with no credential in it. A cache whose `core.worktree` pointed at a
-  user checkout used to have that checkout's tracked files overwritten
-  (VST-256). A
+  source with no credential in it. Its own `.git/config` must also hold nothing
+  but the settings `git clone` writes — checked as an allowlist, because the
+  keys naming a program git runs on a repository's behalf (`core.fsmonitor`,
+  `core.hooksPath`, a `filter.<driver>.smudge`) grow with git while the set a
+  clone writes does not, and `fetch`/`reset --hard` run them. A cache whose
+  `core.worktree` pointed at a user checkout used to have that checkout's
+  tracked files overwritten (VST-256). A
   remote source is a source whether or not its clone is present or usable:
   `add` fails, `refresh` reports the entry as not refreshed naming the real
   cause — the refusal, or a cache that is not on this machine — and exits

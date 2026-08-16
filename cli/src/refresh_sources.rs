@@ -1183,6 +1183,8 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
         ));
     }
 
+    reject_unowned_cache_config(remote)?;
+
     let output = hardened_cache_git_command(&remote.cache_dir)
         .args(["remote", "get-url", "origin"])
         .output()
@@ -1219,6 +1221,94 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
         return Err(refusal(remote, &format!("its origin is unusable ({err})")));
     }
     Ok(())
+}
+
+/// The settings `git clone` itself writes, and nothing else.
+///
+/// A subsection is `*`: `remote.origin.url` normalizes to `remote.*.url`. The
+/// list is deliberately short and platform-generous — the keys a clone writes
+/// on Linux, macOS and Windows — because it is an ALLOWLIST. Nothing on it can
+/// name a program or redirect where the repository lives.
+const CACHE_CLONE_CONFIG_KEYS: &[&str] = &[
+    "core.repositoryformatversion",
+    "core.filemode",
+    "core.bare",
+    "core.logallrefupdates",
+    "core.symlinks",
+    "core.ignorecase",
+    "core.precomposeunicode",
+    "core.autocrlf",
+    "core.eol",
+    "remote.*.url",
+    "remote.*.fetch",
+    "remote.*.tagopt",
+    "remote.*.mirror",
+    "remote.*.promisor",
+    "remote.*.partialclonefilter",
+    "branch.*.remote",
+    "branch.*.merge",
+    // The repository-format extensions a clone records. Deliberately named one
+    // by one: `extensions.worktreeconfig` enables a second config file this
+    // check never sees.
+    "extensions.objectformat",
+    "extensions.compatobjectformat",
+    "extensions.refstorage",
+    "extensions.partialclone",
+];
+
+/// Refuse a cache entry whose own config carries settings vstack's clone did
+/// not write.
+///
+/// The ownership checks above answer where the repository is; this one answers
+/// what it will DO. A repository's config names programs git runs on its own
+/// behalf — `core.fsmonitor`, `core.hooksPath`, a `filter.<driver>.smudge`
+/// — and `fetch` and `reset --hard` run them. An allowlist rather than a list
+/// of dangerous keys: the dangerous set grows with git, the set a clone writes
+/// does not.
+fn reject_unowned_cache_config(remote: &RemoteSource) -> Result<()> {
+    let output = hardened_cache_git_command(&remote.cache_dir)
+        .args(["config", "--local", "--list", "--name-only"])
+        .output()
+        .map_err(|err| refusal(remote, &format!("git could not be run to read it: {err}")))?;
+    if !output.status.success() {
+        return Err(refusal(
+            remote,
+            &format!(
+                "its configuration could not be read: {}",
+                git_output_summary(&output)
+            ),
+        ));
+    }
+    let listed = String::from_utf8_lossy(&output.stdout);
+    // An `include.path` is expanded by this listing, so a key pulled in from
+    // another file is judged here too.
+    for key in listed.lines().map(str::trim).filter(|key| !key.is_empty()) {
+        if !CACHE_CLONE_CONFIG_KEYS.contains(&normalized_config_key(key).as_str()) {
+            return Err(refusal(
+                remote,
+                &format!(
+                    "its configuration sets {}, which `git clone` does not write and which git may act on when fetching or resetting",
+                    escape_unprintable(key)
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A config key with its subsection replaced by `*` and its case normalized.
+/// Git lowercases the section and the final key but preserves subsection case,
+/// so only the two ends are compared.
+fn normalized_config_key(key: &str) -> String {
+    let section = key.split('.').next().unwrap_or(key).to_ascii_lowercase();
+    let name = key.rsplit('.').next().unwrap_or(key).to_ascii_lowercase();
+    match key.split('.').count() {
+        0 | 1 => key.to_ascii_lowercase(),
+        2 => format!("{section}.{name}"),
+        // A subsection may itself contain dots (`branch.v1.2.merge`); every
+        // part between the two ends is subsection.
+        _ => format!("{section}.*.{name}"),
+    }
 }
 
 /// Git's single-line stdout without the trailing newline — and only that, so a

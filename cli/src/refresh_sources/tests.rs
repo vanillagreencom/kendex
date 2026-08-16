@@ -616,6 +616,131 @@ fn update_cached_repo_refuses_a_cache_whose_common_git_dir_points_outside_it() {
     let _ = std::fs::remove_dir_all(fx.root);
 }
 
+/// A cache entry whose config names a program git runs on its own behalf. The
+/// entry is a real clone with a matching work tree, common dir and origin, so
+/// every ownership check above it passes.
+struct ExecutableCacheConfig {
+    root: PathBuf,
+    remote: RemoteSource,
+    marker: PathBuf,
+}
+
+fn cache_with_executable_config(label: &str, key: &str) -> ExecutableCacheConfig {
+    let root = tmpdir(label);
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+    let cache = root.join("cache").join("owner_repo");
+    clone_into(&origin, &cache);
+    // A commit the clone has not seen, so the fetch has work to do and the
+    // reset has a revision to move to.
+    std::fs::write(origin.join("README.md"), "newer\n").unwrap();
+    git(&origin, &["commit", "-q", "-am", "update"]);
+
+    let marker = root.join("executed.marker");
+    let program = root.join("planted.sh");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/usr/bin/env bash\ntouch {}\nexit 1\n",
+            marker.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    git(&cache, &["config", key, program.to_str().unwrap()]);
+
+    ExecutableCacheConfig {
+        remote: remote_at(&cache, &origin),
+        root,
+        marker,
+    }
+}
+
+/// Control for the fixture: an unhardened fetch+reset in this cache really does
+/// run the planted program. Without it the refusal below would pass against a
+/// fixture that never reproduced the execution.
+#[cfg(unix)]
+#[test]
+fn control_unhardened_reset_runs_a_cache_locals_fsmonitor() {
+    let fx = cache_with_executable_config("control-fsmonitor", "core.fsmonitor");
+
+    git(&fx.remote.cache_dir, &["fetch", "origin", "--quiet"]);
+    let _ = std::process::Command::new("git")
+        .args(["reset", "--hard", "origin/HEAD"])
+        .current_dir(&fx.remote.cache_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        fx.marker.exists(),
+        "the fixture must reproduce the execution for the refusal test to mean anything"
+    );
+    let _ = std::fs::remove_dir_all(fx.root);
+}
+
+/// The ownership checks answer where a cache entry IS; this one answers what it
+/// will DO. A repository's own config names programs git runs while fetching
+/// and resetting, so an entry that passes every location check could still
+/// execute one.
+#[cfg(unix)]
+#[test]
+fn update_cached_repo_refuses_a_cache_config_that_names_a_program() {
+    for key in ["core.fsmonitor", "core.hooksPath", "filter.planted.smudge"] {
+        let fx = cache_with_executable_config("refuse-executable-config", key);
+
+        let err = update_cached_repo(&fx.remote).unwrap_err().to_string();
+
+        assert!(err.contains("refusing cached source owner/repo"), "{err}");
+        assert!(
+            err.contains("which `git clone` does not write"),
+            "{key}: {err}"
+        );
+        // Git lowercases the section and key name in its own listing.
+        assert!(
+            err.to_ascii_lowercase().contains(&key.to_ascii_lowercase()),
+            "{key}: {err}"
+        );
+        assert!(err.contains("Remove its cache entry `owner_repo`"), "{err}");
+        assert!(
+            !fx.marker.exists(),
+            "{key}: the planted program ran despite the refusal"
+        );
+        let _ = std::fs::remove_dir_all(fx.root);
+    }
+}
+
+/// The gate is an allowlist, so it must still accept exactly what a clone
+/// writes — otherwise every cache entry is refused and the refusal proves
+/// nothing.
+#[test]
+fn a_plain_clone_passes_the_cache_configuration_check() {
+    let root = tmpdir("clone-config-ok");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+    let cache = root.join("cache").join("owner_repo");
+    clone_into(&origin, &cache);
+
+    reject_unowned_cache_config(&remote_at(&cache, &origin)).unwrap();
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn config_keys_normalize_their_subsection_away() {
+    assert_eq!(normalized_config_key("core.fileMode"), "core.filemode");
+    assert_eq!(normalized_config_key("remote.origin.url"), "remote.*.url");
+    assert_eq!(normalized_config_key("branch.v1.2.merge"), "branch.*.merge");
+    assert_eq!(
+        normalized_config_key("Filter.LFS.smudge"),
+        "filter.*.smudge"
+    );
+    assert_eq!(normalized_config_key("bare"), "bare");
+}
+
 #[test]
 fn update_cached_repo_brings_an_owned_cache_to_origin_head() {
     let root = tmpdir("owned-update");
@@ -693,8 +818,12 @@ fn update_refuses_a_cache_whose_origin_is_another_repository() {
 #[test]
 fn update_refuses_a_cache_whose_origin_carries_a_credential() {
     let root = tmpdir("origin-credential");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+    // A real clone, so its config is the one a clone writes — an `init`ed
+    // repository carries the identity settings the ownership check refuses.
     let cache = root.join("cache").join("owner_repo");
-    init_git_repo(&cache);
+    clone_into(&origin, &cache);
     // Identity-equal to the clean expected URL: userinfo normalizes away,
     // so the mismatch check alone would accept this and then fetch with
     // the token.
@@ -702,7 +831,7 @@ fn update_refuses_a_cache_whose_origin_carries_a_credential() {
         &cache,
         &[
             "remote",
-            "add",
+            "set-url",
             "origin",
             "https://cache-token@github.com/Owner/Repo.git",
         ],
