@@ -1303,10 +1303,11 @@ run "negative retry delay is a config error" "" 2
 
 # What a valid delay IS belongs to the predicate, which validates it before
 # any read — so the repo's committed value is driven through it rather than
-# re-derived here. A committed value the predicate refuses fails this case,
-# naming the key and the offending value (run() discards the predicate's own
-# stderr). The delay is only slept inside the retry loop after a failed
-# read, so no wall time rides on its size.
+# re-derived here. run() discards the predicate's stderr, so the diagnosis
+# has to come from the case NAME: it carries both the key and the offending
+# value, and a refused value prints them on the FAIL line. The delay is only
+# slept inside the retry loop after a failed read, so no wall time rides on
+# its size.
 reset
 CFG_API_DELAY="$ACTIVE_API_DELAY"
 run "committed REVIEW_GATE_API_RETRY_DELAY_SECONDS ('$ACTIVE_API_DELAY') is a value the predicate accepts" awaiting

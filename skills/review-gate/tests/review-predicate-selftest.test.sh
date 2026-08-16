@@ -13,10 +13,10 @@
 # independent (own cwd, own settings, own scratch dir), so they run
 # concurrently: each fixture block launches its replay as soon as it is
 # built, and the assertions read the recorded outputs after `wait`. Teardown
-# runs on EXIT, INT, TERM and HUP, and reports what it terminates; a signal
-# it does not trap (SIGKILL, SIGQUIT) leaves the replay tree and the scratch
-# dir behind, since each replay sits in its own process group rather than
-# the runner's.
+# runs on EXIT, INT, TERM, HUP and QUIT, and reports what it terminates;
+# SIGKILL, the one signal it cannot trap, leaves the replay tree and the
+# scratch dir behind, since each replay sits in its own process group rather
+# than the runner's.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,19 +52,25 @@ signal_groups() {
     kill "-$sig" "-$p" 2>/dev/null || kill "-$sig" "$p" 2>/dev/null || true
   done
 }
-# live_groups LEADERS — how many of those process GROUPS still hold a member.
-# The group is the object that was signalled, and it is the only object worth
-# polling: a leader exits the moment its TERM trap fires, so the job table
-# empties while the selftest and its gh-shim/jq children are still winding
-# down, and `rm -rf "$work"` must not race their last writes.
+# live_groups LEADERS — how many of those process GROUPS still hold a member
+# that can still run. The group is the object that was signalled, and it is
+# the only object worth polling: a leader exits the moment its TERM trap
+# fires, so the job table empties while the selftest and its gh-shim/jq
+# children are still winding down, and `rm -rf "$work"` must not race their
+# last writes. A zombie is NOT such a member — `kill -0 -PGID` succeeds on a
+# group whose leader has exited but not yet been reaped, and this shell is
+# sitting in a trap rather than reaping, so counting it would burn the whole
+# settle budget and escalate against a tree that is already gone.
 live_groups() {
-  local p n=0
-  for p in $1; do
-    if kill -0 "-$p" 2>/dev/null; then
-      n=$((n + 1))
-    fi
-  done
-  echo "$n"
+  local leaders="$1"
+  case "$leaders" in
+    '') echo 0; return 0 ;;
+  esac
+  ps -eo pgid=,state= | awk -v leaders="$leaders" '
+    BEGIN { n = split(leaders, a, /[ \t\n]+/); for (i = 1; i <= n; i++) if (a[i] != "") want[a[i]] = 1 }
+    $2 !~ /^Z/ && ($1 in want) { live[$1] = 1 }
+    END { c = 0; for (g in live) c++; print c }
+  '
 }
 settle() {
   local i=0
@@ -112,7 +118,7 @@ teardown() {
 }
 # EXIT keeps the run's own status; only the signal paths exit 130.
 trap teardown EXIT
-trap 'teardown; exit 130' INT TERM HUP
+trap 'teardown; exit 130' INT TERM HUP QUIT
 
 # replay LABEL DIR [VAR=value ...] — run the selftest in DIR with the given
 # environment, in the background; stdout+stderr land in $work/LABEL.out and

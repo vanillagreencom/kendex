@@ -33,6 +33,8 @@ export RG_TEARDOWN_TIMEOUT="$work/timeout"
 # Two replays, each a probe plus its descendant.
 RG_TEARDOWN_REPLAYS=2
 export RG_TEARDOWN_EXPECT=4
+export RG_TEARDOWN_ZOMBIE_PGID="$work/zombie.pgid"
+export RG_TEARDOWN_ZOMBIE_KEEPER="$work/zombie.keeper"
 : >"$RG_TEARDOWN_PIDS"
 JOBCONTROL_MARK="JOBCONTROL-LEFT-ENABLED"
 
@@ -90,6 +92,8 @@ probe="$work/bin/$marker-probe"
 descendant="$work/bin/$marker-descendant"
 waiter="$work/bin/$marker-wait"
 stubborn="$work/bin/$marker-stubborn-probe"
+zkeeper="$work/bin/$marker-zombie-keeper"
+zwait="$work/bin/$marker-zombie-wait"
 
 # The selftest stand-in. Its descendant stands for the gh-shim/jq layer:
 # a child of the selftest, two levels below the job the wrapper signals.
@@ -131,7 +135,36 @@ echo \$\$ >>"\$RG_TEARDOWN_PIDS"
 "$descendant" &
 while :; do sleep 1; done
 STUBBORN
-chmod +x "$probe" "$descendant" "$waiter" "$stubborn"
+# A process group whose only member is an unreaped zombie — the state a
+# replay leader passes through between its own TERM trap and this shell's
+# SIGCHLD, which is exactly the window teardown polls in. The keeper forks
+# the child into its own group and then stops itself, so it can never reap
+# it; `kill -0` on that group still reports it live.
+cat >"$zkeeper" <<'ZKEEPER'
+#!/usr/bin/env bash
+set -m
+( sleep 0.5; exit 0 ) &
+echo "$!" >"$RG_TEARDOWN_ZOMBIE_PGID"
+set +m
+echo "$$" >"$RG_TEARDOWN_ZOMBIE_KEEPER"
+kill -STOP $$
+ZKEEPER
+cat >"$zwait" <<'ZWAIT'
+#!/usr/bin/env bash
+# Block until the child is genuinely a zombie, so the probe below measures
+# the state it is named for rather than a race.
+i=0
+while [ "$i" -le 200 ]; do
+  z="$(cat "$RG_TEARDOWN_ZOMBIE_PGID" 2>/dev/null || true)"
+  if [ -n "$z" ] && [ "$(ps -o state= -p "$z" 2>/dev/null | tr -d ' \t')" = "Z" ]; then
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 0.05
+done
+: >"$RG_TEARDOWN_TIMEOUT"
+ZWAIT
+chmod +x "$probe" "$descendant" "$waiter" "$stubborn" "$zkeeper" "$zwait"
 
 # The exact wrapper lines each edit rewrites. A miss is not silent: awk
 # records how many times each fired and the counts are asserted per variant.
@@ -156,6 +189,7 @@ variant() {
       -v mode="$mode" -v edits="$edits" \
       -v l_self="$L_SELFTEST" -v l_abort="$L_ABORT" -v l_sweep="$L_SWEEP" \
       -v l_kill="$L_KILL" -v l_setplusm="$L_SETPLUSM" -v l_polls="$L_POLLS" \
+      -v zkeeper="$zkeeper" -v zwait="$zwait" \
       -v counts="$out.counts" '
     $0 == l_self { print "SELFTEST=\"" stub "\""; n_self++; next }
     $0 == l_abort {
@@ -164,6 +198,12 @@ variant() {
       # Job control must be off again the moment replay() returns; the
       # variant with `set +m` removed is what proves this can fail.
       print "case \"$-\" in *m*) echo \"" mark "\" ;; esac"
+      if (index(edits, " zombie ")) {
+        print "\"" zkeeper "\" &"
+        print "\"" zwait "\""
+        print "echo \"ZOMBIE-LIVE-COUNT=$(live_groups \"$(cat \"$RG_TEARDOWN_ZOMBIE_PGID\")\")\""
+        n_zombie++
+      }
       if (mode == "exit") { print "exit 9" }
       else { print "kill -" mode " $$"; print "exit 99" }
       n_abort++
@@ -176,7 +216,7 @@ variant() {
     { print }
     END {
       print (n_self + 0) " " (n_abort + 0) " " (n_leak + 0) \
-        " " (n_perpid + 0) " " (n_nojc + 0) " " (n_fast + 0) > counts
+        " " (n_perpid + 0) " " (n_nojc + 0) " " (n_fast + 0) " " (n_zombie + 0) > counts
     }
   ' "$WRAPPER" >"$out"
   chmod +x "$out"
@@ -228,13 +268,16 @@ started() {
 variant "$work/owning.test.sh"          exit  ""
 variant "$work/sigterm.test.sh"         TERM  ""
 variant "$work/sighup.test.sh"          HUP   ""
+variant "$work/sigquit.test.sh"         QUIT  ""
 variant "$work/leaking.test.sh"         exit  "leak"
 variant "$work/perpid.test.sh"          exit  "perpid fast"
 variant "$work/nojobcontrol.test.sh"    exit  "nojc"
 variant "$work/stubborn.test.sh"        exit  ""              "$stubborn"
-for spec in "owning 1 1 0 0 0 0" "sigterm 1 1 0 0 0 0" "sighup 1 1 0 0 0 0" \
-            "leaking 1 1 1 0 0 0" "perpid 1 1 0 1 0 1" "nojobcontrol 1 1 0 0 1 0" \
-            "stubborn 1 1 0 0 0 0"; do
+variant "$work/zombie.test.sh"          exit  "zombie"
+for spec in "owning 1 1 0 0 0 0 0" "sigterm 1 1 0 0 0 0 0" "sighup 1 1 0 0 0 0 0" \
+            "sigquit 1 1 0 0 0 0 0" \
+            "leaking 1 1 1 0 0 0 0" "perpid 1 1 0 1 0 1 0" "nojobcontrol 1 1 0 0 1 0 0" \
+            "stubborn 1 1 0 0 0 0 0" "zombie 1 1 0 0 0 0 1"; do
   name="${spec%% *}"
   want="${spec#* }"
   got="$(cat "$work/$name.test.sh.counts")"
@@ -268,7 +311,7 @@ if [ "$fail" -eq 0 ]; then
   # --- the signal arms: the same, reached through the trap ----------------
   # HUP is here because putting each replay in its own process group is what
   # takes them out of the runner's group: nothing but these traps cleans up.
-  for arm in "sigterm TERM" "sighup HUP"; do
+  for arm in "sigterm TERM" "sighup HUP" "sigquit QUIT"; do
     v="$work/${arm%% *}.test.sh"
     sig="${arm#* }"
     rc="$(run_variant "$v")"
@@ -304,6 +347,22 @@ if [ "$fail" -eq 0 ]; then
       || note "a wrapper with the post-launch 'set +m' removed did not trip the job-control probe — the probe cannot fail, so the check above is vacuous"
     survivors="$(alive_settled)"
     [ "$survivors" -eq 0 ] || reap
+  fi
+
+  # --- an unreaped leader is not a live group -----------------------------
+  # `kill -0 -PGID` succeeds on a group whose only member is a zombie, and a
+  # leader is exactly that between its TERM trap and this shell's SIGCHLD.
+  # Counting it would burn the settle budget and escalate against a tree
+  # that is already gone — on a loaded runner, every abort.
+  rm -f "$RG_TEARDOWN_ZOMBIE_PGID" "$RG_TEARDOWN_ZOMBIE_KEEPER"
+  rc="$(run_variant "$work/zombie.test.sh")"
+  if started "$work/zombie.test.sh" "$rc" 9; then
+    grep -q "ZOMBIE-LIVE-COUNT=0" "$work/zombie.test.sh.out" \
+      || note "live_groups counted a zombie-only process group as live: $(grep -o 'ZOMBIE-LIVE-COUNT=[0-9]*' "$work/zombie.test.sh.out" | head -1)"
+  fi
+  if [ -s "$RG_TEARDOWN_ZOMBIE_KEEPER" ]; then
+    kill -CONT "$(cat "$RG_TEARDOWN_ZOMBIE_KEEPER")" 2>/dev/null || true
+    kill -KILL "$(cat "$RG_TEARDOWN_ZOMBIE_KEEPER")" 2>/dev/null || true
   fi
 
   # --- the KILL escalation, on a tree that ignores TERM -------------------

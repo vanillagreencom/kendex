@@ -24,8 +24,10 @@ PATTERN="$PATTERN"'|(dirname|basename) +--( |$)'
 # `${@+"$@"}` — or just write `"$@"`.
 PATTERN="$PATTERN"'|\$\{@\}'
 
-# This file is skipped: it carries every pattern above as data.
-violations="$(grep -rnE --exclude="$SELF" "$PATTERN" "$SCRIPTS_DIR" "$TEST_DIR" || true)"
+# Shell files only — a fixture or data file under either directory is not
+# code this lint speaks for, and a false positive here reds a required
+# shard. This file is skipped too: it carries every pattern above as data.
+violations="$(grep -rnE --include='*.sh' --exclude="$SELF" "$PATTERN" "$SCRIPTS_DIR" "$TEST_DIR" || true)"
 if [[ -n "$violations" ]]; then
   echo "Bash 4+ constructs found in review-gate scripts/tests (must run under Bash 3.2):" >&2
   printf '%s\n' "$violations" >&2
