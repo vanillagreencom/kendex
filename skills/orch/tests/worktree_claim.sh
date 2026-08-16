@@ -89,8 +89,8 @@ no_jq_path="$TMP_ROOT/no-jq"
 mkdir -p "$no_jq_path"
 ln -s "$(command -v dirname)" "$no_jq_path/dirname"
 no_jq_rc=0
-PATH="$no_jq_path" "$(command -v bash)" "$CLAIM" --worktree "$wt_a" --issue VST-1 \
-  >"$run_out" 2>"$run_err" || no_jq_rc=$?
+env "WORKTREE_SESSION_GUARD=$GUARD" "PATH=$no_jq_path" "$(command -v bash)" "$CLAIM" \
+  --worktree "$wt_a" --issue VST-1 >"$run_out" 2>"$run_err" || no_jq_rc=$?
 assert_eq "$no_jq_rc" "1" "a missing jq fails closed with exit 1, not 127"
 assert_eq "$(grep -c 'jq is required' "$run_err")" "1" "the missing-jq refusal names jq"
 
@@ -282,6 +282,23 @@ tok_d3="$(cat "$run_out")"
 assert_eq "$(lease_gen "$wt_d" VST-4)" "$tok_d3" "the repossession minted the lease it reports"
 assert_eq "$(jq -r '.worktree_gen' "$state_file")" "$tok_d3" \
   "the repossession records the new token in workflow state"
+
+echo
+echo "=== --help prints the whole contract ==="
+
+help_out="$("$CLAIM" --help)"
+for phrase in "possession gate for an issue worktree" "--expect-gen TOKEN" "Exit codes:" "75   refused"; do
+  if grep -Fq -- "$phrase" <<<"$help_out"; then
+    pass "--help carries: $phrase"
+  else
+    fail "--help dropped: $phrase"
+  fi
+done
+if grep -q '^#' <<<"$help_out"; then
+  fail "--help leaked a raw comment marker"
+else
+  pass "--help strips the comment markers"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

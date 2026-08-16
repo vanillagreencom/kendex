@@ -15,10 +15,13 @@
 # no per-session identity is available to tell them apart — a harness tool call
 # is its own session leader and exits with the call, so the pid the guard
 # records is never a live holder, and `refresh` rewrites it to whichever
-# process refreshed. The guarantee here is that they cannot both proceed
-# unaware: the second claim mints a new generation, and the displaced session's
-# next stamp exits 75. Refusing a second implementer outright is
-# `worktree create <ID>`, which surveys worktrees, refs and open PRs.
+# process refreshed. A second orchestrator that reads the same stored token
+# therefore continues the round beside the first and neither is refused.
+# What is caught is a writer that takes the tree WITHOUT that token — a fresh
+# claim, a reused worktree, a different issue — since it mints a new generation
+# and the displaced session's next stamp exits 75. Refusing a second
+# implementer outright is `worktree create <ID>`, which surveys worktrees,
+# local and remote refs, and open PRs.
 #
 # Usage:
 #   worktree-claim --worktree PATH --issue ID [--state-dir DIR]
@@ -57,8 +60,10 @@ GUARD_UNMANAGED=4
 
 GEN_GRAMMAR='^[0-9]+-[0-9a-f]+$'
 
+# The leading comment block is the contract, printed by shape rather than by
+# line number so --help cannot drift as that block grows.
 usage() {
-	sed -n '2,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
 }
 
 fail() {
