@@ -47,6 +47,21 @@ PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
 CURRENT_MODEL_IS_SESSION_SCOPED=false
 [[ -z "${SECOND_OPINION_CURRENT_MODEL:-}" ]] || CURRENT_MODEL_IS_SESSION_SCOPED=true
 
+# Present in the caller's environment AT ALL — set-but-EMPTY included. A
+# different question from the one above, and both are needed:
+#   IS_SESSION_SCOPED  is there a non-empty DECLARATION, and is it this
+#                      session's? An empty value declares nothing.
+#   IN_CALLER_ENV      did the caller put this variable in the environment? An
+#                      exported empty value is not a declaration but IS an
+#                      instruction — vstack_load_project_env re-asserts it over
+#                      every project file, which is exactly how an operator
+#                      suppresses a committed declaration for one session.
+# Only the second may decide what a lane child inherits: dropping an empty
+# override would let the child re-read the very project value the parent
+# suppressed.
+CURRENT_MODEL_IN_CALLER_ENV=false
+[[ -z "${SECOND_OPINION_CURRENT_MODEL+x}" ]] || CURRENT_MODEL_IN_CALLER_ENV=true
+
 # Source project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —
 # vstack_load_project_env snapshots and re-asserts it.
@@ -356,28 +371,32 @@ clear_output_family() {
   fi
 }
 
-# Clear exactly what THIS MODE can write, and nothing more.
+# THE DELETION RULE, for every path this script removes in caller space:
 #
-# The line is DESIGNATED vs INFERRED, not verdict vs free text. --output is a
-# path the caller handed this run to write: whatever sits there is the run's own
-# output slot, so clearing it is the caller's instruction, and leaving it means a
-# caller who continues past the advisory non-zero exit reads the PREVIOUS run's
-# answer as this one's. Every mode that reaches the output tail writes there —
-# challenge and quick included — so every one of them clears it. A SIBLING
-# (<output>.<name>.json) is a path nobody designated and this run inferred; that
-# is where authorship has to be proven, and it is proven by content.
+#   a path is deleted UNCONDITIONALLY only when THIS run will write it.
+#   anything else must first prove WE wrote it — the review schema plus this
+#   skill's own `external-…` agent marker (is_own_review_artifact).
 #
-#   review                  the artifact, its sidecars, and the lane families
-#   audit|challenge|quick   the artifact and its sidecars. None of the three
-#                           fans out, so none can produce an
-#                           <output>.<target>.json and none may remove one
-#   detect, or no mode      nothing: neither reaches the output tail, so neither
-#                           has an output slot to clear
+# Exactly two places satisfy the first half, and nothing else in this file
+# deletes a path the caller could own:
+#
+#   1. <output> and its managed sidecars — here, for every mode that reaches the
+#      output tail (review, audit, challenge, quick). That path is the slot the
+#      caller designated for THIS run's output, so leaving it means a caller who
+#      continues past the advisory non-zero exit reads the previous run's result
+#      as this one's. detect and a mode-less run never write, so they clear
+#      nothing.
+#   2. <output>.<lane>.json — in the multi-lane spawn loop, per lane, once that
+#      lane is selected and about to be written (see the umask note there).
+#
+# Everything else under the prefix, roster-named or not, goes through the
+# marker-verified sweep below. The roster is NOT a licence: at the default
+# SECOND_OPINION_COUNT=1 a run writes no lane file at all, so deleting
+# <output>.codex.json because "codex is in the roster" removes a path this run
+# was never going to write — the mistake this rule exists to prevent.
 CLEAR_ARTIFACT=false
-CLEAR_LANES=false
 case "$MODE" in
-  review)                CLEAR_ARTIFACT=true; CLEAR_LANES=true ;;
-  audit|challenge|quick) CLEAR_ARTIFACT=true ;;
+  review|audit|challenge|quick) CLEAR_ARTIFACT=true ;;
 esac
 
 # Validation, not deletion, so it covers every mode that could write there: a
@@ -398,45 +417,27 @@ if [[ -n "$OUTPUT_PATH" ]] && $CLEAR_ARTIFACT; then
     exit 1
   fi
   clear_output_family "$OUTPUT_PATH"
-  if $CLEAR_LANES; then
-    # The per-lane family too: <output>.<target>.json is a complete, schema-valid
-    # review carrying its own verdict, so one left by an earlier multi-lane run is
-    # the same stale pass. The multi-lane loop below only clears the lanes THIS
-    # run selects, which is nothing at all when the run refuses or resolves to a
-    # single lane.
-    #
-    # The names this run may itself write — the roster and a forced target — are
-    # cleared unconditionally. Those paths are derived from the caller's own
-    # --output and this run is about to write them, so a survivor there would be
-    # both a stale pass and an inode the run writes through.
-    while IFS= read -r clear_name; do
-      [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
-      clear_output_family "$OUTPUT_PATH.$clear_name.json"
-    done < <(printf '%s\n' "$FORCED_TARGET"; roster_entries)
-    # A target since RENAMED or REMOVED leaves a lane artifact no later run's
-    # roster names, so the prefix is also swept for siblings outside that set.
-    # These are NOT paths this run would write, so a filename cannot authorize
-    # deleting one: `report.json.notes.json` is both a legal-looking lane name and
-    # an ordinary user file, and destroying something the skill never wrote is
-    # worse than the stale-lane gap the sweep exists to close. A sibling is
-    # removed only when its CONTENT is a review this skill emitted — the shape its
-    # own gates require of every artifact it writes.
-    #
-    # "$OUTPUT_PATH". is quoted, so glob metacharacters IN THE CALLER'S PATH
-    # (report[1].json) match literally; only the trailing * is a pattern. The name
-    # test is a cheap pre-filter that keeps jq off every sibling — it carries no
-    # safety role and no test covers it alone, because the content check is the
-    # only thing authorizing a deletion. Removing it changes no outcome.
-    for clear_candidate in "$OUTPUT_PATH".*; do
-      [[ -f "$clear_candidate" ]] || continue        # nothing matched, or not a file
-      clear_name="${clear_candidate#"$OUTPUT_PATH".}"
-      [[ "$clear_name" == *.json ]] || continue
-      clear_name="${clear_name%.json}"
-      [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
-      is_own_review_artifact "$clear_candidate" || continue
-      clear_output_family "$clear_candidate"
-    done
-  fi
+  # Every OTHER path under the prefix — a lane this run will not write, a lane
+  # whose target was renamed out of the roster, anything a caller put there.
+  # None is a path this run writes, so none may be deleted on the strength of
+  # its name: `report.json.codex.json` is a roster-shaped name AND an ordinary
+  # user file, and destroying something the skill never wrote is worse than the
+  # stale-lane gap the sweep exists to close. Each must prove WE wrote it.
+  #
+  # "$OUTPUT_PATH". is quoted, so glob metacharacters IN THE CALLER'S PATH
+  # (report[1].json) match literally; only the trailing * is a pattern. The name
+  # test is a cheap pre-filter that keeps jq off every sibling — it carries no
+  # safety role and no test covers it alone, because the content check is the
+  # only thing authorizing a deletion. Removing it changes no outcome.
+  for clear_candidate in "$OUTPUT_PATH".*; do
+    [[ -f "$clear_candidate" ]] || continue        # nothing matched, or not a file
+    clear_name="${clear_candidate#"$OUTPUT_PATH".}"
+    [[ "$clear_name" == *.json ]] || continue
+    clear_name="${clear_name%.json}"
+    [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+    is_own_review_artifact "$clear_candidate" || continue
+    clear_output_family "$clear_candidate"
+  done
 fi
 
 [[ -z "$PARSE_ERROR" ]] || { echo "Error: $PARSE_ERROR" >&2; exit 1; }
@@ -1496,16 +1497,24 @@ if $MULTI_LANE; then
     # unattributed; the loss is reported in the same shape as the other capture
     # losses instead.
     (
-      # PROVENANCE, not the string, is what a lane must inherit. The settings
-      # loader EXPORTS a project-file SECOND_OPINION_CURRENT_MODEL, so a child
-      # would find it already in its environment and read it as caller-supplied
-      # — promoting a value this run resolved as detected (or as agreeing with
-      # detection, which detection wins) into a DECLARED one, which carries the
-      # roster-spelling guard and refuses the very lanes the parent just
-      # selected. Dropping it unless the CALLER really set it makes the child
-      # re-derive exactly as the parent did: same process tree, same project
-      # files, same answer.
-      if [[ "$CURRENT_MODEL_SOURCE" != "session" ]]; then
+      # The child must start from the CALLER'S environment, exactly as the
+      # parent did — nothing more, nothing less.
+      #
+      # More: the settings loader EXPORTS a project-file value, so a child would
+      # otherwise find it already in its environment and read it as
+      # caller-supplied, promoting a value the parent resolved as detected (or
+      # as agreeing with detection) into a DECLARED one, which carries the
+      # roster-spelling guard and refuses the very lanes the parent selected.
+      #
+      # Less: an exported EMPTY value is how an operator suppresses a committed
+      # declaration for one session. It is not a declaration, so it is not
+      # "session-scoped" in the identity sense — but dropping it would let the
+      # child load the project file the parent had overridden and refuse on it.
+      #
+      # So the test is presence in the caller's environment, not the shape of
+      # the resolved identity: keep whatever the caller set, drop whatever only
+      # the loader put there, and the child re-derives as the parent did.
+      if ! $CURRENT_MODEL_IN_CALLER_ENV; then
         unset SECOND_OPINION_CURRENT_MODEL
       fi
       exec 4>&2 2>/dev/null

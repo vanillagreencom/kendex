@@ -738,10 +738,9 @@ assert_eq "$(find "$s10g_base/-dashtmp" -type f 2>/dev/null | wc -l | tr -d ' ')
 for s10h_mode in quick challenge; do
   s10h_out="$TMP_ROOT/out/review10h-$s10h_mode.txt"
   printf 'PREVIOUS ANSWER\n' > "$s10h_out"
-  # ...but neither fans out, so neither may touch a lane family, exactly as
-  # audit may not. Seeded under a name the roster DOES carry, so only the mode
-  # scoping can be what spares it.
-  printf '%s\n' "$S10_STALE" > "$s10h_out.claude.json"
+  # A sibling under a name the roster DOES carry, holding the caller's own
+  # data: the roster is not a licence to delete, in any mode.
+  printf 'MY DATA\n' > "$s10h_out.claude.json"
   printf '0' > "$COUNTER"
   set +e
   PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
@@ -752,7 +751,8 @@ for s10h_mode in quick challenge; do
   set -e
   assert_eq "$rc10h" "1" "($s10h_mode) a failing run still exits 1"
   assert_file_absent "$s10h_out" "($s10h_mode) a failing run leaves no stale answer at --output"
-  assert_file_exists "$s10h_out.claude.json" "($s10h_mode) leaves a lane family it can never produce"
+  assert_file_exists "$s10h_out.claude.json" "($s10h_mode) a roster-named sibling holding the caller's data survives"
+  assert_eq "$(cat -- "$s10h_out.claude.json")" "MY DATA" "($s10h_mode) that sibling is byte-identical"
   rm -f -- "$s10h_out.claude.json"
 done
 # ...and a refusal, which never reaches the CLI at all, clears it too
@@ -792,11 +792,13 @@ PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CM
 set -e
 assert_eq "$(cat "$s10h_out")" "PREVIOUS ANSWER" "detect writes nothing, so it clears nothing"
 
-# audit writes the artifact and its sidecars but never fans out, so it must
-# clear the one and leave the other alone.
+# audit clears its own output slot. A sibling is judged by the one rule that
+# governs every deletion here — is it ours? — not by which mode is running: the
+# caller's file survives, an artifact carrying our marker is reclaimed.
 s10i_out="$TMP_ROOT/out/review10i.json"
 printf '%s\n' "$S10_STALE" > "$s10i_out"
-printf '%s\n' "$S10_STALE" > "$s10i_out.claude.json"
+printf 'MY DATA\n'         > "$s10i_out.claude.json"
+printf '%s\n' "$S10_STALE" > "$s10i_out.ours.json"
 printf '0' > "$COUNTER"
 set +e
 PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
@@ -807,7 +809,9 @@ rc10i=$?
 set -e
 assert_eq "$rc10i" "5" "audit keeps the no-verdict exit class"
 assert_file_absent "$s10i_out" "audit clears the artifact it does write"
-assert_file_exists "$s10i_out.claude.json" "audit leaves a lane family it can never produce"
+assert_file_exists "$s10i_out.claude.json" "audit leaves a roster-named sibling holding the caller's data"
+assert_eq "$(cat -- "$s10i_out.claude.json")" "MY DATA" "that sibling is byte-identical"
+assert_file_absent "$s10i_out.ours.json" "audit still reclaims a sibling carrying our own marker"
 
 # (b7) the marker is OURS to assert, not the provider's to supply. A response
 # with a missing or foreign `agent` passes the schema gate untouched, so without
@@ -835,6 +839,41 @@ for s10j_agent in 'null' '"someone-elses-reviewer"'; do
   assert_file_absent "$s10j_lane.retired-model.json" \
     "(agent=$s10j_agent) the stamped artifact is reclaimed when its target leaves the roster"
 done
+
+# (b9) the roster is not a licence. At the default COUNT=1 a run writes ONLY
+# <output> and no lane file at all, so a roster-named sibling is a path this run
+# will never write and must pass the same ownership check as any other.
+s10l_out="$TMP_ROOT/out/review10l.json"
+rm -f -- "$s10l_out" "$s10l_out".*
+printf 'MY DATA\n'         > "$s10l_out.codex.json"     # roster-named, caller's
+printf '%s\n' "$S10_STALE" > "$s10l_out.claude.json"    # roster-named, ours
+rc10l=0
+STUB_RC=1 STUB_STDERR="$QUOTA_ERR" run_review "$s10l_out" "$TMP_ROOT/s10l.stderr" || rc10l=$?
+assert_eq "$rc10l" "5" "(b9) the single-lane run still exits 5"
+assert_file_exists "$s10l_out.codex.json" "(b9) COUNT=1 leaves a roster-named sibling holding user data"
+assert_eq "$(cat -- "$s10l_out.codex.json")" "MY DATA" "(b9) that sibling is byte-identical"
+assert_file_absent "$s10l_out.claude.json" "(b9) the same name IS reclaimed when it carries our marker"
+
+# ...and a genuine multi-lane run still clears the lane paths it is about to
+# write, unconditionally, because those it really does write.
+s10m_out="$TMP_ROOT/out/review10m.json"
+rm -f -- "$s10m_out" "$s10m_out".*
+printf 'STALE NOT OURS\n' > "$s10m_out.lane-a.json"
+printf '0' > "$COUNTER"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" \
+  SECOND_OPINION_MODELS="lane-a lane-b" SECOND_OPINION_COUNT=2 \
+  SECOND_OPINION_LANE_A_CMD="$STUB" SECOND_OPINION_LANE_B_CMD="$STUB" \
+  STUB_COUNTER="$COUNTER" STUB_RC=0 STUB_STDOUT="$S10_STALE" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s10m_out" \
+    >/dev/null 2>"$TMP_ROOT/s10m.stderr"
+rc10m=$?
+set -e
+assert_eq "$rc10m" "0" "(b9) the multi-lane run succeeds"
+assert_file_exists "$s10m_out" "(b9) the union artifact is written"
+assert_file_exists "$s10m_out.lane-a.json" "(b9) the lane it writes is present afterwards"
+assert_eq "$(jq -r '.agent' "$s10m_out.lane-a.json")" "external-lane-a" \
+  "(b9) that lane file is this run's own, not the stale one it replaced"
 
 # (c) control: a successful run over a stale artifact replaces it
 s10c_out="$TMP_ROOT/out/review10c.json"

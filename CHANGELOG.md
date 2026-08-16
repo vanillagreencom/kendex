@@ -168,12 +168,14 @@
   before any CLI runs, so no exit past the argument loop leaves a previous run's
   output standing — external review is advisory, and callers are told to
   continue past its non-zero exits. `--help` and `detect` never reach the write
-  and clear nothing. `review` additionally clears the `<output>.<target>.json`
-  lane artifacts only it can produce: the roster's own names unconditionally,
-  and one left by a target since renamed or removed from
-  `SECOND_OPINION_MODELS` only when the file's CONTENT proves this skill wrote
-  it — the review schema AND an `external-…` agent marker, which only this
-  skill's own pipeline produces. A sibling sharing the name shape
+  and clear nothing. One rule governs every deletion: a path is removed
+  unconditionally only when THIS run will write it — `--output` itself, and the
+  `<output>.<lane>.json` files a multi-lane run is about to write. Every other
+  sibling must first prove the skill wrote it (the review schema AND an
+  `external-…` agent marker, which only this skill's pipeline produces),
+  ROSTER-NAMED ONES INCLUDED: at the default `SECOND_OPINION_COUNT=1` a run
+  writes no lane file, so `<output>.codex.json` holding your own data survives
+  while the same name carrying the marker is reclaimed. A sibling sharing the name shape
   (`<output>.notes.json`), or sharing the review schema under another agent (an
   internal `reviewer-*` artifact — that schema is a shared contract, not a
   signature), is never removed, and nothing outside `--output`'s own name space

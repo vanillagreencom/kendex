@@ -1189,6 +1189,40 @@ else
   echo "  skip  scenario 33e: ps hides script ancestors on this platform"
 fi
 
+echo "=== scenario 33f: an exported EMPTY value suppresses the project file in the lanes too ==="
+# The caller's environment outranks project files, set-but-empty included — that
+# is how an operator suppresses a committed declaration for one session. The
+# parent honours it (the loader re-asserts the empty override), so the lanes
+# must inherit the suppression verbatim: a child that dropped it would re-load
+# the very project value the parent overrode, and could refuse on it.
+if $ANCESTOR_VISIBLE; then
+  reset_counts
+  rm -f "$TMP_ROOT/out33g.json" "$s33_proj/.env" "$s33_proj/.env.local"
+  # The project value must be one that would REFUSE if it reached a child —
+  # `claude` under a detected codex harness contradicts detection. An agreeing
+  # value proves nothing here: the child would accept it either way.
+  write_s33_settings claude
+  rc33u=0
+  set +e
+  env SECOND_OPINION_CURRENT_MODEL= \
+    SECOND_OPINION_MODELS="claude my-model" SECOND_OPINION_COUNT=2 \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+    SECOND_OPINION_MY_MODEL_CMD="$TMP_ROOT/bin/lane-extra" \
+    SECOND_OPINION_MY_MODEL_MODEL=deepseek \
+    "$TMP_ROOT/fake/codex" "$S33" review --range HEAD --cwd "$WORK" \
+    --output "$TMP_ROOT/out33g.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
+  rc33u=$?
+  set -e
+  assert_eq "$rc33u" "0" "an exported empty value keeps the fan-out running"
+  assert_eq "$(count lane-claude)" "1" "the claude lane runs under the suppression"
+  assert_eq "$(count lane-extra)" "1" "the deepseek lane runs under the suppression"
+  assert_jq "$TMP_ROOT/out33g.json" '.agent' "external-union(claude+my-model)" "a union artifact is produced"
+  grep -q "comes from project settings\|is declared in project settings" "$TMP_ROOT/last.stderr" \
+    && fail "a lane child re-read the project value the caller had suppressed"
+else
+  echo "  skip  scenario 33f: ps hides script ancestors on this platform"
+fi
+
 echo "=== scenario 33c: only the [env] table of a settings file declares the key ==="
 # vstack_load_settings_file reads no other table and skips comments, so naming a
 # file on a bare textual match sends the operator to edit a line that never
