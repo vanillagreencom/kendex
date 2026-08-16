@@ -265,6 +265,41 @@ out9="$TMP_ROOT/out9.json"
 run_review "$DASH" "$out9"
 assert_contains "$PROMPT_CAPTURE" "RULE-DASHDIR" "AGENTS.md under a dash-leading directory is appended"
 
+echo "=== scenario 10: BSD utilities that reject '--' still build a full prompt ==="
+# The macOS/Bash 3.2 target ships BSD utilities, and they disagree with GNU
+# about the end-of-options marker — BSD sed reads `--` as a FILE operand, and
+# BSD dirname rejects it. An end-of-options sweep once added `--` to sed, which
+# on that platform made the schema substitution fail; the failure is swallowed
+# by the command substitution, so the run still exits 0 having sent a prompt
+# with NO output schema at all. Shims stand in for the whole family, so
+# re-adding `--` to any of them turns this red on Linux too.
+BSDBIN="$TMP_ROOT/bsdbin"
+mkdir -p "$BSDBIN"
+for u in sed head stat cat basename dirname; do
+  real="$(command -v "$u" 2>/dev/null)" || continue
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'for a in "$@"; do [[ "$a" == "--" ]] && { echo "%s: --: No such file or directory" >&2; exit 1; }; done\n' "$u"
+    printf 'exec %q "$@"\n' "$real"
+  } > "$BSDBIN/$u"
+  chmod +x "$BSDBIN/$u"
+done
+out10="$TMP_ROOT/out10.json"
+rm -f "$out10"
+run_review "$WITH" "$out10" PATH="$BSDBIN:$PATH"
+if [[ -f "$out10" ]]; then
+  pass "a review completes under utilities that reject '--'"
+else
+  fail "a review completes under utilities that reject '--'"
+fi
+assert_contains "$PROMPT_CAPTURE" "Output ONLY valid JSON" "the schema still reaches the prompt"
+assert_contains "$PROMPT_CAPTURE" '"verdict": "pass or action_required"' "the schema body is intact, not silently empty"
+# ...and the instruction block, which is read through head/stat. Those failures
+# are `|| true`-guarded too, so without this the content would vanish just as
+# silently as the schema did.
+assert_contains "$PROMPT_CAPTURE" "RULE-ALPHA" "instruction-file content still reaches the prompt"
+assert_contains "$PROMPT_CAPTURE" "RULE-AGENTS" "the AGENTS.md content is appended too"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

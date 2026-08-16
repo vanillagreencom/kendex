@@ -109,12 +109,26 @@ EXIT_NO_SCOPE=3
 EXIT_NO_REVIEW=4
 EXIT_CLI_FAILED=5
 
+# WHERE `--` IS USED IN THIS FILE, and why it is not used everywhere.
+#
+# The macOS/Bash 3.2 support target ships BSD utilities, and they do not agree
+# with GNU about the end-of-options marker: BSD sed reads `--` as a FILE
+# operand, and BSD dirname can reject it outright. So `--` appears only with
+# the shell builtins (cd, printf, set) and with `rm` and `mkdir`, which take it
+# on both. Everywhere else the operand is made safe instead of marked safe:
+#   * caller input reaches a utility through a REDIRECTION (`cat < "$f"`,
+#     `jq … < "$f"`), which has no option parsing at all;
+#   * $CWD is canonicalized to an absolute path once (see its validation), so
+#     every path built from it starts with '/' and can never look like a flag;
+#   * dirname and basename are replaced by parameter expansion — path_dir below
+#     and `${BASH_SOURCE[0]##*/}` — needing no utility and no marker.
+# Adding `--` to sed/head/stat/cat/basename here would buy nothing and break
+# the BSD path; this note exists because a sweep already did it once.
+#
 # The containing directory of a path, without `dirname`. --output is caller
-# input and may legitimately begin with '-', which dirname parses as options —
-# and the `--` end-of-options marker is not available here, because BSD dirname
-# can reject it on the macOS Bash 3.2 support target. Parameter expansion has
-# neither problem. Mirrors dirname for the cases that reach it: no slash yields
-# ".", a root-level path yields "/".
+# input and may legitimately begin with '-', which dirname parses as options.
+# Parameter expansion has no such problem. Mirrors dirname for the cases that
+# reach it: no slash yields ".", a root-level path yields "/".
 path_dir() {
   local path="$1" dir="${1%/*}"
   if [[ "$dir" == "$path" ]]; then
@@ -1261,7 +1275,7 @@ derive_review_scope() {
   # walk and misname files in the prompt's changed-file list.
   # shellcheck disable=SC2086
   if ! diff_files=$(git -C "$cwd" -c core.quotePath=false diff --name-only $range 2>"$git_err"); then
-    jq -n --arg range "$range" --arg cwd "$cwd" --arg detail "$(head -5 -- "$git_err")" \
+    jq -n --arg range "$range" --arg cwd "$cwd" --arg detail "$(head -5 "$git_err")" \
       '{error: "Cannot derive review scope: git diff failed for range \($range)", cwd: $cwd, detail: $detail}' >&2
     rm -f -- "$git_err"
     exit "$EXIT_NO_SCOPE"
@@ -1319,9 +1333,9 @@ emit_instruction_file() {
   case "$matched" in *$'\n'"$f"$'\n'*) return 0 ;; esac
   matched="${matched}${f}"$'\n'
   printf -- '--- %s ---\n' "$f"
-  head -c "$REVIEW_INSTRUCTIONS_FILE_CAP" -- "$CWD/$f" 2>/dev/null || true
+  head -c "$REVIEW_INSTRUCTIONS_FILE_CAP" "$CWD/$f" 2>/dev/null || true
   # Size from metadata (GNU/BSD stat), no second read of the bytes.
-  size=$(stat -c%s -- "$CWD/$f" 2>/dev/null || stat -f%z -- "$CWD/$f" 2>/dev/null || echo 0)
+  size=$(stat -c%s "$CWD/$f" 2>/dev/null || stat -f%z "$CWD/$f" 2>/dev/null || echo 0)
   if [[ "$size" -gt "$REVIEW_INSTRUCTIONS_FILE_CAP" ]]; then
     printf '\n[truncated at %s bytes]\n' "$REVIEW_INSTRUCTIONS_FILE_CAP"
   else
@@ -1402,7 +1416,7 @@ build_review_prompt() {
   local schema
   if [[ -f "$schema_file" ]]; then
     # Replace placeholder tokens with runtime values
-    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" -- "$schema_file")
+    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$schema_file")
   else
     echo "Error: schema file not found: $schema_file" >&2
     exit 1
@@ -1455,7 +1469,10 @@ PROMPT
 read_prompt() {
   if [[ -n "$PROMPT_FILE" ]]; then
     [[ -f "$PROMPT_FILE" ]] || { echo "Error: prompt file not found: $PROMPT_FILE" >&2; exit 1; }
-    cat -- "$PROMPT_FILE"
+    # Redirection, not a path operand: --prompt is caller input and may begin
+    # with `-`. A redirection has no option parsing, so this needs no `--` and
+    # no assumption about which cat is installed.
+    cat < "$PROMPT_FILE"
   elif [[ -n "$INLINE_PROMPT" ]]; then
     printf '%s\n' "$INLINE_PROMPT"
   elif [[ ! -t 0 ]]; then
@@ -1527,7 +1544,10 @@ if $MULTI_LANE; then
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  SELF="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
+  # Parameter expansion, not basename: BSD basename's `--` handling is not
+  # something this branch can verify, and the shell needs no utility here —
+  # the same reasoning that gave this file path_dir instead of dirname.
+  SELF="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
   LANE_OUTS=()
   LANE_ERRS=()
   # Lane children write their sidecar families (.raw.txt, .retry.txt,
@@ -1663,7 +1683,7 @@ if $MULTI_LANE; then
     # exit 5 is diagnosed — goes to /dev/null on the success path, where no
     # verdict assertion would ever notice. The `jq … 2>&1 >/dev/null` capture
     # further down wants the opposite order and is correct as written.
-    if ! sed "s/^/[${lane}] /" -- "${LANE_ERRS[$i]}" >&2 2>/dev/null; then
+    if ! sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" >&2 2>/dev/null; then
       echo "→ lane stderr replay unavailable (scratch capture unreadable): $lane" >&2
     fi
     lane_ok=false
@@ -1931,7 +1951,7 @@ preserve_cli_failure_and_fail() {
   # and made a capped lane read as broken. Fall back to the tail of captured
   # stdout so the reason surfaces whichever stream carried it.
   if [[ -s "$STDERR_TMP" ]]; then
-    cause=$(head -20 -- "$STDERR_TMP")
+    cause=$(head -20 "$STDERR_TMP")
     cause_source="${TARGET_CLI} stderr"
   elif [[ -n "$partial" ]]; then
     cause=$(printf '%s\n' "$partial" | tail -20)
@@ -1978,7 +1998,7 @@ elif [[ $EXIT_CODE -ne 0 ]]; then
   echo "{\"error\": \"$TARGET_CLI exited with code $EXIT_CODE\", \"target\": \"$TARGET_CLI\"}" >&2
   if [[ -s "$STDERR_TMP" ]]; then
     echo "--- stderr ---" >&2
-    head -20 -- "$STDERR_TMP" >&2
+    head -20 "$STDERR_TMP" >&2
   fi
   exit 1
 fi
@@ -1990,7 +2010,7 @@ if [[ ${#RESULT} -eq 0 ]]; then
   echo "{\"error\": \"$TARGET_CLI returned empty response — check CLI auth and configuration\", \"target\": \"$TARGET_CLI\"}" >&2
   if [[ -s "$STDERR_TMP" ]]; then
     echo "--- stderr ---" >&2
-    head -20 -- "$STDERR_TMP" >&2
+    head -20 "$STDERR_TMP" >&2
   fi
   exit 1
 fi
@@ -2066,7 +2086,7 @@ build_retry_prompt() {
   local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
   local schema=""
   if [[ -f "$schema_file" ]]; then
-    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" -- "$schema_file")
+    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$schema_file")
   fi
   cat <<RETRY
 Your previous response to the request below ${problem}. This is a single fresh session with no prior turns and no session history — there is no earlier message and nothing was "delivered above" or "previously". Complete the request below and output the COMPLETE JSON object in THIS response. If your previous response already contains your findings, serialize them without changing them; otherwise perform the request now using the scope it specifies. Output ONLY the JSON object — no prose before or after.
