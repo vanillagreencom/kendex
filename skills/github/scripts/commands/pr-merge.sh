@@ -370,12 +370,13 @@ gh_with_token() {
 # silently either way — it can sit open, gate-clear, and unwatched. Every 75
 # exit says so and names runnable watchers.
 volatile_note() {
-    local pr_num="$1" repo
+    local pr_num="$1" auth_token="${2:-}" repo
     # pr-watch.sh requires GH_REPO; print the reducer with the repository it
-    # will need, resolved the way this script's own reads resolve it.
-    repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
+    # will need, read under the same identity as the merge mutation. When the
+    # read fails the placeholder keeps the shape and says so.
+    repo="$(gh_with_token "$auth_token" repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; keep watching until MERGED" >&2
-    echo "  Watch, re-running until MERGED (neither call is durable — queue-wait exits at its poll budget, pr-watch.sh is one pass): .agents/skills/orch/scripts/queue-wait $pr_num (verdict ejected/disarmed) or GH_REPO=${repo:-OWNER/REPO} .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines); re-arm with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
+    echo "  Watch, re-running until MERGED (neither call is durable — queue-wait exits at its poll budget, pr-watch.sh is one pass), with the orch and review-gate skills installed: .agents/skills/orch/scripts/queue-wait $pr_num (any verdict that is not merged and not queued means re-arm) or GH_REPO=${repo:-<owner/repo — repository read failed>} .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines); re-arm with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
 }
 
 # Read one authoritative post-mutation snapshot. `gh pr view --json` does not
@@ -660,13 +661,13 @@ main() {
 
     if [ "$post_in_queue" = "true" ] || [ "$post_queue_entry" = "true" ]; then
         echo "QUEUED IN MERGE QUEUE PR #$pr_num — queueState=${post_queue_state:-active}" >&2
-        volatile_note "$pr_num"
+        volatile_note "$pr_num" "$token"
         exit 75
     fi
 
     if [ "$post_auto" = "true" ]; then
         echo "AUTO-MERGE ENABLED PR #$pr_num — will fire when CI + branch protection clear" >&2
-        volatile_note "$pr_num"
+        volatile_note "$pr_num" "$token"
         exit 75
     fi
 

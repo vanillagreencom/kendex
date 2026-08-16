@@ -135,11 +135,15 @@ parsing stderr:
 Exit `75` is not a resting state. A merge-group failure ejects the queue entry
 and GitHub disarms auto-merge with it — the PR sits open, gate-clear, and
 merges nothing. The caller that armed it keeps watching until the PR is
-`MERGED`, re-running the watcher because neither call is durable:
+`MERGED`, re-running the watcher because neither call is durable (both live
+in sibling skills — install orch and review-gate beside this one):
 `.agents/skills/orch/scripts/queue-wait <N>` polls to a bounded budget and
-returns `ejected`/`disarmed` with its cause (or `queued` — run it again); the
-review-gate reducer `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh`
-is one pass that prints `disarmed … (re-arm)` lines. On a disarm, re-arm with
+returns `ejected`/`disarmed` with its cause, or `queued` (run it again); a
+re-run carries no memory of the earlier run, so an ejection between two runs
+comes back as `not_queued`/`never_armed` — treat every verdict that is not
+`merged` and not `queued` as a disarm. The review-gate reducer
+`GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
+pass that prints `disarmed … (re-arm)` lines. On a disarm, re-arm with
 `.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.
 `await-mergeable` is not that watcher — it returns as soon as GitHub computes
 a merge state.
