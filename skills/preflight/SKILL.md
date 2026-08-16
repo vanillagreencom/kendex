@@ -1,6 +1,6 @@
 ---
 name: preflight
-description: "Diff-scoped deterministic pre-review checks, fail-only and precision-first: unparseable shell, shellcheck errors, masked return values on added lines, fail-open bash (unchecked mktemp without errexit, new scripts without strict mode), docs citing repo paths that do not exist, source files citing docs that do not exist, TODO/FIXME markers with no issue reference, and malformed JSON/TOML. Load when running, tuning, or debugging preflight or wiring it into validation/CI."
+description: "Diff-scoped deterministic pre-review checks, fail-only and precision-first: unparseable shell, shellcheck errors, masked return values on added lines, fail-open bash (unchecked mktemp without errexit, new scripts without strict mode), docs citing repo paths that do not exist, source files citing docs that do not exist, TODO/FIXME markers with no issue reference, reviewer-bot attributions added to durable prose, malformed JSON/TOML, and workflow run: blocks their shell cannot parse. Load when running, tuning, or debugging preflight or wiring it into validation/CI."
 license: MIT
 user-invocable: true
 metadata:
@@ -41,6 +41,7 @@ clean empty diff.
 | `fail-open` | An `=$(mktemp …)` assignment added to a file without errexit; a new script that never sets `-e`, `-u` and `pipefail`. | built in |
 | `docs-cited-paths` | An added backticked path in a `.md` file, inside a directory the repo really has and the doc's own subtree, that names nothing tracked or on disk. Also the reverse pointer: an added source line citing a `.md` path that names nothing tracked or on disk — URL spans and double-quoted strings are stripped first, data files (JSON/TOML/YAML/lock) and test-named files are out of scope, and the same directory guards apply. | built in |
 | `todo-links` | An added `TODO:`/`FIXME(` marker — the word immediately followed by `:` or `(` — with no `#123`, `ABC-123`, or URL on the line. Prose that merely uses the word is not a marker. | built in |
+| `reviewer-attribution` | An added line crediting a transient reviewer-bot pass: a fleet bot name (qodo, copilot, coderabbit, codex, devin; `PREFLIGHT_BOT_NAMES` replaces the set) coupled to a PR/review reference — a parenthetical credit, `per <bot> review`, or `<bot> review of #N`. Naming a bot is not the shape: prose describing reviewer behavior stays clean. `CHANGELOG.md` is exempt — rationale lives there. | built in |
 | `data-syntax` | A changed `.json` or `.toml` file no parser accepts. | jq, taplo or python3 |
 | `workflow-run-syntax` | A `run:` block in a changed `.github/workflows/*.yml` that its shell cannot parse — `bash -n` for bash, `sh -n` for sh, by name or executable path; `${{ … }}` replaced by a placeholder; other shells skipped, and an undeclared shell counts as bash only on plain `ubuntu-*`/`macos-*` runners. Reported at the offending file line — a folded (`>`) block at its first line; a workflow file that is not valid YAML, at the parser's line; an unterminated `${{`, at its line. | python3 with PyYAML |
 

@@ -35,6 +35,7 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   printf '#!/usr/bin/env bash\nset -euo pipefail\necho hook\n' >"$R/hooks/real.sh"
   # Pre-existing violations, committed: untouched lines must stay invisible.
   printf '# Legacy\n\nTODO: ancient and unreferenced.\n' >"$R/docs/legacy.md"
+  printf '# History\n\nClamped in review (qodo PR #431).\n' >"$R/docs/history.md"
   printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\n' >"$R/scripts/old.sh"
   printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\n' >"$R/scripts/pointer.sh"
   git -C "$R" add -A
@@ -113,26 +114,41 @@ printf '# rust = "Read docs/gone.md before coding."\n# Read docs/gone.md.\nkey =
   printf 'TODO hygiene is preflight job now, so reviewers stop chasing it.\n'
   printf 'Scaffolding placeholders are not work items either: description: TODO - describe this agent.\n'
   printf 'Nor is a bare - TODO bullet, nor TODOS as a heading word.\n'
+  # Naming a bot is not crediting one: reviewer docs, gate config naming the
+  # bot account, and a product name sharing the word are all prose about
+  # behavior, not provenance.
+  printf 'Copilot and Codex are the flat-rate reviewers now; qodo was dropped.\n'
+  printf 'The merge gate waits for the copilot review to land, then queues.\n'
+  printf 'Reviewer gate: Copilot (copilot-pull-request-reviewer) auto-reviews every PR.\n'
+  printf 'Auth is Codex OAuth (Codex OAuth, no openai key).\n'
+  printf 'Rules live in .github/copilot-instructions.md, per copilot instructions convention.\n'
 } >"$R/README.md"
+# The changelog is the sanctioned home for rationale, and a test tree sets
+# its own rules — an attribution in either is nobody's finding.
+printf '# Changelog\n\n- clamp tightened; drops the flaky retry (qodo PR #431)\n' >"$R/CHANGELOG.md"
+printf '# Notes\n\nReworked (Copilot review of #212).\n' >"$R/tests/notes.md"
 # A doc outside the root speaks about another subtree, not about our files.
 printf '# Notes\n\nThe installer writes `hooks/vstack-autorepair` into the consumer.\n' >"$R/docs/notes.md"
 printf '{\n  "ok": true\n}\n' >"$R/data/ok.json"
 printf '{\n  // a comment: this dialect is real and jq is right to reject it\n  "strict": true\n}\n' >"$R/tsconfig.json"
 git -C "$R" add -A
 run_pf
-clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, or JSON-with-comments"
+clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, bot mentions, exempt changelogs, or JSON-with-comments"
 
 echo "=== control: the same fixture still fails on a real defect ==="
 printf 'And a citation that is dead: `docs/gone.md`.\n' >>"$R/README.md"
+printf 'Hardened per qodo review.\n' >>"$R/README.md"
 printf '# and a source line whose citation is dead: docs/gone.md\n' >>"$R/scripts/cites.sh"
 git -C "$R" add -A
 run_pf
-fires "the benign fixture is not clean because nothing ran" "README.md:16: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+fires "the benign fixture is not clean because nothing ran" "[docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "the benign source file is not clean because nothing ran" "scripts/cites.sh:11: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+fires "the same benign bot mentions do not shield a real credit beside them" "[reviewer-attribution]"
 
 echo "=== violations on lines this diff did not touch stay invisible ==="
 seed untouched
 printf '# Legacy\n\nTODO: ancient and unreferenced.\n\nA new paragraph.\n' >"$R/docs/legacy.md"
+printf '# History\n\nClamped in review (qodo PR #431).\n\nMore history.\n' >"$R/docs/history.md"
 printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\necho "$TMP"\n' >"$R/scripts/old.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\necho more\n' >"$R/scripts/pointer.sh"
 git -C "$R" add -A
@@ -141,11 +157,13 @@ clean "appending to files whose older lines violate three lanes reports nothing"
 
 echo "=== control: touching those same lines makes them this diff's problem ==="
 printf '# Legacy\n\nTODO: ancient, reworded, still unreferenced.\n\nA new paragraph.\n' >"$R/docs/legacy.md"
+printf '# History\n\nReworked in review (qodo PR #431).\n\nMore history.\n' >"$R/docs/history.md"
 printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d -t x)"\necho "$TMP"\n' >"$R/scripts/old.sh"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background, still.\necho old\necho more\n' >"$R/scripts/pointer.sh"
 git -C "$R" add -A
 run_pf
 fires "the reworded TODO line fires" "docs/legacy.md:3: [todo-links]"
+fires "the reworded attribution line fires" "docs/history.md:3: [reviewer-attribution]"
 fires "the reworked mktemp line fires" "scripts/old.sh:3: [fail-open] unchecked mktemp"
 fires "the reworked dead-citation line fires" "scripts/pointer.sh:3: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 

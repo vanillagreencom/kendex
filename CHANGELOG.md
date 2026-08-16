@@ -58,6 +58,13 @@
   the markdown side; URL spans and double-quoted strings are stripped
   before matching, and data files (JSON/TOML/YAML/lock) and test-named
   files are out of scope.
+- preflight: new `reviewer-attribution` lane — an added line crediting a
+  transient reviewer-bot pass (a fleet bot name coupled to a PR/review
+  reference: a parenthetical credit, a per-bot review credit, or a bot
+  review-of-#N form) fails with "state the rationale, drop the reviewer
+  credit". Naming a bot without the credit shape stays clean,
+  `CHANGELOG.md` is exempt (rationale lives there), and
+  `PREFLIGHT_BOT_NAMES` replaces the built-in fleet set (VST-284).
 - agents: the seven engineer/analyst agents (generalist, iced, planner,
   researcher, rust, scout, tpm) drop the house "never trust a green check"
   blockquote — the rule's canonical homes are `code-quality` § Prove Your

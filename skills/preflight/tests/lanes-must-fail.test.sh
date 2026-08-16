@@ -133,6 +133,32 @@ run_pf
 fires "the owner-in-parentheses form fails too" "docs/guide.md:5: [todo-links]"
 fires "FIXME is judged exactly as TODO is" "docs/guide.md:6: [todo-links]"
 
+echo "=== lane reviewer-attribution: durable prose crediting a transient review pass ==="
+seed attribution
+printf '# Guide\n\nNothing here yet.\n\nClamped in review (qodo PR #431).\nHardened (Copilot review of #212).\nRenamed (CodeRabbit r3402103393).\nQuoted per codex review.\n' >"$R/docs/guide.md"
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\n# tightened per devin review\n' >"$R/scripts/existing.sh"
+git -C "$R" add -A
+run_pf
+fires "a parenthetical bot-and-PR credit fails" "docs/guide.md:5: [reviewer-attribution]"
+fires "a parenthetical review-of-PR credit fails" "docs/guide.md:6: [reviewer-attribution]"
+fires "a parenthetical review-id credit fails" "docs/guide.md:7: [reviewer-attribution]"
+fires "a per-bot prose credit fails" "docs/guide.md:8: [reviewer-attribution]"
+fires "a code comment carries the same rule as docs" "scripts/existing.sh:4: [reviewer-attribution]"
+
+# PREFLIGHT_BOT_NAMES replaces the fleet default rather than extending it:
+# only the named bots are attributions.
+seed botnames
+printf '# Guide\n\nNothing here yet.\n\nTuned (renovate PR #12).\nTuned (qodo PR #34).\n' >"$R/docs/guide.md"
+git -C "$R" add -A
+OUT=""
+RC=0
+OUT="$(cd "$R" && PREFLIGHT_BOT_NAMES='renovate dependabot' "$PF" 2>&1)" || RC=$?
+fires "an overridden bot set flags its own bots" "docs/guide.md:5: [reviewer-attribution]"
+case "$OUT" in
+  *"docs/guide.md:6"*) bad "an overridden bot set replaces the default set" "out=$OUT" ;;
+  *) ok "an overridden bot set replaces the default set" ;;
+esac
+
 echo "=== lane data-syntax: malformed JSON ==="
 seed json
 if command -v jq >/dev/null 2>&1; then

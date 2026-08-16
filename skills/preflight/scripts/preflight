@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # preflight — diff-scoped, fail-only checks: fail-open bash, docs citing
 # repo paths that do not exist, source files citing docs that do not exist,
-# TODO markers with no issue behind them, malformed JSON/TOML, workflow
-# run: blocks bash cannot parse.
+# TODO markers with no issue behind them, reviewer-bot attributions in
+# durable prose, malformed JSON/TOML, workflow run: blocks bash cannot
+# parse.
 #
 # Precision before coverage: a lane that cannot decide says nothing. The
 # line-scoped lanes report only on lines this diff ADDED, so a pre-existing
@@ -33,7 +34,8 @@ non-ignored untracked files; --staged sees only the index.
   --repo PATH   run against the repository containing PATH (default: cwd)
 
 Lanes: shell-syntax, shellcheck-errors, masked-returns, fail-open,
-docs-cited-paths, todo-links, data-syntax, workflow-run-syntax.
+docs-cited-paths, todo-links, reviewer-attribution, data-syntax,
+workflow-run-syntax.
 
 Exit codes: 0 clean; 1 findings; 2 usage/environment error.
 EOF
@@ -524,6 +526,21 @@ MKTEMP_ASSIGN="=[\"']?\\\$\\(mktemp"
 # on them is a gate people route around.
 TODO_RE='(^|[^A-Za-z0-9_])(TODO|FIXME)[(:]'
 ISSUE_RE='(#[0-9]+|[A-Z][A-Z0-9]+-[0-9]+|http)'
+
+# The attribution shape only: a review-fleet bot name coupled to a PR/review
+# reference — a parenthetical credit, a per-bot review credit, a bot review
+# of #N. A bot pass is not a rationale: the credit rots as PRs renumber,
+# while prose that merely names a bot (reviewer docs, gate config) is
+# describing behavior and stays clean, so the reference word must end at a
+# word boundary — an account named after the reviewing is not a credit.
+# CHANGELOG.md is where rationale belongs and is exempt.
+BOT_ALT="$(printf '%s' "${PREFLIGHT_BOT_NAMES:-qodo copilot coderabbit codex devin}" | tr -cs 'A-Za-z0-9_-' '|')"
+BOT_ALT="${BOT_ALT#|}"
+BOT_ALT="${BOT_ALT%|}"
+[ -n "$BOT_ALT" ] || BOT_ALT='qodo|copilot|coderabbit|codex|devin'
+BOT_ATTR_RE="\\(($BOT_ALT)([^A-Za-z0-9_)][^)]*)?((pr ?)?#[0-9]+|[^A-Za-z0-9_]r[0-9]{6,}|review)([^A-Za-z0-9_)][^)]*)?\\)"
+BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_])per +((the|a) +)?($BOT_ALT)('s)? +(review|pass|feedback|suggestion|comment|finding)"
+BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_])($BOT_ALT)('s)? +review +of +(pr ?)?#[0-9]+"
 : >"$TMP/tok.ok"
 : >"$TMP/tok.bad"
 
@@ -633,6 +650,10 @@ while IFS= read -r f; do
         ;;
     esac
   fi
+  is_changelog=0
+  case "$f" in
+    CHANGELOG.md | */CHANGELOG.md) is_changelog=1 ;;
+  esac
 
   if [ "$is_sh" = 1 ]; then
     has_set_flag "$cpath" "$ERREXIT_RE" && has_ee=1
@@ -750,6 +771,10 @@ while IFS= read -r f; do
 
     if [ "$own_rules" = 0 ] && printf '%s' "$content" | grep -Eq -- "$TODO_RE" && ! printf '%s' "$content" | grep -Eq -- "$ISSUE_RE"; then
       emit "$f" "$n" todo-links "TODO:/FIXME( marker without an issue reference (#123, ABC-123, or a URL)"
+    fi
+
+    if [ "$own_rules" = 0 ] && [ "$is_changelog" = 0 ] && printf '%s' "$content" | grep -Eiq -- "$BOT_ATTR_RE"; then
+      emit "$f" "$n" reviewer-attribution "credits a transient reviewer pass — state the rationale, drop the reviewer credit"
     fi
   done <"$REC"
 done <"$TMP/files.list"
