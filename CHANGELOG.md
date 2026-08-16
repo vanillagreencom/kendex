@@ -37,6 +37,13 @@
   so the last assistant text a consumer extracts is the last one written —
   the out-of-order case surfaced as a merge-queue flake in
   `session-lanes.test.ts`.
+- preflight: the `docs-cited-paths` lane covers the reverse direction too —
+  an added source line citing a `.md` path (the "read this doc first"
+  pointer a doc reorganization leaves dangling) fails when the path names
+  nothing tracked or on disk. Same shared existence and directory guards as
+  the markdown side; URL spans and double-quoted strings are stripped
+  before matching, and data files (JSON/TOML/YAML/lock) and test-named
+  files are out of scope.
 - agents: the seven engineer/analyst agents (generalist, iced, planner,
   researcher, rust, scout, tpm) drop the house "never trust a green check"
   blockquote — the rule's canonical homes are `code-quality` § Prove Your

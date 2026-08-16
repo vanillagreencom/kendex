@@ -36,6 +36,7 @@ seed() { # NAME — fixture in $R: committed baseline, origin/main, feature bran
   # Pre-existing violations, committed: untouched lines must stay invisible.
   printf '# Legacy\n\nTODO: ancient and unreferenced.\n' >"$R/docs/legacy.md"
   printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\n' >"$R/scripts/old.sh"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\n' >"$R/scripts/pointer.sh"
   git -C "$R" add -A
   git -C "$R" commit -qm init
   git clone -q --bare "$R" "$R.git"
@@ -77,8 +78,24 @@ echo "=== benign patterns across every lane stay clean ==="
 seed benign
 # mktemp is fine under errexit; a new script that declares strict mode is fine.
 printf '#!/usr/bin/env bash\nset -euo pipefail\nTMP="$(mktemp -d)"\necho "$TMP"\n' >"$R/scripts/strict.sh"
-# A test-tree script sets its own rules.
-printf '#!/usr/bin/env bash\necho helper\n' >"$R/tests/helper.sh"
+# A test-tree script sets its own rules — including the fixture path it cites.
+printf '#!/usr/bin/env bash\n# fixture: docs/gone.md\necho helper\n' >"$R/tests/helper.sh"
+# Every benign doc-citation shape a source file can carry.
+cat >"$R/scripts/cites.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# A live citation: docs/guide.md is real.
+# A URL is not a repo path: https://github.com/acme/acme/blob/main/docs/gone.md
+# Placeholders and globs are fragments: docs/<area>/file.md, docs/*.md.
+# Interpolations too: $DOCS_ROOT/gone.md, ${DOCS}/gone.md, {docs_root}/gone.md.
+# Another repo layout is not ours: notes/gone.md has no directory here.
+MSG="a quoted path is data, not a citation: docs/gone.md"
+echo "$MSG"
+EOF
+# Test-named source files plant fixture paths on purpose.
+printf '// fixture cite: docs/gone.md\n' >"$R/scripts/widget.test.ts"
+# Data files cite paths as values and generated example comments.
+printf '# rust = "Read docs/gone.md before coding."\n# Read docs/gone.md.\nkey = 1\n' >"$R/data/example.toml"
 {
   printf '# Fixture\n\n'
   printf 'Placeholders are not paths: `skills/<name>/SKILL.md`, `src/*.rs`.\n'
@@ -102,29 +119,34 @@ printf '{\n  "ok": true\n}\n' >"$R/data/ok.json"
 printf '{\n  // a comment: this dialect is real and jq is right to reject it\n  "strict": true\n}\n' >"$R/tsconfig.json"
 git -C "$R" add -A
 run_pf
-clean "no lane fires on placeholders, URLs, foreign subtrees, referenced TODOs, strict scripts, or JSON-with-comments"
+clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, or JSON-with-comments"
 
 echo "=== control: the same fixture still fails on a real defect ==="
 printf 'And a citation that is dead: `docs/gone.md`.\n' >>"$R/README.md"
+printf '# and a source line whose citation is dead: docs/gone.md\n' >>"$R/scripts/cites.sh"
 git -C "$R" add -A
 run_pf
-fires "the benign fixture is not clean because nothing ran" "[docs-cited-paths] cites a path that does not exist: docs/gone.md"
+fires "the benign fixture is not clean because nothing ran" "README.md:16: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+fires "the benign source file is not clean because nothing ran" "scripts/cites.sh:10: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 
 echo "=== violations on lines this diff did not touch stay invisible ==="
 seed untouched
 printf '# Legacy\n\nTODO: ancient and unreferenced.\n\nA new paragraph.\n' >"$R/docs/legacy.md"
 printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d)"\necho "$TMP"\n' >"$R/scripts/old.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho old\necho more\n' >"$R/scripts/pointer.sh"
 git -C "$R" add -A
 run_pf
-clean "appending to a file whose older lines violate two lanes reports nothing"
+clean "appending to files whose older lines violate three lanes reports nothing"
 
 echo "=== control: touching those same lines makes them this diff's problem ==="
 printf '# Legacy\n\nTODO: ancient, reworded, still unreferenced.\n\nA new paragraph.\n' >"$R/docs/legacy.md"
 printf '#!/usr/bin/env bash\necho old\nTMP="$(mktemp -d -t x)"\necho "$TMP"\n' >"$R/scripts/old.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background, still.\necho old\necho more\n' >"$R/scripts/pointer.sh"
 git -C "$R" add -A
 run_pf
 fires "the reworded TODO line fires" "docs/legacy.md:3: [todo-links]"
 fires "the reworked mktemp line fires" "scripts/old.sh:3: [fail-open] unchecked mktemp"
+fires "the reworked dead-citation line fires" "scripts/pointer.sh:3: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 
 echo "=== a deleted file is not a finding ==="
 seed deleted

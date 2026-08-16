@@ -1,6 +1,6 @@
 ---
 name: preflight
-description: "Diff-scoped deterministic pre-review checks, fail-only and precision-first: unparseable shell, shellcheck errors, masked return values on added lines, fail-open bash (unchecked mktemp without errexit, new scripts without strict mode), docs citing repo paths that do not exist, TODO/FIXME markers with no issue reference, and malformed JSON/TOML. Load when running, tuning, or debugging preflight or wiring it into validation/CI."
+description: "Diff-scoped deterministic pre-review checks, fail-only and precision-first: unparseable shell, shellcheck errors, masked return values on added lines, fail-open bash (unchecked mktemp without errexit, new scripts without strict mode), docs citing repo paths that do not exist, source files citing docs that do not exist, TODO/FIXME markers with no issue reference, and malformed JSON/TOML. Load when running, tuning, or debugging preflight or wiring it into validation/CI."
 license: MIT
 user-invocable: true
 metadata:
@@ -39,7 +39,7 @@ clean empty diff.
 | `shellcheck-errors` | Any error-severity finding, anywhere in a changed shell file. | shellcheck |
 | `masked-returns` | SC2155/SC2311 on an added line — a declaration whose exit status hides the command's. | shellcheck |
 | `fail-open` | An `=$(mktemp …)` assignment added to a file without errexit; a new script that never sets `-e`, `-u` and `pipefail`. | built in |
-| `docs-cited-paths` | An added backticked path in a `.md` file, inside a directory the repo really has and the doc's own subtree, that names nothing tracked or on disk. | built in |
+| `docs-cited-paths` | An added backticked path in a `.md` file, inside a directory the repo really has and the doc's own subtree, that names nothing tracked or on disk. Also the reverse pointer: an added source line citing a `.md` path that names nothing tracked or on disk — URL spans and double-quoted strings are stripped first, data files (JSON/TOML/YAML/lock) and test-named files are out of scope, and the same directory guards apply. | built in |
 | `todo-links` | An added `TODO:`/`FIXME(` marker — the word immediately followed by `:` or `(` — with no `#123`, `ABC-123`, or URL on the line. Prose that merely uses the word is not a marker. | built in |
 | `data-syntax` | A changed `.json` or `.toml` file no parser accepts. | jq, taplo or python3 |
 | `workflow-run-syntax` | A `run:` block in a changed `.github/workflows/*.yml` that its shell cannot parse — `bash -n` for bash, `sh -n` for sh, by name or executable path; `${{ … }}` replaced by a placeholder; other shells skipped, and an undeclared shell counts as bash only on plain `ubuntu-*`/`macos-*` runners. Reported at the offending file line — a folded (`>`) block at its first line; a workflow file that is not valid YAML, at the parser's line; an unterminated `${{`, at its line. | python3 with PyYAML |

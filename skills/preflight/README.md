@@ -2,7 +2,8 @@
 
 A diff-scoped, fail-only checker for the escape classes worth catching
 mechanically: fail-open bash, docs citing repo paths that do not exist,
-TODO markers with no issue behind them, and data files no parser accepts.
+source files citing docs that do not exist, TODO markers with no issue
+behind them, and data files no parser accepts.
 It reports only on lines the change added, and every lane is tuned so a
 finding is worth a hard failure — a false positive costs more than a miss,
 so a lane that cannot decide stays quiet.

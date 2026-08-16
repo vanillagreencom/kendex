@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # preflight — diff-scoped, fail-only checks: fail-open bash, docs citing
-# repo paths that do not exist, TODO markers with no issue behind them,
-# malformed JSON/TOML, workflow run: blocks bash cannot parse.
+# repo paths that do not exist, source files citing docs that do not exist,
+# TODO markers with no issue behind them, malformed JSON/TOML, workflow
+# run: blocks bash cannot parse.
 #
 # Precision before coverage: a lane that cannot decide says nothing. The
 # line-scoped lanes report only on lines this diff ADDED, so a pre-existing
@@ -569,6 +570,27 @@ doc_token_is_dead() { # TOKEN DOC-SUBTREE — 0 when the token names a path that
   return 0
 }
 
+# Candidate doc citations on a source line: maximal path-charset runs ending
+# in `.md`, one per output line. Double-quoted spans and URL spans go first —
+# a quoted path is a program's working data or an example string, and a
+# GitHub URL containing /docs/x.md names a web page, not a repo path — and a
+# sentence-final dot is punctuation, not part of the name. Placeholders,
+# globs and interpolations never survive: their delimiters sit outside the
+# charset, so they arrive as fragments the shared guards in
+# doc_token_is_dead already reject.
+md_tokens_of() { # LINE -> candidate tokens on stdout
+  printf '%s\n' "$1" | awk '{
+    gsub(/"([^"\\]|\\.)*"/, " ")
+    gsub(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^ \t]*/, " ")
+    while (match($0, /[A-Za-z0-9_.\/-]+/)) {
+      tok = substr($0, RSTART, RLENGTH)
+      $0 = substr($0, RSTART + RLENGTH)
+      sub(/\.+$/, "", tok)
+      if (tok ~ /\.md$/) print tok
+    }
+  }'
+}
+
 # --- lanes, one changed file at a time ---------------------------------------
 FILE_COUNT=0
 IDX=0
@@ -594,6 +616,22 @@ while IFS= read -r f; do
       case "$f" in */*) subtree="${f%%/*}" ;; esac
       ;;
   esac
+  # Source files whose doc citations are worth judging. Data formats cite
+  # paths as configuration values and carry generated example comments, and
+  # test-named files plant fixture paths on purpose — either would be a
+  # false positive, not a dead pointer.
+  cites_docs=0
+  if [ "$is_md" = 0 ] && [ "$own_rules" = 0 ]; then
+    case "$f" in
+      *.json | *.toml | *.yml | *.yaml | *.lock) ;;
+      *)
+        case "${f##*/}" in
+          tests.rs | *_test.* | *_tests.* | *.test.* | *.spec.* | test_*) ;;
+          *) cites_docs=1 ;;
+        esac
+        ;;
+    esac
+  fi
 
   if [ "$is_sh" = 1 ]; then
     has_set_flag "$cpath" "$ERREXIT_RE" && has_ee=1
@@ -691,6 +729,22 @@ while IFS= read -r f; do
           emit "$f" "$n" docs-cited-paths "cites a path that does not exist: $tok"
         fi
       done
+    elif [ "$cites_docs" = 1 ]; then
+      # The reverse pointer: a source line naming a `.md` file is a citation
+      # whose only job is to be followed, so one a doc reorganization left
+      # dead actively misleads. Only doc targets are judged — other path-like
+      # strings in code are working material — and code cites docs from
+      # anywhere in the tree, so its subtree is the repo itself.
+      case "$content" in
+        *".md"*)
+          while IFS= read -r tok; do
+            [ -n "$tok" ] || continue
+            if doc_token_is_dead "$tok" ""; then
+              emit "$f" "$n" docs-cited-paths "cites a path that does not exist: $tok"
+            fi
+          done <<<"$(md_tokens_of "$content")"
+          ;;
+      esac
     fi
 
     if [ "$own_rules" = 0 ] && printf '%s' "$content" | grep -Eq -- "$TODO_RE" && ! printf '%s' "$content" | grep -Eq -- "$ISSUE_RE"; then

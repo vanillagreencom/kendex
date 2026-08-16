@@ -108,6 +108,16 @@ git -C "$R" add -A
 run_pf
 fires "a citation of a missing file under a real directory fails" "README.md:4: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 
+echo "=== lane docs-cited-paths: a source line citing a doc that does not exist ==="
+seed srccite
+mkdir -p "$R/src"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n# Read docs/gone.md before editing this.\necho run\n' >"$R/scripts/cite.sh"
+printf 'fn main() {\n    // The mode table lives in docs/gone.md.\n}\n' >"$R/src/main.rs"
+git -C "$R" add -A
+run_pf
+fires "a shell comment citing a missing doc fails at its line" "scripts/cite.sh:3: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+fires "a non-shell source comment is judged the same way" "src/main.rs:2: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+
 echo "=== lane todo-links: a TODO marker with no issue behind it ==="
 seed todo
 printf '# Guide\n\nNothing here yet.\n\nTODO: wire this up.\n' >"$R/docs/guide.md"
