@@ -96,6 +96,7 @@ run_hook 'rm -rf -- "${P:?}/save"';      assert_eq "$rc" 0 '${P:?} cannot expand
 run_hook 'rm -rf "${VAR1:?}/x"';         assert_eq "$rc" 0 'digits after the first identifier char pass (${VAR1:?})'
 run_hook 'rm -rf -- "-${P:?}/x"';        assert_eq "$rc" 0 'a dash-leading ${P:?} operand after -- passes'
 run_hook "rm -rf '\$X'";                 assert_eq "$rc" 0 'a single-quoted operand is a literal filename, not an expansion'
+run_hook "rm -rf \$'/var/tmp/safe'";     assert_eq "$rc" 0 'an ANSI-C quoted operand is a literal, not a variable root'
 run_hook 'rm -rf "${TMP_ROOT:?}"';       assert_eq "$rc" 0 'a bare ${TMP_ROOT:?} passes'
 run_hook 'rm -rf /var/tmp/x';            assert_eq "$rc" 0 'a literal absolute path passes'
 run_hook 'rm -rf ./build';               assert_eq "$rc" 0 'a literal relative path passes'

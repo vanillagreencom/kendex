@@ -117,6 +117,7 @@ while IFS= read -r seg; do
       while [ "${stripped#-}" != "$stripped" ]; do stripped=${stripped#-}; done
     fi
     case "$stripped" in
+      \$\'*) continue ;;               # $'…' is an ANSI-C literal, not a variable
       \$\{[A-Za-z_]*:\?*)
         # Safe only when everything before the first :? is a plain
         # identifier: ${NAME:?} aborts on empty, but ${X+x:?} is an
