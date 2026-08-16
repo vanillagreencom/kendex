@@ -841,6 +841,10 @@ const GIT_INHERITED_ENV_VARS: &[&str] = &[
     "GIT_CONFIG_COUNT",
     // Names the directory git runs its own helper programs from.
     "GIT_EXEC_PATH",
+    // Names the template directory a `git clone`/`git init` copies into the
+    // new repository — hooks included, and `post-checkout` runs as part of the
+    // clone, before any check this module makes could see the entry.
+    "GIT_TEMPLATE_DIR",
     // Both name a program run to obtain credentials, which is the same
     // inherited-program class as `core.sshCommand`. `GIT_TERMINAL_PROMPT=0`
     // does not neutralise them: an askpass program is used INSTEAD of the
@@ -1542,6 +1546,16 @@ fn spelling_allows_bare_username(source: &str) -> bool {
     scheme_prefix(source).is_none_or(|scheme| {
         scheme.eq_ignore_ascii_case("ssh") || scheme.eq_ignore_ascii_case("git+ssh")
     })
+}
+
+/// Whether `source` is spelled as if it names a transport, however malformed.
+///
+/// A string that opens with a scheme is an attempt at a URL, so it names
+/// SOMETHING: a caller walking past it because the strict parser could not
+/// read it would install from a different source than the one recorded — the
+/// same refused-is-not-absent fail-open closed everywhere else.
+pub(crate) fn names_a_transport(source: &str) -> bool {
+    scheme_prefix(source.trim()).is_some()
 }
 
 /// The `scheme:` a string opens with. A one-character scheme is a Windows

@@ -1183,6 +1183,8 @@ fn no_inherited_git_environment_reaches_the_commands_vstack_runs() {
     write_marker_program(&exec_dir.join("git-remote-https"), &marker);
     let askpass = root.join("askpass.sh");
     write_marker_program(&askpass, &marker);
+    let template = root.join("git-template");
+    write_marker_program(&template.join("hooks/post-checkout"), &marker);
     let alternate_objects = alternate.join(".git/objects");
     let empty = root.join("empty-objects");
     std::fs::create_dir_all(&empty).unwrap();
@@ -1273,6 +1275,10 @@ fn no_inherited_git_environment_reaches_the_commands_vstack_runs() {
         (
             "GIT_EXEC_PATH",
             Some(("exec-path", vec![("GIT_EXEC_PATH", exec_dir.as_os_str())])),
+        ),
+        (
+            "GIT_TEMPLATE_DIR",
+            Some(("template", vec![("GIT_TEMPLATE_DIR", template.as_os_str())])),
         ),
         (
             "GIT_ASKPASS",
@@ -1512,6 +1518,61 @@ fn inherited_git_env_helper() {
                 .output()
                 .unwrap();
             assert!(!marker.exists(), "git ran the inherited remote helper");
+        }
+        "template" => {
+            let marker =
+                PathBuf::from(crate::test_util::helper_fixture("VSTACK_TEST_MARKER").unwrap());
+            let root = cache.parent().unwrap().join("template-vector");
+            let origin = root.join("origin");
+            std::fs::create_dir_all(&origin).unwrap();
+            for args in [
+                vec!["init", "-q", "-b", "main"],
+                vec!["config", "user.email", "test@example.com"],
+                vec!["config", "user.name", "Test"],
+                vec!["config", "commit.gpgsign", "false"],
+            ] {
+                assert!(unhardened(&origin, &args).status.success(), "{args:?}");
+            }
+            std::fs::write(origin.join("README.md"), "upstream\n").unwrap();
+            assert!(unhardened(&origin, &["add", "README.md"]).status.success());
+            assert!(
+                unhardened(&origin, &["commit", "-q", "-m", "init"])
+                    .status
+                    .success()
+            );
+            let url = format!("file://{}", origin.display());
+
+            // Control: the inherited template's `post-checkout` hook is copied
+            // into the new repository and RUN by an unhardened clone.
+            let control = root.join("control-clone");
+            std::fs::create_dir_all(&control).unwrap();
+            let _ = unhardened(
+                &control,
+                &[
+                    "clone",
+                    "-q",
+                    "--",
+                    &url,
+                    control.join("c").to_str().unwrap(),
+                ],
+            );
+            assert!(
+                marker.exists(),
+                "the vector must reach an unhardened git for this to prove anything"
+            );
+            std::fs::remove_file(&marker).unwrap();
+
+            let hardened_dest = root.join("hardened-clone");
+            std::fs::create_dir_all(&hardened_dest).unwrap();
+            let _ = hardened_git_network_command(&hardened_dest)
+                .args(["clone", "-q", "--", &url])
+                .arg(hardened_dest.join("c"))
+                .output()
+                .unwrap();
+            assert!(
+                !marker.exists(),
+                "the clone ran a hook from the inherited template directory"
+            );
         }
         "askpass" => {
             let marker =
@@ -2310,6 +2371,35 @@ fn a_malformed_credential_source_is_redacted_when_reported_missing() {
         absent_source_reason("/srv/vstack"),
         "source not found: /srv/vstack"
     );
+}
+
+/// A remembered source that opens with a scheme is an attempt at a URL, so it
+/// names something the chain must not walk past — even when it is malformed
+/// enough that the strict parser cannot read it, which is exactly when
+/// `looks_like_remote_source` says no.
+#[test]
+fn a_malformed_url_still_names_a_transport() {
+    for source in [
+        "https:/user:ghp_SECRET@host.example/owner/repo",
+        "https:///ghp_SECRET@host.example/owner/repo",
+        "ssh:/git@host.example/owner/repo",
+        "git://host.example/owner/repo",
+    ] {
+        assert!(names_a_transport(source), "{source}");
+    }
+    // A path names no transport, whatever it contains — a Windows drive letter
+    // is not a scheme.
+    for source in [
+        "/srv/checkouts/repo",
+        "./vendor",
+        "../vstack",
+        "name",
+        "",
+        "C:/src/vstack",
+        "owner/repo",
+    ] {
+        assert!(!names_a_transport(source), "{source}");
+    }
 }
 
 /// A bare `user@host` is an ssh remote's spelling and a token-only

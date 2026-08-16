@@ -2899,6 +2899,15 @@ fn resolve_remembered_source(source: &str) -> Result<Option<PathBuf>> {
             )
         });
     }
+    // A spelling that opens with a scheme is an attempt at a URL, so it names
+    // something even when the strict parser cannot read it. Walking on would
+    // install from whatever source the chain reaches next.
+    if crate::refresh_sources::names_a_transport(source) {
+        anyhow::bail!(
+            "the source this project is set to use is not a usable URL: {}",
+            crate::refresh_sources::remote_source_display(source)
+        );
+    }
     Ok(None)
 }
 

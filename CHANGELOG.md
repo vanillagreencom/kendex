@@ -266,7 +266,9 @@
   program git RUNS — the last of those was read back and re-exported to the
   fetch. The programs an environment can name directly go with them:
   `GIT_EXEC_PATH`, whose directory supplies the `git-remote-<transport>` helper
-  a fetch executes, and `GIT_ASKPASS`/`SSH_ASKPASS`, which are used INSTEAD of
+  a fetch executes; `GIT_TEMPLATE_DIR`, whose `hooks/` a clone copies into the
+  new repository and whose `post-checkout` the clone then runs; and
+  `GIT_ASKPASS`/`SSH_ASKPASS`, which are used INSTEAD of
   the terminal and so are not covered by `GIT_TERMINAL_PROMPT=0` — which is set
   too.
   Cache commands additionally drop `GIT_CEILING_DIRECTORIES` and
@@ -323,7 +325,8 @@
   `src:!`. `add` no longer walks past a refused source to a different one: a
   credential, transport, ownership or clone failure on the source a project
   selected is an error naming it, not a silent fall-back that installs from
-  somewhere else. A failed fetch keeps the stale clone
+  somewhere else — and a remembered source spelled as a URL is refused rather
+  than walked past when it is too malformed to parse as one. A failed fetch keeps the stale clone
   (warned once per source and message, not once per resolve); a failed reset is
   an error. Remote
   sources resolve to one cache entry per repository identity — every spelling
