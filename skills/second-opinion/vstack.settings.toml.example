@@ -21,9 +21,17 @@ SECOND_OPINION_COUNT = "1"
 
 # Used by: second-opinion. The model THIS session runs. Claude Code and Codex
 # are detected; Pi, OpenCode, Cursor and undetected shells REQUIRE it (the run
-# refuses otherwise). Model ids work: "opus", "claude-opus-5" -> claude;
-# "gpt-5.6-sol" -> codex. "none" declares there is no session model (CI, a
-# plain terminal): every roster entry is then cross-model.
+# refuses otherwise). Model ids work, provider prefix included: "opus",
+# "claude-opus-5", "anthropic/claude-opus-4" -> claude; "gpt-5.6-sol",
+# "openai-codex/gpt-5.6-sol", "openai/gpt-5.6-sol" -> codex. "none" declares
+# there is no session model (CI, a plain terminal): every roster entry is then
+# cross-model.
+#
+# SESSION-SCOPED — leave it commented here and export it in the environment of
+# the sessions that need it. This file is read by EVERY session in the repo, so
+# a value set for a Pi session also reaches Claude Code and Codex sessions,
+# where it would outrank the detection that was already correct. A value from
+# this file that contradicts a detected claude/codex session is refused.
 # SECOND_OPINION_CURRENT_MODEL = "claude"
 
 # Used by: second-opinion. Roster entry claude (identity claude).

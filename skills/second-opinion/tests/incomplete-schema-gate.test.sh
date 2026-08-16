@@ -66,7 +66,9 @@ assert_file_absent() {
 
 assert_file_contains() {
   local file="$1" needle="$2" name="$3"
-  if [[ -f "$file" ]] && grep -Fq "$needle" "$file"; then
+  # -e: a needle that begins with `-` (a flag name in an error message) would
+  # otherwise be parsed by grep as its own options.
+  if [[ -f "$file" ]] && grep -Fq -e "$needle" "$file"; then
     pass "$name"
   else
     fail "$name"

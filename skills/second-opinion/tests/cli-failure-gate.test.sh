@@ -35,6 +35,14 @@ FAIL=0
 
 pass() { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1" >&2; }
+skip() { printf '  skip  %s\n' "$1"; }
+
+# Fixtures that create a failure by REMOVING write permission prove nothing as
+# root, which ignores the mode bits entirely — the denial never happens and the
+# assertions pass over a run that took the success path. Skipped out loud, so
+# a root CI runner reports missing coverage rather than false coverage.
+CAN_DENY_BY_MODE=true
+[[ "$(id -u)" == "0" ]] && CAN_DENY_BY_MODE=false
 
 assert_eq() {
   local got="$1" want="$2" name="$3"
@@ -68,7 +76,9 @@ assert_file_absent() {
 
 assert_file_contains() {
   local file="$1" needle="$2" name="$3"
-  if [[ -f "$file" ]] && grep -Fq "$needle" "$file"; then
+  # -e: a needle that begins with `-` (a flag name in an error message) would
+  # otherwise be parsed by grep as its own options.
+  if [[ -f "$file" ]] && grep -Fq -e "$needle" "$file"; then
     pass "$name"
   else
     fail "$name"
@@ -385,7 +395,7 @@ rm -rf "$WORK/tmp"
 # checkout, and both must land in the named home rather than being read as an
 # empty or `.` component and sent to system temp with an escape reason nobody
 # can act on.
-for s9_spelling in "tmp/second-opinion/" "./tmp/second-opinion" ".//tmp/second-opinion" "tmp/./second-opinion"; do
+for s9_spelling in "tmp/second-opinion/" "./tmp/second-opinion" ".//tmp/second-opinion" "tmp/./second-opinion" "tmp/second-opinion/."; do
   reset9
   run9 "$s9_spelling"
   assert_eq "$rc9" "5" "($s9_spelling) still exits EXIT_CLI_FAILED (5)"
@@ -452,6 +462,57 @@ PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" \
 set -e
 assert_file_contains "$s9_err" "~user expansion is not supported" "~user is refused, not taken literally"
 assert_file_absent "$WORK/~someuser" "~user leaves no literal directory in the reviewed checkout"
+
+# a tilde home with HOME unset has nothing to expand to and must say so rather
+# than build a path out of the empty string
+for s9_tilde in "~" "~/so-records"; do
+  reset9
+  set +e
+  env -u HOME PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" \
+    SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+    SECOND_OPINION_ARTIFACT_DIR="$s9_tilde" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s9_err"
+  rc9=$?
+  set -e
+  assert_eq "$rc9" "5" "($s9_tilde, HOME unset) still exits EXIT_CLI_FAILED (5)"
+  assert_file_contains "$s9_err" "HOME is not set" "($s9_tilde, HOME unset) names the missing HOME"
+  assert_file_absent "$WORK/~" "($s9_tilde, HOME unset) no literal ~ directory appears"
+  fallback_used && pass "($s9_tilde, HOME unset) record fell back to TMPDIR" \
+    || fail "($s9_tilde, HOME unset) no fallback record"
+done
+
+# (j) the ignore seeding may only ever touch a directory THIS RUN created.
+# A pre-existing home is the operator's — possibly a tracked directory with a
+# curated .gitignore, and possibly holding a planted symlink.
+s9_pre="$WORK/pre-existing"
+# (j1) curated tracked .gitignore is untouched, and the tree stays clean
+reset9
+rm -rf "$s9_pre"; mkdir -p "$s9_pre"
+printf 'build/\n' > "$s9_pre/.gitignore"
+git -C "$WORK" add -f pre-existing/.gitignore >/dev/null 2>&1
+git -C "$WORK" -c commit.gpgsign=false -c user.email=t@e -c user.name=t commit -q -m pre >/dev/null 2>&1
+run9 pre-existing
+assert_eq "$(cat "$s9_pre/.gitignore")" "build/" "a curated .gitignore in a pre-existing home is untouched"
+assert_eq "$(git -C "$WORK" status --porcelain -- pre-existing/.gitignore | wc -l | tr -d ' ')" "0" \
+  "the curated .gitignore is not modified in git's eyes"
+# (j2) a pre-existing home with no .gitignore gets none
+reset9
+rm -rf "$s9_pre"; mkdir -p "$s9_pre"
+run9 pre-existing
+assert_file_absent "$s9_pre/.gitignore" "a pre-existing home is not given a .gitignore"
+# (j3) a DANGLING .gitignore symlink must not become an arbitrary-file write.
+# `-e` reads false for a dangling link, so an existence test would have followed
+# it; only the created-only gate plus the noclobber (O_EXCL) write refuse it.
+s9_target="$TMP_ROOT/attacker-target"
+reset9
+rm -rf "$s9_pre" "$s9_target"; mkdir -p "$s9_pre"
+ln -s "$s9_target" "$s9_pre/.gitignore"
+run9 pre-existing
+assert_file_absent "$s9_target" "a dangling .gitignore symlink creates nothing at its target"
+assert_eq "$(readlink "$s9_pre/.gitignore")" "$s9_target" "the symlink itself is left alone"
+rm -rf "$s9_pre"
+git -C "$WORK" rm -q --cached pre-existing/.gitignore >/dev/null 2>&1 || true
+git -C "$WORK" -c commit.gpgsign=false -c user.email=t@e -c user.name=t commit -q -m unpre >/dev/null 2>&1 || true
 
 # (i) the artifact home is git-ignored on creation, so records never dirty the
 # reviewed working tree
@@ -565,22 +626,45 @@ echo "=== scenario 11: an uncreatable --output parent is a named pre-flight erro
 # The clearing block has to create the parent before it can clear inside it. A
 # bare `mkdir: cannot create directory` under set -e would be a failure mode
 # the exit-code contract does not name.
-s11_ro="$TMP_ROOT/readonly-parent"
-rm -rf "$s11_ro"; mkdir -p "$s11_ro"; chmod 0500 "$s11_ro"
 s11_err="$TMP_ROOT/s11.stderr"
+if $CAN_DENY_BY_MODE; then
+  s11_ro="$TMP_ROOT/readonly-parent"
+  rm -rf "$s11_ro"; mkdir -p "$s11_ro"; chmod 0500 "$s11_ro"
+  printf '0' > "$COUNTER"
+  rc11=0
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+    STUB_COUNTER="$COUNTER" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s11_ro/sub/review.json" \
+      >/dev/null 2>"$s11_err"
+  rc11=$?
+  set -e
+  chmod 0700 "$s11_ro"
+  assert_eq "$rc11" "1" "uncreatable --output parent exits 1"
+  assert_file_contains "$s11_err" "cannot create the --output parent directory" "the cause is named, not a bare mkdir error"
+  assert_eq "$(cat "$COUNTER")" "0" "uncreatable --output parent invokes no CLI"
+else
+  skip "uncreatable --output parent: running as root, a mode-denied directory is still writable"
+fi
+
+# A DIRECTORY at --output can never become the artifact, and the clearing's rm
+# would report it as a bare "Is a directory". Not mode-dependent, so it runs
+# everywhere.
+s11d="$TMP_ROOT/out/review11d.json"
+rm -rf "$s11d"; mkdir -p "$s11d"
 printf '0' > "$COUNTER"
-rc11=0
+rc11d=0
 set +e
 PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
   STUB_COUNTER="$COUNTER" \
-  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s11_ro/sub/review.json" \
-    >/dev/null 2>"$s11_err"
-rc11=$?
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s11d" >/dev/null 2>"$s11_err"
+rc11d=$?
 set -e
-chmod 0700 "$s11_ro"
-assert_eq "$rc11" "1" "uncreatable --output parent exits 1"
-assert_file_contains "$s11_err" "cannot create the --output parent directory" "the cause is named, not a bare mkdir error"
-assert_eq "$(cat "$COUNTER")" "0" "uncreatable --output parent invokes no CLI"
+assert_eq "$rc11d" "1" "a directory at --output exits 1"
+assert_file_contains "$s11_err" "--output is a directory" "the directory cause is named"
+grep -q "Is a directory" "$s11_err" && fail "a directory at --output leaks a bare rm error"
+assert_eq "$(cat "$COUNTER")" "0" "a directory at --output invokes no CLI"
+rmdir "$s11d"
 
 echo "=== scenario 12: no writable location at all keeps the exit class and the cause ==="
 # The artifact home and system temp can both refuse (read-only, full). An
@@ -590,23 +674,27 @@ echo "=== scenario 12: no writable location at all keeps the exit class and the 
 # start read-only: the stub locks it once its own files exist, leaving only the
 # record allocation to fail.
 s12_err="$TMP_ROOT/s12.stderr"
-s12_tmp="$TMP_ROOT/tmpdir12"
-rm -rf "$s12_tmp" "$WORK/tmp"; mkdir -p "$s12_tmp"
-printf '0' > "$COUNTER"
-rc12=0
-set +e
-PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s12_tmp" \
-  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
-  SECOND_OPINION_ARTIFACT_DIR="/proc/no-such-home/second-opinion" \
-  STUB_LOCK_DIR="$s12_tmp" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
-  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s12_err"
-rc12=$?
-set -e
-chmod 0700 "$s12_tmp"
-assert_eq "$rc12" "5" "unstorable record keeps EXIT_CLI_FAILED (5)"
-assert_file_contains "$s12_err" "no writable location for the record" "the storage loss is stated"
-assert_file_contains "$s12_err" "hit your usage limit" "the provider cause still reaches stderr"
-assert_file_contains "$s12_err" "refusing to write a review artifact" "the error JSON is still emitted"
+if $CAN_DENY_BY_MODE; then
+  s12_tmp="$TMP_ROOT/tmpdir12"
+  rm -rf "$s12_tmp" "$WORK/tmp"; mkdir -p "$s12_tmp"
+  printf '0' > "$COUNTER"
+  rc12=0
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s12_tmp" \
+    SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+    SECOND_OPINION_ARTIFACT_DIR="/proc/no-such-home/second-opinion" \
+    STUB_LOCK_DIR="$s12_tmp" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s12_err"
+  rc12=$?
+  set -e
+  chmod 0700 "$s12_tmp"
+  assert_eq "$rc12" "5" "unstorable record keeps EXIT_CLI_FAILED (5)"
+  assert_file_contains "$s12_err" "no writable location for the record" "the storage loss is stated"
+  assert_file_contains "$s12_err" "hit your usage limit" "the provider cause still reaches stderr"
+  assert_file_contains "$s12_err" "refusing to write a review artifact" "the error JSON is still emitted"
+else
+  skip "unstorable record: running as root, a mode-denied TMPDIR is still writable"
+fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

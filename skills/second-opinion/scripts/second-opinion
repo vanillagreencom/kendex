@@ -27,6 +27,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Resolve project root for .env sourcing (works in worktrees and main repos)
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
 
+# Whether SECOND_OPINION_CURRENT_MODEL arrived from the CALLER'S OWN
+# environment rather than a project settings file. Captured here because this
+# is the only moment the two can be told apart — project loading exports the
+# file's value into the same variable, and its own parent-env snapshot is
+# unset when it returns.
+#
+# The distinction decides how far the declaration is trusted. A value in the
+# session environment was set for THIS session and outranks detection. A value
+# in vstack.settings.toml or .env.local was set for the REPO: it reaches every
+# session run there, including the Claude Code and Codex sessions whose model
+# the script can detect for itself. `+x` rather than `:-` so a set-but-empty
+# value counts as caller-provided, matching vstack_load_project_env's own
+# precedence rule.
+CURRENT_MODEL_IS_SESSION_SCOPED=false
+[[ -z "${SECOND_OPINION_CURRENT_MODEL+x}" ]] || CURRENT_MODEL_IS_SESSION_SCOPED=true
+
 # Source project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —
 # vstack_load_project_env snapshots and re-asserts it.
@@ -248,7 +264,10 @@ FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
 # never a pattern.
 roster_entries() {
   local raw t
-  raw="${SECOND_OPINION_MODELS:-$DEFAULT_MODELS}"
+  # `-` not `:-`: an explicitly EMPTY roster is a statement that there are no
+  # targets, and must land in the refusal path. Falling back to the default
+  # roster there would dispatch to models the operator just removed.
+  raw="${SECOND_OPINION_MODELS-$DEFAULT_MODELS}"
   raw="${raw//,/ }"
   set -f
   for t in $raw; do printf '%s\n' "$t"; done
@@ -269,6 +288,13 @@ clear_output_family() {
 }
 
 if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" ]]; then
+  # A directory here can never become the artifact, and rm would report it as a
+  # bare "Is a directory" from inside the clearing. Named as its own pre-flight
+  # cause instead.
+  if [[ -d "$OUTPUT_PATH" ]]; then
+    echo "Error: --output is a directory, not a file path: $OUTPUT_PATH" >&2
+    exit 1
+  fi
   # path_dir stands in for dirname, which cannot take the `--` marker portably.
   if ! mkdir -p -- "$(path_dir "$OUTPUT_PATH")" 2>/dev/null; then
     echo "Error: cannot create the --output parent directory: $(path_dir "$OUTPUT_PATH")" >&2
@@ -494,8 +520,13 @@ roster_has_current() {
   return 1
 }
 # One "target: reason" line per roster entry that was NOT taken — the refusal
-# body, and stderr detail on every run.
+# body, and stderr detail on every run. The two flags separate the refusal's
+# CAUSE: a roster nobody can run is fixed by installing a CLI or naming its
+# command, and telling that operator to check their model identity sends them
+# at the wrong setting entirely.
 SKIP_REASONS=()
+SKIPPED_UNAVAILABLE=false
+SKIPPED_SAME_MODEL=false
 skip_target() {
   SKIP_REASONS+=("$1: $2")
   echo "→ skipping $1: $2" >&2
@@ -520,6 +551,7 @@ consider_target() {
   SEEN_NAMESPACES+=("$ns")
   model="$(target_model "$t")"
   if [[ "$model" == "$CURRENT_MODEL" ]]; then
+    SKIPPED_SAME_MODEL=true
     skip_target "$t" "runs the same model as this session ($model) — a second opinion must be cross-model"
     return 1
   fi
@@ -527,6 +559,7 @@ consider_target() {
     [[ "$existing" == "$model" ]] && { skip_target "$t" "model $model already selected"; return 1; }
   done
   if ! target_available "$t"; then
+    SKIPPED_UNAVAILABLE=true
     skip_target "$t" "CLI not found — install it or configure $(target_cmd_var "$t")"
     return 1
   fi
@@ -558,6 +591,20 @@ if [[ -z "$CURRENT_MODEL" ]]; then
   else
     skip_target "session" "model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
   fi
+elif $CURRENT_MODEL_DECLARED && ! $CURRENT_MODEL_IS_SESSION_SCOPED \
+     && [[ "$CURRENT_HARNESS" == "claude" || "$CURRENT_HARNESS" == "codex" ]] \
+     && [[ "$CURRENT_MODEL" != "$CURRENT_HARNESS" ]]; then
+  # A repo-scoped declaration that contradicts a POSITIVELY DETECTED
+  # single-model harness. The project file is read by every session in the repo,
+  # so a value set to make Pi or OpenCode work arrives in Claude Code and Codex
+  # sessions too — where it outranks the detection that was already correct and
+  # silently marks this session's own model as cross-model. That is the exact
+  # failure this whole guarantee exists to prevent, and it would leave no skip
+  # line and no degraded stamp behind, so it refuses rather than picking a
+  # winner. A value in the session's own environment is not second-guessed:
+  # that one was set for this session.
+  SESSION_REFUSED=true
+  skip_target "session" "project settings declare model $CURRENT_MODEL but this session is a detected $CURRENT_HARNESS harness — SECOND_OPINION_CURRENT_MODEL is session-scoped and cannot be right for every session in one repo; remove it from vstack.settings.toml / .env.local and set it in the environment of the sessions that need it (Pi, OpenCode, Cursor)"
 elif $CURRENT_MODEL_DECLARED && [[ "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then
   # A DECLARED identity the roster does not spell excludes nothing, which is
   # what a typo in SECOND_OPINION_CURRENT_MODEL looks like — and what a session
@@ -583,6 +630,10 @@ elif [[ -n "$FORCED_TARGET" ]]; then
   consider_target "$FORCED_TARGET" || true
 else
   walk_roster "$WANT"
+  # A roster set to the empty string names no targets at all. Say so once —
+  # otherwise the refusal below lists no candidates and reads as a bug.
+  [[ -n "$(roster_entries)" ]] \
+    || skip_target "roster" "SECOND_OPINION_MODELS is set but empty — no targets to consider"
 fi
 
 if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
@@ -592,6 +643,14 @@ if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
   reasons_json=$(printf '%s\n' ${SKIP_REASONS[@]+"${SKIP_REASONS[@]}"} | jq -R 'select(length > 0)' | jq -s .)
   jq -n --arg current "${CURRENT_MODEL:-undeclared}" --argjson candidates "$reasons_json" \
     '{error: "no eligible cross-model target — refusing to run a second opinion", current_model: $current, candidates: $candidates}' >&2
+  # Name the CAUSE, not just the candidates. A roster whose entries were all
+  # skipped for availability is an install/configuration problem; sending that
+  # operator to check SECOND_OPINION_CURRENT_MODEL points at a setting that is
+  # not wrong. Only when nothing was excluded for identity, or the whole thing
+  # reads as an identity problem again.
+  if $SKIPPED_UNAVAILABLE && ! $SKIPPED_SAME_MODEL && ! $SESSION_REFUSED; then
+    echo "→ every candidate was skipped for availability, not identity — install the CLI or set its SECOND_OPINION_<NAME>_CMD; SECOND_OPINION_CURRENT_MODEL is not the setting to change here" >&2
+  fi
   # A force that came from project settings rather than the command line is a
   # seeded value nobody typed today: name what the roster would have picked so
   # the settings fix is one edit. Only when the force is what refused — a
@@ -713,18 +772,33 @@ vet_relative_home() {
 # inside the home makes it invisible to git with no action from the consumer.
 # Written only when absent, and never allowed to fail the run.
 #
-# RELATIVE homes only. An absolute or `~/…` home is a location the operator
-# named deliberately, outside the checkout by intent; dropping an ignore file
-# into it would be writing to a directory that is not ours to configure —
-# `SECOND_OPINION_ARTIFACT_DIR="~"` would seed $HOME/.gitignore with `*`.
+# RELATIVE homes only, and only a directory THIS RUN created. Both limits are
+# load-bearing, not tidiness:
+#
+#  - An absolute or `~/…` home is a location the operator named deliberately,
+#    outside the checkout by intent; `SECOND_OPINION_ARTIFACT_DIR="~"` would
+#    otherwise seed $HOME/.gitignore with `*`.
+#  - A directory that already existed is the operator's, and may be a TRACKED
+#    directory holding a curated .gitignore — `SECOND_OPINION_ARTIFACT_DIR=docs`
+#    must not make every future file under docs/ invisible to git status and
+#    `git add -A`. A directory this run just created can hold nothing at all,
+#    which also removes the symlink vector: an existence test cannot be used to
+#    decide, because `-e` follows symlinks and reads false for a DANGLING one,
+#    so a committed `.gitignore -> /somewhere/outside` in the reviewed checkout
+#    would have turned this into an arbitrary-file-create primitive.
+#
+# The write closes the residual race on its own: noclobber opens with O_EXCL,
+# which refuses an existing file AND refuses to follow a symlink. That layer is
+# unreachable while the created-only gate holds, so no test exercises it alone;
+# the pre-existing-home fixtures prove the PAIR — remove both and they go red,
+# remove either one and the other still refuses. Failure is always tolerated —
+# an ignore file is a courtesy, never worth failing a run.
 seed_artifact_home_ignore() {
-  local ignore="$1/.gitignore"
-  [[ -e "$ignore" ]] && return 0
-  printf '*\n' > "$ignore" 2>/dev/null || true
+  ( set -C; printf '*\n' > "$1/.gitignore" ) 2>/dev/null || true
 }
 
 artifact_file() {
-  local kind="$1" dir rel reason phys_root phys_dir
+  local kind="$1" dir rel reason phys_root phys_dir home_created=false
   dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
   ARTIFACT_PATH=""
   # `~/...` is the spelling vstack's other path settings accept (WORKTREE_BASE_DIR
@@ -760,6 +834,9 @@ artifact_file() {
       dir=""
     elif reason=$(vet_relative_home "$rel"); then
       dir="$CWD/$rel"
+      # Captured at the only moment it can be: whether the leaf existed before
+      # this run's mkdir. Gates the .gitignore seeding below.
+      [[ -d "$dir" ]] || home_created=true
       if ! (umask 077 && mkdir -p -- "$dir") 2>/dev/null; then
         echo "→ artifact home not creatable: $dir" >&2
         dir=""
@@ -774,7 +851,7 @@ artifact_file() {
         if [[ -z "$phys_root" || "$phys_dir" != "$phys_root/$rel" ]]; then
           echo "→ artifact home rejected (resolves outside the reviewed repo): $dir -> ${phys_dir:-?}" >&2
           dir=""
-        else
+        elif $home_created; then
           seed_artifact_home_ignore "$dir"
         fi
       fi
