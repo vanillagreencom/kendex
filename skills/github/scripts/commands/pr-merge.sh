@@ -92,18 +92,50 @@ EOF
 # PR_STATE_JSON. Also validates that the PR exists — a bare number does not.
 # Every caller shares the single fetch; a failed read is not cached, so the
 # next caller retries rather than inheriting an empty state.
+#
+# On failure PR_STATE_ERROR carries a prefixed issue string. Only GitHub's
+# own "this PR does not exist" wording becomes `not_found:` — an auth, network,
+# rate-limit, or API failure keeps its own diagnostic instead of being
+# reported as a missing PR.
 PR_STATE_JSON=""
 PR_STATE_JSON_PR=""
+PR_STATE_ERROR=""
 load_pr_state_json() {
     local pr_num="$1"
     if [ -n "$PR_STATE_JSON_PR" ] && [ "$PR_STATE_JSON_PR" = "$pr_num" ]; then
         return 0
     fi
 
-    local state_json
-    state_json=$(gh pr view "$pr_num" --json state,mergedAt 2>/dev/null) || return 1
-    PR_STATE_JSON="$state_json"
-    PR_STATE_JSON_PR="$pr_num"
+    local err_file state_json status=0
+    if ! err_file=$(mktemp "${TMPDIR:-/tmp}/pr-merge-state.XXXXXX"); then
+        PR_STATE_ERROR="gh_error: could not create a temporary file for the PR state lookup"
+        return 1
+    fi
+
+    state_json=$(gh pr view "$pr_num" --json state,mergedAt 2>"$err_file") || status=$?
+    local detail
+    detail=$(grep -v '^[[:space:]]*$' "$err_file" | head -1)
+    rm -f "$err_file"
+
+    if [ "$status" -eq 0 ]; then
+        PR_STATE_JSON="$state_json"
+        PR_STATE_JSON_PR="$pr_num"
+        PR_STATE_ERROR=""
+        return 0
+    fi
+
+    case "$detail" in
+    *"Could not resolve to a PullRequest"* | *"o pull requests found"*)
+        PR_STATE_ERROR="not_found: PR #$pr_num not found"
+        ;;
+    "")
+        PR_STATE_ERROR="gh_error: gh pr view exited $status with no diagnostic"
+        ;;
+    *)
+        PR_STATE_ERROR="gh_error: $detail"
+        ;;
+    esac
+    return 1
 }
 
 # Run safety checks, output JSON
@@ -119,7 +151,7 @@ run_checks() {
 
     local pr_state
     if ! load_pr_state_json "$pr_num"; then
-        jq -n '{can_merge: false, issues: ["not_found: PR #'"$pr_num"' not found"], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN"}'
+        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN"}'
         return 0 # Return 0 so JSON is output, caller checks can_merge
     fi
     pr_state=$(jq -r '.state // "UNKNOWN"' <<<"$PR_STATE_JSON")

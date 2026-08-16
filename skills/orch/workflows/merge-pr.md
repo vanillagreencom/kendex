@@ -50,7 +50,7 @@ High-severity findings (conflicts) abort early with the issues shown. Otherwise 
 
 ### 3.2 Act On The Result
 
-`CHECK.state` decides first: `MERGED` → the PR already landed — run § 4 (`ISSUE`, worktree, token) and § 5's preamble (`MAIN_REPO_ROOT`) as for a fresh merge, then continue at § 5 step 2 for sync and cleanup, skipping step 1; `CLOSED` → report that it was closed unmerged and stop. Neither is a blocker to clear, and both arrive with an empty `issues` array.
+`CHECK.state` decides first: `MERGED` → the PR already landed — run § 4 EXCEPT § 4.1 (`ISSUE`, worktree, token; § 4.1 guards a merge that has not happened yet, so it has nothing to detach here) and § 5's preamble (`MAIN_REPO_ROOT`), then continue at § 5 step 2 for sync and cleanup, skipping step 1; `CLOSED` → report that it was closed unmerged and stop. Neither is a blocker to clear, and both arrive with an empty `issues` array.
 
 `can_merge: true` → § 4, showing any warnings. `false` → show the issues with their suggested fixes and ask: `Skip` | `Fix and retry` | `Force merge`.
 

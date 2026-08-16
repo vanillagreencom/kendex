@@ -102,6 +102,13 @@ case "${1:-}" in
         case "${2:-}" in
             view)
                 if [[ "$*" == *"--json state,mergedAt"* ]]; then
+                    if [[ -n "${STUB_STATE_STDERR:-}" ]]; then
+                        printf '%s\n' "$STUB_STATE_STDERR" >&2
+                        exit "${STUB_STATE_EXIT:-1}"
+                    fi
+                    if [[ "${STUB_STATE_SILENT_FAIL:-false}" == "true" ]]; then
+                        exit "${STUB_STATE_EXIT:-1}"
+                    fi
                     if [[ "${STUB_PR_MISSING:-false}" == "true" ]]; then
                         echo "no pull requests found" >&2
                         exit 1
@@ -225,6 +232,41 @@ assert_eq "$(jq -r '.issues | length' <<<"$out")" "0" "--check on a closed PR re
 out=$(STUB_PR_MISSING=true run_pr_merge --check)
 assert_eq "$(jq -r .state <<<"$out")" "UNKNOWN" "--check on a missing PR reports UNKNOWN state"
 assert_contains "$(jq -r '.issues[]' <<<"$out")" "not_found: PR #123 not found" "--check still reports a missing PR"
+
+echo
+echo "=== a failed state lookup names its real cause ==="
+
+out=$(STUB_STATE_STDERR="GraphQL: Could not resolve to a PullRequest with the number of 123. (repository.pullRequest)" \
+    run_pr_merge --check)
+assert_contains "$(jq -r '.issues[]' <<<"$out")" "not_found: PR #123 not found" \
+    "GitHub's own missing-PR wording stays not_found"
+
+out=$(STUB_STATE_STDERR="gh: Bad credentials (HTTP 401)" STUB_STATE_EXIT=1 run_pr_merge --check)
+assert_contains "$(jq -r '.issues[]' <<<"$out")" "gh_error: gh: Bad credentials (HTTP 401)" \
+    "an auth failure is reported as gh_error with its diagnostic"
+assert_not_contains "$(jq -r '.issues[]' <<<"$out")" "not_found" \
+    "an auth failure is never reported as a missing PR"
+assert_eq "$(jq -r '.issues | length' <<<"$out")" "1" "a failed state lookup emits one issue"
+assert_eq "$(jq -r .state <<<"$out")" "UNKNOWN" "a failed state lookup reports UNKNOWN state"
+
+out=$(STUB_STATE_STDERR="API rate limit exceeded for user ID 1." STUB_STATE_EXIT=1 run_pr_merge --check)
+assert_contains "$(jq -r '.issues[]' <<<"$out")" "gh_error: API rate limit exceeded" \
+    "a rate-limit failure keeps its own diagnostic"
+
+out=$(STUB_STATE_SILENT_FAIL=true STUB_STATE_EXIT=4 run_pr_merge --check)
+assert_contains "$(jq -r '.issues[]' <<<"$out")" "gh_error: gh pr view exited 4 with no diagnostic" \
+    "a silent failure still names gh and its exit code"
+
+# The merge path must see the same cause: a failed lookup is not cached, so the
+# checks re-read it instead of inheriting an empty state and inventing issues.
+set +e
+out=$(STUB_STATE_STDERR="gh: Bad credentials (HTTP 401)" run_pr_merge --keep-branch)
+status=$?
+set -e
+assert_eq "$status" "1" "a failed state lookup blocks the merge"
+assert_contains "$out" "gh_error: gh: Bad credentials (HTTP 401)" "the merge path reports the real cause"
+assert_not_contains "$out" "not_found" "the merge path never reports a missing PR for an auth failure"
+assert_not_contains "$out" "ALREADY MERGED" "an unreadable state is never treated as merged"
 
 echo
 echo "=== an open PR is unaffected ==="
