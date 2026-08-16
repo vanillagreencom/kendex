@@ -89,9 +89,8 @@ pub(crate) struct SourceRecords {
 
 /// The recorded sources resolution refused, keyed by the recorded string so a
 /// caller holding a lock entry can look its own reason up — and whether source
-/// resolution ran at all. A caller that resolved its own source (the wizard)
-/// hands in the default, so an entry that produced nothing there is never told
-/// a clone is missing from a cache nothing looked in.
+/// resolution ran at all. Every refresh path now resolves each entry's own
+/// source from its lock, so a refusal is always available to the report.
 #[derive(Clone, Debug, Default)]
 pub struct SourceRefusals {
     reasons: std::collections::BTreeMap<String, String>,
@@ -360,8 +359,12 @@ pub(crate) fn absent_source_reason(source: &str) -> String {
             "remote cache not present — run `vstack add {}`",
             remote_source_display(source)
         )
+    } else if source.trim().is_empty() {
+        "source not found (none recorded)".to_string()
     } else {
-        "source not found".to_string()
+        // Named so the user can see WHICH source vanished, and escaped because
+        // a lock file records the string verbatim.
+        format!("source not found: {}", escape_unprintable(source))
     }
 }
 

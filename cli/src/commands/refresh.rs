@@ -128,15 +128,7 @@ impl RefreshStats {
         if let Some(refusal) = self.refused_sources.reason(recorded_source) {
             return refusal.to_string();
         }
-        // Only a pass that resolved sources can say a clone is not on this
-        // machine; a caller that brought its own source never looked.
-        if self.refused_sources.attempted_resolution() {
-            return crate::refresh_sources::absent_source_reason(recorded_source);
-        }
-        if recorded_source.trim().is_empty() {
-            return "source not found (none recorded)".to_string();
-        }
-        format!("source not found: {recorded_source}")
+        crate::refresh_sources::absent_source_reason(recorded_source)
     }
 
     pub fn has_failures(&self) -> bool {
