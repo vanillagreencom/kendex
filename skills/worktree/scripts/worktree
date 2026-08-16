@@ -2696,11 +2696,15 @@ reuse_respects_session_lease() {
     echo "Coordinate with the owning session instead of reusing its worktree." >&2
     return 1
   fi
-  # `refresh` REJECTS `--repo` — it applies only to release/status/list/sweep.
-  # Passing it fails every refresh, and a best-effort wrapper would swallow that
-  # so the guard looks wired while silently never refreshing. Do not add it.
-  if ! "$SESSION_GUARD" refresh "$wt" --owner "$owner" >/dev/null; then
-    echo "Error: could not refresh this session's guard lease on $wt." >&2
+  # A reuse is a REPLACEMENT session for the issue, not a heartbeat of the
+  # session that claimed the lease: `claim`'s same-owner branch mints a new
+  # generation, so a concurrent remove that decided against the previous
+  # session's lease refuses instead of unlocking this one. (`claim`, like
+  # `refresh`, REJECTS `--repo` — it applies only to release/status/list/
+  # sweep; a best-effort wrapper would swallow that failure, so do not add
+  # it.)
+  if ! "$SESSION_GUARD" claim "$wt" --owner "$owner" >/dev/null; then
+    echo "Error: could not take over the session guard lease on $wt." >&2
     return 1
   fi
   return 0
