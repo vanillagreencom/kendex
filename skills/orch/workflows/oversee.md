@@ -22,7 +22,7 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 
 Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`) plus the terminal condition: the item is complete only when its PR is MERGED and its worktree cleaned up — an opened PR is not done. The brief also carries question routing: "If your harness can message other sessions (a session list plus a send-message tool), push any blocking question to the overseer session that launched you the moment it arises — the user may not be watching this session — and still raise it locally through your normal question tool. Without such messaging, just ask normally; the overseer's watch will find it." `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2), each still carrying the terminal condition. Size launch flags to the item and launch on the § 1 surface.
 
-Record the lane. First use only — when `exists` reports false, run `init` (init overwrites: never re-init a live lane log):
+Record the lane (`[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ`; the first lane's value is the fleet start that § 4 passes as `--since`). First use only — when `exists` reports false, run `init` (init overwrites: never re-init a live lane log):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state exists --json oversee
@@ -36,10 +36,10 @@ Record the lane. First use only — when `exists` reports false, run `init` (ini
 
 ## 4. Watch And Advance
 
-One blocking command, passed every live lane's tmux window name (none on a non-tmux surface); it exits on the first event that needs the overseer and prints one `EVENT` line. Re-run it after handling each event. Never hand-roll a monitor. It runs `pr-watch.sh` when the review-gate skill is installed and skips that step otherwise (`gate-stale` is then invisible — [references/gates.md](../references/gates.md) § Multi-PR watching).
+One blocking command, passed the fleet's start as `--since` (the first lane's `launched_at` — the same value on every run, never "now", so a merge landing between two runs is still reported by the next), `--item` for every live item, and every live lane's tmux window name (none on a non-tmux surface); it exits on the first event that needs the overseer and prints one `EVENT` line. Re-run it after handling each event with the live set updated — a merged item and a dead lane's window drop out. Never hand-roll a monitor. It runs `pr-watch.sh` when the review-gate skill is installed and skips that step otherwise (`gate-stale` is then invisible — [references/gates.md](../references/gates.md) § Multi-PR watching); attention already present when a run starts is a baseline appended to the next event, and only a new `<pr> <kind>` line is itself an event.
 
 ```bash
-.agents/skills/orch/scripts/oversee-watch --interval 240 [LANE_WINDOW...]
+.agents/skills/orch/scripts/oversee-watch --interval 240 --since [FLEET_SINCE] --item [ISSUE_ID]... [LANE_WINDOW...]
 ```
 
 - `merged` → mark the lane done, launch the next unblocked item.

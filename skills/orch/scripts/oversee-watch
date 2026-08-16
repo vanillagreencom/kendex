@@ -4,25 +4,32 @@
 #
 # Each pass, in order:
 #   1. pr-watch   the review-gate reducer over every open PR (when installed;
-#                 absent → one stderr note at start, step skipped)
-#   2. merged     a PR whose head branch matches --branch-regex merged at or
-#                 after --since
+#                 absent → one stderr note at start, step skipped). An event
+#                 only when a NEW `<pr> <kind>` line appears during this run:
+#                 attention present at start is a baseline (noted once on
+#                 stderr), never a preempting event, so a PR that sits at
+#                 threads-open for an hour cannot starve the lane checks.
+#                 The latest reducer output is appended to every event.
+#   2. merged     an --item's PR (head branch = the item id, lowercased)
+#                 merged at or after --since
 #   3. window-gone a listed tmux lane window no longer exists
 #   4. question   a listed lane's pane shows a question/selection prompt
 #   5. heartbeat  after --max-loops passes with no event
 #
 # Output on the first event: `EVENT <kind> ...` on stdout, followed by
-# supporting lines (pr-watch output, the merged PR list, the pane tail, or the
-# open PR list for a heartbeat). Silence on stdout never means "fine": every
-# exit path prints an EVENT line or a stderr error.
+# supporting lines (the merged PR list, the pane tail, or the open PR list for
+# a heartbeat), then the latest pr-watch attention lines when there are any.
+# Silence on stdout never means "fine": every exit path prints an EVENT line
+# or a stderr error.
 #
 # Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
-#                      [--branch-regex RE] [--repo OWNER/REPO] [LANE_WINDOW...]
+#                      [--item ISSUE_ID]... [--repo OWNER/REPO] [LANE_WINDOW...]
 #
 # Exit codes:
 #   0  an EVENT line was printed
 #   2  usage error, or a global failure (gh not authenticated, repo
-#      unresolvable, PR listing failed, lanes given outside tmux)
+#      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
+#      lanes given outside tmux)
 #
 # Environment:
 #   OVERSEE_WATCH_PR_WATCH  path to the pr-watch reducer (default:
@@ -44,43 +51,60 @@ QUESTION_RE='❯ [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
 INTERVAL=240
 MAX_LOOPS=25
 SINCE=""
-BRANCH_RE='^(issue-[0-9]+|[A-Za-z]+-[0-9]+)$'
 REPO=""
+ITEMS=()
 LANES=()
 
 usage() {
   cat <<'USAGE'
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
-                     [--branch-regex RE] [--repo OWNER/REPO] [LANE_WINDOW...]
+                     [--item ISSUE_ID]... [--repo OWNER/REPO] [LANE_WINDOW...]
 
 Blocks until the fleet needs the overseer, prints one `EVENT <kind> ...` line
-(plus supporting lines), and exits 0. Re-run it after handling the event.
+(plus supporting lines), and exits 0. Re-run it after handling the event, with
+the lanes still live: drop a merged item and a dead lane's window, keep
+--since as the fleet's start.
 
 Events, checked in this order every pass:
-  EVENT pr-watch rc=N        the review-gate reducer reported attention (its
-                             output follows); skipped with a stderr note when
-                             pr-watch.sh is not installed
-  EVENT merged <PR> <branch> a PR whose head branch matches --branch-regex
-                             merged at or after --since (one line per PR)
+  EVENT pr-watch rc=N        the review-gate reducer reported a NEW
+                             `<pr> <kind>` attention line during this run
+                             (its output follows). Attention already present
+                             when the run starts is a baseline (one stderr
+                             note), so it can never preempt the checks below;
+                             skipped with a stderr note when pr-watch.sh is
+                             not installed
+  EVENT merged <PR> <branch> an --item's PR merged at or after --since (one
+                             line per PR; the item's head branch is its id,
+                             lowercased)
   EVENT window-gone <lane>   a listed tmux window no longer exists
   EVENT question <lane>      the lane's pane shows a question/selection
                              prompt (last 40 non-empty pane lines follow)
   EVENT heartbeat            --max-loops passes with no event (open PR list
                              follows: number, head branch, title)
 
+Every event is followed by the latest pr-watch attention lines when there are
+any (`pr-watch rc=N` header), so the overseer sees the reducer's state on
+each wake even when it is not the event.
+
 Options:
   --interval SECS     seconds between passes (default 240)
   --max-loops N       passes before a heartbeat (default 25)
-  --since ISO8601     merged-at floor for `merged` (default: now, at start)
-  --branch-regex RE   head-branch filter for `merged`
-                      (default '^(issue-[0-9]+|[A-Za-z]+-[0-9]+)$')
+  --since ISO8601     merged-at floor for `merged`, UTC with a `Z` suffix,
+                      e.g. 2026-08-15T12:00:00Z (default: none). Pass the
+                      fleet's start time on every run — the same value each
+                      time, never "now" — so a merge landing between two runs
+                      is still reported by the next one
+  --item ISSUE_ID     a live item (issue-N or PROJ-123); repeatable. `merged`
+                      fires only for these items' PRs; none given → the
+                      merged check is skipped with a stderr note
   --repo OWNER/REPO   repository (default: gh repo view)
   LANE_WINDOW...      tmux window names to watch; requires $TMUX
 
 Exit codes:
   0  an EVENT line was printed
   2  usage error, or a global failure: gh not authenticated, repo
-     unresolvable, PR listing failed, lanes given outside tmux
+     unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
+     lanes given outside tmux
 
 Environment:
   OVERSEE_WATCH_PR_WATCH  path to pr-watch.sh (default: the review-gate
@@ -99,8 +123,8 @@ while [[ $# -gt 0 ]]; do
     --max-loops=*) MAX_LOOPS="${1#--max-loops=}"; shift ;;
     --since) need_val "$@"; SINCE="$2"; shift 2 ;;
     --since=*) SINCE="${1#--since=}"; shift ;;
-    --branch-regex) need_val "$@"; BRANCH_RE="$2"; shift 2 ;;
-    --branch-regex=*) BRANCH_RE="${1#--branch-regex=}"; shift ;;
+    --item) need_val "$@"; ITEMS+=("$2"); shift 2 ;;
+    --item=*) ITEMS+=("${1#--item=}"); shift ;;
     --repo) need_val "$@"; REPO="$2"; shift 2 ;;
     --repo=*) REPO="${1#--repo=}"; shift ;;
     --help|-h) usage; exit 0 ;;
@@ -115,32 +139,42 @@ if [[ ${#LANES[@]} -gt 0 && -z "${TMUX:-}" ]]; then
   die "lane windows given (${LANES[*]}) but not inside tmux; drop the lanes or run from the tmux session that owns them"
 fi
 
-# ISO8601 → epoch, GNU date first, then BSD/macOS. -u is load-bearing so a
-# Z-suffixed timestamp is not shifted by the local zone.
+# ISO8601 (UTC, Z suffix) → epoch, GNU date first, then BSD/macOS. -u is
+# load-bearing so the timestamp is not shifted by the local zone.
 to_epoch() {
   date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null
 }
 
-if [[ -z "$SINCE" ]]; then
-  SINCE_EPOCH="$(date +%s)"
-  SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-else
-  SINCE_EPOCH="$(to_epoch "$SINCE")" || die "--since '$SINCE' is not an ISO8601 timestamp"
+# No floor by default: the floor must not move between runs, and a run has no
+# way to know when the previous one stopped looking.
+SINCE_EPOCH=0
+if [[ -n "$SINCE" ]]; then
+  SINCE_EPOCH="$(to_epoch "$SINCE")" || die "--since '$SINCE' is not an ISO8601 timestamp (UTC, Z suffix)"
 fi
+
+# The item's head branch is its id lowercased (worktree create's branch name);
+# one branch per line, for the jq membership test.
+ITEM_BRANCHES=""
+for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
+  [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die "--item '$item' is not an issue id (issue-N or PROJ-123)"
+  ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
+done
 
 command -v gh >/dev/null 2>&1 || die "gh CLI not found on PATH"
 command -v jq >/dev/null 2>&1 || die "jq not found on PATH"
 
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
 # Auth ladder (gates.md § Waiter auth ladder): a stale env token yields to the
-# keyring; with no working env token, the project's GH_BOT_TOKEN is the last
-# candidate. Never proceed unauthenticated — an unauthenticated `gh pr list`
-# would report an empty fleet, not a failure.
+# keyring; when neither works, the env token is dropped so the project's
+# GH_BOT_TOKEN can be selected — the last candidate. Never proceed
+# unauthenticated: an unauthenticated `gh pr list` would report an empty
+# fleet, not a failure.
 orch_sanitize_gh_env
 if ! orch_github_auth_status; then
-  if [[ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
-    orch_load_env_bot_token "$PROJECT_ROOT" || true
-  fi
-  orch_github_auth_status \
+  unset GH_TOKEN GITHUB_TOKEN
+  { [[ -n "$PROJECT_ROOT" ]] && orch_load_env_bot_token "$PROJECT_ROOT" && orch_github_auth_status; } \
     || die "no working GitHub auth path (tried env GH_TOKEN/GITHUB_TOKEN, gh keyring, project GH_BOT_TOKEN). Run: gh auth login"
 fi
 
@@ -155,33 +189,72 @@ else
   echo "oversee-watch: pr-watch.sh not found at $PR_WATCH; skipping the review-gate reducer (merged/window/question checks still run)" >&2
   PR_WATCH=""
 fi
+if [[ -z "$ITEM_BRANCHES" ]]; then
+  echo "oversee-watch: no --item given; skipping the merged check (pr-watch/window/question checks still run)" >&2
+fi
+
+# The latest pr-watch result, appended to every event's output.
+PW_RC=0
+PW_OUT=""
+PW_ERR=""
+# `<pr>\t<kind>` keys already reported or baselined during this run.
+PW_SEEN=""
+PW_PASSES=0
+
+pr_watch_context() {
+  [[ "$PW_RC" -ne 0 ]] || return 0
+  echo "pr-watch rc=$PW_RC"
+  [[ -z "$PW_OUT" ]] || printf '%s\n' "$PW_OUT"
+  [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
+}
 
 # Every step exits on its first event; the loop body only reaches `sleep`
 # when nothing needs the overseer.
 check_pr_watch() {
   [[ -n "$PR_WATCH" ]] || return 0
-  local out rc=0
-  out="$(GH_REPO="$REPO" "$PR_WATCH" 2>&1)" || rc=$?
-  [[ "$rc" -ne 0 ]] || return 0
-  echo "EVENT pr-watch rc=$rc"
-  [[ -z "$out" ]] || printf '%s\n' "$out"
+  local errf="$WORK_DIR/pr-watch.err" keys new_keys="" key
+  PW_RC=0
+  PW_OUT="$(GH_REPO="$REPO" "$PR_WATCH" 2>"$errf")" || PW_RC=$?
+  PW_ERR="$(cat "$errf")"
+  PW_PASSES=$((PW_PASSES + 1))
+  [[ "$PW_RC" -ne 0 ]] || return 0
+  # Non-zero with no per-PR lines is pr-watch's GLOBAL failure shape
+  # (gates.md): it reports on stderr only, and nothing here can be trusted.
+  [[ -n "$PW_OUT" ]] || die "pr-watch failed (rc=$PW_RC) with no per-PR lines: ${PW_ERR:-<no stderr>}"
+  keys="$(awk -F'\t' 'NF >= 3 { print $1 "\t" $3 }' <<<"$PW_OUT")"
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    grep -qxF -- "$key" <<<"$PW_SEEN" || new_keys+="$key"$'\n'
+  done <<<"$keys"
+  PW_SEEN+="$new_keys"
+  [[ -n "$new_keys" ]] || return 0
+  if [[ "$PW_PASSES" -eq 1 ]]; then
+    echo "oversee-watch: pr-watch attention present at start (rc=$PW_RC, $(grep -c . <<<"$new_keys") line(s)) — baseline, reported with the next event; only NEW lines become events" >&2
+    return 0
+  fi
+  echo "EVENT pr-watch rc=$PW_RC"
+  printf '%s\n' "$PW_OUT"
+  [[ -z "$PW_ERR" ]] || printf '%s\n' "$PW_ERR"
   exit 0
 }
 
 check_merged() {
-  local list hits
-  list="$(gh pr list --repo "$REPO" --state merged --limit 50 --json number,headRefName,mergedAt 2>&1)" \
-    || die "gh pr list --state merged failed for $REPO: $list"
-  hits="$(jq -r --arg re "$BRANCH_RE" --argjson since "$SINCE_EPOCH" '
-    [ .[]
-      | select(.headRefName | test($re))
-      | select(.mergedAt != null)
-      | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
-      | "EVENT merged \(.number) \(.headRefName)" ]
-    | .[]' <<<"$list" 2>/dev/null)" \
-    || die "could not parse gh pr list output for $REPO"
+  [[ -n "$ITEM_BRANCHES" ]] || return 0
+  local errf="$WORK_DIR/merged.err" list hits
+  list="$(gh pr list --repo "$REPO" --state merged --limit 50 --json number,headRefName,mergedAt 2>"$errf")" \
+    || die "gh pr list --state merged failed for $REPO: $(cat "$errf")"
+  hits="$(jq -r --arg branches "$ITEM_BRANCHES" --argjson since "$SINCE_EPOCH" '
+    ($branches | split("\n") | map(select(length > 0))) as $live
+    | [ .[]
+        | select(.headRefName | ascii_downcase | IN($live[]))
+        | select(.mergedAt != null)
+        | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
+        | "EVENT merged \(.number) \(.headRefName)" ]
+    | .[]' <<<"$list" 2>"$errf")" \
+    || die "could not parse gh pr list output for $REPO: $(cat "$errf")"
   [[ -n "$hits" ]] || return 0
   printf '%s\n' "$hits"
+  pr_watch_context
   exit 0
 }
 
@@ -192,29 +265,33 @@ check_lanes() {
   for lane in "${LANES[@]}"; do
     if ! grep -qxF -- "$lane" <<<"$existing"; then
       echo "EVENT window-gone $lane"
+      pr_watch_context
       exit 0
     fi
   done
   for lane in "${LANES[@]}"; do
     if ! pane="$(tmux capture-pane -t "$lane" -p 2>/dev/null)"; then
       echo "EVENT window-gone $lane"
+      pr_watch_context
       exit 0
     fi
     if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
       echo "EVENT question $lane"
       grep -v '^[[:space:]]*$' <<<"$pane" | tail -40
+      pr_watch_context
       exit 0
     fi
   done
 }
 
 heartbeat() {
-  local open
+  local errf="$WORK_DIR/open.err" open
   open="$(gh pr list --repo "$REPO" --state open --limit 50 --json number,headRefName,title \
-    --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>&1)" \
-    || die "gh pr list --state open failed for $REPO: $open"
-  echo "EVENT heartbeat loops=$MAX_LOOPS interval=${INTERVAL}s since=$SINCE"
+    --jq '.[] | "\(.number)\t\(.headRefName)\t\(.title)"' 2>"$errf")" \
+    || die "gh pr list --state open failed for $REPO: $(cat "$errf")"
+  echo "EVENT heartbeat loops=$MAX_LOOPS interval=${INTERVAL}s since=${SINCE:-none}"
   [[ -z "$open" ]] || printf '%s\n' "$open"
+  pr_watch_context
   exit 0
 }
 
