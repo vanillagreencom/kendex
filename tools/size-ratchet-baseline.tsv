@@ -38,7 +38,7 @@ skills/orch/tests/approval_wait.sh	1634
 skills/review-gate/scripts/review-predicate-selftest.sh	2624
 skills/review-gate/scripts/review-predicate.sh	1149
 skills/review-gate/tests/pr-watch.test.sh	1158
-skills/second-opinion/scripts/second-opinion	2492
+skills/second-opinion/scripts/second-opinion	2502
 skills/second-opinion/tests/cli-failure-gate.test.sh	1180
 skills/second-opinion/tests/review-dual-model.test.sh	1516
 skills/worktree/scripts/worktree	4077
