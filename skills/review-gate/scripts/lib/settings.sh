@@ -26,6 +26,24 @@
 # Scripts run from the repo root in CI (workflow working directory), so the
 # default settings path is relative.
 
+# A source is skipped only when it is ABSENT. A path that exists as
+# something else — directory, FIFO, socket, device — fails -f exactly like
+# an absent one, and a symlink that does not resolve fails -e as well as -f,
+# so -L is what sees it at all: either shape would skip a configured source
+# with nothing said and let a lower-precedence value decide. /dev/null is
+# the documented force-defaults handle and stays exempt.
+rg_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error otherwise
+  [ "$1" != "/dev/null" ] || return 0
+  { [ -e "$1" ] || [ -L "$1" ]; } || return 0
+  [ ! -f "$1" ] || return 0
+  if [ ! -e "$1" ]; then
+    echo "::error::$1: settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
+  else
+    echo "::error::$1: settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
+  fi
+  return 1
+}
+
 # One read discipline for every settings probe: grep exits 0/1 are
 # measurements, anything else is an unreadable source and fails loud —
 # falling through to a lower-precedence layer would silently change the
@@ -59,21 +77,7 @@ rg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     return 0
   fi
   file="${REVIEW_GATE_SETTINGS_FILE:-vstack.settings.toml}"
-  # The fall-back-to-defaults path covers an ABSENT PLAIN FILE only. A path
-  # that EXISTS as something else — directory, FIFO, socket, device — fails
-  # -f exactly like an absent one, so every key would resolve to its
-  # built-in default with nothing said, and an empty default widens the gate
-  # (empty trusted-logins = any non-author). A symlink that does not resolve
-  # fails -e as well as -f, so -L is what sees it at all. /dev/null is the
-  # documented force-defaults handle and stays exempt.
-  if [ "$file" != "/dev/null" ] && { [ -e "$file" ] || [ -L "$file" ]; } && [ ! -f "$file" ]; then
-    if [ ! -e "$file" ]; then
-      echo "::error::$file: settings path is a symlink that does not resolve (dangling target, cycle, or over-long chain); the fall-back to built-in defaults covers an absent plain file only" >&2
-    else
-      echo "::error::$file: settings path exists but is not a regular file (directory, FIFO, socket or device); the fall-back to built-in defaults covers an absent plain file only" >&2
-    fi
-    return 1
-  fi
+  rg_settings_usable "$file" || return 1
   if [ -f "$file" ]; then
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment ("empty disables" per the settings docs) and must override the

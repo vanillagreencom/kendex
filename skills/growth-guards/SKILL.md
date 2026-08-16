@@ -53,7 +53,10 @@ file from a gate.
 Resolution order for every key: explicit environment > `.env.local`
 (personal, untracked) > `.vstack/settings.toml` > the repo's committed
 `vstack.settings.toml` (flat `KEY = "value"` under `[env]`) > `.env` >
-built-in default.
+built-in default. Only an ABSENT source is skipped: a source that exists
+but is unusable — unreadable, a directory, FIFO, socket or device, or a
+symlink that does not resolve — is a config error (exit 2), never a
+fall-through to the next layer. `/dev/null` forces the built-in defaults.
 
 | Key | Default | Meaning |
 |---|---|---|

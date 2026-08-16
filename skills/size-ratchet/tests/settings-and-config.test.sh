@@ -237,6 +237,34 @@ run_raw SIZE_RATCHET_SETTINGS_FILE=absent.settings.toml || true
   && ok "an ABSENT plain file still falls back to the built-in default (control)" \
   || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
 
+echo "=== an EXISTING non-regular ENV-FILE source never falls through ==="
+# .env.local and .env are probed with -f like the settings file, so a
+# directory or an unresolvable symlink there is skipped exactly like an
+# absent one and a lower-precedence value silently decides.
+new_repo nonregularenv
+mkfile f.txt 20
+git -C "$R" add -A
+printf '[env]\nSIZE_RATCHET_THRESHOLD = "30"\n' >"$R/vstack.settings.toml"
+
+mkdir -p "$R/.env.local"
+run_raw || true
+[ "$RC" -eq 2 ] && case "$OUT" in *".env.local: settings source exists but is not a regular file"*) true ;; *) false ;; esac \
+  && ok "a DIRECTORY at .env.local is exit 2 (falling through would have read 30 and passed)" \
+  || bad "a DIRECTORY at .env.local is exit 2" "rc=$RC out=$OUT"
+rmdir "$R/.env.local"
+
+ln -s missing.env "$R/.env"
+run_raw || true
+[ "$RC" -eq 2 ] && case "$OUT" in *".env: settings source is a symlink that does not resolve"*) true ;; *) false ;; esac \
+  && ok "a DANGLING .env symlink is exit 2, not a silent skip" \
+  || bad "a DANGLING .env symlink is exit 2" "rc=$RC out=$OUT"
+rm -f "$R/.env"
+
+run_raw || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 30"*) true ;; *) false ;; esac \
+  && ok "control: with both env files absent the settings file still supplies 30" \
+  || bad "control: absent env files fall through to the settings file" "rc=$RC out=$OUT"
+
 echo "=== an UNREADABLE settings source fails loud, never falls through ==="
 # grep exits 0/1 are measurements; anything else means the source could not
 # be read, and continuing to a lower-precedence layer would silently

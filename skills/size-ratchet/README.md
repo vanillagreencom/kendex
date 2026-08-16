@@ -100,8 +100,12 @@ src/gen/*.rs	generated bindings
 Each key resolves environment > `.env.local` > `.vstack/settings.toml` > committed `vstack.settings.toml`
 (flat `KEY = "value"` assignment under `[env]`) >
 `.env` > default (env files use `KEY=value` or `export KEY=value`; parsed,
-never sourced). `--baseline` / `--excludes` flags override every source for
-the paths. All relative paths are
+never sourced). Only an ABSENT source is skipped: a source that exists but
+is unusable — unreadable, a directory, FIFO, socket or device, or a symlink
+that does not resolve — is a config error (exit 2), never a fall-through to
+the next layer; `/dev/null` forces the built-in defaults. `--baseline` /
+`--excludes` flags override every source for the paths. All relative paths
+are
 repo-root-relative; the script `cd`s to `git rev-parse --show-toplevel`
 before resolving anything.
 

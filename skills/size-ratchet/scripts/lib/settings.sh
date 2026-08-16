@@ -75,6 +75,24 @@ sr_dotenv_value() { # RAW — value on stdout; nonzero on an unsupported shape
   return 1
 }
 
+# A source is skipped only when it is ABSENT. A path that exists as
+# something else — directory, FIFO, socket, device — fails -f exactly like
+# an absent one, and a symlink that does not resolve fails -e as well as -f,
+# so -L is what sees it at all: either shape would skip a configured source
+# with nothing said and let a lower-precedence value decide. /dev/null is
+# the documented force-defaults handle and stays exempt.
+sr_settings_usable() { # PATH — 0 = readable-shaped or absent; 1 + ::error otherwise
+  [ "$1" != "/dev/null" ] || return 0
+  { [ -e "$1" ] || [ -L "$1" ]; } || return 0
+  [ ! -f "$1" ] || return 0
+  if [ ! -e "$1" ]; then
+    echo "::error::$1: settings source is a symlink that does not resolve (dangling target, cycle, or over-long chain); a source is skipped only when it is absent" >&2
+  else
+    echo "::error::$1: settings source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent" >&2
+  fi
+  return 1
+}
+
 # One read discipline for every settings probe: grep exits 0/1 are
 # measurements, anything else is an unreadable source and fails loud —
 # falling through to a lower-precedence layer would silently change the
@@ -110,6 +128,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
   # Env-file overrides (standard project layering: .env.local beats the
   # committed settings, .env is the base) — LAST matching KEY= line wins (shell-sourcing semantics),
   # optional surrounding quotes stripped. Parsed, never sourced.
+  sr_settings_usable ".env.local" || return 1
   if [ -f ".env.local" ]; then
     status=0
     matches="$(sr_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" .env.local)" || status=$?
@@ -132,21 +151,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     set -- ".vstack/settings.toml" "vstack.settings.toml"
   fi
   for file in "$@"; do
-  # The fall-back past this file covers an ABSENT PLAIN FILE only. A path
-  # that EXISTS as something else — directory, FIFO, socket, device — fails
-  # -f exactly like an absent one, so the configured settings would be
-  # skipped with nothing said and the built-in default would decide. A
-  # symlink that does not resolve fails -e as well as -f, so -L is what sees
-  # it at all. /dev/null is the documented force-defaults handle and stays
-  # exempt.
-  if [ "$file" != "/dev/null" ] && { [ -e "$file" ] || [ -L "$file" ]; } && [ ! -f "$file" ]; then
-    if [ ! -e "$file" ]; then
-      echo "::error::$file: settings path is a symlink that does not resolve (dangling target, cycle, or over-long chain); the fall-back to built-in defaults covers an absent plain file only" >&2
-    else
-      echo "::error::$file: settings path exists but is not a regular file (directory, FIFO, socket or device); the fall-back to built-in defaults covers an absent plain file only" >&2
-    fi
-    return 1
-  fi
+  sr_settings_usable "$file" || return 1
   if [ -f "$file" ]; then
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment and must override the built-in default, exactly like a
@@ -184,6 +189,7 @@ sr_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     fi
   fi
   done
+  sr_settings_usable ".env" || return 1
   if [ -f ".env" ]; then
     status=0
     matches="$(sr_settings_grep "^[[:space:]]*(export[[:space:]]+)?${name}=" .env)" || status=$?

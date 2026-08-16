@@ -155,8 +155,11 @@ type(scope)!: subject        # scope and '!' optional
 Each key resolves environment > `.env.local` > `.vstack/settings.toml` >
 committed `vstack.settings.toml` (flat `KEY = "value"` under `[env]`) >
 `.env` > default (env files use `KEY=value` or `export KEY=value`; parsed,
-never sourced). Per-check flags (`--excludes`, `--baseline`) override
-every source for the paths. All relative paths are repo-root-relative; the
+never sourced). Only an ABSENT source is skipped: a source that exists but
+is unusable — unreadable, a directory, FIFO, socket or device, or a symlink
+that does not resolve — is a config error (exit 2), never a fall-through to
+the next layer; `/dev/null` forces the built-in defaults. Per-check flags
+(`--excludes`, `--baseline`) override every source for the paths. All relative paths are repo-root-relative; the
 scripts `cd` to `git rev-parse --show-toplevel` before resolving anything.
 
 ```toml

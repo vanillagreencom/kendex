@@ -11,8 +11,11 @@
   grep exit >= 2 as an unreadable source and refuses by name (the discipline
   growth-guards already carried). This retires review-predicate-selftest's
   own unreadable-settings guard: the resolver refuses first, for the live
-  predicate and writer as much as for the selftest. Repos vendoring
-  review-gate or size-ratchet must re-vendor.
+  predicate and writer as much as for the selftest. The same "only an
+  ABSENT source is skipped" rule now covers the `.env.local` and `.env`
+  lanes, which still fell through on a directory, FIFO, socket, device or
+  unresolvable symlink. Repos vendoring review-gate, size-ratchet or
+  growth-guards must re-vendor.
 - size-ratchet: the collection loop measures worktree files in batched `wc`
   invocations instead of one process per file — 6.3s -> 0.8s on a tree
   measuring 9,325 files, 0.86s -> 0.09s on one measuring 1,454, with the
