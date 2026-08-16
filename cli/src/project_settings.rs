@@ -1,6 +1,6 @@
 use crate::skill::Skill;
 use anyhow::{Context, Result};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 const SETTINGS_FILE: &str = "vstack.settings.toml";
@@ -11,17 +11,37 @@ pub struct SettingsMergeResult {
     pub path: PathBuf,
     pub created: bool,
     pub added_keys: Vec<String>,
+    /// Keys whose seeded comment block was refreshed to the template's
+    /// revised text (the key's value line is never touched).
+    pub updated_keys: Vec<String>,
 }
 
 impl SettingsMergeResult {
     pub fn summary(&self) -> String {
-        let action = if self.created { "created" } else { "updated" };
-        format!(
-            "{action} {} with {} setting(s): {}",
-            self.path.display(),
-            self.added_keys.len(),
-            self.added_keys.join(", ")
-        )
+        if self.created {
+            return format!(
+                "created {} with {} setting(s): {}",
+                self.path.display(),
+                self.added_keys.len(),
+                self.added_keys.join(", ")
+            );
+        }
+        let mut parts = Vec::new();
+        if !self.added_keys.is_empty() {
+            parts.push(format!(
+                "{} setting(s): {}",
+                self.added_keys.len(),
+                self.added_keys.join(", ")
+            ));
+        }
+        if !self.updated_keys.is_empty() {
+            parts.push(format!(
+                "{} refreshed comment(s): {}",
+                self.updated_keys.len(),
+                self.updated_keys.join(", ")
+            ));
+        }
+        format!("updated {} with {}", self.path.display(), parts.join("; "))
     }
 }
 
@@ -31,9 +51,20 @@ struct EnvEntry {
     lines: Vec<String>,
 }
 
+/// Seed missing skill-settings keys into `<project>/vstack.settings.toml` and
+/// refresh seeded comment blocks whose upstream template text changed.
+///
+/// `seeds` is the provenance ledger (normally the project lock's
+/// `settings_seeds`): per key, the hash of the comment block last written by
+/// seeding. A comment is rewritten only while its current text still hashes
+/// to that value — any other text is a user edit and is preserved. The map
+/// can change even when the file does not (a block matching the incoming
+/// template is recorded so the next upstream revision can propagate); callers
+/// persist it when it changed.
 pub fn ensure_skill_settings(
     project_root: &Path,
     skills: &[Skill],
+    seeds: &mut BTreeMap<String, String>,
 ) -> Result<Option<SettingsMergeResult>> {
     let entries = settings_entries_from_skills(skills)?;
     if entries.is_empty() {
@@ -41,7 +72,6 @@ pub fn ensure_skill_settings(
     }
 
     let path = project_root.join(SETTINGS_FILE);
-    let added_keys: Vec<String> = entries.iter().map(|entry| entry.key.clone()).collect();
 
     if !path.exists() {
         if let Some(parent) = path.parent() {
@@ -50,38 +80,162 @@ pub fn ensure_skill_settings(
         }
         std::fs::write(&path, render_new_settings_file(&entries))
             .with_context(|| format!("writing {}", path.display()))?;
+        record_seeds(seeds, &entries);
         return Ok(Some(SettingsMergeResult {
             path,
             created: true,
-            added_keys,
+            added_keys: entries.iter().map(|entry| entry.key.clone()).collect(),
+            updated_keys: Vec::new(),
         }));
     }
 
     let original =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let (refreshed, updated_keys) = refresh_seeded_comments(&original, &entries, seeds);
     // File-wide, not [env]-scoped: the review-gate settings contract enforces key
     // uniqueness across the whole file (its shell-side reader is not TOML-table-aware),
     // so a key assigned under any table must block a duplicate append just the same.
-    let existing_keys = assigned_keys(&original);
+    let existing_keys = assigned_keys(&refreshed);
     let missing: Vec<EnvEntry> = entries
         .into_iter()
         .filter(|entry| !existing_keys.contains(&entry.key))
         .collect();
-    if missing.is_empty() {
-        return Ok(None);
-    }
 
     let added_keys: Vec<String> = missing.iter().map(|entry| entry.key.clone()).collect();
-    let merged = merge_missing_entries(&original, &missing);
+    let merged = if missing.is_empty() {
+        refreshed
+    } else {
+        merge_missing_entries(&refreshed, &missing)
+    };
+    record_seeds(seeds, &missing);
     if merged != original {
         std::fs::write(&path, merged).with_context(|| format!("writing {}", path.display()))?;
     }
 
+    if added_keys.is_empty() && updated_keys.is_empty() {
+        return Ok(None);
+    }
     Ok(Some(SettingsMergeResult {
         path,
         created: false,
         added_keys,
+        updated_keys,
     }))
+}
+
+fn record_seeds(seeds: &mut BTreeMap<String, String>, entries: &[EnvEntry]) {
+    for entry in entries {
+        let comment = trim_blank_edges(&entry.lines[..entry.lines.len() - 1]);
+        seeds.insert(entry.key.clone(), comment_hash(comment));
+    }
+}
+
+/// Blank separators around a comment block are layout, not content: trim
+/// them off both edges before comparing or hashing. Interior blanks stay.
+fn trim_blank_edges(lines: &[String]) -> &[String] {
+    let mut lo = 0;
+    let mut hi = lines.len();
+    while lo < hi && lines[lo].trim().is_empty() {
+        lo += 1;
+    }
+    while hi > lo && lines[hi - 1].trim().is_empty() {
+        hi -= 1;
+    }
+    &lines[lo..hi]
+}
+
+fn comment_hash(lines: &[String]) -> String {
+    format!("{:016x}", crate::config::fnv1a(lines.join("\n").as_bytes()))
+}
+
+/// Rewrite `[env]` comment blocks whose upstream template text changed,
+/// gated by the `seeds` ledger (see [`ensure_skill_settings`]). A block
+/// already matching the incoming template is recorded in the ledger without
+/// a file change, which is how installs predating the ledger pick up
+/// provenance. Returns the (possibly rewritten) content and the refreshed
+/// keys. Assignment lines are never touched.
+fn refresh_seeded_comments(
+    original: &str,
+    entries: &[EnvEntry],
+    seeds: &mut BTreeMap<String, String>,
+) -> (String, Vec<String>) {
+    let lines: Vec<String> = original.lines().map(str::to_string).collect();
+    let Some(env_start) = lines.iter().position(|line| is_env_header(line)) else {
+        return (original.to_string(), Vec::new());
+    };
+    let env_end = lines
+        .iter()
+        .enumerate()
+        .skip(env_start + 1)
+        .find_map(|(idx, line)| is_table_header(line).then_some(idx))
+        .unwrap_or(lines.len());
+
+    // (start, end, replacement) line spans, spliced back-to-front below so
+    // earlier spans keep their indices.
+    let mut replacements: Vec<(usize, usize, Vec<String>)> = Vec::new();
+    let mut updated_keys = Vec::new();
+    let mut pending: Vec<usize> = Vec::new();
+    for idx in env_start + 1..env_end {
+        let line = &lines[idx];
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            pending.push(idx);
+            continue;
+        }
+        let key = assignment_key(line);
+        let block = std::mem::take(&mut pending);
+        // A line that is neither comment, blank, nor assignment breaks the
+        // block: never splice across it (the drained run is discarded).
+        let Some(key) = key else {
+            continue;
+        };
+        let Some(template) = entries.iter().find(|entry| entry.key == key) else {
+            continue;
+        };
+        let mut lo = 0;
+        let mut hi = block.len();
+        while lo < hi && lines[block[lo]].trim().is_empty() {
+            lo += 1;
+        }
+        while hi > lo && lines[block[hi - 1]].trim().is_empty() {
+            hi -= 1;
+        }
+        let current: Vec<String> = block[lo..hi].iter().map(|&i| lines[i].clone()).collect();
+        let incoming = trim_blank_edges(&template.lines[..template.lines.len() - 1]);
+        if current == incoming {
+            seeds.insert(key, comment_hash(&current));
+            continue;
+        }
+        if seeds.get(&key).map(String::as_str) != Some(comment_hash(&current).as_str()) {
+            continue;
+        }
+        let (start, end) = if lo < hi {
+            (block[lo], block[hi - 1] + 1)
+        } else {
+            // No existing comment: insert directly above the assignment.
+            (idx, idx)
+        };
+        seeds.insert(key.clone(), comment_hash(incoming));
+        replacements.push((start, end, incoming.to_vec()));
+        updated_keys.push(key);
+    }
+
+    if replacements.is_empty() {
+        return (original.to_string(), updated_keys);
+    }
+    let mut lines = lines;
+    for (start, end, mut block) in replacements.into_iter().rev() {
+        if start == end
+            && start > 0
+            && !lines[start - 1].trim().is_empty()
+            && !is_table_header(&lines[start - 1])
+        {
+            block.insert(0, String::new());
+        }
+        lines.splice(start..end, block);
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    (out, updated_keys)
 }
 
 fn settings_entries_from_skills(skills: &[Skill]) -> Result<Vec<EnvEntry>> {
@@ -342,9 +496,13 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol"
         .unwrap();
 
         let project = root.join("project");
-        let result = ensure_skill_settings(&project, &[skill("second-opinion", skill_dir)])
-            .unwrap()
-            .unwrap();
+        let result = ensure_skill_settings(
+            &project,
+            &[skill("second-opinion", skill_dir)],
+            &mut BTreeMap::new(),
+        )
+        .unwrap()
+        .unwrap();
 
         assert!(result.created);
         assert_eq!(
@@ -388,9 +546,13 @@ value = true
         )
         .unwrap();
 
-        let result = ensure_skill_settings(&project, &[skill("second-opinion", skill_dir)])
-            .unwrap()
-            .unwrap();
+        let result = ensure_skill_settings(
+            &project,
+            &[skill("second-opinion", skill_dir)],
+            &mut BTreeMap::new(),
+        )
+        .unwrap()
+        .unwrap();
 
         assert!(!result.created);
         assert_eq!(result.added_keys, vec!["SECOND_OPINION_CODEX_CMD"]);
@@ -435,9 +597,13 @@ REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
         )
         .unwrap();
 
-        let result = ensure_skill_settings(&project, &[skill("review-gate", skill_dir)])
-            .unwrap()
-            .unwrap();
+        let result = ensure_skill_settings(
+            &project,
+            &[skill("review-gate", skill_dir)],
+            &mut BTreeMap::new(),
+        )
+        .unwrap()
+        .unwrap();
 
         assert!(!result.created);
         assert_eq!(result.added_keys, vec!["REVIEW_GATE_CONTEXT"]);
@@ -467,10 +633,167 @@ REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
         std::fs::create_dir_all(&skill_dir).unwrap();
         let project = root.join("project");
 
-        let result = ensure_skill_settings(&project, &[skill("plain", skill_dir)]).unwrap();
+        let result =
+            ensure_skill_settings(&project, &[skill("plain", skill_dir)], &mut BTreeMap::new())
+                .unwrap();
 
         assert!(result.is_none());
         assert!(!project.join(SETTINGS_FILE).exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    const TUNER_V1: &str = r#"[env]
+
+# Used by: tuner. Old guidance about the knob.
+TUNER_MODE = "ask"
+"#;
+
+    const TUNER_V2: &str = r#"[env]
+
+# Used by: tuner. Revised guidance: the knob now also
+# governs merges.
+TUNER_MODE = "ask"
+"#;
+
+    fn write_template(skill_dir: &Path, content: &str) {
+        std::fs::create_dir_all(skill_dir).unwrap();
+        std::fs::write(skill_dir.join(SETTINGS_TEMPLATE), content).unwrap();
+    }
+
+    #[test]
+    fn refreshes_unedited_seeded_comment_when_template_revises_it() {
+        let root = temp_root("comment_refresh");
+        let skill_dir = root.join("source").join("skills").join("tuner");
+        write_template(&skill_dir, TUNER_V1);
+        let project = root.join("project");
+        let mut seeds = BTreeMap::new();
+
+        ensure_skill_settings(&project, &[skill("tuner", skill_dir.clone())], &mut seeds)
+            .unwrap()
+            .unwrap();
+        // A hand-set VALUE must survive a comment refresh untouched.
+        let path = project.join(SETTINGS_FILE);
+        let hand_valued = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("TUNER_MODE = \"ask\"", "TUNER_MODE = \"auto\"");
+        std::fs::write(&path, hand_valued).unwrap();
+
+        write_template(&skill_dir, TUNER_V2);
+        let result = ensure_skill_settings(&project, &[skill("tuner", skill_dir)], &mut seeds)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.updated_keys, vec!["TUNER_MODE"]);
+        assert!(result.added_keys.is_empty());
+        let settings = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            settings.contains("Revised guidance") && !settings.contains("Old guidance"),
+            "stale seeded comment survived the template revision: {settings}"
+        );
+        assert!(
+            settings.contains("TUNER_MODE = \"auto\""),
+            "comment refresh touched the value line: {settings}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn never_rewrites_hand_edited_comment() {
+        let root = temp_root("comment_hand_edit");
+        let skill_dir = root.join("source").join("skills").join("tuner");
+        write_template(&skill_dir, TUNER_V1);
+        let project = root.join("project");
+        let mut seeds = BTreeMap::new();
+
+        ensure_skill_settings(&project, &[skill("tuner", skill_dir.clone())], &mut seeds)
+            .unwrap()
+            .unwrap();
+        let path = project.join(SETTINGS_FILE);
+        let edited = std::fs::read_to_string(&path).unwrap().replace(
+            "Old guidance about the knob.",
+            "our fork pins this to ask — do not change.",
+        );
+        std::fs::write(&path, &edited).unwrap();
+
+        write_template(&skill_dir, TUNER_V2);
+        let result =
+            ensure_skill_settings(&project, &[skill("tuner", skill_dir)], &mut seeds).unwrap();
+
+        assert!(result.is_none(), "hand-edited comment reported as changed");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            edited,
+            "hand-edited comment was rewritten"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn matching_comment_without_ledger_gains_provenance_then_updates() {
+        // Installs that predate the settings_seeds ledger: the first refresh
+        // finds the comment still matching its template and records
+        // provenance without touching the file; the next template revision
+        // then propagates.
+        let root = temp_root("comment_bootstrap");
+        let skill_dir = root.join("source").join("skills").join("tuner");
+        write_template(&skill_dir, TUNER_V1);
+        let project = root.join("project");
+
+        ensure_skill_settings(
+            &project,
+            &[skill("tuner", skill_dir.clone())],
+            &mut BTreeMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let path = project.join(SETTINGS_FILE);
+        let seeded = std::fs::read_to_string(&path).unwrap();
+
+        let mut seeds = BTreeMap::new();
+        let result =
+            ensure_skill_settings(&project, &[skill("tuner", skill_dir.clone())], &mut seeds)
+                .unwrap();
+        assert!(result.is_none());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), seeded);
+        assert!(
+            seeds.contains_key("TUNER_MODE"),
+            "matching comment did not bootstrap provenance: {seeds:?}"
+        );
+
+        write_template(&skill_dir, TUNER_V2);
+        let result = ensure_skill_settings(&project, &[skill("tuner", skill_dir)], &mut seeds)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.updated_keys, vec!["TUNER_MODE"]);
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("Revised guidance")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stale_comment_without_ledger_is_preserved() {
+        // No provenance and the comment differs from the incoming template:
+        // indistinguishable from a hand edit, so it must stay.
+        let root = temp_root("comment_no_ledger");
+        let skill_dir = root.join("source").join("skills").join("tuner");
+        write_template(&skill_dir, TUNER_V2);
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let existing =
+            "[env]\n\n# Guidance from an older template revision.\nTUNER_MODE = \"ask\"\n";
+        let path = project.join(SETTINGS_FILE);
+        std::fs::write(&path, existing).unwrap();
+
+        let mut seeds = BTreeMap::new();
+        let result =
+            ensure_skill_settings(&project, &[skill("tuner", skill_dir)], &mut seeds).unwrap();
+
+        assert!(result.is_none());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), existing);
+        assert!(!seeds.contains_key("TUNER_MODE"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

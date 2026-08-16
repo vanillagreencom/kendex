@@ -103,6 +103,13 @@ impl std::fmt::Display for InstallMethod {
 pub struct LockFile {
     pub version: u32,
     pub entries: BTreeMap<String, LockEntry>,
+    /// Per settings key, the FNV-1a hash of the comment block last seeded
+    /// into `vstack.settings.toml`. A key's comment is refreshed from the
+    /// skill template only while its current text still hashes to this
+    /// value — a comment the user edited stops matching and is never
+    /// rewritten. Project-scope locks only.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub settings_seeds: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -601,7 +608,7 @@ pub fn now_iso() -> String {
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x00000100000001B3;
 
-fn fnv1a(data: &[u8]) -> u64 {
+pub(crate) fn fnv1a(data: &[u8]) -> u64 {
     let mut h = FNV_OFFSET;
     for &b in data {
         h ^= b as u64;
@@ -2879,6 +2886,7 @@ mod source_registry_tests {
         let mut lock = LockFile {
             version: 1,
             entries: std::collections::BTreeMap::new(),
+            settings_seeds: std::collections::BTreeMap::new(),
         };
 
         let modified = recover_hook_lock_entries_at(
@@ -3091,6 +3099,7 @@ mod source_registry_tests {
         let mut lock = LockFile {
             version: 1,
             entries: std::collections::BTreeMap::new(),
+            settings_seeds: std::collections::BTreeMap::new(),
         };
 
         assert!(recover_hook_lock_entries_at(
@@ -3129,6 +3138,7 @@ echo foreign
         let mut lock = LockFile {
             version: 1,
             entries: std::collections::BTreeMap::new(),
+            settings_seeds: std::collections::BTreeMap::new(),
         };
 
         let modified = recover_hook_lock_entries_at(
@@ -3166,6 +3176,7 @@ echo foreign
         let mut lock = LockFile {
             version: 1,
             entries: std::collections::BTreeMap::new(),
+            settings_seeds: std::collections::BTreeMap::new(),
         };
 
         assert!(recover_hook_lock_entries_at(
@@ -3204,6 +3215,7 @@ echo foreign
         let mut lock = LockFile {
             version: 1,
             entries: std::collections::BTreeMap::new(),
+            settings_seeds: std::collections::BTreeMap::new(),
         };
         let modified = recover_hook_lock_entries_at_with_cursor_global_rules(
             &mut lock,
@@ -3253,6 +3265,7 @@ echo foreign
         let mut lock = LockFile {
             version: 1,
             entries: std::collections::BTreeMap::new(),
+            settings_seeds: std::collections::BTreeMap::new(),
         };
 
         assert!(recover_hook_lock_entries_at(
@@ -3354,6 +3367,7 @@ echo foreign
         let mut lock = LockFile {
             version: 1,
             entries: std::collections::BTreeMap::new(),
+            settings_seeds: std::collections::BTreeMap::new(),
         };
         assert!(recover_hook_lock_entries_at(
             &mut lock,
@@ -3459,6 +3473,7 @@ echo foreign
         let mut lock = LockFile {
             version: 1,
             entries: std::collections::BTreeMap::new(),
+            settings_seeds: std::collections::BTreeMap::new(),
         };
         assert!(!recover_hook_lock_entries_at(
             &mut lock,
@@ -3507,6 +3522,7 @@ echo foreign
         let mut lock = LockFile {
             version: 1,
             entries: std::collections::BTreeMap::new(),
+            settings_seeds: std::collections::BTreeMap::new(),
         };
         assert!(recover_hook_lock_entries_at(
             &mut lock,

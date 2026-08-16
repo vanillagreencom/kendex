@@ -1503,3 +1503,83 @@ fn refresh_rejects_project_skills_dir_inside_agents() {
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+fn write_settings_skill(source: &Path, name: &str, template: &str) {
+    let skill_dir = source.join("skills").join(name);
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: Settings {name}\nlicense: MIT\n---\n# {name}\n\nBody.\n"),
+    )
+    .unwrap();
+    std::fs::write(skill_dir.join("vstack.settings.toml.example"), template).unwrap();
+}
+
+#[test]
+fn seed_installed_skill_settings_covers_project_that_is_its_own_source() {
+    // VST-260: a repo that is its own package source must still receive
+    // seeded settings keys for its installed skills.
+    let root = tmpdir("seed-self-source");
+    let project = root.join("project");
+    write_settings_skill(
+        &project,
+        "tuner",
+        "[env]\n\n# Used by: tuner.\nTUNER_MODE = \"ask\"\n",
+    );
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry(
+        "tuner",
+        ItemKind::Skill,
+        &project,
+        vec!["claude-code"],
+    ));
+    let sources = vec![RefreshSource::from_root(&project)];
+
+    let seeds_changed = seed_installed_skill_settings(&project, &mut lock, &sources).unwrap();
+
+    let settings = std::fs::read_to_string(project.join("vstack.settings.toml"))
+        .expect("no settings seeded in a repo that is its own package source");
+    assert!(
+        settings.contains("TUNER_MODE = \"ask\""),
+        "seeded key missing: {settings}"
+    );
+    assert!(seeds_changed, "seeded comment not recorded in the ledger");
+    assert!(lock.settings_seeds.contains_key("TUNER_MODE"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn seed_installed_skill_settings_seeds_consumer_projects() {
+    let root = tmpdir("seed-consumer");
+    let source = root.join("source");
+    let project = root.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    write_settings_skill(
+        &source,
+        "tuner",
+        "[env]\n\n# Used by: tuner.\nTUNER_MODE = \"ask\"\n",
+    );
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry(
+        "tuner",
+        ItemKind::Skill,
+        &source,
+        vec!["claude-code"],
+    ));
+    let sources = vec![RefreshSource::from_root(&source)];
+
+    let seeds_changed = seed_installed_skill_settings(&project, &mut lock, &sources).unwrap();
+
+    let settings = std::fs::read_to_string(project.join("vstack.settings.toml")).unwrap();
+    assert!(
+        settings.contains("TUNER_MODE = \"ask\""),
+        "seeded key missing: {settings}"
+    );
+    assert!(seeds_changed);
+    assert!(lock.settings_seeds.contains_key("TUNER_MODE"));
+
+    let _ = std::fs::remove_dir_all(root);
+}

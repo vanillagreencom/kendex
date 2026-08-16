@@ -32,6 +32,15 @@
   GitHub-route Linear-free check — its sed pattern was BRE (parens grouped,
   never matched) and the extraction failure inside `$(...)` could not stop
   the run. ERE now, and an empty region fails the assertion.
+- cli: `vstack refresh` now seeds missing skill-settings keys into a repo
+  that is its own package source (previously such repos silently received
+  none and drifted on every settings addition), and refreshes a seeded
+  key's comment block when the skill template revises it — gated by a new
+  `settings_seeds` provenance ledger in `.vstack-lock.json`, so a comment
+  the user edited is never rewritten. Installs predating the ledger pick up
+  provenance on their first refresh where the comment still matches the
+  template; a pre-ledger comment that already drifted from the incoming
+  template stays untouched (indistinguishable from a hand edit) (VST-260).
 - orch: `queue-wait` default budget is 2400s, sized to the merge-group suite
   (VST-249); the budget-exhausted `queued` verdict now carries `progressing`
   and a `cause` of `still_progressing` vs `stalled` from merge-queue-entry

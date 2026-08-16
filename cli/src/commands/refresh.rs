@@ -1111,6 +1111,45 @@ pub fn run(scope: crate::scope::ScopeFilter, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+/// Seed missing skill-settings keys into `<project>/vstack.settings.toml`
+/// and refresh seeded comments whose template text changed (hand-edited
+/// comments are never rewritten — see `project_settings`). Runs for repos
+/// that are their own package source too: unlike `vstack.toml`, whose
+/// source-catalog form is shielded by the `vstack-local.toml` redirect in
+/// `project_config_path`, `vstack.settings.toml` is per-checkout runtime
+/// state with no catalog counterpart, so skipping source repos only lets
+/// them drift from the documented keys. Returns whether the
+/// lock's `settings_seeds` ledger changed and needs saving.
+fn seed_installed_skill_settings(
+    project_root: &Path,
+    lock: &mut config::LockFile,
+    sources: &[RefreshSource],
+) -> Result<bool> {
+    let installed_settings_skills: Vec<Skill> = lock
+        .entries
+        .iter()
+        .filter(|(_, entry)| entry.kind == ItemKind::Skill)
+        .filter_map(|(name, entry)| {
+            refresh_source_for_entry(sources, entry).and_then(|source| {
+                source
+                    .skills
+                    .iter()
+                    .find(|skill| &skill.name == name)
+                    .cloned()
+            })
+        })
+        .collect();
+    let seeds_before = lock.settings_seeds.clone();
+    if let Some(result) = crate::project_settings::ensure_skill_settings(
+        project_root,
+        &installed_settings_skills,
+        &mut lock.settings_seeds,
+    )? {
+        eprintln!("  + {}", result.summary());
+    }
+    Ok(lock.settings_seeds != seeds_before)
+}
+
 fn run_one(global: bool, verbose: bool) -> Result<()> {
     let lock_path = config::lock_file_path(global);
     let lock_existed = lock_path.exists();
@@ -1180,33 +1219,8 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     let all_pi_extensions = all_source_pi_extensions(&sources);
 
     if !global && !lock.entries.is_empty() {
-        let project_canon = project_root
-            .canonicalize()
-            .unwrap_or_else(|_| project_root.clone());
-        let project_is_source = source_dirs
-            .iter()
-            .any(|dir| dir.canonicalize().unwrap_or_else(|_| dir.clone()) == project_canon);
-        if !project_is_source {
-            let installed_settings_skills: Vec<Skill> = lock
-                .entries
-                .iter()
-                .filter(|(_, entry)| entry.kind == ItemKind::Skill)
-                .filter_map(|(name, entry)| {
-                    refresh_source_for_entry(&sources, entry).and_then(|source| {
-                        source
-                            .skills
-                            .iter()
-                            .find(|skill| &skill.name == name)
-                            .cloned()
-                    })
-                })
-                .collect();
-            if let Some(result) = crate::project_settings::ensure_skill_settings(
-                &project_root,
-                &installed_settings_skills,
-            )? {
-                eprintln!("  + {}", result.summary());
-            }
+        if seed_installed_skill_settings(&project_root, &mut lock, &sources)? {
+            lock.save(&lock_path)?;
         }
 
         let harnesses_by_agent: HashMap<String, Vec<Harness>> = lock

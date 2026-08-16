@@ -2561,22 +2561,25 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         }
     }
 
+    let lock_path = config::lock_file_path(global);
+    let mut lock = LockFile::load(&lock_path).unwrap_or_default();
+
     // Write computed agent→skill mappings to project vstack.toml.
     // Must happen BEFORE lock timestamps are captured so that the
     // vstack.toml mtime doesn't post-date installed_at (which would
     // make every item appear outdated on next launch).
     if writes_project_config {
         crate::project_config::write_agent_skills(&project_root, &agent_skill_map);
-        if let Some(result) =
-            crate::project_settings::ensure_skill_settings(&project_root, &selected_skills)?
-        {
+        if let Some(result) = crate::project_settings::ensure_skill_settings(
+            &project_root,
+            &selected_skills,
+            &mut lock.settings_seeds,
+        )? {
             settings_note = Some(format!("Project settings: {}", result.summary()));
         }
     }
 
     // Update lock file
-    let lock_path = config::lock_file_path(global);
-    let mut lock = LockFile::load(&lock_path).unwrap_or_default();
     lock.version = 1;
     for legacy in &migrated_pi_extensions {
         lock.remove(legacy);
