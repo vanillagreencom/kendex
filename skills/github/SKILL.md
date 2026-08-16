@@ -140,8 +140,10 @@ in sibling skills — install orch and review-gate beside this one):
 `.agents/skills/orch/scripts/queue-wait <N>` polls to a bounded budget and
 returns `ejected`/`disarmed` with its cause, or `queued` (run it again); a
 re-run carries no memory of the earlier run, so an ejection between two runs
-comes back as `not_queued`/`never_armed` — treat every verdict that is not
-`merged` and not `queued` as a disarm. The review-gate reducer
+comes back as `not_queued`/`never_armed`. Re-arm on `ejected`, `disarmed` and
+that memoryless `not_queued`; `dequeued` means late review findings — triage
+them first; `closed` and `unknown` are terminal, not a re-arm. The review-gate
+reducer
 `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
 pass that prints `disarmed … (re-arm)` lines. On a disarm, re-arm with
 `.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.

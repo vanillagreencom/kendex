@@ -64,8 +64,10 @@ assert_matches "$table" 'queue-wait <N>' \
   "the outcomes section names queue-wait as the required follow-up"
 assert_matches "$table" 'github\.sh pr-merge <N> --auto' \
   "the outcomes section names the re-arm by its installed entry point"
-assert_matches "$table" 'treat every verdict that is not' \
-  "the outcomes section states a re-run without queue memory still routes to re-arm"
+assert_matches "$table" 'Re-arm on `ejected`, `disarmed` and' \
+  "the outcomes section routes only genuine disarm verdicts to re-arm"
+assert_matches "$table" '`dequeued` means late review findings' \
+  "the outcomes section routes dequeued to findings triage, not re-arm"
 assert_matches "$table" 'await-mergeable` is not that' \
   "the outcomes section states await-mergeable is not the ejection watcher"
 
