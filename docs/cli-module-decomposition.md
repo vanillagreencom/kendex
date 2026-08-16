@@ -12,8 +12,8 @@ Precedent to copy — the split already inside `installer.rs`:
 - `installer.rs` declares `mod hooks;` and re-exports the submodule surface
   with `pub(crate) use hooks::{...}`, so callers keep writing
   `crate::installer::install_hook` — the split is caller-invisible.
-- `installer/hooks.rs` nests `mod opencode;` and reaches back with a
-  targeted `use super::checked_child_path;`, never a glob.
+- `installer/hooks.rs` nests `mod codex;` and `mod opencode;`, each reaching
+  back with a targeted `use super::checked_child_path;`, never a glob.
 - Visibility is not symmetric, and every extraction step below depends on
   it: a child sees its ancestors' private items (that reach-back compiles),
   but a parent does NOT see its child's — a moved item the parent or a

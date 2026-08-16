@@ -1,3 +1,6 @@
+use super::codex::{
+    enable_codex_hooks_feature, merge_codex_hooks_json, migrate_codex_hooks_feature,
+};
 use super::opencode::{install_hook_opencode_at_path, remove_hook_from_opencode_json_at_path};
 use super::*;
 
