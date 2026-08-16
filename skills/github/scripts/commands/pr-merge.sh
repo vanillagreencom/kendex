@@ -370,7 +370,7 @@ gh_with_token() {
 # silently either way — it can sit open, gate-clear, and unwatched. Every 75
 # exit says so and names runnable watchers.
 volatile_note() {
-    local pr_num="$1" repo="${GH_REPO:-}" remote resolved
+    local pr_num="$1" repo="${GH_REPO:-}" remote resolved reducer
     # pr-watch.sh requires GH_REPO; print the reducer with the repository it
     # will need. Resolved LOCALLY (env, else the origin remote) — no network
     # request may stand between a queued/armed PR and its exit 75. When
@@ -410,7 +410,9 @@ volatile_note() {
         *) repo="" ;;
     esac
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; keep watching until MERGED" >&2
-    echo "  Watch, re-running until MERGED (neither call is durable — queue-wait exits at its poll budget, pr-watch.sh is one pass), with the orch and review-gate skills installed: .agents/skills/orch/scripts/queue-wait $pr_num (re-arm on ejected/disarmed/not_queued after repairing what the cause names — a failed merge-group/check is a CI repair first; dequeued = triage the late findings first; closed/unknown = stop) or GH_REPO=${repo:-<owner/repo — repository read failed>} .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines); re-arm with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
+    local reducer="GH_REPO=$repo .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines)"
+    [ -n "$repo" ] || reducer=".agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)"
+    echo "  Watch, re-running until MERGED (neither call is durable — queue-wait exits at its poll budget, pr-watch.sh is one pass), with the orch and review-gate skills installed: .agents/skills/orch/scripts/queue-wait $pr_num (re-arm on ejected/disarmed/not_queued after repairing what the cause names — a failed merge-group/check is a CI repair first; dequeued = triage the late findings first; closed/unknown = stop) or $reducer; re-arm with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
 }
 
 # Read one authoritative post-mutation snapshot. `gh pr view --json` does not

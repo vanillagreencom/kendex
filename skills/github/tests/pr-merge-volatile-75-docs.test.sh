@@ -46,8 +46,10 @@ assert_matches "$script_src" 'VOLATILE.*an ejection or a failed protection check
   "the note states an ejection or a failed protection check disarms silently"
 assert_matches "$script_src" '\.agents/skills/orch/scripts/queue-wait \$pr_num' \
   "the note names queue-wait by its runnable path"
-assert_matches "$script_src" 'GH_REPO=\$\{repo:-<owner/repo — repository read failed>\} \.agents/skills/review-gate/scripts/pr-watch\.sh' \
-  "the note names the pr-watch reducer by its runnable path, with the GH_REPO it requires (failure named, never a bare placeholder)"
+assert_matches "$script_src" 'reducer="GH_REPO=\$repo \.agents/skills/review-gate/scripts/pr-watch\.sh' \
+  "the note names the pr-watch reducer by its runnable path, with the GH_REPO it requires"
+assert_matches "$script_src" 'with GH_REPO set to the repository \(not resolvable locally here\)' \
+  "an unresolvable repository yields a plain instruction, never a pasteable placeholder"
 assert_matches "$script_src" 'git config --get "remote\.\$remote_name\.url"' \
   "the repository is resolved locally (the resolved remote), never by a network read on the exit path"
 assert_matches "$script_src" 'gh-resolved' \
@@ -67,7 +69,7 @@ assert_count "$table" '^\| `75` \| MERGE PENDING \(volatile\)' 2 \
   "both 75 rows of the outcomes table are marked volatile"
 assert_matches "$table" 'keep watching until MERGED' \
   "the 75 rows say the caller keeps watching until MERGED"
-assert_matches "$table" 'neither\s*$|neither$|— neither' \
+assert_matches "$table" '— neither' \
   "the outcomes section states no watcher is durable"
 assert_matches "$script_src" 're-running until MERGED' \
   "the note says to re-run the watcher until MERGED"
