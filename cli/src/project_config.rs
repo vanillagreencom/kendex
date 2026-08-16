@@ -2645,9 +2645,9 @@ fn create_project_config(path: &Path, agents: &[String], skills: &[String]) {
     out.push_str("# description = \"What this hook does\"     # inlined as instructions in non-Claude-Code harnesses\n");
     out.push_str("# agents = \"all\"             # \"all\", a role (\"engineer\"), or a list [\"rust\", \"iced\"]\n");
 
-    if let Err(e) = std::fs::write(path, out) {
-        eprintln!("warning: could not write {}: {e}", path.display());
-    }
+    // `path` does not exist here (`ensure_project_config` branches on that),
+    // so the existing content is empty and the write always happens.
+    write_if_changed(path, out, "");
 }
 
 fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
@@ -2696,7 +2696,7 @@ fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
 
 /// Write `out` to `path` only when it differs from `existing`, so an
 /// unchanged config is never rewritten (no needless working-tree churn).
-/// The written text always ends in a newline: a file that lost its
+/// Non-empty written text always ends in a newline: a file that lost its
 /// terminator is repaired by the first pass that reads it, and every later
 /// pass sees identical content and skips the write. A failed write prints a
 /// warning to stderr; the command still exits successfully, so that warning
