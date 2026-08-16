@@ -2543,10 +2543,10 @@ pid_is_self_or_ancestor() {
 issue_release_permits_removal() {
   local wt="$1" owner="$2" status rc=0 err_file pid host
   # The lease GENERATION this verdict was reached on, for the caller's
-  # compare-and-release; empty when the lease records none, which is also the
-  # permit-by-default case. The generation, not the pid: a pid is reused by the
-  # OS, so a claim taken by a new session after the recorded one exited can
-  # carry the same number and pass a pid compare.
+  # compare-and-release; empty when the lease records none, which the caller
+  # refuses to release optimistically. The generation, not the pid: a pid is
+  # reused by the OS, so a claim taken by a new session after the recorded one
+  # exited can carry the same number and pass a pid compare.
   LEASE_VERIFIED_GEN=""
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-lease-status.XXXXXX")"; then
     echo "Error: could not create a scratch file to verify the session lease of $wt; refusing to remove it." >&2
@@ -2636,7 +2636,15 @@ release_own_session_lease() {
     # Bind the release to the lease that verdict was reached on: a sibling that
     # claims between the two guard calls mints a new generation, and the
     # release refuses rather than unlocking a live claim (see --expect-gen).
-    [[ -n "$LEASE_VERIFIED_GEN" ]] && expect_gen_args=(--expect-gen "$LEASE_VERIFIED_GEN")
+    # A lease recording no generation cannot be bound, so it is refused rather
+    # than released blind — the owning session records one on its next
+    # claim/refresh; a dead legacy lease takes `remove --force`.
+    if [[ -z "$LEASE_VERIFIED_GEN" ]]; then
+      echo "Error: the session lease on $wt records no generation token; refusing an unbound release." >&2
+      echo "  Retry after the owning session's next refresh records one, or use: remove --force" >&2
+      return 1
+    fi
+    expect_gen_args=(--expect-gen "$LEASE_VERIFIED_GEN")
   fi
   if ! "$SESSION_GUARD" release "$wt" --owner "$owner" --repo "$PROJECT_ROOT" \
     "${expect_gen_args[@]+"${expect_gen_args[@]}"}" >/dev/null; then

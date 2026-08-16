@@ -134,6 +134,35 @@ assert_eq "$rec_code" "0" "same-session remove <ID> with a live recorded leader 
 assert_contains "$rec_out" "Removed: $REC_WT" "the same-session removal reports the removal"
 assert_path_absent "$REC_WT" "the same-session worktree is gone"
 
+echo "=== a lease with no generation refuses the optimistic release ==="
+
+# A pre-generation lease cannot be bound with --expect-gen, so the remove
+# flow refuses rather than releasing blind; --force stays the way out.
+LEG_ROOT="$TMP_ROOT/legacy"
+make_repo "$LEG_ROOT/main"
+git -C "$LEG_ROOT/main" worktree add -q -b issue-leg "$LEG_ROOT/trees/issue-leg" main
+LEG_WT="$LEG_ROOT/trees/issue-leg"
+"$GUARD_SCRIPT" claim "$LEG_WT" --owner issue-leg >/dev/null
+LEG_LOCK="$LEG_ROOT/main/.git/worktrees/issue-leg/locked"
+sed 's/ gen=[^ ]*//' "$LEG_LOCK" > "$LEG_LOCK.planted" && mv "$LEG_LOCK.planted" "$LEG_LOCK"
+set +e
+leg_out=$(cd "$LEG_ROOT/main" && env -u VSTACK_SESSION_OWNER -u HT_SESSION_OWNER \
+  "$WORKTREE_SCRIPT" remove issue-leg 2>"$LEG_ROOT/leg.err")
+leg_code=$?
+set -e
+assert_eq "$leg_code" "1" "remove <ID> on a generation-less lease refuses"
+assert_contains "$(cat "$LEG_ROOT/leg.err")" "records no generation token" \
+  "the refusal names the missing generation"
+assert_path_exists "$LEG_WT" "the worktree survives the unbound-release refusal"
+set +e
+leg_force_out=$(cd "$LEG_ROOT/main" && env -u VSTACK_SESSION_OWNER -u HT_SESSION_OWNER \
+  "$WORKTREE_SCRIPT" remove issue-leg --force 2>"$LEG_ROOT/leg-force.err")
+leg_force_code=$?
+set -e
+assert_eq "$leg_force_code" "0" "remove --force still releases a generation-less lease"
+assert_contains "$leg_force_out" "Removed: $LEG_WT" "the forced legacy removal is reported"
+assert_path_absent "$LEG_WT" "the worktree is gone after --force"
+
 echo "=== a live foreign session's issue-keyed lease refuses remove <ID> ==="
 
 ROOT="$TMP_ROOT/live"

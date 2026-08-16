@@ -66,8 +66,9 @@ PR_REVIEW_QUORUM = ""
 # to CI/merge — but ONLY when zero threads are unresolved, so an open thread
 # always blocks (it returns "comments" first) and a real comment is never
 # bypassed. CI and the comment-hygiene gate still apply. On multi-reviewer
-# repos this only fires when EVERY reviewer is silent; a single live reviewer
-# already satisfies the gate on its own.
+# repos this only fires when EVERY reviewer is silent. Without a configured
+# PR_REVIEW_QUORUM one live review satisfies the gate; with one, a partial
+# response is engagement and ends in a timeout, never a proceed.
 PR_REVIEW_ON_TIMEOUT = "block"
 
 # Used by: orch (`ci-wait`). Seconds to keep polling before failing when no CI
