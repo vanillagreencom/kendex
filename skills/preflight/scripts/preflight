@@ -2,8 +2,8 @@
 # preflight — diff-scoped, fail-only checks: fail-open bash, docs citing
 # repo paths that do not exist, source files citing docs that do not exist,
 # TODO markers with no issue behind them, reviewer-bot attributions in
-# durable prose, malformed JSON/TOML, workflow run: blocks bash cannot
-# parse.
+# durable prose, malformed JSON/TOML, workflow run: blocks their shell
+# cannot parse.
 #
 # Precision before coverage: a lane that cannot decide says nothing. The
 # line-scoped lanes report only on lines this diff ADDED, so a pre-existing
@@ -534,11 +534,11 @@ ISSUE_RE='(#[0-9]+|[A-Z][A-Z0-9]+-[0-9]+|http)'
 # describing behavior and stays clean, so the reference word must end at a
 # word boundary — an account named after the reviewing is not a credit.
 # CHANGELOG.md is where rationale belongs and is exempt.
-BOT_ALT="$(printf '%s' "${PREFLIGHT_BOT_NAMES:-qodo copilot coderabbit codex devin}" | tr -cs 'A-Za-z0-9_-' '|')"
+BOT_ALT="$(printf '%s' "${PREFLIGHT_BOT_NAMES:-qodo copilot coderabbit codex devin}" | LC_ALL=C tr -cs 'A-Za-z0-9_-' '|')"
 BOT_ALT="${BOT_ALT#|}"
 BOT_ALT="${BOT_ALT%|}"
 [ -n "$BOT_ALT" ] || BOT_ALT='qodo|copilot|coderabbit|codex|devin'
-BOT_ATTR_RE="\\(($BOT_ALT)([^A-Za-z0-9_)][^)]*)?((pr ?)?#[0-9]+|[^A-Za-z0-9_]r[0-9]{6,}|review)([^A-Za-z0-9_)][^)]*)?\\)"
+BOT_ATTR_RE="\\(($BOT_ALT)([^A-Za-z0-9_)][^)]*)?((pr ?)?#[0-9]+|[^A-Za-z0-9_]r[0-9]{6,})([^A-Za-z0-9_)][^)]*)?\\)"
 BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_])per +((the|a) +)?($BOT_ALT)('s)? +(review|pass|feedback|suggestion|comment|finding)"
 BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_])($BOT_ALT)('s)? +review +of +(pr ?)?#[0-9]+"
 : >"$TMP/tok.ok"

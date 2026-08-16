@@ -155,7 +155,7 @@ RC=0
 OUT="$(cd "$R" && PREFLIGHT_BOT_NAMES='renovate dependabot' "$PF" 2>&1)" || RC=$?
 fires "an overridden bot set flags its own bots" "docs/guide.md:5: [reviewer-attribution]"
 case "$OUT" in
-  *"docs/guide.md:6"*) bad "an overridden bot set replaces the default set" "out=$OUT" ;;
+  *"docs/guide.md:6: [reviewer-attribution]"*) bad "an overridden bot set replaces the default set" "out=$OUT" ;;
   *) ok "an overridden bot set replaces the default set" ;;
 esac
 
