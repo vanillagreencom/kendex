@@ -46,8 +46,8 @@ assert_matches "$script_src" 'VOLATILE.*an ejection or a failed protection check
   "the note states an ejection or a failed protection check disarms silently"
 assert_matches "$script_src" '\.agents/skills/orch/scripts/queue-wait \$pr_num' \
   "the note names queue-wait by its runnable path"
-assert_matches "$script_src" '\.agents/skills/review-gate/scripts/pr-watch\.sh' \
-  "the note names the pr-watch reducer by its runnable path"
+assert_matches "$script_src" 'GH_REPO=\$\{repo:-OWNER/REPO\} \.agents/skills/review-gate/scripts/pr-watch\.sh' \
+  "the note names the pr-watch reducer by its runnable path, with the GH_REPO it requires"
 
 table=$(sed -n '/^### PR Merge Outcomes$/,/^### /p' "$SKILL_MD")
 assert_count "$table" '^\| `75` \| MERGE PENDING \(volatile\)' 2 \
