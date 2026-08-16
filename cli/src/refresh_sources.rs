@@ -2384,8 +2384,9 @@ mod tests {
         // cannot be observed from a test, stated with the reason.
         let vectors: Vec<(&str, Option<(&str, Vec<(&str, &std::ffi::OsStr)>)>)> = vec![
             // The location family is driven by path_safety's own child test,
-            // which asserts all three identity reads answer for the directory
-            // they were pointed at.
+            // whose environment sets all three and whose assertions require
+            // every identity read to answer for the directory it was pointed
+            // at rather than for the one they name.
             ("GIT_DIR", None),
             ("GIT_WORK_TREE", None),
             ("GIT_COMMON_DIR", None),
@@ -2471,8 +2472,10 @@ mod tests {
                     "askpass",
                     vec![
                         ("SSH_ASKPASS", askpass.as_os_str()),
-                        // git prefers its own; set both so the vector proves
-                        // the one it is named for.
+                        // Set so the unhardened control fires on the variable
+                        // git prefers. The hardened assertion still bites for
+                        // the one this row is named for: with `GIT_ASKPASS`
+                        // removed and `SSH_ASKPASS` left, git falls back to it.
                         ("GIT_ASKPASS", askpass.as_os_str()),
                     ],
                 )),

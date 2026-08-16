@@ -337,10 +337,25 @@ pub fn refresh_items_in_scope(
         .map(|entry| UndeterminedHook {
             name: entry.name.clone(),
             harnesses: entry.harnesses.clone(),
-            reason: if config::resolve_source_path(&entry.source).is_none() {
-                stats.unresolved_source_reason(&entry.source)
-            } else {
-                "its source no longer carries it".to_string()
+            // Three states reach here, and each is repaired differently. The
+            // middle one used to be reported as the last, telling the operator
+            // a source no longer carries a hook that it plainly does.
+            reason: match config::resolve_source_path(&entry.source) {
+                None => stats.unresolved_source_reason(&entry.source),
+                Some(root)
+                    if !sources
+                        .iter()
+                        .any(|source| crate::resolve::same_path(&source.root, &root)) =>
+                {
+                    format!(
+                        "its source resolved to {} but this run did not load it — check the source recorded for it",
+                        root.display()
+                    )
+                }
+                Some(_) => format!(
+                    "its source no longer carries it — restore it there, or `vstack remove {}` the entry",
+                    entry.name
+                ),
             },
         })
         .collect();
@@ -1180,7 +1195,7 @@ pub fn regenerate_agents_after_hook_removal(
         anyhow::bail!(
             "failed to regenerate agents after hook removal: {}. \
              The hook and its lock entry are already removed; \
-             re-run `vstack refresh` once the source above resolves",
+             act on the cause above, then re-run `vstack refresh`",
             causes.join("; ")
         );
     }

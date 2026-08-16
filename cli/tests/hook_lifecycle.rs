@@ -1383,19 +1383,36 @@ fn remove_hook_fails_when_a_sibling_hook_is_gone_from_its_source() {
         stderr.contains("keeper") && stderr.contains("no longer carries it"),
         "the report must name the hook and the cause:\n{stderr}"
     );
+    // The recovery has to follow THIS cause: the source resolves perfectly
+    // well, so waiting for it to resolve would refuse identically forever.
+    assert!(
+        stderr.contains("vstack remove keeper"),
+        "the report must name the remedy for this cause:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("once the source"),
+        "the advice assumes a cause that is not the one reported:\n{stderr}"
+    );
 }
 
-/// Repro B: a bare legacy source name. It resolves — by walking up from the
-/// working directory to a vstack-shaped ancestor — to a source that has no such
-/// hook, while source resolution reports the same string as naming nothing.
+/// Repro B: a bare legacy source name. It RESOLVES — by walking up from the
+/// working directory to a vstack-shaped ancestor — while source records do not
+/// name it, so the run never loads it. That ancestor carries the very hook the
+/// entry names, which is why reporting it as a source that no longer carries
+/// the hook was a lie: the cause is that this run did not load it.
 #[test]
-fn refresh_leaves_the_agent_alone_when_a_bare_hook_source_carries_no_such_hook() {
+fn refresh_leaves_the_agent_alone_when_a_bare_hook_source_is_not_the_loaded_one() {
     let sandbox = Sandbox::new("refresh-bare-hook-source");
+    // The loaded source sits OUTSIDE the ancestor below, so nothing it ships
+    // can be mistaken for that ancestor's own.
+    let outside = unique_temp_dir("refresh-bare-hook-outside");
+    write_fixture_source(&outside, None);
+
     for args in [vec!["--hook", "guard"], vec!["--agent", "rust"]] {
         let output = sandbox
             .vstack()
             .arg("add")
-            .arg(&sandbox.source)
+            .arg(&outside)
             .args(args.clone())
             .args(["--harness", "claude-code", "--copy", "-y"])
             .output()
@@ -1406,10 +1423,13 @@ fn refresh_leaves_the_agent_alone_when_a_bare_hook_source_carries_no_such_hook()
     let agent_before = fs::read_to_string(&agent_path).unwrap();
     assert!(agent_before.contains("guard.sh"), "fixture: {agent_before}");
 
-    // A vstack-shaped ancestor of the project, holding no `guard` hook, is what
-    // the bare name resolves to.
-    fs::create_dir_all(sandbox.project.join("source/agents")).unwrap();
-    fs::create_dir_all(sandbox.project.join("source/skills")).unwrap();
+    // A vstack-shaped ancestor of the working directory, carrying that very
+    // hook. Resolving a source and loading it are different questions.
+    fs::create_dir_all(sandbox.root.join("agents")).unwrap();
+    fs::create_dir_all(sandbox.root.join("hooks")).unwrap();
+    write_hook(&sandbox.root, None);
+    assert!(!sandbox.project.join("source").exists(), "fixture");
+
     let lock_path = sandbox.project.join(".vstack-lock.json");
     let mut lock: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
@@ -1433,4 +1453,15 @@ fn refresh_leaves_the_agent_alone_when_a_bare_hook_source_carries_no_such_hook()
         stderr.contains("rust"),
         "the agent left untouched must be named:\n{stderr}"
     );
+    // The cause has to be the true one: that source carries `guard`.
+    assert!(
+        stderr.contains("did not load it"),
+        "the report must name the state it is actually in:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("no longer carries it"),
+        "the report claims a source lacks a hook it holds:\n{stderr}"
+    );
+
+    let _ = fs::remove_dir_all(outside);
 }

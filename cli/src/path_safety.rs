@@ -644,6 +644,9 @@ mod tests {
             &[
                 ("GIT_DIR", elsewhere.join(".git").as_os_str()),
                 ("GIT_WORK_TREE", elsewhere.as_os_str()),
+                // Answers `--git-common-dir` on its own, with the other two
+                // cleared, so the reads below bite for it too.
+                ("GIT_COMMON_DIR", elsewhere.join(".git").as_os_str()),
                 ("VSTACK_TEST_ANCHORED_REPO", anchored.as_os_str()),
                 ("VSTACK_TEST_ELSEWHERE_REPO", elsewhere.as_os_str()),
             ],
