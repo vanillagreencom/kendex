@@ -571,16 +571,17 @@ doc_token_is_dead() { # TOKEN DOC-SUBTREE — 0 when the token names a path that
 }
 
 # Candidate doc citations on a source line: maximal path-charset runs ending
-# in `.md`, one per output line. Double-quoted spans and URL spans go first —
-# a quoted path is a program's working data or an example string, and a
-# GitHub URL containing /docs/x.md names a web page, not a repo path — and a
+# in `.md`, one per output line. Quoted spans (either kind) and URL spans go
+# first — a quoted path is a program's working data or an example string, and
+# a GitHub URL containing /docs/x.md names a web page, not a repo path — and a
 # sentence-final dot is punctuation, not part of the name. Placeholders,
 # globs and interpolations never survive: their delimiters sit outside the
 # charset, so they arrive as fragments the shared guards in
 # doc_token_is_dead already reject.
 md_tokens_of() { # LINE -> candidate tokens on stdout
-  printf '%s\n' "$1" | awk '{
+  printf '%s\n' "$1" | LC_ALL=C awk -v q="'" '{
     gsub(/"([^"\\]|\\.)*"/, " ")
+    gsub(q "[^" q "]*" q, " ")
     gsub(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^ \t]*/, " ")
     while (match($0, /[A-Za-z0-9_.\/-]+/)) {
       tok = substr($0, RSTART, RLENGTH)

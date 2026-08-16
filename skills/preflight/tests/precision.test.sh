@@ -90,7 +90,8 @@ set -euo pipefail
 # Interpolations too: $DOCS_ROOT/gone.md, ${DOCS}/gone.md, {docs_root}/gone.md.
 # Another repo layout is not ours: notes/gone.md has no directory here.
 MSG="a quoted path is data, not a citation: docs/gone.md"
-echo "$MSG"
+DOC='docs/gone.md'
+echo "$MSG" "$DOC"
 EOF
 # Test-named source files plant fixture paths on purpose.
 printf '// fixture cite: docs/gone.md\n' >"$R/scripts/widget.test.ts"
@@ -127,7 +128,7 @@ printf '# and a source line whose citation is dead: docs/gone.md\n' >>"$R/script
 git -C "$R" add -A
 run_pf
 fires "the benign fixture is not clean because nothing ran" "README.md:16: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
-fires "the benign source file is not clean because nothing ran" "scripts/cites.sh:10: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+fires "the benign source file is not clean because nothing ran" "scripts/cites.sh:11: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 
 echo "=== violations on lines this diff did not touch stay invisible ==="
 seed untouched
