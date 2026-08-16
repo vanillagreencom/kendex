@@ -95,7 +95,7 @@ DOC='docs/gone.md'
 echo "$MSG" "$DOC"
 EOF
 # Test-named source files plant fixture paths on purpose.
-printf '// fixture cite: docs/gone.md\n' >"$R/scripts/widget.test.ts"
+printf '// fixture cite: docs/gone.md\nconst s = "Hardened per codex review.";\n' >"$R/scripts/widget.test.ts"
 # Data files cite paths as values and generated example comments.
 printf '# rust = "Read docs/gone.md before coding."\n# Read docs/gone.md.\nkey = 1\n' >"$R/data/example.toml"
 {
@@ -122,6 +122,7 @@ printf '# rust = "Read docs/gone.md before coding."\n# Read docs/gone.md.\nkey =
   printf 'Reviewer gate: Copilot (copilot-pull-request-reviewer) auto-reviews every PR.\n'
   printf 'Auth is Codex OAuth (Codex OAuth, no openai key).\n'
   printf 'Rules live in .github/copilot-instructions.md, per copilot instructions convention.\n'
+  printf 'The option landed upstream (codex-cli PR #123), not here.\n'
 } >"$R/README.md"
 # The changelog is the sanctioned home for rationale, and a test tree sets
 # its own rules — an attribution in either is nobody's finding.
@@ -141,9 +142,9 @@ printf 'Hardened per qodo review.\n' >>"$R/README.md"
 printf '# and a source line whose citation is dead: docs/gone.md\n' >>"$R/scripts/cites.sh"
 git -C "$R" add -A
 run_pf
-fires "the benign fixture is not clean because nothing ran" "README.md:21: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+fires "the benign fixture is not clean because nothing ran" "README.md:22: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "the benign source file is not clean because nothing ran" "scripts/cites.sh:11: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
-fires "the same benign bot mentions do not shield a real credit beside them" "README.md:22: [reviewer-attribution]"
+fires "the same benign bot mentions do not shield a real credit beside them" "README.md:23: [reviewer-attribution]"
 
 echo "=== violations on lines this diff did not touch stay invisible ==="
 seed untouched

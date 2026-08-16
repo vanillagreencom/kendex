@@ -538,7 +538,7 @@ BOT_ALT="$(printf '%s' "${PREFLIGHT_BOT_NAMES:-qodo copilot coderabbit codex dev
 BOT_ALT="${BOT_ALT#|}"
 BOT_ALT="${BOT_ALT%|}"
 [ -n "$BOT_ALT" ] || BOT_ALT='qodo|copilot|coderabbit|codex|devin'
-BOT_ATTR_RE="\\(($BOT_ALT)([^A-Za-z0-9_)][^)]*)?((pr ?)?#[0-9]+|[^A-Za-z0-9_]r[0-9]{6,})([^A-Za-z0-9_)][^)]*)?\\)"
+BOT_ATTR_RE="\\(($BOT_ALT)([^A-Za-z0-9_)-][^)]*)?((pr ?)?#[0-9]+|[^A-Za-z0-9_]r[0-9]{6,})([^A-Za-z0-9_)][^)]*)?\\)"
 BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_])per +((the|a) +)?($BOT_ALT)('s)? +(review|pass|feedback|suggestion|comment|finding)"
 BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_])($BOT_ALT)('s)? +review +of +(pr ?)?#[0-9]+"
 : >"$TMP/tok.ok"
@@ -638,16 +638,15 @@ while IFS= read -r f; do
   # paths as configuration values and carry generated example comments, and
   # test-named files plant fixture paths on purpose — either would be a
   # false positive, not a dead pointer.
+  is_testname=0
+  case "${f##*/}" in
+    tests.rs | *_test.* | *_tests.* | *.test.* | *.spec.* | test_*) is_testname=1 ;;
+  esac
   cites_docs=0
-  if [ "$is_md" = 0 ] && [ "$own_rules" = 0 ]; then
+  if [ "$is_md" = 0 ] && [ "$own_rules" = 0 ] && [ "$is_testname" = 0 ]; then
     case "$f" in
       *.json | *.toml | *.yml | *.yaml | *.lock) ;;
-      *)
-        case "${f##*/}" in
-          tests.rs | *_test.* | *_tests.* | *.test.* | *.spec.* | test_*) ;;
-          *) cites_docs=1 ;;
-        esac
-        ;;
+      *) cites_docs=1 ;;
     esac
   fi
   is_changelog=0
@@ -773,7 +772,7 @@ while IFS= read -r f; do
       emit "$f" "$n" todo-links "TODO:/FIXME( marker without an issue reference (#123, ABC-123, or a URL)"
     fi
 
-    if [ "$own_rules" = 0 ] && [ "$is_changelog" = 0 ] && printf '%s' "$content" | grep -Eiq -- "$BOT_ATTR_RE"; then
+    if [ "$own_rules" = 0 ] && [ "$is_changelog" = 0 ] && [ "$is_testname" = 0 ] && printf '%s' "$content" | grep -Eiq -- "$BOT_ATTR_RE"; then
       emit "$f" "$n" reviewer-attribution "credits a transient reviewer pass — state the rationale, drop the reviewer credit"
     fi
   done <"$REC"
