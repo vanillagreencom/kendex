@@ -216,7 +216,8 @@ if [[ -z "$REPO" ]]; then
   REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
   [[ -n "$REPO" ]] || die "could not resolve the repository (gh repo view failed); pass --repo OWNER/REPO"
 fi
-REPO_OWNER="${REPO%%/*}"
+# GitHub logins are case-insensitive and --repo's casing is the caller's.
+REPO_OWNER="$(printf '%s' "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
 
 if [[ -x "$PR_WATCH" ]]; then
   :
@@ -322,7 +323,7 @@ check_merged() {
     hit="$(jq -r --arg branch "$branch" --arg owner "$REPO_OWNER" --argjson since "$SINCE_EPOCH" '
       [ .[]
         | select(.headRefName | ascii_downcase == $branch)
-        | select(.headRepositoryOwner.login == $owner)
+        | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $owner)
         | select(.mergedAt != null)
         | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
         | "EVENT merged \(.number) \(.headRefName)" ]

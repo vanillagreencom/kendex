@@ -35,6 +35,7 @@ CMD_TEMPLATE=""
 LANE=""
 LANE_MAX_PCT="${ORCH_LANE_MAX_PCT:-90}"
 LANE_ENV=""
+RELAUNCH=false
 ITEMS=()
 
 usage() {
@@ -60,15 +61,20 @@ Options:
                     in settings; a claude lane whose flags carry no
                     permission-bypass warns, because handoff is unattended and
                     a prompting mode stalls the lane at its first tool call.
+  --relaunch        Replace a dead session on items that may already have a
+                    worktree: an existing tree is reused instead of being read
+                    as another session's claim. A worktree under a lease held
+                    by a different owner is still skipped.
 
 On tmux lanes the brief's delivery is verified against the pane and re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
 default 15, positive integer clamped to 120).
 
-Each item's worktree is created here (worktree create). An item whose
-worktree is owned by another session (create exit 75) is skipped and the
-remaining items still launch. The final summary line reports launched,
-skipped, and failed counts.
+Each item's worktree is created here (worktree create, or create --reuse
+under --relaunch when the item's tree already exists). An item whose worktree
+is owned by another session (create exit 75) is skipped and the remaining
+items still launch. The final summary line reports launched, skipped, and
+failed counts.
 
 Exit codes:
   0   at least one lane launched and none failed (skipped items allowed)
@@ -99,6 +105,7 @@ while [[ $# -gt 0 ]]; do
     --lane-max-pct=*) LANE_MAX_PCT="${1#--lane-max-pct=}"; shift ;;
     --launch-flags) need_val "$@"; LAUNCH_FLAGS="$2"; shift 2 ;;
     --launch-flags=*) LAUNCH_FLAGS="${1#--launch-flags=}"; shift ;;
+    --relaunch) RELAUNCH=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) ITEMS+=("$1"); shift ;;
   esac
@@ -459,8 +466,18 @@ for raw in "${ITEMS[@]}"; do
   # holds this item, which skips it without touching its siblings. Any other
   # failure is this item's alone — the batch continues so one broken item
   # cannot silently prevent the rest of a fleet launch.
+  # A relaunch re-enters the item's own worktree, which the first launch
+  # already created: bare create reads an existing tree as a claim and exits
+  # 75, so the replacement session would be skipped instead of launched.
+  # `create --reuse` is the reuse assertion, and it still exits 75 on a lease
+  # held under another owner — a live foreign claim stays a skip. It requires
+  # the tree to exist, so a relaunch after cleanup takes the bare form.
+  create_args=("$wt_id")
+  if [[ "$RELAUNCH" == true && "$("$WORKTREE_CLI" exists "$wt_id" 2>/dev/null || true)" == "true" ]]; then
+    create_args+=(--reuse)
+  fi
   create_rc=0
-  wt="$("$WORKTREE_CLI" create "$wt_id")" || create_rc=$?
+  wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?
   if [[ "$create_rc" -eq 75 ]]; then
     echo "Skipped $item: owned by another session (worktree create exit 75)" >&2
     skipped=$((skipped + 1))

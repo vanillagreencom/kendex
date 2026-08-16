@@ -436,6 +436,19 @@ assert_eq "$rc" "0" "a fork-only merged list still exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" "a fork PR on the item's branch name is not a merge" "$err"
 assert_not_contains "$out" "EVENT merged" "a same-named fork branch never fires merged" "$err"
 
+# the owner comparison is case-insensitive: GitHub logins are, and --repo's
+# casing is the caller's
+new_case merged_owner_case
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 5, "headRefName": "issue-5", "headRepositoryOwner": {"login": "VanillaGreenCom"}, "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2f"
+out="$(run_watch -- --repo vanillagreencom/x --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "mixed-case owner exits 0" "$err"
+assert_contains "$out" "EVENT merged 5 issue-5" "an owner login differing only in case still fires merged" "$err"
+
 # --- 3. window-gone --------------------------------------------------------
 new_case window_gone
 printf 'gh-1\n' > "$STUB_DIR/windows.txt"

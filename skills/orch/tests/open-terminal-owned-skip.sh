@@ -8,6 +8,11 @@
 # stderr, counted in the summary) and the remaining items still launch; any
 # other create failure is that item's failure alone, not an abort.
 #
+# `--relaunch` covers the replacement launch: the dead lane already created the
+# item's worktree, so a bare create reads it as a claim and skips the item. The
+# flag reuses that tree; a lease held under another owner still skips, and a
+# tree that was cleaned up takes the bare form.
+#
 # The test runs a byte-identical copy of open-terminal inside a temp git repo
 # so `git rev-parse --show-toplevel` resolves to a hermetic PROJECT_ROOT, and
 # stubs the worktree CLI (scripted per-item exit codes, call log), the GUI
@@ -71,19 +76,31 @@ exit 1
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh"
 
-# Stub worktree CLI: `create <item>` logs the call, then exits with the code in
-# $STUB_EXIT_DIR/<item> when that file exists, else makes and prints a dir.
+# Stub worktree CLI:
+#   exists <item>          "true" when $STUB_EXISTS_DIR/<item> is present
+#   create <item>          logs "<item>", exits per $STUB_EXIT_DIR/<item>
+#   create <item> --reuse  logs "<item> --reuse", exits per
+#                          $STUB_EXIT_DIR/<item>.reuse
+# With no exit-code file the call makes and prints a worktree dir (exit 0).
 STUB="$TMP_ROOT/worktree-stub"
 cat > "$STUB" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "\${1:-}" == "exists" ]]; then
+  [[ -f "\$STUB_EXISTS_DIR/\${2:-unknown}" ]] && echo "true" || echo "false"
+  exit 0
+fi
 if [[ "\${1:-}" == "create" ]]; then
-  printf '%s\n' "\${2:-unknown}" >> "\$STUB_CALL_LOG"
-  if [[ -f "\$STUB_EXIT_DIR/\${2:-unknown}" ]]; then
-    echo "stub: refusing \${2:-unknown}" >&2
-    exit "\$(cat "\$STUB_EXIT_DIR/\${2:-unknown}")"
+  item="\${2:-unknown}"
+  key="\$item"
+  logged="\$item"
+  if [[ "\${3:-}" == "--reuse" ]]; then key="\$item.reuse"; logged="\$item --reuse"; fi
+  printf '%s\n' "\$logged" >> "\$STUB_CALL_LOG"
+  if [[ -f "\$STUB_EXIT_DIR/\$key" ]]; then
+    echo "stub: refusing \$item" >&2
+    exit "\$(cat "\$STUB_EXIT_DIR/\$key")"
   fi
-  d="$TMP_ROOT/wt/\${2:-unknown}"
+  d="$TMP_ROOT/wt/\$item"
   mkdir -p "\$d"
   printf '%s\n' "\$d"
   exit 0
@@ -106,8 +123,11 @@ run_case() {
   local name="$1"; shift; shift
   CALL_LOG="$TMP_ROOT/$name.calls"
   : > "$CALL_LOG"
+  : "${EXISTS_DIR:=$TMP_ROOT/exists-none}"
+  mkdir -p "$EXISTS_DIR"
   set +e
   OUT=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" \
+    STUB_EXISTS_DIR="$EXISTS_DIR" \
     "$OT" --ghostty --cmd 'echo {item}' "$@" 2>"$TMP_ROOT/$name.err")
   RC=$?
   set -e
@@ -146,6 +166,44 @@ assert_contains "$OUT" "Opened terminal 'CC-3'" "item after the failed one still
 assert_contains "$ERR" "Error: worktree create failed for CC-2 (exit 1)" "create failure names the item and exit code"
 assert_contains "$ERR" "1 handoff lane(s) failed; launched 2 successfully." "summary reports failed=1 launched=2"
 assert_not_contains "$ERR" "Skipped CC-2" "a non-75 create failure is not reported as skipped"
+
+# Case 4: without --relaunch, an item whose worktree already exists is refused
+# by bare create — this is the state a dead lane leaves behind.
+EXIT_DIR="$TMP_ROOT/exit4"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists4"; mkdir -p "$EXISTS_DIR"
+printf '75' > "$EXIT_DIR/CC-1"; touch "$EXISTS_DIR/CC-1"
+run_case c4 -- CC-1
+assert_eq "$RC" "75" "an existing worktree is exit 75 to a bare launch"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 " "a bare launch never asks for reuse"
+
+# Case 5: --relaunch reuses the item's own worktree, so the replacement
+# session launches instead of being skipped as owned.
+EXIT_DIR="$TMP_ROOT/exit5"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists5"; mkdir -p "$EXISTS_DIR"
+printf '75' > "$EXIT_DIR/CC-1"; touch "$EXISTS_DIR/CC-1"
+run_case c5 -- --relaunch CC-1
+assert_eq "$RC" "0" "--relaunch launches into the existing worktree"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse " "--relaunch creates with --reuse, and never retries bare"
+assert_contains "$OUT" "Opened terminal 'CC-1'" "the replacement session is launched"
+assert_not_contains "$ERR" "Skipped CC-1" "a relaunched item is not skipped as owned"
+
+# Case 6: --relaunch on a worktree held under another owner's lease — create
+# --reuse still exits 75 — stays a skip.
+EXIT_DIR="$TMP_ROOT/exit6"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists6"; mkdir -p "$EXISTS_DIR"
+printf '75' > "$EXIT_DIR/CC-1.reuse"; touch "$EXISTS_DIR/CC-1"
+run_case c6 -- --relaunch CC-1
+assert_eq "$RC" "75" "a live foreign lease is still a skip under --relaunch"
+assert_not_contains "$OUT" "Opened terminal" "nothing launches into another owner's worktree"
+assert_contains "$ERR" "Skipped CC-1: owned by another session (worktree create exit 75)" "the foreign-lease skip is named on stderr"
+
+# Case 7: --relaunch after the worktree was cleaned up falls back to bare
+# create — `create --reuse` requires an existing tree.
+EXIT_DIR="$TMP_ROOT/exit7"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists7"; mkdir -p "$EXISTS_DIR"
+run_case c7 -- --relaunch CC-1
+assert_eq "$RC" "0" "--relaunch with no existing worktree launches"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 " "a missing worktree takes the bare create form"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
