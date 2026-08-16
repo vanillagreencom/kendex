@@ -314,16 +314,19 @@ fn check_staleness(entry: &LockEntry) -> Staleness {
     // Resolved once: the comparison needs the root, and the report needs the
     // cause when there is none. Hashing through `is_source_changed` would
     // resolve the same source a second time.
+    use crate::refresh_sources::SourceResolution;
     let resolution = crate::refresh_sources::source_path_resolution(&entry.source);
+    // Exhaustive: a new resolution state must be classified here on purpose,
+    // not fall into "unresolved" because a wildcard absorbed it.
     match &resolution {
-        crate::refresh_sources::SourceResolution::Resolved(root) => {
+        SourceResolution::Resolved(root) => {
             if config::is_source_changed_in(entry, root) {
                 Staleness::Outdated
             } else {
                 Staleness::Ok
             }
         }
-        _ => Staleness::Unresolved(
+        SourceResolution::Absent | SourceResolution::Refused(_) => Staleness::Unresolved(
             resolution
                 .unresolved_note(&entry.source)
                 .unwrap_or_else(|| "source not found".to_string()),

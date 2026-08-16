@@ -117,12 +117,13 @@ fn verify_entry(entry: &LockEntry, global: bool) -> VerifyRow {
 
     // Source hash check (covers all kinds). Resolved once here: the row needs
     // the root to hash against AND, when there is none, the cause to report.
+    use crate::refresh_sources::SourceResolution;
     let resolution = crate::refresh_sources::source_path_resolution(&entry.source);
+    // Exhaustive: a new resolution state must decide here whether it has a
+    // root to hash, rather than be hashed as empty because a wildcard said so.
     let current = match &resolution {
-        crate::refresh_sources::SourceResolution::Resolved(root) => {
-            config::compute_source_hash_in(entry, root)
-        }
-        _ => String::new(),
+        SourceResolution::Resolved(root) => config::compute_source_hash_in(entry, root),
+        SourceResolution::Absent | SourceResolution::Refused(_) => String::new(),
     };
     let source_ok = if entry.source_hash.is_empty() {
         // Legacy lock without recorded hash — best effort: just confirm

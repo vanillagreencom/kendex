@@ -1076,6 +1076,84 @@ fn refresh_keeps_a_hook_whose_remote_source_is_not_cached() {
     );
 }
 
+/// `vstack add` reconciles every installed agent at the end of an install, and
+/// that reconciliation rewrites agent frontmatter from the hook set it can
+/// read. A hook whose recorded remote has no clone is not absent — it is
+/// unreadable — so rewriting the agent without it left the frontmatter
+/// inconsistent with the hook's surviving script, settings.json registration
+/// and lock entry, on a successful add.
+#[test]
+fn add_leaves_an_agent_alone_when_a_hooks_remote_source_is_not_cached() {
+    let sandbox = Sandbox::new("add-uncached-hook-source");
+
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args([
+            "--hook",
+            "guard",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add --hook");
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args([
+            "--agent",
+            "rust",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add --agent");
+
+    let agent_path = sandbox.project.join(".claude/agents/rust.md");
+    let agent_before = fs::read_to_string(&agent_path).unwrap();
+    assert!(agent_before.contains(".claude/hooks/guard.sh"), "fixture");
+
+    // The entry's own source becomes a remote with no clone under this HOME.
+    let lock_path = sandbox.project.join(".vstack-lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    lock["entries"]["guard"]["source"] = serde_json::Value::String("owner/repo".into());
+    fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+
+    // A second, unrelated install — whose reconciliation pass rewrites agents.
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args(["--skill", "dev", "--harness", "claude-code", "--copy", "-y"])
+        .output()
+        .unwrap();
+    let combined = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        sandbox.project.join(".claude/hooks/guard.sh").exists(),
+        "the installed hook artifact vanished:\n{combined}"
+    );
+    assert_eq!(
+        fs::read_to_string(&agent_path).unwrap(),
+        agent_before,
+        "the agent was rewritten with a hook set the run could not determine:\n{combined}"
+    );
+    assert!(
+        combined.contains("rust") && combined.contains("guard"),
+        "the agent left untouched and the hook that could not be read must both be named:\n{combined}"
+    );
+}
+
 /// The CLI removal path has already deleted the hook artifact and its lock
 /// entry when the agents are regenerated, so a regeneration that cannot run
 /// must be reported as the failure it is.

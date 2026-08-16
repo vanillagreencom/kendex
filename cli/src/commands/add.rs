@@ -185,10 +185,11 @@ fn source_label(source: &str) -> String {
     if Path::new(source).exists() {
         // A lock-recorded local path is untrusted text like any other: a
         // matching directory whose name carries an escape would put it on the
-        // picker row.
+        // picker row. Through the same redacting display as every other source
+        // diagnostic — a credential-looking string can name a real path.
         return format!(
             "local: {}",
-            crate::refresh_sources::escape_unprintable(source)
+            crate::refresh_sources::remote_source_display(source)
         );
     }
 
@@ -3002,7 +3003,29 @@ fn reconcile_agents(
     // Discover source agents and skills for descriptions
     let source_agents = crate::catalog::discover_agents(source_dir).unwrap_or_default();
     let source_skills = crate::catalog::discover_skills(source_dir).unwrap_or_default();
-    let source_hooks = crate::catalog::discover_hooks(source_dir).unwrap_or_default();
+    // Hooks come from EVERY recorded source, not just the one being installed
+    // from: an agent's frontmatter is rewritten below with whatever hook set
+    // this function can see, and a hook installed from another source — or
+    // from a remote whose cache is absent or refused — is not absent, it is
+    // unreadable. Read as they stand, with no fetch: reconciling is not a
+    // reason to update a source the user did not name.
+    let hook_records = crate::refresh_sources::resolve_source_records_without_update(&lock);
+    let all_hooks = crate::refresh_sources::all_source_hooks(
+        &crate::refresh_sources::load_refresh_sources(&hook_records.sources),
+    );
+    // Hook entries this run cannot read, asked of the same function the agent
+    // frontmatter is built from — so the two can never disagree about which
+    // entries have no hook. An agent whose set includes one is left exactly as
+    // installed: dropping the hook from its frontmatter while the script, the
+    // settings.json registration and the lock entry all survive is the
+    // inconsistency a successful `add` must not leave behind.
+    let undetermined_hooks: Vec<(String, Vec<String>)> = lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == config::ItemKind::Hook)
+        .filter(|entry| crate::resolve::source_hook_for_lock_entry(&all_hooks, entry).is_none())
+        .map(|entry| (entry.name.clone(), entry.harnesses.clone()))
+        .collect();
     let mut regenerated_codex_agents: Vec<crate::agent::Agent> = Vec::new();
     let mut regenerated_codex_agent_names = std::collections::HashSet::new();
 
@@ -3018,6 +3041,19 @@ fn reconcile_agents(
         let Some(agent) = source_agents.iter().find(|a| &a.name == *name) else {
             continue;
         };
+
+        let undetermined: Vec<&str> = undetermined_hooks
+            .iter()
+            .filter(|(_, harnesses)| harnesses.iter().any(|h| entry.harnesses.contains(h)))
+            .map(|(hook, _)| hook.as_str())
+            .collect();
+        if !undetermined.is_empty() {
+            eprintln!(
+                "  Warning: leaving agent {name} as installed: its hook set is not known this run — {} (run `vstack refresh` once every source is readable)",
+                undetermined.join(", ")
+            );
+            continue;
+        }
 
         // Use project [agent-skills] if present, else source mapping
         let skill_names: Vec<String> =
@@ -3057,7 +3093,7 @@ fn reconcile_agents(
                 if harnesses.contains(&harness) {
                     let matched_hooks = crate::resolve::matched_installed_hooks_for_agent_harness(
                         &lock,
-                        &source_hooks,
+                        &all_hooks,
                         &mapping,
                         &agent.role,
                         harness.id(),
@@ -3077,7 +3113,7 @@ fn reconcile_agents(
 
     if !regenerated_codex_agents.is_empty() {
         let codex_fallback_hooks =
-            crate::resolve::installed_codex_fallback_hooks(&lock, &source_hooks);
+            crate::resolve::installed_codex_fallback_hooks(&lock, &all_hooks);
         installer::install_codex_fallback_hooks_for_agents(
             &codex_fallback_hooks,
             global,

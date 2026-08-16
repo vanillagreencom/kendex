@@ -858,15 +858,8 @@ pub fn parse_github_slug(url: &str) -> Option<String> {
         }
         let bare = url.strip_suffix(".git").unwrap_or(url);
         let mut parts = bare.split('/');
-        if let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next())
-            && !owner.is_empty()
-            && !repo.is_empty()
-        {
-            return Some(format!(
-                "{}/{}",
-                owner.to_ascii_lowercase(),
-                repo.to_ascii_lowercase()
-            ));
+        if let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) {
+            return github_slug_from(owner, repo);
         }
         return None;
     }
@@ -890,14 +883,38 @@ pub fn parse_github_slug(url: &str) -> Option<String> {
     let mut parts = after.split('/');
     let owner = parts.next()?;
     let repo = parts.next()?;
-    if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
+    if parts.next().is_some() {
         return None;
     }
-    Some(format!(
-        "{}/{}",
-        owner.to_ascii_lowercase(),
-        repo.to_ascii_lowercase()
-    ))
+    github_slug_from(owner, repo)
+}
+
+/// The one place a slug is minted, so every caller gets a name GitHub could
+/// actually have.
+///
+/// The charset is the gate, not a tidy-up. A slug is pasted straight into
+/// `https://github.com/{slug}.git` for the bare `owner/repo` shorthand, which
+/// is not URL-shaped and so never reaches the credential refusal: without
+/// this, `owner/repo?access_token=secret.git` handed the token to `git clone`
+/// and to every diagnostic the URL appears in. Reserved URL characters — `?`,
+/// `#`, `@`, `:`, `%` — are therefore not owner or repository name characters
+/// here, and `.`/`..` are not names at all.
+fn github_slug_from(owner: &str, repo: &str) -> Option<String> {
+    fn is_name(part: &str) -> bool {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    }
+    (is_name(owner) && is_name(repo)).then(|| {
+        format!(
+            "{}/{}",
+            owner.to_ascii_lowercase(),
+            repo.to_ascii_lowercase()
+        )
+    })
 }
 
 pub fn github_slug_eq(left: &str, right: &str) -> bool {

@@ -273,42 +273,57 @@
   `GIT_DISCOVERY_ACROSS_FILESYSTEM`, which are hostile only where vstack owns
   the repository — for the user's own project they are configuration, and
   clearing them changed the answer the anchoring callers fail closed on.
-  Network commands take the ssh program git would pick (`GIT_SSH_COMMAND`, then
-  `core.sshCommand`) with its own variant's noninteractive flag APPENDED —
-  `-o BatchMode=yes` for OpenSSH, `-batch` for plink/putty/tortoiseplink,
-  nothing for `simple`, honouring `GIT_SSH_VARIANT` then `ssh.variant`. Git puts
+  Network commands take the ssh program the USER named (`GIT_SSH_COMMAND`,
+  `GIT_SSH`, then `core.sshCommand` in their global or system config) with its
+  own variant's noninteractive flag APPENDED — `-o BatchMode=yes` for OpenSSH,
+  `-batch` for plink/putty/tortoiseplink, nothing for `simple`, honouring
+  `GIT_SSH_VARIANT` then `ssh.variant`. Git puts
   the host and upload-pack arguments after the whole string, so a trailing
   option still applies and a command carrying arguments of its own
   (`ssh -i key`, `env FOO=bar ssh`) keeps working AND stops prompting — the one
   prompt `GIT_TERMINAL_PROMPT=0` cannot suppress is ssh's own. An explicit
   `-o BatchMode=no` the user wrote earlier in their command still wins. A
-  `GIT_SSH` program, and a plink-family command with arguments, are left exactly
-  as git has them. `reset --hard` runs only after the cache entry
+  `GIT_SSH` program, and a plink-family command with arguments, keep the
+  argument list they expect — but `GIT_SSH_COMMAND` is always SET, never left
+  for git to resolve, and the cache entry's own `.git/config` is never read for
+  either key: `core.sshCommand` there names a program git RUNS, so a cache that
+  passed every ownership check could still execute one.
+  `reset --hard` runs only after the cache entry
   proves to be vstack's own clone: not a symlink, not a redirected `.git`,
-  `rev-parse --show-toplevel` is the entry itself, and `origin` is this source
-  with no credential in it. A cache whose `core.worktree` pointed at a user
-  checkout used to have that checkout's tracked files overwritten (VST-256). A
+  `rev-parse --show-toplevel` is the entry itself, `rev-parse
+  --git-common-dir` resolves inside it — a `commondir` file redirects refs and
+  objects at another repository while the work tree still answers as the cache,
+  so a fetch advanced the victim's remote-tracking refs — and `origin` is this
+  source with no credential in it. A cache whose `core.worktree` pointed at a
+  user checkout used to have that checkout's tracked files overwritten
+  (VST-256). A
   remote source is a source whether or not its clone is present or usable:
   `add` fails, `refresh` reports the entry as not refreshed naming the real
   cause — the refusal, or a cache that is not on this machine — and exits
   non-zero, never rebinding the entry to another source (hooks included) or
   repairing its lock record; the TUI's startup cache refresh skips it, and a
   hook removal that cannot regenerate the affected agents fails instead of
-  leaving them carrying the removed hook. An agent is never rewritten with a
-  hook set the run could not determine — whether the hook's source did not
-  resolve or no longer carries it, the agent file is left exactly as installed
-  and named in the report, rather than silently losing that hook's frontmatter
-  while its script and its settings.json registration stay. `check` and
+  leaving them carrying the removed hook. Neither `refresh` nor `add` rewrites
+  an agent with a hook set the run could not determine — whether the hook's
+  source did not resolve, was refused, or no longer carries it, the agent file
+  is left exactly as installed and named in the report, rather than silently
+  losing that hook's frontmatter while its script and its settings.json
+  registration stay; `add`'s end-of-install reconciliation now reads hooks from
+  every recorded source rather than only the one being installed from. `check` and
   `verify` name the same cause and the same command as `refresh` for a source
   that did not resolve, instead of calling it outdated or reporting a bare
   `src:!`. `add` no longer walks past a refused source to a different one: a
   credential, transport, ownership or clone failure on the source a project
   selected is an error naming it, not a silent fall-back that installs from
   somewhere else. A failed fetch keeps the stale clone
-  (warned once, not once per resolve); a failed reset is an error. Remote
+  (warned once per source and message, not once per resolve); a failed reset is
+  an error. Remote
   sources resolve to one cache entry per repository identity — every spelling
   of a GitHub repo shares one, two repositories never do — so URL-added sources
-  refresh from the clone `add` made.
+  refresh from the clone `add` made. On a non-GitHub host the ssh account is
+  part of that identity, because an scp-like path resolves relative to the
+  account's home: `alice@host:repo` and `bob@host:repo` shared one cache entry
+  and passed each other's origin check.
   **Breaking:** cache entries written by earlier vstack versions are not
   reused, because the cache key now derives from the repository identity. The
   first `vstack refresh` after upgrading reports each remote source as not
@@ -324,9 +339,15 @@
   (`https:///user:token@host/repo` put its credential in the path, where the
   authority checks could not see it), and sources starting with `-` are rejected
   before any git runs and never echoed — including in the
-  source picker, which used to print a legacy registry entry's token verbatim;
+  source picker, which used to print a legacy registry entry's token verbatim,
+  and in the "source not found" line, which reached a credential URL malformed
+  enough to be classified as a local path (`https:/user:token@host/repo`);
   ssh usernames are kept, and any control or direction-changing character in a
-  source string is escaped before it reaches a terminal.
+  source string is escaped before it reaches a terminal. The bare `owner/repo`
+  shorthand is not URL-shaped and so never reached those refusals: an owner or
+  repository segment now accepts only characters GitHub allows, so
+  `owner/repo?access_token=…` is no longer expanded into an HTTPS URL carrying
+  the token.
 - decider: index rows are append-only, never re-sorted — the template's
   "date order" clause contradicted its own example and the CLI reads rows
   positionally (VST-263); the schema carries the placement rule.
