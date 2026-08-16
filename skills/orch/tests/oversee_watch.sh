@@ -14,13 +14,16 @@
 #       unreadable state file exits 2 naming the path
 #   2.  merged: an --item's PR merged at/after --since fires; a PR merged
 #       BEFORE --since, a non-item branch, and a non-item conventional branch
-#       do not; item ids match branches case-insensitively; no --since means
-#       no floor; no --item skips the check with a note; gh stderr noise on
-#       success does not break the JSON parse
+#       do not; a fork's PR on the same head branch name does not; item ids
+#       match branches case-insensitively; no --since means no floor; no
+#       --item skips the check with a note; gh stderr noise on success does
+#       not break the JSON parse
 #   3.  a listed lane window that no longer exists
-#   3b. a live window whose pane command is a bare shell — the harness exited
-#       (pane tail follows); a live pane command is not an event; an
-#       unreadable pane command is window-gone
+#   3b. a live window whose pane command is a bare shell on two consecutive
+#       passes — the harness exited (pane tail follows); one pass alone, and
+#       a shell followed by a live command, are not events; a login shell
+#       (-bash) counts; a live pane command is not an event; an unreadable
+#       pane command is window-gone
 #   4.  a lane pane showing a question prompt (pane tail follows)
 #   5.  heartbeat after --max-loops with the open PR list
 #   6.  gh auth failure exits 2; a stale env token falls through to the
@@ -109,21 +112,24 @@ case "${1:-} ${2:-}" in
     printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
     [[ -f "$STUB_DIR/list-fail" ]] && { echo "HTTP 502: bad gateway" >&2; exit 1; }
     [[ -f "$STUB_DIR/noisy" ]] && echo "Notice: something advisory" >&2
-    head=""; limit=""; state=""
+    head=""; limit=""; state=""; repo=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --head) head="$2"; shift ;;
         --limit) limit="$2"; shift ;;
         --state) state="$2"; shift ;;
+        --repo) repo="$2"; shift ;;
       esac
       shift
     done
     if [[ "$state" == "merged" ]]; then
       src="$STUB_DIR/merged.json"; [[ -f "$src" ]] || src=/dev/null
       # newest-created first, like gh: the fixture is in that order already;
-      # --head narrows to one branch, --limit caps the page.
-      jq -c --arg head "$head" --argjson limit "${limit:-1000}" \
-        '[ .[] | select($head == "" or .headRefName == $head) ] | .[:$limit]' "$src" 2>/dev/null || echo '[]'
+      # --head narrows to one branch, --limit caps the page. gh always returns
+      # headRepositoryOwner; a fixture that omits it is a same-repo head.
+      jq -c --arg head "$head" --arg owner "${repo%%/*}" --argjson limit "${limit:-1000}" \
+        '[ .[] | select($head == "" or .headRefName == $head)
+                | (.headRepositoryOwner //= {login: $owner}) ] | .[:$limit]' "$src" 2>/dev/null || echo '[]'
       exit 0
     fi
     [[ -f "$STUB_DIR/open.txt" ]] && cat "$STUB_DIR/open.txt"
@@ -148,8 +154,11 @@ case "${1:-}" in
   display-message)
     lane=""
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; shift; done
-    [[ -f "$STUB_DIR/cmd-$lane.txt" ]] || { echo "can't find window: $lane" >&2; exit 1; }
-    cat "$STUB_DIR/cmd-$lane.txt"; exit 0 ;;
+    n=0; [[ -f "$STUB_DIR/cmd-$lane.calls" ]] && n="$(cat "$STUB_DIR/cmd-$lane.calls")"
+    n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/cmd-$lane.calls"
+    src="$STUB_DIR/cmd-$lane.$n.txt"; [[ -f "$src" ]] || src="$STUB_DIR/cmd-$lane.txt"
+    [[ -f "$src" ]] || { echo "can't find window: $lane" >&2; exit 1; }
+    cat "$src"; exit 0 ;;
 esac
 printf 'unexpected tmux call: %s\n' "$*" >&2
 exit 1
@@ -414,6 +423,19 @@ out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc
 assert_eq "$rc" "0" "gh stderr noise on success still exits 0" "$err"
 assert_eq "$out" "EVENT merged 5 issue-5" "gh stderr noise does not corrupt the merged list" "$err"
 
+# a fork's PR carries the same head branch NAME, and --head matches by name
+new_case merged_fork
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 42, "headRefName": "issue-5", "headRepositoryOwner": {"login": "forker"}, "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2e"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "a fork-only merged list still exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" "a fork PR on the item's branch name is not a merge" "$err"
+assert_not_contains "$out" "EVENT merged" "a same-named fork branch never fires merged" "$err"
+
 # --- 3. window-gone --------------------------------------------------------
 new_case window_gone
 printf 'gh-1\n' > "$STUB_DIR/windows.txt"
@@ -435,9 +457,33 @@ printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
 err="$TMP_ROOT/e3b"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "lane-exited exits 0" "$err"
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" "a bare shell in the pane is the event" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" "a bare shell on two consecutive passes is the event" "$err"
 assert_contains "$out" "session limit" "the pane tail follows, carrying the exit reason" "$err"
 assert_not_contains "$out" "EVENT window-gone" "a live window is not reported gone" "$err"
+
+# one pass is not enough: a live harness can hold a shell in the foreground
+# for a single poll, and relaunching a working lane costs more than a wait
+new_case lane_exited_debounce
+printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
+err="$TMP_ROOT/e3b2"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" "one pass of shell is not the event" "$err"
+assert_not_contains "$out" "EVENT lane-exited" "a single shell reading never fires" "$err"
+
+# a shell on one pass followed by a live command is a transient, not an exit
+new_case lane_exited_transient
+printf 'bash\n' > "$STUB_DIR/cmd-gh-2.1.txt"
+err="$TMP_ROOT/e3b3"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "shell then live is not an exit" "$err"
+assert_not_contains "$out" "EVENT lane-exited" "a non-consecutive shell reading never fires" "$err"
+
+# a login shell reports itself as -bash
+new_case lane_exited_login_shell
+printf -- '-bash\n' > "$STUB_DIR/cmd-gh-2.txt"
+err="$TMP_ROOT/e3b4"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" "a login shell (-bash) counts as a bare shell" "$err"
 
 # a live harness under the same conditions is no event
 new_case lane_live

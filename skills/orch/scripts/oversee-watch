@@ -14,13 +14,15 @@
 #                 on stderr), never a preempting event, so a PR that sits at
 #                 threads-open for an hour cannot starve the lane checks.
 #                 The latest reducer output is appended to every event.
-#   2. merged     an --item's PR (head branch = the item id, lowercased;
-#                 one --head query per item — no listing window to miss)
-#                 merged at or after --since
+#   2. merged     an --item's PR (head branch = the item id, lowercased, in
+#                 this repo — never a fork's same-named branch; one --head
+#                 query per item — no listing window to miss) merged at or
+#                 after --since
 #   3. window-gone a listed tmux lane window no longer exists
 #   4. lane-exited a listed lane's window is alive but its pane's current
-#                 command is a bare shell — the harness under it exited
-#                 (session limit, crash, quit) and the slot is free
+#                 command is a bare shell on two consecutive passes — the
+#                 harness under it exited (session limit, crash, quit) and
+#                 the slot is free
 #   5. question   a listed lane's pane shows a question/selection prompt
 #   6. heartbeat  after --max-loops passes with no event
 #
@@ -95,10 +97,12 @@ Events, checked in this order every pass:
                              not installed
   EVENT merged <PR> <branch> an --item's PR merged at or after --since (one
                              line per PR; the item's head branch is its id,
-                             lowercased)
+                             lowercased, in this repo — a fork's PR on the
+                             same branch name is not the item's)
   EVENT window-gone <lane>   a listed tmux window no longer exists
   EVENT lane-exited <lane>   the window is alive but the pane's current
-                             command is a bare shell (bash/zsh/fish/sh/dash):
+                             command is a bare shell (bash/zsh/fish/sh/dash,
+                             login spellings too) on two consecutive passes:
                              the harness under it exited — session limit,
                              crash, quit — and the lane's slot is free (last
                              40 non-empty pane lines follow, carrying why)
@@ -212,6 +216,7 @@ if [[ -z "$REPO" ]]; then
   REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
   [[ -n "$REPO" ]] || die "could not resolve the repository (gh repo view failed); pass --repo OWNER/REPO"
 fi
+REPO_OWNER="${REPO%%/*}"
 
 if [[ -x "$PR_WATCH" ]]; then
   :
@@ -310,11 +315,14 @@ check_merged() {
   local errf="$WORK_DIR/merged.err" branch list hit hits=""
   while IFS= read -r branch; do
     [[ -n "$branch" ]] || continue
-    list="$(gh pr list --repo "$REPO" --head "$branch" --state merged --limit 10 --json number,headRefName,mergedAt 2>"$errf")" \
+    list="$(gh pr list --repo "$REPO" --head "$branch" --state merged --limit 10 --json number,headRefName,headRepositoryOwner,mergedAt 2>"$errf")" \
       || die "gh pr list --state merged failed for $REPO (--head $branch): $(cat "$errf")"
-    hit="$(jq -r --arg branch "$branch" --argjson since "$SINCE_EPOCH" '
+    # --head matches by branch NAME, so a fork's PR on the same name lands in
+    # this list; only a head in this repo can be a lane's own PR.
+    hit="$(jq -r --arg branch "$branch" --arg owner "$REPO_OWNER" --argjson since "$SINCE_EPOCH" '
       [ .[]
         | select(.headRefName | ascii_downcase == $branch)
+        | select(.headRepositoryOwner.login == $owner)
         | select(.mergedAt != null)
         | select((.mergedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) >= $since)
         | "EVENT merged \(.number) \(.headRefName)" ]
@@ -333,9 +341,20 @@ check_merged() {
 # miss, and under pipefail that would abort the script mid-event.
 pane_tail() { grep -v '^[[:space:]]*$' <<<"$1" | tail -40 || true; }
 
+# A login shell reports itself as `-bash`; strip the dash before matching.
+is_bare_shell() {
+  case "${1#-}" in
+    bash|zsh|fish|sh|dash) return 0 ;;
+  esac
+  return 1
+}
+
+# Lanes whose pane held a bare shell on the previous pass.
+LANE_SHELL_SEEN=""
+
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane cmd
+  local existing lane pane cmd shell_now=""
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     if ! grep -qxF -- "$lane" <<<"$existing"; then
@@ -349,22 +368,26 @@ check_lanes() {
   # shell in the foreground — a window that exists, a pane that matches no
   # question prompt, and a slot held until someone looks. A bare shell as the
   # pane's current command IS that lane, finished; the pane tail carries why.
+  # Two consecutive passes: a live harness can hold a shell in the foreground
+  # for one poll, and relaunching a working lane costs more than one interval.
   for lane in "${LANES[@]}"; do
     if ! cmd="$(tmux display-message -p -t "$lane" '#{pane_current_command}' 2>/dev/null)" || [[ -z "$cmd" ]]; then
       echo "EVENT window-gone $lane"
       pr_watch_context
       exit 0
     fi
-    case "$cmd" in
-      bash|zsh|fish|sh|dash)
+    if is_bare_shell "$cmd"; then
+      shell_now+="$lane"$'\n'
+      if grep -qxF -- "$lane" <<<"$LANE_SHELL_SEEN"; then
         echo "EVENT lane-exited $lane"
         pane="$(tmux capture-pane -t "$lane" -p 2>/dev/null || true)"
         [[ -z "$pane" ]] || pane_tail "$pane"
         pr_watch_context
         exit 0
-        ;;
-    esac
+      fi
+    fi
   done
+  LANE_SHELL_SEEN="$shell_now"
   for lane in "${LANES[@]}"; do
     if ! pane="$(tmux capture-pane -t "$lane" -p 2>/dev/null)"; then
       echo "EVENT window-gone $lane"
