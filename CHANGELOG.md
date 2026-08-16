@@ -18,6 +18,11 @@
   GitHub-route Linear-free check — its sed pattern was BRE (parens grouped,
   never matched) and the extraction failure inside `$(...)` could not stop
   the run. ERE now, and an empty region fails the assertion.
+- pi-agents-tmux 2.8.2: oneshot transcript records are appended in event
+  order (one ordered write chain instead of concurrent `appendFile` calls),
+  so the last assistant text a consumer extracts is the last one written —
+  the out-of-order case surfaced as a merge-queue flake in
+  `session-lanes.test.ts`.
 - agents: the seven engineer/analyst agents (generalist, iced, planner,
   researcher, rust, scout, tpm) drop the house "never trust a green check"
   blockquote — the rule's canonical homes are `code-quality` § Prove Your

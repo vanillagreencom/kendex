@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.8.2
+
+- Oneshot transcript records are written strictly in event order. Each record was a separate concurrent `appendFile`, which land in any order under load, so a transcript could carry an earlier `message_end` after the final buffered partial and `getFinalOutput`/last-assistant-text extraction reported the wrong message (vstack#1311). Appends now run through one ordered chain (`createTranscriptAppender`); a failed write never blocks the next record.
+
 ### 2.8.1
 
 - Child spawning no longer trusts `process.argv[1]` as the pi entry (vstack#192). Previously any existing script in `argv[1]` was re-invoked as if it were pi, so a standalone harness/test that imported `runner.ts` directly and dispatched a subagent re-ran the harness recursively — an unbounded fork bomb. Self-re-invocation now requires a pi entry basename (`pi`, `pi.js`, `pi.mjs`, `pi.ts`, `cli.js`, `cli.mjs`, `cli.ts`) AND proven pi package identity: the nearest `package.json` above the realpathed entry must have `name` `@earendil-works/pi-coding-agent`, or its `pi` bin entry (object form, or string form on a package named `pi`) must itself resolve to the realpathed entry script — merely declaring a `pi` bin does not qualify. A missing manifest continues the walk upward; any other manifest read failure (EACCES etc.) rejects immediately. Anything else — including a harness literally named `cli.ts` — falls back to resolving `pi` on PATH. Compiled-binary (`/$bunfs`) and pi dev-mode behavior are unchanged.
