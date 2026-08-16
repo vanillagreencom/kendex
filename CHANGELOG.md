@@ -17,9 +17,12 @@
   store that exists but cannot be read — consumers delegating lane selection
   see a misconfigured `OVERSEE_WATCH_STATE_DIR` as a launch failure instead
   of a fleet stacked on one account (VST-296).
-- repo: `CHANGELOG.md` merges with git's `union` driver (`.gitattributes`) —
-  two branches each adding a bullet under Unreleased no longer conflict on
-  rebase; both bullets are kept.
+- repo: the root `CHANGELOG.md` merges with git's `union` driver
+  (`.gitattributes`) — two branches each adding a bullet under Unreleased no
+  longer conflict on rebase; both bullets are kept. The driver also keeps both
+  sides of an in-place rewrite of one line and, across a release rotation,
+  lands a rebased bullet under the new heading: read the Unreleased list after
+  a rebase, and rotate a release only with no PR open.
 - review-gate/size-ratchet: settings resolution fails closed on a source it
   cannot read. `-f` and `-e` both pass on an existing mode-000 file, so only
   the read itself sees it: `grep` failed, the resolver read that as "no

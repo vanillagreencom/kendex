@@ -1,3 +1,6 @@
 # CHANGELOG.md is append-at-top: two branches each adding a bullet under
-# Unreleased conflict on every rebase; the union driver keeps both.
-CHANGELOG.md merge=union
+# Unreleased conflict on every rebase; the union driver keeps both. It also
+# keeps both sides of an in-place rewrite and, across a release rotation,
+# lands a rebased bullet under the new heading — read the Unreleased list
+# after a rebase, and rotate a release with no PR open.
+/CHANGELOG.md merge=union
