@@ -2127,6 +2127,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// A cache entry that is not a directory at all. The callers all gate on
+    /// `.git` being present, which a plain file cannot satisfy, so this pins
+    /// the check's own contract: without it the entry falls through to the
+    /// git-metadata read and answers with an `inspecting` context error.
+    #[test]
+    fn a_cache_entry_that_is_not_a_directory_is_refused() {
+        let root = tmpdir("plain-file");
+        let home = root.join("home");
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            let remote = RemoteSource::parse("owner/repo").unwrap().unwrap();
+            std::fs::create_dir_all(remote.cache_dir.parent().unwrap()).unwrap();
+            std::fs::write(&remote.cache_dir, "not a clone\n").unwrap();
+
+            for err in [
+                reject_unowned_cache_entry(&remote),
+                ensure_cache_entry_is_owned(&remote),
+                update_cached_repo(&remote),
+            ] {
+                let err = format!("{:#}", err.unwrap_err());
+                assert!(err.contains("its cache entry is not a directory"), "{err}");
+            }
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn cache_entry_whose_git_metadata_is_redirected_is_refused() {
@@ -2919,6 +2944,18 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("whitespace or control characters"), "{err}");
+        // And a control character that is NOT whitespace, which every other
+        // input here is: `\t` and `\n` are both, so they prove only half the
+        // guard.
+        for control in ['\u{1}', '\u{7f}'] {
+            let source = format!("https://git{control}hub.com/owner/repo.git");
+            let err = RemoteSource::parse(&source).unwrap_err().to_string();
+            assert!(
+                err.contains("whitespace or control characters"),
+                "{control:?}: {err}"
+            );
+            assert!(!err.contains(control), "{control:?}: {err}");
+        }
         // The ssh username every scp remote carries is still kept.
         let remote = RemoteSource::parse("git@github.com:Owner/Repo.git")
             .unwrap()

@@ -591,6 +591,39 @@ all = "Shared extra."
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// The gate has two directions and both are load-bearing. A recorded source
+    /// that names NOTHING — a local source directory moved or deleted since the
+    /// install — may still borrow a same-named hook from another loaded source,
+    /// which is what keeps an old lock matching its hooks at all. Only a source
+    /// that exists but did not resolve is refused.
+    #[test]
+    fn a_hook_entry_whose_recorded_source_is_gone_still_matches_by_name() {
+        let root = tmpdir("hook-source-gone");
+        let gone = root.join("moved-away");
+        let other = root.join("other");
+        std::fs::create_dir_all(other.join("hooks")).unwrap();
+        let hooks = vec![hook_from_path(
+            "guard",
+            Some(vec!["claude-code"]),
+            other.join("hooks/guard.sh"),
+        )];
+        let entry = lock_hook("guard", &gone, vec!["claude-code"]);
+        assert!(!gone.exists(), "fixture: the recorded source must be gone");
+
+        assert_eq!(
+            source_hook_for_lock_entry(&hooks, &entry).map(|hook| hook.source_path.clone()),
+            Some(other.join("hooks/guard.sh")),
+            "a source that names nothing must still match by name"
+        );
+
+        // Control: once that directory exists it owns the entry again, and
+        // another source's hook is no longer substituted for it.
+        std::fs::create_dir_all(gone.join("hooks")).unwrap();
+        assert!(source_hook_for_lock_entry(&hooks, &entry).is_none());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn installed_codex_fallback_hooks_filters_native_and_non_codex_entries() {
         let mut lock = LockFile::default();
