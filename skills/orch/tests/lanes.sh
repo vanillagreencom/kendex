@@ -248,8 +248,10 @@ cat > "$CLAIM_BIN/tmux" <<'STUBEOF'
 n=0; [[ -f "${TMUX_PANES_FILE:-}.calls" ]] && n="$(cat "$TMUX_PANES_FILE.calls")"
 n=$((n + 1)); [[ -z "${TMUX_PANES_FILE:-}" ]] || printf '%s' "$n" > "$TMUX_PANES_FILE.calls"
 src="$TMUX_PANES_FILE.$n"; [[ -f "$src" ]] || src="$TMUX_PANES_FILE"
-[[ -f "$src" ]] && cat "$src"
-exit 0
+[[ -f "$src" ]] || exit 0
+# cat's status is the stub's: an unreadable file is a failed enumeration, the
+# way a dead tmux server is, not an empty one.
+cat "$src"
 STUBEOF
 chmod +x "$CLAIM_BIN/tmux"
 
@@ -427,6 +429,34 @@ assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$RACED")" "1" 
   "a claim written after the pane snapshot is not pruned by it"
 assert_eq "$([[ -f "$CLAIM_STATE/claims/racer.claim" ]] && echo yes || echo no)" "yes" \
   "the raced claim file survives"
+
+# ...and a re-enumeration that FAILS says nothing: the claims the first
+# snapshot proved live must survive it.
+rm -f "$CLAIM_STATE"/claims/*.claim "$PANES.calls"
+if [[ "$(id -u)" -eq 0 ]]; then
+  # Root reads a mode-000 file, so the second enumeration would SUCCEED and
+  # the case would assert the retention path without ever failing a re-check.
+  printf '  skip  failed re-enumeration (running as root)\n'
+else
+  printf '%s %%1\n%s %%4\n' "$LIVE_PID" "$LIVE_PID" > "$PANES.1"
+  : > "$PANES.2"; chmod 000 "$PANES.2"           # the second enumeration fails
+  printf '%s %%1\n' "$LIVE_PID" > "$PANES"
+  write_claim live4 "$LIVE_PID" "%4" "$H/.claude" "vst-10"
+  write_claim gone5 "$LIVE_PID" "%5" "$H/.eclaude" "vst-11"
+  KEPT2="$(run_lanes_claims list --harness claude --json)"
+  chmod 644 "$PANES.2"; rm -f "$PANES.1" "$PANES.2" "$PANES.calls"
+  assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$KEPT2")" "1" \
+    "a failed re-enumeration does not prune what the first snapshot proved live"
+  assert_eq "$([[ -f "$CLAIM_STATE/claims/live4.claim" ]] && echo yes || echo no)" "yes" \
+    "the claim the snapshot covered survives a failed re-check"
+  # The record that PROVOKED the re-check is the one a stale snapshot cannot
+  # settle: without a fresh enumeration it is unknown, and kept.
+  assert_eq "$(jq -r '.[] | select(.alias=="eclaude") | .claims' <<<"$KEPT2")" "1" \
+    "the record that provoked the failed re-check is kept, not pruned by the stale snapshot"
+  assert_eq "$([[ -f "$CLAIM_STATE/claims/gone5.claim" ]] && echo yes || echo no)" "yes" \
+    "no claim is deleted on a snapshot that predates it"
+fi
+rm -f "$CLAIM_STATE"/claims/*.claim
 
 # A config dir carrying a backslash is a real path, and the count must see it:
 # `awk -v` would expand the escape and match nothing.

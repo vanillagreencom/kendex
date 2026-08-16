@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- second-opinion settings example: the `SECOND_OPINION_CURRENT_MODEL` block
+  announced "three cases, and only the third makes a project file usable at
+  all" over a list of two, neither of which does — and no case does, since a
+  project-file value is refused wherever it would matter. `vstack refresh`
+  copies the file verbatim, so every consuming repo carried the contradiction
+  and flagged it as drift. Both copies (the skill's template and the root
+  `vstack.settings.toml.example` the README points at) now state the rule
+  itself — a project file is read by every session in the repo, so a value in
+  one describes no single session — with no count and no positional reference
+  to maintain.
+
 - orch: `oversee-watch` gains `usage-limit` (the harness is still running but
   its account's limit banner is up — one pass, ahead of `question`, naming the
   config dir when a live lane claim covers the pane it read) and
@@ -17,6 +28,17 @@
   store that exists but cannot be read — consumers delegating lane selection
   see a misconfigured `OVERSEE_WATCH_STATE_DIR` as a launch failure instead
   of a fleet stacked on one account (VST-296).
+- repo: the root `CHANGELOG.md` merges with git's `union` driver
+  (`.gitattributes`) — two branches each adding a bullet under Unreleased no
+  longer conflict on rebase; both bullets are kept. The driver also keeps both
+  sides of an in-place rewrite of one line and, across a release rotation,
+  lands a rebased bullet under the new heading: read the Unreleased list after
+  a rebase, and rotate a release only with no PR open.
+- orch: pruning a lane claim re-enumerates the tmux server once per pass
+  before deleting a same-server miss, and keeps the snapshot it already had
+  when that re-enumeration fails — a claim another launcher wrote after the
+  first `list-panes` looked dead on this server and was deleted, handing a
+  running account straight back out (VST-296).
 - review-gate/size-ratchet: settings resolution fails closed on a source it
   cannot read. `-f` and `-e` both pass on an existing mode-000 file, so only
   the read itself sees it: `grep` failed, the resolver read that as "no
