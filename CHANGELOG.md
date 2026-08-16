@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- orch: `oversee-watch` gains `usage-limit` (the harness is still running but
+  its account's limit banner is up — one pass, ahead of `question`, naming the
+  config dir when a live lane claim maps the window to one) and
+  `idle-after-return` (the lane sits at its input prompt with nothing in
+  flight on two consecutive passes). Both kinds were previously invisible: a
+  spent account read as a working lane, and a finished lane held its slot
+  until a heartbeat. `open-terminal` now records a claim per tmux lane it
+  launches under a resolved lane, and `lanes pick` takes the lane with the
+  fewest live claims before the one with the most headroom — usage numbers lag
+  a launch by minutes, so back-to-back picks were handing one account the
+  whole fleet. `lanes list`/`--json` report the count (VST-296).
 - review-gate/size-ratchet: settings resolution fails closed on a source it
   cannot read. `-f` and `-e` both pass on an existing mode-000 file, so only
   the read itself sees it: `grep` failed, the resolver read that as "no

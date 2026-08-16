@@ -15,6 +15,8 @@ SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
 # shellcheck source=lib/vstack-env.sh
 source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
+# shellcheck source=lib/lane-claims.sh
+source "$SCRIPT_DIR/lib/lane-claims.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -52,7 +54,10 @@ Options:
                     picks for harness <h>; a config dir is used literally; any
                     other value is looked up as a lane alias. Refuses to launch
                     when no lane is under the usage threshold, rather than
-                    launching into a wall.
+                    launching into a wall. Every tmux window launched under a
+                    lane records a claim (see `lanes --help`), live while its
+                    pane is, so the next `pick` counts this launch before the
+                    account's usage numbers move.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -379,14 +384,29 @@ open_tmux() {
   # return (most visibly on briefless lanes, whose early return would
   # otherwise count a broken window as launched).
   [[ -n "${TMUX:-}" ]] || { echo "Error: not inside tmux" >&2; return 1; }
-  local last_idx pane
+  local last_idx pane spec server
   if ! last_idx=$(tmux list-windows -F '#{window_index}' | tail -1) || [[ -z "$last_idx" ]]; then
     echo "Error: tmux list-windows failed; cannot place window '$title'" >&2
     return 1
   fi
-  if ! pane=$(tmux new-window -a -t ":${last_idx}" -n "$title" -c "$dir" -P -F '#{pane_id}') || [[ -z "$pane" ]]; then
+  # The server pid rides along with the pane id: it is the other half of a
+  # lane claim's liveness key, and taking both from the creating call means no
+  # second tmux round trip and no window between them.
+  if ! spec=$(tmux new-window -a -t ":${last_idx}" -n "$title" -c "$dir" -P -F '#{pid} #{pane_id}') || [[ -z "$spec" ]]; then
     echo "Error: tmux new-window failed for '$title'" >&2
     return 1
+  fi
+  pane="${spec##* }"
+  server="${spec% *}"
+  [[ "$server" != "$spec" ]] || server=""
+  # A lane launch is in flight the moment its window exists: `lanes pick`
+  # counts it from here, minutes before the account's usage numbers move.
+  # Recorded only under a resolved lane — the config dir is the account's
+  # identity — and never fatal: a launch that worked is not a failure because
+  # its bookkeeping did not.
+  if [[ -n "$LANE_ENV" && -n "$server" ]]; then
+    lane_claim_write "$(lane_claims_dir "$PROJECT_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title" \
+      || echo "Warning: could not record the lane claim for '$title'; lanes pick will not count it (set OVERSEE_WATCH_STATE_DIR)" >&2
   fi
   if ! tmux send-keys -t "$pane" "clear" Enter ||
      ! tmux send-keys -t "$pane" -l "$cmd" ||

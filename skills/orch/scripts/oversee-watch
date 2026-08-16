@@ -23,8 +23,14 @@
 #                 command is a bare shell on two consecutive passes — the
 #                 harness under it exited (session limit, crash, quit) and
 #                 the slot is free
-#   5. question   a listed lane's pane shows a question/selection prompt
-#   6. heartbeat  after --max-loops passes with no event
+#   5. usage-limit a listed lane's harness is still the pane's current
+#                 command and its pane shows the account's limit banner —
+#                 one pass, and the claimed config dir when a live lane
+#                 claim names the window
+#   6. question   a listed lane's pane shows a question/selection prompt
+#   7. idle-after-return a listed lane's pane sits at its harness input
+#                 prompt with no work in flight on two consecutive passes
+#   8. heartbeat  after --max-loops passes with no event
 #
 # Output on the first event: `EVENT <kind> ...` on stdout — one line, except
 # `merged`, which prints one `EVENT merged` line per merged item so the
@@ -47,7 +53,8 @@
 #   OVERSEE_WATCH_PR_WATCH   path to the pr-watch reducer (default:
 #                            $PROJECT_ROOT/.agents/skills/review-gate/scripts/pr-watch.sh)
 #   OVERSEE_WATCH_STATE_DIR  directory holding the persisted pr-watch baseline,
-#                            one file per fleet, rewritten after every pass
+#                            one file per fleet, rewritten after every pass,
+#                            and open-terminal's lane claims under claims/
 #                            (default: $PROJECT_ROOT/tmp/oversee-watch); a
 #                            directory that cannot be created or written is a
 #                            hard failure, never a silent fallback
@@ -61,10 +68,27 @@ source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
+# shellcheck source=lib/lane-claims.sh
+source "$SCRIPT_DIR/lib/lane-claims.sh"
 
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
+
+# Every pane predicate lives here, one line each, matched with `grep -E`
+# against the whole pane capture.
 QUESTION_RE='❯ [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
+# The account is spent. Both harnesses: Claude Code opens the banner with
+# "You've hit your <bucket> limit" / "You've reached your…" and points at
+# /usage-credits; Codex prints "Usage limit reached" and its out-of-credits
+# wording. `.` stands in for the apostrophe, which is ASCII in the binaries
+# and typographic once rendered.
+USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
+# A turn in flight: the interrupt hint (both harnesses), the hint shown while
+# a foreground shell runs, or the streaming token counter of the status line.
+WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens'
+# A ready input prompt: Claude Code's composer line, Codex's submit hint.
+# Present while working too, so it decides idleness only with WORKING_RE out.
+IDLE_PROMPT_RE='^❯|to submit message'
 
 INTERVAL=240
 MAX_LOOPS=25
@@ -106,8 +130,26 @@ Events, checked in this order every pass:
                              the harness under it exited — session limit,
                              crash, quit — and the lane's slot is free (last
                              40 non-empty pane lines follow, carrying why)
+  EVENT usage-limit <lane> [<config-dir>]
+                             the harness is still the pane's current command
+                             and the pane shows the account's limit banner
+                             (`You've hit your … limit`, `/usage-credits`,
+                             `Usage limit reached`, out of credits): the
+                             account is spent and every lane on it follows.
+                             One pass — a banner is terminal for that
+                             account window, not a transient. The config dir
+                             is appended when a live lane claim names this
+                             window (last 40 non-empty pane lines follow)
   EVENT question <lane>      the lane's pane shows a question/selection
                              prompt (last 40 non-empty pane lines follow)
+  EVENT idle-after-return <lane>
+                             the pane sits at the harness input prompt (`❯`
+                             composer, Codex's submit hint) with no work in
+                             flight (no interrupt hint, no background-shell
+                             hint, no streaming token counter) on two
+                             consecutive passes: the round is over and the
+                             lane is waiting on the overseer (last 40
+                             non-empty pane lines follow)
   EVENT heartbeat            --max-loops passes with no event (open PR list
                              follows: number, head branch, title)
 
@@ -140,7 +182,8 @@ Environment:
                            skill's install under .agents/skills)
   OVERSEE_WATCH_STATE_DIR  directory holding the persisted pr-watch baseline,
                            one file per fleet (repo + --since), rewritten
-                           after every pass (default: PROJECT_ROOT/tmp/
+                           after every pass, and open-terminal's lane claims
+                           under claims/ (default: PROJECT_ROOT/tmp/
                            oversee-watch); a directory that cannot be created
                            or written exits 2
 USAGE
@@ -352,10 +395,17 @@ is_bare_shell() {
 
 # Lanes whose pane held a bare shell on the previous pass.
 LANE_SHELL_SEEN=""
+# Lanes whose pane sat at an idle harness prompt on the previous pass.
+LANE_IDLE_SEEN=""
+
+# The pass's snapshot of one lane: its pane's current command, and the file
+# holding its pane capture. Every check reads the same observation.
+lane_cmd() { awk -F'\t' -v l="$2" '$1 == l { print $2 }' <<<"$1"; }
+lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$(pw_slug "$1")"; }
 
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane cmd shell_now=""
+  local existing lane pane cmd cmds="" shell_now="" idle_now="" claims="" claimed
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     if ! grep -qxF -- "$lane" <<<"$existing"; then
@@ -363,6 +413,21 @@ check_lanes() {
       pr_watch_context
       exit 0
     fi
+  done
+  # One command read and one pane capture per lane per pass: a lane's kind is
+  # decided from a single observation, never from two screens taken apart.
+  for lane in "${LANES[@]}"; do
+    if ! cmd="$(tmux display-message -p -t "$lane" '#{pane_current_command}' 2>/dev/null)" || [[ -z "$cmd" ]]; then
+      echo "EVENT window-gone $lane"
+      pr_watch_context
+      exit 0
+    fi
+    if ! tmux capture-pane -t "$lane" -p >"$(lane_pane_file "$lane")" 2>/dev/null; then
+      echo "EVENT window-gone $lane"
+      pr_watch_context
+      exit 0
+    fi
+    cmds+="$lane"$'\t'"$cmd"$'\n'
   done
   # A lane window outlives its harness: open-terminal runs claude/codex inside
   # a shell, so a session that hit its limit, crashed, or quit leaves the
@@ -372,16 +437,11 @@ check_lanes() {
   # Two consecutive passes: a live harness can hold a shell in the foreground
   # for one poll, and relaunching a working lane costs more than one interval.
   for lane in "${LANES[@]}"; do
-    if ! cmd="$(tmux display-message -p -t "$lane" '#{pane_current_command}' 2>/dev/null)" || [[ -z "$cmd" ]]; then
-      echo "EVENT window-gone $lane"
-      pr_watch_context
-      exit 0
-    fi
-    if is_bare_shell "$cmd"; then
+    if is_bare_shell "$(lane_cmd "$cmds" "$lane")"; then
       shell_now+="$lane"$'\n'
       if grep -qxF -- "$lane" <<<"$LANE_SHELL_SEEN"; then
         echo "EVENT lane-exited $lane"
-        pane="$(tmux capture-pane -t "$lane" -p 2>/dev/null || true)"
+        pane="$(cat "$(lane_pane_file "$lane")")"
         [[ -z "$pane" ]] || pane_tail "$pane"
         pr_watch_context
         exit 0
@@ -389,12 +449,25 @@ check_lanes() {
     fi
   done
   LANE_SHELL_SEEN="$shell_now"
+  # The harness is still running and the account is spent: every lane on that
+  # account dies with it, so the config dir is the actionable part and a live
+  # claim is where it is recorded. Before `question` — a limit banner can sit
+  # above a stale prompt, and the account is the news. One pass: a banner is
+  # terminal for that account window, not a screen a poll can catch mid-draw.
   for lane in "${LANES[@]}"; do
-    if ! pane="$(tmux capture-pane -t "$lane" -p 2>/dev/null)"; then
-      echo "EVENT window-gone $lane"
+    if is_bare_shell "$(lane_cmd "$cmds" "$lane")"; then continue; fi
+    pane="$(cat "$(lane_pane_file "$lane")")"
+    if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$pane"; then
+      claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")")"
+      claimed="$(lane_claims_config_dir "$claims" "$lane")"
+      echo "EVENT usage-limit $lane${claimed:+ $claimed}"
+      [[ -z "$pane" ]] || pane_tail "$pane"
       pr_watch_context
       exit 0
     fi
+  done
+  for lane in "${LANES[@]}"; do
+    pane="$(cat "$(lane_pane_file "$lane")")"
     if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
       echo "EVENT question $lane"
       pane_tail "$pane"
@@ -402,6 +475,23 @@ check_lanes() {
       exit 0
     fi
   done
+  # The round is over and nobody is driving: the harness is up, at its input
+  # prompt, with nothing in flight. Two consecutive passes, because the screen
+  # between a finished tool call and the next one reads the same.
+  for lane in "${LANES[@]}"; do
+    if is_bare_shell "$(lane_cmd "$cmds" "$lane")"; then continue; fi
+    pane="$(cat "$(lane_pane_file "$lane")")"
+    if grep -Eq -- "$WORKING_RE" <<<"$pane"; then continue; fi
+    if ! grep -Eq -- "$IDLE_PROMPT_RE" <<<"$pane"; then continue; fi
+    idle_now+="$lane"$'\n'
+    if grep -qxF -- "$lane" <<<"$LANE_IDLE_SEEN"; then
+      echo "EVENT idle-after-return $lane"
+      pane_tail "$pane"
+      pr_watch_context
+      exit 0
+    fi
+  done
+  LANE_IDLE_SEEN="$idle_now"
 }
 
 heartbeat() {
