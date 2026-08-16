@@ -579,42 +579,55 @@ canon_identity() {
 
 CURRENT_HARNESS=""
 CURRENT_MODEL=""
-# Where the identity came from — the whole basis for how far it is trusted:
-#   session   declared in the CALLER's own environment. Set for THIS session,
-#             so it is authoritative and never second-guessed.
-#   project   declared in a project settings file. Set for the REPO: it reaches
-#             every session run there, so it is not a statement about any one of
-#             them (see the refusal rules below).
-#   detected  no declaration; the model the detected harness is known to run.
+# Where the identity came from — the basis for how far it is trusted:
+#   detected  the model a positively detected single-model harness runs.
+#   session   declared in the CALLER's own environment, in a session detection
+#             cannot arbitrate. A statement about THIS session.
+#   project   declared in a project settings file, likewise. Set for the REPO,
+#             so it is not a statement about any one session in it.
 #   ""        no identity at all.
 # Only a declared value can carry a typo, so only a declared value is held to
 # the roster-spelling check.
 CURRENT_MODEL_SOURCE=""
+# A declaration that contradicts a positively detected harness, held for the
+# refusal that names both values. Empty when there is no such conflict.
+CURRENT_MODEL_CONFLICT=""
+
 resolve_current_model() {
   CURRENT_HARNESS=$(detect_current_harness)
-  if [[ -n "${SECOND_OPINION_CURRENT_MODEL:-}" ]]; then
-    CURRENT_MODEL=$(canon_identity "$SECOND_OPINION_CURRENT_MODEL")
+
+  local harness_model="" declared=""
+  case "$CURRENT_HARNESS" in claude|codex) harness_model="$CURRENT_HARNESS" ;; esac
+  [[ -z "${SECOND_OPINION_CURRENT_MODEL:-}" ]] || declared=$(canon_identity "$SECOND_OPINION_CURRENT_MODEL")
+
+  if [[ -n "$harness_model" ]]; then
+    # ONE rule for a harness that can be identified: detection wins, whatever
+    # the declaration's source. A single-model harness is direct evidence about
+    # THIS process; a declaration is a variable, and a variable is inherited —
+    # a Claude session that exports one and then starts a nested Codex session
+    # leaks it there, where trusting it would dispatch to the nested session's
+    # own model. An AGREEING declaration adds nothing and is simply not used
+    # (it is not "declared", so no roster-spelling requirement follows from it);
+    # a CONTRADICTING one is refused naming both values, because one of the two
+    # is wrong and guessing which is how a same-model review gets published.
+    CURRENT_MODEL="$harness_model"
+    CURRENT_MODEL_SOURCE="detected"
+    [[ -z "$declared" || "$declared" == "$harness_model" ]] || CURRENT_MODEL_CONFLICT="$declared"
+    return
+  fi
+
+  # Detection cannot arbitrate (Pi, OpenCode, Cursor, undetected): the
+  # declaration is the only identity available, and this is the one place its
+  # SOURCE still decides anything — a project file is read by every session in
+  # the repo, so only a caller-scoped value is a statement about this one.
+  if [[ -n "$declared" ]]; then
+    CURRENT_MODEL="$declared"
     if $CURRENT_MODEL_IS_SESSION_SCOPED; then
       CURRENT_MODEL_SOURCE="session"
-    elif [[ "$CURRENT_MODEL" == "$CURRENT_HARNESS" ]] \
-         && [[ "$CURRENT_HARNESS" == "claude" || "$CURRENT_HARNESS" == "codex" ]]; then
-      # A project value that only repeats what detection already established
-      # adds nothing — it is redundant, not a declaration. Classify it as
-      # DETECTED so nothing downstream treats it as a typed value: a declared
-      # identity carries a roster-spelling requirement, and applying that to a
-      # value the operator never typed for this session refuses the most
-      # natural configuration there is (a roster naming only the cross-model
-      # target). Same regression already fixed once for plain detection.
-      CURRENT_MODEL_SOURCE="detected"
     else
       CURRENT_MODEL_SOURCE="project"
     fi
-    return
   fi
-  case "$CURRENT_HARNESS" in
-    claude|codex) CURRENT_MODEL="$CURRENT_HARNESS"; CURRENT_MODEL_SOURCE="detected" ;;
-    *) CURRENT_MODEL="" ;;
-  esac
 }
 
 # Does $1 declare SECOND_OPINION_CURRENT_MODEL the way the LOADER would read it?
@@ -842,17 +855,29 @@ SESSION_REFUSED=false
 # The reason is computed first and acted on once, because the agreeing
 # claude/codex case must fall through to normal selection rather than refuse.
 SESSION_SKIP_REASON=""
-SESSION_DECLARING_FILES=""
-[[ "$CURRENT_MODEL_SOURCE" != "project" ]] || SESSION_DECLARING_FILES="$(declaring_project_files)"
-# Where the value came from, in the refusal's own words. When no file can be
-# shown to have supplied it, say that rather than naming one on suspicion — the
-# operator would edit a line that is not the cause.
-if [[ -n "$SESSION_DECLARING_FILES" ]]; then
-  SESSION_DECLARED_IN="project settings ($SESSION_DECLARING_FILES)"
+# Where the declaration came from, in the refusal's own words — an operator
+# cannot remove a value whose home they were not told. A caller-scoped value is
+# named as such; otherwise the project files are scanned for the one that really
+# supplied it, and when none can be shown, the message says so rather than
+# naming a file on suspicion.
+SESSION_DECLARED_IN=""
+if $CURRENT_MODEL_IS_SESSION_SCOPED; then
+  SESSION_DECLARED_IN="this session's own environment"
 else
-  SESSION_DECLARED_IN="outside this session's environment (no project settings file was found to declare it)"
+  SESSION_DECLARING_FILES="$(declaring_project_files)"
+  if [[ -n "$SESSION_DECLARING_FILES" ]]; then
+    SESSION_DECLARED_IN="project settings ($SESSION_DECLARING_FILES)"
+  else
+    SESSION_DECLARED_IN="outside this session's environment (no project settings file was found to declare it)"
+  fi
 fi
-if [[ -z "$CURRENT_MODEL" ]]; then
+if [[ -n "$CURRENT_MODEL_CONFLICT" ]]; then
+  # A declaration that contradicts a positively detected single-model harness.
+  # Source is irrelevant here: an exported value is inherited by every nested
+  # session, so "the caller set it" is not evidence about THIS process, while
+  # the harness is. One of the two is wrong and the operator has to say which.
+  SESSION_SKIP_REASON="declared model $CURRENT_MODEL_CONFLICT contradicts this session's detected $CURRENT_HARNESS harness (declared in $SESSION_DECLARED_IN) — a detected single-model harness is the stronger evidence, so this refuses rather than pick one; clear SECOND_OPINION_CURRENT_MODEL for this session, or run the review from the session whose model you meant"
+elif [[ -z "$CURRENT_MODEL" ]]; then
   # No identity to compare against: no target can be shown to be a different
   # model, so none can be taken.
   if [[ "$CURRENT_HARNESS" == "unknown" ]]; then
@@ -861,16 +886,10 @@ if [[ -z "$CURRENT_MODEL" ]]; then
     SESSION_SKIP_REASON="model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
   fi
 elif [[ "$CURRENT_MODEL_SOURCE" == "project" ]]; then
-  case "$CURRENT_HARNESS" in
-    claude|codex)
-      # Only a CONTRADICTION reaches here: a project value agreeing with
-      # detection was reclassified as detected in resolve_current_model.
-      SESSION_SKIP_REASON="model $CURRENT_MODEL is declared in $SESSION_DECLARED_IN but this session is a detected $CURRENT_HARNESS harness — SECOND_OPINION_CURRENT_MODEL is session-scoped and cannot be right for every session in one repo; remove it there and export it in the environment of the sessions that need it (Pi, OpenCode, Cursor)"
-      ;;
-    *)
-      SESSION_SKIP_REASON="model $CURRENT_MODEL is declared in $SESSION_DECLARED_IN rather than in this session, and $CURRENT_HARNESS fronts a selectable model that detection cannot check it against — remove it there and export SECOND_OPINION_CURRENT_MODEL in this session's environment"
-      ;;
-  esac
+  # Reachable only when detection could NOT arbitrate — a detected harness
+  # always resolves to "detected" above. So this is the one case the source
+  # distinction still decides: nothing here can check a stale repo-wide value.
+  SESSION_SKIP_REASON="model $CURRENT_MODEL is declared in $SESSION_DECLARED_IN rather than in this session, and $CURRENT_HARNESS fronts a selectable model that detection cannot check it against — remove it there and export SECOND_OPINION_CURRENT_MODEL in this session's environment"
 fi
 if [[ -z "$SESSION_SKIP_REASON" && "$CURRENT_MODEL_SOURCE" != "detected" \
       && -n "$CURRENT_MODEL" && "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then

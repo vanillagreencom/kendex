@@ -31,6 +31,30 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# --- Harness-free environment for the identity scenarios ---------------------
+# A positively detected single-model harness now beats any contradicting
+# declaration, whatever its source, so a scenario can no longer simulate an
+# arbitrary session by exporting an identity while a real harness is visible —
+# it has to genuinely not have one. Detection reads the process tree first and
+# the environment markers second, so both are neutralized: a `ps` stand-in that
+# reports init as the first parent, and the markers unset.
+#
+# This file ALSO has scenarios that need real detection (run_under, run_s33 and
+# the detached runs), so the stub is NOT on the global PATH — it is applied per
+# invocation through $PS_FREE_PATH by the runners that declare identities.
+unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
+      CODEX_SANDBOX_NETWORK_DISABLED PI_CODING_AGENT_DIR OPENCODE \
+      CURSOR_AGENT CURSOR_TRACE_ID
+_PSBIN="$TMP_ROOT/psbin"
+mkdir -p "$_PSBIN"
+cat > "$_PSBIN/ps" <<'PSSH'
+#!/usr/bin/env bash
+mode=""; while [[ $# -gt 0 ]]; do case "$1" in -o) mode="$2"; shift 2 ;; *) shift ;; esac; done
+case "$mode" in ppid=) printf '1\n' ;; comm=) printf 'bash\n' ;; esac
+PSSH
+chmod +x "$_PSBIN/ps"
+PS_FREE_PATH="$_PSBIN:$PATH"
+
 mkdir -p "$TMP_ROOT/proj/skills"
 git init -q "$TMP_ROOT/proj"
 cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills/second-opinion"
@@ -147,7 +171,7 @@ run_multi() {
   shift
   local rc=0
   set +e
-  env SECOND_OPINION_MODELS="codex claude" SECOND_OPINION_COUNT=2 "$@" \
+  env PATH="$PS_FREE_PATH" SECOND_OPINION_MODELS="codex claude" SECOND_OPINION_COUNT=2 "$@" \
     SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
     SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
     "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$out" \
@@ -455,10 +479,16 @@ if $ANCESTOR_VISIBLE; then
   assert_eq "$rc12" "0" "detected-harness review exits 0"
   assert_eq "$(count lane-claude)" "0" "detected claude session never invokes claude"
   assert_eq "$(count lane-codex)" "1" "detected claude session gets codex"
-  # control: a declared foreign identity under the same ancestor dispatches to claude
+  # control: a declared identity that CONTRADICTS the detected harness is now
+  # refused rather than trusted — detection is evidence about this process, a
+  # variable is inherited. Naming both values is what lets the operator fix it.
   reset_counts
-  run_under claude SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_COUNT=1 SECOND_OPINION_MODELS="claude codex" || true
-  assert_eq "$(count lane-claude)" "1" "control: declared identity outranks harness detection"
+  rc12b=0
+  run_under claude SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_COUNT=1 SECOND_OPINION_MODELS="claude codex" || rc12b=$?
+  assert_eq "$rc12b" "1" "control: a declaration contradicting the detected harness is refused"
+  assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "control: that refusal invokes no CLI"
+  grep -q "declared model codex contradicts this session's detected claude harness" "$TMP_ROOT/last.stderr" \
+    || fail "control: the refusal does not name both values"
 elif $DETACHED_HIDES_ANCESTOR; then
   # Env-marker route: CLAUDECODE=1 is what Claude Code sets. It only decides
   # anything when the process tree says nothing, so the run has to be detached —
@@ -534,7 +564,7 @@ echo "=== scenario 17: quick mode is guarded too ==="
 reset_counts
 rc17=0
 set +e
-env SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_MODELS="codex" \
+env PATH="$PS_FREE_PATH" SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_MODELS="codex" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
   "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" >/dev/null 2>"$TMP_ROOT/last.stderr"
 rc17=$?
@@ -543,7 +573,7 @@ assert_eq "$rc17" "1" "quick mode refuses a same-model roster"
 assert_eq "$(count lane-codex)" "0" "quick mode refusal invokes no CLI"
 reset_counts
 set +e
-env SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_MODELS="codex claude" \
+env PATH="$PS_FREE_PATH" SECOND_OPINION_CURRENT_MODEL=codex SECOND_OPINION_MODELS="codex claude" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
   "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" >/dev/null 2>"$TMP_ROOT/last.stderr"
 rc17b=$?
@@ -552,7 +582,7 @@ assert_eq "$rc17b" "0" "control: quick mode takes the next eligible model"
 assert_eq "$(count lane-claude)" "1" "control: quick mode dispatched to the cross-model lane"
 
 echo "=== scenario 18: detect reports the selection and refuses the same way ==="
-got18=$(env SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
+got18=$(env PATH="$PS_FREE_PATH" SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
   "$SECOND_OPINION" detect 2>/dev/null) || true
 assert_eq "$got18" "codex" "detect prints the cross-model target"
@@ -607,7 +637,7 @@ fi
 echo "=== scenario 21: SECOND_OPINION_COUNT applies to review only ==="
 reset_counts
 set +e
-env SECOND_OPINION_COUNT=2 SECOND_OPINION_MODELS="codex claude" \
+env PATH="$PS_FREE_PATH" SECOND_OPINION_COUNT=2 SECOND_OPINION_MODELS="codex claude" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
   "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" >"$TMP_ROOT/out21.txt" 2>"$TMP_ROOT/last.stderr"
 rc21=$?
@@ -631,7 +661,7 @@ assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "COUNT=0 invok
 reset_counts
 rc22b=0
 set +e
-env SECOND_OPINION_COUNT=0 SECOND_OPINION_MODELS="codex claude" \
+env PATH="$PS_FREE_PATH" SECOND_OPINION_COUNT=0 SECOND_OPINION_MODELS="codex claude" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
   "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" >/dev/null 2>"$TMP_ROOT/last.stderr"
 rc22b=$?
@@ -731,7 +761,7 @@ echo "=== scenario 29: a force does not carry a misspelled identity past the ros
 reset_counts
 rc29=0
 set +e
-env SECOND_OPINION_CURRENT_MODEL=codxe SECOND_OPINION_MODELS="claude codex" \
+env PATH="$PS_FREE_PATH" SECOND_OPINION_CURRENT_MODEL=codxe SECOND_OPINION_MODELS="claude codex" \
   SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
   "$SECOND_OPINION" review --target codex --range HEAD --cwd "$WORK" \
@@ -745,7 +775,7 @@ grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" || fail "forced ref
 # detect takes the same path — a forced target must not make it report a target
 reset_counts
 rc29b=0
-got29b=$(env SECOND_OPINION_CURRENT_MODEL=deepseek SECOND_OPINION_MODELS="claude codex" \
+got29b=$(env PATH="$PS_FREE_PATH" SECOND_OPINION_CURRENT_MODEL=deepseek SECOND_OPINION_MODELS="claude codex" \
   SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
   "$SECOND_OPINION" detect --target codex 2>/dev/null) || rc29b=$?
@@ -754,7 +784,7 @@ assert_eq "$got29b:$rc29b" "none:1" "detect --target refuses an unspelled identi
 reset_counts
 rc29c=0
 set +e
-env SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
+env PATH="$PS_FREE_PATH" SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
   SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
   "$SECOND_OPINION" review --target codex --range HEAD --cwd "$WORK" \
@@ -980,7 +1010,7 @@ if $ANCESTOR_VISIBLE; then
   assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "the contradiction invokes no CLI"
   assert_file_absent "$TMP_ROOT/out33.json" "the contradiction writes no artifact"
   grep -q "detected claude harness" "$TMP_ROOT/last.stderr" || fail "the refusal does not name the detected harness"
-  grep -q "model codex is declared in" "$TMP_ROOT/last.stderr" || fail "the refusal does not name the declared model"
+  grep -q "declared model codex contradicts" "$TMP_ROOT/last.stderr" || fail "the refusal does not name the declared model"
   # `none` is a contradiction too: in a detected Claude session it would make
   # claude eligible, which is the whole failure mode
   reset_counts
@@ -990,7 +1020,10 @@ if $ANCESTOR_VISIBLE; then
   assert_eq "$rc33b" "1" "a project-file none in a detected claude session exits 1"
   assert_eq "$(count lane-claude)" "0" "a project-file none never makes the session's own model eligible"
   # (an undetectable session with a project-sourced value is scenario 33b)
-  # control 2: the SESSION's own environment still outranks detection
+  # control 2: a CALLER-exported declaration gets no special treatment against a
+  # detected harness. This is the nested-session leak: a claude session exports
+  # an identity, starts a codex session, and the variable arrives there looking
+  # like that session's own statement while detection says otherwise.
   reset_counts
   write_s33_settings codex
   rc33d=0
@@ -1003,8 +1036,10 @@ if $ANCESTOR_VISIBLE; then
     --output "$TMP_ROOT/out33.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
   rc33d=$?
   set -e
-  assert_eq "$rc33d" "0" "control: a session-environment declaration is not second-guessed"
-  assert_eq "$(count lane-claude)" "1" "control: the session-environment declaration still selects the target"
+  assert_eq "$rc33d" "1" "an exported declaration contradicting the detected harness is refused"
+  assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "that refusal invokes no CLI"
+  grep -q "this session's own environment" "$TMP_ROOT/last.stderr" \
+    || fail "the refusal does not say where the declaration came from"
   # control 3: a project value AGREEING with detection is not a contradiction
   reset_counts
   write_s33_settings claude
@@ -1223,6 +1258,51 @@ else
   echo "  skip  scenario 33f: ps hides script ancestors on this platform"
 fi
 
+echo "=== scenario 33h: a nested harness does not inherit the outer session's identity ==="
+# The docs tell a Pi/OpenCode/Cursor operator to EXPORT the identity. Exporting
+# it means every nested session inherits it: a claude session that exports
+# `claude` and then starts a codex session leaks the value there, where it looks
+# like that session's own statement. Trusting it would exclude claude and select
+# codex — the nested session's own model, which is the review this whole change
+# exists to prevent. Detection is evidence about THIS process; a variable is not.
+if $ANCESTOR_VISIBLE; then
+  reset_counts
+  rm -f "$TMP_ROOT/out33h.json"
+  rc33x=0
+  set +e
+  env SECOND_OPINION_CURRENT_MODEL=claude \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+    SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+    SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 \
+    "$TMP_ROOT/fake/codex" "$SECOND_OPINION" review --range HEAD --cwd "$WORK" \
+    --output "$TMP_ROOT/out33h.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
+  rc33x=$?
+  set -e
+  assert_eq "$rc33x" "1" "an inherited identity contradicting the nested harness is refused"
+  assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "the nested-session refusal invokes no CLI"
+  assert_file_absent "$TMP_ROOT/out33h.json" "the nested-session refusal writes no artifact"
+  grep -q "declared model claude" "$TMP_ROOT/last.stderr" || fail "the refusal does not name the declared model"
+  grep -q "detected codex harness" "$TMP_ROOT/last.stderr" || fail "the refusal does not name the detected harness"
+  # control: the same export in an ACTUAL claude session is agreement, not
+  # conflict — it changes nothing and the run proceeds cross-model.
+  reset_counts
+  rc33y=0
+  set +e
+  env SECOND_OPINION_CURRENT_MODEL=claude \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+    SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+    SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 \
+    "$TMP_ROOT/fake/claude" "$SECOND_OPINION" review --range HEAD --cwd "$WORK" \
+    --output "$TMP_ROOT/out33i.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
+  rc33y=$?
+  set -e
+  assert_eq "$rc33y" "0" "control: the same export in a real claude session proceeds"
+  assert_eq "$(count lane-claude)" "0" "control: it still excludes the session's own model"
+  assert_eq "$(count lane-codex)" "1" "control: it still selects the cross-model target"
+else
+  echo "  skip  scenario 33h: ps hides script ancestors on this platform"
+fi
+
 echo "=== scenario 33c: only the [env] table of a settings file declares the key ==="
 # vstack_load_settings_file reads no other table and skips comments, so naming a
 # file on a bare textual match sends the operator to edit a line that never
@@ -1377,7 +1457,7 @@ grep -q "SECOND_OPINION_MODELS is set but empty" "$TMP_ROOT/last.stderr" || fail
 reset_counts
 rc34b=0
 set +e
-env -u SECOND_OPINION_MODELS SECOND_OPINION_CURRENT_MODEL=none SECOND_OPINION_COUNT=1 \
+env -u SECOND_OPINION_MODELS PATH="$PS_FREE_PATH" SECOND_OPINION_CURRENT_MODEL=none SECOND_OPINION_COUNT=1 \
   SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$TMP_ROOT/out34b.json" \
@@ -1393,7 +1473,7 @@ echo "=== scenario 35: a refusal names availability vs identity as its cause ===
 reset_counts
 rc35=0
 set +e
-env SECOND_OPINION_CURRENT_MODEL=none SECOND_OPINION_MODELS="claude codex" \
+env PATH="$PS_FREE_PATH" SECOND_OPINION_CURRENT_MODEL=none SECOND_OPINION_MODELS="claude codex" \
   SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/no-such-cli-claude" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/no-such-cli-codex" \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$TMP_ROOT/out35.json" \
@@ -1416,7 +1496,7 @@ grep -q "runs the same model as this session" "$TMP_ROOT/last.stderr" || fail "t
 reset_counts
 rc35c=0
 set +e
-env SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
+env PATH="$PS_FREE_PATH" SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
   SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
   SECOND_OPINION_CODEX_CMD="$TMP_ROOT/no-such-cli-codex" \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$TMP_ROOT/out35c.json" \

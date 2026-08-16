@@ -29,6 +29,30 @@ SECOND_OPINION="$REPO_ROOT/skills/second-opinion/scripts/second-opinion"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# --- Deterministic harness-free session -------------------------------------
+# A positively detected single-model harness now beats any contradicting
+# declaration, whatever its source — so a suite can no longer neutralize the
+# harness that runs it by exporting an identity. It has to actually not have
+# one. This `ps` stand-in reports the first parent as init, so the ancestor walk
+# finds nothing and the declared identity below is what the script uses. It also
+# makes these suites independent of where they run: same result under Claude
+# Code, under Codex, and in CI.
+_PSBIN="$TMP_ROOT/psbin"
+mkdir -p "$_PSBIN"
+cat > "$_PSBIN/ps" <<'PSSH'
+#!/usr/bin/env bash
+mode=""; while [[ $# -gt 0 ]]; do case "$1" in -o) mode="$2"; shift 2 ;; *) shift ;; esac; done
+case "$mode" in ppid=) printf '1\n' ;; comm=) printf 'bash\n' ;; esac
+PSSH
+chmod +x "$_PSBIN/ps"
+PATH="$_PSBIN:$PATH"
+export PATH
+# The process tree is only half the signal; the environment markers are the
+# other half, and this session's are inherited. Drop them too.
+unset CLAUDECODE CLAUDE_CODE CLAUDE_PROJECT_DIR CODEX_SANDBOX \
+      CODEX_SANDBOX_NETWORK_DISABLED PI_CODING_AGENT_DIR OPENCODE \
+      CURSOR_AGENT CURSOR_TRACE_ID
+
 PASS=0
 FAIL=0
 

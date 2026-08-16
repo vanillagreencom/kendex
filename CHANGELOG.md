@@ -187,9 +187,17 @@
   assertion of authorship rather than something a provider may omit. Reusing one
   `--output` path across runs is now safe, and pointing `--output` at a file you
   want to keep is not.
-- second-opinion: `SECOND_OPINION_CURRENT_MODEL` is SESSION-scoped and must be
-  exported in the environment of the session that needs it. **A value reaching
-  a run from any project file — `.env`, `vstack.settings.toml`,
+- second-opinion: a positively detected single-model harness (`claude`,
+  `codex`) beats any CONTRADICTING `SECOND_OPINION_CURRENT_MODEL`, whatever its
+  source — the run refuses naming both values rather than picking one. A
+  declaration is a variable and variables are inherited, so an exported identity
+  reaches every nested session (a Claude session starting a Codex one), where
+  trusting it would dispatch to that session's own model; the harness is
+  evidence about this process, the variable is not. An agreeing declaration
+  changes nothing. Where detection CANNOT arbitrate (Pi, OpenCode, Cursor,
+  undetected) the declaration is the only identity available and is still
+  required — exported in that session's environment. **A value reaching
+  such a run from any project file — `.env`, `vstack.settings.toml`,
   `.vstack/settings.toml`, `.env.local` — is refused, naming the file**: those
   are read by every session in the repo, so a value in one is not a declaration
   about any single session. A declaration set to make Pi or OpenCode work
