@@ -3,11 +3,14 @@
 #
 # oversee-watch is the overseer's single blocking watch: it loops until the
 # fleet needs a hand and prints ONE `EVENT <kind> ...` line. Covered:
-#   1.  pr-watch: attention present at start is a baseline (no event, one
-#       stderr note, context on the next event); a NEW `<pr> <kind>` line
-#       mid-run is the event; a head-only change is not; GH_REPO reaches
+#   1.  pr-watch: on the fleet's first run attention present at start is a
+#       baseline (no event, one stderr note, context on the next event); that
+#       baseline persists, so a line appearing between two runs is the next
+#       run's first-pass event and a standing line is not; a NEW `<pr> <kind>`
+#       line mid-run is the event; a head-only change is not; GH_REPO reaches
 #       pr-watch; rc≠0 with no lines is a global failure (exit 2); attention
-#       at start does not starve a lane's question
+#       at start does not starve a lane's question; the state file is
+#       rewritten after every pass and an uncreatable state dir exits 2
 #   2.  merged: an --item's PR merged at/after --since fires; a PR merged
 #       BEFORE --since, a non-item branch, and a non-item conventional branch
 #       do not; item ids match branches case-insensitively; no --since means
@@ -161,10 +164,14 @@ EOF
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pr-watch-stub.sh"
 
 STUB_DIR=""
+STATE_DIR=""
 new_case() {
   STUB_DIR="$TMP_ROOT/cases/$1"
   rm -rf "$STUB_DIR"
   mkdir -p "$STUB_DIR"
+  # Fresh pr-watch baseline per case: cases stay independent and nothing is
+  # written under the real repo.
+  STATE_DIR="$STUB_DIR/state"
   printf 'gh-1\ngh-2\n' > "$STUB_DIR/windows.txt"
   printf '⏺ working on it\n' > "$STUB_DIR/pane-gh-1.txt"
   printf '⏺ working on it\n' > "$STUB_DIR/pane-gh-2.txt"
@@ -180,6 +187,7 @@ run_watch() {
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN \
            STUB_DIR="$STUB_DIR" TMUX="fake" \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
+           OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
            .agents/skills/orch/scripts/oversee-watch --interval 0 --max-loops 2 --repo owner/repo "$@")
 }
@@ -262,6 +270,64 @@ err="$TMP_ROOT/e1f"
 out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT question gh-2" "a lane question is seen despite standing pr-watch attention" "$err"
 assert_contains "$out" "pr-watch rc=1" "the question event still carries the pr-watch context" "$err"
+
+# 1g. the baseline persists across runs of the same fleet: the overseer exits
+# on every event and re-runs the watch, so a line that appears BETWEEN two runs
+# is the next run's first-pass event, while a standing line stays baseline
+new_case prwatch_cross_run
+printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
+printf '1' > "$STUB_DIR/prwatch.rc"
+err="$TMP_ROOT/e1g1"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" \
+  "run 1 of a fleet: attention at start is the baseline, not the event" "$err"
+
+# run 2, same fleet (same repo and --since): PR 12 alone is not news
+err="$TMP_ROOT/e1g2"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" \
+  "run 2: a key carried over from run 1 is not an event" "$err"
+assert_not_contains "$out" "EVENT pr-watch" "run 2 with no new key never fires pr-watch" "$err"
+
+# run 3: PR 34 showed up while the overseer was handling something else
+printf '12\tabcdef01\tthreads-open\t2 unresolved\n34\t99887766\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out"
+err="$TMP_ROOT/e1g3"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "cross-run rising edge exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
+  "attention arriving between two runs is the next run's first-pass event" "$err"
+assert_contains "$out" "99887766" "the new PR's line follows the event" "$err"
+assert_not_contains "$(cat "$err")" "attention present at start" \
+  "a persisted baseline replaces the start-of-run note"
+
+# 1h. the state file is rewritten after every pass — the pass's keys, and the
+# empty set when the reducer reports nothing
+new_case prwatch_state_file
+printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
+printf '1' > "$STUB_DIR/prwatch.rc"
+err="$TMP_ROOT/e1h1"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(ls -1 "$STATE_DIR" 2>/dev/null | wc -l | tr -d '[:space:]')" "1" "one state file per fleet, no temp left behind" "$err"
+state_file="$STATE_DIR/owner_repo__none"
+assert_eq "$([[ -f "$state_file" ]] && echo yes || echo no)" "yes" "the state file is keyed on the repo and --since" "$err"
+assert_eq "$(cat "$state_file")" "$(printf '12\tthreads-open')" "the state file holds the pass's <pr> <kind> keys" "$err"
+
+printf '0' > "$STUB_DIR/prwatch.rc"
+: > "$STUB_DIR/prwatch.out"
+err="$TMP_ROOT/e1h2"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$([[ -f "$state_file" ]] && echo yes || echo no)" "yes" "the state file survives a clean pass" "$err"
+assert_eq "$(cat "$state_file" 2>/dev/null; echo x)" "x" "a pass with no attention empties the state file" "$err"
+
+# 1i. a state directory that cannot be created is a hard failure, never a
+# silent fallback to in-process-only memory
+new_case prwatch_state_unwritable
+printf 'not a directory\n' > "$STUB_DIR/blocker"
+err="$TMP_ROOT/e1i"
+out="$(run_watch OVERSEE_WATCH_STATE_DIR="$STUB_DIR/blocker/state" -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "an uncreatable state dir exits 2" "$err"
+assert_eq "$out" "" "state dir failure prints no EVENT" "$err"
+assert_contains "$(cat "$err")" "$STUB_DIR/blocker/state" "the failure names the state dir path"
 
 # --- 2. merged, with item, since, and case controls -------------------------
 new_case merged

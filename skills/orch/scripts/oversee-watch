@@ -5,9 +5,13 @@
 # Each pass, in order:
 #   1. pr-watch   the review-gate reducer over every open PR (when installed;
 #                 absent → one stderr note at start, step skipped). An event
-#                 only when a NEW `<pr> <kind>` line appears during this run:
-#                 attention present at start is a baseline (noted once on
-#                 stderr), never a preempting event, so a PR that sits at
+#                 when a `<pr> <kind>` line is NEW against the previous pass —
+#                 and on pass 1, against the baseline this fleet's previous
+#                 run persisted (one state file per repo + --since under
+#                 $OVERSEE_WATCH_STATE_DIR), so attention that arrives between
+#                 two runs is still an event. No state file (the fleet's first
+#                 run) → attention present at start is a baseline (noted once
+#                 on stderr), never a preempting event, so a PR that sits at
 #                 threads-open for an hour cannot starve the lane checks.
 #                 The latest reducer output is appended to every event.
 #   2. merged     an --item's PR (head branch = the item id, lowercased;
@@ -32,11 +36,16 @@
 #   0  an EVENT line was printed
 #   2  usage error, or a global failure (gh not authenticated, repo
 #      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
-#      lanes given outside tmux)
+#      the pr-watch state directory unusable, lanes given outside tmux)
 #
 # Environment:
-#   OVERSEE_WATCH_PR_WATCH  path to the pr-watch reducer (default:
-#                           $PROJECT_ROOT/.agents/skills/review-gate/scripts/pr-watch.sh)
+#   OVERSEE_WATCH_PR_WATCH   path to the pr-watch reducer (default:
+#                            $PROJECT_ROOT/.agents/skills/review-gate/scripts/pr-watch.sh)
+#   OVERSEE_WATCH_STATE_DIR  directory holding the persisted pr-watch baseline,
+#                            one file per fleet, rewritten after every pass
+#                            (default: $PROJECT_ROOT/tmp/oversee-watch); a
+#                            directory that cannot be created or written is a
+#                            hard failure, never a silent fallback
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +58,7 @@ vstack_load_project_env "$PROJECT_ROOT"
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
+PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 QUESTION_RE='❯ [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
 
 INTERVAL=240
@@ -70,11 +80,14 @@ the lanes still live: drop a merged item and a dead lane's window, keep
 --since as the fleet's start.
 
 Events, checked in this order every pass:
-  EVENT pr-watch rc=N        the review-gate reducer reported a NEW
-                             `<pr> <kind>` attention line during this run
-                             (its output follows). Attention already present
-                             when the run starts is a baseline (one stderr
-                             note), so it can never preempt the checks below;
+  EVENT pr-watch rc=N        the review-gate reducer reported a `<pr> <kind>`
+                             attention line that is NEW against the previous
+                             pass — on pass 1, against the baseline this
+                             fleet's previous run persisted, so attention that
+                             arrived between two runs is an event (its output
+                             follows). On the fleet's first run, attention
+                             already present is a baseline (one stderr note),
+                             so it can never preempt the checks below;
                              skipped with a stderr note when pr-watch.sh is
                              not installed
   EVENT merged <PR> <branch> an --item's PR merged at or after --since (one
@@ -108,11 +121,16 @@ Exit codes:
   0  an EVENT line was printed
   2  usage error, or a global failure: gh not authenticated, repo
      unresolvable, PR listing failed, pr-watch failed with no per-PR lines,
-     lanes given outside tmux
+     the pr-watch state directory unusable, lanes given outside tmux
 
 Environment:
-  OVERSEE_WATCH_PR_WATCH  path to pr-watch.sh (default: the review-gate
-                          skill's install under .agents/skills)
+  OVERSEE_WATCH_PR_WATCH   path to pr-watch.sh (default: the review-gate
+                           skill's install under .agents/skills)
+  OVERSEE_WATCH_STATE_DIR  directory holding the persisted pr-watch baseline,
+                           one file per fleet (repo + --since), rewritten
+                           after every pass (default: PROJECT_ROOT/tmp/
+                           oversee-watch); a directory that cannot be created
+                           or written exits 2
 USAGE
 }
 
@@ -204,6 +222,33 @@ PW_ERR=""
 # `<pr>\t<kind>` keys present on the previous pass (the rising-edge baseline).
 PW_SEEN=""
 PW_PASSES=0
+PW_STATE_FILE=""
+PW_HAD_STATE=0
+
+# The overseer exits this watch on every event and re-runs it, so the baseline
+# outlives the process: one file per fleet, keyed on the repo and the --since
+# value every run of that fleet passes. Loaded as pass 1's baseline, rewritten
+# after every pass.
+pw_slug() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'; }
+
+pw_save_state() {
+  [[ -n "$PW_STATE_FILE" ]] || return 0
+  local tmp="$PW_STATE_FILE.$$.tmp"
+  { printf '%s' "$1" > "$tmp" && mv -f "$tmp" "$PW_STATE_FILE"; } \
+    || die "could not write the pr-watch state file $PW_STATE_FILE (set OVERSEE_WATCH_STATE_DIR)"
+}
+
+if [[ -n "$PR_WATCH" ]]; then
+  mkdir -p "$PW_STATE_DIR" \
+    || die "could not create the pr-watch state directory $PW_STATE_DIR (set OVERSEE_WATCH_STATE_DIR)"
+  [[ -w "$PW_STATE_DIR" ]] \
+    || die "the pr-watch state directory $PW_STATE_DIR is not writable (set OVERSEE_WATCH_STATE_DIR)"
+  PW_STATE_FILE="$PW_STATE_DIR/$(pw_slug "$REPO")__$(pw_slug "${SINCE:-none}")"
+  if [[ -f "$PW_STATE_FILE" ]]; then
+    PW_SEEN="$(cat "$PW_STATE_FILE")"
+    PW_HAD_STATE=1
+  fi
+fi
 
 pr_watch_context() {
   [[ "$PW_RC" -ne 0 ]] || return 0
@@ -223,6 +268,7 @@ check_pr_watch() {
   PW_PASSES=$((PW_PASSES + 1))
   if [[ "$PW_RC" -eq 0 ]]; then
     PW_SEEN=""
+    pw_save_state ""
     return 0
   fi
   # Non-zero with no per-PR lines is pr-watch's GLOBAL failure shape
@@ -234,11 +280,12 @@ check_pr_watch() {
     grep -qxF -- "$key" <<<"$PW_SEEN" || new_keys+="$key"$'\n'
   done <<<"$keys"
   # Rising edge against the previous pass only: a line that clears and later
-  # recurs is news again.
+  # recurs is news again. Pass 1 compares against the persisted baseline.
   PW_SEEN="$keys"
+  pw_save_state "$keys"
   [[ -n "$new_keys" ]] || return 0
-  if [[ "$PW_PASSES" -eq 1 ]]; then
-    echo "oversee-watch: pr-watch attention present at start (rc=$PW_RC, $(grep -c . <<<"$new_keys") line(s)) — baseline, reported with the next event; only NEW lines become events" >&2
+  if [[ "$PW_PASSES" -eq 1 && "$PW_HAD_STATE" -eq 0 ]]; then
+    echo "oversee-watch: pr-watch attention present at start (rc=$PW_RC, $(grep -c . <<<"$new_keys") line(s)) — the fleet's baseline, reported with the next event; only NEW lines become events" >&2
     return 0
   fi
   echo "EVENT pr-watch rc=$PW_RC"
