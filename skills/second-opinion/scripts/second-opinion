@@ -1289,9 +1289,18 @@ write_owned() {
 # caller is on its way to. Echoes the stored path, empty when nothing was
 # stored.
 store_record() {
-  local path="$1" content="$2"
+  local path="$1" content="$2" err
   [[ -n "$path" ]] || return 0
-  write_owned "$path" "$content" 2>/dev/null || return 0
+  # The write's own message is the actionable half — a directory at the path, a
+  # read-only filesystem, an exclusive create that lost its race all read the
+  # same from outside. Suppressing it left the caller saying only that the
+  # record went nowhere, which is the wrong-cause shape this file has fixed
+  # twice already. Captured and named here; still never fatal, because a record
+  # is a diagnostic and losing it must not change the caller's exit class.
+  if ! err=$(write_owned "$path" "$content" 2>&1); then
+    [[ -z "$err" ]] || echo "→ record could not be written to $path: $err" >&2
+    return 0
+  fi
   printf '%s' "$path"
 }
 
@@ -1643,20 +1652,21 @@ if $MULTI_LANE; then
       clear_output_family "$lane_out" "${ALL_RECORD_SUFFIXES[@]}"
     else
       artifact_home
+      # CREATED here, not merely named: mktemp makes the artifact exclusively
+      # and owner-only, under a prefix that still says which lane it belongs to.
+      # The review leaves shared temp space, and the path is neither derivable
+      # by another process nor shared with a run carrying the same pid in
+      # another namespace — so nothing stale can sit at a name that did not
+      # exist a moment ago, and there is nothing to clear before the child
+      # writes it.
+      lane_out=""
       if [[ -n "$ARTIFACT_HOME" ]]; then
-        # One name per lane per run in the home this tool owns. The review is
-        # out of shared temp space, so an actor clearing temp FILES cannot cost
-        # the lane; the run's own pid keeps concurrent runs in one checkout off
-        # each other's artifacts; and a run killed before its trap leaves one
-        # file per lane rather than an unbounded set of random names.
-        lane_out="$ARTIFACT_HOME/${MODE}-lane-${lane}.$$.json"
-        clear_output_family "$lane_out" "${ALL_RECORD_SUFFIXES[@]}"
-      else
-        # No home — placement can never decide whether the review happens, so
-        # the lane falls back to a temp file and the resolution has already
-        # named the reason on stderr.
-        lane_out=$(mktemp)
+        lane_out=$(mktemp "$ARTIFACT_HOME/${MODE}-lane-${lane}.XXXXXX" 2>/dev/null) || lane_out=""
       fi
+      # No home, or one that stopped accepting files after it proved itself:
+      # placement can never decide whether the review happens, so the lane falls
+      # back to a temp file and the reason is already on stderr.
+      [[ -n "$lane_out" ]] || lane_out=$(mktemp)
       LANE_TMP_FILES+=("$lane_out")
     fi
     lane_err="$LANE_TMP_DIR/lane-${lane}.stderr"

@@ -6,8 +6,8 @@
   its lane reviews in shared system temp (VST-241), and the lane umask no
   longer governs the external model CLI's own files (VST-243). Each lane's
   review is now a per-run file in `SECOND_OPINION_ARTIFACT_DIR` (default
-  `tmp/second-opinion` under `--cwd`), cleared before the lane writes it and
-  removed at exit, so an actor clearing temp *files* — not only the one
+  `tmp/second-opinion` under `--cwd`), created there exclusively and removed at
+  exit, so an actor clearing temp *files* — not only the one
   directory the run creates there — can no longer cost a blocker-carrying lane
   its findings, and the durability guarantee now holds in both modes. Owner-
   only is applied by whoever writes the file instead of by a umask wrapped

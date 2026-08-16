@@ -80,8 +80,10 @@ per-run file in `SECOND_OPINION_ARTIFACT_DIR` (default `tmp/second-opinion`
 under `--cwd`), with the same sidecar family beside it; the parent removes both
 at exit.
 
-Stale files at those paths are removed before lanes spawn — the union artifact,
-and each lane's artifact and those exact sidecar suffixes. A previous run's
+Stale files under a caller's `--output` are removed before lanes spawn — the
+union artifact, and each lane's artifact and those exact sidecar suffixes. A
+stdout run's lane artifact is created rather than named, so nothing can be
+stale at it. A previous run's
 union would otherwise read as a fresh pass to a caller that continued past an
 advisory failure, and a previous run's lane artifact is misleading whether or
 not the current run overwrites it. The suffixes are enumerated, never globbed:
@@ -89,7 +91,8 @@ the output path belongs to the caller, and anything else of theirs sitting
 under the same prefix is not this tool's to delete.
 
 A lane artifact and the sidecars beside it are written owner-only by the child
-that writes them, whatever the caller's umask. The restriction rides on those
+that writes them, whatever the caller's umask, and each is created rather than
+written through whatever is found at the name. The restriction rides on those
 writes rather than on a umask around the lane, so nothing else the lane creates
 inherits it — the session and cache state the external model CLI keeps for
 itself comes out exactly as it does on a single-lane run. The union artifact

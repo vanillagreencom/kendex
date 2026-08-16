@@ -133,6 +133,9 @@ cat > /dev/null            # drain the prompt on stdin
 # Turn a directory read-only mid-run: the wrapper's own temp files already
 # exist, so this reaches only the record allocation that happens after the CLI.
 [[ -n "${STUB_LOCK_DIR:-}" ]] && chmod 0500 "$STUB_LOCK_DIR"
+# Put an entry at a record path the wrapper is about to write, after its
+# pre-flight clearing has already run and passed.
+[[ -n "${STUB_PLANT_DIR:-}" ]] && mkdir -p "$STUB_PLANT_DIR"
 [[ "${STUB_SLEEP:-0}" != "0" ]] && sleep "$STUB_SLEEP"
 [[ -n "${STUB_STDERR:-}" ]] && printf '%s\n' "$STUB_STDERR" >&2
 [[ -n "${STUB_STDOUT:-}" ]] && printf '%s' "$STUB_STDOUT"
@@ -1148,6 +1151,30 @@ if $CAN_DENY_BY_MODE; then
 else
   skip "unstorable record: running as root, a mode-denied TMPDIR is still writable"
 fi
+
+# --- Scenario 13: a record that cannot be written says why -------------------
+# "Could not be preserved anywhere" on its own is the wrong-cause shape: an
+# operator cannot tell a full disk from a directory sitting at the record path,
+# and both read the same. The write's own message is the actionable half, so it
+# has to survive the layer that keeps a failed record from failing the run.
+echo "=== scenario 13: an unwritable record path names the cause, not just the loss ==="
+s13_out="$TMP_ROOT/s13/out.json"
+s13_err="$TMP_ROOT/s13.stderr"
+rm -rf "$TMP_ROOT/s13"; mkdir -p "$TMP_ROOT/s13"
+printf '0' > "$COUNTER"
+rc13=0
+set +e
+PATH="$TMP_ROOT/bin:$PATH" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  STUB_PLANT_DIR="$s13_out.failed.json" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s13_out" >/dev/null 2>"$s13_err"
+rc13=$?
+set -e
+assert_eq "$rc13" "5" "an unwritable record keeps EXIT_CLI_FAILED (5)"
+assert_file_contains "$s13_err" "record could not be written to" "the failed write is named"
+assert_file_contains "$s13_err" "$s13_out.failed.json" "the path that refused it is named"
+assert_file_contains "$s13_err" "could not be preserved anywhere" "the loss is still stated"
+assert_file_contains "$s13_err" "hit your usage limit" "the provider cause still reaches stderr"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
