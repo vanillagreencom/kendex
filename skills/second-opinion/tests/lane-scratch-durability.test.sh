@@ -244,6 +244,31 @@ ARTIFACT_HOME_DIR="$WORK/tmp/second-opinion"
 
 mkdir -p "$TMP_ROOT/bin"
 
+# Blocks until a lane review lands in the artifact home and prints its path —
+# $1 an exact agent name, empty for any lane. A handshake that gave up quietly
+# would leave its scenario green having exercised nothing, so a timeout is a
+# hard failure of the stub that called it, and of the lane.
+cat > "$TMP_ROOT/bin/lane-wait-review" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+waited=0
+while [[ \$waited -lt 300 ]]; do
+  for f in \$(find "$ARTIFACT_HOME_DIR" -type f 2>/dev/null); do
+    if jq -e --arg a "\${1:-}" \
+      'if \$a == "" then (.agent // "" | startswith("external-")) else .agent == \$a end' \
+      "\$f" >/dev/null 2>&1; then
+      printf '%s\\n' "\$f"
+      exit 0
+    fi
+  done
+  sleep 0.1
+  waited=\$((waited + 1))
+done
+echo "handshake never happened: no lane review reached the artifact home" >&2
+exit 1
+SH
+WAIT_REVIEW="$TMP_ROOT/bin/lane-wait-review"
+
 # Lane stub that answers with the response file named by $1.
 cat > "$TMP_ROOT/bin/lane-answer" <<'SH'
 #!/usr/bin/env bash
@@ -276,30 +301,14 @@ SH
 # macOS system bash).
 #
 # $2, when given, is a lane agent name to wait for: the reaper holds until that
-# lane's review has landed somewhere in temp space, making "cleared after the
-# sibling lane wrote its review, before the parent reaped it" deterministic
-# instead of a race. It finds that review wherever the parent chose to put it,
-# so the handshake works against the old layout and the new one alike.
+# lane's review has landed, making "cleared after the sibling lane wrote its
+# review, before the parent reaped it" deterministic instead of a race.
 cat > "$TMP_ROOT/bin/lane-reap" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
 cat "\$1"
-if [[ \$# -ge 2 ]]; then
-  waited=0
-  found=""
-  while [[ -z "\$found" && \$waited -lt 300 ]]; do
-    for f in \$(find "$SCRATCH" -type f 2>/dev/null); do
-      if jq -e --arg a "\$2" '.agent == \$a' "\$f" >/dev/null 2>&1; then
-        found=1
-        break
-      fi
-    done
-    [[ -n "\$found" ]] && break
-    sleep 0.1
-    waited=\$((waited + 1))
-  done
-fi
+[[ \$# -lt 2 ]] || "$WAIT_REVIEW" "\$2" >/dev/null
 find "$SCRATCH" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
 SH
 
@@ -418,20 +427,8 @@ cat > "$TMP_ROOT/bin/lane-plant-dir" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
-waited=0
-target=""
-while [[ -z "\$target" && \$waited -lt 300 ]]; do
-  for f in \$(find "$SCRATCH" -type f 2>/dev/null); do
-    if jq -e '.agent // "" | startswith("external-")' "\$f" >/dev/null 2>&1; then
-      target="\$f"
-      break
-    fi
-  done
-  [[ -n "\$target" ]] && break
-  sleep 0.1
-  waited=\$((waited + 1))
-done
-[[ -n "\$target" ]] && mkdir -p "\${target}.evil"
+target="\$("$WAIT_REVIEW" "")"
+mkdir -p -- "\${target}.evil"
 cat "\$1"
 SH
 # Lane stub that answers with $1 and then removes every regular FILE under $2 —
@@ -444,19 +441,7 @@ cat > "$TMP_ROOT/bin/lane-reap-files" <<SH
 set -euo pipefail
 cat >/dev/null
 cat "\$1"
-waited=0
-found=""
-while [[ -z "\$found" && \$waited -lt 300 ]]; do
-  for f in \$(find "$ARTIFACT_HOME_DIR" -type f 2>/dev/null); do
-    if jq -e --arg a "\$3" '.agent == \$a' "\$f" >/dev/null 2>&1; then
-      found=1
-      break
-    fi
-  done
-  [[ -n "\$found" ]] && break
-  sleep 0.1
-  waited=\$((waited + 1))
-done
+"$WAIT_REVIEW" "\$3" >/dev/null
 find "\$2" -type f -exec rm -f -- {} + 2>/dev/null || true
 SH
 
@@ -480,7 +465,7 @@ SH
 chmod +x "$TMP_ROOT/bin/lane-answer" "$TMP_ROOT/bin/lane-fail" "$TMP_ROOT/bin/lane-reap" \
   "$TMP_ROOT/bin/lane-sabotage" "$TMP_ROOT/bin/lane-probe-perms" "$TMP_ROOT/bin/lane-plant-dir" \
   "$TMP_ROOT/bin/lane-plant-locked" "$TMP_ROOT/bin/lane-reap-files" \
-  "$TMP_ROOT/bin/lane-cli-state"
+  "$TMP_ROOT/bin/lane-cli-state" "$WAIT_REVIEW"
 
 cat > "$TMP_ROOT/resp-claude.json" <<'JSON'
 {"agent":"external-claude","timestamp":"2026-01-01T00:00:00Z","verdict":"action_required",
@@ -739,6 +724,9 @@ echo "=== scenario 12: an unremovable entry in cleanup -> run still exits 0 ==="
 rc12=0
 run_lanes "$ANSWER_CLAUDE" "$TMP_ROOT/bin/lane-plant-dir $TMP_ROOT/resp-codex.json" || rc12=$?
 assert_eq "$rc12" "0" "a cleanup that cannot unlink an entry does not fail the run"
+planted12="$(find "$ARTIFACT_HOME_DIR" -type d -name '*.evil' 2>/dev/null | head -1)"
+assert_eq "${planted12:+planted}" "planted" \
+  "the unremovable entry survived the cleanup that could not unlink it"
 assert_jq "$TMP_ROOT/last.stdout" '.agent' "external-union(codex+claude)" "the union is still delivered"
 assert_jq "$TMP_ROOT/last.stdout" '.blockers | length' "1" "with both lanes' findings"
 
@@ -930,8 +918,8 @@ assert_stderr_has "capture could not be opened" "the lost capture is reported on
 # --- Scenario 17: a reaper that removes temp FILES ---------------------------
 # The stdout-mode residual: while a lane's review sat in shared temp space, an
 # actor unlinking temp FILES — rather than the one directory the run creates
-# there — still cost that lane its findings. The review is in the artifact home
-# now, so the same actor costs the log replay and nothing else.
+# there — still cost that lane its findings. A review that lives in the artifact
+# home leaves that actor the log replay and nothing else.
 echo "=== scenario 17: temp FILES removed mid-run (stdout) -> union intact ==="
 rc17=0
 run_lanes "$ANSWER_CLAUDE" \

@@ -251,6 +251,13 @@ HELP
 # in-loop exit — a help request must never delete anything.
 
 PARSE_ERROR=""
+# The mode of a file belongs to whoever writes it. --scratch-output marks the
+# output path as one the tool owns rather than the caller — the lane artifact a
+# multi-lane parent hands this child — so that artifact and the sidecar records
+# beside it are created owner-only whatever the caller's umask: the model's raw
+# review of the reviewed repository is never left readable by every local user.
+# A caller's own --output keeps the caller's umask.
+SCRATCH_OUTPUT=false
 # A split-form option must be followed by a VALUE, not the next flag.
 # `review --timeout --output report.json` otherwise takes `--output` as the
 # timeout and the designated output is silently lost: never written, never
@@ -275,6 +282,11 @@ while [[ $# -gt 0 ]]; do
     --cwd=*)     CWD="${1#--cwd=}"; shift ;;
     --timeout)   [[ $# -ge 2 && "$2" != -* ]] || { PARSE_ERROR="--timeout requires a value (use --timeout=VALUE for a value beginning with '-')"; break; }; TIMEOUT="$2"; shift 2 ;;
     --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
+    # The multi-lane parent's word to its own children, and the reason it is a
+    # flag rather than an environment variable: a project settings file's [env]
+    # table names any variable it likes, and whether an output path belongs to
+    # the caller is not something ambient configuration may decide.
+    --scratch-output) SCRATCH_OUTPUT=true; shift ;;
     -h|--help)   show_help; exit 0 ;;
     --*)
       PARSE_ERROR="unknown flag: $1"
@@ -1230,15 +1242,6 @@ artifact_file() {
   fi
 }
 
-# The mode of a file belongs to whoever writes it. SECOND_OPINION_SCRATCH_OUTPUT
-# marks the output path as one the tool owns rather than the caller — the lane
-# artifact a multi-lane parent hands this child — so that artifact and the
-# sidecar records beside it are created owner-only whatever the caller's umask:
-# the model's raw review of the reviewed repository is never left readable by
-# every local user. A caller's own --output keeps the caller's umask.
-SCRATCH_OUTPUT=false
-if [[ "${SECOND_OPINION_SCRATCH_OUTPUT:-}" == "1" ]]; then SCRATCH_OUTPUT=true; fi
-
 # write_owned <path> <content> — the one write that carries that policy. A path
 # this run owns is unlinked and then CREATED, never written through whatever is
 # found at the name: umask governs creation only, so a plain redirection would
@@ -1679,10 +1682,6 @@ if $MULTI_LANE; then
       if ! $CURRENT_MODEL_IN_CALLER_ENV; then
         unset SECOND_OPINION_CURRENT_MODEL
       fi
-      # The artifact this child is handed is the tool's, not the caller's: it
-      # and its sidecars are written owner-only. A marker on the path, so the
-      # restriction reaches those writes and nothing else the lane creates.
-      export SECOND_OPINION_SCRATCH_OUTPUT=1
       # The capture carries the lane's own log, so it is owner-only too —
       # restrictive for the open, restored before the exec so the external CLI
       # this child runs starts from the caller's umask like any other program.
@@ -1700,8 +1699,12 @@ if $MULTI_LANE; then
       # value, and every one of these is derived from caller input that may
       # legitimately begin with '-' (--output above all). The child would
       # otherwise reject its own lane path.
+      # --scratch-output: the artifact this child is handed is the tool's, not
+      # the caller's, so it and its sidecars are written owner-only. Told per
+      # invocation, so the restriction reaches those writes and nothing else
+      # the lane creates.
       exec "$SELF" review --target="$lane" --range="$REVIEW_RANGE" --cwd="$CWD" \
-        --timeout="$TIMEOUT" --output="$lane_out" >/dev/null 2>&3 3>&-
+        --timeout="$TIMEOUT" --output="$lane_out" --scratch-output >/dev/null 2>&3 3>&-
     ) &
     LANE_PIDS+=($!)
     LANE_OUTS+=("$lane_out")
