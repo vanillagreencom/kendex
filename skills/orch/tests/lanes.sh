@@ -641,6 +641,32 @@ assert_contains "$blind_out" "could not record the lane claim" "the failed write
 assert_contains "$blind_out" "stopping after 1 launch(es)" \
   "the batch stops instead of stacking the next item blind"
 
+# A lane picked for an item that turns out to be owned by another session
+# never carried a session, and must not appear in the spread the summary
+# reports. The worktree stub refuses the second item the way `create` does.
+OWNED_STUB="$TMP_ROOT/worktree-owned"
+cat > "$OWNED_STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+# `create <item>`: the first item gets a tree, every later one is owned.
+[[ "${1:-}" == "create" ]] || exit 0
+n=0; [[ -f "$OWNED_COUNT" ]] && n="$(cat "$OWNED_COUNT")"
+n=$((n + 1)); printf '%s' "$n" > "$OWNED_COUNT"
+[[ "$n" -eq 1 ]] || exit 75
+d="$(mktemp -d)"; printf '%s\n' "$d"
+STUBEOF
+chmod +x "$OWNED_STUB"
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES" "$TMP_ROOT/owned-count"
+set +e
+owned_out=$(LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OWNED_COUNT="$TMP_ROOT/owned-count" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OWNED_STUB" \
+  "$OPEN_TERMINAL" --harness claude --lane auto --cmd "true" CC-17 CC-18 2>&1)
+set -e
+assert_contains "$owned_out" "on lane CLAUDE_CONFIG_DIR=$H/.claude" \
+  "a lane picked for an owned item is not counted as one the batch ran on"
+assert_contains "$owned_out" "skipped 1 (owned by another session)" "the owned item is still skipped"
+
 # A GUI launch has no pane to keep a claim alive, so a GUI batch records
 # nothing and stays on the lane resolved up front — as `--help` says.
 cat > "$OT_STUB_BIN/ghostty" <<'STUBEOF'

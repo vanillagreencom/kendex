@@ -475,8 +475,11 @@ check_lanes() {
       # Claims from every live tmux server are kept, and window names are not
       # unique across servers: only a claim recorded on the server that owns
       # the watched pane can name this lane's account.
-      this_server="$(tmux display-message -p '#{pid}' 2>/dev/null || true)"
+      this_server="$(tmux display-message -p -t "$lane" '#{pid}' 2>/dev/null || true)"
       claimed="$(lane_claims_config_dir "$claims" "$lane" "$this_server")"
+      if [[ -z "$claimed" && -n "$claims" ]]; then
+        echo "oversee-watch: no live lane claim for window '$lane' on this tmux server; the usage-limit event names no account" >&2
+      fi
       echo "EVENT usage-limit $lane${claimed:+ $claimed}"
       [[ -z "$pane" ]] || pane_tail "$pane"
       pr_watch_context

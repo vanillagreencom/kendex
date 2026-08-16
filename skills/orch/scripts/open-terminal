@@ -473,11 +473,11 @@ launched=0
 failed=0
 skipped=0
 attempted=0
-# The DISTINCT lanes this run launched on, so the summary cannot attribute a
-# spread batch to whichever lane happened to be last — nor inflate the count
-# when a re-pick returns to a lane already used.
+# The DISTINCT lanes this run LAUNCHED on, so the summary cannot attribute a
+# spread batch to whichever lane happened to be last, inflate the count when a
+# re-pick returns to a lane already used, or count a lane picked for an item
+# that turned out to be owned by another session.
 lanes_seen=""
-[[ -z "$LANE_ENV" ]] || lanes_seen="$LANE_ENV"$'\n'
 for raw in "${ITEMS[@]}"; do
   item="$raw"
   if [[ "$TRACKER" == "linear" ]]; then
@@ -540,7 +540,6 @@ for raw in "${ITEMS[@]}"; do
       LANE_ENV="$next_lane"
       echo "Lane: $LANE_ENV"
     fi
-    grep -qxF -- "$LANE_ENV" <<<"$lanes_seen" || lanes_seen+="$LANE_ENV"$'\n'
   fi
   # The worktree create is the ownership claim: exit 75 means another session
   # holds this item, which skips it without touching its siblings. Any other
@@ -589,6 +588,9 @@ for raw in "${ITEMS[@]}"; do
     open_gui "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
   fi
   launched=$((launched + 1))
+  # Recorded here, after the window exists: a lane picked for an item that
+  # turned out to be owned elsewhere never carried a session.
+  [[ -z "$LANE_ENV" ]] || grep -qxF -- "$LANE_ENV" <<<"$lanes_seen" || lanes_seen+="$LANE_ENV"$'\n'
 done
 
 skipped_note=""
@@ -601,11 +603,14 @@ if [[ "$launched" -eq 0 && "$skipped" -gt 0 ]]; then
   echo "Done: launched 0 handoff session(s)$skipped_note." >&2
   exit 75
 fi
+# The lanes that carried a session, never $LANE_ENV: a re-pick for an item
+# that turned out to be owned elsewhere leaves that variable naming an account
+# this run never launched on.
 lanes_used="$(grep -c . <<<"$lanes_seen" || true)"
 if [[ "$lanes_used" -gt 1 ]]; then
-  # A re-picked batch ran on several accounts; naming the last one would
-  # attribute every session to a lane most of them never touched.
   echo "Done: launched $launched handoff session(s)$skipped_note across $lanes_used lanes (see the Lane: lines above)."
+elif [[ "$lanes_used" -eq 1 ]]; then
+  echo "Done: launched $launched handoff session(s)$skipped_note on lane ${lanes_seen%$'\n'}."
 elif [[ -n "$LANE_ENV" ]]; then
   echo "Done: launched $launched handoff session(s)$skipped_note on lane $LANE_ENV."
 else
