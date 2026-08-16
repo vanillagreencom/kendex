@@ -352,20 +352,23 @@ lint_files() { # pathspec... -> tracked + untracked matches
 run_lint_shell() {
   local fail=0 f mode
   # executable bits on skill tests and scripts (+ tools). CI reads the index
-  # mode; locally the working-tree bit is checked too, since `git add`
-  # records it (an untracked file has no index mode at all).
+  # mode; locally the working-tree bit decides, since the `git add` that
+  # follows validation records it — a stale 100644 in the index under an
+  # executable file is what that add corrects. The index mode only names
+  # which side dropped the bit; a path gone from the working tree is a
+  # deletion, not a lint subject.
   while IFS= read -r f; do
+    [ -e "$f" ] || continue
+    [ -x "$f" ] && continue
     mode="$(git ls-files -s -- "$f" | cut -d' ' -f1)"
     if [ "$mode" = "100644" ]; then
       echo "not executable in git: $f"
-      fail=1
-    elif [ -z "$mode" ] && [ ! -x "$f" ]; then
+    elif [ -z "$mode" ]; then
       echo "not executable (untracked): $f"
-      fail=1
-    elif [ -e "$f" ] && [ ! -x "$f" ]; then
+    else
       echo "not executable in working tree: $f"
-      fail=1
     fi
+    fail=1
   done < <(lint_files 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' 'tools/tests/*.sh' 'tools/validate-changed' | grep -v '/scripts/lib/' || true)
   # skills point reports at `vstack report`
   while IFS= read -r f; do

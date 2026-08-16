@@ -465,6 +465,16 @@ assert_line "working-tree exec-bit lint" "not executable in working tree: skills
 assert_no_line "working-tree exec-bit lint" "not executable in git:"
 reset_tree
 
+# The reverse: index still 100644 while the working tree already carries the
+# bit (chmod +x after staging) passes — the `git add` that follows validation
+# records 100755, the state CI will see.
+touch_path skills/withtests/SKILL.md
+git -C "$REPO" update-index --chmod=-x skills/withtests/tests/a.test.sh
+chmod +x "$REPO/skills/withtests/tests/a.test.sh"
+run
+assert_no_line "stale-index exec-bit lint" "not executable"
+reset_tree
+
 printf 'no routing here\n' >"$REPO/skills/withtests/SKILL.md"
 run
 assert_rc "vstack report lint" 1
