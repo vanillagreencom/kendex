@@ -1239,28 +1239,29 @@ artifact_file() {
 SCRATCH_OUTPUT=false
 if [[ "${SECOND_OPINION_SCRATCH_OUTPUT:-}" == "1" ]]; then SCRATCH_OUTPUT=true; fi
 
-# write_owned <path> <content> — the one write that carries that policy. umask
-# governs creation only, and a redirection truncates whatever inode it finds,
-# keeping that inode's mode: an artifact path recreated loose after the parent
-# cleared it would otherwise take the review through a mode someone else chose,
-# for the whole length of a model call. So a path this run owns is unlinked
-# first and created fresh under the restrictive umask. rm's own failure is not
-# fatal — the write is what has to happen, and it reports its own outcome.
+# write_owned <path> <content> — the one write that carries that policy. A path
+# this run owns is unlinked and then CREATED, never written through whatever is
+# found at the name: umask governs creation only, so a plain redirection would
+# truncate a survivor and keep that survivor's mode, and would follow a symlink
+# planted at the name into a file of somebody else's. The window is as long as
+# a model call, and the artifact name is derived rather than random.
+#
+# noclobber is what makes the create exclusive — O_EXCL refuses an existing
+# file AND refuses to follow a symlink — so between them the review reaches a
+# path this run made, at a mode this run chose, or it does not get written at
+# all. Refusing is the right end of that: a caller reading a review out of a
+# file someone else controls is worse than a caller told the record could not
+# be stored, which every caller of this already handles.
+#
+# rm's own failure is not fatal on its own; the exclusive create is what
+# decides, and it fails loudly through the shell's own message. That layer is
+# unreachable while the clear before each lane spawns holds — it fails the run
+# on a path it cannot remove — so no test drives it alone; the fixtures that
+# put an inode back at an artifact path prove the PAIR.
 write_owned() {
   if $SCRATCH_OUTPUT; then
     rm -f -- "$1" 2>/dev/null || true
-    ( umask 077 && printf '%s\n' "$2" > "$1" ) || return 1
-    # Defense in depth behind the unlink: the unlink can only fail on a
-    # directory this run cannot write, and the redirection would then have
-    # truncated a survivor at its own mode. Unreachable while the clear before
-    # the spawn holds — that clear fails the run on a path it cannot remove, so
-    # no path reaches here unremovable unless its directory changed mid-run —
-    # which is why no test exercises this line alone; scenario 19 proves the
-    # pair. Never fatal: the review is already written, and losing it to a mode
-    # that could not be tightened is the worse outcome, so the shortfall is
-    # stated instead.
-    chmod 600 -- "$1" 2>/dev/null \
-      || echo "→ could not restrict to its owner: $1" >&2
+    ( set -C && umask 077 && printf '%s\n' "$2" > "$1" ) || return 1
   else
     printf '%s\n' "$2" > "$1"
   fi

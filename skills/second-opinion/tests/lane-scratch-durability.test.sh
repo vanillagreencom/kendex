@@ -473,7 +473,7 @@ mkdir -p -- "$2/$3.cache"
 printf 'session\n' > "$2/$3.session"
 if [[ $# -ge 4 ]]; then
   printf 'reappeared\n' > "$4"
-  chmod 644 "$4"
+  chmod 644 -- "$4"
 fi
 cat "$1"
 SH
