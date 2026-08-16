@@ -25,7 +25,7 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 
 new_repo() { # NAME
   R="$TMP/$1"
-  mkdir -p "$R"
+  mkdir -p -- "$R"
   git -C "$R" -c init.defaultBranch=main init -q
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
@@ -92,7 +92,7 @@ run_sb
 case "$OUT" in *"hand-added baseline row in this diff"*) ok "NEW diagnostic names the freeze remedy" ;; *) bad "NEW diagnostic names the freeze remedy" "$OUT" ;; esac
 
 echo "=== rust ratchet: a baseline row freezes the count; every direction fires ==="
-mkdir -p "$R/tools"
+mkdir -p -- "$R/tools"
 printf 'ok.rs\t2\n' >"$R/tools/suppression-baseline.tsv"
 git -C "$R" add -A
 run_sb
@@ -128,6 +128,7 @@ run_sb --update
 echo "=== --update never raises: a grown count keeps its row and keeps failing ==="
 printf '#[allow(dead_code)]\nfn f() {}\n#[allow(dead_code)]\nfn g() {}\n' >"$R/ok.rs"
 printf 'ok.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
+git -C "$R" add tools/suppression-baseline.tsv
 git -C "$R" add -A
 run_sb --update
 [ "$RC" -eq 1 ] && [ "$(cat "$R/tools/suppression-baseline.tsv")" = "$(printf 'ok.rs\t1')" ] \
@@ -181,7 +182,7 @@ run_sb
 
 echo "=== excludes: vendored trees, reason mandatory ==="
 new_repo exc
-mkdir -p "$R/vendor" "$R/tools"
+mkdir -p -- "$R/vendor" "$R/tools"
 printf '#![allow(dead_code)]\nfn v() {}\n' >"$R/vendor/lib.rs"
 git -C "$R" add -A
 run_sb
@@ -197,25 +198,72 @@ git -C "$R" add -A
 run_sb
 [ "$RC" -eq 2 ] && ok "a pattern without a reason is exit 2" || bad "pattern without a reason is exit 2" "rc=$RC out=$OUT"
 
+echo "=== the baseline comes from the index, like the scan ==="
+new_repo indexed-baseline
+mkdir -p -- "$R/tools"
+printf '#[allow(dead_code)]\nfn f() {}\n' >"$R/ok.rs"
+printf 'ok.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+printf '#[allow(dead_code)]\n#[allow(unused)]\nfn f() {}\n' >"$R/ok.rs"
+git -C "$R" add ok.rs
+# Raised on disk only: the commit still carries the row of 1.
+printf 'ok.rs\t2\n' >"$R/tools/suppression-baseline.tsv"
+run_sb
+[ "$RC" -eq 1 ] && ok "an unstaged baseline bump does not authorize staged growth" \
+  || bad "unstaged baseline bump rejected" "rc=$RC out=$OUT"
+git -C "$R" add tools/suppression-baseline.tsv
+run_sb
+[ "$RC" -eq 0 ] && ok "control: staging the row alongside the growth passes" \
+  || bad "staged baseline row passes" "rc=$RC out=$OUT"
+git -C "$R" commit -q -m "chore: freeze"
+git -C "$R" rm -q --cached tools/suppression-baseline.tsv
+printf 'ok.rs\t2\n' >"$R/tools/suppression-baseline.tsv"
+run_sb
+[ "$RC" -eq 1 ] && ok "a baseline staged for deletion freezes nothing" \
+  || bad "staged baseline deletion" "rc=$RC out=$OUT"
+
+new_repo update-unstaged
+mkdir -p -- "$R/tools"
+printf '#[allow(dead_code)]\n#[allow(unused)]\nfn f() {}\n' >"$R/ok.rs"
+printf '#[allow(dead_code)]\nfn g() {}\n' >"$R/also.rs"
+printf 'ok.rs\t2\n' >"$R/tools/suppression-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -q -m seed
+# An unstaged row for a file that IS still counted: --update rewrites the
+# worktree file, so it has to read the worktree file, or the row vanishes and
+# its file becomes a new violation.
+printf 'also.rs\t1\nok.rs\t2\n' >"$R/tools/suppression-baseline.tsv"
+run_sb --update
+[ "$RC" -eq 0 ] && ok "--update preserves an unstaged row for a still-counted file" \
+  || bad "--update preserves unstaged rows" "rc=$RC row=$(cat "$R/tools/suppression-baseline.tsv") out=$OUT"
+case "$(cat "$R/tools/suppression-baseline.tsv")" in
+  *also.rs*) ok "and the row is still in the file it rewrote" ;;
+  *) bad "unstaged row survives --update" "got: $(cat "$R/tools/suppression-baseline.tsv")" ;;
+esac
+
 echo "=== baseline hygiene is enforced, not repaired silently ==="
 new_repo hygiene
 printf '#[allow(dead_code)]\nfn f() {}\n' >"$R/a.rs"
 printf '#[allow(dead_code)]\nfn f() {}\n' >"$R/b.rs"
-mkdir -p "$R/tools"
+mkdir -p -- "$R/tools"
 printf 'b.rs\t1\na.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
 git -C "$R" add -A
 run_sb
 [ "$RC" -eq 2 ] && case "$OUT" in *"LC_ALL=C sorted"*) true ;; *) false ;; esac \
   && ok "unsorted baseline is exit 2" || bad "unsorted baseline is exit 2" "rc=$RC out=$OUT"
 printf 'a.rs\t1\na.rs\t2\nb.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
+git -C "$R" add tools/suppression-baseline.tsv
 run_sb
 [ "$RC" -eq 2 ] && case "$OUT" in *"duplicate"*) true ;; *) false ;; esac \
   && ok "duplicate baseline path is exit 2" || bad "duplicate baseline path is exit 2" "rc=$RC out=$OUT"
 printf 'a.rs\tnope\n' >"$R/tools/suppression-baseline.tsv"
+git -C "$R" add tools/suppression-baseline.tsv
 run_sb
 [ "$RC" -eq 2 ] && case "$OUT" in *"malformed row"*) true ;; *) false ;; esac \
   && ok "non-numeric baseline count is exit 2" || bad "non-numeric count is exit 2" "rc=$RC out=$OUT"
 printf 'a.rs\t1\nb.rs\t1\n' >"$R/tools/suppression-baseline.tsv"
+git -C "$R" add tools/suppression-baseline.tsv
 run_sb
 [ "$RC" -eq 0 ] && ok "well-formed sorted baseline passes (control for the hygiene gates)" \
   || bad "well-formed baseline passes" "rc=$RC out=$OUT"

@@ -1,0 +1,604 @@
+#!/usr/bin/env bash
+# install-git-hooks — real git pre-commit / commit-msg shims, so the guard
+# chain runs for every tool that commits (any agent harness, an editor, a
+# script, a human shell), not only the ones with their own hook system.
+#
+# Layout, mirroring the worktree skill's auto-repair install:
+#   .git/hooks/vstack-guards   helper this installer owns outright and
+#                              rewrites atomically on every run
+#   .git/hooks/pre-commit      one marked delegating line, created or appended
+#   .git/hooks/commit-msg      one marked delegating line, created or appended
+#
+# core.hooksPath is deliberately NOT used: it redirects the whole hooks
+# directory and would disable hooks the repo already has.
+#
+# The shims BLOCK. A failing check exits nonzero with its own remediation
+# text; a check that cannot run — missing script, exit 2 — blocks too, naming
+# what is missing. An existing foreign hook keeps its own exit status when our
+# chain passes.
+#
+# Exit codes: 0 shims in place (or deliberately skipped, stated on stdout);
+# 1 one or more shims could not be installed; 2 usage error.
+set -euo pipefail
+
+HELPER_NAME="vstack-guards"
+HELPER_MARKER="vstack growth-guards git hooks"
+# Trailing marker on our hook line; only this installer ever writes it, so a
+# foreign hook that merely mentions the helper by name is not mistaken for an
+# install that is already current.
+HOOK_SENTINEL="# vstack-guards-hook"
+# Written into hooks this installer CREATES, so removal can tell them from a
+# consumer's own shebang-only hook, which is indistinguishable by content.
+# It carries the sentinel, so the same filter strips it.
+CREATED_MARKER="# vstack-guards-hook created this file"
+# Every project-scope skills directory a vstack install can write, plus the
+# source layout vstack itself has. Keep in step with the CLI's skills_dir.
+SKILL_ROOTS=".agents/skills .claude/skills .cursor/rules .opencode/skills skills"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'EOF'
+usage: install-git-hooks [--repo PATH] [--uninstall]
+
+Installs (or repairs) the .git/hooks/pre-commit and .git/hooks/commit-msg
+shims that run the growth-guards chain. Idempotent: re-running is a no-op
+when the install is current. --repo defaults to the current directory.
+
+--uninstall drops the helper and our marked line from each hook, deleting a
+hook file this installer created outright and leaving every other line of a
+consumer's own hook untouched.
+
+Prints one summary line on stdout; warnings go to stderr.
+
+Exit codes: 0 installed/removed or deliberately skipped; 1 a shim could not
+be installed or removed; 2 usage error.
+EOF
+}
+
+die() { # usage/config error
+  echo "::error::install-git-hooks: $*" >&2
+  exit 2
+}
+
+REPO="."
+MODE="install"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --uninstall) MODE="uninstall" ;;
+    --repo)
+      [ $# -ge 2 ] || die "--repo requires a path"
+      shift
+      REPO="$1"
+      ;;
+    --repo=*) REPO="${1#--repo=}" ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) die "unknown argument '$1' (see --help)" ;;
+  esac
+  shift
+done
+
+[ -d "$REPO" ] || die "no such directory: $REPO"
+# A work tree, not merely a git directory: the guards read a staged index and
+# the helper resolves a working-tree root, neither of which a bare repository
+# has — installing there would report hooks that can never run.
+[ "$(git -C "$REPO" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ] \
+  || die "not inside a git work tree: $REPO"
+
+REPO_ABS="$(cd "$REPO" && pwd)" || die "could not resolve $REPO"
+# --git-common-dir may answer relative to the repository (git predates
+# --path-format), so absolutize it here rather than assuming a git version.
+COMMON_DIR="$(git -C "$REPO_ABS" rev-parse --git-common-dir 2>/dev/null || true)"
+[ -n "$COMMON_DIR" ] || die "could not resolve the common git directory of $REPO"
+case "$COMMON_DIR" in
+  /*) ;;
+  *) COMMON_DIR="$REPO_ABS/$COMMON_DIR" ;;
+esac
+HOOKS_DIR="$COMMON_DIR/hooks"
+
+# Installing under core.hooksPath would write files git never reads. Removal
+# still runs: shims left in .git/hooks reactivate the moment the setting goes
+# away, and they fail closed.
+# PRESENCE decides, not value: core.hooksPath set to the empty string still
+# redirects git away from .git/hooks, and reading it by value alone would let
+# that configuration pass as unset and the install report guards git ignores.
+CUSTOM_HOOKS=""
+HOOKS_PATH_SET=0
+if git -C "$REPO_ABS" config --get core.hooksPath >/dev/null 2>&1; then
+  HOOKS_PATH_SET=1
+  CUSTOM_HOOKS="$(git -C "$REPO_ABS" config --get core.hooksPath 2>/dev/null || true)"
+fi
+if [ "$HOOKS_PATH_SET" -eq 1 ] && [ "$MODE" = "install" ]; then
+  echo "::warning::install-git-hooks: core.hooksPath is set ('$CUSTOM_HOOKS'); git ignores .git/hooks, so the guard shims were NOT installed" >&2
+  echo "  Have that directory's pre-commit run $SCRIPT_DIR/pre-commit, and its commit-msg run $SCRIPT_DIR/commit-msg \"\$1\"." >&2
+  echo "growth-guards git hooks: skipped — core.hooksPath is set ($CUSTOM_HOOKS)"
+  exit 0
+fi
+
+mkdir -p -- "$HOOKS_DIR" || die "could not create $HOOKS_DIR"
+
+
+# The helper is POSIX sh and self-contained. It looks for the hook-shaped
+# entry point in this install's own scripts directory first, then rediscovers
+# it from the MAIN checkout (linked worktrees share this hooks directory and
+# may carry no installed skills of their own) so a moved or re-installed
+# checkout repairs itself. Every failure to reach a script blocks the commit —
+# a guard that cannot run must never read as a pass.
+write_helper() { # PATH
+  local helper="$1" tmp=""
+  # The name is vstack-namespaced, but the non-destructive contract holds even
+  # against a collision: never write through a symlink, never replace a
+  # non-regular file, never overwrite content missing our marker.
+  if [ -L "$helper" ] || { [ -e "$helper" ] && [ ! -f "$helper" ]; }; then
+    echo "::warning::install-git-hooks: $helper exists and is not a regular file; refusing to replace it" >&2
+    return 1
+  fi
+  if [ -f "$helper" ] && ! grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null; then
+    echo "::warning::install-git-hooks: $helper exists but was not written by this installer; refusing to overwrite it" >&2
+    return 1
+  fi
+  tmp="$(mktemp "$helper.tmp.XXXXXX")" || return 1
+  # Single-quote the baked path for the generated sh, escaping any quote in it.
+  local sq="'" escaped=""
+  escaped="${SCRIPT_DIR//$sq/$sq\\$sq$sq}"
+  cat >"$tmp" <<HELPER_HEAD || { rm -f -- "$tmp"; return 1; }
+#!/bin/sh
+# Scripts directory of the install that wrote this file.
+installed_scripts='$escaped'
+HELPER_HEAD
+  cat >>"$tmp" <<'HELPER' || { rm -f -- "$tmp"; return 1; }
+# vstack growth-guards git hooks. Managed by the growth-guards skill and
+# rewritten on every install — do not edit.
+#
+# usage: vstack-guards pre-commit | vstack-guards commit-msg MSGFILE
+#
+# Blocks whenever the guard it should run cannot be reached: a gate that
+# cannot run is never a pass.
+skill_roots=".agents/skills .claude/skills .cursor/rules .opencode/skills skills"
+
+mode="${1-}"
+case "$mode" in
+  pre-commit | commit-msg) shift ;;
+  *)
+    echo "vstack-guards: usage: vstack-guards pre-commit | commit-msg MSGFILE" >&2
+    exit 2
+    ;;
+esac
+
+# Exit 2 is the family's "could not complete", distinct from a check's
+# exit 1 verdict. Both block the commit.
+fail() {
+  echo "vstack-guards: $*" >&2
+  echo "  The commit is blocked because a guard could not run. Reinstall the shims with 'vstack refresh', or bypass this commit with 'git commit --no-verify'." >&2
+  exit 2
+}
+
+common="$(git rev-parse --git-common-dir 2>/dev/null)" || common=""
+[ -n "$common" ] || fail "could not resolve the common git directory"
+case "$common" in /*) ;; *) common="$PWD/$common" ;; esac
+top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
+[ -n "$top" ] || fail "could not resolve the working tree root"
+# The main checkout owns the installed skills; a linked worktree shares this
+# hooks directory but may not carry its own copy. Its own root is the
+# fallback for layouts where the git directory is not <root>/.git.
+main="${common%/*}"
+[ -n "$main" ] || main="/"
+if [ -n "$installed_scripts" ] && [ -x "$installed_scripts/$mode" ]; then
+  exec "$installed_scripts/$mode" "$@"
+fi
+for root in "$main" "$top"; do
+  for base in $skill_roots; do
+    if [ -x "$root/$base/growth-guards/scripts/$mode" ]; then
+      exec "$root/$base/growth-guards/scripts/$mode" "$@"
+    fi
+  done
+done
+fail "no executable growth-guards $mode script at $installed_scripts, nor under $main or $top ($skill_roots)"
+HELPER
+  # mktemp creates 0600; a hook must be readable and executable by whoever
+  # git runs as, which on a shared repository is not only its owner.
+  chmod 0755 "$tmp" 2>/dev/null && mv -f -- "$tmp" "$helper" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+}
+
+# The delegating line goes FIRST in the hook, right after the shebang: hook
+# content that ends in an explicit `exit` would otherwise leave an appended
+# guard unreachable while the install still reported the hook as armed. Ours
+# runs, blocks on any nonzero, and only then falls through to whatever the
+# hook already did — whose own exit status then decides, unchanged.
+call_line() { # HOOK
+  local hook="$1" args=""
+  [ "$hook" = "pre-commit" ] || args=' "$@"'
+  printf '%s' 'vstack_gg_h="$(git rev-parse --git-path hooks 2>/dev/null)/'"$HELPER_NAME"'"; [ -x "$vstack_gg_h" ] || { echo "growth-guards: hook helper $vstack_gg_h is missing or not executable; commit blocked (reinstall: vstack refresh)" >&2; exit 2; }; "$vstack_gg_h" '"$hook$args"' || exit $?; '"$HOOK_SENTINEL"
+}
+
+FAILED=0
+# Line tools terminate their last line, which would permanently add a newline
+# a hook never had. The original EOF state is recorded and re-asserted, so
+# foreign bytes come back exactly as they were.
+ends_with_newline() { # FILE — 0 when the last byte is a newline
+  [ -s "$1" ] || return 1
+  [ -z "$(tail -c 1 "$1")" ]
+}
+
+strip_final_newline() { # FILE — drop one trailing newline byte if present
+  local size=0
+  ends_with_newline "$1" || return 0
+  size="$(wc -c <"$1")" || return 1
+  size="$((size - 1))"
+  dd if="$1" of="$1.trim" bs=1 count="$size" 2>/dev/null || {
+    rm -f -- "$1.trim"
+    return 1
+  }
+  mv -f -- "$1.trim" "$1"
+}
+
+# git ignores a hook without the executable bit, so a bit that is not there
+# and cannot be restored is a guard that never runs — never a success.
+ensure_hook_executable() { # HOOK PATH
+  local hook="$1" path="$2"
+  if [ -x "$path" ]; then
+    return 0
+  fi
+  if chmod +x -- "$path" 2>/dev/null && [ -x "$path" ]; then
+    return 0
+  fi
+  echo "::warning::install-git-hooks: $path is not executable and could not be made so; git ignores it — the $hook guard is NOT armed" >&2
+  FAILED=1
+  return 0
+}
+
+install_hook() { # HOOK
+  local hook="$1" path="$HOOKS_DIR/$1" line="" tmp="" rest="" status=0
+  line="$(call_line "$hook")"
+  # A symlinked hook points at a shared or externally managed target; writing
+  # through it (live) or materializing its target (dangling, which passes
+  # `! -e`) would modify content this install does not own.
+  if [ -L "$path" ]; then
+    echo "::warning::install-git-hooks: $path is a symlink; not modifying its target — the $hook guard is NOT installed" >&2
+    FAILED=1
+    return 0
+  fi
+  if [ ! -e "$path" ]; then
+    printf '#!/bin/sh\n%s\n%s\n' "$line" "$CREATED_MARKER" >"$path" 2>/dev/null || {
+      echo "::warning::install-git-hooks: could not write $path — the $hook guard is NOT installed" >&2
+      FAILED=1
+      return 0
+    }
+    ensure_hook_executable "$hook" "$path"
+    return 0
+  fi
+  if [ ! -f "$path" ]; then
+    echo "::warning::install-git-hooks: $path exists and is not a regular file — the $hook guard is NOT installed" >&2
+    FAILED=1
+    return 0
+  fi
+  # Whole interpreter names only: '.*sh' would match #!/usr/bin/fish and let
+  # POSIX-sh syntax into a hook that cannot run it. Checked BEFORE the
+  # already-current fast path: our line under an interpreter that cannot run
+  # it is not an armed hook, whoever changed the shebang.
+  if ! head -n 1 "$path" | grep -qE '^#![[:space:]]*([^[:space:]]*/)?(env[[:space:]]+)?(sh|bash|dash|ksh|zsh)([[:space:]]|$)'; then
+    echo "::warning::install-git-hooks: $path is not a POSIX-shell script; not modifying it — the $hook guard is NOT installed" >&2
+    FAILED=1
+    return 0
+  fi
+  # Idempotence keys on the EXACT delegate AT ITS POSITION — line 2, straight
+  # after the shebang. Content alone is not enough: a line that was commented
+  # out, truncated, left by an older version, or moved below hook content that
+  # exits is not an install, and each is rewritten rather than trusted.
+  if [ "$(sed -n '2p' "$path")" = "$line" ]; then
+    ensure_hook_executable "$hook" "$path"
+    return 0
+  fi
+  if [ ! -x "$path" ]; then
+    echo "::warning::install-git-hooks: $path exists but is not executable (a disabled hook); not modifying it — the $hook guard is NOT installed" >&2
+    FAILED=1
+    return 0
+  fi
+  # Ownership is READ before the filter strips the marker along with our line,
+  # and re-asserted below: a repair must not turn a hook we created into one
+  # that looks like a consumer's.
+  local created=0
+  grep -qF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
+  # Everything the hook has apart from its shebang and any stale delegate of
+  # ours, kept in a FILE: a command substitution would strip a missing final
+  # newline, and the foreign bytes must come back exactly as they were.
+  # grep -v exits 1 when it prints nothing; only >= 2 is a read failure.
+  rest="$(mktemp "$path.rest.XXXXXX")" || {
+    echo "::warning::install-git-hooks: could not create a temporary file beside $path — the $hook guard is NOT installed" >&2
+    FAILED=1
+    return 0
+  }
+  tail -n +2 "$path" | grep -vF -- "$HOOK_SENTINEL" >"$rest" || status=$?
+  if [ "$status" -gt 1 ]; then
+    rm -f -- "$rest"
+    echo "::warning::install-git-hooks: could not read $path — the $hook guard is NOT installed" >&2
+    FAILED=1
+    return 0
+  fi
+  if ! ends_with_newline "$path" && ! strip_final_newline "$rest"; then
+    rm -f -- "$rest"
+    echo "::warning::install-git-hooks: could not preserve the end of $path — the $hook guard is NOT installed" >&2
+    FAILED=1
+    return 0
+  fi
+  # Written back through the existing file, not renamed over it: the hook keeps
+  # its inode, mode, and any links a consumer's tooling holds.
+  tmp="$(mktemp "$path.tmp.XXXXXX")" || {
+    rm -f -- "$rest"
+    echo "::warning::install-git-hooks: could not create a temporary file beside $path — the $hook guard is NOT installed" >&2
+    FAILED=1
+    return 0
+  }
+  # The shebang is re-emitted TERMINATED even when the original file ended at
+  # it: the delegate has to start on its own line or the interpreter path and
+  # the shell code run together. A shebang cannot contain a newline, so the
+  # command substitution is lossless; the body's own EOF state is preserved
+  # above.
+  local shebang=""
+  shebang="$(head -n 1 "$path")"
+  if ! cp -p -- "$path" "$tmp" 2>/dev/null || ! {
+    printf '%s\n' "$shebang"
+    printf '%s\n' "$line"
+    if [ "$created" -eq 1 ]; then
+      printf '%s\n' "$CREATED_MARKER"
+    fi
+    cat -- "$rest"
+  } >"$tmp" 2>/dev/null || ! mv -f -- "$tmp" "$path" 2>/dev/null; then
+    rm -f -- "$tmp" "$rest"
+    echo "::warning::install-git-hooks: could not rewrite $path — the $hook guard is NOT installed" >&2
+    FAILED=1
+    return 0
+  fi
+  rm -f -- "$rest"
+  ensure_hook_executable "$hook" "$path"
+}
+
+uninstall_hook() { # HOOK — drop our line; drop the file when only ours was in it
+  local hook="$1" path="$HOOKS_DIR/$1" tmp="" status=0 body=0 sentinel_status=0 created=0
+  [ -e "$path" ] || [ -L "$path" ] || return 0
+  if [ -L "$path" ]; then
+    # Only a target that actually carries our line is a problem: leaving it
+    # while the helper goes would block every commit. A target that cannot be
+    # inspected is unknown, and unknown is treated as carrying it.
+    sentinel_status=0
+    grep -qF -- "$HOOK_SENTINEL" "$path" 2>/dev/null || sentinel_status=$?
+    if [ "$sentinel_status" -eq 0 ]; then
+      echo "::warning::install-git-hooks: $path is a symlink carrying the guard line; remove it by hand — its target is not ours to edit" >&2
+      FAILED=1
+    elif [ "$sentinel_status" -gt 1 ]; then
+      echo "::warning::install-git-hooks: $path is a symlink whose target could not be read; it was left in place" >&2
+      FAILED=1
+    fi
+    return 0
+  fi
+  [ -f "$path" ] || return 0
+  # grep exit 1 = no sentinel; >= 1 means the file could not be read, and a
+  # managed hook whose content is unknown must not be assumed clean — left
+  # behind with the helper gone it blocks every commit.
+  sentinel_status=0
+  grep -qF -- "$HOOK_SENTINEL" "$path" 2>/dev/null || sentinel_status=$?
+  if [ "$sentinel_status" -gt 1 ]; then
+    echo "::warning::install-git-hooks: could not read $path to check for the guard line; it was left in place" >&2
+    FAILED=1
+    return 0
+  fi
+  [ "$sentinel_status" -eq 0 ] || return 0
+  # Ownership is READ before the filter strips the marker with our line.
+  created=0
+  grep -qF -- "$CREATED_MARKER" "$path" 2>/dev/null && created=1
+  tmp="$(mktemp "$path.tmp.XXXXXX")" || {
+    echo "::warning::install-git-hooks: could not create a temporary file beside $path; its guard line was left in place" >&2
+    FAILED=1
+    return 0
+  }
+  # grep -v exits 1 when it prints nothing; only >= 2 means the read failed.
+  grep -vF -- "$HOOK_SENTINEL" "$path" >"$tmp" || status=$?
+  if [ "$status" -gt 1 ]; then
+    rm -f -- "$tmp"
+    echo "::warning::install-git-hooks: could not read $path; its guard line was left in place" >&2
+    FAILED=1
+    return 0
+  fi
+  if ! ends_with_newline "$path" && ! strip_final_newline "$tmp"; then
+    rm -f -- "$tmp"
+    echo "::warning::install-git-hooks: could not preserve the end of $path; its guard line was left in place" >&2
+    FAILED=1
+    return 0
+  fi
+  # Only a hook this installer CREATED goes away outright; a consumer's own
+  # hook is rewritten without our line, even when nothing but its shebang is
+  # left, because that shebang is theirs.
+  status=0
+  body="$(grep -cvE '^([[:space:]]*|#!.*)$' "$tmp")" || status=$?
+  if [ "$status" -gt 1 ]; then
+    rm -f -- "$tmp"
+    echo "::warning::install-git-hooks: could not inspect $path; its guard line was left in place" >&2
+    FAILED=1
+    return 0
+  fi
+  if [ "$created" -eq 1 ] && [ "$body" -eq 0 ]; then
+    rm -f -- "$tmp" "$path"
+    REMOVED="$REMOVED $hook"
+    return 0
+  fi
+  # The rename is atomic and the temp already carries the hook's own mode, so
+  # no commit can catch the hook half-written.
+  if ! cp -p -- "$path" "$tmp.mode" 2>/dev/null \
+    || ! cat "$tmp" >"$tmp.mode" 2>/dev/null \
+    || ! mv -f -- "$tmp.mode" "$path" 2>/dev/null; then
+    rm -f -- "$tmp" "$tmp.mode"
+    echo "::warning::install-git-hooks: could not rewrite $path; its guard line was left in place" >&2
+    FAILED=1
+    return 0
+  fi
+  rm -f -- "$tmp"
+  REMOVED="$REMOVED $hook"
+}
+
+# Every work tree on this common git directory shares one hooks directory, so
+# a checkout that still has the skill installed still needs the shims. Only a
+# SEPARATE install counts: worktree layouts commonly link their skills
+# directory back into the checkout being uninstalled from, and that copy is
+# the one going away, so candidates are compared by physical path.
+#
+# Roots come from the per-worktree `gitdir` files rather than from
+# `worktree list`, whose line-oriented output cannot represent a path
+# containing a newline — one such path would silently shorten a root and
+# hide a survivor. Anything unreadable here is "cannot tell", never "none".
+#
+# Returns 0 with the surviving scripts directory on stdout, 1 when there is
+# none, 2 when the question could not be answered.
+other_worktree_still_installed() {
+  local repo_phys="" main_root="" gitdir="" root="" root_phys="" base="" dir="" phys="" entry=""
+  local own_gitdir="" own_phys="" common_phys="" guess_gitdir="" guess_phys="" parent=""
+  local roots=()
+  repo_phys="$(cd "$REPO_ABS" 2>/dev/null && pwd -P)" || return 2
+  # This checkout IS the main work tree exactly when its own git directory is
+  # the common one; a linked worktree's is <common>/worktrees/<name>.
+  own_gitdir="$(git -C "$REPO_ABS" rev-parse --git-dir 2>/dev/null || true)"
+  [ -n "$own_gitdir" ] || return 2
+  case "$own_gitdir" in /*) ;; *) own_gitdir="$REPO_ABS/$own_gitdir" ;; esac
+  own_phys="$(cd "$own_gitdir" 2>/dev/null && pwd -P)" || return 2
+  common_phys="$(cd "$COMMON_DIR" 2>/dev/null && pwd -P)" || return 2
+  if [ "$own_phys" = "$common_phys" ]; then
+    main_root="$REPO_ABS"
+  else
+    # <root>/.git holds the git directory in the ordinary layout. Under
+    # --separate-git-dir it does not, and git records the main work tree
+    # nowhere a linked worktree can read — so it cannot be ruled out as a
+    # survivor, and guessing would disarm it.
+    main_root="${COMMON_DIR%/*}"
+    # Owning it is the test, not merely having some `.git`: the parent of an
+    # external git directory can be an unrelated checkout, and treating that
+    # as the main work tree would rule out the real one.
+    if [ -z "$main_root" ]; then
+      return 2
+    fi
+    guess_gitdir="$(git -C "$main_root" rev-parse --git-common-dir 2>/dev/null || true)"
+    [ -n "$guess_gitdir" ] || return 2
+    case "$guess_gitdir" in /*) ;; *) guess_gitdir="$main_root/$guess_gitdir" ;; esac
+    guess_phys="$(cd "$guess_gitdir" 2>/dev/null && pwd -P)" || return 2
+    [ "$guess_phys" = "$common_phys" ] || return 2
+  fi
+  roots+=("$main_root")
+  if [ -d "$COMMON_DIR/worktrees" ]; then
+    for entry in "$COMMON_DIR"/worktrees/*/; do
+      [ -d "$entry" ] || continue
+      [ -f "$entry/gitdir" ] || return 2
+      gitdir="$(cat -- "$entry/gitdir")" || return 2
+      [ -n "$gitdir" ] || return 2
+      # git may register the path relative to the registration directory
+      # (relocatable worktrees); resolving it against this process's cwd
+      # would point somewhere else entirely.
+      case "$gitdir" in /*) ;; *) gitdir="$entry/$gitdir" ;; esac
+      # <root>/.git -> <root>
+      roots+=("${gitdir%/*}")
+    done
+  fi
+  for root in ${roots[@]+"${roots[@]}"}; do
+    # A registration whose directory is gone (pruned, moved) can hold no
+    # install; one that cannot be INSPECTED is unknown, not empty — an
+    # unsearchable parent answers "not a directory" exactly like an absent
+    # one, and another user's worktree under it may still carry the skill.
+    if [ ! -d "$root" ]; then
+      # Walk up until an ancestor can be stat'd: one that EXISTS but cannot be
+      # searched hides everything under it, and at any depth. Only a
+      # searchable ancestor proves the path is genuinely gone.
+      parent="$root"
+      while :; do
+        case "$parent" in
+          "" | "/") break ;;
+        esac
+        parent="${parent%/*}"
+        [ -n "$parent" ] || parent="/"
+        if [ -d "$parent" ]; then
+          [ -x "$parent" ] || return 2
+          break
+        fi
+      done
+      continue
+    fi
+    root_phys="$(cd "$root" 2>/dev/null && pwd -P)" || return 2
+    if [ "$root_phys" = "$repo_phys" ]; then
+      continue
+    fi
+    for base in $SKILL_ROOTS; do
+      dir="$root/$base/growth-guards/scripts"
+      # BOTH entry points, because both hooks are retained: a survivor that
+      # cannot serve commit-msg would leave that hook failing closed forever.
+      if [ ! -x "$dir/pre-commit" ] || [ ! -x "$dir/commit-msg" ]; then
+        continue
+      fi
+      phys="$(cd "$dir" 2>/dev/null && pwd -P)" || continue
+      case "$phys" in
+        "$repo_phys" | "$repo_phys"/*) continue ;;
+      esac
+      printf '%s\n' "$dir"
+      return 0
+    done
+  done
+  return 1
+}
+
+if [ "$MODE" = "uninstall" ]; then
+  other=""
+  survivor_status=0
+  other="$(other_worktree_still_installed)" || survivor_status=$?
+  if [ "$survivor_status" -gt 1 ]; then
+    echo "::warning::install-git-hooks: could not enumerate this repository's work trees; the shims were left in place rather than risk disarming one that still needs them" >&2
+    echo "growth-guards git hooks: kept — the work-tree list under $COMMON_DIR/worktrees could not be read"
+    exit 1
+  fi
+  if [ "$survivor_status" -eq 0 ]; then
+    # The helper still names the scripts about to be deleted, so point it at
+    # the install that survives before leaving the shims in place.
+    SCRIPT_DIR="$other"
+    if ! write_helper "$HOOKS_DIR/$HELPER_NAME"; then
+      echo "growth-guards git hooks: kept for $other, but the helper could not be retargeted to it"
+      exit 1
+    fi
+    echo "growth-guards git hooks: kept — retargeted to $other, which another work tree still has installed"
+    exit 0
+  fi
+  REMOVED=""
+  uninstall_hook pre-commit
+  uninstall_hook commit-msg
+  helper="$HOOKS_DIR/$HELPER_NAME"
+  # The helper stays while any of our lines could not go: a delegate left
+  # pointing at a missing helper blocks every commit.
+  if [ "$FAILED" -eq 0 ] \
+    && [ -f "$helper" ] && [ ! -L "$helper" ] \
+    && grep -qF -- "$HELPER_MARKER" "$helper" 2>/dev/null; then
+    rm -f -- "$helper" || {
+      echo "::warning::install-git-hooks: could not remove $helper" >&2
+      FAILED=1
+    }
+  fi
+  if [ "$FAILED" -eq 1 ]; then
+    echo "growth-guards git hooks: removal incomplete — see the warnings above ($HOOKS_DIR)"
+    exit 1
+  fi
+  case "$REMOVED" in
+    *[!\ ]*) echo "growth-guards git hooks: removed from$REMOVED in $HOOKS_DIR" ;;
+    *) echo "growth-guards git hooks: nothing to remove in $HOOKS_DIR" ;;
+  esac
+  exit 0
+fi
+
+if ! write_helper "$HOOKS_DIR/$HELPER_NAME"; then
+  echo "growth-guards git hooks: NOT installed — could not write $HOOKS_DIR/$HELPER_NAME"
+  exit 1
+fi
+install_hook pre-commit
+install_hook commit-msg
+
+if [ "$FAILED" -eq 1 ]; then
+  echo "growth-guards git hooks: incomplete — see the warnings above ($HOOKS_DIR)"
+  exit 1
+fi
+echo "growth-guards git hooks: pre-commit and commit-msg armed in $HOOKS_DIR"

@@ -481,6 +481,19 @@ pub fn install_skill(
         }
     };
 
+    // Arming lives here for the same reason the disarm does: every install
+    // path — add, refresh, and the TUI's own update and move flows — passes
+    // through this function, and shims that were never written guard nothing.
+    // Once per process: the call is per-harness, the outcome is not.
+    if !global
+        && skill.name == crate::git_hooks::SKILL_NAME
+        && !HOOKS_ARMED.swap(true, std::sync::atomic::Ordering::SeqCst)
+        && let Some(note) =
+            crate::git_hooks::install_growth_guards_hooks(&crate::config::project_root())
+    {
+        eprintln!("  + {note}");
+    }
+
     Ok(InstallResult {
         name: skill.name.clone(),
         kind: ItemKind::Skill,
@@ -489,6 +502,10 @@ pub fn install_skill(
         detail,
     })
 }
+
+/// One arming attempt per process: `install_skill` runs per harness, but the
+/// hooks it arms are per repository.
+static HOOKS_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// What [`remove_item`] did and deliberately did not do.
 #[derive(Debug)]
@@ -518,6 +535,24 @@ pub fn remove_item(
     let remove_agents = kind.is_none_or(|kind| kind == ItemKind::Agent);
     let remove_skills = kind.is_none_or(|kind| kind == ItemKind::Skill);
     let remove_hooks = kind.is_none_or(|kind| kind == ItemKind::Hook);
+
+    // Before the files go, and here rather than in one command: every removal
+    // path — CLI and TUI alike — passes through this function, and the git
+    // shims fail closed, so a delegate left without its scripts blocks every
+    // commit in the repository. A cleanup that fails aborts the removal,
+    // which is the recoverable state.
+    if !global && remove_skills && name == crate::git_hooks::SKILL_NAME {
+        let project_root = crate::config::project_root();
+        match crate::git_hooks::uninstall_growth_guards_hooks(&project_root) {
+            Ok(None) => {}
+            Ok(Some(note)) => eprintln!("  {note}"),
+            Err(detail) => anyhow::bail!(
+                "{detail}\n  {name} was NOT removed: its git shims fail closed, so leaving them \
+                 behind without the skill would block every commit. Repair the hooks directory \
+                 (or remove the shim lines by hand) and retry."
+            ),
+        }
+    }
 
     // Resolve anchored canonical homes for every requested dest BEFORE any
     // unlinking: removal destroys the evidence it needs (deleting a

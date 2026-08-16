@@ -27,18 +27,87 @@ The batch runs `GROWTH_GUARDS_CHECKS` (default
 check could not complete, else 1 if any found violations. `commit-msg`
 reads a message, so it never runs in the batch.
 
-Typical wiring:
+CI wiring:
 
 ```bash
-# .git/hooks/commit-msg
-.agents/skills/growth-guards/scripts/commit-msg "$1"
-
-# pre-commit shim / CI
 .agents/skills/growth-guards/scripts/todo-ban
-.agents/skills/growth-guards/scripts/byte-ceiling            # staged additions
-.agents/skills/growth-guards/scripts/byte-ceiling --base origin/main   # CI on a PR
+.agents/skills/growth-guards/scripts/byte-ceiling --base origin/main
 .agents/skills/growth-guards/scripts/suppression-ban
 ```
+
+Local commits are covered by the git hooks below, not by these calls.
+
+## Git hooks
+
+```bash
+.agents/skills/growth-guards/scripts/install-git-hooks [--repo PATH]
+.agents/skills/growth-guards/scripts/install-git-hooks --uninstall
+```
+
+Writes three files into the repository's `.git/hooks` (never
+`core.hooksPath`, which redirects the whole directory and would disable the
+repository's existing hooks):
+
+| File | Content |
+|---|---|
+| `vstack-guards` | Helper the installer owns outright and rewrites on every run. |
+| `pre-commit` | One marked line delegating to the helper — created, or inserted after the shebang of an existing hook. |
+| `commit-msg` | Same, passing git's message file through. |
+
+The line goes FIRST, not last: hook content ending in an explicit `exit`
+would leave an appended guard unreachable. Ours runs, blocks on any nonzero,
+and then falls through to whatever the hook already did — whose own exit
+status still decides.
+
+`pre-commit` runs `scripts/pre-commit`, which judges ONE commit snapshot —
+staged content, and tracked configuration read from the index, so an
+unstaged edit cannot switch a check off for content the commit keeps:
+`size-ratchet --staged` when that skill is installed beside this one, then the `growth-guards` batch over the staged
+content, then the repo-local entry named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`
+(repo-root-relative executable; empty means none). `commit-msg` runs
+`scripts/commit-msg` on git's message file. Every step runs before the
+verdict, so one attempt reports every blocker.
+
+The shims BLOCK, and fail closed, on the family's exit contract: `1` for a
+violation, carrying the check's own remediation text, and `2` for a guard
+that could not run — an uninstalled script, a missing helper, a missing
+repo-local entry — naming what is missing. `git commit --no-verify` is the
+deliberate bypass.
+
+Repeat runs are no-ops, and repairs. A hook counts as current only when it
+carries the EXACT delegating line on a line of its own — a line that was
+commented out, truncated, or left behind by an older version is rewritten,
+not trusted — and a hook whose executable bit was cleared gets it back,
+because git silently ignores a hook it cannot execute. An
+existing `pre-commit`/`commit-msg` keeps its content and its own exit status;
+a hook that is symlinked, deliberately disabled (not executable), or whose
+shebang names an interpreter that is not a POSIX-compatible shell is left
+alone entirely (reported, and the install exits 1). A file at the helper path that this installer did not write is
+never overwritten. A bare repository is refused — there is no work tree to
+guard.
+
+Linked worktrees share the install, since git resolves their hooks to the
+main checkout's hooks directory. The same sharing governs removal: while any
+work tree on that hooks directory still has a SEPARATE install of the skill,
+`--uninstall` keeps the shims, retargets the helper at that surviving install,
+and says so. Separate is decided by physical path — a worktree whose skills
+directory links back into the checkout being uninstalled from is the same
+install, and it is going away.
+
+`--uninstall` drops the helper and our marked line from each hook, deleting a
+hook file this installer created outright and leaving every other line of a
+consumer's own hook untouched. It runs even where `core.hooksPath` is set —
+shims left in `.git/hooks` come back to life the moment that setting goes
+away. A delegating line it may not edit (a symlinked hook) keeps the helper
+in place and fails the removal rather than stranding a hook with no guard to
+reach.
+
+`vstack add` and `vstack refresh` run this installer for a project that has
+the skill installed, so consumers get the shims — and repairs — without a
+manual step; a non-git project is skipped with a note. `vstack remove
+growth-guards` runs `--uninstall` first and refuses the removal if that
+cleanup fails, so removing the skill never leaves hooks that block every
+commit.
 
 ## todo-ban
 
@@ -151,6 +220,7 @@ type(scope)!: subject        # scope and '!' optional
 | `GROWTH_GUARDS_SUPPRESSION_EXCLUDES` | `tools/suppression-ban-excludes` | suppression-ban exclusion list. |
 | `GROWTH_GUARDS_SUPPRESSION_BASELINE` | `tools/suppression-baseline.tsv` | Bare-allow baseline. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted types. |
+| `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. Empty means none; a configured path that is missing or not executable blocks the commit. |
 
 Each key resolves environment > `.env.local` > `.vstack/settings.toml` >
 committed `vstack.settings.toml` (flat `KEY = "value"` under `[env]`) >

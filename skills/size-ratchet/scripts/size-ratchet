@@ -36,14 +36,23 @@ source "$SCRIPT_DIR/lib/settings.sh"
 
 TAB="$(printf '\t')"
 
+# Count index blobs rather than worktree copies. The default prefers the
+# worktree — what a developer is looking at — and only falls back to the
+# index; a pre-commit gate needs the opposite, because the blob is what
+# enters history.
+STAGED=0
+
 usage() {
   cat <<'EOF'
-usage: size-ratchet [--update] [--baseline FILE] [--excludes FILE]
+usage: size-ratchet [--staged] [--update] [--baseline FILE] [--excludes FILE]
 
 Tighten-only file-size gate: tracked files over the line threshold must be
 frozen in the baseline at their current size, and the baseline may only
 move down. --update lowers/removes rows to current reality (never adds,
 never raises) and then re-checks.
+
+--staged counts INDEX blobs for every tracked file instead of preferring the
+worktree copy — what a commit will actually record. For a pre-commit hook.
 
 Configuration (env > .env.local > .vstack/settings.toml >
 vstack.settings.toml [env] > .env > default):
@@ -99,6 +108,7 @@ while [ $# -gt 0 ]; do
       usage
       exit 0
       ;;
+    --staged) STAGED=1 ;;
     *) config_error "unknown argument '$1' (see --help)" ;;
   esac
   shift
@@ -107,6 +117,16 @@ done
 # All configured paths (settings file, baseline, excludes) are repo-relative.
 REPO_ROOT="$(git rev-parse --show-toplevel)" || config_error "not inside a git repository"
 cd "$REPO_ROOT"
+
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/size-ratchet.XXXXXX")" || config_error "could not create a temporary directory"
+trap 'rm -rf -- "$TMP"' EXIT
+# Not in update mode: it rewrites the worktree policy, and the settings that
+# name WHICH file it rewrites have to come from the same place.
+if [ "$STAGED" -eq 1 ] && [ "$MODE" != "update" ]; then
+  SR_SETTINGS_FROM_INDEX=1
+  SR_SETTINGS_INDEX_DIR="$TMP"
+  export SR_SETTINGS_FROM_INDEX SR_SETTINGS_INDEX_DIR
+fi
 
 THRESHOLD="$(sr_setting SIZE_RATCHET_THRESHOLD 1000)" || exit 2
 case "$THRESHOLD" in
@@ -160,12 +180,43 @@ EXCLUDES_FILE="$(normalize_rel_path "$EXCLUDES_FILE")" || config_error "excludes
 case "$BASELINE_FILE" in -*) config_error "baseline path must not begin with '-': $BASELINE_FILE" ;; /*) config_error "baseline path must be repo-root-relative, got absolute: $BASELINE_FILE" ;; esac
 case "$EXCLUDES_FILE" in -*) config_error "excludes path must not begin with '-': $EXCLUDES_FILE" ;; /*) config_error "excludes path must be repo-root-relative, got absolute: $EXCLUDES_FILE" ;; esac
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 
 # --- exclusion list: pattern<TAB>reason, reason mandatory --------------------
+# In staged mode the whole verdict must come from ONE commit snapshot, policy
+# included: an unstaged edit to a tracked exclusion list or baseline would
+# otherwise authorize staged growth the commit does not carry. A tracked
+# policy file is therefore read from the index; an untracked one is the
+# worktree copy either way.
+# 0 = the index copy governs; 1 = the worktree copy does; 2 = the commit
+# carries no such file (it is staged for deletion), which is not the same
+# thing as a never-tracked path whose worktree copy is all there is.
+staged_policy_state() { # PATH
+  [ "$STAGED" -eq 1 ] || return 1
+  # --update REWRITES the worktree policy file, so it must read that copy or
+  # the rewrite would drop every unstaged hand-edit from it.
+  [ "$MODE" != "update" ] || return 1
+  [ "$(git cat-file -t ":$1" 2>/dev/null)" = "blob" ] && return 0
+  git cat-file -e "HEAD:$1" 2>/dev/null && return 2
+  return 1
+}
+
+EXCLUDES_SOURCE="$EXCLUDES_FILE"
+excludes_state=0
+staged_policy_state "$EXCLUDES_FILE" || excludes_state=$?
+case "$excludes_state" in
+  0)
+    git show ":$EXCLUDES_FILE" >"$TMP/excludes" \
+      || config_error "failed to read tracked excludes from the index: $EXCLUDES_FILE"
+    EXCLUDES_SOURCE="$TMP/excludes"
+    ;;
+  2)
+    : >"$TMP/excludes"
+    EXCLUDES_SOURCE="$TMP/excludes"
+    ;;
+esac
+
 EXCLUDE_PATTERNS=()
-if [ -f "$EXCLUDES_FILE" ]; then
+if [ -f "$EXCLUDES_SOURCE" ]; then
   lineno=0
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
@@ -178,7 +229,7 @@ if [ -f "$EXCLUDES_FILE" ]; then
       config_error "$EXCLUDES_FILE:$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
     fi
     EXCLUDE_PATTERNS+=("$pat")
-  done <"$EXCLUDES_FILE"
+  done <"$EXCLUDES_SOURCE"
 fi
 
 is_excluded() { # PATH — 0 when some exclusion glob matches the full path
@@ -197,7 +248,12 @@ is_excluded() { # PATH — 0 when some exclusion glob matches the full path
 
 # --- baseline: path<TAB>lines, LC_ALL=C sorted, unique paths -----------------
 BASELINE_FROM_INDEX=0
-if [ -f "$BASELINE_FILE" ]; then
+baseline_state=0
+staged_policy_state "$BASELINE_FILE" || baseline_state=$?
+if [ "$baseline_state" -eq 2 ]; then
+  # Staged for deletion: the commit freezes nothing, so nothing is frozen.
+  : >"$TMP/baseline.tsv"
+elif [ "$baseline_state" -eq 1 ] && [ -f "$BASELINE_FILE" ]; then
   # grep exit 1 = every row well-formed; exit >= 2 = the validation itself
   # broke, which must never read as a clean baseline.
   grep_status=0
@@ -217,11 +273,14 @@ if [ -f "$BASELINE_FILE" ]; then
   fi
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
 elif [ "$(git cat-file -t ":$BASELINE_FILE" 2>/dev/null)" = "blob" ]; then
-  # Sparse checkout: the accepted baseline is tracked but not materialized —
-  # read it from the index rather than degrading to an empty baseline (which
-  # would report every frozen offender as new). Full hygiene applies: an
-  # index baseline must satisfy exactly what a materialized one must.
-  BASELINE_FROM_INDEX=1
+  # Staged mode, or a sparse checkout where the accepted baseline is tracked
+  # but not materialized: read it from the index rather than degrading to an
+  # empty baseline (which would report every frozen offender as new). Full
+  # hygiene applies: an index baseline must satisfy exactly what a
+  # materialized one must.
+  # The flag means "no worktree copy to rewrite", which is what --update
+  # needs to know; staged mode reads the index with the file present too.
+  [ -f "$BASELINE_FILE" ] || BASELINE_FROM_INDEX=1
   git show ":$BASELINE_FILE" >"$TMP/baseline.tsv" || config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
   grep_status=0
   bad_rows="$(grep -nEv "^[^${TAB}]+${TAB}[1-9][0-9]*\$" -- "$TMP/baseline.tsv")" || grep_status=$?
@@ -337,10 +396,14 @@ while IFS= read -r -d '' rec; do
     160000) continue ;; # submodule gitlink — never countable; a baseline
                         # row for one reads as gone/stale, not absent
   esac
-  if [ ! -f "$f" ] || [ -h "$f" ]; then
-    # The index says regular file but the worktree disagrees (unstaged
-    # deletion, sparse checkout, or a shadowing symlink/directory): count
-    # the INDEX blob so the "every tracked file" contract holds — a sparse
+  if [ "$STAGED" -eq 1 ] || [ ! -f "$f" ] || [ -h "$f" ]; then
+    # --staged always lands here: what the commit records is the blob, and a
+    # worktree copy reverted after `git add` would otherwise hide staged
+    # growth from the gate entirely.
+    #
+    # Otherwise: the index says regular file but the worktree disagrees
+    # (unstaged deletion, sparse checkout, or a shadowing symlink/directory).
+    # Either way, count the INDEX blob so the "every tracked file" contract holds — a sparse
     # tree cannot smuggle a new offender past the gate, and baselined rows
     # evaluate against real content. An unshowable blob (corrupt object,
     # promisor blob unavailable offline) is a collection failure: its size

@@ -199,14 +199,29 @@ validate_baseline() { # FILE LABEL
   fi
 }
 
+# The scan is index-scoped, so the baseline it is judged against must be the
+# index copy too: an unstaged row bump would otherwise authorize growth the
+# commit does not carry. Only a never-tracked baseline comes off disk.
+#
+# --update is the exception, because it REWRITES the worktree copy: reading
+# the index there would drop any unstaged hand-edit from the file it then
+# replaces.
 BASELINE_FROM_INDEX=0
-if [ -f "$BASELINE_FILE" ]; then
+if [ "$MODE" = "update" ] && [ -f "$BASELINE_FILE" ]; then
   validate_baseline "$BASELINE_FILE" "$BASELINE_FILE"
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
-elif [ "$(git cat-file -t ":$BASELINE_FILE" 2>/dev/null)" = "blob" ]; then
-  BASELINE_FROM_INDEX=1
+elif git ls-files --error-unmatch -- "$BASELINE_FILE" >/dev/null 2>&1; then
+  # The flag means "no worktree copy to rewrite", which is what --update
+  # needs to know; reading the index is now the norm, not the exception.
+  [ -f "$BASELINE_FILE" ] || BASELINE_FROM_INDEX=1
   git show ":$BASELINE_FILE" >"$TMP/baseline.tsv" || gg_config_error "failed to read tracked baseline from the index: $BASELINE_FILE"
   validate_baseline "$TMP/baseline.tsv" "$BASELINE_FILE (index copy)"
+elif git cat-file -e "HEAD:$BASELINE_FILE" 2>/dev/null; then
+  # Staged for deletion: the commit freezes nothing.
+  : >"$TMP/baseline.tsv"
+elif [ -f "$BASELINE_FILE" ]; then
+  validate_baseline "$BASELINE_FILE" "$BASELINE_FILE"
+  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv"
 else
   : >"$TMP/baseline.tsv"
 fi

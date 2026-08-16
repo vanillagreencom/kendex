@@ -5,7 +5,7 @@ cli/src/commands/refresh.rs	1622
 cli/src/commands/refresh/tests.rs	2089
 cli/src/commands/report.rs	1872
 cli/src/config.rs	3895
-cli/src/installer.rs	3784
+cli/src/installer.rs	3819
 cli/src/pi_extension.rs	2857
 cli/src/project_config.rs	4892
 cli/src/refresh_sources.rs	2021

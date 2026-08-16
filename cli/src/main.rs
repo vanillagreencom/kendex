@@ -7,6 +7,7 @@ mod config;
 mod extra;
 mod frontmatter;
 mod ghostty_apply;
+mod git_hooks;
 mod harness;
 mod hook;
 mod installer;

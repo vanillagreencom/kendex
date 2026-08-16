@@ -1,6 +1,6 @@
 ---
 name: growth-guards
-description: "Four repo growth guards beside size-ratchet: todo-ban (flat ban on work markers — the TODO/FIXME/HACK/XXX comment shapes — in first-party tracked files), byte-ceiling (newly added files over N KB fail, default 200; lockfiles and declared asset trees exempt), suppression-ban (blanket lint suppressions fail flat; bare rust allow(dead_code)/allow(unused) attributes ratchet against a tighten-only baseline), and commit-msg (conventional-commit gate that accepts uppercase issue keys and git-generated messages). Load when adding, tuning, or debugging any of these checks, their exclusion lists, the suppression baseline, or GROWTH_GUARDS_* settings — or when a change trips one of them."
+description: "Four repo growth guards beside size-ratchet: todo-ban (flat ban on work markers — the TODO/FIXME/HACK/XXX comment shapes — in first-party tracked files), byte-ceiling (newly added files over N KB fail, default 200; lockfiles and declared asset trees exempt), suppression-ban (blanket lint suppressions fail flat; bare rust allow(dead_code)/allow(unused) attributes ratchet against a tighten-only baseline), and commit-msg (conventional-commit gate that accepts uppercase issue keys and git-generated messages). Also installs the real git pre-commit/commit-msg shims that run the chain for every tool that commits. Load when adding, tuning, or debugging any of these checks, the git hook shims, their exclusion lists, the suppression baseline, or GROWTH_GUARDS_* settings — or when a change trips one of them."
 license: MIT
 user-invocable: true
 metadata:
@@ -23,11 +23,38 @@ rows carry their reasons) and the same exit contract.
 ```bash
 .agents/skills/growth-guards/scripts/growth-guards              # batch: every enabled repo check
 .agents/skills/growth-guards/scripts/growth-guards todo-ban     # one check by name, flags pass through
-.agents/skills/growth-guards/scripts/commit-msg "$1"            # the commit-msg hook line
+.agents/skills/growth-guards/scripts/install-git-hooks          # arm the git pre-commit/commit-msg shims
 ```
 
-Every check is also independently invocable as `scripts/CHECK` — wire
-pre-commit shims and CI at whichever grain fits.
+Every check is also independently invocable as `scripts/CHECK` — wire CI at
+whichever grain fits.
+
+## Git hooks
+
+`scripts/install-git-hooks [--repo PATH]` writes real `.git/hooks` shims, so
+the chain fires for every tool that commits — any agent harness, an editor, a
+script, a plain shell. `vstack add` and `vstack refresh` run it for a project
+that has this skill installed, and `vstack remove growth-guards` runs
+`--uninstall` before the files go; a non-git project is skipped with a note.
+
+- `pre-commit` runs `scripts/pre-commit`: `size-ratchet --staged` when that
+  skill is installed beside this one, the batch over staged content, then the
+  repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`
+  (empty = none).
+- `commit-msg` runs `scripts/commit-msg` on git's message file.
+- The shims BLOCK and fail closed on the family's exit contract: `1` for a
+  violation with its remediation, `2` for a guard that could not run, naming
+  what is missing. `git commit --no-verify` is the deliberate bypass.
+- The line goes first in the hook, not last: content ending in an explicit
+  `exit` would leave an appended guard unreachable.
+- `core.hooksPath` is never set — it would redirect every hook and disable the
+  repository's existing ones. Where a repo already sets it, the install is a
+  reported skip.
+- Existing hooks keep their content and exit status; the install is a no-op
+  only when the exact delegating line is present, and repairs a tampered or
+  stale one and a cleared executable bit. Removal keeps and retargets the
+  shims while another work tree on the same hooks directory still has a
+  separate install. Full behaviour: [README.md](README.md).
 
 ## The checks
 
@@ -67,6 +94,7 @@ fall-through to the next layer. `/dev/null` forces the built-in defaults.
 | `GROWTH_GUARDS_SUPPRESSION_EXCLUDES` | `tools/suppression-ban-excludes` | suppression-ban exclusion list. |
 | `GROWTH_GUARDS_SUPPRESSION_BASELINE` | `tools/suppression-baseline.tsv` | Bare-allow ratchet baseline. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
+| `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 
 **Excludes format** — `pattern<TAB>reason` per line (shell glob against the
 full repo-relative path; `*` crosses `/`); blank lines and `#` comments are
@@ -77,4 +105,4 @@ positive counts; the only way a number goes up is a human editing the row
 in a reviewed diff.
 
 Marker shapes, per-language suppression patterns, seeding a first baseline,
-and hook/CI wiring: [README.md](README.md).
+and CI wiring: [README.md](README.md).
