@@ -376,6 +376,12 @@ volatile_note() {
     # request may stand between a queued/armed PR and its exit 75. When
     # nothing local names it the placeholder keeps the shape and says so.
     if [ -z "$repo" ]; then
+        # gh's configured default (`gh repo set-default`) is stored as
+        # remote.<name>.gh-resolved: an OWNER/REPO value names the repository
+        # gh operates on when origin is a fork; "base" means origin itself.
+        repo="$(git config --get-regexp '^remote\..*\.gh-resolved$' 2>/dev/null | awk 'NF == 2 && $2 != "base" { print $2; exit }' || true)"
+    fi
+    if [ -z "$repo" ]; then
         remote="$(git config --get remote.origin.url 2>/dev/null || true)"
         case "$remote" in
             *github.com[:/]*/*)
@@ -385,6 +391,10 @@ volatile_note() {
                 ;;
         esac
     fi
+    # Only an OWNER/REPO-shaped value is printed into a pasteable command.
+    case "$repo" in
+        */*/* | */ | /* | "" | *[!A-Za-z0-9._/-]*) repo="" ;;
+    esac
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; keep watching until MERGED" >&2
     echo "  Watch, re-running until MERGED (neither call is durable — queue-wait exits at its poll budget, pr-watch.sh is one pass), with the orch and review-gate skills installed: .agents/skills/orch/scripts/queue-wait $pr_num (re-arm on ejected/disarmed/not_queued after repairing what the cause names — a failed merge-group/check is a CI repair first; dequeued = triage the late findings first; closed/unknown = stop) or GH_REPO=${repo:-<owner/repo — repository read failed>} .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines); re-arm with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
 }

@@ -50,7 +50,11 @@ assert_matches "$script_src" 'GH_REPO=\$\{repo:-<owner/repo — repository read 
   "the note names the pr-watch reducer by its runnable path, with the GH_REPO it requires (failure named, never a bare placeholder)"
 assert_matches "$script_src" 'remote\.origin\.url' \
   "the repository is resolved locally (origin remote), never by a network read on the exit path"
-if grep -qE 'gh(_with_token[^\n]*)? repo view' <<<"$(sed -n '/^volatile_note() {/,/^}/p' "$PR_MERGE")"; then
+assert_matches "$script_src" 'gh-resolved' \
+  "gh's configured default repository (a fork's upstream) wins over origin"
+assert_matches "$script_src" '\*\[!A-Za-z0-9\._/-\]\*\) repo=""' \
+  "only an OWNER/REPO-shaped value is printed into the pasteable command"
+if grep -qE 'repo view|gh api|gh pr' <<<"$(sed -n '/^volatile_note() {/,/^}/p' "$PR_MERGE")"; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "volatile_note makes no gh request"
 else
   PASS=$((PASS + 1)); printf '  ok    %s\n' "volatile_note makes no gh request"
