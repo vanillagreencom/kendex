@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- second-opinion settings example: the `SECOND_OPINION_CURRENT_MODEL` block
+  announced "three cases, and only the third makes a project file usable at
+  all" over a list of two, neither of which does — and no case does, since a
+  project-file value is refused wherever it would matter. `vstack refresh`
+  copies the file verbatim, so every consuming repo carried the contradiction
+  and flagged it as drift. Both copies (the skill's template and the root
+  `vstack.settings.toml.example` the README points at) now state the rule
+  itself — a project file is read by every session in the repo, so a value in
+  one describes no single session — with no count and no positional reference
+  to maintain.
+
 - orch: `oversee-watch` gains `usage-limit` (the harness is still running but
   its account's limit banner is up — one pass, ahead of `question`, naming the
   config dir when a live lane claim covers the pane it read) and

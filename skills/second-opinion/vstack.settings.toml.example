@@ -28,17 +28,17 @@ SECOND_OPINION_COUNT = "1"
 # cross-model.
 #
 # SESSION-SCOPED — leave it COMMENTED here and export it in the environment of
-# the sessions that need it. Three cases, and only the third makes a project
-# file usable at all:
-#   * A DETECTED Claude Code or Codex session already knows its model. A value
-#     that AGREES is ignored (it adds nothing); one that CONTRADICTS is refused
-#     naming both values — whatever its source, since an exported value is
-#     inherited by every nested session and so is no more trustworthy there.
+# the sessions that need it. A project file (.env, vstack.settings.toml,
+# .vstack/settings.toml, .env.local) is read by EVERY session in the repo, so a
+# value in one describes no single session:
 #   * Where the harness CANNOT be detected (Pi, OpenCode, Cursor, a plain
-#     shell) the declaration is the only identity there is — but every project
-#     file (.env, vstack.settings.toml, .vstack/settings.toml, .env.local) is
-#     read by EVERY session in the repo, so a value in one describes no single
-#     session and is refused naming the file. Export it in the session instead.
+#     shell) the declaration is the only identity there is, and one from a
+#     project file is refused naming the file. Export it in the session.
+#   * A DETECTED Claude Code or Codex session already knows its model and
+#     outranks any declaration: one that AGREES is ignored (it adds nothing),
+#     one that CONTRADICTS is refused naming both values — whatever its source,
+#     since an exported value is inherited by every nested session and so is no
+#     more trustworthy there.
 # SECOND_OPINION_CURRENT_MODEL = "claude"
 
 # Used by: second-opinion. Roster entry claude (identity claude).
