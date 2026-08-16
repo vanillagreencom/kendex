@@ -2698,9 +2698,9 @@ fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
 /// unchanged config is never rewritten (no needless working-tree churn).
 /// The written text always ends in a newline: a file that lost its
 /// terminator is repaired by the first pass that reads it, and every later
-/// pass sees identical content and skips the write. A failed write is
-/// reported, never swallowed — the caller's update would otherwise vanish
-/// behind a successful exit.
+/// pass sees identical content and skips the write. A failed write prints a
+/// warning to stderr; the command still exits successfully, so that warning
+/// is the only signal.
 fn write_if_changed(path: &Path, mut out: String, existing: &str) {
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
