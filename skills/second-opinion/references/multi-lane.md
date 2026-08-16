@@ -64,7 +64,7 @@ key: for the same slot the stricter class wins.
 | `verdict` | `action_required` when the merged blockers are non-empty, else `pass` |
 | `summary` | Each lane's own summary, lane-labelled |
 | `qa_metadata.union` | Always `true` for a union artifact |
-| `qa_metadata.coverage` | `full` when every lane answered, `degraded` otherwise |
+| `qa_metadata.coverage` | `full` only when every selected lane answered AND as many lanes were selected as `SECOND_OPINION_COUNT` requested; `degraded` for either shortfall (see `requested_count` / `selected_count`) |
 | `qa_metadata.lanes` | One entry per lane: the answering lanes with their agent, verdict and finding counts, then the failed ones with `status: "failed"` and their exit code |
 | `qa_metadata.dedupe` | Findings in and out, per class |
 | `qa_metadata.reviewed_head` | The scope-derivation pin |

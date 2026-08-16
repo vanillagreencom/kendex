@@ -27,11 +27,13 @@ SECOND_OPINION_COUNT = "1"
 # there is no session model (CI, a plain terminal): every roster entry is then
 # cross-model.
 #
-# SESSION-SCOPED — leave it commented here and export it in the environment of
-# the sessions that need it. This file is read by EVERY session in the repo, so
-# a value set for a Pi session also reaches Claude Code and Codex sessions,
-# where it would outrank the detection that was already correct. A value from
-# this file that contradicts a detected claude/codex session is refused.
+# SESSION-SCOPED — leave it COMMENTED here and export it in the environment of
+# the sessions that need it. Every project file (.env, vstack.settings.toml,
+# .vstack/settings.toml, .env.local) is read by EVERY session in the repo, so a
+# value in one is not a declaration for any single session: a value set for Pi
+# also reaches Claude Code and Codex sessions. The run refuses a value that
+# came from a project file, naming the file — whether it contradicts a detected
+# claude/codex session or fronts a harness detection cannot check it against.
 # SECOND_OPINION_CURRENT_MODEL = "claude"
 
 # Used by: second-opinion. Roster entry claude (identity claude).

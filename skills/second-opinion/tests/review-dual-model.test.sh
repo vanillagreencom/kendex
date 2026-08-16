@@ -626,6 +626,18 @@ run_multi "$TMP_ROOT/out22.json" SECOND_OPINION_COUNT=0 || rc22=$?
 assert_eq "$rc22" "1" "COUNT=0 exits 1"
 grep -q "must be a positive integer" "$TMP_ROOT/last.stderr" || fail "COUNT=0 is not diagnosed"
 assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "COUNT=0 invokes no CLI"
+# ...and only where it is consulted: quick never reads a count, so a bad value
+# must not fail an invocation it has no bearing on
+reset_counts
+rc22b=0
+set +e
+env SECOND_OPINION_COUNT=0 SECOND_OPINION_MODELS="codex claude" \
+  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+  "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" >/dev/null 2>"$TMP_ROOT/last.stderr"
+rc22b=$?
+set -e
+assert_eq "$rc22b" "0" "COUNT=0 does not fail quick, which never reads it"
+assert_eq "$(count lane-codex)" "1" "quick still dispatches with an invalid COUNT"
 
 echo "=== scenario 23: a shortfall against the requested count is recorded, not implied away ==="
 reset_counts
@@ -977,15 +989,7 @@ if $ANCESTOR_VISIBLE; then
   run_s33 claude SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33b=$?
   assert_eq "$rc33b" "1" "a project-file none in a detected claude session exits 1"
   assert_eq "$(count lane-claude)" "0" "a project-file none never makes the session's own model eligible"
-  # control 1: the same project value in a session the script CANNOT detect is
-  # exactly what the key is for, and is honoured
-  reset_counts
-  write_s33_settings codex
-  rc33c=0
-  run_s33 pi SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33c=$?
-  assert_eq "$rc33c" "0" "control: the project value is honoured in an undetectable session"
-  assert_eq "$(count lane-claude)" "1" "control: a Pi-on-codex session gets claude"
-  assert_eq "$(count lane-codex)" "0" "control: a Pi-on-codex session never gets codex"
+  # (an undetectable session with a project-sourced value is scenario 33b)
   # control 2: the SESSION's own environment still outranks detection
   reset_counts
   write_s33_settings codex
@@ -1008,6 +1012,68 @@ if $ANCESTOR_VISIBLE; then
   run_s33 claude SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33e=$?
   assert_eq "$rc33e" "0" "control: a project value agreeing with detection proceeds"
   assert_eq "$(count lane-codex)" "1" "control: the agreeing session still gets the cross-model target"
+  # the mirrored detected harness: the codex arm of the cross-check is its own
+  # case and would otherwise be unpinned by a suite that only ever runs claude
+  reset_counts
+  rm -f "$TMP_ROOT/out33.json"
+  write_s33_settings claude
+  rc33f=0
+  run_s33 codex SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33f=$?
+  assert_eq "$rc33f" "1" "project-file identity contradicting a detected codex session exits 1"
+  assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "the codex-side contradiction invokes no CLI"
+  assert_file_absent "$TMP_ROOT/out33.json" "the codex-side contradiction writes no artifact"
+  grep -q "detected codex harness" "$TMP_ROOT/last.stderr" || fail "the refusal does not name the detected codex harness"
+
+  # A harness detection CANNOT arbitrate is the case the key exists for — and
+  # the case where a stale project value has nothing to check it against, so
+  # believing it is a silent same-model review with no detection to catch it.
+  echo "=== scenario 33b: a project-sourced identity is refused in an undetectable session too ==="
+  for s33_h in pi cursor-agent; do
+    reset_counts
+    rm -f "$TMP_ROOT/out33.json"
+    write_s33_settings codex
+    rc33g=0
+    run_s33 "$s33_h" SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33g=$?
+    assert_eq "$rc33g" "1" "($s33_h) a project-sourced identity exits 1"
+    assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "($s33_h) a project-sourced identity invokes no CLI"
+    assert_file_absent "$TMP_ROOT/out33.json" "($s33_h) a project-sourced identity writes no artifact"
+    grep -q "comes from project settings" "$TMP_ROOT/last.stderr" \
+      || fail "($s33_h) the refusal does not say the value came from project settings"
+    grep -q "$s33_proj/vstack.settings.toml" "$TMP_ROOT/last.stderr" \
+      || fail "($s33_h) the refusal does not name the file the value came from"
+  done
+  # control: the SAME value exported in the session's own environment is a real
+  # declaration for that session and is honoured
+  reset_counts
+  write_s33_settings codex
+  rc33h=0
+  set +e
+  env SECOND_OPINION_CURRENT_MODEL=codex \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+    SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+    SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 \
+    "$TMP_ROOT/fake/pi" "$S33" review --range HEAD --cwd "$WORK" \
+    --output "$TMP_ROOT/out33.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
+  rc33h=$?
+  set -e
+  assert_eq "$rc33h" "0" "control: a session-exported identity is honoured in a Pi session"
+  assert_eq "$(count lane-claude)" "1" "control: the Pi-on-codex session gets claude"
+  assert_eq "$(count lane-codex)" "0" "control: the Pi-on-codex session never gets codex"
+  # every project source is covered, not just the settings file
+  for s33_file in .env .env.local .vstack/settings.toml; do
+    reset_counts
+    rm -f "$s33_proj/vstack.settings.toml"
+    mkdir -p "$s33_proj/.vstack"
+    case "$s33_file" in
+      *.toml) printf '[env]\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' > "$s33_proj/$s33_file" ;;
+      *)      printf 'export SECOND_OPINION_CURRENT_MODEL=codex\n' > "$s33_proj/$s33_file" ;;
+    esac
+    rc33i=0
+    run_s33 pi SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33i=$?
+    assert_eq "$rc33i" "1" "($s33_file) a project-sourced identity exits 1"
+    grep -q "$s33_proj/$s33_file" "$TMP_ROOT/last.stderr" || fail "($s33_file) the refusal does not name this file"
+    rm -f "$s33_proj/$s33_file"
+  done
 else
   echo "  skip  scenario 33: ps hides script ancestors on this platform"
 fi
@@ -1058,6 +1124,27 @@ reset_counts
 run_multi "$TMP_ROOT/out35b.json" SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude" || true
 grep -q "skipped for availability" "$TMP_ROOT/last.stderr" && fail "an identity refusal wrongly blames availability"
 grep -q "runs the same model as this session" "$TMP_ROOT/last.stderr" || fail "the identity refusal lost its own reason"
+# mixed causes: one candidate excluded for identity, the other unavailable. The
+# availability-only line would be wrong here — the roster DID lose a candidate
+# to identity — so both skip reasons must stand on their own with no verdict on
+# top. This is the case the `! $SKIPPED_SAME_MODEL` conjunct exists for.
+reset_counts
+rc35c=0
+set +e
+env SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
+  SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/no-such-cli-codex" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$TMP_ROOT/out35c.json" \
+  >/dev/null 2>"$TMP_ROOT/last.stderr"
+rc35c=$?
+set -e
+assert_eq "$rc35c" "1" "a mixed-cause roster exits 1"
+assert_eq "$(count lane-claude)" "0" "a mixed-cause refusal invokes no CLI"
+grep -q "runs the same model as this session" "$TMP_ROOT/last.stderr" || fail "the mixed-cause refusal lost the identity skip"
+grep -q "CLI not found" "$TMP_ROOT/last.stderr" || fail "the mixed-cause refusal lost the availability skip"
+grep -q "skipped for availability, not identity" "$TMP_ROOT/last.stderr" \
+  && fail "a mixed-cause refusal wrongly claims availability was the only cause" \
+  || pass "a mixed-cause refusal does not claim availability was the only cause"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

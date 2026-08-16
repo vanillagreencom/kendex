@@ -98,7 +98,7 @@ External review runs automatically alongside the internal panel when available, 
 
 A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anything else sets it `true` with that output as `EXTERNAL_TARGET`.
 
-Output of `none` is a settings gap, not a missing skill: stderr carries a JSON object whose `candidates` name each reason. Tell the user once — `External review skipped — [REASON]. Fix in vstack.settings.toml [env]: SECOND_OPINION_CURRENT_MODEL / SECOND_OPINION_MODELS` — then continue.
+Output of `none` is a settings gap, not a missing skill: stderr carries a JSON object whose `candidates` name each reason. Tell the user once — `External review skipped — [REASON]. Fix: export SECOND_OPINION_CURRENT_MODEL in this session (it is session-scoped, never committed to project settings), or set SECOND_OPINION_MODELS / SECOND_OPINION_<NAME>_CMD in vstack.settings.toml [env]` — then continue.
 
 ### 2.2 Launch And Delegate
 

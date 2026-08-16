@@ -149,16 +149,25 @@ it as <output>.<target>.json. A failed lane is recorded in the artifact
 (qa_metadata.coverage="degraded"); when every lane fails there is no artifact
 and the run exits 4/5.
 
-Environment (set in vstack.settings.toml [env] or .env.local):
+Environment. Every key below belongs in vstack.settings.toml [env] (or
+.env.local) EXCEPT SECOND_OPINION_CURRENT_MODEL, which is session-scoped —
+export it in the environment of the session that needs it:
   SECOND_OPINION_MODELS      Priority-ordered target roster, space/comma
-                             separated (default: "claude codex")
+                             separated (default: "claude codex"); set empty and
+                             the run refuses rather than using the default
   SECOND_OPINION_COUNT       Opinions to collect in review mode (default: 1)
   SECOND_OPINION_CURRENT_MODEL
                              Model identity of THIS session; overrides harness
                              detection. Required in a multi-model front end
                              (Pi, OpenCode, Cursor) or an undetected shell —
                              refused until set; "none" = no session model.
-                             Model ids normalize (opus -> claude, gpt-* -> codex)
+                             Model ids normalize, provider prefix included
+                             (opus, anthropic/claude-* -> claude; gpt-*,
+                             openai-codex/gpt-* -> codex).
+                             EXPORT IT IN THE SESSION, do not commit it to a
+                             project settings file: those are read by every
+                             session in the repo, so a value from one is not a
+                             declaration for any of them and is refused
   SECOND_OPINION_<NAME>_MODEL
                              Model identity of target <NAME> (default: <NAME>)
   SECOND_OPINION_<NAME>_CMD  Full command for target <NAME> (name uppercased,
@@ -413,21 +422,48 @@ canon_identity() {
 
 CURRENT_HARNESS=""
 CURRENT_MODEL=""
-# Whether the identity was DECLARED (SECOND_OPINION_CURRENT_MODEL) rather than
-# detected. Only a declared value can carry a typo, so only a declared value is
-# held to the roster-spelling check.
-CURRENT_MODEL_DECLARED=false
+# Where the identity came from — the whole basis for how far it is trusted:
+#   session   declared in the CALLER's own environment. Set for THIS session,
+#             so it is authoritative and never second-guessed.
+#   project   declared in a project settings file. Set for the REPO: it reaches
+#             every session run there, so it is not a statement about any one of
+#             them (see the refusal rules below).
+#   detected  no declaration; the model the detected harness is known to run.
+#   ""        no identity at all.
+# Only a declared value can carry a typo, so only a declared value is held to
+# the roster-spelling check.
+CURRENT_MODEL_SOURCE=""
 resolve_current_model() {
   CURRENT_HARNESS=$(detect_current_harness)
   if [[ -n "${SECOND_OPINION_CURRENT_MODEL:-}" ]]; then
     CURRENT_MODEL=$(canon_identity "$SECOND_OPINION_CURRENT_MODEL")
-    CURRENT_MODEL_DECLARED=true
+    if $CURRENT_MODEL_IS_SESSION_SCOPED; then
+      CURRENT_MODEL_SOURCE="session"
+    else
+      CURRENT_MODEL_SOURCE="project"
+    fi
     return
   fi
   case "$CURRENT_HARNESS" in
-    claude|codex) CURRENT_MODEL="$CURRENT_HARNESS" ;;
+    claude|codex) CURRENT_MODEL="$CURRENT_HARNESS"; CURRENT_MODEL_SOURCE="detected" ;;
     *) CURRENT_MODEL="" ;;
   esac
+}
+
+# The project settings file(s) that define SECOND_OPINION_CURRENT_MODEL, for the
+# refusal message — an operator cannot remove a value whose file they were not
+# told. Same set vstack_load_project_env reads, in its load order. Only ever
+# called on a refusal path.
+declaring_project_files() {
+  local f found=""
+  for f in "$PROJECT_ROOT/.env" "$PROJECT_ROOT/vstack.settings.toml" \
+           "$PROJECT_ROOT/.vstack/settings.toml" "$PROJECT_ROOT/.env.local"; do
+    [[ -f "$f" ]] || continue
+    if grep -Eq '^[[:space:]]*(export[[:space:]]+)?SECOND_OPINION_CURRENT_MODEL[[:space:]]*=' "$f" 2>/dev/null; then
+      found="${found:+$found, }$f"
+    fi
+  done
+  printf '%s' "$found"
 }
 
 # Env var naming for a target's settings: name uppercased, hyphens as
@@ -495,10 +531,15 @@ target_available() {
 [[ -n "${SECOND_OPINION_REVIEW_TARGETS:-}" ]] \
   && echo "→ SECOND_OPINION_REVIEW_TARGETS is not read; the roster is SECOND_OPINION_MODELS" >&2
 
+# Validated only where it is consulted. review/detect are the modes that read a
+# count; failing challenge or quick over a value they never look at rejects a
+# working invocation for a setting that has no bearing on it.
 COUNT="${SECOND_OPINION_COUNT:-1}"
-[[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "Error: SECOND_OPINION_COUNT must be a positive integer" >&2; exit 1; }
 WANT=1
-[[ "$MODE" == "review" || "$MODE" == "detect" ]] && WANT="$COUNT"
+if [[ "$MODE" == "review" || "$MODE" == "detect" ]]; then
+  [[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "Error: SECOND_OPINION_COUNT must be a positive integer" >&2; exit 1; }
+  WANT="$COUNT"
+fi
 
 resolve_current_model
 
@@ -582,30 +623,50 @@ walk_roster() {
 # trusted while the identity that excludes from it is not trustworthy.
 SESSION_REFUSED=false
 
+# --- Is this session's identity usable? ---------------------------------------
+# One rule, applied the same way to every harness: a declaration is a statement
+# about THIS SESSION only when it arrives in the session's own environment. A
+# project settings file is read by every session in the repo, so its value is a
+# statement about the repo — and cannot be a declaration for any one session in
+# it. What that means per harness:
+#
+#   claude/codex   detection already knows the model. A project value that
+#                  agrees changes nothing; one that contradicts is refused,
+#                  because trusting it would mark this session's own model
+#                  cross-model with no skip line and no degraded stamp.
+#   pi/opencode/   detection CANNOT arbitrate — these front a selectable model,
+#   cursor/unknown which is exactly why the key exists. A project value here has
+#                  nothing to check it against, so a stale or committed one is
+#                  believed outright: the same silent same-model review, with no
+#                  detection to catch it. Refused, naming the file it came from.
+#
+# The reason is computed first and acted on once, because the agreeing
+# claude/codex case must fall through to normal selection rather than refuse.
+SESSION_SKIP_REASON=""
+SESSION_DECLARING_FILES=""
+[[ "$CURRENT_MODEL_SOURCE" != "project" ]] || SESSION_DECLARING_FILES="$(declaring_project_files)"
 if [[ -z "$CURRENT_MODEL" ]]; then
   # No identity to compare against: no target can be shown to be a different
-  # model, so none is taken. The refusal below carries the one reason.
-  SESSION_REFUSED=true
+  # model, so none can be taken.
   if [[ "$CURRENT_HARNESS" == "unknown" ]]; then
-    skip_target "session" "harness not detected and model undeclared — set SECOND_OPINION_CURRENT_MODEL to the model this session runs, or to none when there is no session model (CI, plain terminal)"
+    SESSION_SKIP_REASON="harness not detected and model undeclared — set SECOND_OPINION_CURRENT_MODEL to the model this session runs, or to none when there is no session model (CI, plain terminal)"
   else
-    skip_target "session" "model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
+    SESSION_SKIP_REASON="model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
   fi
-elif $CURRENT_MODEL_DECLARED && ! $CURRENT_MODEL_IS_SESSION_SCOPED \
-     && [[ "$CURRENT_HARNESS" == "claude" || "$CURRENT_HARNESS" == "codex" ]] \
-     && [[ "$CURRENT_MODEL" != "$CURRENT_HARNESS" ]]; then
-  # A repo-scoped declaration that contradicts a POSITIVELY DETECTED
-  # single-model harness. The project file is read by every session in the repo,
-  # so a value set to make Pi or OpenCode work arrives in Claude Code and Codex
-  # sessions too — where it outranks the detection that was already correct and
-  # silently marks this session's own model as cross-model. That is the exact
-  # failure this whole guarantee exists to prevent, and it would leave no skip
-  # line and no degraded stamp behind, so it refuses rather than picking a
-  # winner. A value in the session's own environment is not second-guessed:
-  # that one was set for this session.
-  SESSION_REFUSED=true
-  skip_target "session" "project settings declare model $CURRENT_MODEL but this session is a detected $CURRENT_HARNESS harness — SECOND_OPINION_CURRENT_MODEL is session-scoped and cannot be right for every session in one repo; remove it from vstack.settings.toml / .env.local and set it in the environment of the sessions that need it (Pi, OpenCode, Cursor)"
-elif $CURRENT_MODEL_DECLARED && [[ "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then
+elif [[ "$CURRENT_MODEL_SOURCE" == "project" ]]; then
+  case "$CURRENT_HARNESS" in
+    claude|codex)
+      if [[ "$CURRENT_MODEL" != "$CURRENT_HARNESS" ]]; then
+        SESSION_SKIP_REASON="project settings declare model $CURRENT_MODEL but this session is a detected $CURRENT_HARNESS harness${SESSION_DECLARING_FILES:+ (declared in $SESSION_DECLARING_FILES)} — SECOND_OPINION_CURRENT_MODEL is session-scoped and cannot be right for every session in one repo; remove it there and export it in the environment of the sessions that need it (Pi, OpenCode, Cursor)"
+      fi
+      ;;
+    *)
+      SESSION_SKIP_REASON="model $CURRENT_MODEL comes from project settings${SESSION_DECLARING_FILES:+ ($SESSION_DECLARING_FILES)}, not from this session, and $CURRENT_HARNESS fronts a selectable model that detection cannot check it against — remove it there and export SECOND_OPINION_CURRENT_MODEL in this session's environment"
+      ;;
+  esac
+fi
+if [[ -z "$SESSION_SKIP_REASON" && "$CURRENT_MODEL_SOURCE" != "detected" \
+      && -n "$CURRENT_MODEL" && "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then
   # A DECLARED identity the roster does not spell excludes nothing, which is
   # what a typo in SECOND_OPINION_CURRENT_MODEL looks like — and what a session
   # running a model the roster does not know looks like. Either way the operator
@@ -622,8 +683,12 @@ elif $CURRENT_MODEL_DECLARED && [[ "$CURRENT_MODEL" != "none" ]] && ! roster_has
   # identity and a --target naming the very model that identity misspells is
   # exactly the case the guard exists for, and a force must not be the way past
   # it. Nothing has been selected at this point, so there is nothing to undo.
+  SESSION_SKIP_REASON="model $CURRENT_MODEL matches no roster identity — add it to SECOND_OPINION_MODELS (a command is optional) or fix SECOND_OPINION_CURRENT_MODEL; none declares that this session has no model"
+fi
+
+if [[ -n "$SESSION_SKIP_REASON" ]]; then
   SESSION_REFUSED=true
-  skip_target "session" "model $CURRENT_MODEL matches no roster identity — add it to SECOND_OPINION_MODELS (a command is optional) or fix SECOND_OPINION_CURRENT_MODEL; none declares that this session has no model"
+  skip_target "session" "$SESSION_SKIP_REASON"
 elif [[ -n "$FORCED_TARGET" ]]; then
   # A force asks for exactly one opinion.
   WANT=1

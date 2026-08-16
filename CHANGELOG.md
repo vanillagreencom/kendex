@@ -167,25 +167,33 @@
   are told to continue past its non-zero exits. `--help` and `detect` are
   excluded; neither writes anything. Reusing one `--output` path across runs is
   now safe, and pointing `--output` at a file you want to keep is not.
-- second-opinion: `SECOND_OPINION_CURRENT_MODEL` is SESSION-scoped. A value
-  reaching a run from shared project settings (`vstack.settings.toml`,
-  `.env.local`) that contradicts a positively detected `claude` or `codex`
-  session is refused naming both values, rather than overriding detection that
-  was already correct — a repo-wide declaration set to make Pi or OpenCode work
-  otherwise arrives in every session in the repo and silently marks that
-  session's own model cross-model. Export it per session instead; a value in
-  the session's own environment is still authoritative. Model ids also
-  canonicalize with their provider prefix (`openai-codex/gpt-5.6-sol` → codex,
-  `anthropic/claude-opus-4` → claude). The roster-spelling refusal applies only
-  to DECLARED identities: a detected identity the roster does not name excludes
-  nothing, so `SECOND_OPINION_MODELS` may name only the cross-model target.
+- second-opinion: `SECOND_OPINION_CURRENT_MODEL` is SESSION-scoped and must be
+  exported in the environment of the session that needs it. **A value reaching
+  a run from any project file — `.env`, `vstack.settings.toml`,
+  `.vstack/settings.toml`, `.env.local` — is refused, naming the file**: those
+  are read by every session in the repo, so a value in one is not a declaration
+  about any single session. A declaration set to make Pi or OpenCode work
+  otherwise arrives in Claude Code and Codex sessions too (where it outranks
+  detection that was already correct) and in other Pi sessions running a
+  different model (where nothing can catch it) — either way a silent same-model
+  review. The one exemption is a project value that agrees with a positively
+  detected `claude`/`codex` harness: it changes nothing and is simply not used.
+  Migration: move the key out of your settings file and into the session.
+  Model ids also canonicalize with their provider prefix
+  (`openai-codex/gpt-5.6-sol` → codex, `anthropic/claude-opus-4` → claude). The
+  roster-spelling refusal applies only to DECLARED identities: a detected
+  identity the roster does not name excludes nothing, so `SECOND_OPINION_MODELS`
+  may name only the cross-model target. Set that roster to the empty string and
+  the run refuses instead of falling back to the default targets.
+  `SECOND_OPINION_COUNT` is validated only in the modes that read it
+  (`review`, `detect`).
 - second-opinion: `SECOND_OPINION_ARTIFACT_DIR` accepts `~/…` (expanded via
   `$HOME`, like `WORKTREE_BASE_DIR`) alongside relative and absolute paths, and
   a relative home the run CREATES is seeded with a `*` `.gitignore` so records
-  never dirty the reviewed working tree. Pre-existing directories are never
-  touched — point the setting at an existing tracked directory and nothing is
-  written to it. Set the roster to the empty string and the run refuses instead
-  of falling back to the default targets.
+  never dirty the reviewed working tree. A directory that already existed is
+  left as the operator arranged it: no `.gitignore` is seeded into it, so
+  records written there are visible to git — point the setting at a directory
+  you already ignore, or let the run create its own.
 - orch: `PR_REVIEW_QUORUM` — approval-wait's multi-bot enqueue gate. When a
   repo lists its reviewer logins, no success emits (either mode) until every
   listed login has a non-dismissed review pinned to the current head AND
