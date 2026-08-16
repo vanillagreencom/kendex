@@ -29,7 +29,7 @@ output, bot account support, configurable issue ID extraction.
 |---------|---------|
 | `pr-data <N> [--actionable]` | Get PR with threads, comments, files. `--actionable`: unresolved non-outdated only. |
 | `pr-view [N] [--json FIELDS]` | View PR details (wraps gh pr view with bounded auth/no-PR errors) |
-| `pr-threads <N> [--unresolved]` | Complete paginated thread list/count, outdated included. See *PR blocked with no visible conversations*. |
+| `pr-threads <N> [--unresolved\|--resolved] [--format=safe\|raw]` | Complete paginated thread list/count, outdated included. Both filters apply in both formats. See *PR blocked with no visible conversations*. |
 | `pr-list-ready [--all] [--format=safe\|table]` | List PRs ready for merge |
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
 | `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed; `--force` skips them. |
@@ -126,9 +126,16 @@ parsing stderr:
 | Exit | Meaning | Stderr line | When |
 |------|---------|-------------|------|
 | `0`  | MERGED | `MERGED PR #N` | Merge completed immediately |
+| `0`  | MERGED | `ALREADY MERGED PR #N <mergedAt>` | PR was merged before the call; nothing attempted |
 | `75` | MERGE PENDING | `QUEUED IN MERGE QUEUE PR #N` | A required GitHub merge queue has an active entry |
 | `75` | MERGE PENDING | `AUTO-MERGE ENABLED PR #N` | Classic auto-merge is armed until protection clears |
 | `1`  | BLOCKED | `BLOCKED PR #N` | Nothing merged, queued, or armed |
+| `1`  | BLOCKED | `CLOSED (not merged) PR #N` | PR is closed unmerged; nothing attempted |
+
+A PR that has left `OPEN` is terminal and short-circuits every mode before any
+check, auth, or mutation: `mergeable` is permanently `UNKNOWN` after a merge,
+and post-merge CI runs and bot comments are not merge blockers. `--check`
+reports the same through its `state` field rather than inventing issues.
 
 Merge state is mutated only against the exact resolved head, via
 `--match-head-commit`. Queue membership is then read with GraphQL, because
@@ -163,8 +170,12 @@ BLOCKED is classified on stderr as **transient** (mergeable UNKNOWN,
 Callers read the `transient` field from `--check`:
 
 ```json
-{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false}
+{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false, "state": "OPEN"}
 ```
+
+`state` is the PR's lifecycle state (`OPEN`, `MERGED`, `CLOSED`, `UNKNOWN`).
+`can_merge: false` with an empty `issues` array means the PR is terminal — read
+`state` before treating a refusal as a blocker to clear.
 
 `transient: true` means every blocking issue is recoverable by waiting
 (prefixes `unknown:`, `ci_pending:`, `ci_unconfigured:`, `ci_fetch_failed:`).

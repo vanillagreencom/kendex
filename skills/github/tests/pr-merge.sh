@@ -136,8 +136,11 @@ case "${1:-}" in
     pr)
         case "${2:-}" in
             view)
-                if [[ "$*" == *"--json title"* ]]; then
-                    echo '{"title":"Test PR"}'
+                if [[ "$*" == *"--json state,mergedAt"* ]]; then
+                    jq -cn \
+                        --arg state "${STUB_STATE:-OPEN}" \
+                        --arg merged_at "${STUB_MERGED_AT:-}" \
+                        '{state:$state,mergedAt:(if $merged_at == "" then null else $merged_at end)}'
                     exit 0
                 fi
                 if [[ "$*" == *"--json headRefName"* ]]; then

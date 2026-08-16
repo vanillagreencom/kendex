@@ -95,6 +95,14 @@
 - review-gate: an errored bot review object is treated as silence, not
   approval evidence — the gate stays awaiting (VST-253; fail-open observed
   live). New selftest cases with pre-fix controls.
+- github: thread and merge state are reported honestly (VST-269, VST-271) —
+  `pr-threads --unresolved`/`--resolved` filter `--format=raw` as well as
+  `safe`, and `pr-merge` short-circuits a PR that has left OPEN: an
+  already-merged PR exits 0 with `ALREADY MERGED PR #N <mergedAt>`, a closed
+  unmerged PR exits 1 with `CLOSED (not merged) PR #N`, and `--check` carries
+  the lifecycle state in a new `state` field instead of reporting the
+  permanently-UNKNOWN mergeable value, post-merge CI, and post-merge comment
+  threads as blockers.
 - cli: `vstack add` without `-y` in a non-TTY session fails with an
   actionable message instead of `os error 6`, and no longer repoints the
   global source registry on that failure (VST-255).

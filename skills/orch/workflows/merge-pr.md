@@ -50,6 +50,8 @@ High-severity findings (conflicts) abort early with the issues shown. Otherwise 
 
 ### 3.2 Act On The Result
 
+`CHECK.state` decides first: `MERGED` → the PR already landed, skip to § 5 step 2 for sync and cleanup; `CLOSED` → report that it was closed unmerged and stop. Neither is a blocker to clear, and both arrive with an empty `issues` array.
+
 `can_merge: true` → § 4, showing any warnings. `false` → show the issues with their suggested fixes and ask: `Skip` | `Fix and retry` | `Force merge`.
 
 Two warnings are merge gates, not advice:

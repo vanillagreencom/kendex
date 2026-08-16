@@ -4,8 +4,14 @@
 #
 # Outcomes (distinct exit codes + messages):
 #   0   MERGED                 — merge completed immediately
+#   0   ALREADY MERGED         — PR was already merged; nothing attempted
 #   75  QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active
 #   1   BLOCKED                — checks failed; no merge attempted, none queued
+#   1   CLOSED (not merged)    — PR is closed unmerged; nothing attempted
+#
+# A PR that has left OPEN is terminal and short-circuits before any check or
+# mutation: `mergeable` stays UNKNOWN forever once a PR is merged or closed, so
+# running the checks against it manufactures blockers that can never clear.
 #
 # Actionable unresolved review threads are a local hard gate: neither an
 # immediate merge nor `--auto` may mutate merge state while they remain. Only
@@ -70,9 +76,9 @@ Modes:
   --auto           Enable auto-merge when immediate merge is blocked
 
 Exit codes:
-  0    MERGED                 — merge completed immediately
+  0    MERGED / ALREADY MERGED — merge completed now, or the PR was already merged
   75   QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active
-  1    BLOCKED                — checks failed; nothing queued
+  1    BLOCKED / CLOSED        — checks failed or the PR is closed unmerged; nothing queued
 
 Examples:
   github.sh pr-merge 42 --check          # Check only, JSON output
@@ -82,20 +88,36 @@ Examples:
 EOF
 }
 
+# One authoritative read of the PR's lifecycle state. Also validates that the
+# PR exists — a bare number does not.
+pr_state_json() {
+    gh pr view "$1" --json state,mergedAt 2>/dev/null
+}
+
 # Run safety checks, output JSON
 # JSON shape:
 #   {can_merge, issues, warnings, mergeable, review,
-#    transient: bool}     # true when only TRANSIENT issues are blocking
+#    transient: bool,     # true when only TRANSIENT issues are blocking
+#    state}               # PR lifecycle state: OPEN, MERGED, CLOSED, UNKNOWN
 run_checks() {
     local pr_num="$1"
     local can_merge=true
     local issues=()
     local warnings=()
 
-    # Check PR exists first (use title - number alone doesn't validate)
-    if ! gh pr view "$pr_num" --json title >/dev/null 2>&1; then
-        jq -n '{can_merge: false, issues: ["not_found: PR #'"$pr_num"' not found"], warnings: [], mergeable: "UNKNOWN", review: "", transient: false}'
+    local state_json pr_state
+    if ! state_json=$(pr_state_json "$pr_num"); then
+        jq -n '{can_merge: false, issues: ["not_found: PR #'"$pr_num"' not found"], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN"}'
         return 0 # Return 0 so JSON is output, caller checks can_merge
+    fi
+    pr_state=$(jq -r '.state // "UNKNOWN"' <<<"$state_json")
+
+    # A terminal PR is unmergeable for a reason no caller can act on, and its
+    # check data is meaningless: `mergeable` is permanently UNKNOWN, post-merge
+    # CI runs and bot comments are not blockers. Report the state, no issues.
+    if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
+        jq -n --arg state "$pr_state" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state}'
+        return 0
     fi
 
     # 1. Check mergeable status
@@ -227,7 +249,8 @@ run_checks() {
         --arg mergeable "$mergeable" \
         --arg review "$review" \
         --argjson transient "$transient" \
-        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient}'
+        --arg state "$pr_state" \
+        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state}'
 }
 
 # Print BLOCKED breakdown to stderr, distinguishing transient vs permanent.
@@ -392,6 +415,32 @@ main() {
     if [ "$check_only" = true ]; then
         run_checks "$pr_num"
         exit 0
+    fi
+
+    # Terminal-state short-circuit, ahead of every mode's checks, auth, and
+    # mutation. Retrying a merge on a PR that already left OPEN can only
+    # produce false diagnostics, and there is nothing left to mutate.
+    # An unreadable state is not terminal — fall through to the normal path.
+    local terminal_state_json terminal_state
+    if terminal_state_json=$(pr_state_json "$pr_num"); then
+        terminal_state=$(jq -r '.state // ""' <<<"$terminal_state_json")
+        case "$terminal_state" in
+        MERGED)
+            local merged_at
+            merged_at=$(jq -r '.mergedAt // ""' <<<"$terminal_state_json")
+            if [ -n "$merged_at" ]; then
+                echo "ALREADY MERGED PR #$pr_num $merged_at" >&2
+            else
+                echo "ALREADY MERGED PR #$pr_num" >&2
+            fi
+            exit 0
+            ;;
+        CLOSED)
+            echo "CLOSED (not merged) PR #$pr_num — no merge attempted, none queued" >&2
+            echo "  Reopen the PR or supersede it; merge flags cannot act on a closed PR." >&2
+            exit 1
+            ;;
+        esac
     fi
 
     local token

@@ -231,22 +231,28 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String!) {
         }
     }') || exit 1
 
+    # Resolution filter is format-independent: a filter that applied to one
+    # output shape only would report resolved threads as still outstanding.
+    local jq_filter
+    if [ "$filter_unresolved" = "true" ]; then
+        jq_filter='select(.isResolved == false)'
+    elif [ "$filter_resolved" = "true" ]; then
+        jq_filter='select(.isResolved == true)'
+    else
+        jq_filter='.'
+    fi
+
     # Apply format and filters
     case "$FORMAT" in
         raw)
-            echo "$result"
+            # Filter the thread nodes in place. Raw callers walk the GitHub
+            # response shape, and it carries no count field to keep in sync.
+            echo "$result" | jq -c '
+                .repository.pullRequest.reviewThreads.nodes |= [.[] | '"$jq_filter"']
+            '
             ;;
         safe)
-            local jq_filter
-            if [ "$filter_unresolved" = "true" ]; then
-                jq_filter='select(.isResolved == false)'
-            elif [ "$filter_resolved" = "true" ]; then
-                jq_filter='select(.isResolved == true)'
-            else
-                jq_filter='.'
-            fi
-
-            echo "$result" | jq --arg filter "$jq_filter" '{
+            echo "$result" | jq '{
                 count: ([.repository.pullRequest.reviewThreads.nodes[] | '"$jq_filter"'] | length),
                 unresolved_count: ([.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length),
                 threads: [.repository.pullRequest.reviewThreads.nodes[] | '"$jq_filter"' | {
