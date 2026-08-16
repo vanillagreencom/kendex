@@ -111,6 +111,13 @@ jobs:
         if: matrix.shard == 'shell'
         run: bash tools/tests/validate-changed.test.sh
 
+      # The queue-side half of the size gate: the preflight job runs only on
+      # pull_request, so without this a merge group never re-checks the
+      # baseline against what it is about to merge.
+      - name: size-ratchet (tighten-only file-size gate)
+        if: matrix.shard == 'shell'
+        run: skills/size-ratchet/scripts/size-ratchet
+
       # Every skill must route problem reports through `vstack report`. The
       # ownership guard is a backstop for issues that bypassed it, so a skill
       # carrying only a `bugs:` URL sends agents to hand-file in this repo
