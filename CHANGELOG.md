@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- ci: `CHANGELOG.md` joins the size-ratchet excludes — an append-only log
+  grows every PR by design and its seam is release rotation, not a code
+  split; the gate was about to block every open PR at 1000 lines.
 - hooks: `block-unsafe-rm` scans harder shapes — backslash-escaped flags
   (`rm -\rf`), case-arm bodies (`x) rm -rf …;;`), and here-string targets
   classify correctly, and a PATH missing the text tools refuses up front on
