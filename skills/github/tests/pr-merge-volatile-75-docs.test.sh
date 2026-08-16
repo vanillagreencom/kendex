@@ -60,6 +60,8 @@ assert_matches "$script_src" 're-running until MERGED' \
   "the note says to re-run the watcher until MERGED"
 assert_matches "$table" 'queue-wait <N>' \
   "the outcomes section names queue-wait as the required follow-up"
+assert_matches "$table" 'github\.sh pr-merge <N> --auto' \
+  "the outcomes section names the re-arm by its installed entry point"
 assert_matches "$table" 'await-mergeable` is not that' \
   "the outcomes section states await-mergeable is not the ejection watcher"
 

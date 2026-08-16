@@ -140,8 +140,8 @@ merges nothing. The caller that armed it keeps watching until the PR is
 returns `ejected`/`disarmed` with its cause (or `queued` — run it again); the
 review-gate reducer `.agents/skills/review-gate/scripts/pr-watch.sh` is one
 pass that prints `disarmed … (re-arm)` lines. On a disarm, re-arm with
-`pr-merge <N> --auto`. `await-mergeable` is not that watcher — it returns as
-soon as GitHub computes a merge state.
+`.agents/skills/github/scripts/github.sh pr-merge <N> --auto`. `await-mergeable`
+is not that watcher — it returns as soon as GitHub computes a merge state.
 
 A PR that has left `OPEN` is terminal and short-circuits every mode before any
 check, auth, or mutation: `mergeable` is permanently `UNKNOWN` after a merge,
