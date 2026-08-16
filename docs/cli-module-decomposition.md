@@ -14,6 +14,12 @@ Precedent to copy — the split already inside `installer.rs`:
   `crate::installer::install_hook` — the split is caller-invisible.
 - `installer/hooks.rs` nests `mod opencode;` and reaches back with a
   targeted `use super::checked_child_path;`, never a glob.
+- Visibility is not symmetric, and every extraction step below depends on
+  it: a child sees its ancestors' private items (that reach-back compiles),
+  but a parent does NOT see its child's — a moved item the parent or a
+  sibling still calls has to become `pub(crate)`/`pub(super)` or the move
+  fails to compile with E0603. `installer/hooks.rs` already marks its
+  parent-facing helpers `pub(crate)` for this reason.
 - Tests hoist to `<mod>/tests.rs` (`#[cfg(test)] mod tests;` +
   `use super::*;` at the top of the test file) — the same shape as
   `commands/refresh/tests.rs` and `tui/disk_mutations/tests.rs`.
@@ -55,7 +61,9 @@ callers; `canonicalize_allowing_missing`, 6).
 ### Sequence
 
 1. Hoist tests to `installer/tests.rs`. Pure move, no impl change.
-2. Extract `paths.rs` (leaf, all private — `use paths::{...}` in the parent, no re-export).
+2. Extract `paths.rs` (leaf; the helpers become `pub(super)` so the parent
+   and the later siblings can `use paths::{...}`, with no crate-level
+   re-export).
 3. Extract `anchor.rs`; re-export `AnchorEvidence`, `AnchorSharing`,
    `anchored_canonical_skill_roots` from `installer.rs` like `hooks`.
 4. Name the phases inside `install_skill`, then move it to `skill.rs`.
@@ -104,14 +112,16 @@ helpers used by four clusters (`ensure_value_section_entry_spacing`,
 ### Sequence
 
 1. Hoist tests to `project_config/tests.rs`.
-2. Extract `toml_text.rs` (leaf).
+2. Extract `toml_text.rs` (leaf; `pub(super)` on what the parent calls).
 3. Extract `frontmatter_defaults.rs`; re-export `write_agent_frontmatter_defaults`.
 4. Extract `instructions.rs`; re-export the consts and keep the accessor
    methods on `ProjectConfig` (second `impl` block).
 5. Split repair into `repair/{headings,normalize,migrate}.rs`; the parent
-   keeps `ensure_project_config` as the entry point.
-6. Extract `writers.rs`; delete or wire `write_agent_colors` (currently
-   dead) in the same step.
+   keeps `ensure_project_config` as the entry point, so each split-out
+   entry point is `pub(super)` and the four cross-submodule users of
+   `normalize.rs` make it `pub(crate)`.
+6. Extract `writers.rs` (`pub(super)` on what the parent calls); delete or
+   wire `write_agent_colors` (currently dead) in the same step.
 
 Steps 1–4 are moves with `use` rewiring only. Step 5 is the one that
 needs judgment: `normalize.rs` is imported by four other submodules, so it

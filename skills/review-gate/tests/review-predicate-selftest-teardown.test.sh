@@ -33,8 +33,12 @@ export RG_TEARDOWN_TIMEOUT="$work/timeout"
 # Two replays, each a probe plus its descendant.
 RG_TEARDOWN_REPLAYS=2
 export RG_TEARDOWN_EXPECT=4
-export RG_TEARDOWN_ZOMBIE_PGID="$work/zombie.pgid"
-export RG_TEARDOWN_ZOMBIE_KEEPER="$work/zombie.keeper"
+# Inheritable: the leak probe below re-invokes this file and needs the
+# keeper's pid to land somewhere it still owns after that run exits.
+export RG_TEARDOWN_ZOMBIE_PGID="${RG_TEARDOWN_ZOMBIE_PGID:-$work/zombie.pgid}"
+export RG_TEARDOWN_PROBE_READY="${RG_TEARDOWN_PROBE_READY:-$work/probe.ready}"
+export RG_TEARDOWN_ZOMBIE_KEEPER="${RG_TEARDOWN_ZOMBIE_KEEPER:-$work/zombie.keeper}"
+SELF_PATH="$TEST_DIR/${BASH_SOURCE[0]##*/}"
 : >"$RG_TEARDOWN_PIDS"
 JOBCONTROL_MARK="JOBCONTROL-LEFT-ENABLED"
 
@@ -76,8 +80,19 @@ alive_settled() {
 }
 
 reap() {
-  [ -f "$RG_TEARDOWN_PIDS" ] || return 0
   local p
+  # The zombie fixture's keeper is STOPPED, so it cannot act on a signal it
+  # is sent — CONT first or SIGKILL leaves it parked on the runner forever.
+  # It is registered the moment it exists (it writes its own pid before
+  # stopping), so every exit path below can find it.
+  if [ -s "$RG_TEARDOWN_ZOMBIE_KEEPER" ]; then
+    p="$(cat "$RG_TEARDOWN_ZOMBIE_KEEPER")"
+    if is_ours "$p"; then
+      kill -CONT "$p" 2>/dev/null || true
+      kill -KILL "$p" 2>/dev/null || true
+    fi
+  fi
+  [ -f "$RG_TEARDOWN_PIDS" ] || return 0
   while read -r p; do
     [ -n "$p" ] || continue
     if is_ours "$p"; then
@@ -85,7 +100,12 @@ reap() {
     fi
   done <"$RG_TEARDOWN_PIDS"
 }
-trap 'reap; rm -rf "$work"' EXIT
+cleanup() { reap; rm -rf "$work"; }
+# Signals as well as EXIT: an interrupted run must not park a stopped
+# keeper on the runner, and bash does not run an EXIT trap for a signal it
+# was never told to catch.
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT TERM HUP QUIT
 
 mkdir -p "$work/bin"
 probe="$work/bin/$marker-probe"
@@ -264,6 +284,19 @@ started() {
   return 0
 }
 
+# --- leak-probe mode ------------------------------------------------------
+# Re-invoked by the assertion further down: signal readiness, then wait to be
+# interrupted, so the outer run can prove an interruption reaches cleanup.
+if [ -n "${RG_TEARDOWN_LEAK_PROBE:-}" ]; then
+  : >"$RG_TEARDOWN_PROBE_READY"
+  i=0
+  while [ "$i" -lt 200 ]; do
+    i=$((i + 1))
+    sleep 0.1
+  done
+  exit 0
+fi
+
 #       out                            mode  edits           stub
 variant "$work/owning.test.sh"          exit  ""
 variant "$work/sigterm.test.sh"         TERM  ""
@@ -360,9 +393,79 @@ if [ "$fail" -eq 0 ]; then
     grep -q "ZOMBIE-LIVE-COUNT=0" "$work/zombie.test.sh.out" \
       || note "live_groups counted a zombie-only process group as live: $(grep -o 'ZOMBIE-LIVE-COUNT=[0-9]*' "$work/zombie.test.sh.out" | head -1)"
   fi
-  if [ -s "$RG_TEARDOWN_ZOMBIE_KEEPER" ]; then
-    kill -CONT "$(cat "$RG_TEARDOWN_ZOMBIE_KEEPER")" 2>/dev/null || true
-    kill -KILL "$(cat "$RG_TEARDOWN_ZOMBIE_KEEPER")" 2>/dev/null || true
+  reap
+
+  # --- an interrupted run must not park a stopped keeper ------------------
+  # A stopped process cannot act on an ordinary signal, so a keeper left
+  # behind accumulates on a persistent runner. Driven, not reasoned: a
+  # nested run of this same file is interrupted while its keeper is stopped.
+  # (a) an interruption has to REACH cleanup at all. bash runs no EXIT trap
+  # for a signal it was never told to catch, so this pins the signal traps.
+  probe_ready="$work/probe.ready"
+  rm -f "$probe_ready"
+  # Job control around the launch: a background job of a shell WITHOUT it
+  # ignores SIGINT, so the probe would sail past the interrupt and pass this
+  # for the wrong reason — it exits through its trap or not at all.
+  set -m
+  RG_TEARDOWN_LEAK_PROBE=1 RG_TEARDOWN_PROBE_READY="$probe_ready" \
+    bash "$SELF_PATH" >"$work/probe.out" 2>&1 &
+  probe_pid=$!
+  set +m
+  i=0
+  while [ ! -e "$probe_ready" ] && [ "$i" -lt 200 ]; do
+    i=$((i + 1))
+    sleep 0.05
+  done
+  if [ ! -e "$probe_ready" ]; then
+    cat "$work/probe.out"
+    note "the leak probe never signalled readiness, so it proves nothing about an interrupted run"
+    kill -KILL "$probe_pid" 2>/dev/null || true
+  else
+    kill -INT "$probe_pid" 2>/dev/null || true
+    prc=0
+    wait "$probe_pid" 2>/dev/null || prc=$?
+    if [ "$prc" -ne 130 ]; then
+      note "an interrupted run exited $prc rather than 130 — the interrupt never reached cleanup"
+    fi
+  fi
+
+  # (b) and cleanup has to be able to kill a STOPPED keeper. Driven here
+  # rather than inside the probe: when a nested run's whole tree exits its
+  # process group is orphaned, and the kernel's SIGHUP+SIGCONT for an
+  # orphaned group with stopped members would clean the keeper up for us and
+  # hide the leak. Under a live parent — a persistent runner — nothing does.
+  rm -f "$RG_TEARDOWN_ZOMBIE_KEEPER"
+  # In a subshell so bash does not narrate the kill as a job notification.
+  ( "$zkeeper" & )
+  i=0
+  while [ ! -s "$RG_TEARDOWN_ZOMBIE_KEEPER" ] && [ "$i" -lt 200 ]; do
+    i=$((i + 1))
+    sleep 0.05
+  done
+  kpid="$(cat "$RG_TEARDOWN_ZOMBIE_KEEPER" 2>/dev/null || true)"
+  i=0
+  while [ -n "$kpid" ] && [ "$i" -lt 200 ] \
+    && [ "$(ps -o state= -p "$kpid" 2>/dev/null | tr -d ' \t' || true)" != "T" ]; do
+    i=$((i + 1))
+    sleep 0.05
+  done
+  if [ -z "$kpid" ] || [ "$(ps -o state= -p "$kpid" 2>/dev/null | tr -d ' \t' || true)" != "T" ]; then
+    note "the keeper fixture never reached the stopped state, so the cleanup check below proves nothing"
+  else
+    reap
+    i=0
+    while [ -n "$(ps -o state= -p "$kpid" 2>/dev/null || true)" ] && [ "$i" -lt 60 ]; do
+      i=$((i + 1))
+      sleep 0.05
+    done
+    # `|| true` is load-bearing under pipefail: ps exits 1 for a pid that is
+    # already gone, which is the PASSING case here.
+    kstate="$(ps -o state= -p "$kpid" 2>/dev/null | tr -d ' \t' || true)"
+    if [ -n "$kstate" ]; then
+      note "cleanup left the stopped keeper parked in state '$kstate' — it cannot act on an ordinary signal"
+      kill -CONT "$kpid" 2>/dev/null || true
+      kill -KILL "$kpid" 2>/dev/null || true
+    fi
   fi
 
   # --- the KILL escalation, on a tree that ignores TERM -------------------

@@ -26,17 +26,42 @@ PATTERN="$PATTERN"'|\$\{@\}'
 
 # Shell files only — a fixture or data file under either directory is not
 # code this lint speaks for, and a false positive here reds a required
-# shard. This file is skipped too: it carries every pattern above as data.
-violations="$(grep -rnE --include='*.sh' --exclude="$SELF" "$PATTERN" "$SCRIPTS_DIR" "$TEST_DIR" || true)"
-if [[ -n "$violations" ]]; then
-  echo "Bash 4+ constructs found in review-gate scripts/tests (must run under Bash 3.2):" >&2
-  printf '%s\n' "$violations" >&2
+# shard. Discovery is `find`, and the scan below is plain `grep -nE` one
+# file at a time: `--include`/`--exclude`/`-H` are all outside POSIX grep,
+# and a lint whose job is protecting BSD userland must not itself depend on
+# an extension it cannot exercise in CI.
+sh_files=()
+while IFS= read -r f; do
+  sh_files[${#sh_files[@]}]="$f"
+done < <(find "$SCRIPTS_DIR" "$TEST_DIR" -type f -name '*.sh' | LC_ALL=C sort)
+if [ "${#sh_files[@]}" -eq 0 ]; then
+  echo "FAIL: no shell files found under $SCRIPTS_DIR or $TEST_DIR" >&2
   exit 1
 fi
 
-# Syntax-check every shipped script and suite while we are here.
+nl='
+'
+violations=""
+for f in ${sh_files[@]+"${sh_files[@]}"}; do
+  # This file is skipped: it carries every pattern above as data.
+  if [ "${f##*/}" = "$SELF" ]; then
+    continue
+  fi
+  hits="$(grep -nE "$PATTERN" "$f" || true)"
+  if [ -n "$hits" ]; then
+    violations="$violations$(printf '%s\n' "$hits" | sed "s|^|$f:|")$nl"
+  fi
+done
+if [[ -n "$violations" ]]; then
+  echo "Bash 4+ constructs found in review-gate scripts/tests (must run under Bash 3.2):" >&2
+  printf '%s' "$violations" >&2
+  exit 1
+fi
+
+# Syntax-check every shipped script and suite while we are here — the same
+# discovered set, this file included.
 fail=0
-for f in "$SCRIPTS_DIR"/*.sh "$SCRIPTS_DIR"/lib/*.sh "$TEST_DIR"/*.sh; do
+for f in ${sh_files[@]+"${sh_files[@]}"}; do
   if ! bash -n "$f"; then
     echo "FAIL: bash -n $f"
     fail=1
