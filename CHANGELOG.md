@@ -12,6 +12,11 @@
   launches under a resolved lane, and `lanes pick` takes the lane with the
   fewest live claims before the one with the most headroom — usage numbers lag
   a launch by minutes, so back-to-back picks were handing one account the
+  whole fleet. `lanes list`/`--json` report the count, `null` when the store
+  could not be read. `pick` refuses (exit 1) rather than deciding on a claim
+  store that exists but cannot be read — consumers delegating lane selection
+  see a misconfigured `OVERSEE_WATCH_STATE_DIR` as a launch failure instead
+  of a fleet stacked on one account (VST-296).
   whole fleet. `lanes list`/`--json` report the count (VST-296).
 - review-gate/size-ratchet: settings resolution fails closed on a source it
   cannot read. `-f` and `-e` both pass on an existing mode-000 file, so only

@@ -375,12 +375,25 @@ else
   # `list` reports what it measured; `pick` DECIDES, so it refuses rather
   # than reading an unreadable store as "nothing in flight".
   chmod 000 "$CLAIM_STATE/claims"
+  UNKNOWN_JSON="$(run_lanes_claims list --harness claude --json 2>/dev/null)"
+  UNKNOWN_TABLE="$(run_lanes_claims list --harness claude 2>/dev/null)"
   run_lanes_claims list --harness claude --json >/dev/null 2>&1
   list_rc=$?
   PICK_ERR="$(run_lanes_claims pick --harness claude 2>&1 >/dev/null)"
   pick_rc=$?
   chmod 755 "$CLAIM_STATE/claims"
   assert_eq "$list_rc" "0" "list still reports the lanes it could measure"
+  assert_eq "$(jq -r '.[0].claims' <<<"$UNKNOWN_JSON")" "null" \
+    "an unreadable store reports claims as unknown, never as zero"
+  assert_contains "$UNKNOWN_TABLE" "?" "the table shows the unknown claim count as ?"
+
+  # A single unreadable claim FILE is the same unknown, not an absent claim.
+  chmod 755 "$CLAIM_STATE/claims"; chmod 000 "$CLAIM_STATE/claims/keepme.claim"
+  ONEBAD_PICK="$(run_lanes_claims pick --harness claude 2>&1 >/dev/null)"
+  onebad_rc=$?
+  chmod 644 "$CLAIM_STATE/claims/keepme.claim"
+  assert_eq "$onebad_rc" "1" "one unreadable claim file is enough for pick to refuse"
+  assert_contains "$ONEBAD_PICK" "refusing to pick" "the single-file refusal says what it refused"
   assert_eq "$pick_rc" "1" "pick refuses when in-flight claims cannot be read"
   assert_contains "$PICK_ERR" "refusing to pick" "the refusal says what it refused to do"
 
@@ -629,17 +642,35 @@ assert_contains "$three_out" "across 2 lanes" \
 # A claim that could not be written is a batch that can no longer be spread:
 # the launch stands, the next item does not go out blind.
 rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+mkdir -p "$OT_STATE/claims"
+if [[ "$(id -u)" -eq 0 ]]; then
+  printf '  skip  unwritable claim store (running as root)\n'
+else
+  chmod 555 "$OT_STATE/claims"   # readable (so the pick works), not writable
+  set +e
+  blind_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-15 CC-16 2>&1)
+  blind_rc=$?
+  set -e
+  chmod 755 "$OT_STATE/claims"
+  assert_eq "$blind_rc" "1" "a batch whose claim could not be recorded exits nonzero"
+  assert_contains "$blind_out" "could not record the lane claim" "the failed write is reported"
+  assert_contains "$blind_out" "stopping after 1 launch(es)" \
+    "the batch stops instead of stacking the next item blind"
+fi
+
+# A claims path that is not a directory at all is a misconfiguration, not an
+# empty store: the pick refuses before anything launches.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
 mkdir -p "$OT_STATE"
-: > "$OT_STATE/claims"          # a FILE where the claims dir must be created
+: > "$OT_STATE/claims"
 set +e
-blind_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-15 CC-16 2>&1)
-blind_rc=$?
+notdir_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-19 2>&1)
+notdir_rc=$?
 set -e
 rm -f "$OT_STATE/claims"
-assert_eq "$blind_rc" "1" "a batch whose claim could not be recorded exits nonzero"
-assert_contains "$blind_out" "could not record the lane claim" "the failed write is reported"
-assert_contains "$blind_out" "stopping after 1 launch(es)" \
-  "the batch stops instead of stacking the next item blind"
+assert_eq "$notdir_rc" "1" "a non-directory claims path refuses the launch"
+assert_contains "$notdir_out" "is not a directory" "the refusal names what is wrong"
+assert_contains "$notdir_out" "nothing was launched" "nothing is launched on an unreadable store"
 
 # A lane picked for an item that turns out to be owned by another session
 # never carried a session, and must not appear in the spread the summary

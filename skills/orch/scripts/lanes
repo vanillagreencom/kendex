@@ -389,8 +389,10 @@ refresh_claude_token() {
 # which is the one thing it must not read as.
 emit_lane() {
 	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7"
-	local claims
-	claims="$(lane_claims_count "$LANE_CLAIMS_LIVE" "$dir")"
+	# `null`, never 0, when the store could not be read: "we could not see the
+	# launches in flight" must not read as "there are none".
+	local claims="null"
+	[[ "$LANE_CLAIMS_RC" -ne 0 ]] || claims="$(lane_claims_count "$LANE_CLAIMS_LIVE" "$dir")"
 	jq -nc \
 		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" \
 		--arg status "$status" --arg detail "$detail" --arg plan "$plan" \
@@ -461,7 +463,7 @@ render_table() {
 		(.[] | [ .alias, .harness, .status, (.plan // "-"),
 		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct),
 		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
-		         (.claims // 0)
+		         (if .claims == null then "?" else .claims end)
 		       ] | @tsv)
 	' | column -t -s "$(printf '\t')"
 }

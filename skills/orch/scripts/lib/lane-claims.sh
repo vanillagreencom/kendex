@@ -47,10 +47,17 @@ lane_claims_canon() {
 # all: a caller deciding where to launch must fail closed on that, and only
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
-  local dir="$1" live this_server f server pane cfg window created
-  [[ -d "$dir" ]] || return 0
-  # An unreadable store is not an empty one: reporting no claims here would
-  # report every busy account as free.
+  local dir="$1" live this_server f server pane cfg window created rc=0
+  # Absent is genuinely empty; anything else that is not a directory is a
+  # misconfiguration, and an unreadable store is not an empty one. Reporting
+  # no claims for either would report every busy account as free.
+  if [[ ! -e "$dir" ]]; then
+    return 0
+  fi
+  if [[ ! -d "$dir" ]]; then
+    echo "lane-claims: claims path $dir is not a directory; launches already in flight cannot be read" >&2
+    return 2
+  fi
   if [[ ! -r "$dir" || ! -x "$dir" ]]; then
     echo "lane-claims: claims directory $dir is not readable; launches already in flight are invisible" >&2
     return 2
@@ -65,7 +72,11 @@ lane_claims_read() {
     # record's fields standing in for this one.
     server=""; pane=""; cfg=""; window=""; created=""
     if [[ ! -r "$f" ]]; then
+      # A claim that cannot be read is a launch that cannot be seen: reported,
+      # left in place, and carried out as a failure so a caller deciding where
+      # to launch refuses rather than counting it as absent.
       echo "lane-claims: cannot read claim $f; leaving it in place" >&2
+      rc=2
       continue
     fi
     IFS=$'\t' read -r server pane cfg window created < "$f" || true
@@ -85,6 +96,7 @@ lane_claims_read() {
     # land on the account discovery reports.
     printf '%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server"
   done
+  return "$rc"
 }
 
 # Live claims against one config dir. $1: `lane_claims_read` output, $2: dir.
