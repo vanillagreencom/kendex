@@ -297,6 +297,8 @@ pub struct CheckReport {
     /// Why the background cache refresh could not even be started, if it
     /// could not. A refresh that never runs would otherwise be invisible:
     /// nothing writes a stamp, so nothing else on the read path notices.
+    /// Reported, never drift — an environment where spawning cannot succeed
+    /// must not exit 1 at every session start forever.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background_refresh_error: Option<String>,
     pub scopes: Vec<ScopeReport>,
@@ -323,19 +325,59 @@ use crate::path_safety::is_safe_item_name;
 /// agent's context on one report line.
 const DISPLAY_LIMIT: usize = 120;
 
-/// Remove `user:password@` from any URL in `text`. A source string can carry
-/// a token, and this report is injected into an agent's context and copied
-/// into transcripts; the host and path are all a reader needs.
-fn strip_url_userinfo(text: &str) -> String {
-    let Some(scheme_end) = text.find("://") else {
+/// Remove credentials from a source string, keeping it FUNCTIONAL. Applied
+/// at report construction, so every consumer — human report, quiet hook
+/// line, `--json` on stdout, CI logs quoting either — sees credential-free
+/// strings.
+///
+/// For `ssh://` URLs and scp-style `user@host:path` sources the username is
+/// kept and only a `:password` is dropped: `git@` is how the endpoint picks
+/// the key, not a secret, and stripping it turns a working remedy command
+/// into one that dies on publickey. For every other scheme (https) the whole
+/// userinfo goes — a bare user field is exactly where tokens like
+/// `ghp_…@github.com` live.
+fn scrub_source_credentials(text: &str) -> String {
+    if let Some(rest) = text.strip_prefix("ssh://") {
+        let host_end = rest.find('/').unwrap_or(rest.len());
+        if let Some(at) = rest[..host_end].rfind('@') {
+            let user = rest[..at].split(':').next().unwrap_or_default();
+            return format!("ssh://{user}@{}", &rest[at + 1..]);
+        }
         return text.to_string();
-    };
-    let after = &text[scheme_end + 3..];
-    // Userinfo ends at the first `@`, and only counts before the path starts.
-    let host_end = after.find('/').unwrap_or(after.len());
-    match after[..host_end].rfind('@') {
-        Some(at) => format!("{}{}", &text[..scheme_end + 3], &after[at + 1..]),
-        None => text.to_string(),
+    }
+    if let Some(scheme_end) = text.find("://") {
+        let after = &text[scheme_end + 3..];
+        // Userinfo ends at the last `@` before the path starts.
+        let host_end = after.find('/').unwrap_or(after.len());
+        return match after[..host_end].rfind('@') {
+            Some(at) => format!("{}{}", &text[..scheme_end + 3], &after[at + 1..]),
+            None => text.to_string(),
+        };
+    }
+    // scp-style `user@host:path` has no scheme; a pasted `user:pass@` form
+    // must still lose the password while the user survives.
+    let head_end = text.find('/').unwrap_or(text.len());
+    if let Some(at) = text[..head_end].find('@') {
+        let user = text[..at].split(':').next().unwrap_or_default();
+        if user.len() != at {
+            return format!("{user}@{}", &text[at + 1..]);
+        }
+    }
+    text.to_string()
+}
+
+/// A source rendered INSIDE a copy-paste command: credential- and
+/// control-scrubbed like prose, but never truncated — an elided argument is
+/// a command that cannot work — and quoted when it contains whitespace.
+fn command_arg(text: &str) -> String {
+    let scrubbed: String = scrub_source_credentials(text)
+        .chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect();
+    if scrubbed.chars().any(char::is_whitespace) {
+        format!("\"{scrubbed}\"")
+    } else {
+        scrubbed
     }
 }
 
@@ -346,7 +388,7 @@ fn strip_url_userinfo(text: &str) -> String {
 /// terminal, and anything long is truncated — an item is never classified on
 /// its length, only shortened when shown.
 fn display_text(text: &str) -> String {
-    let scrubbed: String = strip_url_userinfo(text)
+    let scrubbed: String = scrub_source_credentials(text)
         .chars()
         .map(|c| if c.is_control() { '?' } else { c })
         .collect();
@@ -432,9 +474,7 @@ pub fn gather(scope: ScopeFilter, opts: CheckOptions) -> Result<CheckReport> {
         }
     }
     cache_refresh_failures.sort_by(|a, b| a.source.cmp(&b.source));
-    let drift = scopes.iter().any(ScopeReport::has_drift)
-        || cache_refresh_failures.iter().any(|f| f.persistent)
-        || background_refresh_error.is_some();
+    let drift = computed_drift(&scopes, &cache_refresh_failures);
     Ok(CheckReport {
         version: 1,
         cli_version: env!("CARGO_PKG_VERSION"),
@@ -444,6 +484,14 @@ pub fn gather(scope: ScopeFilter, opts: CheckOptions) -> Result<CheckReport> {
         background_refresh_error,
         scopes,
     })
+}
+
+/// The exit-code verdict. The background-refresh spawn error is deliberately
+/// not even a parameter: it is reported, but an environment where spawning
+/// can never succeed (a sandbox denying fork) must not be a permanent exit 1
+/// at every session start that no vstack command can fix.
+fn computed_drift(scopes: &[ScopeReport], cache_refresh_failures: &[CacheRefreshFailure]) -> bool {
+    scopes.iter().any(ScopeReport::has_drift) || cache_refresh_failures.iter().any(|f| f.persistent)
 }
 
 fn cache_failure(problem: config::RemoteCacheProblem, offline: bool) -> CacheRefreshFailure {
@@ -469,7 +517,8 @@ fn cache_failure(problem: config::RemoteCacheProblem, offline: bool) -> CacheRef
         ),
     };
     CacheRefreshFailure {
-        source: problem.source,
+        // Scrubbed at construction so `--json` never carries a token either.
+        source: scrub_source_credentials(&problem.source),
         age_secs,
         reason,
         persistent,
@@ -599,7 +648,9 @@ fn source_issues_for(
                 config::RemoteCacheLookup::Unverifiable { reason, .. } => {
                     SourceProblem::Unverifiable {
                         entries: named(&|_| true),
-                        reason,
+                        // The reason quotes the cache's recorded origin URL,
+                        // which can carry a cloned-with token.
+                        reason: scrub_source_credentials(&reason),
                     }
                 }
                 _ => SourceProblem::Unresolvable {
@@ -607,7 +658,7 @@ fn source_issues_for(
                 },
             };
             issues.push(SourceIssue {
-                source: source.to_string(),
+                source: scrub_source_credentials(source),
                 problem,
             });
             continue;
@@ -622,7 +673,7 @@ fn source_issues_for(
             reasons.sort();
             reasons.dedup();
             issues.push(SourceIssue {
-                source: source.to_string(),
+                source: scrub_source_credentials(source),
                 problem: SourceProblem::Unreadable {
                     entries: unreadable,
                     reasons,
@@ -631,7 +682,7 @@ fn source_issues_for(
         }
         if !catalog.failures.is_empty() {
             issues.push(SourceIssue {
-                source: source.to_string(),
+                source: scrub_source_credentials(source),
                 problem: SourceProblem::Discovery {
                     failures: catalog.failures.clone(),
                 },
@@ -764,7 +815,7 @@ fn available_for(
                 available.push(AvailableItem {
                     name: name.clone(),
                     kind,
-                    source: source.to_string(),
+                    source: scrub_source_credentials(source),
                 });
             }
         }
@@ -981,8 +1032,9 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
             SourceProblem::Unresolvable { entries } => {
                 let _ = writeln!(
                     out,
-                    "\n  source {source} is unreachable (cache not cloned or path missing) — {} item(s) cannot be verified; run `vstack add {source}` to restore it, or `vstack remove <name>` if it is gone for good:",
-                    entries.len()
+                    "\n  source {source} is unreachable (cache not cloned or path missing) — {} item(s) cannot be verified; run `vstack add {}` to restore it, or `vstack remove <name>` if it is gone for good:",
+                    entries.len(),
+                    command_arg(&issue.source),
                 );
                 for name in entries {
                     let _ = writeln!(out, "    ? {name}");
@@ -1004,9 +1056,10 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
             SourceProblem::Unverifiable { entries, reason } => {
                 let _ = writeln!(
                     out,
-                    "\n  source {source} has a cache that is not provably its own ({}) — {} item(s) cannot be verified; remove that directory under ~/.vstack/cache and run `vstack add {source}` to re-clone it:",
+                    "\n  source {source} has a cache that is not provably its own ({}) — {} item(s) cannot be verified; remove that directory under ~/.vstack/cache and run `vstack add {}` to re-clone it:",
                     display_text(reason),
-                    entries.len()
+                    entries.len(),
+                    command_arg(&issue.source),
                 );
                 for name in entries {
                     let _ = writeln!(out, "    ? {name}");
@@ -1070,7 +1123,7 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
                     out,
                     "    + {} (`vstack add {} {flag} <name>`): {}",
                     kind.label_plural(),
-                    display_text(source),
+                    command_arg(source),
                     names.join(", ")
                 );
             }
@@ -1592,9 +1645,30 @@ mod scope_report_tests {
             display_text("https://user:ghp_secret@github.com/owner/repo"),
             "https://github.com/owner/repo"
         );
+        // A bare https user field is where tokens live too.
+        assert_eq!(
+            display_text("https://ghp_secret@github.com/owner/repo"),
+            "https://github.com/owner/repo"
+        );
+        // ssh KEEPS its user — `git@` picks the key, it is not a secret, and
+        // a remedy command without it dies on publickey — while a password
+        // still goes.
         assert_eq!(
             display_text("ssh://git@example.com/owner/repo"),
-            "ssh://example.com/owner/repo"
+            "ssh://git@example.com/owner/repo"
+        );
+        assert_eq!(
+            display_text("ssh://git:hunter2@example.com/owner/repo"),
+            "ssh://git@example.com/owner/repo"
+        );
+        // scp-style: same rule, schemeless.
+        assert_eq!(
+            display_text("git@github.com:owner/repo"),
+            "git@github.com:owner/repo"
+        );
+        assert_eq!(
+            display_text("git:hunter2@github.com:owner/repo"),
+            "git@github.com:owner/repo"
         );
         // Controls: nothing else is touched, and an `@` in the PATH is not
         // userinfo.
@@ -1607,6 +1681,24 @@ mod scope_report_tests {
             "https://github.com/owner/re@po"
         );
         assert_eq!(display_text("/local/path"), "/local/path");
+        assert_eq!(display_text("owner/repo"), "owner/repo");
+    }
+
+    #[test]
+    fn a_command_argument_is_never_truncated_and_quotes_whitespace() {
+        // A remedy command built from an elided or unquoted string cannot be
+        // pasted; prose may truncate, commands may not.
+        let long = format!("/sources/{}", "x".repeat(200));
+        assert!(display_text(&long).ends_with('…'), "prose truncates");
+        assert_eq!(command_arg(&long), long, "commands never truncate");
+        assert_eq!(
+            command_arg("/sources/my repos/vstack"),
+            "\"/sources/my repos/vstack\""
+        );
+        assert_eq!(
+            command_arg("ssh://git@example.com/owner/repo"),
+            "ssh://git@example.com/owner/repo"
+        );
     }
 
     #[test]
@@ -1644,6 +1736,135 @@ mod scope_report_tests {
             assert!(
                 !out.contains("is unreachable"),
                 "the wrong remedy must not appear: {out}"
+            );
+        });
+    }
+
+    /// A remedy command has to WORK when pasted: an ssh source keeps its
+    /// `git@` (the round-4 scrub dropped it and the suggested command died on
+    /// publickey), and a long local path is never truncated inside backticks.
+    #[test]
+    fn remedy_commands_are_pasteable_for_ssh_and_long_sources() {
+        let ssh = "ssh://git@example.com/owner/repo";
+        let mut report = ScopeReport {
+            scope: "project",
+            installed: 1,
+            ..Default::default()
+        };
+        report.source_issues.push(SourceIssue {
+            source: scrub_source_credentials(ssh),
+            problem: SourceProblem::Unresolvable {
+                entries: vec!["alpha".into()],
+            },
+        });
+        let mut out = String::new();
+        render_scope(&mut out, &report, true);
+        assert!(
+            out.contains("`vstack add ssh://git@example.com/owner/repo`"),
+            "the command must keep the working ssh user: {out}"
+        );
+
+        let long = format!("/sources/{}", "x".repeat(200));
+        let mut report = ScopeReport {
+            scope: "project",
+            installed: 1,
+            ..Default::default()
+        };
+        report.source_issues.push(SourceIssue {
+            source: long.clone(),
+            problem: SourceProblem::Unresolvable {
+                entries: vec!["alpha".into()],
+            },
+        });
+        let mut out = String::new();
+        render_scope(&mut out, &report, true);
+        assert!(
+            out.contains(&format!("`vstack add {long}`")),
+            "the command must carry the whole argument: {out}"
+        );
+    }
+
+    /// A refresh that cannot even be spawned is worth a line, never an exit
+    /// code: it renders (alongside drift on the quiet path too), and the
+    /// drift computation does not take it as an input at all.
+    #[test]
+    fn a_background_refresh_error_is_reported_but_never_drift() {
+        assert!(
+            !computed_drift(&[], &[]),
+            "nothing else wrong means clean, whatever the spawn did"
+        );
+        let report = CheckReport {
+            version: 1,
+            cli_version: "0.0.0",
+            cli_hash: "abc",
+            drift: computed_drift(&[], &[]),
+            background_refresh_error: Some("spawn failed".into()),
+            cache_refresh_failures: Vec::new(),
+            scopes: Vec::new(),
+        };
+        assert_eq!(report.outcome(), CheckOutcome::Clean);
+        let out = render_report(&report, false);
+        assert!(
+            out.contains("could not be refreshed in the background")
+                && out.contains("spawn failed"),
+            "{out}"
+        );
+        // Quiet + clean prints nothing: the quiet contract holds.
+        assert_eq!(render_report(&report, true), "");
+
+        // Alongside REAL drift the quiet path carries the line too.
+        let drifted = ScopeReport {
+            scope: "project",
+            installed: 1,
+            outdated: vec![Item::new("alpha", ItemKind::Skill)],
+            ..Default::default()
+        };
+        let scopes = vec![drifted];
+        let report = CheckReport {
+            version: 1,
+            cli_version: "0.0.0",
+            cli_hash: "abc",
+            drift: computed_drift(&scopes, &[]),
+            background_refresh_error: Some("spawn failed".into()),
+            cache_refresh_failures: Vec::new(),
+            scopes,
+        };
+        assert_eq!(report.outcome(), CheckOutcome::Drift);
+        let quiet = render_report(&report, true);
+        assert!(quiet.contains("spawn failed"), "{quiet}");
+    }
+
+    /// `--json` goes to stdout and into CI logs verbatim: a token in a lock
+    /// source or in a cache-origin reason must be gone from the REPORT, not
+    /// just from the human rendering.
+    #[test]
+    fn json_serialization_carries_no_credentials() {
+        with_sandbox("json-credentials", |project, _source| {
+            let source = "https://user:ghp_supersecret@github.com/owner/repo";
+            let cache = config::remote_cache_dir(source).unwrap();
+            std::fs::create_dir_all(cache.join(".git")).unwrap();
+            // The cache's recorded origin carries a token of its own, which
+            // the unverifiable reason quotes.
+            std::fs::write(
+                cache.join(".git").join("config"),
+                "[remote \"origin\"]\n\turl = https://other:ghp_othersecret@github.com/other/repo.git\n",
+            )
+            .unwrap();
+            install_skill_on_disk(project, "alpha");
+            let mut lock = LockFile::default();
+            let mut entry = locked(&cache, ItemKind::Skill, "alpha");
+            entry.source = source.into();
+            lock.add(entry);
+
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            let json = serde_json::to_string(&report).unwrap();
+            assert!(
+                !json.contains("ghp_supersecret") && !json.contains("ghp_othersecret"),
+                "no token may reach any serialization: {json}"
+            );
+            assert!(
+                json.contains("github.com/owner/repo"),
+                "the host and path survive: {json}"
             );
         });
     }

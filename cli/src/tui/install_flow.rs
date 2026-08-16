@@ -122,8 +122,22 @@ pub fn run_install_flow(
         {
             eprintln!("Refreshing remote source caches…");
         }
-        crate::config::refresh_remote_caches(&project_lock);
-        crate::config::refresh_remote_caches(&global_lock);
+        // An announced refresh must not fail silently: say which caches are
+        // still stale, then proceed on their cached contents.
+        let mut problems = crate::config::refresh_remote_caches(&project_lock);
+        problems.extend(crate::config::refresh_remote_caches(&global_lock));
+        for problem in problems {
+            let detail = match &problem.kind {
+                crate::config::RemoteCacheProblemKind::Failing { cause, .. } => cause
+                    .map_or("the refresh did not complete", |cause| cause.describe())
+                    .to_string(),
+                crate::config::RemoteCacheProblemKind::Unwritable { reason } => reason.clone(),
+            };
+            eprintln!(
+                "Warning: source {} cache is not up to date ({detail}) — using cached content",
+                problem.source
+            );
+        }
     }
 
     let prev_harnesses: HashSet<String> = installed

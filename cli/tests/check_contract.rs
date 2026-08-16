@@ -764,6 +764,67 @@ fn a_deleted_native_codex_hook_script_is_drift_without_any_agents() {
         "{}",
         text(&quiet.stderr)
     );
+
+    // Deleting hooks.json too must not launder the hook into a prose
+    // fallback: nativeness comes from the hook's EVENT in its source, which
+    // no amount of deleted install artifacts can rewrite.
+    fs::remove_file(sb.project.join(".codex/hooks.json")).unwrap();
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(
+        quiet.status.code(),
+        Some(1),
+        "a fully-deleted native install is still drift: {}",
+        text(&quiet.stderr)
+    );
+}
+
+/// `pre-check.sh` in hooks.json must never answer for a hook named `check`:
+/// nativeness is derived from each hook's EVENT in its source, so a
+/// prose-fallback hook whose name nests inside a native sibling's stays a
+/// prose fallback — not a phantom native install with an impossible remedy.
+#[test]
+fn a_prose_hook_nested_inside_a_native_hooks_name_is_not_phantom_drift() {
+    let sb = Sandbox::new("check-codex-nested");
+    sb.write_hook_for_event("pre-check", "PreToolUse"); // native script
+    sb.write_hook_for_event("check", "TaskCompleted"); // prose-only event
+    let add = |name: &str| {
+        let output = sb
+            .vstack()
+            .args(["add", sb.source.to_str().unwrap(), "--hook", name])
+            .args(["--harness", "codex", "--no-auto-skills", "-y"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    add("pre-check");
+    add("check");
+
+    // The trap is real: the registration file contains `pre-check.sh`, whose
+    // name CONTAINS `check.sh`, and this scope has no agent for prose.
+    let hooks_json = fs::read_to_string(sb.project.join(".codex/hooks.json")).unwrap();
+    assert!(hooks_json.contains("pre-check.sh"), "{hooks_json}");
+
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(
+        quiet.status.code(),
+        Some(0),
+        "an agent-less prose fallback beside a nested native name is clean: {}",
+        text(&quiet.stderr)
+    );
+
+    // Control: the native sibling is still protected.
+    fs::remove_file(sb.project.join(".codex/hooks/pre-check.sh")).unwrap();
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    assert!(
+        text(&quiet.stderr).contains("pre-check (hook)"),
+        "{}",
+        text(&quiet.stderr)
+    );
 }
 
 /// A cache whose `.git` cannot be written can never record anything, so the

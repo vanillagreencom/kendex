@@ -705,9 +705,13 @@ role: engineer
         let mut registry = config::SourceRegistry::default();
         registry.remember_for_project(&project_root, "/repo/current-vstack");
 
-        let resolved =
-            resolve_source_for_app(Some(&alternate.to_string_lossy()), &registry, &project_root)
-                .expect("passed source should resolve");
+        let resolved = resolve_source_for_app(
+            Some(&alternate.to_string_lossy()),
+            &registry,
+            &project_root,
+            false,
+        )
+        .expect("passed source should resolve");
 
         let canonical = std::fs::canonicalize(&alternate).unwrap();
         assert_eq!(resolved.source, canonical.display().to_string());
@@ -731,9 +735,13 @@ role: engineer
         init_git_origin(&source, "https://github.com/vanillagreencom/vstack.git");
 
         let registry = config::SourceRegistry::default();
-        let resolved =
-            resolve_source_for_app(Some(&source.to_string_lossy()), &registry, &project_root)
-                .expect("local source should resolve");
+        let resolved = resolve_source_for_app(
+            Some(&source.to_string_lossy()),
+            &registry,
+            &project_root,
+            false,
+        )
+        .expect("local source should resolve");
 
         assert_eq!(
             resolved.source_repo.as_deref(),
@@ -1212,8 +1220,8 @@ role: engineer
         let registry = self_pointing_registry(&project);
         write_project_skill_lock(&project, &canonical, InstallMethod::Copy);
 
-        let resolved =
-            resolve_source_for_app(None, &registry, &project).expect("default source resolves");
+        let resolved = resolve_source_for_app(None, &registry, &project, false)
+            .expect("default source resolves");
 
         assert_eq!(
             resolved.dir,
@@ -1261,8 +1269,8 @@ role: engineer
         lock.save(&project.join(".vstack-lock.json")).unwrap();
 
         let registry = config::SourceRegistry::default();
-        let resolved =
-            resolve_source_for_app(None, &registry, &project).expect("default source resolves");
+        let resolved = resolve_source_for_app(None, &registry, &project, false)
+            .expect("default source resolves");
 
         assert_eq!(resolved.dir, canonical.canonicalize().unwrap());
         let _ = std::fs::remove_dir_all(root);
@@ -1278,8 +1286,8 @@ role: engineer
         write_canonical_source(&project);
         let registry = self_pointing_registry(&project);
 
-        let resolved =
-            resolve_source_for_app(None, &registry, &project).expect("default source resolves");
+        let resolved = resolve_source_for_app(None, &registry, &project, false)
+            .expect("default source resolves");
 
         assert_eq!(resolved.dir, project.canonicalize().unwrap());
         let _ = std::fs::remove_dir_all(root);
@@ -1796,6 +1804,7 @@ fn resolve_source_for_app(
     source: Option<&str>,
     registry: &config::SourceRegistry,
     project_root: &Path,
+    interactive: bool,
 ) -> Result<ResolvedSource> {
     match source {
         Some(path) if Path::new(path).exists() => {
@@ -1809,7 +1818,7 @@ fn resolve_source_for_app(
             })
         }
         Some(source) => {
-            let dir = resolve_source(Some(source))?;
+            let dir = resolve_source(Some(source), interactive)?;
             Ok(ResolvedSource {
                 source: source.to_string(),
                 source_repo: config::source_repo_for_source(Some(&dir), source),
@@ -1833,7 +1842,7 @@ fn resolve_source_for_app(
             // intentionally project-scoped: choosing a repo while working in
             // one project must not silently change the source used by another.
             if let Some(current) = registry.current_for_project(project_root)
-                && let Ok(dir) = resolve_source(Some(current))
+                && let Ok(dir) = resolve_source(Some(current), interactive)
                 && usable(&dir)
             {
                 return Ok(ResolvedSource {
@@ -1849,7 +1858,7 @@ fn resolve_source_for_app(
             // lock file. Use that before any global/default source so a
             // project's repo choice remains stable across invocations.
             if let Some(current) = source_from_project_lock(project_root)
-                && let Ok(dir) = resolve_source(Some(&current))
+                && let Ok(dir) = resolve_source(Some(&current), interactive)
                 && usable(&dir)
             {
                 return Ok(ResolvedSource {
@@ -1882,7 +1891,7 @@ fn resolve_source_for_app(
             }
 
             let source = crate::REPO.to_string();
-            let dir = resolve_source(Some(&source))?;
+            let dir = resolve_source(Some(&source), interactive)?;
             Ok(ResolvedSource {
                 label: source_label(&source),
                 source_repo: config::source_repo_for_source(Some(&dir), &source),
@@ -2009,7 +2018,12 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         method,
         update_cli,
     ) = loop {
-        let resolved = resolve_source_for_app(current_source.as_deref(), &registry, &project_root)?;
+        let resolved = resolve_source_for_app(
+            current_source.as_deref(),
+            &registry,
+            &project_root,
+            !non_interactive,
+        )?;
         let source_dir = resolved.dir.clone();
         let all_agents = crate::catalog::discover_agents(&source_dir)?;
         let all_skills = crate::catalog::discover_skills(&source_dir)?;
@@ -2807,10 +2821,10 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     Ok(())
 }
 
-fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
+fn resolve_source(source: Option<&str>, interactive: bool) -> Result<PathBuf> {
     match source {
         Some(path) if Path::new(path).exists() => Ok(std::fs::canonicalize(path)?),
-        Some(source) if looks_like_remote(source) => clone_or_update(source),
+        Some(source) if looks_like_remote(source) => clone_or_update(source, interactive),
         Some(source) => {
             anyhow::bail!(
                 "Source not found: {source}\n\
@@ -2829,7 +2843,7 @@ fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
                 }
             }
             // Fall back to default remote repo
-            clone_or_update(crate::REPO)
+            clone_or_update(crate::REPO, interactive)
         }
     }
 }
@@ -2842,7 +2856,7 @@ fn looks_like_remote(source: &str) -> bool {
 }
 
 /// Clone or update a remote repo into `~/.vstack/cache/<host>_<owner>_<repo>`
-fn clone_or_update(source: &str) -> Result<PathBuf> {
+fn clone_or_update(source: &str, interactive: bool) -> Result<PathBuf> {
     let cache_dir = crate::config::global_base_dir()
         .join(".vstack")
         .join("cache");
@@ -2885,7 +2899,19 @@ fn clone_or_update(source: &str) -> Result<PathBuf> {
     if repo_dir.join(".git").exists() {
         // Update existing clone (handles force-pushed histories) through the
         // one guarded fetch, reporting every outcome the way `refresh` does.
-        crate::refresh_sources::update_cached_repo(&repo_dir);
+        // Interactive resolution (the wizard's own source lookup) is
+        // TTL-gated and short-bounded so the UI paints in seconds even when
+        // the remote is unroutable; an explicit non-interactive `vstack add`
+        // asked for this exact fetch and gets it unbounded.
+        let (max_age, bound) = if interactive {
+            (
+                Some(crate::config::REMOTE_CACHE_TTL),
+                crate::config::FetchBound::INTERACTIVE,
+            )
+        } else {
+            (None, crate::config::FetchBound::Unbounded)
+        };
+        crate::refresh_sources::update_cached_repo(&repo_dir, max_age, bound);
     } else {
         // Fresh shallow clone. Same builder as every other cache git call:
         // nothing inherited may redirect it at another repository's index or

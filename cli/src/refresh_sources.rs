@@ -334,7 +334,8 @@ fn resolve_single_source_with(
     // another repository's agents and hooks.
     let cached = config::usable_remote_cache(source)?;
     if update_remote {
-        update_cached_repo(&cached);
+        // `vstack refresh` route: the user asked for this fetch.
+        update_cached_repo(&cached, None, config::FetchBound::Unbounded);
     }
     Some(cached)
 }
@@ -392,15 +393,23 @@ fn find_vstack_source_from_cwd() -> Option<PathBuf> {
 /// Routed through [`config::fetch_remote_cache`] so the guard, the stamp and
 /// the fetch itself are one mechanism: a refresh running beside a session-start
 /// check can never reset the tree the check is reading, and a successful
-/// refresh clears the failure the check would otherwise keep reporting. Runs
-/// unbounded — a user is waiting on this one and expects it to finish.
-pub(crate) fn update_cached_repo(repo_dir: &std::path::Path) {
-    eprintln!("Updating cached repo...");
-    report_fetch_outcome(config::fetch_remote_cache(
-        repo_dir,
-        None,
-        config::FetchBound::Unbounded,
-    ));
+/// refresh clears the failure the check would otherwise keep reporting.
+///
+/// The caller picks the bound: an explicit `vstack add`/`vstack refresh`
+/// asked for this fetch and runs it unbounded with no TTL, while interactive
+/// source resolution passes a TTL and a short deadline so a wizard paints in
+/// seconds even against an unroutable remote.
+pub(crate) fn update_cached_repo(
+    repo_dir: &std::path::Path,
+    max_age: Option<std::time::Duration>,
+    bound: config::FetchBound,
+) {
+    // Announce only a fetch that is actually going to run: within the TTL
+    // there is nothing to wait on and nothing to say.
+    if config::remote_cache_fetch_due(repo_dir, max_age) {
+        eprintln!("Updating cached repo...");
+    }
+    report_fetch_outcome(config::fetch_remote_cache(repo_dir, max_age, bound));
 }
 
 /// Say what the fetch did, for every outcome. One helper, shared by `refresh`
