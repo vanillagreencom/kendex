@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- cli: `vstack check` is a process contract a session can branch on — exit `0`
+  clean, `1` drift, `2` the check itself failed, `--quiet` silent when clean,
+  `--json` on stdout, `--offline` skipping every network call. Items a source
+  ships but the scope never installed are suggestions and never drift. The
+  verdict is computed from disk alone: a remote source cache older than six
+  hours is refreshed by a detached `vstack cache-refresh` nobody waits on, and
+  its outcome is reported at the next session, so a session start never blocks
+  on the network — a cache that has been failing to refresh for more than two
+  refresh windows, or that vstack cannot write to at all, is drift, and each
+  report names the cause rather than a generic staleness. A source vstack
+  REFUSED is reported as refused by `check`, `verify` and `refresh` alike,
+  with the refusal's own remedy instead of a `vstack add` that would refuse
+  again. A new `session-drift-check` hook (Claude Code and Codex) and the Pi
+  `pi-hooks` `sessionDriftCheck` setting relay the quiet report at session
+  start; both are thin adapters over `check --quiet`, whose output is bounded
+  by construction (VST-258).
+
 - second-opinion settings example: the `SECOND_OPINION_CURRENT_MODEL` block
   announced "three cases, and only the third makes a project file usable at
   all" over a list of two, neither of which does — and no case does, since a
