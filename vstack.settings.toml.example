@@ -356,8 +356,9 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 # DECLARED to match no tracked path today. The selftest fails an exclusion
 # glob that matches nothing — a typo'd anchor is dead config like a
 # leading-'/' one — unless declared here as deliberately guarding paths
-# that do not exist yet. Inert while REVIEW_GATE_CARRY_FORWARD_EXCLUDE is
-# empty.
+# that do not exist yet. A declaration that is not an entry of
+# REVIEW_GATE_CARRY_FORWARD_EXCLUDE is an orphan and FAILS the selftest;
+# an EMPTY exclusion list makes every declaration one.
 
 REVIEW_GATE_MODE = "enforce"
 # Used by: review-gate (`review-predicate.sh`) and orch (submit flow). The

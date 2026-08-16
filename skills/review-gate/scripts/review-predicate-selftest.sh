@@ -46,6 +46,9 @@ predicate="$here/review-predicate.sh"
 case "${REVIEW_GATE_SETTINGS_FILE:-}" in
   '' | /dev/null) : ;;
   *)
+    # An EXISTING non-regular path (directory, FIFO, socket, device) is
+    # rg_setting's refusal, for the live engine as much as for this run;
+    # these guards cover what a bare -f/-e cannot see.
     if [ ! -f "$REVIEW_GATE_SETTINGS_FILE" ] && [ -L "$REVIEW_GATE_SETTINGS_FILE" ]; then
       echo "FATAL: REVIEW_GATE_SETTINGS_FILE ('$REVIEW_GATE_SETTINGS_FILE') names a symlink that does not resolve to a readable file (cycle, dangling target, or over-long chain) — refusing to test built-in defaults in its place" >&2
       exit 1
@@ -2293,6 +2296,9 @@ if [ -n "$ACTIVE_CARRY" ]; then
   # committed glob matches must refuse the carry, and a sibling path outside
   # every committed glob must still carry (the exclusion neither dead nor
   # over-broad).
+  # Set by the battery below; the ledger validation after it references it
+  # only in tracked mode, which only the battery can establish.
+  probe_exts=""
   if [ -n "$ACTIVE_CARRY_EXCLUDE" ]; then
     load_exclude_tracked
     if [ -n "$EXCLUDE_TRACKED_ERROR" ]; then
@@ -2417,47 +2423,6 @@ EOF_PROPHYLACTIC
 $(list_items "$ACTIVE_CARRY_EXCLUDE")
 EOF_EXCLUDE_BATTERY
 
-    # The prophylactic ledger is validated in BOTH directions (tracked
-    # mode): each declared entry must be an exact member of the active
-    # exclusion list AND still match nothing tracked. The loop above only
-    # consults the ledger on a no-match glob, so without this pass a
-    # declaration whose glob was renamed away, or whose guarded path has
-    # since been committed, would sit silently false — a waiver that
-    # outlives its subject masks nothing and trains operators to trust a
-    # lying ledger.
-    if [ -n "$ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC" ]; then
-      while IFS= read -r proph_pat; do
-        [ -z "$proph_pat" ] && continue
-        # Membership needs no tracked evidence — an orphaned waiver is
-        # stale config in hermetic runs too.
-        proph_member=""
-        while IFS= read -r proph_x; do
-          [ "$proph_x" = "$proph_pat" ] && proph_member=1
-        done <<EOF_PROPH_MEMBER
-$(list_items "$ACTIVE_CARRY_EXCLUDE")
-EOF_PROPH_MEMBER
-        if [ -z "$proph_member" ]; then
-          cases=$((cases + 1))
-          echo "FAIL  configured: carry-exclude — prophylactic declaration '$proph_pat' is not an active REVIEW_GATE_CARRY_FORWARD_EXCLUDE entry: a waiver without its glob is stale config (remove the declaration, or restore the exclusion it waives)" >&2
-          failures=$((failures + 1))
-          continue
-        fi
-        # Falsification (the glob gained a tracked match) needs the
-        # tracked tree; hermetic runs cannot judge it.
-        [ "$EXCLUDE_TRACKED_MODE" = "tracked" ] || continue
-        # shellcheck disable=SC2086 # probe_exts is a controlled word list
-        proph_match="$(exclude_glob_probe "$proph_pat" $probe_exts)"
-        proph_rc=$?
-        if [ "$proph_rc" -ne 2 ]; then
-          cases=$((cases + 1))
-          echo "FAIL  configured: carry-exclude — prophylactic declaration '$proph_pat' no longer holds: the glob now matches ${proph_match:-tracked paths} (the declaration asserts NO tracked match today; remove it so the live exclusion is exercised)" >&2
-          failures=$((failures + 1))
-        fi
-      done <<EOF_PROPH_VALIDATE
-$(list_items "$ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC")
-EOF_PROPH_VALIDATE
-    fi
-
     if [ -n "$probe_free" ]; then
       reset
       CFG_TRUSTED_LOGINS="$ACTIVE_TRUSTED_LOGINS"
@@ -2515,6 +2480,49 @@ EOF_UNIVERSAL
         echo "note  configured: carry-exclude — no TRACKED carry-class ($probe_exts) file escapes the committed exclusions today; the positive carry case is unproven against this tree (future non-excluded files still carry)"
       fi
     fi
+  fi
+
+  # The prophylactic ledger is validated in BOTH directions: each declared
+  # entry must be an exact member of the active exclusion list AND (tracked
+  # mode) still match nothing tracked. The battery above only consults the
+  # ledger on a no-match glob, so without this pass a declaration whose glob
+  # was renamed away, or whose guarded path has since been committed, would
+  # sit silently false — a waiver that outlives its subject masks nothing
+  # and trains operators to trust a lying ledger. Deliberately OUTSIDE the
+  # exclusion-list gate: with declarations present and the exclusion list
+  # EMPTY, every declaration is an orphan by definition — an all-orphan
+  # ledger is stale config and must FAIL, never sit inert.
+  if [ -n "$ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC" ]; then
+    while IFS= read -r proph_pat; do
+      [ -z "$proph_pat" ] && continue
+      # Membership needs no tracked evidence — an orphaned waiver is
+      # stale config in hermetic runs too.
+      proph_member=""
+      while IFS= read -r proph_x; do
+        [ "$proph_x" = "$proph_pat" ] && proph_member=1
+      done <<EOF_PROPH_MEMBER
+$(list_items "$ACTIVE_CARRY_EXCLUDE")
+EOF_PROPH_MEMBER
+      if [ -z "$proph_member" ]; then
+        cases=$((cases + 1))
+        echo "FAIL  configured: carry-exclude — prophylactic declaration '$proph_pat' is not an active REVIEW_GATE_CARRY_FORWARD_EXCLUDE entry: a waiver without its glob is stale config (remove the declaration, or restore the exclusion it waives)" >&2
+        failures=$((failures + 1))
+        continue
+      fi
+      # Falsification (the glob gained a tracked match) needs the
+      # tracked tree; hermetic runs cannot judge it.
+      [ "$EXCLUDE_TRACKED_MODE" = "tracked" ] || continue
+      # shellcheck disable=SC2086 # probe_exts is a controlled word list
+      proph_match="$(exclude_glob_probe "$proph_pat" $probe_exts)"
+      proph_rc=$?
+      if [ "$proph_rc" -ne 2 ]; then
+        cases=$((cases + 1))
+        echo "FAIL  configured: carry-exclude — prophylactic declaration '$proph_pat' no longer holds: the glob now matches ${proph_match:-tracked paths} (the declaration asserts NO tracked match today; remove it so the live exclusion is exercised)" >&2
+        failures=$((failures + 1))
+      fi
+    done <<EOF_PROPH_VALIDATE
+$(list_items "$ACTIVE_CARRY_EXCLUDE_PROPHYLACTIC")
+EOF_PROPH_VALIDATE
   fi
 fi
 

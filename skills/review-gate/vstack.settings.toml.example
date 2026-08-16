@@ -156,7 +156,9 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 # exact glob text). The selftest fails an exclusion glob that matches
 # nothing — a typo'd anchor is dead config in the same way a leading-'/'
 # one is — unless it is declared here as deliberately guarding paths that
-# do not exist yet. Inert while REVIEW_GATE_CARRY_FORWARD_EXCLUDE is empty.
+# do not exist yet. A declaration that is not an entry of
+# REVIEW_GATE_CARRY_FORWARD_EXCLUDE is an orphan and FAILS the selftest;
+# an EMPTY exclusion list makes every declaration one.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 
 # The one-switch per-repo gate disable (owner decision 2026-08-08):

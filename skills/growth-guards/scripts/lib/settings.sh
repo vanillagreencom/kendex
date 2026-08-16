@@ -134,6 +134,15 @@ gg_setting() { # NAME DEFAULT — resolved value on stdout; nonzero + ::error on
     set -- ".vstack/settings.toml" "vstack.settings.toml"
   fi
   for file in "$@"; do
+  # The fall-back past this file covers an ABSENT PLAIN FILE only. A path
+  # that EXISTS as something else — directory, FIFO, socket, device — fails
+  # -f exactly like an absent one, so the configured settings would be
+  # skipped with nothing said and the built-in default would decide.
+  # /dev/null is the documented force-defaults handle and stays exempt.
+  if [ "$file" != "/dev/null" ] && [ -e "$file" ] && [ ! -f "$file" ]; then
+    echo "::error::$file: settings path exists but is not a regular file (directory, FIFO, socket or device); the fall-back to built-in defaults covers an absent plain file only" >&2
+    return 1
+  fi
   if [ -f "$file" ]; then
     # Key PRESENCE decides, not value non-emptiness: `NAME = ""` is a real
     # assignment and must override the built-in default, exactly like a

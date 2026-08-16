@@ -87,5 +87,31 @@ OUT=""; RC=0
 OUT="$(cd "$TMP" && unset REVIEW_GATE_TD 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="-e" rg_setting REVIEW_GATE_TD "dflt" 2>"$TMP/err")" || RC=$?
 [[ "$RC" -eq 0 && "$OUT" == "dashfile" ]] && ok "dash-prefixed settings path reads its value (no option-injection fallback)" || bad "dash-prefixed settings path reads its value (no option-injection fallback)" "rc=$RC out=$OUT"
 
+echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
+# A directory (FIFO/socket/device are the same shape) fails -f exactly like
+# an absent file, so the reader would resolve every key to its caller
+# default with nothing said — fail-open on permissive defaults.
+mkdir -p "$TMP/nonregular.dir"
+OUT=""; RC=0
+OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/nonregular.dir" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -ne 0 ]] && grep -q "not a regular file" "$TMP/err" && ok "a DIRECTORY settings path is a config error, not a silent default" || bad "a DIRECTORY settings path is a config error, not a silent default" "rc=$RC out=$OUT"
+
+if mkfifo "$TMP/nonregular.fifo" 2>/dev/null; then
+  OUT=""; RC=0
+  OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/nonregular.fifo" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+  [[ "$RC" -ne 0 ]] && grep -q "not a regular file" "$TMP/err" && ok "a FIFO settings path is a config error, not a silent default" || bad "a FIFO settings path is a config error, not a silent default" "rc=$RC out=$OUT"
+else
+  echo "  skip  mkfifo unavailable — FIFO shape not exercised"
+fi
+
+# Controls: the two shapes that MUST still resolve to the caller default.
+OUT=""; RC=0
+OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE=/dev/null rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "dflt" ]] && ok "/dev/null still forces built-in defaults (control)" || bad "/dev/null still forces built-in defaults (control)" "rc=$RC out=$OUT"
+
+OUT=""; RC=0
+OUT="$(unset REVIEW_GATE_TN 2>/dev/null; REVIEW_GATE_SETTINGS_FILE="$TMP/absent.settings.toml" rg_setting REVIEW_GATE_TN "dflt" 2>"$TMP/err")" || RC=$?
+[[ "$RC" -eq 0 && "$OUT" == "dflt" ]] && ok "an ABSENT plain file still falls back to the default (control)" || bad "an ABSENT plain file still falls back to the default (control)" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

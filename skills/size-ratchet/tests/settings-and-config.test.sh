@@ -180,6 +180,40 @@ run_raw || true
 if [ "$RC" -ne 0 ] && case "$OUT" in *"unsupported syntax"*) true ;; *) false ;; esac; then ok "adjacent # after a quoted value is a segment, not a comment — fails loud"; else bad "adjacent-hash dotenv (.env)" "rc=$RC out=$OUT"; fi
 rm -f "$R/.env"
 
+echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
+# A directory (FIFO/socket/device are the same shape) fails -f exactly like
+# an absent file, so the configured settings would be skipped with nothing
+# said and the built-in 1000 would decide.
+new_repo nonregular
+mkfile f.txt 20
+git -C "$R" add -A
+mkdir -p "$R/nonregular.dir"
+run_raw SIZE_RATCHET_SETTINGS_FILE=nonregular.dir || true
+[ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
+  && ok "a DIRECTORY settings path is exit 2, not a silent built-in default" \
+  || bad "a DIRECTORY settings path is exit 2" "rc=$RC out=$OUT"
+
+if mkfifo "$R/nonregular.fifo" 2>/dev/null; then
+  run_raw SIZE_RATCHET_SETTINGS_FILE=nonregular.fifo || true
+  [ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
+    && ok "a FIFO settings path is exit 2, not a silent built-in default" \
+    || bad "a FIFO settings path is exit 2" "rc=$RC out=$OUT"
+  rm -f "$R/nonregular.fifo"
+else
+  echo "  skip  mkfifo unavailable — FIFO shape not exercised"
+fi
+
+# Controls: the two shapes that MUST still resolve to the built-in default.
+run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 1000"*) true ;; *) false ;; esac \
+  && ok "/dev/null still forces the built-in default (control)" \
+  || bad "/dev/null still forces the built-in default (control)" "rc=$RC out=$OUT"
+
+run_raw SIZE_RATCHET_SETTINGS_FILE=absent.settings.toml || true
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 1000"*) true ;; *) false ;; esac \
+  && ok "an ABSENT plain file still falls back to the built-in default (control)" \
+  || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
+
 echo "=== option-like configured paths ==="
 new_repo optpath
 mkfile f.txt 20

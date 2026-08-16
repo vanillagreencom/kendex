@@ -191,6 +191,37 @@ OUT="$(cd "$R" && GROWTH_GUARDS_BYTE_CEILING_KB=5 "$BC" 2>&1)" && RC=0 || RC=$?
 [ "$RC" -eq 0 ] && ok "environment overrides the settings file (5 passes where 3 failed)" \
   || bad "environment overrides the settings file" "rc=$RC out=$OUT"
 
+echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
+# A directory (FIFO/socket/device are the same shape) fails -f exactly like
+# an absent file, so the configured settings would be skipped with nothing
+# said and the built-in 200 KB would decide.
+mkdir -p "$R/nonregular.dir"
+OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=nonregular.dir "$BC" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
+  && ok "a DIRECTORY settings path is exit 2, not a silent built-in default" \
+  || bad "a DIRECTORY settings path is exit 2" "rc=$RC out=$OUT"
+
+if mkfifo "$R/nonregular.fifo" 2>/dev/null; then
+  OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=nonregular.fifo "$BC" 2>&1)" && RC=0 || RC=$?
+  [ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
+    && ok "a FIFO settings path is exit 2, not a silent built-in default" \
+    || bad "a FIFO settings path is exit 2" "rc=$RC out=$OUT"
+  rm -f "$R/nonregular.fifo"
+else
+  echo "  skip  mkfifo unavailable — FIFO shape not exercised"
+fi
+
+# Controls: the two shapes that MUST still resolve to the built-in default
+# (200 KB, under which the 4 KB addition passes).
+OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=/dev/null "$BC" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 0 ] && ok "/dev/null still forces the built-in default (control)" \
+  || bad "/dev/null still forces the built-in default (control)" "rc=$RC out=$OUT"
+
+OUT="$(cd "$R" && GROWTH_GUARDS_SETTINGS_FILE=absent.settings.toml "$BC" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 0 ] && ok "an ABSENT plain file still falls back to the built-in default (control)" \
+  || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
+rmdir "$R/nonregular.dir"
+
 echo "=== settings: an unreadable source fails loud, never falls through ==="
 if [ "$(id -u)" -eq 0 ]; then
   printf '  skip  unreadable-source pins need a non-root reader (chmod 000 cannot deny root)\n'
