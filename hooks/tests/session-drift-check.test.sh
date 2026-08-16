@@ -146,6 +146,39 @@ assert_contains "$out" "vstack check could not run: project directory $TMP_ROOT/
   "missing project dir says drift status is unknown rather than reading as clean"
 assert_eq "$(cat "$ARGS_LOG")" "" "missing project dir never invokes vstack"
 
+echo "session-drift-check: dash-leading project directory"
+# A relative project dir starting with `-` is a path, not a `cd` option.
+mkdir -p "$TMP_ROOT/-dash"
+: >"$ARGS_LOG"
+: >"$CWD_LOG"
+set +e
+out="$(cd "$TMP_ROOT" && env -u VSTACK_DRIFT_HOOK -u VSTACK_DRIFT_HOOK_AVAILABLE \
+  PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
+  CLAUDE_PROJECT_DIR=-dash FAKE_RC=0 bash "$HOOK" <<<'{"source":"startup"}' 2>/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" 0 "dash-leading project dir exits 0"
+assert_eq "$out" "" "dash-leading project dir is entered, not parsed as an option"
+assert_eq "$(cat "$ARGS_LOG")" "check --quiet" "dash-leading project dir still runs the check"
+assert_eq "$(cd "$TMP_ROOT/-dash" && pwd -P)" "$(cd "$(cat "$CWD_LOG")" && pwd -P)" \
+  "runs vstack inside the dash-leading project dir"
+
+echo "session-drift-check: unexpected failure"
+# Inject an unguarded failure into a COPY of the shipped hook. The strict-mode
+# abort it triggers must still reach the agent as a diagnostic — a session that
+# printed nothing would read as a clean install.
+BROKEN_HOOK="$TMP_ROOT/broken-hook.sh"
+awk '{ print } /^INPUT=/ { print "false" }' "$HOOK" >"$BROKEN_HOOK"
+set +e
+out="$(env -u CLAUDE_PROJECT_DIR -u VSTACK_DRIFT_HOOK -u VSTACK_DRIFT_HOOK_AVAILABLE \
+  PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
+  FAKE_RC=0 bash "$BROKEN_HOOK" <<<'{"source":"startup"}' 2>/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" 0 "an unexpected failure still exits 0"
+assert_contains "$out" "vstack check could not run:" "an unexpected failure is reported, not swallowed"
+assert_contains "$out" "drift status unknown" "an unexpected failure says drift status is unknown"
+
 echo "session-drift-check: no vstack on PATH"
 NOVSTACK_BIN="$TMP_ROOT/novstack"
 mkdir -p "$NOVSTACK_BIN"

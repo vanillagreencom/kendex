@@ -41,15 +41,27 @@ pub(crate) fn has_catalog_table(source_root: &Path) -> bool {
         .is_some()
 }
 
-/// The item paths a kind's configured roots expand to, and whether any of
-/// those roots exists at all.
+/// The item paths a kind's configured roots expand to, and whether EVERY one
+/// of those roots exists.
 #[derive(Debug)]
 struct ExpandedRoots {
     paths: Vec<PathBuf>,
-    /// A configured root is present. A glob whose parent directory exists
+    /// Every configured root is present. A glob whose parent directory exists
     /// counts: it is a readable root that currently matches nothing, which is
     /// evidence the source ships no such item — not evidence the layout moved.
-    root_present: bool,
+    ///
+    /// This is an AND, never an OR: one readable root cannot vouch for a
+    /// sibling that is missing, or the items the missing root used to supply
+    /// would classify as removed upstream and `check` would tell the user to
+    /// uninstall a still-valid install. A missing root instead makes the kind
+    /// [`KindInventory::MissingRoot`] — "inspect the source layout", which is
+    /// the safe direction to be wrong in.
+    ///
+    /// An explicitly empty `[catalog]` list has no roots to check and so is
+    /// vacuously present: an empty list is positive evidence the source ships
+    /// no items of that kind. An ABSENT key is not empty — it expands to the
+    /// kind's default root and fails this test when that root is gone.
+    all_roots_present: bool,
 }
 
 fn expand_configured_paths(
@@ -59,12 +71,12 @@ fn expand_configured_paths(
 ) -> Result<ExpandedRoots> {
     let mut out = ExpandedRoots {
         paths: Vec::new(),
-        root_present: false,
+        all_roots_present: true,
     };
     let mut seen = HashSet::new();
     for raw in catalog.paths_for(kind) {
         let expanded = expand_catalog_entry(source_root, &raw)?;
-        out.root_present |= expanded.root_present;
+        out.all_roots_present &= expanded.all_roots_present;
         for path in expanded.paths {
             let key = normalize_lexical(&path);
             if seen.insert(key) {
@@ -120,10 +132,10 @@ fn expand_catalog_entry(source_root: &Path, raw: &str) -> Result<ExpandedRoots> 
     let last = parts.last().expect("non-empty parts");
     if !last.contains('*') {
         let path = source_root.join(parts.iter().collect::<PathBuf>());
-        let root_present = path.exists();
+        let all_roots_present = path.exists();
         return Ok(ExpandedRoots {
             paths: vec![path],
-            root_present,
+            all_roots_present,
         });
     }
 
@@ -132,7 +144,7 @@ fn expand_catalog_entry(source_root: &Path, raw: &str) -> Result<ExpandedRoots> 
     if !parent.exists() {
         return Ok(ExpandedRoots {
             paths: Vec::new(),
-            root_present: false,
+            all_roots_present: false,
         });
     }
     let mut matches = Vec::new();
@@ -151,7 +163,7 @@ fn expand_catalog_entry(source_root: &Path, raw: &str) -> Result<ExpandedRoots> 
     matches.sort();
     Ok(ExpandedRoots {
         paths: matches,
-        root_present: true,
+        all_roots_present: true,
     })
 }
 
@@ -361,59 +373,35 @@ pub(crate) fn discover_extras(source_root: &Path) -> Result<Vec<Extra>> {
 /// Name-only view of one item kind in a source, for callers that must not
 /// print and must know when discovery was incomplete. Unlike the
 /// `discover_*` functions, a parse failure is recorded rather than warned
-/// about, and every candidate path is kept so a caller can tell "the item's
-/// files are gone" from "the item's files are there but unparseable".
+/// about, so a caller can tell "the item's files are gone" from "the item's
+/// files are there but unparseable".
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Inventory {
     /// Parsed item names, deduplicated, sorted.
     pub names: Vec<String>,
-    /// `path: reason` for every candidate that failed to parse.
+    /// `path: reason` for every candidate whose manifest could not be parsed
+    /// or whose directory could not be read.
     pub failures: Vec<String>,
-    /// Every candidate item path (file for agents/hooks, directory for the
-    /// packaged kinds), parseable or not.
-    pub candidates: Vec<PathBuf>,
 }
 
 impl Inventory {
-    /// True when this item may still have a physical footprint in the source,
-    /// so "removed upstream" is not proven.
+    /// Every candidate parsed, so [`names`](Self::names) is the whole truth
+    /// about what this kind ships — the precondition for calling anything
+    /// absent from it removed upstream.
     ///
-    /// Two independent ways it can be present without appearing in
-    /// [`names`](Self::names):
+    /// The one way an item can be present without appearing in `names` is a
+    /// candidate whose manifest never parsed, and that evidence cannot be
+    /// keyed on the item's name: a directory need not be named after the item
+    /// it declares (`pi-extensions/pi-hooks` ships `@vanillagreen/pi-hooks`),
+    /// so ANY unparseable candidate could be this item's under a directory
+    /// name matching nothing.
     ///
-    /// 1. a candidate path named after it whose manifest no longer parses —
-    ///    the name is unknown but the files are right there;
-    /// 2. ANY unparseable candidate, because a directory need not be named
-    ///    after the item it declares (`pi-extensions/pi-hooks` ships
-    ///    `@vanillagreen/pi-hooks`), so an unreadable manifest could be this
-    ///    item's under a directory name that matches nothing.
-    ///
-    /// Each clause is load-bearing on its own; the tests exercise them
-    /// separately so neither can quietly stop mattering.
-    pub fn may_still_be_present(&self, name: &str) -> bool {
-        self.has_unreadable_candidate() || self.has_candidate_named(name)
-    }
-
-    /// Clause 2: discovery of this kind was incomplete.
-    pub fn has_unreadable_candidate(&self) -> bool {
-        !self.failures.is_empty()
-    }
-
-    /// Clause 1: a candidate path carries this item's name. Directories are
-    /// never named with the npm scope, so a scoped package name compares on
-    /// its last component.
-    pub fn has_candidate_named(&self, name: &str) -> bool {
-        let basename = name.rsplit('/').next().unwrap_or(name);
-        !basename.is_empty()
-            && self.candidates.iter().any(|path| {
-                path.file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .is_some_and(|stem| stem == basename)
-                    || path
-                        .file_name()
-                        .and_then(|file| file.to_str())
-                        .is_some_and(|file| file == basename)
-            })
+    /// A candidate that parsed cleanly already contributed its declared name
+    /// and never answers for a different one — an item renamed in its own
+    /// manifest really is gone under its old name, and a `refresh` keyed on
+    /// that old name could never find it again.
+    pub fn names_are_complete(&self) -> bool {
+        self.failures.is_empty()
     }
 }
 
@@ -469,7 +457,7 @@ pub(crate) fn inventory(
         Ok(roots) => roots,
         Err(err) => return KindInventory::Error(format!("{err:#}")),
     };
-    if !roots.root_present {
+    if !roots.all_roots_present {
         return KindInventory::MissingRoot;
     }
     let mut inv = Inventory::default();
@@ -480,18 +468,14 @@ pub(crate) fn inventory(
     for unreadable in unreadable_candidate_dirs(&roots.paths) {
         inv.failures
             .push(format!("{}: permission denied", unreadable.display()));
-        inv.candidates.push(unreadable);
     }
-    let mut record = |path: PathBuf, parsed: Result<String>| {
-        match parsed {
-            Ok(name) => {
-                if !inv.names.contains(&name) {
-                    inv.names.push(name);
-                }
+    let mut record = |path: PathBuf, parsed: Result<String>| match parsed {
+        Ok(name) => {
+            if !inv.names.contains(&name) {
+                inv.names.push(name);
             }
-            Err(err) => inv.failures.push(format!("{}: {err:#}", path.display())),
         }
-        inv.candidates.push(path);
+        Err(err) => inv.failures.push(format!("{}: {err:#}", path.display())),
     };
     let discovered = match kind {
         ItemKind::Agent => discover_files_in(roots.paths, "md").map(|paths| {
@@ -760,7 +744,7 @@ extras = ["theme-packs"]
         let empty = inv(&root, &default_catalog);
         assert!(matches!(&empty, KindInventory::Readable(inv) if inv.names.is_empty()));
         assert!(
-            !empty.readable().unwrap().may_still_be_present("gone"),
+            empty.readable().unwrap().names_are_complete(),
             "an empty readable root proves absence"
         );
 
@@ -805,51 +789,125 @@ extras = ["theme-packs"]
     }
 
     #[test]
-    fn each_may_still_be_present_clause_is_load_bearing_on_its_own() {
-        let root = sandbox("presence-clauses");
-        // Clause 1 alone: a candidate directory named after the item, whose
-        // manifest parses fine under a DIFFERENT name (so `names` cannot be
-        // what saves it) and no failures anywhere.
+    fn a_directory_that_parsed_under_a_new_name_does_not_shelter_the_old_one() {
+        // A skill renamed in its own SKILL.md while the directory keeps the
+        // old basename. The old name is GONE — refresh is keyed on the
+        // declared name and could never find it again — so a directory that
+        // parsed cleanly must not answer for a name it does not declare.
+        let root = sandbox("renamed-in-manifest");
         skill_at(&root, "skills/alpha", "renamed-alpha");
         let catalog = crate::mapping::CatalogConfig::default();
         let inventory = inv(&root, &catalog);
         let readable = inventory.readable().unwrap();
-        assert!(readable.failures.is_empty(), "clause 2 must not apply");
+        assert_eq!(readable.names, vec!["renamed-alpha".to_string()]);
         assert!(
-            readable.has_candidate_named("alpha"),
-            "clause 1 must carry this case"
+            readable.names_are_complete(),
+            "a clean parse leaves nothing unaccounted for, so `alpha` is removed"
         );
-        assert!(readable.may_still_be_present("alpha"));
+        let _ = fs::remove_dir_all(root);
+    }
 
-        // Clause 2 alone: an unparseable candidate whose directory name
-        // matches NOTHING the lock names, so only "discovery was incomplete"
-        // can save the entry.
-        let root = sandbox("presence-clause-2");
+    #[test]
+    fn an_unparseable_candidate_shelters_every_name_of_its_kind() {
+        // A directory need not be named after the item it declares, so an
+        // unparseable manifest could be ANY locked item's — including one
+        // whose directory name matches nothing.
+        let root = sandbox("unparseable-candidate");
+        let catalog = crate::mapping::CatalogConfig::default();
         skill_at(&root, "skills/keeper", "keeper");
         fs::create_dir_all(root.join("skills").join("mystery")).unwrap();
         fs::write(root.join("skills/mystery/SKILL.md"), "no frontmatter\n").unwrap();
         let inventory = inv(&root, &catalog);
         let readable = inventory.readable().unwrap();
         assert!(
-            !readable.has_candidate_named("@scope/pkg"),
-            "clause 1 must not apply"
+            !readable.names_are_complete(),
+            "an unparseable candidate makes the name list incomplete"
         );
-        assert!(
-            readable.has_unreadable_candidate(),
-            "clause 2 must carry this case"
-        );
-        assert!(readable.may_still_be_present("@scope/pkg"));
 
-        // And the same name IS provably absent once discovery is clean and no
-        // directory matches.
+        // A candidate named after the locked item behaves the same way — it is
+        // the parse failure, not the name, that carries the evidence.
         fs::remove_dir_all(root.join("skills").join("mystery")).unwrap();
-        let inventory = inv(&root, &catalog);
+        fs::create_dir_all(root.join("skills").join("gone")).unwrap();
+        fs::write(root.join("skills/gone/SKILL.md"), "no frontmatter\n").unwrap();
         assert!(
-            !inventory
+            !inv(&root, &catalog)
                 .readable()
                 .unwrap()
-                .may_still_be_present("@scope/pkg")
+                .names_are_complete()
         );
+
+        // Control: once discovery is clean, absence is provable again.
+        fs::remove_dir_all(root.join("skills").join("gone")).unwrap();
+        assert!(
+            inv(&root, &catalog)
+                .readable()
+                .unwrap()
+                .names_are_complete()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn one_missing_configured_root_makes_the_whole_kind_unverifiable() {
+        // Two configured roots, one gone: the readable one cannot vouch for
+        // the items the missing one used to supply, so the kind is a layout
+        // problem to inspect — never a list of removals to run.
+        let root = sandbox("partial-roots");
+        let two_roots = crate::mapping::CatalogConfig {
+            skills: Some(vec!["skills".into(), "packages/skills".into()]),
+            ..Default::default()
+        };
+        skill_at(&root, "skills/keeper", "keeper");
+        assert!(matches!(inv(&root, &two_roots), KindInventory::MissingRoot));
+
+        // Control: with both roots present the kind is readable as before.
+        skill_at(&root, "packages/skills/extra", "extra");
+        assert!(matches!(
+            inv(&root, &two_roots),
+            KindInventory::Readable(inv) if inv.names == ["extra".to_string(), "keeper".to_string()]
+        ));
+
+        // Control: a single configured root that is missing is unchanged.
+        let one_missing = crate::mapping::CatalogConfig {
+            skills: Some(vec!["nowhere".into()]),
+            ..Default::default()
+        };
+        assert!(matches!(
+            inv(&root, &one_missing),
+            KindInventory::MissingRoot
+        ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_explicitly_empty_catalog_list_is_a_readable_empty_kind() {
+        // `skills = []` is positive evidence the source ships no skills, so a
+        // lock entry against it is removed upstream — unlike an ABSENT key,
+        // which expands to `skills/` and is a missing root when that is gone.
+        let root = sandbox("empty-catalog-list");
+        let declared_empty = crate::mapping::CatalogConfig {
+            skills: Some(Vec::new()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            inv(&root, &declared_empty),
+            KindInventory::Readable(inv) if inv.names.is_empty()
+        ));
+        assert!(
+            inv(&root, &declared_empty)
+                .readable()
+                .unwrap()
+                .names_are_complete(),
+            "an explicitly empty list proves absence"
+        );
+
+        // Control: the absent key is still a missing root.
+        assert!(matches!(
+            inv(&root, &crate::mapping::CatalogConfig::default()),
+            KindInventory::MissingRoot
+        ));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -876,24 +934,19 @@ extras = ["theme-packs"]
         fs::set_permissions(&locked_dir, fs::Permissions::from_mode(0o700)).unwrap();
 
         assert!(
-            readable.has_unreadable_candidate(),
-            "an unreadable candidate must be recorded, not ignored"
-        );
-        assert!(
-            readable.may_still_be_present("secret"),
+            !readable.names_are_complete(),
             "files behind a permission bit are still files: {readable:?}"
         );
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn a_scoped_package_name_matches_its_unscoped_directory() {
-        // The real shape: the lock names `@vg/pi-hooks`, the directory is
-        // `pi-hooks`, and its manifest has been renamed upstream so the name
-        // no longer parses to the locked one. Comparing the full scoped name
-        // against directory names would find nothing and condemn a package
-        // whose files are all still there.
-        let root = sandbox("scoped-basename");
+    fn a_package_renamed_in_its_manifest_is_removed_under_its_old_name() {
+        // The lock names `@vg/pi-hooks` and the directory is still
+        // `pi-hooks`, but its manifest now declares a different package. The
+        // directory name is not evidence: `vstack refresh` resolves the locked
+        // name against declared names and would never find this package again.
+        let root = sandbox("renamed-package");
         let dir = root.join("pi-extensions").join("pi-hooks");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
@@ -904,18 +957,11 @@ extras = ["theme-packs"]
         let catalog = crate::mapping::CatalogConfig::default();
         let inventory = inventory(&root, crate::config::ItemKind::PiExtension, &catalog);
         let readable = inventory.readable().expect("root exists and was read");
+        assert_eq!(readable.names, vec!["@vg/pi-hooks-renamed".to_string()]);
         assert!(
-            readable.failures.is_empty(),
-            "the manifest parses fine, so only the name clause can save it"
+            readable.names_are_complete(),
+            "the manifest parsed, so the declared name is the whole truth"
         );
-        assert!(
-            readable.has_candidate_named("@vg/pi-hooks"),
-            "the scope must be stripped before comparing to the directory"
-        );
-        assert!(readable.may_still_be_present("@vg/pi-hooks"));
-        // Negative control: a scoped name with no directory at all.
-        assert!(!readable.has_candidate_named("@vg/absent"));
-        assert!(!readable.may_still_be_present("@vg/absent"));
         let _ = fs::remove_dir_all(root);
     }
 

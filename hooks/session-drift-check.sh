@@ -12,6 +12,10 @@
 # command that can legitimately fail is guarded so this always reaches exit 0.
 set -euo pipefail
 
+# Reaching this trap means an UNGUARDED command failed. Say so: an unexpected
+# failure that printed nothing would read as a clean install.
+trap 'rc=$?; echo "vstack check could not run: drift hook failed at line $LINENO (exit $rc); drift status unknown"; exit 0' ERR
+
 INPUT=$(cat || true)
 
 if [ "${VSTACK_DRIFT_HOOK:-}" = "off" ]; then
@@ -42,8 +46,9 @@ fi
 
 # Claude Code exports the project root; other harnesses launch the hook in it.
 # Enter it separately so only vstack's own exit code drives classification.
+# `--` so a directory whose name starts with a dash is a path, not an option.
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
-if ! cd "$PROJECT_DIR" 2>/dev/null; then
+if ! cd -- "$PROJECT_DIR" 2>/dev/null; then
   echo "vstack check could not run: project directory $PROJECT_DIR is not accessible; drift status unknown"
   exit 0
 fi

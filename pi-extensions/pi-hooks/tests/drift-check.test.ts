@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { driftCheckArgs, driftMessage, runDriftCheck } from "../extensions/drift-check.ts";
+import { deliverDrift, driftCheckArgs, driftMessage, runDriftCheck } from "../extensions/drift-check.ts";
 import piHooks from "../extensions/hooks.ts";
 
 type SessionStartHandler = (
@@ -127,6 +127,36 @@ describe("drift-check classification", () => {
 	test("includeAvailable=false passes --no-available", () => {
 		expect(driftCheckArgs({ includeAvailable: false })).toEqual(["check", "--quiet", "--no-available"]);
 		expect(driftCheckArgs({ includeAvailable: true })).toEqual(["check", "--quiet"]);
+	});
+});
+
+describe("drift delivery", () => {
+	test("an unexpected throw is reported, never mistaken for a clean install", async () => {
+		const sent: string[] = [];
+		await deliverDrift(Promise.reject(new Error("spawn exploded")), (m) => sent.push(m));
+		expect(sent).toEqual(["vstack check could not run: spawn exploded; drift status unknown"]);
+	});
+
+	test("a non-Error throw still yields a diagnostic", async () => {
+		const sent: string[] = [];
+		await deliverDrift(Promise.reject("nope"), (m) => sent.push(m));
+		expect(sent).toEqual(["vstack check could not run: nope; drift status unknown"]);
+	});
+
+	test("a clean result stays silent and a drift result is relayed verbatim", async () => {
+		const clean: string[] = [];
+		await deliverDrift(Promise.resolve({ kind: "clean" }), (m) => clean.push(m));
+		expect(clean).toEqual([]);
+
+		const drifted: string[] = [];
+		await deliverDrift(Promise.resolve({ kind: "drift", report: REPORT }), (m) => drifted.push(m));
+		expect(drifted).toEqual([REPORT]);
+	});
+
+	test("a delivery channel that throws never rejects into session startup", async () => {
+		await expect(deliverDrift(Promise.reject(new Error("boom")), () => {
+			throw new Error("channel down");
+		})).resolves.toBeUndefined();
 	});
 });
 

@@ -715,19 +715,20 @@ fn classify(
         if catalog.unverifiable(entry.kind).is_some() {
             continue;
         }
-        // "Removed" needs positive evidence: the kind's root was READ (an
-        // empty readable root proves the source ships nothing of this kind)
-        // and nothing in it could be this item. An item whose files exist but
+        // "Removed" needs positive evidence: every configured root for the
+        // kind was READ (an empty readable root proves the source ships
+        // nothing of this kind) and every candidate in them parsed, so the
+        // discovered names are the whole truth. An item whose files exist but
         // no longer parse falls through to the hash check instead of being
         // condemned.
         let known = catalog
             .names
             .get(&entry.kind)
             .is_some_and(|names| names.contains(&entry.name));
-        let physically_absent = catalog
+        let discovery_complete = catalog
             .readable(entry.kind)
-            .is_some_and(|inv| !inv.may_still_be_present(&entry.name));
-        if !known && physically_absent {
+            .is_some_and(|inv| inv.names_are_complete());
+        if !known && discovery_complete {
             removed.push(item(entry));
         } else if config::is_source_changed(entry) {
             outdated.push(item(entry));
@@ -1084,11 +1085,12 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
         );
         let shown = shown_count(quiet, report.missing_skill_refs.len());
         for r in &report.missing_skill_refs[..shown] {
-            let skill = display_text(&r.skill);
             let _ = writeln!(
                 out,
-                "    ✗ agent {} references skill {skill} but it's not installed; run `vstack add --skill {skill} .` or `vstack add` to auto-install dependent skills.",
-                r.agent
+                "    ✗ agent {} references skill {} but it's not installed; run `vstack add --skill {} .` or `vstack add` to auto-install dependent skills.",
+                display_text(&r.agent),
+                display_text(&r.skill),
+                command_arg(&r.skill),
             );
         }
         overflow_line(out, "    ", shown, report.missing_skill_refs.len());
@@ -1776,6 +1778,36 @@ mod scope_report_tests {
     }
 
     #[test]
+    fn a_long_missing_skill_name_truncates_in_prose_but_not_in_the_command() {
+        let long = "s".repeat(DISPLAY_LIMIT + 40);
+        let report = CheckReport {
+            version: 1,
+            cli_version: "0.0.0",
+            cli_hash: "abc",
+            drift: true,
+            background_refresh_error: None,
+            cache_refresh_failures: Vec::new(),
+            scopes: vec![ScopeReport {
+                scope: "project",
+                missing_skill_refs: vec![MissingSkillRef {
+                    agent: "rust".into(),
+                    skill: long.clone(),
+                }],
+                ..ScopeReport::default()
+            }],
+        };
+        let out = render_report(&report, false);
+        assert!(
+            out.contains(&format!("references skill {}…", "s".repeat(DISPLAY_LIMIT))),
+            "prose truncates: {out}"
+        );
+        assert!(
+            out.contains(&format!("vstack add --skill {long} .")),
+            "the pasted command must carry the whole name: {out}"
+        );
+    }
+
+    #[test]
     fn a_command_argument_quotes_every_shell_metacharacter() {
         // Plain slugs and URLs stay bare — quoting everything would make the
         // common line noisier for no gain.
@@ -2215,6 +2247,123 @@ mod scope_report_tests {
             // Control: remove the ROOT as well and the verdict must retract —
             // a moved layout is not proof of removal.
             std::fs::remove_dir_all(source.join("skills")).unwrap();
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(report.removed.is_empty(), "{report:?}");
+            assert!(!report.source_issues.is_empty(), "{report:?}");
+        });
+    }
+
+    #[test]
+    fn an_item_renamed_in_its_own_manifest_is_removed_under_the_old_name() {
+        with_sandbox("renamed-manifest", |project, source| {
+            write_skill(source, "alpha", "one");
+            install_skill_on_disk(project, "alpha");
+            let mut lock = LockFile::default();
+            let mut entry = locked(source, ItemKind::Skill, "alpha");
+            entry.source_hash = String::new();
+            lock.add(entry);
+
+            // The directory keeps its old basename while SKILL.md declares a
+            // new name. `refresh` resolves the locked name against DECLARED
+            // names, so nothing here can ever satisfy `alpha` again — the
+            // matching directory name is not evidence of survival.
+            std::fs::write(
+                source.join("skills").join("alpha").join("SKILL.md"),
+                "---\nname: renamed-alpha\ndescription: renamed\n---\n\nbody\n",
+            )
+            .unwrap();
+
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert_eq!(names(&report.removed), vec!["alpha"], "{report:?}");
+            assert!(report.source_issues.is_empty(), "{report:?}");
+
+            // Control: make that same directory unparseable and the verdict
+            // retracts — an unreadable manifest could be any item's.
+            std::fs::write(
+                source.join("skills").join("alpha").join("SKILL.md"),
+                "no frontmatter\n",
+            )
+            .unwrap();
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(report.removed.is_empty(), "{report:?}");
+            assert!(!report.source_issues.is_empty(), "{report:?}");
+        });
+    }
+
+    #[test]
+    fn one_missing_configured_root_never_prescribes_a_removal() {
+        with_sandbox("partial-roots", |project, source| {
+            std::fs::write(
+                source.join("vstack.toml"),
+                "[catalog]\nskills = [\"skills\", \"pkgs/skills\"]\n",
+            )
+            .unwrap();
+            write_skill(source, "alpha", "one");
+            std::fs::create_dir_all(source.join("pkgs").join("skills").join("beta")).unwrap();
+            std::fs::write(
+                source
+                    .join("pkgs")
+                    .join("skills")
+                    .join("beta")
+                    .join("SKILL.md"),
+                "---\nname: beta\ndescription: beta\n---\n\nbody\n",
+            )
+            .unwrap();
+            install_skill_on_disk(project, "alpha");
+            install_skill_on_disk(project, "beta");
+            let mut lock = LockFile::default();
+            for name in ["alpha", "beta"] {
+                let mut entry = locked(source, ItemKind::Skill, name);
+                entry.source_hash = String::new();
+                lock.add(entry);
+            }
+
+            // Control: both roots present, both entries classify normally.
+            let clean = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(clean.removed.is_empty(), "{clean:?}");
+            assert!(clean.source_issues.is_empty(), "{clean:?}");
+
+            // One configured root disappears. The surviving root cannot vouch
+            // for what the missing one used to supply, so the whole kind is a
+            // layout problem to inspect — never a `vstack remove` to run.
+            std::fs::remove_dir_all(source.join("pkgs").join("skills")).unwrap();
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(
+                report.removed.is_empty(),
+                "a still-readable sibling root must not condemn beta: {report:?}"
+            );
+            assert!(
+                matches!(
+                    &report.source_issues[0].problem,
+                    SourceProblem::Unreadable { entries, reasons }
+                        if entries == &vec!["alpha".to_string(), "beta".to_string()]
+                            && reasons[0].contains("skills")
+                ),
+                "{report:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn an_explicitly_empty_catalog_list_reports_its_entries_removed() {
+        with_sandbox("empty-catalog-list", |project, source| {
+            // `skills = []` says the source ships no skills at all — positive
+            // evidence, unlike an absent key whose default root is simply
+            // missing.
+            std::fs::write(source.join("vstack.toml"), "[catalog]\nskills = []\n").unwrap();
+            install_skill_on_disk(project, "alpha");
+            let mut lock = LockFile::default();
+            let mut entry = locked(source, ItemKind::Skill, "alpha");
+            entry.source_hash = String::new();
+            lock.add(entry);
+
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert_eq!(names(&report.removed), vec!["alpha"], "{report:?}");
+            assert!(report.source_issues.is_empty(), "{report:?}");
+
+            // Control: drop the key entirely and, with no `skills/` directory,
+            // the same lock is unverifiable rather than removed.
+            std::fs::write(source.join("vstack.toml"), "[catalog]\nhooks = []\n").unwrap();
             let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
             assert!(report.removed.is_empty(), "{report:?}");
             assert!(!report.source_issues.is_empty(), "{report:?}");

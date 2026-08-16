@@ -72,3 +72,34 @@ export function driftMessage(result: DriftCheckResult): string | undefined {
 			return `vstack check could not run (exit ${result.exitCode}); drift status unknown:\n${result.report}`;
 	}
 }
+
+/** Text for a throw the classified result kinds never accounted for. */
+export function driftErrorMessage(error: unknown): string {
+	const reason = error instanceof Error ? error.message : String(error);
+	return `vstack check could not run: ${reason || "unknown error"}; drift status unknown`;
+}
+
+/**
+ * Hand a drift check's outcome to `send`. Every failure mode gets a line: an
+ * unexpected throw is the one path that could otherwise be mistaken for a
+ * clean install. Never rejects — the caller does not await it, so a rejection
+ * would surface as an unhandled one during session startup.
+ */
+export async function deliverDrift(
+	check: Promise<DriftCheckResult>,
+	send: (message: string) => void,
+): Promise<void> {
+	let message: string | undefined;
+	try {
+		message = driftMessage(await check);
+	} catch (error) {
+		message = driftErrorMessage(error);
+	}
+	if (message === undefined) return;
+	try {
+		send(message);
+	} catch {
+		// The delivery channel itself is what failed; there is nowhere left to
+		// report it to.
+	}
+}

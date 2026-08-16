@@ -5,7 +5,7 @@ import { isBareCd, runPreCommitCheck } from "./bash-guards.js";
 import { refusalReason, repoCopyRefusal } from "./repo-copy-guard.js";
 import { invalidateClippyCache } from "./cargo.js";
 import { getBool, getNumber, readConfig, recordProjectTrust } from "./config.js";
-import { driftMessage, runDriftCheck } from "./drift-check.js";
+import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { clippyIssuesForFile, workspaceClippyErrors } from "./lint-hooks.js";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-hooks.installed");
@@ -39,19 +39,17 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const cfg = readConfig(ctx.cwd);
 		if (!getBool(cfg, "enabled") || !getBool(cfg, "sessionDriftCheck")) return;
 
-		void runDriftCheck(ctx.cwd, {
-			includeAvailable: getBool(cfg, "sessionDriftAvailable"),
-			timeoutMs: getNumber(cfg, "driftCheckTimeoutMs"),
-		})
-			.then((result) => {
-				const message = driftMessage(result);
-				if (message === undefined) return;
+		void deliverDrift(
+			runDriftCheck(ctx.cwd, {
+				includeAvailable: getBool(cfg, "sessionDriftAvailable"),
+				timeoutMs: getNumber(cfg, "driftCheckTimeoutMs"),
+			}),
+			(message) =>
 				pi.sendMessage(
 					{ customType: "vstack-drift", content: message, display: true },
 					{ triggerTurn: false },
-				);
-			})
-			.catch(() => undefined);
+				),
+		);
 	});
 
 	pi.on("tool_call", async (event, ctx: ExtensionContext) => {
