@@ -37,11 +37,15 @@ PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
 # session environment was set for THIS session and outranks detection. A value
 # in vstack.settings.toml or .env.local was set for the REPO: it reaches every
 # session run there, including the Claude Code and Codex sessions whose model
-# the script can detect for itself. `+x` rather than `:-` so a set-but-empty
-# value counts as caller-provided, matching vstack_load_project_env's own
-# precedence rule.
+# the script can detect for itself.
+#
+# Non-empty, the same test resolve_current_model applies: an EMPTY value is not
+# a declaration, so it is neither an identity nor session-scoped, and takes the
+# undeclared path exactly like an unset one. (A set-but-empty caller value still
+# does its job through vstack_load_project_env, which re-asserts it over any
+# project file — which is precisely why nothing is declared afterwards.)
 CURRENT_MODEL_IS_SESSION_SCOPED=false
-[[ -z "${SECOND_OPINION_CURRENT_MODEL+x}" ]] || CURRENT_MODEL_IS_SESSION_SCOPED=true
+[[ -z "${SECOND_OPINION_CURRENT_MODEL:-}" ]] || CURRENT_MODEL_IS_SESSION_SCOPED=true
 
 # Source project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —
@@ -290,10 +294,21 @@ roster_entries() {
 # preserve_raw_and_fail and preserve_no_review_and_fail, the only writers.
 # `--` marks the end of options: --output is caller input and may begin with
 # '-', which rm would otherwise parse as flags.
+#
+# A removal that fails — read-only filesystem, a directory that denies write, an
+# immutable file — must not abort under set -e with a bare `rm: cannot remove`
+# and no context: that is the wrong-cause shape already fixed twice here, for
+# the artifact home and the record writers. rm's own text is the actionable
+# part (which path, which errno), so it is captured and reported INSIDE a named
+# cause rather than discarded or left to stand alone.
 clear_output_family() {
-  rm -f -- "$1" \
-    "$1.raw.txt" "$1.retry.txt" "$1.failed.json" \
-    "$1.noreview.json" "$1.incomplete.json"
+  local err
+  if ! err=$(rm -f -- "$1" \
+      "$1.raw.txt" "$1.retry.txt" "$1.failed.json" \
+      "$1.noreview.json" "$1.incomplete.json" 2>&1); then
+    echo "Error: cannot clear a previous run's artifact at $1: ${err:-rm failed without a message}" >&2
+    exit 1
+  fi
 }
 
 if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" ]]; then
@@ -305,8 +320,11 @@ if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" ]]; then
     exit 1
   fi
   # path_dir stands in for dirname, which cannot take the `--` marker portably.
-  if ! mkdir -p -- "$(path_dir "$OUTPUT_PATH")" 2>/dev/null; then
-    echo "Error: cannot create the --output parent directory: $(path_dir "$OUTPUT_PATH")" >&2
+  # mkdir's own message carries the errno, so it is folded into the named cause
+  # rather than sent to /dev/null — a named error the operator cannot act on is
+  # only half the fix.
+  if ! mkdir_err=$(mkdir -p -- "$(path_dir "$OUTPUT_PATH")" 2>&1); then
+    echo "Error: cannot create the --output parent directory: $(path_dir "$OUTPUT_PATH"): ${mkdir_err:-mkdir failed without a message}" >&2
     exit 1
   fi
   clear_output_family "$OUTPUT_PATH"
@@ -1284,26 +1302,16 @@ if $MULTI_LANE; then
   for lane in "${REVIEW_LANES[@]}"; do
     if [[ -n "$OUTPUT_PATH" ]]; then
       lane_out="${OUTPUT_PATH}.${lane}.json"
-      # Same policy as the designated-output clearing after argument parsing,
-      # applied to this lane's own family — that pass cleared the union path
-      # and its sidecars, not the per-lane ones. A previous run's lane artifact
-      # is misleading whether or not this run overwrites it, and the umask only
-      # governs files the child CREATES — writing through a surviving inode
-      # keeps that inode's old mode, so a family left at 0644 would stay
-      # world-readable through every later run. Unremovable here means the
-      # artifact family cannot be guaranteed clean, which is worth failing on
-      # before any model spend.
-      #
-      # Every suffix the recursive writer can produce, enumerated rather than
-      # globbed: this path is the CALLER's, so `"$lane_out".*` would also take
-      # anything else of theirs that happens to sit under this prefix. (The
-      # same glob in cleanup_lanes is safe because it runs on a random mktemp
-      # name that cannot collide with a caller's file.) Keep in step with
-      # preserve_cli_failure_and_fail, preserve_raw_and_fail and
-      # preserve_no_review_and_fail, the only writers of these sidecars.
-      rm -f -- "$lane_out" \
-        "$lane_out.raw.txt" "$lane_out.retry.txt" "$lane_out.failed.json" \
-        "$lane_out.noreview.json" "$lane_out.incomplete.json"
+      # Belt for the lane this run actually selected. The pre-flight pass
+      # already cleared every roster name's family, so this normally removes
+      # nothing; it re-runs here because the umask only governs files the child
+      # CREATES — writing through a surviving inode keeps that inode's old mode,
+      # so a family that reappeared at 0644 between the two points would stay
+      # world-readable through every later run. Unremovable means the artifact
+      # family cannot be guaranteed clean, which is worth failing on before any
+      # model spend — through the same named cause as the pre-flight pass, not a
+      # bare rm error.
+      clear_output_family "$lane_out"
     else
       lane_out=$(mktemp)
       LANE_TMP_FILES+=("$lane_out")

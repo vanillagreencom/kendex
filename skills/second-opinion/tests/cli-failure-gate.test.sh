@@ -666,6 +666,53 @@ grep -q "Is a directory" "$s11_err" && fail "a directory at --output leaks a bar
 assert_eq "$(cat "$COUNTER")" "0" "a directory at --output invokes no CLI"
 rmdir "$s11d"
 
+echo "=== scenario 11b: an unclearable previous artifact is a named cause, not a bare rm error ==="
+# The clearing runs before anything else, so a directory that denies write makes
+# `rm` fail — under set -e that would abort with `rm: cannot remove …` and no
+# statement of what the run was doing or why it stopped.
+s11b_err="$TMP_ROOT/s11b.stderr"
+if $CAN_DENY_BY_MODE; then
+  s11b_dir="$TMP_ROOT/ro-out"
+  rm -rf "$s11b_dir"; mkdir -p "$s11b_dir"
+  printf '%s\n' '{"verdict":"pass","summary":"STALE"}' > "$s11b_dir/review.json"
+  chmod 0500 "$s11b_dir"
+  printf '0' > "$COUNTER"
+  rc11b=0
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+    STUB_COUNTER="$COUNTER" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s11b_dir/review.json" \
+      >/dev/null 2>"$s11b_err"
+  rc11b=$?
+  set -e
+  chmod 0700 "$s11b_dir"
+  assert_eq "$rc11b" "1" "an unclearable previous artifact exits 1"
+  assert_file_contains "$s11b_err" "cannot clear a previous run's artifact" "the clearing failure is a named cause"
+  assert_file_contains "$s11b_err" "$s11b_dir/review.json" "the named cause carries the path"
+  assert_file_contains "$s11b_err" "Permission denied" "the named cause keeps rm's own actionable reason"
+  assert_eq "$(cat "$COUNTER")" "0" "an unclearable artifact invokes no CLI"
+else
+  skip "unclearable previous artifact: running as root, a mode-denied directory is still writable"
+fi
+
+# The parent-directory error must carry its reason too — a named error the
+# operator cannot act on is only half the fix.
+if $CAN_DENY_BY_MODE; then
+  s11c_ro="$TMP_ROOT/readonly-parent2"
+  rm -rf "$s11c_ro"; mkdir -p "$s11c_ro"; chmod 0500 "$s11c_ro"
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+    STUB_COUNTER="$COUNTER" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s11c_ro/sub/review.json" \
+      >/dev/null 2>"$s11b_err"
+  set -e
+  chmod 0700 "$s11c_ro"
+  assert_file_contains "$s11b_err" "cannot create the --output parent directory" "the parent failure is still a named cause"
+  assert_file_contains "$s11b_err" "Permission denied" "the parent failure keeps mkdir's own reason"
+else
+  skip "uncreatable --output parent reason: running as root, a mode-denied directory is still writable"
+fi
+
 echo "=== scenario 12: no writable location at all keeps the exit class and the cause ==="
 # The artifact home and system temp can both refuse (read-only, full). An
 # unguarded final mktemp would die under set -e at exit 1, losing both the

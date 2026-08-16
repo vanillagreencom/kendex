@@ -1059,6 +1059,43 @@ if $ANCESTOR_VISIBLE; then
   assert_eq "$rc33h" "0" "control: a session-exported identity is honoured in a Pi session"
   assert_eq "$(count lane-claude)" "1" "control: the Pi-on-codex session gets claude"
   assert_eq "$(count lane-codex)" "0" "control: the Pi-on-codex session never gets codex"
+  # A set-but-EMPTY caller value is not a declaration. It still does its job —
+  # vstack_load_project_env re-asserts it over the project file — which is
+  # exactly why nothing is declared afterwards, so the run must take the
+  # UNDECLARED path, not the project-sourced one and not a session-scoped one.
+  reset_counts
+  rm -f "$TMP_ROOT/out33.json"
+  write_s33_settings codex
+  rc33j=0
+  set +e
+  env SECOND_OPINION_CURRENT_MODEL= \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+    SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+    SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 \
+    "$TMP_ROOT/fake/pi" "$S33" review --range HEAD --cwd "$WORK" \
+    --output "$TMP_ROOT/out33.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
+  rc33j=$?
+  set -e
+  assert_eq "$rc33j" "1" "an empty caller value takes the undeclared path (exit 1)"
+  assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "an empty caller value invokes no CLI"
+  grep -q "model undeclared" "$TMP_ROOT/last.stderr" \
+    || fail "an empty caller value is not reported as undeclared"
+  grep -q "comes from project settings" "$TMP_ROOT/last.stderr" \
+    && fail "an empty caller value is wrongly treated as the project file's declaration"
+  # control: the same session with the value actually exported proceeds
+  reset_counts
+  rc33k=0
+  set +e
+  env SECOND_OPINION_CURRENT_MODEL=codex \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+    SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+    SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 \
+    "$TMP_ROOT/fake/pi" "$S33" review --range HEAD --cwd "$WORK" \
+    --output "$TMP_ROOT/out33.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
+  rc33k=$?
+  set -e
+  assert_eq "$rc33k" "0" "control: a non-empty exported value is a declaration"
+
   # every project source is covered, not just the settings file
   for s33_file in .env .env.local .vstack/settings.toml; do
     reset_counts
