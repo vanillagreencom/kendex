@@ -678,6 +678,7 @@ assert_contains "$notdir_out" "nothing was launched" "nothing is launched on an 
 OWNED_STUB="$TMP_ROOT/worktree-owned"
 cat > "$OWNED_STUB" <<'STUBEOF'
 #!/usr/bin/env bash
+set -euo pipefail
 # `create <item>`: the first item gets a tree, every later one is owned.
 [[ "${1:-}" == "create" ]] || exit 0
 n=0; [[ -f "$OWNED_COUNT" ]] && n="$(cat "$OWNED_COUNT")"
@@ -699,6 +700,22 @@ set -e
 assert_contains "$owned_out" "on lane CLAUDE_CONFIG_DIR=$H/.claude" \
   "a lane picked for an owned item is not counted as one the batch ran on"
 assert_contains "$owned_out" "skipped 1 (owned by another session)" "the owned item is still skipped"
+
+# A config dir carrying the claim record's field separator is refused at lane
+# resolution, like a quote-bearing one: a claim nobody can count is worse than
+# no launch.
+TABBED="$TMP_ROOT/tab	lane"; mkdir -p "$TABBED"
+set +e
+tab_out=$(GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' run_ot --harness claude --lane "$TABBED" --cmd "true" CC-21 2>&1)
+tab_rc=$?
+set -e
+assert_eq "$tab_rc" "1" "a tab-bearing lane config dir is refused"
+assert_contains "$tab_out" "tab or newline" "the refusal names what it cannot record"
+if grep -qF "Opened" <<<"$tab_out"; then
+  fail "a refused tab-bearing lane launches nothing"
+else
+  pass "a refused tab-bearing lane launches nothing"
+fi
 
 # The claim store belongs to the CALLER's checkout, not the one the script is
 # installed in: `.agents` in a worktree points back at the main checkout, so a

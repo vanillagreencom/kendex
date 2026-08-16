@@ -263,9 +263,15 @@ if [[ -n "$LANE" ]]; then
   # Refused here, before any worktree is created (vstack#894: resolve the lane
   # before mutating anything). The value is single-quoted in the rendered
   # launch command, and a single quote inside the path cannot be embedded
-  # safely.
+  # safely; a tab or newline cannot survive the claim record's field
+  # separator, and a lane whose claim nobody can count is a lane that stacks
+  # sessions silently.
   if [[ "$LANE_ENV" == *"'"* ]]; then
     echo "Error: lane config dir contains a single quote; cannot render a safe launch command: $LANE_ENV" >&2
+    exit 1
+  fi
+  if [[ "$LANE_ENV" == *$'\t'* || "$LANE_ENV" == *$'\n'* ]]; then
+    echo "Error: lane config dir contains a tab or newline; its in-flight claim could not be recorded: $LANE_ENV" >&2
     exit 1
   fi
   echo "Lane: $LANE_ENV"
