@@ -163,8 +163,10 @@
   target(s) a review would run.
 - second-opinion: no run can hand a caller a stale result. Every mode that
   writes `--output` — `review`, `audit`, `challenge`, `quick` — DELETES that
-  path and its managed sidecars (`.raw.txt`, `.retry.txt`, `.failed.json`,
-  `.noreview.json`, `.incomplete.json`) at startup, before target selection and
+  path at startup, plus exactly the sidecar records that mode can produce
+  (`.raw.txt`, `.retry.txt`, `.failed.json`, `.noreview.json`,
+  `.incomplete.json` for `review`/`audit`; `challenge` and `quick` write no such
+  record, so beside their `--output` those names are yours and are left alone), before target selection and
   before any CLI runs, so no exit past the argument loop leaves a previous run's
   output standing — external review is advisory, and callers are told to
   continue past its non-zero exits. `--help` and `detect` never reach the write

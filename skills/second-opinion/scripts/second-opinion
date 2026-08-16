@@ -22,7 +22,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Resolve project root for .env sourcing (works in worktrees and main repos)
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
@@ -361,12 +361,32 @@ is_own_review_artifact() {
   ' >/dev/null 2>&1 < "$1"
 }
 
+# Every sidecar record this skill can write beside an artifact. Enumerated in
+# ONE place: the call sites pass the subset that applies, so a mode cannot
+# inherit a suffix it never produces by copying a list. Keep in step with
+# preserve_cli_failure_and_fail, preserve_raw_response, preserve_raw_and_fail
+# and preserve_no_review_and_fail — the only writers.
+ALL_RECORD_SUFFIXES=(.raw.txt .retry.txt .failed.json .noreview.json .incomplete.json)
+
+# The subset THIS mode can produce, derived from capability rather than listed
+# at the call site. Only review and audit carry the no-verdict contract that
+# preserves a raw, retried, failed, no-review or incomplete response; challenge
+# and quick write their answer and nothing else, so beside THEIR --output those
+# five names are user files by construction.
+MODE_RECORD_SUFFIXES=()
+case "$MODE" in
+  review|audit) MODE_RECORD_SUFFIXES=("${ALL_RECORD_SUFFIXES[@]}") ;;
+esac
+
+# clear_output_family <base> [suffix...] — the base path plus exactly the
+# suffixes the caller states this run may have written there.
 clear_output_family() {
-  local err
-  if ! err=$(rm -f -- "$1" \
-      "$1.raw.txt" "$1.retry.txt" "$1.failed.json" \
-      "$1.noreview.json" "$1.incomplete.json" 2>&1); then
-    echo "Error: cannot clear a previous run's artifact at $1: ${err:-rm failed without a message}" >&2
+  local base="$1"; shift
+  local err suffix
+  local -a targets=("$base")
+  for suffix in "$@"; do targets+=("$base$suffix"); done
+  if ! err=$(rm -f -- "${targets[@]}" 2>&1); then
+    echo "Error: cannot clear a previous run's artifact at $base: ${err:-rm failed without a message}" >&2
     exit 1
   fi
 }
@@ -416,7 +436,9 @@ if [[ -n "$OUTPUT_PATH" ]] && $CLEAR_ARTIFACT; then
     echo "Error: cannot create the --output parent directory: $(path_dir "$OUTPUT_PATH"): ${mkdir_err:-mkdir failed without a message}" >&2
     exit 1
   fi
-  clear_output_family "$OUTPUT_PATH"
+  # This mode's own subset: challenge and quick can produce no sidecar, so
+  # beside their --output those names are the caller's files.
+  clear_output_family "$OUTPUT_PATH" ${MODE_RECORD_SUFFIXES[@]+"${MODE_RECORD_SUFFIXES[@]}"}
   # Every OTHER path under the prefix — a lane this run will not write, a lane
   # whose target was renamed out of the roster, anything a caller put there.
   # None is a path this run writes, so none may be deleted on the strength of
@@ -436,7 +458,9 @@ if [[ -n "$OUTPUT_PATH" ]] && $CLEAR_ARTIFACT; then
     clear_name="${clear_name%.json}"
     [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
     is_own_review_artifact "$clear_candidate" || continue
-    clear_output_family "$clear_candidate"
+    # The artifact proved ours, so its whole family is ours by construction —
+    # a review wrote it, whatever mode is clearing up after it now.
+    clear_output_family "$clear_candidate" "${ALL_RECORD_SUFFIXES[@]}"
   done
 fi
 
@@ -1093,8 +1117,8 @@ artifact_file() {
         # pre-creation vet, which already refuses every escape the tests can
         # construct — only the accept-control (a --cwd reached through a
         # symlink) exercises this branch.
-        phys_root="$(cd "$CWD" 2>/dev/null && pwd -P)" || phys_root=""
-        phys_dir="$(cd "$dir" 2>/dev/null && pwd -P)" || phys_dir=""
+        phys_root="$(cd -- "$CWD" 2>/dev/null && pwd -P)" || phys_root=""
+        phys_dir="$(cd -- "$dir" 2>/dev/null && pwd -P)" || phys_dir=""
         if [[ -z "$phys_root" || "$phys_dir" != "$phys_root/$rel" ]]; then
           echo "→ artifact home rejected (resolves outside the reviewed repo): $dir -> ${phys_dir:-?}" >&2
           dir=""
@@ -1108,6 +1132,11 @@ artifact_file() {
     fi
   fi
   if [[ -n "$dir" ]]; then
+    # No `--` here, and none needed: every branch above leaves $dir ABSOLUTE
+    # (the `/*` case by definition, `~` via $HOME, the relative case via the
+    # canonicalized $CWD), so the template can never begin with `-`. That also
+    # avoids relying on `--` in mktemp, whose support for it is not uniform
+    # across the BSD/macOS target.
     ARTIFACT_PATH=$(mktemp "$dir/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || ARTIFACT_PATH=""
   fi
   if [[ -z "$ARTIFACT_PATH" ]]; then
@@ -1235,7 +1264,10 @@ emit_instruction_file() {
     echo "→ skipping symlinked instruction file (must be a regular file inside the repo): $f" >&2
     return 0
   fi
-  phys_dir="$(cd "$CWD/$(dirname "$f")" 2>/dev/null && pwd -P)" || return 0
+  # path_dir, not dirname: `f` comes from the REVIEWED repo, which this code
+  # treats as untrusted, so it may begin with `-` — and dirname cannot take
+  # `--` portably (see path_dir).
+  phys_dir="$(cd -- "$CWD/$(path_dir "$f")" 2>/dev/null && pwd -P)" || return 0
   if [[ "$phys_dir" != "$phys_root" && "$phys_dir" != "$phys_root"/* ]]; then
     echo "→ skipping instruction file outside the reviewed repo: $f -> $phys_dir" >&2
     return 0
@@ -1268,14 +1300,14 @@ collect_review_instructions() {
   # Containment root: the reviewed repo's PHYSICAL path (see
   # emit_instruction_file for the checks each match must pass).
   local phys_root
-  phys_root="$(cd "$CWD" && pwd -P)" || return 0
+  phys_root="$(cd -- "$CWD" && pwd -P)" || return 0
   for pattern in ${pattern_list[@]+"${pattern_list[@]}"}; do
     # compgen -G expands the glob without leaking non-matches (a bare unmatched
     # pattern would otherwise pass through as a literal word). One path per
     # line, so spaces in names survive; newline-in-name is not supported.
     while IFS= read -r f; do
       emit_instruction_file "$f"
-    done < <(cd "$CWD" && compgen -G "$pattern" 2>/dev/null || true)
+    done < <(cd -- "$CWD" && compgen -G "$pattern" 2>/dev/null || true)
   done
 
   # Scoped instructions: when the pattern list carries the literal AGENTS.md
@@ -1304,10 +1336,10 @@ collect_review_instructions() {
       # later content — so the more-specific file must appear last. Collect
       # the ancestor chain walking up, then emit it in reverse.
       local -a agents_chain=()
-      dir="$(dirname "$changed_file")"
+      dir="$(path_dir "$changed_file")"
       while [[ "$dir" != "." && "$dir" != "/" ]]; do
         agents_chain+=("$dir/AGENTS.md")
-        dir="$(dirname "$dir")"
+        dir="$(path_dir "$dir")"
       done
       for ((chain_i = ${#agents_chain[@]} - 1; chain_i >= 0; chain_i--)); do
         emit_instruction_file "${agents_chain[$chain_i]}"
@@ -1475,7 +1507,7 @@ if $MULTI_LANE; then
       # family cannot be guaranteed clean, which is worth failing on before any
       # model spend — through the same named cause as the pre-flight pass, not a
       # bare rm error.
-      clear_output_family "$lane_out"
+      clear_output_family "$lane_out" "${ALL_RECORD_SUFFIXES[@]}"
     else
       lane_out=$(mktemp)
       LANE_TMP_FILES+=("$lane_out")
@@ -1825,7 +1857,7 @@ run_target_cli() {
   fi
   echo "→ cmd: timeout ${TIMEOUT}s $cmd" >&2
   # shellcheck disable=SC2086
-  (cd "$CWD" && timeout "$TIMEOUT" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
+  (cd -- "$CWD" && timeout "$TIMEOUT" $cmd < "$prompt_file" 2>"$STDERR_TMP") || rc=$?
   return "$rc"
 }
 

@@ -224,6 +224,23 @@ run_review "$WITH" "$out8" SECOND_OPINION_REVIEW_INSTRUCTIONS=
 assert_not_contains "$PROMPT_CAPTURE" "Repository review instructions" "caller-empty disables despite project settings"
 rm -f "$TMP_ROOT/proj/vstack.settings.toml"
 
+echo "=== scenario 9: a changed path in a dash-leading directory still resolves ==="
+# The reviewed repo is untrusted, so a directory name may begin with '-'. The
+# nested-AGENTS walk splits changed paths into directories and cd's into them;
+# `dirname` cannot take `--` portably, so the walk uses this file's own path_dir
+# stand-in. Untreated, `-dir` is read as options and its AGENTS.md is dropped.
+DASH="$TMP_ROOT/dashrepo"
+make_repo "$DASH"
+mkdir -p "$DASH/-svc"
+printf 'RULE-DASHDIR\n' > "$DASH/-svc/AGENTS.md"
+printf 'x\n' > "$DASH/-svc/code.txt"
+git -C "$DASH" add -A >/dev/null 2>&1
+git -C "$DASH" -c commit.gpgsign=false commit -q -m dash >/dev/null 2>&1
+printf 'y\n' >> "$DASH/-svc/code.txt"
+out9="$TMP_ROOT/out9.json"
+run_review "$DASH" "$out9"
+assert_contains "$PROMPT_CAPTURE" "RULE-DASHDIR" "AGENTS.md under a dash-leading directory is appended"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

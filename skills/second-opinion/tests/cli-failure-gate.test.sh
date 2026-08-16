@@ -741,6 +741,9 @@ for s10h_mode in quick challenge; do
   # A sibling under a name the roster DOES carry, holding the caller's own
   # data: the roster is not a licence to delete, in any mode.
   printf 'MY DATA\n' > "$s10h_out.claude.json"
+  for s10h_sfx in .raw.txt .retry.txt .failed.json .noreview.json .incomplete.json; do
+    printf 'MY %s\n' "$s10h_sfx" > "$s10h_out$s10h_sfx"
+  done
   printf '0' > "$COUNTER"
   set +e
   PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
@@ -753,6 +756,14 @@ for s10h_mode in quick challenge; do
   assert_file_absent "$s10h_out" "($s10h_mode) a failing run leaves no stale answer at --output"
   assert_file_exists "$s10h_out.claude.json" "($s10h_mode) a roster-named sibling holding the caller's data survives"
   assert_eq "$(cat -- "$s10h_out.claude.json")" "MY DATA" "($s10h_mode) that sibling is byte-identical"
+  # The sidecar NAMES are user files here by construction: these modes preserve
+  # no raw/retry/failed/no-review/incomplete record, so the clear-set for their
+  # output slot is the slot alone.
+  for s10h_sfx in .raw.txt .retry.txt .failed.json .noreview.json .incomplete.json; do
+    assert_file_exists "$s10h_out$s10h_sfx" "($s10h_mode) a pre-existing $s10h_sfx beside --output survives"
+    assert_eq "$(cat -- "$s10h_out$s10h_sfx")" "MY $s10h_sfx" "($s10h_mode) that $s10h_sfx is byte-identical"
+    rm -f -- "$s10h_out$s10h_sfx"
+  done
   rm -f -- "$s10h_out.claude.json"
 done
 # ...and a refusal, which never reaches the CLI at all, clears it too
