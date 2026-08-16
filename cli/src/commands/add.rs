@@ -2879,7 +2879,7 @@ fn clone_or_update(source: &str) -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("Source not found: {source}"))?;
     let display = &remote.display;
 
-    if crate::refresh_sources::locate_cache_entry(&remote).is_some() {
+    if crate::refresh_sources::cache_entry_present(&remote) {
         // Update existing clone (handles force-pushed histories). A refusal —
         // the entry is not vstack's own clone — is an error; a failed fetch
         // keeps the stale clone.

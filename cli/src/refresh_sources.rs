@@ -404,17 +404,16 @@ fn resolve_single_source_with(
     }
 
     // Remote shorthand or URL: update once during top-level source resolution,
-    // then use the cached clone as it stands. Locating it may still adopt a
-    // clone an earlier vstack left under an older key — skipping that on the
-    // read-only paths would orphan the clone instead.
+    // then use the cached clone as it stands — nothing here writes to the
+    // cache, so the pure attribution and hash paths are read-only.
     let remote = match RemoteSource::parse(source) {
         Ok(Some(remote)) => remote,
         Ok(None) => return SourceResolution::Absent,
         Err(err) => return SourceResolution::refused(&err),
     };
-    let Some(cache_dir) = locate_cache_entry(&remote) else {
+    if !cache_entry_present(&remote) {
         return SourceResolution::Absent;
-    };
+    }
     if update_remote {
         eprintln!("Updating cached repo {}...", remote.display);
         // The update path runs the filesystem checks itself, on its way to the
@@ -428,7 +427,7 @@ fn resolve_single_source_with(
         // remote source.
         return SourceResolution::refused(&err);
     }
-    SourceResolution::Resolved(cache_dir)
+    SourceResolution::Resolved(remote.cache_dir)
 }
 
 /// Best-effort update of every remote source's cache entry named by a lock.
@@ -448,7 +447,7 @@ pub(crate) fn refresh_remote_caches(lock: &config::LockFile) {
                 continue;
             }
         };
-        if locate_cache_entry(&remote).is_none() {
+        if !cache_entry_present(&remote) {
             continue;
         }
         if let Err(err) = update_cached_repo(&remote) {
@@ -523,13 +522,11 @@ fn find_vstack_source_from_cwd() -> Option<PathBuf> {
 // Remote sources
 // ---------------------------------------------------------------------------
 
-/// What a remote source string names: the one URL git is given and the one
-/// cache key its clone lives under. Pure — nothing here consults the
-/// environment, so classifying a source is independent of where clones live.
-/// This is also where credential-bearing and unsupported inputs are refused,
-/// before any git process sees them.
+/// What a remote source string names: the one URL git is given, and the one
+/// cache entry its clone lives in. This is also where credential-bearing and
+/// unsupported inputs are refused, before any git process sees them.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RemoteIdentity {
+pub(crate) struct RemoteSource {
     /// The source as recorded, safe to show: userinfo secrets, query and
     /// fragment replaced.
     pub display: String,
@@ -539,24 +536,10 @@ pub(crate) struct RemoteIdentity {
     /// in. Derived from the repository identity, so two spellings of one repo
     /// share a clone and two repositories never do.
     pub cache_key: String,
-    /// The keys earlier vstack versions wrote a clone of this source under.
-    /// [`locate_cache_entry`] adopts such a clone, so the key changes do not
-    /// orphan one.
-    legacy_cache_keys: Vec<String>,
-}
-
-/// A [`RemoteIdentity`] placed in the cache: the same repository, plus where
-/// its clone lives on this machine.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RemoteSource {
-    pub display: String,
-    pub git_url: String,
-    pub cache_key: String,
     pub cache_dir: PathBuf,
-    legacy_cache_dirs: Vec<PathBuf>,
 }
 
-impl RemoteIdentity {
+impl RemoteSource {
     /// `Ok(None)` when `source` is not remote-shaped (a local path or bare
     /// name); `Err` when it is remote-shaped but must not be used.
     pub(crate) fn parse(source: &str) -> Result<Option<Self>> {
@@ -608,40 +591,17 @@ impl RemoteIdentity {
             anyhow::anyhow!("remote source URL has no repository path: {display}")
         })?;
         let cache_key = cache_key_for_identity(&identity);
-        let legacy_cache_keys = legacy_cache_keys(source, &cache_key);
         Ok(Some(Self {
+            cache_dir: remote_cache_root().join(&cache_key),
             display,
             git_url,
             cache_key,
-            legacy_cache_keys,
         }))
-    }
-
-    fn located(self) -> RemoteSource {
-        let root = remote_cache_root();
-        RemoteSource {
-            cache_dir: root.join(&self.cache_key),
-            legacy_cache_dirs: self
-                .legacy_cache_keys
-                .into_iter()
-                .map(|key| root.join(key))
-                .collect(),
-            display: self.display,
-            git_url: self.git_url,
-            cache_key: self.cache_key,
-        }
-    }
-}
-
-impl RemoteSource {
-    /// [`RemoteIdentity::parse`], placed in this machine's cache.
-    pub(crate) fn parse(source: &str) -> Result<Option<Self>> {
-        Ok(RemoteIdentity::parse(source)?.map(RemoteIdentity::located))
     }
 }
 
 pub(crate) fn looks_like_remote_source(source: &str) -> bool {
-    matches!(RemoteIdentity::parse(source), Ok(Some(_)) | Err(_))
+    matches!(RemoteSource::parse(source), Ok(Some(_)) | Err(_))
 }
 
 pub(crate) fn remote_cache_root() -> PathBuf {
@@ -720,122 +680,13 @@ fn cache_key_for_identity(identity: &str) -> String {
     }
 }
 
-/// Every cache key an earlier vstack wrote a clone of this exact source under,
-/// most specific first. Two schemes shipped before the identity key: `add`
-/// keyed a URL on its last two path segments and shorthand on the string with
-/// `/` replaced by `_`, and the resolver keyed every spelling on the latter —
-/// so an upgrade that only reproduces one of them leaves the clone `add` made
-/// orphaned, and the source then fails as "not present" with a clone on disk.
-/// No derivation here can produce a `/`, so the only spelling that could name
-/// something other than one entry under the cache root is a `\` the source
-/// carried — a separator on Windows — and that key is dropped.
-fn legacy_cache_keys(source: &str, cache_key: &str) -> Vec<String> {
-    let mut keys = vec![source.replace('/', "_")];
-    // Released `add` accepted exactly these two URL spellings, and keyed both
-    // on the last two `/`-separated segments.
-    if source.starts_with("https://") || source.starts_with("git@") {
-        keys.push(
-            source
-                .trim_end_matches('/')
-                .trim_end_matches(".git")
-                .rsplit('/')
-                .take(2)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join("_"),
-        );
-    }
-    // The readable half of the current key — `owner_repo` — is what every
-    // GitHub spelling reduced to under both schemes.
-    if let Some((prefix, _)) = cache_key.rsplit_once('-') {
-        keys.push(prefix.to_string());
-    }
-    let mut usable: Vec<String> = Vec::new();
-    for key in keys {
-        if !key.contains('\\') && !usable.contains(&key) {
-            usable.push(key);
-        }
-    }
-    usable
-}
-
-/// Where `remote`'s clone is, adopting one an earlier vstack left under a
-/// [`legacy_cache_keys`] name — a rename, not a read: without it an upgrade
-/// orphans every live clone and each source reads as absent on the first
-/// refresh after it. A clone is adopted only once its own `origin` says it is
-/// this repository, so a key two sources once shared cannot move the wrong
-/// clone into the canonical slot. A rename that fails leaves the source
-/// absent, warned once.
-pub(crate) fn locate_cache_entry(remote: &RemoteSource) -> Option<PathBuf> {
-    if remote.cache_dir.join(".git").exists() {
-        return Some(remote.cache_dir.clone());
-    }
-    // Anything already occupying the canonical entry makes the rename a
-    // destructive move.
-    if std::fs::symlink_metadata(&remote.cache_dir).is_ok() {
-        return None;
-    }
-    for legacy in &remote.legacy_cache_dirs {
-        // A legacy entry that is not a plain directory owning a real `.git` is
-        // not a clone vstack made: `rename` does not follow a symlinked source,
-        // so adopting one would move the user's own checkout into the cache.
-        let Ok(meta) = std::fs::symlink_metadata(legacy) else {
-            continue;
-        };
-        if !meta.is_dir() || !legacy.join(".git").is_dir() {
-            continue;
-        }
-        match cache_entry_origin(legacy) {
-            Some(origin) if remote_identity(&origin) == remote_identity(&remote.git_url) => {}
-            found => {
-                let whose = match found {
-                    Some(origin) => format!("it is a clone of {}", remote_source_display(&origin)),
-                    None => "its origin could not be read".to_string(),
-                };
-                warn_once(
-                    &remote.cache_key,
-                    &format!(
-                        "not adopting the older cache entry {} for {}: {whose}. It is left untouched; `vstack add` clones this source afresh under `{}`",
-                        legacy.display(),
-                        remote.display,
-                        remote.cache_key
-                    ),
-                );
-                continue;
-            }
-        }
-        match std::fs::rename(legacy, &remote.cache_dir) {
-            Ok(()) => {
-                eprintln!(
-                    "  Adopted cached clone of {} as `{}`",
-                    remote.display, remote.cache_key
-                );
-                return Some(remote.cache_dir.clone());
-            }
-            Err(err) => warn_once(
-                &remote.cache_key,
-                &format!(
-                    "could not adopt the existing cache entry for {}: {err}",
-                    remote.display
-                ),
-            ),
-        }
-    }
-    None
-}
-
-/// The `origin` a cache entry names, or `None` when git cannot answer.
-fn cache_entry_origin(dir: &Path) -> Option<String> {
-    let output = hardened_cache_git_command(dir)
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| git_stdout_line(&output.stdout))
+/// Whether `remote`'s clone is on this machine.
+///
+/// A cache entry written by an earlier vstack under a different key is not
+/// reused: the key derives from the repository identity now, and re-cloning is
+/// one `vstack add` away. Every caller reports the absence with that command.
+pub(crate) fn cache_entry_present(remote: &RemoteSource) -> bool {
+    remote.cache_dir.join(".git").exists()
 }
 
 // ---------------------------------------------------------------------------
@@ -2035,7 +1886,6 @@ mod tests {
             git_url: file_url(origin),
             cache_key: cache.file_name().unwrap().to_string_lossy().into_owned(),
             cache_dir: cache.to_path_buf(),
-            legacy_cache_dirs: Vec::new(),
         }
     }
 
@@ -2891,178 +2741,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// The keys are joined onto the cache root, so a candidate that is not one
-    /// entry under it would name a directory outside the cache — and adoption
-    /// renames whatever it names.
-    #[test]
-    fn every_legacy_cache_key_is_one_entry_under_the_cache_root() {
-        let keys = |source: &str| {
-            RemoteIdentity::parse(source)
-                .unwrap_or_else(|err| panic!("{source}: {err}"))
-                .unwrap_or_else(|| panic!("{source} is not remote-shaped"))
-                .legacy_cache_keys
-        };
-        for source in [
-            "Owner/Repo",
-            "https://github.com/Owner/Repo.git",
-            "git@github.com:Owner/Repo.git",
-            "https://gitlab.com/o/r",
-            "ssh://git@gitea.example.org:2222/o/r.git",
-            "https://host/a\\b/c",
-            "git@host:../x",
-        ] {
-            for key in keys(source) {
-                assert!(
-                    !key.is_empty()
-                        && key != "."
-                        && key != ".."
-                        && !key.contains('/')
-                        && !key.contains('\\'),
-                    "{source}: {key:?}"
-                );
-            }
-        }
-        // Released `add`'s keys are the reason this is not one candidate.
-        assert!(
-            keys("https://github.com/Owner/Repo.git").contains(&"Owner_Repo".to_string()),
-            "{:?}",
-            keys("https://github.com/Owner/Repo.git")
-        );
-        assert!(
-            keys("git@github.com:Owner/Repo.git")
-                .contains(&"git@github.com:Owner_Repo".to_string()),
-            "{:?}",
-            keys("git@github.com:Owner/Repo.git")
-        );
-        // Two schemes deriving the same key list it once.
-        let shorthand = keys("owner/repo");
-        assert_eq!(
-            shorthand.iter().filter(|key| *key == "owner_repo").count(),
-            1,
-            "{shorthand:?}"
-        );
-        // A `\` the source carried is a separator on Windows, so those
-        // candidates are dropped — and the one that survives is what keeps the
-        // case from passing on an empty list.
-        assert!(!keys("https://host/a\\b/c").is_empty());
-    }
-
-    /// A clone made before the key became identity-derived is adopted, not
-    /// orphaned: without the rename every existing cache entry reads as absent
-    /// on the first refresh after the upgrade. Released `add` keyed a URL on
-    /// its last two path segments and shorthand on the `/`-replaced string, so
-    /// what is on disk is not one older key but several.
-    #[test]
-    fn a_clone_under_a_pre_identity_cache_key_is_adopted() {
-        for (source, legacy_key) in [
-            ("Owner/Repo", "Owner_Repo"),
-            ("https://github.com/Owner/Repo.git", "Owner_Repo"),
-            ("git@github.com:Owner/Repo.git", "git@github.com:Owner_Repo"),
-        ] {
-            let root = tmpdir("legacy-cache-key");
-            let home = root.join("home");
-            let origin = root.join("origin");
-            init_git_repo(&origin);
-
-            crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
-                let remote = RemoteSource::parse(source).unwrap().unwrap();
-                // Control: with nothing under any key the source is absent, so
-                // the adoption below is what makes the difference.
-                assert_eq!(locate_cache_entry(&remote), None, "{source}");
-                assert_eq!(
-                    resolve_single_source_with(source, false, false),
-                    SourceResolution::Absent,
-                    "{source}"
-                );
-
-                let legacy = remote_cache_root().join(legacy_key);
-                clone_into(&origin, &legacy);
-                git(&legacy, &["remote", "set-url", "origin", &remote.git_url]);
-
-                assert_eq!(
-                    locate_cache_entry(&remote),
-                    Some(remote.cache_dir.clone()),
-                    "{source}"
-                );
-                assert!(
-                    !legacy.exists(),
-                    "{source}: the legacy entry is renamed, not copied"
-                );
-                assert_eq!(
-                    resolve_single_source_with(source, false, false),
-                    SourceResolution::Resolved(remote.cache_dir.clone()),
-                    "{source}"
-                );
-                assert_eq!(
-                    std::fs::read_to_string(remote.cache_dir.join("README.md")).unwrap(),
-                    "upstream\n"
-                );
-            });
-            let _ = std::fs::remove_dir_all(root);
-        }
-    }
-
-    /// Adoption moves a directory from outside the canonical entry, so every
-    /// arm that declines it is load-bearing: a legacy key another source
-    /// populated first, a symlink to a live checkout (`rename` does not follow
-    /// one), and a directory that is no clone at all.
-    #[test]
-    fn a_legacy_cache_entry_is_adopted_only_when_it_is_this_repository() {
-        let root = tmpdir("legacy-cache-refusals");
-        let home = root.join("home");
-        let origin = root.join("origin");
-        init_git_repo(&origin);
-        let checkout = root.join("user-checkout");
-        init_git_repo(&checkout);
-
-        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
-            let remote = RemoteSource::parse("Owner/Repo").unwrap().unwrap();
-            let legacy = remote_cache_root().join("Owner_Repo");
-
-            // A clone of a different repository under the same older key.
-            clone_into(&origin, &legacy);
-            git(
-                &legacy,
-                &[
-                    "remote",
-                    "set-url",
-                    "origin",
-                    "https://github.com/other/repo.git",
-                ],
-            );
-            assert_eq!(locate_cache_entry(&remote), None);
-            assert!(
-                legacy.join(".git").is_dir(),
-                "the other repository's clone must stay where it is"
-            );
-            assert!(!remote.cache_dir.exists());
-            std::fs::remove_dir_all(&legacy).unwrap();
-
-            #[cfg(unix)]
-            {
-                std::os::unix::fs::symlink(&checkout, &legacy).unwrap();
-                assert_eq!(locate_cache_entry(&remote), None);
-                assert!(
-                    std::fs::symlink_metadata(&legacy)
-                        .unwrap()
-                        .file_type()
-                        .is_symlink(),
-                    "the symlink must be left in place, not renamed into the cache"
-                );
-                assert!(checkout.join(".git").is_dir());
-                assert!(!remote.cache_dir.exists());
-                std::fs::remove_file(&legacy).unwrap();
-            }
-
-            // A plain directory owning no `.git` is not a clone vstack made.
-            std::fs::create_dir_all(legacy.join("skills")).unwrap();
-            assert_eq!(locate_cache_entry(&remote), None);
-            assert!(legacy.join("skills").is_dir());
-            assert!(!remote.cache_dir.exists());
-        });
-        let _ = std::fs::remove_dir_all(root);
-    }
-
     /// A remote-shaped source that git must not be handed is refused at parse,
     /// before any process sees it — and stays a source, so no entry of its own
     /// is quietly reinstalled from somewhere else.
@@ -3282,7 +2960,11 @@ mod tests {
             !remote_source_display("https:///user:ghp_LEAKTEST@host/repo").contains("ghp_LEAKTEST")
         );
 
-        for source in ["https:///owner/repo", "ssh:///owner/repo.git", "git@:owner/repo.git"] {
+        for source in [
+            "https:///owner/repo",
+            "ssh:///owner/repo.git",
+            "git@:owner/repo.git",
+        ] {
             let err = RemoteSource::parse(source).unwrap_err().to_string();
             assert!(err.contains("names no host"), "{source}: {err}");
         }

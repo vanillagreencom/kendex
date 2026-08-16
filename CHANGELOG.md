@@ -298,12 +298,16 @@
   (warned once, not once per resolve); a failed reset is an error. Remote
   sources resolve to one cache entry per repository identity — every spelling
   of a GitHub repo shares one, two repositories never do — so URL-added sources
-  refresh from the clone `add` made: a clone under any older cache name is
-  adopted once its own `origin` confirms the repository, and one belonging to a
-  different repository is left where it is. Only https, ssh, git+ssh and file
-  transports are handed to git: `git://` is unauthenticated and unencrypted and
-  an unknown scheme makes git run a `git-remote-<scheme>` helper, so both are
-  refused — as is a cached entry whose own `origin` uses one. Credential-bearing
+  refresh from the clone `add` made.
+  **Breaking:** cache entries written by earlier vstack versions are not
+  reused, because the cache key now derives from the repository identity. The
+  first `vstack refresh` after upgrading reports each remote source as not
+  present and names the `vstack add <source>` that re-clones it; the stale
+  directory under `~/.vstack/cache/` can be deleted.
+  Only https, ssh, git+ssh and file transports are handed to git: `git://` is
+  unauthenticated and unencrypted and an unknown scheme makes git run a
+  `git-remote-<scheme>` helper, so both are refused — as is a cached entry
+  whose own `origin` uses one. Credential-bearing
   or plaintext-HTTP source URLs (userinfo token, `user:pass@` in any spelling
   including `user:pass@host:path`, query or fragment, `http://`), URLs whose
   authority carries whitespace or control characters, URLs naming no host
