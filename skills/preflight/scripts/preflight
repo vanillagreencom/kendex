@@ -22,10 +22,12 @@ usage() {
 usage: preflight [--staged | --base REF | --all] [--repo PATH]
 
 Diff-scoped deterministic checks. Default scope is the merge base of HEAD
-and the default branch (origin/HEAD, else origin/main, else main).
+and the default branch (origin/HEAD, else origin/main, else main), plus
+non-ignored untracked files; --staged sees only the index.
 
   --staged      staged changes only (pre-commit scope)
-  --base REF    changes since the merge base of HEAD and REF
+  --base REF    changes since the merge base of HEAD and REF, plus every
+                non-ignored untracked file (a new file, every line added)
   --all         every tracked file, every line treated as added
   --repo PATH   run against the repository containing PATH (default: cwd)
 
@@ -114,8 +116,13 @@ case "$MODE" in
     git_diff --name-only --diff-filter=d -z "$BASE" -- >"$TMP/files.z" || env_error "git diff against $BASE failed"
     git_diff --unified=0 --no-color --no-renames --diff-filter=d "$BASE" -- >"$TMP/patch" || env_error "git diff against $BASE failed"
     git_diff --name-only --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || true
+    # A file never added is invisible to `git diff` yet is part of the change
+    # the author is about to commit: every non-ignored untracked file is a new
+    # file with every line added, exactly what it will be at the PR.
+    git -c core.quotePath=false ls-files --others --exclude-standard -z >"$TMP/untracked.z" || env_error "git ls-files --others failed"
     ;;
 esac
+[ -f "$TMP/untracked.z" ] || : >"$TMP/untracked.z"
 
 # Newline- and tab-free paths are a precondition for every record below, and
 # for the positional map that pairs a path with its added lines. Refuse the
@@ -165,6 +172,16 @@ else
       ln++
     }
   ' "$TMP/patch"
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      *"$TAB"* | *"$NL"*) env_error "untracked path contains a tab or newline, unrepresentable in this tool's records: '$f'" ;;
+    esac
+    printf '%s\n' "$f" >>"$TMP/files.list"
+    printf '%s\n' "$f" >>"$TMP/newfiles.list"
+    [ -f "$f" ] && [ ! -h "$f" ] || continue
+    grep -Iq . -- "$f" 2>/dev/null || continue
+    PF="$f" awk 'BEGIN { p = ENVIRON["PF"] } { print p "\t" FNR "\t" $0 }' "$f" >>"$TMP/added.tsv"
+  done <"$TMP/untracked.z"
 fi
 
 # Split the added lines into one `line<TAB>content` file per changed file,

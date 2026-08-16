@@ -67,6 +67,25 @@ else
   bad "the default scope is base-to-worktree, so it sees both" "rc=$RC out=$OUT"
 fi
 
+echo "=== untracked files are new files in the default scope, invisible to --staged ==="
+seed untracked
+printf '# Never added\n\nTODO: untracked and unreferenced.\n' >"$R/docs/never-added.md"
+mkdir -p "$R/scratch"
+printf 'scratch/\n' >"$R/.gitignore"
+printf '# Ignored\n\nTODO: ignored and unreferenced.\n' >"$R/scratch/ignored.md"
+run_pf
+if [ "$RC" -eq 1 ] && has "docs/never-added.md:3: [todo-links]" && ! has "scratch/ignored.md"; then
+  ok "a non-ignored untracked file is in scope; an ignored one is not"
+else
+  bad "a non-ignored untracked file is in scope; an ignored one is not" "rc=$RC out=$OUT"
+fi
+run_pf --staged
+if [ "$RC" -eq 0 ] && ! has "never-added.md"; then
+  ok "--staged sees only the index, so the untracked file is out of scope"
+else
+  bad "--staged sees only the index, so the untracked file is out of scope" "rc=$RC out=$OUT"
+fi
+
 echo "=== --staged judges staged bytes even when the worktree has moved on ==="
 seed rewound
 printf '# Staged\n\nTODO: staged and unreferenced.\n' >"$R/docs/staged.md"

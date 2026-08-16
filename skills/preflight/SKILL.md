@@ -56,8 +56,8 @@ not a git repository, unresolvable base). Findings print as
 ## Wiring
 
 Dev agents run `preflight` in the validate step, **before** the project's
-own validation command. Untracked files are outside every diff scope:
-stage new files before expecting them to be checked.
+own validation command. The default and `--base` scopes include every
+non-ignored untracked file as a new file; `--staged` sees only the index.
 
 The commit-time surface is vstack's managed `pre-commit-check` harness
 hook (PreToolUse on `git commit`), which runs `preflight --staged` when

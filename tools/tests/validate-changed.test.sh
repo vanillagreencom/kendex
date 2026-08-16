@@ -255,6 +255,7 @@ run --dry-run
 assert_lane "cli" "cli:cargo-test"
 assert_line "cli" "cargo test --manifest-path cli/Cargo.toml"
 assert_lane "cli" "cli:integration-check"
+assert_line "cli" "cli/scripts/integration-check.sh"
 assert_no_lane "cli" "lint:shell"
 reset_tree
 
