@@ -162,17 +162,41 @@ pub(crate) fn refresh_source_for_entry<'a>(
         return Some(source);
     }
 
-    // Legacy/moved-source fallback: an old lock may record a source string
-    // that no longer names anything on disk (a renamed repo, or a pre-1.0 lock
-    // with no meaningful source). Those may fall back to the sole loaded
-    // source. An entry whose own recorded source still exists must never be
-    // rebound to a different one — that silently reinstalled such entries from
-    // the wrong repo and masked the real source's edits.
-    if sources.len() == 1 && !recorded_source_exists(&entry.source) {
+    // Legacy fallback: an entry that recorded no usable source at all may bind
+    // to the sole loaded source. A recorded path or remote that merely no
+    // longer resolves must not — see `may_rebind_to_fallback_source`.
+    if sources.len() == 1 && may_rebind_to_fallback_source(&entry.source) {
         sources.first()
     } else {
         None
     }
+}
+
+/// Whether an entry may be bound to a source it did not record.
+///
+/// Only a legacy placeholder qualifies: an empty source, or a bare token that
+/// is neither path-like (`/…`, `~…`, `.`, `./…`, `../…`) nor remote-like
+/// (`owner/repo`, a URL) — the shapes pre-1.0 locks and disk recovery wrote
+/// when no source was known — and only while that token does not name a live
+/// project-relative directory. A recorded path or remote that no longer
+/// resolves stays bound to what it recorded and is reported missing:
+/// rebinding it would refresh the entry from a source it was never installed
+/// from, and a same-named asset there would silently replace the real one.
+pub(crate) fn may_rebind_to_fallback_source(source: &str) -> bool {
+    is_legacy_placeholder_source(source) && !recorded_source_exists(source)
+}
+
+fn is_legacy_placeholder_source(source: &str) -> bool {
+    let source = source.trim();
+    if source.is_empty() {
+        return true;
+    }
+    let path_like = Path::new(source).is_absolute()
+        || source.starts_with('~')
+        || is_explicit_relative_local_source(source)
+        || source == "..";
+    let remote_like = source.contains('/') || source.contains("://") || source.contains('@');
+    !path_like && !remote_like
 }
 
 pub(crate) fn all_source_hooks(sources: &[RefreshSource]) -> Vec<Hook> {
@@ -596,11 +620,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// An entry whose own source still exists must never be silently rebound to
-    /// the sole other loaded source; that reinstalled it from the wrong repo.
-    /// The fallback stays available for a source that has genuinely gone away.
+    /// An entry that recorded a real source — live or vanished — must never be
+    /// silently rebound to the sole other loaded source; that reinstalled it
+    /// from a repo it was never installed from (a same-named asset there
+    /// replaced the real one). A vanished source is reported missing instead.
     #[test]
-    fn refresh_source_for_entry_only_falls_back_when_the_recorded_source_is_gone() {
+    fn refresh_source_for_entry_never_rebinds_a_recorded_source() {
         let root = tmpdir("no-rebind");
         let alternate = root.join(".agents");
         std::fs::create_dir_all(alternate.join("skills/demo")).unwrap();
@@ -614,10 +639,90 @@ mod tests {
         );
 
         let vanished = lock_entry("demo", &root.join("deleted-repo").to_string_lossy());
-        assert_eq!(
-            refresh_source_for_entry(&sources, &vanished).map(|s| s.root.clone()),
-            Some(only_source),
-            "legacy lock with a missing source keeps the single-source fallback"
+        assert!(
+            refresh_source_for_entry(&sources, &vanished).is_none(),
+            "a recorded absolute source that vanished must not bind to a different source"
+        );
+
+        let uncached_remote = lock_entry("demo", "owner/repo");
+        assert!(
+            refresh_source_for_entry(&sources, &uncached_remote).is_none(),
+            "a recorded remote that did not resolve must not bind to a local source"
+        );
+
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let vanished_relative = lock_entry("demo", "./vendor/gone");
+        crate::test_util::with_project_root(&project, || {
+            assert!(
+                refresh_source_for_entry(&sources, &vanished_relative).is_none(),
+                "a recorded relative source that vanished must not bind to a different source"
+            );
+        });
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The fallback exists for locks that recorded no usable source at all:
+    /// an empty source (disk recovery into an empty lock) or a bare
+    /// placeholder token (pre-1.0 hash/reconcile paths). Even those bind only
+    /// while exactly one source is loaded and the token names no live
+    /// project-relative directory.
+    #[test]
+    fn refresh_source_for_entry_falls_back_only_for_legacy_placeholder_sources() {
+        let root = tmpdir("legacy-placeholder");
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let only_source = make_vstack_source(&root, "other");
+        let sources = vec![RefreshSource::from_root(&only_source)];
+
+        crate::test_util::with_project_root(&project, || {
+            for placeholder in ["", "source"] {
+                assert_eq!(
+                    refresh_source_for_entry(&sources, &lock_entry("demo", placeholder))
+                        .map(|s| s.root.clone()),
+                    Some(only_source.clone()),
+                    "legacy placeholder {placeholder:?} keeps the single-source fallback"
+                );
+            }
+
+            std::fs::create_dir_all(project.join("source")).unwrap();
+            assert!(
+                refresh_source_for_entry(&sources, &lock_entry("demo", "source")).is_none(),
+                "a bare token that names a live project-relative dir is a real source"
+            );
+
+            for legacy in ["", "  ", "local"] {
+                assert!(
+                    may_rebind_to_fallback_source(legacy),
+                    "{legacy:?} is a legacy placeholder"
+                );
+            }
+            for recorded in [
+                "/gone/checkout",
+                "~/gone",
+                ".",
+                "./gone",
+                "../gone",
+                "owner/repo",
+                "https://github.com/owner/repo.git",
+                "git@github.com:owner/repo.git",
+            ] {
+                assert!(
+                    !may_rebind_to_fallback_source(recorded),
+                    "{recorded:?} is a recorded source, never rebound"
+                );
+            }
+        });
+
+        let second = make_vstack_source(&root, "second");
+        let two_sources = vec![
+            RefreshSource::from_root(&only_source),
+            RefreshSource::from_root(&second),
+        ];
+        assert!(
+            refresh_source_for_entry(&two_sources, &lock_entry("demo", "")).is_none(),
+            "no fallback when more than one source is loaded"
         );
 
         let _ = std::fs::remove_dir_all(root);

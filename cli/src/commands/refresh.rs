@@ -83,12 +83,23 @@ impl RefreshStats {
         });
     }
 
-    /// Record that `item` has no asset to refresh from. `source` is the source
-    /// root it resolved to, or `None` when no source resolved at all.
-    fn mark_missing(&mut self, item: &str, source: Option<&Path>) {
-        let reason = match source {
-            Some(root) => format!("not found in source {}", root.display()),
-            None => "source not found".to_string(),
+    /// Record that `item` has no asset to refresh from: its source resolved
+    /// to `root` but does not carry the asset.
+    fn mark_missing(&mut self, item: &str, root: &Path) {
+        self.missing.insert(
+            item.to_string(),
+            format!("not found in source {}", root.display()),
+        );
+    }
+
+    /// Record that `item`'s recorded source did not resolve to any loaded
+    /// source. The reason names what the lock recorded so the user can see
+    /// which source vanished (or that none was ever recorded).
+    fn mark_source_missing(&mut self, item: &str, recorded_source: &str) {
+        let reason = if recorded_source.trim().is_empty() {
+            "source not found (none recorded)".to_string()
+        } else {
+            format!("source not found: {recorded_source}")
         };
         self.missing.insert(item.to_string(), reason);
     }
@@ -284,11 +295,11 @@ pub fn refresh_items_in_scope(
             continue;
         }
         let Some(source) = refresh_source_for_entry(sources, entry) else {
-            stats.mark_missing(name, None);
+            stats.mark_source_missing(name, &entry.source);
             continue;
         };
         let Some(agent) = source.agents.iter().find(|a| &a.name == name) else {
-            stats.mark_missing(name, Some(&source.root));
+            stats.mark_missing(name, &source.root);
             continue;
         };
 
@@ -411,11 +422,11 @@ pub fn refresh_items_in_scope(
         .filter(|(n, _)| pass(n))
     {
         let Some(source) = refresh_source_for_entry(sources, entry) else {
-            stats.mark_missing(name, None);
+            stats.mark_source_missing(name, &entry.source);
             continue;
         };
         let Some(skill) = source.skills.iter().find(|s| &s.name == name) else {
-            stats.mark_missing(name, Some(&source.root));
+            stats.mark_missing(name, &source.root);
             continue;
         };
 
@@ -487,11 +498,11 @@ pub fn refresh_items_in_scope(
         .filter(|(n, _)| pass(n))
     {
         let Some(source) = refresh_source_for_entry(sources, entry) else {
-            stats.mark_missing(name, None);
+            stats.mark_source_missing(name, &entry.source);
             continue;
         };
         let Some(hook) = source.hooks.iter().find(|hook| hook.name == entry.name) else {
-            stats.mark_missing(name, Some(&source.root));
+            stats.mark_missing(name, &source.root);
             continue;
         };
         let mut succeeded = 0usize;
@@ -526,11 +537,11 @@ pub fn refresh_items_in_scope(
         .filter(|(n, _)| pass(n))
     {
         let Some(source) = refresh_source_for_entry(sources, entry) else {
-            stats.mark_missing(name, None);
+            stats.mark_source_missing(name, &entry.source);
             continue;
         };
         let Some(ext) = source_pi_extension_for_lock_name(&source.pi_extensions, name) else {
-            stats.mark_missing(name, Some(&source.root));
+            stats.mark_missing(name, &source.root);
             continue;
         };
         match crate::pi_extension::install_pi_extension(ext, global) {
@@ -1260,10 +1271,10 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         }
     }
 
-    // Update lock file timestamps and content hashes. Also repair stale source
-    // paths: if an entry's recorded source no longer resolves but we found a
-    // working source via CWD/registry fallback, rewrite the entry's source so
-    // future refresh/staleness checks use the valid path.
+    // Update lock file timestamps and content hashes. Also repair legacy
+    // placeholder sources: an entry that recorded no usable source (see
+    // `may_rebind_to_fallback_source`) is pointed at the source we found via
+    // CWD/registry fallback so future refresh/staleness checks use a real path.
     let mut lock = config::LockFile::load(&lock_path)?;
     let now = config::now_iso();
     let fallback_source = source_dirs.first().map(|p| p.display().to_string());
@@ -1287,13 +1298,14 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         let source_resolved = source_records
             .iter()
             .any(|source| source.aliases.iter().any(|alias| alias == &entry.source));
-        // Repair only a source that has genuinely gone away. An entry whose
-        // recorded source still exists keeps it even when nothing else in the
+        // Repair only a legacy placeholder. A recorded path or remote keeps
+        // its source even when it no longer resolves or nothing else in the
         // lock references it: rewriting it here is what silently re-pointed
-        // alternate-source entries at the majority source and undid every
-        // hand-correction of the lock.
+        // entries at the majority source, undid every hand-correction of the
+        // lock, and would refresh a vanished-source entry from a source it was
+        // never installed from on the next run.
         if !source_resolved
-            && !crate::refresh_sources::recorded_source_exists(&entry.source)
+            && crate::refresh_sources::may_rebind_to_fallback_source(&entry.source)
             && let Some(replacement) = &fallback_source
             && &entry.source != replacement
         {

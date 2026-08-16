@@ -983,9 +983,79 @@ fn inline_update_reports_an_entry_whose_source_is_gone() {
     });
 
     assert_eq!(report.completed, 1, "report: {report:?}");
-    assert_eq!(report.failed.len(), 1, "report: {report:?}");
-    assert!(
-        report.failed[0].starts_with("guard-gone: not refreshed:"),
+    assert_eq!(
+        report.failed,
+        vec![format!(
+            "guard-gone: not refreshed: source not found: {}",
+            gone.display()
+        )],
+        "a requested item names its vanished source: {report:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Updating a hook regenerates every installed agent so its hook payload
+/// stays current. An agent that cannot be regenerated is a real outcome the
+/// user must see, but it is not an item they asked to update — the message
+/// says what happened instead of reading like a failed request.
+#[test]
+fn inline_update_names_agents_it_could_not_regenerate_after_a_hook_update() {
+    let root = tmpdir("inline-update-expanded-agent-missing");
+    let project = root.join("project");
+    let source = root.join("source");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(source.join("agents")).unwrap();
+
+    let mut old_hook = hook_fixture("guard", None);
+    old_hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+    old_hook.source_path = source.join("hooks/guard.sh");
+    let mut new_hook = old_hook.clone();
+    new_hook.event = "PostCompact".into();
+    new_hook.matcher = None;
+    write_source_hook(&source, &new_hook);
+    // `rust` is locked as installed from this source, but the source no
+    // longer carries agents/rust.md.
+    let agent = agent_fixture("rust");
+
+    let mut lock = LockFile::default();
+    lock.add(hook_lock_entry("guard", &source));
+    lock.add(LockEntry {
+        name: "rust".into(),
+        kind: ItemKind::Agent,
+        source: source.to_string_lossy().into_owned(),
+        source_repo: None,
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    let report = crate::test_util::with_project_root(&project, || {
+        crate::installer::install_hook(&old_hook, Harness::ClaudeCode, false, &[]).unwrap();
+        Harness::ClaudeCode
+            .generate_agent(
+                &agent,
+                false,
+                &[],
+                &[old_hook.clone()],
+                &crate::agent::AgentExtras::default(),
+            )
+            .unwrap();
+        perform_inline_update(&["guard".to_string()])
+    });
+
+    assert_eq!(
+        report.completed, 1,
+        "the requested hook updates: {report:?}"
+    );
+    assert_eq!(
+        report.failed,
+        vec![format!(
+            "rust: agent not regenerated after hook update: not found in source {}",
+            source.display()
+        )],
         "report: {report:?}"
     );
 

@@ -643,9 +643,18 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
         }
         // An entry whose source is gone (or no longer carries it) is not
         // refreshed; without this it would count as neither done nor failed
-        // and the flash would read "Updated 0 item(s)".
+        // and the flash would read "Updated 0 item(s)". Agents the hook
+        // update pulled in on its own are named as such — the user never
+        // asked for them, but their stale payload is a real outcome.
         for (item, reason) in &stats.missing {
-            report.fail(item, format!("not refreshed: {reason}"));
+            if names.contains(item) {
+                report.fail(item, format!("not refreshed: {reason}"));
+            } else {
+                report.fail(
+                    item,
+                    format!("agent not regenerated after hook update: {reason}"),
+                );
+            }
         }
 
         let now = config::now_iso();

@@ -1178,11 +1178,118 @@ fn refresh_reports_missing_when_the_recorded_source_is_not_loaded() {
     assert_eq!(stats.skills_refreshed, 0);
     assert_eq!(
         stats.missing.get("shared").map(String::as_str),
-        Some("source not found")
+        Some(format!("source not found: {}", alternate.display()).as_str())
     );
     assert!(
         !project.join(".claude/skills/shared/SKILL.md").exists(),
         "must not install from a source the entry was never installed from"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A recorded source that vanished is not a legacy placeholder: with exactly
+/// one other source loaded that carries a same-named asset, the entry must be
+/// reported missing (naming the vanished source), never refreshed from the
+/// unrelated source — that would silently replace the real asset.
+#[test]
+fn refresh_reports_missing_instead_of_rebinding_a_vanished_source() {
+    let root = tmpdir("vanished-source");
+    let project = root.join("project");
+    let loaded = make_source(&root, "loaded");
+    let gone = root.join("gone");
+    std::fs::create_dir_all(&project).unwrap();
+    write_colliding_source(&loaded, "1", "PreToolUse", "source-model");
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry(
+        "shared",
+        ItemKind::Skill,
+        &gone,
+        vec!["claude-code"],
+    ));
+    let sources = vec![RefreshSource::from_root(&loaded)];
+
+    let stats = crate::test_util::with_project_root(&project, || {
+        let mut project_config = ProjectConfig::default();
+        refresh_items_in_scope(false, &lock, &sources, &mut project_config, &project, None)
+    });
+
+    assert_eq!(stats.skills_refreshed, 0);
+    assert!(!stats.successful_items.contains("shared"));
+    assert_eq!(
+        stats.missing.get("shared").map(String::as_str),
+        Some(format!("source not found: {}", gone.display()).as_str())
+    );
+    assert!(
+        !project.join(".claude/skills/shared/SKILL.md").exists(),
+        "must not install the same-named asset from a source the entry was never installed from"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// `vstack refresh`'s lock repair must follow the same rule: a vanished
+/// recorded source keeps its recorded value (the run reports it missing) —
+/// rewriting it to the sole other source would refresh the entry from that
+/// source on the very next run.
+#[test]
+fn refresh_command_keeps_a_vanished_source_recorded_instead_of_repairing_it_away() {
+    let root = tmpdir("vanished-source-no-repair");
+    let project = root.join("project");
+    let live = make_source(&root, "live");
+    let gone = root.join("gone");
+    std::fs::create_dir_all(&project).unwrap();
+    // `live` carries a hook named `guard` too — the same-named asset a rebind
+    // would have installed.
+    write_colliding_source(&live, "1", "PreToolUse", "source-model");
+
+    let mut lock = LockFile::default();
+    lock.add(lock_entry(
+        "shared",
+        ItemKind::Skill,
+        &live,
+        vec!["claude-code"],
+    ));
+    lock.add(lock_entry(
+        "guard",
+        ItemKind::Hook,
+        &gone,
+        vec!["claude-code"],
+    ));
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    // Canonical dir for the live entry so lock/disk reconciliation keeps it
+    // in the lock (it is what makes `live` the sole resolved source).
+    std::fs::create_dir_all(project.join(".agents/skills/shared")).unwrap();
+
+    let result = crate::test_util::with_project_root(&project, || {
+        run(crate::scope::ScopeFilter::Project, false)
+    });
+    assert!(result.is_err(), "a missing entry must fail the run");
+
+    let after = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert_eq!(
+        after.entries["guard"].source,
+        gone.to_string_lossy(),
+        "vanished source must stay recorded, not be repaired to the other source"
+    );
+    assert!(
+        after.entries["guard"].source_hash.is_empty(),
+        "an entry that was not refreshed must not be stamped"
+    );
+    assert!(
+        project.join(".claude/skills/shared/SKILL.md").exists(),
+        "the live entry still refreshes"
+    );
+    let settings = project.join(".claude/settings.json");
+    let hook_installed = settings.exists()
+        && std::fs::read_to_string(&settings)
+            .unwrap()
+            .contains("guard");
+    assert!(
+        !hook_installed,
+        "the same-named hook must not be installed from the unrelated source"
     );
 
     let _ = std::fs::remove_dir_all(root);
