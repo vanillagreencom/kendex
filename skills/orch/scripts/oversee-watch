@@ -197,7 +197,7 @@ fi
 PW_RC=0
 PW_OUT=""
 PW_ERR=""
-# `<pr>\t<kind>` keys already reported or baselined during this run.
+# `<pr>\t<kind>` keys present on the previous pass (the rising-edge baseline).
 PW_SEEN=""
 PW_PASSES=0
 
@@ -217,7 +217,10 @@ check_pr_watch() {
   PW_OUT="$(GH_REPO="$REPO" "$PR_WATCH" 2>"$errf")" || PW_RC=$?
   PW_ERR="$(cat "$errf")"
   PW_PASSES=$((PW_PASSES + 1))
-  [[ "$PW_RC" -ne 0 ]] || return 0
+  if [[ "$PW_RC" -eq 0 ]]; then
+    PW_SEEN=""
+    return 0
+  fi
   # Non-zero with no per-PR lines is pr-watch's GLOBAL failure shape
   # (gates.md): it reports on stderr only, and nothing here can be trusted.
   [[ -n "$PW_OUT" ]] || die "pr-watch failed (rc=$PW_RC) with no per-PR lines: ${PW_ERR:-<no stderr>}"
@@ -226,7 +229,9 @@ check_pr_watch() {
     [[ -n "$key" ]] || continue
     grep -qxF -- "$key" <<<"$PW_SEEN" || new_keys+="$key"$'\n'
   done <<<"$keys"
-  PW_SEEN+="$new_keys"
+  # Rising edge against the previous pass only: a line that clears and later
+  # recurs is news again.
+  PW_SEEN="$keys"
   [[ -n "$new_keys" ]] || return 0
   if [[ "$PW_PASSES" -eq 1 ]]; then
     echo "oversee-watch: pr-watch attention present at start (rc=$PW_RC, $(grep -c . <<<"$new_keys") line(s)) — baseline, reported with the next event; only NEW lines become events" >&2

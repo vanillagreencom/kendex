@@ -220,6 +220,17 @@ err="$TMP_ROOT/e1d"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "a new kind on a baselined PR is the event" "$err"
 
+# 1e'. a line that clears and later recurs is a rising edge again
+new_case prwatch_recur
+printf '12\taaaa0000\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out.1"
+printf '1' > "$STUB_DIR/prwatch.rc.1"
+printf '0' > "$STUB_DIR/prwatch.rc.2"
+printf '12\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.3"
+printf '1' > "$STUB_DIR/prwatch.rc.3"
+err="$TMP_ROOT/e1e2"
+out="$(run_watch -- --max-loops 3 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "a cleared pr+kind that recurs is an event again" "$err"
+
 # 1e. rc≠0 with no per-PR lines is pr-watch's global failure: exit 2
 new_case prwatch_global
 printf '2' > "$STUB_DIR/prwatch.rc"
