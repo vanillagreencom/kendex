@@ -241,8 +241,8 @@ NUDGE_SECS="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE_SECS 600)"
 NUDGE_BODY="$("$SCRIPT_DIR/orch-env" PR_REVIEW_NUDGE "")"
 
 # Reviewer quorum (PR_REVIEW_QUORUM, empty = off): reviewer logins separated
-# by commas or any whitespace — spaces, tabs, and newlines alike, so a long
-# list can span lines in a TOML value — that must EACH have a non-dismissed
+# by commas or whitespace (the tokenizer accepts any whitespace; the settings
+# loader delivers one line) that must EACH have a non-dismissed
 # review pinned to the CURRENT head, with zero unresolved threads, before any
 # success emit, in either mode. This is the multi-bot enqueue gate: one bot's
 # verdict cannot open the gate while a listed sibling has not yet reacted to
