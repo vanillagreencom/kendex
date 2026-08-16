@@ -23,7 +23,12 @@ case "$INPUT" in
 esac
 
 if command -v jq >/dev/null 2>&1; then
-  COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // .command // empty' 2>/dev/null || true)
+  # A payload that does not parse is refused, not skipped: an unreadable
+  # command cannot be proven safe, and this guard is fail-closed by design.
+  if ! COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // .command // empty' 2>/dev/null); then
+    echo "block-unsafe-rm: hook payload is not valid JSON; refusing rather than skipping the guard" >&2
+    exit 2
+  fi
 else
   # Escape-aware fallback: the value may carry \" and \\ inside it.
   COMMAND=$(printf '%s' "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"\([^"\\]\|\\.\)*"' | head -1 \
@@ -32,11 +37,13 @@ fi
 
 # One rm invocation per line: split on command separators, then keep the
 # segments that start with rm (optionally under sudo/env prefixes are out of
-# scope — the shape the harness prompts on is a plain rm).
-SEGMENTS=$(printf '%s\n' "$COMMAND" | sed 's/\\n/\n/g' | sed -E 's/(&&|\|\||;|\|)/\n/g')
+# scope — the shape the harness prompts on is a plain rm). Tabs count as the
+# word separators they are, and a leading subshell/group/substitution opener
+# is peeled so `(rm …` and `$(rm …` classify like `rm …`.
+SEGMENTS=$(printf '%s\n' "$COMMAND" | tr '\t' ' ' | sed 's/\\n/\n/g' | sed -E 's/(&&|\|\||;|\|)/\n/g')
 
 while IFS= read -r seg; do
-  seg=$(printf '%s' "$seg" | sed 's/^[[:space:]]*//')
+  seg=$(printf '%s' "$seg" | sed 's/^[[:space:]({$`]*//')
   case "$seg" in
     rm\ *) ;;
     *) continue ;;
@@ -46,11 +53,23 @@ while IFS= read -r seg; do
   # Any operand (not an option) that begins with a variable expansion whose
   # value can be empty: $NAME, ${NAME}, "$NAME/…", ${NAME:-…}. The one form
   # that cannot expand empty is ${NAME:?…}, which the harness accepts.
+  # Globbing is off around the unquoted split so a `*` in the command stays a
+  # literal token instead of expanding against the hook's cwd; `--` ends
+  # option skipping, and a post-`--` operand sheds leading dashes for
+  # classification so `-$DIR/sub` is still a variable root.
+  set -f
+  seen_ddash=0
   for tok in $seg; do
-    case "$tok" in
-      -*) continue ;;
-    esac
+    if [ "$seen_ddash" -eq 0 ]; then
+      case "$tok" in
+        --) seen_ddash=1; continue ;;
+        -*) continue ;;
+      esac
+    fi
     stripped=${tok#\"}; stripped=${stripped#\'}
+    if [ "$seen_ddash" -eq 1 ]; then
+      while [ "${stripped#-}" != "$stripped" ]; do stripped=${stripped#-}; done
+    fi
     case "$stripped" in
       \$\{[A-Za-z_]*:\?*) continue ;;   # ${NAME:?} — cannot expand empty
       \$*)
@@ -66,6 +85,7 @@ while IFS= read -r seg; do
         ;;
     esac
   done
+  set +f
 done <<<"$SEGMENTS"
 
 exit 0
