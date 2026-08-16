@@ -67,7 +67,10 @@ Options:
                     re-pick that qualifies no lane stops the batch, leaving
                     the items already launched alone. A GUI launch has no
                     pane to keep a claim alive, so a GUI batch stays on the
-                    lane resolved up front.
+                    lane resolved up front. Claims line up only while this
+                    command, `lanes` and `oversee-watch` resolve the same
+                    $OVERSEE_WATCH_STATE_DIR; set it explicitly when they do
+                    not share one project configuration.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -209,6 +212,21 @@ fi
 LANE_AUTO=false
 LANE_HARNESS=""
 CLAIM_WRITE_FAILED=false
+
+# One home for what a lane value may not contain, applied to the lane resolved
+# up front AND to every one a batch re-picks. Prints the reason and returns 0
+# when the value is unusable.
+lane_value_error() {
+  if [[ "$1" == *"'"* ]]; then
+    echo "Error: lane config dir contains a single quote; cannot render a safe launch command: $1" >&2
+    return 0
+  fi
+  if [[ "$1" == *$'\t'* || "$1" == *$'\n'* ]]; then
+    echo "Error: lane config dir contains a tab or newline; its in-flight claim could not be recorded: $1" >&2
+    return 0
+  fi
+  return 1
+}
 pick_auto_lane() { "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT"; }
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
@@ -266,14 +284,7 @@ if [[ -n "$LANE" ]]; then
   # safely; a tab or newline cannot survive the claim record's field
   # separator, and a lane whose claim nobody can count is a lane that stacks
   # sessions silently.
-  if [[ "$LANE_ENV" == *"'"* ]]; then
-    echo "Error: lane config dir contains a single quote; cannot render a safe launch command: $LANE_ENV" >&2
-    exit 1
-  fi
-  if [[ "$LANE_ENV" == *$'\t'* || "$LANE_ENV" == *$'\n'* ]]; then
-    echo "Error: lane config dir contains a tab or newline; its in-flight claim could not be recorded: $LANE_ENV" >&2
-    exit 1
-  fi
+  if lane_value_error "$LANE_ENV"; then exit 1; fi
   echo "Lane: $LANE_ENV"
 fi
 
@@ -542,8 +553,7 @@ for raw in "${ITEMS[@]}"; do
       failed=$((failed + 1))
       break
     fi
-    if [[ "$next_lane" == *"'"* ]]; then
-      echo "Error: lane config dir contains a single quote; cannot render a safe launch command: $next_lane" >&2
+    if lane_value_error "$next_lane"; then
       failed=$((failed + 1))
       break
     fi

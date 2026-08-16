@@ -717,6 +717,31 @@ else
   pass "a refused tab-bearing lane launches nothing"
 fi
 
+# ...and the same guard covers a lane a BATCH re-picks, not only the one
+# resolved up front: discovery, not just `--lane`, can hand back such a path.
+H9="$TMP_ROOT/home9"; mkdir -p "$H9"
+TABDIR="$H9/.tab	claude"
+mkdir -p "$H9/.aclaude" "$TABDIR"
+jq -n '{claudeAiOauth: {accessToken: "t", refreshToken: "r", expiresAt: 99999999999999, subscriptionType: "max"}}' \
+  > "$H9/.aclaude/.credentials.json"
+cp "$H9/.aclaude/.credentials.json" "$TABDIR/.credentials.json"
+TABFIX="$TMP_ROOT/fix9"; mkdir -p "$TABFIX"
+claude_usage 10 20 5  "Opus" > "$TABFIX/.aclaude.json"
+claude_usage 30 30 30 "Opus" > "$TABFIX/.tab	claude.json"
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+set +e
+tabpick_out=$(LANES_HOME="$H9" FIXTURE_DIR="$TABFIX" ORCH_LANES_FETCH_CMD="$FETCHER" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  "$OPEN_TERMINAL" --harness claude --lane auto --cmd "true" CC-22 CC-23 2>&1)
+tabpick_rc=$?
+set -e
+assert_eq "$tabpick_rc" "1" "a re-picked lane carrying a separator stops the batch"
+assert_contains "$tabpick_out" "tab or newline" "the re-pick refusal names what it cannot record"
+assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "1" \
+  "only the first item launched; the unusable lane recorded nothing"
+
 # The claim store belongs to the CALLER's checkout, not the one the script is
 # installed in: `.agents` in a worktree points back at the main checkout, so a
 # script-derived root would write where `lanes` never looks.
