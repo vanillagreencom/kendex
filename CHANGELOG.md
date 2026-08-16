@@ -139,8 +139,8 @@
 - second-opinion: the cross-model guarantee holds in every mode. Target
   selection is one roster walk — `SECOND_OPINION_MODELS`, priority-ordered
   (default `claude codex`) — that skips any target whose declared model
-  identity equals the session's (`SECOND_OPINION_CURRENT_MODEL`, else the
-  detected harness's model; per-target `SECOND_OPINION_<NAME>_MODEL`,
+  identity equals the session's (the detected harness's model where there is
+  one, else `SECOND_OPINION_CURRENT_MODEL`; per-target `SECOND_OPINION_<NAME>_MODEL`,
   default the name), forced `--target`/`SECOND_OPINION_TARGET` included, and
   refuses (exit 1, every candidate and its reason on stderr, nothing written
   or invoked) when no eligible model remains. `review` collects

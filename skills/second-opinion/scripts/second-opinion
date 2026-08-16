@@ -451,6 +451,15 @@ if [[ -n "$OUTPUT_PATH" ]] && $CLEAR_ARTIFACT; then
   # test is a cheap pre-filter that keeps jq off every sibling — it carries no
   # safety role and no test covers it alone, because the content check is the
   # only thing authorizing a deletion. Removing it changes no outcome.
+  # Ownership is proven by parsing the candidate, so the sweep needs jq. The
+  # dependency check deliberately runs AFTER this block — the clear-what-we-
+  # write rule must hold on every parsed invocation — which leaves a window
+  # where the sweep can do nothing at all. Say so rather than let an operator
+  # infer it from siblings that are still there: the designated output was
+  # cleared regardless, but a previous run's lane artifacts survive.
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "→ jq not found — the designated output was cleared, but sibling lane artifacts cannot be checked for ownership and are left as they are" >&2
+  fi
   for clear_candidate in "$OUTPUT_PATH".*; do
     [[ -f "$clear_candidate" ]] || continue        # nothing matched, or not a file
     clear_name="${clear_candidate#"$OUTPUT_PATH".}"

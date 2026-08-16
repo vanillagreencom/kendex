@@ -990,6 +990,46 @@ else
   sed -n '1,5p' "$TMP_ROOT/s10k.stderr" >&2
 fi
 
+echo "=== scenario 10n: without jq the sibling sweep is skipped, and says so ==="
+# Ownership is proven by PARSING a candidate, so the sweep needs jq — while the
+# dependency check deliberately runs after the clearing, so the
+# clear-what-we-write rule still holds on every parsed invocation. That leaves a
+# window where the sweep can do nothing, and an operator must not have to infer
+# it from siblings that are still there. Built by mirroring the real PATH minus
+# jq, so the fixture cannot rot as the script's command set changes.
+s10n_bin="$TMP_ROOT/nojq"
+mkdir -p "$s10n_bin"
+while IFS= read -r s10n_dir; do
+  [[ -d "$s10n_dir" ]] || continue
+  for s10n_f in "$s10n_dir"/*; do
+    [[ -f "$s10n_f" && -x "$s10n_f" ]] || continue
+    s10n_b="${s10n_f##*/}"
+    [[ "$s10n_b" == jq ]] && continue
+    [[ -e "$s10n_bin/$s10n_b" ]] || ln -sf "$s10n_f" "$s10n_bin/$s10n_b" 2>/dev/null || true
+  done
+done < <(printf '%s\n' "$PATH" | tr ':' '\n')
+if PATH="$s10n_bin" command -v jq >/dev/null 2>&1 || ! PATH="$s10n_bin" command -v git >/dev/null 2>&1; then
+  skip "no-jq sweep: could not build a PATH with git but without jq"
+else
+  s10n_out="$TMP_ROOT/out/review10n.json"
+  rm -f -- "$s10n_out" "$s10n_out".*
+  printf 'STALE ANSWER\n' > "$s10n_out"
+  printf '%s\n' "$S10_STALE" > "$s10n_out.retired.json"
+  set +e
+  PATH="$s10n_bin" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+    STUB_COUNTER="$COUNTER" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s10n_out" \
+      >/dev/null 2>"$TMP_ROOT/s10n.stderr"
+  rc10n=$?
+  set -e
+  assert_eq "$rc10n" "1" "the run still exits 1 on the missing dependency"
+  assert_file_contains "$TMP_ROOT/s10n.stderr" "jq is required" "the dependency error is still reported"
+  assert_file_contains "$TMP_ROOT/s10n.stderr" "sibling lane artifacts cannot be checked for ownership" \
+    "the skipped sweep is stated rather than left to be inferred"
+  assert_file_absent "$s10n_out" "the designated output is cleared regardless — it needs no proof"
+  assert_file_exists "$s10n_out.retired.json" "a sibling is left alone when ownership cannot be checked"
+fi
+
 echo "=== scenario 11b: an unclearable previous artifact is a named cause, not a bare rm error ==="
 # The clearing runs before anything else, so a directory that denies write makes
 # `rm` fail — under set -e that would abort with `rm: cannot remove …` and no
