@@ -30,6 +30,15 @@ impl DiskMutationReport {
     fn fail(&mut self, item: &str, err: impl std::fmt::Display) {
         self.failed.push(format!("{item}: {err}"));
     }
+
+    /// Record an item that was deliberately not attempted. A skip is a
+    /// notice, never a failure: it must not veto follow-up work gated on
+    /// `failed` (the CLI update behind an "Update All"), and it leaves
+    /// `attempted` so the completed/attempted ratio counts only real tries.
+    fn skip(&mut self, item: &str, why: impl std::fmt::Display) {
+        self.attempted = self.attempted.saturating_sub(1);
+        self.notices.push(format!("skipped {item}: {why}"));
+    }
 }
 
 /// Resolve a lock entry's harness id list to the set that actually supports
@@ -557,7 +566,10 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
         };
         // Extras are applied, not installed: the refresh pass has no branch
         // for them, so a requested extra would count as neither done nor
-        // failed. Say so, and keep it out of the refresh below.
+        // failed. Skip it with a notice — not a failure: a failure would
+        // veto the CLI update queued behind the same "Update All", and a
+        // stale extra stays stale until re-applied, so it would veto every
+        // one after it too.
         let is_extra = |name: &String| {
             lock.entries
                 .get(name)
@@ -565,9 +577,9 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
         };
         for name in names.iter().filter(|name| is_extra(name)) {
             if extras_reported.insert(name.clone()) {
-                report.fail(
+                report.skip(
                     name,
-                    format!("extras are not refreshed here — reapply with `vstack apply {name}`"),
+                    format!("extras are reapplied with `vstack apply {name}`"),
                 );
             }
         }

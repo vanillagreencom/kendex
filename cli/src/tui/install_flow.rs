@@ -2206,6 +2206,13 @@ fn spawn_disk_work<F>(
     );
 }
 
+/// The CLI binary update queued behind a mixed "Update All" runs only when
+/// every attempted content update succeeded. Skipped items are notices, not
+/// failures — a stale extra must not veto the CLI update it was batched with.
+fn cli_update_may_follow(report: &DiskMutationReport) -> bool {
+    report.failed.is_empty()
+}
+
 fn format_disk_mutation_flash(report: &DiskMutationReport, action: &str, suffix: &str) -> String {
     // Worker threads never print (raw-mode terminal is the TUI's); anything
     // they collected as a notice surfaces here on the main thread instead.
@@ -2333,7 +2340,7 @@ fn apply_post_work(state: &mut FlowState<'_>, post: PostWork) -> Result<Option<I
                     }
                     state.select.flash_message =
                         Some(format_disk_mutation_flash(&report, &action, &suffix));
-                    if then_cli_update && report.failed.is_empty() {
+                    if then_cli_update && cli_update_may_follow(&report) {
                         run_cli_update_inline()?;
                     }
                 }
@@ -2617,5 +2624,36 @@ mod tests {
             Some(&false)
         );
         assert_eq!(state.select.harness_selection.get("pi"), Some(&true));
+    }
+
+    /// "Update All" with a stale extra AND the `vstack (cli)` row: the extra
+    /// is skipped (a notice), so the CLI update queued behind the batch still
+    /// runs and the flash reports the honest count with the skip on its own
+    /// segment. A real failure still vetoes the CLI update.
+    #[test]
+    fn skipped_extra_does_not_block_the_queued_cli_update() {
+        // The report shape `perform_inline_update` yields for
+        // [hook, stale extra] (see disk_mutations tests).
+        let report = DiskMutationReport {
+            attempted: 1,
+            completed: 1,
+            failed: Vec::new(),
+            notices: vec![
+                "skipped vanillagreen-themes: extras are reapplied with `vstack apply vanillagreen-themes`"
+                    .to_string(),
+            ],
+        };
+
+        assert!(cli_update_may_follow(&report));
+        assert_eq!(
+            format_disk_mutation_flash(&report, "Updated", ""),
+            "Updated 1 item(s) \u{2014} skipped vanillagreen-themes: extras are reapplied with `vstack apply vanillagreen-themes`"
+        );
+
+        let failed = DiskMutationReport {
+            failed: vec!["guard: refresh failed: boom".to_string()],
+            ..report
+        };
+        assert!(!cli_update_may_follow(&failed));
     }
 }
