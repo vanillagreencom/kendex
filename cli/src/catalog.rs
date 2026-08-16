@@ -314,6 +314,93 @@ pub(crate) fn discover_extras(source_root: &Path) -> Result<Vec<Extra>> {
     Ok(out)
 }
 
+/// Name-only view of one item kind in a source, for callers that must not
+/// print and must know when discovery was incomplete. Unlike the
+/// `discover_*` functions, a parse failure is recorded rather than warned
+/// about, and every candidate path is kept so a caller can tell "the item's
+/// files are gone" from "the item's files are there but unparseable".
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Inventory {
+    /// Parsed item names, deduplicated, sorted.
+    pub names: Vec<String>,
+    /// `path: reason` for every candidate that failed to parse.
+    pub failures: Vec<String>,
+    /// Every candidate item path (file for agents/hooks, directory for the
+    /// packaged kinds), parseable or not.
+    pub candidates: Vec<PathBuf>,
+}
+
+impl Inventory {
+    /// True when a candidate path is named after `name` — the physical
+    /// footprint of an item independent of whether it parsed.
+    pub fn has_candidate_named(&self, name: &str) -> bool {
+        self.candidates.iter().any(|path| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| stem == name)
+                || path
+                    .file_name()
+                    .and_then(|file| file.to_str())
+                    .is_some_and(|file| file == name)
+        })
+    }
+}
+
+/// Discover `kind` in `source_root` without printing. Errors only when the
+/// catalog configuration itself is unusable (bad `[catalog]` path, unreadable
+/// root); per-item parse failures land in [`Inventory::failures`].
+pub(crate) fn inventory(source_root: &Path, kind: crate::config::ItemKind) -> Result<Inventory> {
+    use crate::config::ItemKind;
+    let mut inv = Inventory::default();
+    let mut record = |path: PathBuf, parsed: Result<String>| {
+        match parsed {
+            Ok(name) => {
+                if !inv.names.contains(&name) {
+                    inv.names.push(name);
+                }
+            }
+            Err(err) => inv.failures.push(format!("{}: {err:#}", path.display())),
+        }
+        inv.candidates.push(path);
+    };
+    match kind {
+        ItemKind::Agent => {
+            for path in discover_files(source_root, CatalogKind::Agents, "md")? {
+                let parsed = Agent::from_file(&path).map(|a| a.name);
+                record(path, parsed);
+            }
+        }
+        ItemKind::Skill => {
+            for dir in discover_manifest_dirs(source_root, CatalogKind::Skills, "SKILL.md")? {
+                let parsed = Skill::from_file(&dir.join("SKILL.md")).map(|s| s.name);
+                record(dir, parsed);
+            }
+        }
+        ItemKind::Hook => {
+            for path in discover_files(source_root, CatalogKind::Hooks, "sh")? {
+                let parsed = Hook::from_file(&path).map(|h| h.name);
+                record(path, parsed);
+            }
+        }
+        ItemKind::PiExtension => {
+            for dir in
+                discover_manifest_dirs(source_root, CatalogKind::PiExtensions, "package.json")?
+            {
+                let parsed = PiExtension::from_dir(&dir).map(|e| e.name);
+                record(dir, parsed);
+            }
+        }
+        ItemKind::Extra => {
+            for dir in discover_manifest_dirs(source_root, CatalogKind::Extras, "extra.toml")? {
+                let parsed = Extra::from_dir(&dir).map(|e| e.name().to_string());
+                record(dir, parsed);
+            }
+        }
+    }
+    inv.names.sort();
+    Ok(inv)
+}
+
 pub(crate) fn find_item_path(
     source_root: &Path,
     kind: crate::config::ItemKind,

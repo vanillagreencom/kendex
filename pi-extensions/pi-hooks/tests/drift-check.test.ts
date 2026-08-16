@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -75,12 +75,12 @@ describe("drift-check classification", () => {
 		});
 	});
 
-	test("a missing binary is unavailable and silent", async () => {
+	test("a missing binary is unavailable and says so in one line", async () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-hooks-drift-missing-"));
 		try {
 			const result = await runDriftCheck(root, { includeAvailable: true, timeoutMs: 5000, binary: join(root, "no-such-vstack") });
 			expect(result).toEqual({ kind: "unavailable" });
-			expect(driftMessage(result)).toBeUndefined();
+			expect(driftMessage(result)).toBe("vstack drift check skipped: vstack is not on PATH");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -93,11 +93,16 @@ describe("drift-check classification", () => {
 });
 
 describe("session_start wiring", () => {
-	function install(): { handler: SessionStartHandler; sent: unknown[] } {
-		let handler: SessionStartHandler | undefined;
+	type SessionStartHandlerSync = (
+		event: { type: "session_start"; reason: string },
+		ctx: Record<string, unknown>,
+	) => unknown;
+
+	function install(): { handler: SessionStartHandlerSync; sent: unknown[] } {
+		let handler: SessionStartHandlerSync | undefined;
 		const sent: unknown[] = [];
 		const pi = {
-			on(event: string, cb: SessionStartHandler) {
+			on(event: string, cb: SessionStartHandlerSync) {
 				if (event === "session_start") handler = cb;
 			},
 			sendMessage(message: unknown, options: unknown) {
@@ -109,26 +114,64 @@ describe("session_start wiring", () => {
 		return { handler, sent };
 	}
 
-	test("drift is appended to context without triggering a turn; reload and clean are silent", async () => {
+	/** The handler is fire-and-forget: wait for `sent` to reach `n`, or ~2s. */
+	async function waitForSent(sent: unknown[], n: number): Promise<void> {
+		for (let i = 0; i < 100 && sent.length < n; i++) await new Promise((r) => setTimeout(r, 20));
+	}
+
+	/** Enough time for a spawned check to have landed if it were going to. */
+	async function grace(): Promise<void> {
+		await new Promise((r) => setTimeout(r, 300));
+	}
+
+	/** Isolate every settings source: HOME → temp, project pinned to enabled. */
+	async function withIsolatedSettings<T>(root: string, run: () => Promise<T>): Promise<T> {
+		const home = join(root, "home");
+		mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+		mkdirSync(join(root, ".pi"), { recursive: true });
+		writeFileSync(join(root, ".pi", "settings.json"), JSON.stringify({
+			vstack: { extensionManager: { config: { "@vanillagreen/pi-hooks": { enabled: true, sessionDriftCheck: true, sessionDriftAvailable: true } } } },
+		}));
+		const oldHome = process.env.HOME;
+		process.env.HOME = home;
+		try {
+			return await run();
+		} finally {
+			if (oldHome === undefined) delete process.env.HOME;
+			else process.env.HOME = oldHome;
+		}
+	}
+
+	test("drift is appended to context without triggering a turn or blocking start; reload, resume, and clean are silent", async () => {
 		await withFake("1", REPORT, async ({ root }) => {
 			const oldPath = process.env.PATH;
 			process.env.PATH = `${root}:${oldPath ?? ""}`;
 			try {
-				const { handler, sent } = install();
-				await handler({ type: "session_start", reason: "startup" }, { cwd: root });
-				expect(sent).toEqual([
-					{
-						message: { customType: "vstack-drift", content: REPORT, display: true },
-						options: { triggerTurn: false },
-					},
-				]);
+				await withIsolatedSettings(root, async () => {
+					const ctx = { cwd: root, isProjectTrusted: () => true };
+					const { handler, sent } = install();
+					const returned = handler({ type: "session_start", reason: "startup" }, ctx);
+					expect(returned).toBeUndefined();
+					expect(sent).toHaveLength(0);
+					await waitForSent(sent, 1);
+					expect(sent).toEqual([
+						{
+							message: { customType: "vstack-drift", content: REPORT, display: true },
+							options: { triggerTurn: false },
+						},
+					]);
 
-				await handler({ type: "session_start", reason: "reload" }, { cwd: root });
-				expect(sent).toHaveLength(1);
+					for (const reason of ["reload", "resume"]) {
+						handler({ type: "session_start", reason }, ctx);
+						await grace();
+						expect(sent).toHaveLength(1);
+					}
 
-				process.env.FAKE_RC = "0";
-				await handler({ type: "session_start", reason: "startup" }, { cwd: root });
-				expect(sent).toHaveLength(1);
+					process.env.FAKE_RC = "0";
+					handler({ type: "session_start", reason: "startup" }, ctx);
+					await grace();
+					expect(sent).toHaveLength(1);
+				});
 			} finally {
 				if (oldPath === undefined) delete process.env.PATH;
 				else process.env.PATH = oldPath;

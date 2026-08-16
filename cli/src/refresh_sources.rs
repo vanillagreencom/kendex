@@ -330,9 +330,7 @@ fn resolve_single_source_with(
 
     // Remote shorthand (owner/repo) — update once during top-level source resolution,
     // then use the cached clone without side effects from pure attribution/hash paths.
-    let cache_dir = config::global_base_dir().join(".vstack").join("cache");
-    let key = source.replace('/', "_");
-    let cached = cache_dir.join(&key);
+    let cached = config::remote_cache_dir(source)?;
     if cached.join(".git").exists() {
         if update_remote {
             update_cached_repo(&cached);

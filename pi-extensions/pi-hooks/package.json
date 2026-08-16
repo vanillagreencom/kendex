@@ -80,7 +80,7 @@
         {
           "key": "sessionDriftCheck",
           "label": "Session-start drift report",
-          "description": "At session start, run `vstack check --quiet` and hand the agent the drift report: outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`), and items available in the source but not installed (`vstack add --<kind> <name>`, pending your approval). Silent when the install is current, when no vstack binary is on PATH, and on extension reload. Informational only \u2014 never installs, removes, or touches git. Mirrors hooks/session-drift-check.sh.",
+          "description": "On a fresh session start (startup, new, fork \u2014 not resume or reload), run `vstack check --quiet` in the background and hand the agent the drift report: outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`), unreachable sources, and \u2014 alongside drift \u2014 items available in the source but not installed (`vstack add --<kind> <name>`, pending your approval). Silent when the install is current; one line when no vstack binary is on PATH. Never blocks startup. Informational only \u2014 never installs or removes anything and never touches the project's git; vstack's own source caches under ~/.vstack/cache may be fetched at most once per TTL. Mirrors hooks/session-drift-check.sh.",
           "type": "boolean",
           "default": true,
           "category": "Session",

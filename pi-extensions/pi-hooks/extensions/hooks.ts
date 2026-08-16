@@ -30,25 +30,28 @@ export default function piHooks(pi: ExtensionAPI): void {
 		invalidateClippyCache();
 	});
 
-	// Pi port of hooks/session-drift-check.sh. A reload re-runs extensions in
-	// a session that already carries the report, so it is the one start
-	// reason skipped.
-	pi.on("session_start", async (event, ctx: ExtensionContext) => {
+	// Pi port of hooks/session-drift-check.sh. Fresh starts only: a resumed
+	// session already carries the report and a reload re-runs extensions in
+	// place. Fire-and-forget — an informational check never gates startup.
+	pi.on("session_start", (event, ctx: ExtensionContext) => {
 		recordProjectTrust(ctx);
-		if (event.reason === "reload") return;
+		if (event.reason === "reload" || event.reason === "resume") return;
 		const cfg = readConfig(ctx.cwd);
 		if (!getBool(cfg, "enabled") || !getBool(cfg, "sessionDriftCheck")) return;
 
-		const result = await runDriftCheck(ctx.cwd, {
+		void runDriftCheck(ctx.cwd, {
 			includeAvailable: getBool(cfg, "sessionDriftAvailable"),
 			timeoutMs: getNumber(cfg, "driftCheckTimeoutMs"),
-		});
-		const message = driftMessage(result);
-		if (message === undefined) return;
-		pi.sendMessage(
-			{ customType: "vstack-drift", content: message, display: true },
-			{ triggerTurn: false },
-		);
+		})
+			.then((result) => {
+				const message = driftMessage(result);
+				if (message === undefined) return;
+				pi.sendMessage(
+					{ customType: "vstack-drift", content: message, display: true },
+					{ triggerTurn: false },
+				);
+			})
+			.catch(() => undefined);
 	});
 
 	pi.on("tool_call", async (event, ctx: ExtensionContext) => {

@@ -156,7 +156,7 @@ Key rules:
 
 ### Checking For Drift
 
-`vstack check` compares every installed scope against its source and reports outdated items, items removed upstream, items on disk but missing from the lock, lock entries missing from disk, agents referencing uninstalled skills, and items a source ships that the scope never installed (only kinds the scope already uses are offered). Its exit code is the contract: `0` clean, `1` drift found, `2` the check itself could not run.
+`vstack check` compares every installed scope against its source and reports outdated items, items removed upstream, items on disk but missing from the lock, lock entries missing from disk, agents referencing uninstalled skills, and sources it cannot resolve or fully read. It also lists items a source ships that the scope never installed (only kinds the scope already uses are offered) — a suggestion, not drift. Its exit code is the contract: `0` clean, `1` drift found, `2` the check itself could not run. Suggestions alone exit `0`.
 
 ```bash
 vstack check                 # human report; also looks up the latest CLI version
@@ -166,7 +166,7 @@ vstack check --offline       # no network at all
 vstack check --no-available  # skip the available-but-not-installed suggestions
 ```
 
-Remote source caches under `~/.vstack/cache/` are refetched at most once every six hours by `check` (never with `--offline`), so a session-start check is instant and works offline. `vstack refresh` applies updates; `check` itself never installs or removes anything.
+`check` never touches the project's git state. Remote source caches under `~/.vstack/cache/` are vstack's own clones; `check` fetches and resets one at most once every six hours (never with `--offline`), under a per-cache lock, and reports a failed refresh so a stale answer is never silent. Session start therefore stays instant and works offline. `vstack refresh` applies updates; `check` itself never installs or removes anything.
 
 ### Runtime Settings
 
@@ -260,7 +260,7 @@ Windows: CLI runs natively; symlink mode falls back to copy.
 | `pre-commit-check` | `PreToolUse` | Validates formatting and lint before commits. Rust Clippy lane is scoped to staged packages and configurable via `VSTACK_PRE_COMMIT_RUST_CLIPPY` (custom command or `off`). |
 | `post-edit-lint` | `PostToolUse` | Runs lint checks after source edits. |
 | `task-completed-check` | `TaskCompleted` | Runs final lint checks before marking work complete. Claude-Code-only — codex has no clean equivalent event. |
-| `session-drift-check` | `SessionStart` | Runs `vstack check --quiet` and hands the agent the drift report — outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`), items available but not installed (`vstack add --<kind> <name>`, pending your approval). Prints nothing when the install is current; never installs, removes, or touches git. `VSTACK_DRIFT_HOOK=off` disables it, `VSTACK_DRIFT_HOOK_AVAILABLE=off` hides the available-item suggestions. Claude Code and Codex only (native `SessionStart`); Pi gets the same report from `pi-hooks`. |
+| `session-drift-check` | `SessionStart` | On a fresh session start (not resume or compact) runs `vstack check --quiet` and hands the agent the drift report — outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`), unreachable sources — plus, alongside drift, items available but not installed (`vstack add --<kind> <name>`, pending your approval). Prints nothing when the install is current; one line when `vstack` is not on `PATH`. Never installs or removes anything and never touches the project's git; vstack's own source caches under `~/.vstack/cache` may be fetched at most once per TTL. `VSTACK_DRIFT_HOOK=off` disables it, `VSTACK_DRIFT_HOOK_AVAILABLE=off` hides the available-item suggestions. Claude Code and Codex only (native `SessionStart`); Pi gets the same report from `pi-hooks`. |
 
 Hook installation per harness:
 
@@ -268,7 +268,7 @@ Hook installation per harness:
 - **Codex** — native install when codex supports the event (`PreToolUse`, `PostToolUse`, `PreCompact`, `PostCompact`, `PermissionRequest`, `SessionStart`, `UserPromptSubmit`, `Stop`): script copied to `<scope>/.codex/hooks/`, entry merged into `<scope>/.codex/hooks.json`, and `[features] hooks = true` ensured in `config.toml`. Events without a codex equivalent fall back to a safety advisory appended to each agent's `developer_instructions`.
 - **Cursor** — safety advisory `.mdc` written under `<scope>/.cursor/rules/`.
 - **OpenCode** — permission rule + instruction file referenced from `opencode.json`.
-- **Pi** — same hook behaviors ship as a first-class Pi extension, `@vanillagreen/pi-hooks`. It listens on Pi's `tool_call`/`tool_result`/`turn_end` events and uses `{block: true, reason}` to short-circuit unsafe tool calls. Each hook is independently toggleable from the pi-extension-manager settings panel.
+- **Pi** — same hook behaviors ship as a first-class Pi extension, `@vanillagreen/pi-hooks`. It listens on Pi's `session_start`/`tool_call`/`tool_result`/`turn_end` events and uses `{block: true, reason}` to short-circuit unsafe tool calls. Each hook is independently toggleable from the pi-extension-manager settings panel.
 
 Use `harnesses:` in a hook's frontmatter to scope it explicitly (e.g. `harnesses: [claude-code]`).
 

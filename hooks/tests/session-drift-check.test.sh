@@ -37,15 +37,16 @@ exit "${FAKE_RC:-0}"
 EOF
 chmod +x "$BIN_DIR/vstack"
 
-# Run the hook with a SessionStart payload on stdin. Extra VAR=value args are
-# passed through the environment. Captures stdout in $out and exit in $rc.
+# Run the hook with a SessionStart payload on stdin (source from $HOOK_SOURCE,
+# default startup). Extra VAR=value args are passed through the environment.
+# Captures stdout in $out and exit in $rc.
 run_hook() {
   : >"$ARGS_LOG"
   : >"$CWD_LOG"
   set +e
   env -u CLAUDE_PROJECT_DIR -u VSTACK_DRIFT_HOOK -u VSTACK_DRIFT_HOOK_AVAILABLE \
     PATH="$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" "$@" \
-    bash "$HOOK" <<<'{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' \
+    bash "$HOOK" <<<"{\"session_id\":\"s\",\"hook_event_name\":\"SessionStart\",\"source\":\"${HOOK_SOURCE:-startup}\"}" \
     2>/dev/null
   rc=$?
   set -e
@@ -109,10 +110,28 @@ mkdir -p "$TMP_ROOT/proj"
 capture FAKE_RC=0 CLAUDE_PROJECT_DIR="$TMP_ROOT/proj"
 assert_eq "$(cd "$TMP_ROOT/proj" && pwd -P)" "$(cd "$(cat "$CWD_LOG")" && pwd -P)" "runs vstack inside CLAUDE_PROJECT_DIR"
 
+echo "session-drift-check: start reasons"
+for src in resume compact; do
+  HOOK_SOURCE=$src capture FAKE_RC=1 FAKE_OUT="$REPORT"
+  assert_eq "$rc" 0 "source=$src exits 0"
+  assert_eq "$out" "" "source=$src prints nothing"
+  assert_eq "$(cat "$ARGS_LOG")" "" "source=$src never invokes vstack"
+done
+for src in startup clear; do
+  HOOK_SOURCE=$src capture FAKE_RC=1 FAKE_OUT="$REPORT"
+  assert_eq "$out" "$REPORT"$'\n' "source=$src relays the report"
+done
+
+echo "session-drift-check: unusable project directory"
+capture FAKE_RC=1 FAKE_OUT="$REPORT" CLAUDE_PROJECT_DIR="$TMP_ROOT/does-not-exist"
+assert_eq "$rc" 0 "missing project dir exits 0"
+assert_eq "$out" "" "missing project dir prints nothing (a failed cd is not drift)"
+assert_eq "$(cat "$ARGS_LOG")" "" "missing project dir never invokes vstack"
+
 echo "session-drift-check: no vstack on PATH"
 NOVSTACK_BIN="$TMP_ROOT/novstack"
 mkdir -p "$NOVSTACK_BIN"
-for tool in bash cat command printf; do
+for tool in bash cat command printf grep sed head; do
   real="$(command -v "$tool" 2>/dev/null || true)"
   [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOVSTACK_BIN/$tool"
 done
@@ -121,7 +140,7 @@ out="$(env -i HOME="$HOME" PATH="$NOVSTACK_BIN" "$(command -v bash)" "$HOOK" <<<
 rc=$?
 set -e
 assert_eq "$rc" 0 "exits 0 without a vstack binary"
-assert_eq "$out" "" "prints nothing without a vstack binary"
+assert_eq "$out" "vstack drift check skipped: vstack is not on PATH" "says why it skipped without a vstack binary"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

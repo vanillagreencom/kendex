@@ -275,7 +275,7 @@ pub fn discover_pi_extensions(dir: &Path) -> Result<Vec<PiExtension>> {
 /// could be published to npm without colliding with unrelated unscoped names.
 /// Stale locks pre-dating the move still key on the unscoped names, so each
 /// scoped name lists its unscoped predecessor (and any earlier aliases).
-const PI_EXTENSION_RENAMES: &[(&str, &[&str])] = &[
+pub(crate) const PI_EXTENSION_RENAMES: &[(&str, &[&str])] = &[
     (
         "@vanillagreen/pi-agents-tmux",
         &["pi-agents-tmux", "pi-subagents-tmux", "pi-subagents"],

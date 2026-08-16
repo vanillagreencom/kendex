@@ -1,4 +1,4 @@
-import { runCommandAsync } from "./cargo.js";
+import { runCommandAsync } from "./process.js";
 
 /**
  * Pi port of `hooks/session-drift-check.sh`: run `vstack check --quiet` and
@@ -7,7 +7,7 @@ import { runCommandAsync } from "./cargo.js";
  *   0 → clean (say nothing)
  *   1 → drift (relay the report to the agent verbatim)
  *   2+ → the check itself failed (say so once, with its diagnostic)
- *   spawn failure → no vstack binary; stay silent
+ *   spawn failure → no vstack binary; one line saying so
  */
 export type DriftCheckResult =
 	| { kind: "clean" }
@@ -37,8 +37,8 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 	if (result.exitCode === 0) return { kind: "clean" };
 	if (result.exitCode === 1) return { kind: "drift", report };
 	// spawn() surfaces ENOENT through the error event as exit -1 with the
-	// error text; a missing binary is the one failure the user cannot act on
-	// from inside a session, so it is silent rather than "failed".
+	// error text. The port only runs because vstack installed it, so a
+	// missing binary is almost always a PATH gap worth one line.
 	if (result.exitCode === -1 && /ENOENT/.test(result.stderr)) return { kind: "unavailable" };
 	return { kind: "failed", exitCode: result.exitCode, report };
 }
@@ -47,8 +47,9 @@ export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Pr
 export function driftMessage(result: DriftCheckResult): string | undefined {
 	switch (result.kind) {
 		case "clean":
-		case "unavailable":
 			return undefined;
+		case "unavailable":
+			return "vstack drift check skipped: vstack is not on PATH";
 		case "drift":
 			return result.report;
 		case "failed":
