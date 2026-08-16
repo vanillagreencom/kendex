@@ -170,10 +170,11 @@ BLOCKED is classified on stderr as **transient** (mergeable UNKNOWN,
 Callers read the `transient` field from `--check`:
 
 ```json
-{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false, "state": "OPEN"}
+{"can_merge": true, "issues": [], "warnings": [], "mergeable": "MERGEABLE", "review": "APPROVED", "transient": false, "state": "OPEN", "merged_at": ""}
 ```
 
-`state` is the PR's lifecycle state (`OPEN`, `MERGED`, `CLOSED`, `UNKNOWN`).
+`state` is the PR's lifecycle state (`OPEN`, `MERGED`, `CLOSED`, `UNKNOWN`), and
+`merged_at` carries the merge timestamp when that state is `MERGED`.
 `can_merge: false` with an empty `issues` array means the PR is terminal — read
 `state` before treating a refusal as a blocker to clear.
 

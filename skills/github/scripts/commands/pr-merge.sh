@@ -138,29 +138,54 @@ load_pr_state_json() {
     return 1
 }
 
+# Report a PR that has left OPEN and exit. Every mode routes its terminal
+# states through here so the outcome lines and exit codes cannot diverge.
+# Any other state returns and lets the caller continue.
+exit_terminal_state() {
+    local state="$1" pr_num="$2" merged_at="${3:-}"
+
+    case "$state" in
+    MERGED)
+        if [ -n "$merged_at" ]; then
+            echo "ALREADY MERGED PR #$pr_num $merged_at" >&2
+        else
+            echo "ALREADY MERGED PR #$pr_num" >&2
+        fi
+        exit 0
+        ;;
+    CLOSED)
+        echo "CLOSED (not merged) PR #$pr_num" >&2
+        echo "  No merge attempted, none queued. Reopen the PR or supersede it." >&2
+        exit 1
+        ;;
+    esac
+}
+
 # Run safety checks, output JSON
 # JSON shape:
 #   {can_merge, issues, warnings, mergeable, review,
 #    transient: bool,     # true when only TRANSIENT issues are blocking
-#    state}               # PR lifecycle state: OPEN, MERGED, CLOSED, UNKNOWN
+#    state,               # PR lifecycle state: OPEN, MERGED, CLOSED, UNKNOWN
+#    merged_at}           # merge timestamp, "" unless state is MERGED
 run_checks() {
     local pr_num="$1"
     local can_merge=true
     local issues=()
     local warnings=()
 
-    local pr_state
+    local pr_state pr_merged_at
     if ! load_pr_state_json "$pr_num"; then
-        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN"}'
+        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN", merged_at: ""}'
         return 0 # Return 0 so JSON is output, caller checks can_merge
     fi
     pr_state=$(jq -r '.state // "UNKNOWN"' <<<"$PR_STATE_JSON")
+    pr_merged_at=$(jq -r '.mergedAt // ""' <<<"$PR_STATE_JSON")
 
     # A terminal PR is unmergeable for a reason no caller can act on, and its
     # check data is meaningless: `mergeable` is permanently UNKNOWN, post-merge
     # CI runs and bot comments are not blockers. Report the state, no issues.
     if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
-        jq -n --arg state "$pr_state" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state}'
+        jq -n --arg state "$pr_state" --arg merged_at "$pr_merged_at" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state, merged_at: $merged_at}'
         return 0
     fi
 
@@ -294,7 +319,8 @@ run_checks() {
         --arg review "$review" \
         --argjson transient "$transient" \
         --arg state "$pr_state" \
-        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state}'
+        --arg merged_at "$pr_merged_at" \
+        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at}'
 }
 
 # Print BLOCKED breakdown to stderr, distinguishing transient vs permanent.
@@ -465,26 +491,11 @@ main() {
     # mutation. Retrying a merge on a PR that already left OPEN can only
     # produce false diagnostics, and there is nothing left to mutate.
     # An unreadable state is not terminal — fall through to the normal path.
-    local terminal_state
     if load_pr_state_json "$pr_num"; then
-        terminal_state=$(jq -r '.state // ""' <<<"$PR_STATE_JSON")
-        case "$terminal_state" in
-        MERGED)
-            local merged_at
-            merged_at=$(jq -r '.mergedAt // ""' <<<"$PR_STATE_JSON")
-            if [ -n "$merged_at" ]; then
-                echo "ALREADY MERGED PR #$pr_num $merged_at" >&2
-            else
-                echo "ALREADY MERGED PR #$pr_num" >&2
-            fi
-            exit 0
-            ;;
-        CLOSED)
-            echo "CLOSED (not merged) PR #$pr_num" >&2
-            echo "  No merge attempted, none queued. Reopen the PR or supersede it." >&2
-            exit 1
-            ;;
-        esac
+        exit_terminal_state \
+            "$(jq -r '.state // ""' <<<"$PR_STATE_JSON")" \
+            "$pr_num" \
+            "$(jq -r '.mergedAt // ""' <<<"$PR_STATE_JSON")"
     fi
 
     local token
@@ -493,8 +504,17 @@ main() {
     # Unless --force, run checks
     local check_result=""
     if [ "$force" = false ]; then
-        local can_merge
+        local can_merge checked_state checked_merged_at
         check_result=$(run_checks "$pr_num")
+
+        # The checks re-read a state the up-front lookup could not resolve, so
+        # a PR that is terminal by now must be reported here too. Otherwise
+        # `--auto`, which defers every non-thread blocker, arms a merge on a PR
+        # that has already left OPEN.
+        checked_state=$(echo "$check_result" | jq -r '.state // ""')
+        checked_merged_at=$(echo "$check_result" | jq -r '.merged_at // ""')
+        exit_terminal_state "$checked_state" "$pr_num" "$checked_merged_at"
+
         can_merge=$(echo "$check_result" | jq -r '.can_merge')
 
         if [ "$can_merge" != "true" ]; then

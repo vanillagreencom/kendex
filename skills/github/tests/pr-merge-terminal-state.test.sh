@@ -109,6 +109,12 @@ case "${1:-}" in
                     if [[ "${STUB_STATE_SILENT_FAIL:-false}" == "true" ]]; then
                         exit "${STUB_STATE_EXIT:-1}"
                     fi
+                    # Transient failure: only the first lookup of a run fails.
+                    if [[ -n "${STUB_STATE_FAIL_ONCE:-}" && ! -f "$STUB_STATE_FAIL_ONCE" ]]; then
+                        : >"$STUB_STATE_FAIL_ONCE"
+                        echo "error connecting to api.github.com" >&2
+                        exit 1
+                    fi
                     if [[ "${STUB_PR_MISSING:-false}" == "true" ]]; then
                         echo "no pull requests found" >&2
                         exit 1
@@ -152,9 +158,11 @@ EOF
 chmod +x "$TMPDIR/bin/gh"
 
 call_log="$TMPDIR/calls.log"
+fail_once_marker="$TMPDIR/state-lookup-failed-once"
 
 run_pr_merge() { # env assignments come from the caller's environment
     : >"$call_log"
+    rm -f "$fail_once_marker"
     (cd "$TMPDIR/repo" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN \
         STUB_CALL_LOG="$call_log" "$PR_MERGE" 123 "$@" 2>&1)
 }
@@ -219,6 +227,7 @@ echo "=== --check reports the terminal state instead of issues ==="
 
 out=$(STUB_STATE=MERGED STUB_MERGED_AT=2026-08-15T09:41:12Z run_pr_merge --check)
 assert_eq "$(jq -r .state <<<"$out")" "MERGED" "--check reports state MERGED"
+assert_eq "$(jq -r .merged_at <<<"$out")" "2026-08-15T09:41:12Z" "--check carries the merge timestamp"
 assert_eq "$(jq -r .can_merge <<<"$out")" "false" "--check on a merged PR cannot merge"
 assert_eq "$(jq -r '.issues | length' <<<"$out")" "0" "--check on a merged PR reports no issues"
 assert_eq "$(jq -r '.warnings | length' <<<"$out")" "0" "--check on a merged PR reports no warnings"
@@ -267,6 +276,42 @@ assert_eq "$status" "1" "a failed state lookup blocks the merge"
 assert_contains "$out" "gh_error: gh: Bad credentials (HTTP 401)" "the merge path reports the real cause"
 assert_not_contains "$out" "not_found" "the merge path never reports a missing PR for an auth failure"
 assert_not_contains "$out" "ALREADY MERGED" "an unreadable state is never treated as merged"
+
+echo
+echo "=== a state resolved only on the retry still short-circuits ==="
+
+# The up-front lookup fails on a network blip; the readiness checks re-read and
+# find the PR terminal. `--auto` defers every non-thread blocker, so without a
+# second branch on the checked state it arms a merge on a landed PR.
+set +e
+out=$(STUB_STATE=MERGED STUB_MERGED_AT=2026-08-15T09:41:12Z \
+    STUB_STATE_FAIL_ONCE="$fail_once_marker" run_pr_merge --auto --keep-branch)
+status=$?
+set -e
+assert_eq "$status" "0" "--auto exits MERGED (0) when only the retry resolves the state"
+assert_contains "$out" "ALREADY MERGED PR #123 2026-08-15T09:41:12Z" \
+    "the retried state still reports the already-merged outcome with its timestamp"
+assert_not_contains "$out" "BLOCKED" "the retried state never reports BLOCKED"
+assert_not_contains "$(cat "$call_log")" "pr merge" "a state resolved on retry still blocks the mutation"
+assert_eq "$(grep -c -- '--json state,mergedAt' "$call_log")" "2" \
+    "the failed lookup is retried rather than cached"
+
+set +e
+out=$(STUB_STATE=CLOSED STUB_STATE_FAIL_ONCE="$fail_once_marker" run_pr_merge --auto --keep-branch)
+status=$?
+set -e
+assert_eq "$status" "1" "--auto exits 1 when only the retry finds the PR closed"
+assert_eq "$(head -1 <<<"$out")" "CLOSED (not merged) PR #123" \
+    "the retried closed state keeps the exact state line"
+assert_not_contains "$(cat "$call_log")" "pr merge" "a closed PR found on retry blocks the mutation"
+
+set +e
+out=$(STUB_STATE=MERGED STUB_MERGED_AT=2026-08-15T09:41:12Z \
+    STUB_STATE_FAIL_ONCE="$fail_once_marker" run_pr_merge --keep-branch)
+status=$?
+set -e
+assert_eq "$status" "0" "immediate mode exits MERGED (0) on a retry-resolved state"
+assert_not_contains "$(cat "$call_log")" "pr merge" "immediate mode attempts no mutation either"
 
 echo
 echo "=== an open PR is unaffected ==="
