@@ -1,4 +1,3 @@
-CHANGELOG.md	1089
 cli/src/agent.rs	1074
 cli/src/commands/add.rs	3029
 cli/src/commands/apply.rs	2778
