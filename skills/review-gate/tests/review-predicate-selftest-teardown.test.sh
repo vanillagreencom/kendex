@@ -42,10 +42,25 @@ SELF_PATH="$TEST_DIR/${BASH_SOURCE[0]##*/}"
 : >"$RG_TEARDOWN_PIDS"
 JOBCONTROL_MARK="JOBCONTROL-LEFT-ENABLED"
 
+# still_running PID — the pid exists AND is not a zombie. A process in state
+# Z has already terminated; it is waiting to be reaped, not running, and
+# where init never reaps adopted children it stays visible forever. Every
+# liveness question in this file goes through here, the same rule the
+# wrapper's live_groups applies to a process group.
+still_running() {
+  case "$(ps -o state= -p "$1" 2>/dev/null | tr -d ' \t' || true)" in
+    '' | Z*) return 1 ;;
+  esac
+  return 0
+}
+
 # is_ours PID — still running AND still carrying our marker in argv. Every
 # read and every kill goes through this, so a recycled number can neither
 # read as a survivor nor be killed by this test's own cleanup.
 is_ours() {
+  if ! still_running "$1"; then
+    return 1
+  fi
   # -ww: BSD/macOS ps truncates to 79 columns off a terminal, and the marker
   # sits at the tail of a long temp path.
   case "$(ps -ww -p "$1" -o args= 2>/dev/null || true)" in
@@ -435,8 +450,11 @@ if [ "$fail" -eq 0 ]; then
   # orphaned group with stopped members would clean the keeper up for us and
   # hide the leak. Under a live parent — a persistent runner — nothing does.
   rm -f "$RG_TEARDOWN_ZOMBIE_KEEPER"
-  # In a subshell so bash does not narrate the kill as a job notification.
-  ( "$zkeeper" & )
+  # A direct job of this shell, never orphaned into a subshell: this shell
+  # reaps it below, so the check that follows never has to reason about
+  # whether the local init would.
+  "$zkeeper" &
+  zkeeper_pid=$!
   i=0
   while [ ! -s "$RG_TEARDOWN_ZOMBIE_KEEPER" ] && [ "$i" -lt 200 ]; do
     i=$((i + 1))
@@ -452,20 +470,29 @@ if [ "$fail" -eq 0 ]; then
   if [ -z "$kpid" ] || [ "$(ps -o state= -p "$kpid" 2>/dev/null | tr -d ' \t' || true)" != "T" ]; then
     note "the keeper fixture never reached the stopped state, so the cleanup check below proves nothing"
   else
-    reap
-    i=0
-    while [ -n "$(ps -o state= -p "$kpid" 2>/dev/null || true)" ] && [ "$i" -lt 60 ]; do
-      i=$((i + 1))
-      sleep 0.05
-    done
-    # `|| true` is load-bearing under pipefail: ps exits 1 for a pid that is
-    # already gone, which is the PASSING case here.
-    kstate="$(ps -o state= -p "$kpid" 2>/dev/null | tr -d ' \t' || true)"
-    if [ -n "$kstate" ]; then
-      note "cleanup left the stopped keeper parked in state '$kstate' — it cannot act on an ordinary signal"
-      kill -CONT "$kpid" 2>/dev/null || true
-      kill -KILL "$kpid" 2>/dev/null || true
-    fi
+    # stderr closed over the region only so bash does not narrate killing
+    # our own fixture as a job notification; every kill here is already
+    # quiet, and note() reports on stdout.
+    {
+      reap
+      i=0
+      while still_running "$kpid" && [ "$i" -lt 60 ]; do
+        i=$((i + 1))
+        sleep 0.05
+      done
+      if still_running "$kpid"; then
+        kstate="$(ps -o state= -p "$kpid" 2>/dev/null | tr -d ' \t' || true)"
+        note "cleanup left the stopped keeper parked in state '$kstate' — it cannot act on an ordinary signal"
+        # Clear it here, so the wait below cannot block on a keeper that
+        # cleanup failed to kill: this check reports a leak, never hangs on
+        # one.
+        kill -CONT "$kpid" 2>/dev/null || true
+        kill -KILL "$kpid" 2>/dev/null || true
+      fi
+      # Reap our own child rather than leaving it for an init that may never
+      # do it. By here it is dead or dying, so this returns at once.
+      wait "$zkeeper_pid" || true
+    } 2>/dev/null
   fi
 
   # --- the KILL escalation, on a tree that ignores TERM -------------------
