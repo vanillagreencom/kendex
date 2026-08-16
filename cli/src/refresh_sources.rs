@@ -407,7 +407,9 @@ pub(crate) fn recorded_source_exists(source: &str) -> bool {
     if path.is_absolute() {
         return path.is_dir();
     }
-    resolve_recorded_local_source(source).is_some() || looks_like_remote_source(source)
+    resolve_recorded_local_source(source).is_some()
+        || looks_like_remote_source(source)
+        || names_a_transport(source)
 }
 
 pub(crate) fn resolve_source_path(source: &str) -> Option<PathBuf> {
@@ -886,10 +888,11 @@ fn hardened_cache_git_command(dir: &Path) -> std::process::Command {
     // own behalf — `reference-transaction` on every ref a fetch writes,
     // `post-checkout` on a reset — and unlike `core.hooksPath` it is not
     // configuration any check can inspect. Command-line `-c` outranks the
-    // repository's config, so pointing the hook directory at a path that holds
-    // no hooks is what makes the whole class unreachable. vstack's own clone
-    // has no use for a hook.
-    command.args(["-c", "core.hooksPath=/dev/null"]);
+    // repository's config, so pointing the hook directory at a path that
+    // cannot hold one is what makes the whole class unreachable. vstack's own
+    // clone has no use for a hook.
+    command.arg("-c");
+    command.arg(format!("core.hooksPath={}", no_hooks_path().display()));
     command
 }
 
@@ -1218,23 +1221,7 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
         ));
     }
 
-    // `.git/config` is the one file vstack WRITES, and git follows a symlink
-    // there like any other: a link to another repository's config makes every
-    // check above answer for that repository, and then `remote set-url` edits
-    // it. Required to be a regular file of the entry's own.
-    let config_meta = std::fs::symlink_metadata(remote.cache_dir.join(".git").join("config"))
-        .with_context(|| {
-            format!(
-                "inspecting git configuration for cached source {}",
-                remote.display
-            )
-        })?;
-    if !config_meta.is_file() || config_meta.file_type().is_symlink() {
-        return Err(refusal(
-            remote,
-            "its cache entry does not own its git configuration",
-        ));
-    }
+    reject_redirected_cache_metadata(remote)?;
 
     reject_unowned_cache_config(remote)?;
 
@@ -1295,6 +1282,107 @@ fn point_cache_origin_at(remote: &RemoteSource) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Refuse a cache entry whose git metadata is not entirely its own.
+///
+/// One walk rather than a guard per file: git follows a symlink anywhere under
+/// `.git`, and every part of it is somewhere a command writes — `config` is
+/// the file `remote set-url` edits, `refs` and `logs` are what a fetch
+/// advances, `objects` is where it puts what it downloads. A link anywhere in
+/// that tree points part of the repository at something vstack does not own,
+/// and `--git-common-dir` only answers for the `.git` root. Symlinks are
+/// refused rather than descended into, so the walk cannot leave the entry.
+fn reject_redirected_cache_metadata(remote: &RemoteSource) -> Result<()> {
+    let git_dir = remote.cache_dir.join(".git");
+    let mut pending = vec![git_dir.clone()];
+    while let Some(dir) = pending.pop() {
+        let entries = std::fs::read_dir(&dir).map_err(|err| {
+            refusal(
+                remote,
+                &format!("its git metadata could not be read: {err}"),
+            )
+        })?;
+        for entry in entries {
+            let path = entry
+                .map_err(|err| {
+                    refusal(
+                        remote,
+                        &format!("its git metadata could not be read: {err}"),
+                    )
+                })?
+                .path();
+            let meta = std::fs::symlink_metadata(&path).map_err(|err| {
+                refusal(
+                    remote,
+                    &format!("its git metadata could not be read: {err}"),
+                )
+            })?;
+            if meta.file_type().is_symlink() {
+                // The linked path is a user location this refuses to touch and
+                // is not printed; the entry-relative name is enough to find it.
+                return Err(refusal(
+                    remote,
+                    &format!(
+                        "its git metadata redirects {} elsewhere",
+                        escape_unprintable(
+                            &path
+                                .strip_prefix(&git_dir)
+                                .unwrap_or(&path)
+                                .display()
+                                .to_string()
+                        )
+                    ),
+                ));
+            }
+            if meta.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+
+    // `.git/config` is the one file vstack WRITES. A hard link makes another
+    // repository's config the same file — one no path check can distinguish,
+    // because there is no link to follow. A clone always writes it fresh.
+    let config = git_dir.join("config");
+    let meta = std::fs::symlink_metadata(&config).map_err(|err| {
+        refusal(
+            remote,
+            &format!("its git configuration could not be read: {err}"),
+        )
+    })?;
+    if !meta.is_file() {
+        return Err(refusal(
+            remote,
+            "its cache entry does not own its git configuration",
+        ));
+    }
+    #[cfg(unix)]
+    if std::os::unix::fs::MetadataExt::nlink(&meta) > 1 {
+        return Err(refusal(
+            remote,
+            "its git configuration is a hard link to another file, and writing it would edit that file",
+        ));
+    }
+    Ok(())
+}
+
+/// The `core.hooksPath` every cache command runs under: a REGULAR FILE, so no
+/// `<hooksPath>/<name>` resolves to a hook on any platform.
+///
+/// A file rather than a missing path, because whoever can write the cache root
+/// can create a directory at one; and rather than `/dev/null`, which is a
+/// directory-shaped path on Windows.
+fn no_hooks_path() -> PathBuf {
+    let path = remote_cache_root().join(".no-hooks");
+    // Recomputed rather than memoized: the cache root is derived from the home
+    // directory, and a memo would outlive the answer. A path that is already a
+    // directory is left alone — the entry that would use it is refused instead.
+    if !path.is_file() {
+        let _ = std::fs::create_dir_all(remote_cache_root());
+        let _ = std::fs::write(&path, b"");
+    }
+    path
 }
 
 /// The settings `git clone` itself writes, and nothing else.

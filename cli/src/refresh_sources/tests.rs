@@ -746,7 +746,7 @@ fn update_cached_repo_refuses_a_cache_whose_config_is_a_symlink() {
     let err = update_cached_repo(&remote).unwrap_err().to_string();
 
     assert!(err.contains("refusing cached source owner/repo"), "{err}");
-    assert!(err.contains("does not own its git configuration"), "{err}");
+    assert!(err.contains("redirects config elsewhere"), "{err}");
     assert_eq!(
         std::fs::read_to_string(&victim_config).unwrap(),
         before,
@@ -758,7 +758,66 @@ fn update_cached_repo_refuses_a_cache_whose_config_is_a_symlink() {
         source_path_resolution(&format!("file://{}", origin.display())),
         SourceResolution::Absent | SourceResolution::Refused(_)
     ));
+
+    // A hard link is the same file with no link to follow, so no path check
+    // sees it — only the link count does.
+    std::fs::remove_file(cache.join(".git").join("config")).unwrap();
+    std::fs::hard_link(&victim_config, cache.join(".git").join("config")).unwrap();
+    let err = update_cached_repo(&remote).unwrap_err().to_string();
+    assert!(err.contains("is a hard link"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&victim_config).unwrap(),
+        before,
+        "the victim's configuration was rewritten through a hard link"
+    );
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// `--git-common-dir` answers for the `.git` ROOT only, so a redirect one level
+/// down passes every check above it: a fetch writing refs through a symlinked
+/// `.git/refs` advances the victim repository's remote-tracking branches.
+#[cfg(unix)]
+#[test]
+fn update_cached_repo_refuses_a_redirected_metadata_descendant() {
+    for redirected in ["refs", "logs", "objects"] {
+        let root = tmpdir("redirected-metadata");
+        let origin = root.join("origin");
+        init_git_repo(&origin);
+        let victim = root.join("victim");
+        clone_into(&origin, &victim);
+        let cache = root.join("cache").join("owner_repo");
+        clone_into(&origin, &cache);
+        std::fs::write(origin.join("README.md"), "newer\n").unwrap();
+        git(&origin, &["commit", "-q", "-am", "update"]);
+
+        let victim_dir = victim.join(".git").join(redirected);
+        std::fs::create_dir_all(&victim_dir).unwrap();
+        let entry_dir = cache.join(".git").join(redirected);
+        if entry_dir.exists() {
+            std::fs::remove_dir_all(&entry_dir).unwrap();
+        }
+        std::os::unix::fs::symlink(&victim_dir, &entry_dir).unwrap();
+        let before = rev_parse(&victim, "origin/main");
+
+        let err = update_cached_repo(&remote_at(&cache, &origin))
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            err.contains(&format!("redirects {redirected} elsewhere")),
+            "{redirected}: {err}"
+        );
+        assert!(
+            !err.contains(&victim.display().to_string()),
+            "the victim path may not be printed: {err}"
+        );
+        assert_eq!(
+            rev_parse(&victim, "origin/main"),
+            before,
+            "{redirected}: the victim's refs were advanced by the refused update"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 /// The gate is an allowlist, so it must still accept exactly what a clone
@@ -2488,12 +2547,15 @@ fn a_cache_entrys_own_git_hooks_never_run() {
     update_cached_repo(&remote_at(&cache, &origin)).unwrap();
 
     assert!(!marker.exists(), "the cache entry's own git hook ran");
+    // The hooks path is a regular FILE, so no `<hooksPath>/<name>` resolves on
+    // any platform — a path that merely does not exist can be created by
+    // whoever can write the cache root.
+    assert!(no_hooks_path().is_file(), "{}", no_hooks_path().display());
     // The update still did its work.
     assert_eq!(
         std::fs::read_to_string(cache.join("README.md")).unwrap(),
         "newer\n"
     );
-    let _ = std::fs::remove_dir_all(root);
 }
 
 /// A bare `user@host` is an ssh remote's spelling and a token-only

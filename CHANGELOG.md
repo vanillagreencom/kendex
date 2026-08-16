@@ -300,15 +300,19 @@
   but the settings `git clone` writes — checked as an allowlist, because the
   keys naming a program git runs on a repository's behalf (`core.fsmonitor`,
   `core.hooksPath`, a `filter.<driver>.smudge`) grow with git while the set a
-  clone writes does not, and `fetch`/`reset --hard` run them. Its `.git/config`
-  must additionally be a regular file of its own: git follows a symlink there,
-  so a link to another repository's config answered every check for that
-  repository and then had its `origin` rewritten. Every cache
-  command runs with `core.hooksPath` pinned at `/dev/null` — a path that is
-  never a directory on any platform, so no hook is ever found: an entry's own
-  `.git/hooks/` is a directory of programs — git runs `reference-transaction`
-  for every ref a fetch writes — that no check on its config or its location
-  can see. A cache whose
+  clone writes does not, and `fetch`/`reset --hard` run them. Nothing anywhere
+  under its `.git` may be a symlink, and its `.git/config` must be a regular
+  file with a link count of one: git follows a link at any depth, so a
+  redirected `config` answered every check for another repository and then had
+  its `origin` rewritten, a redirected `refs` or `objects` took what the fetch
+  wrote, and a hard-linked `config` is the same file with no link to follow.
+  `--git-common-dir` answers for the `.git` root alone, which is why the check
+  is a walk. Every cache
+  command runs with `core.hooksPath` pinned at a regular file vstack maintains
+  under the cache root, so no `<hooksPath>/<name>` resolves on any platform:
+  an entry's own `.git/hooks/` is a directory of programs — git runs
+  `reference-transaction` for every ref a fetch writes — that no check on its
+  config or its location can see. A cache whose
   `core.worktree` pointed at a user checkout used to have that checkout's
   tracked files overwritten (VST-256). A
   Reading an entry asks every one of those questions too, not just the
@@ -334,7 +338,9 @@
   credential, transport, ownership or clone failure on the source a project
   selected is an error naming it, not a silent fall-back that installs from
   somewhere else — and a remembered source spelled with a transport's scheme is
-  refused rather than walked past when it is too malformed to parse as a URL,
+  refused rather than walked past when it is too malformed to parse as a URL —
+  and a lock entry recording one is owned by it, so no same-named asset from
+  another loaded source stands in for it either —
   while a missing local path stays a candidate the chain may walk past, `:`
   being an ordinary character in one. A remembered source that is remote-shaped
   is read as the remote even when a directory of that name exists under the
