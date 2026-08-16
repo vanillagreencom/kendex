@@ -296,7 +296,20 @@ pub(crate) fn cursor_hook_rule_contents(hook: &Hook) -> String {
 }
 
 pub(crate) fn codex_hook_safety_block(hook: &Hook) -> String {
-    format!("## Safety: {}\n\n{}", hook.name, hook.safety_prose())
+    format!(
+        "{}\n\n{}",
+        codex_hook_safety_marker(&hook.name),
+        hook.safety_prose()
+    )
+}
+
+/// The anchored heading that marks a hook's safety prose in an agent TOML.
+/// Installation and presence checking must agree on EXACTLY this string: a
+/// bare substring search for the hook's name matches ordinary words in the
+/// generated header ("check", "add", "run"), so a hook named after one of
+/// them was skipped as already-installed and then reported missing forever.
+pub(crate) fn codex_hook_safety_marker(hook_name: &str) -> String {
+    format!("## Safety: {hook_name}")
 }
 
 /// Map a canonical (Claude-style) hook event to its codex equivalent.
@@ -690,7 +703,7 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
         }
 
         let content = std::fs::read_to_string(&toml_path)?;
-        if content.contains(&hook.name) {
+        if content.contains(&codex_hook_safety_marker(&hook.name)) {
             wrote = true;
             continue;
         }
@@ -701,8 +714,10 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
             new_content.push_str(&codex_hook_safety_block(hook));
             new_content.push('\n');
             new_content.push_str(&content[close_pos..]);
+            // Only claim the install when the marker presence checking looks
+            // for is actually in the bytes we wrote.
+            wrote |= new_content.contains(&codex_hook_safety_marker(&hook.name));
             std::fs::write(&toml_path, new_content)?;
-            wrote = true;
         }
     }
 

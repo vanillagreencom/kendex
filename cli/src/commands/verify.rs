@@ -317,8 +317,15 @@ fn verify_hook_install(
                 let script = root.join("hooks").join(format!("{name}.sh"));
                 let has_script = script.exists();
                 let has_prose = !has_script && codex_agent_has_prose(&root, name);
-                if !has_script && !has_prose && codex_scope_has_agents(&root) {
-                    missing.push(format!("{h}: no script and no prose"));
+                if !has_script && !has_prose {
+                    // The agents guard applies to the PROSE fallback only. A
+                    // hook whose event Codex supports natively installs a
+                    // script regardless of agents, so its absence is drift
+                    // whether or not the scope has any agent TOMLs.
+                    let prose_only = codex_hooks_json_lacks(&root, name);
+                    if !prose_only || codex_scope_has_agents(&root) {
+                        missing.push(format!("{h}: no script and no prose"));
+                    }
                 }
             }
             crate::harness::Harness::Pi => {
@@ -334,6 +341,18 @@ fn verify_hook_install(
     } else {
         (Some(false), Some(missing.join("; ")))
     }
+}
+
+/// True when this scope has no NATIVE registration for the hook — i.e. it can
+/// only ever have been a prose fallback. A native install writes both the
+/// script and a `hooks.json` entry; the entry survives a deleted script, so
+/// it is the evidence that a script is genuinely missing rather than never
+/// expected.
+fn codex_hooks_json_lacks(codex_root: &Path, hook_name: &str) -> bool {
+    let Ok(content) = std::fs::read_to_string(codex_root.join("hooks.json")) else {
+        return true;
+    };
+    !content.contains(&format!("{hook_name}.sh"))
 }
 
 /// Does this scope have any Codex agent for a prose fallback to live in?

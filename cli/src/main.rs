@@ -415,7 +415,7 @@ fn main() -> Result<()> {
                 config::refresh_remote_caches_older_than(
                     &lock,
                     Some(config::REMOTE_CACHE_TTL),
-                    config::FetchBound::Bounded,
+                    config::FetchBound::BACKGROUND,
                 );
             }
             Ok(())

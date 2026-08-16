@@ -109,9 +109,20 @@ pub fn run_install_flow(
     if has_installed {
         let project_lock = crate::config::LockFile::load(&crate::config::lock_file_path(false))
             .unwrap_or_default();
-        crate::config::refresh_remote_caches(&project_lock);
         let global_lock =
             crate::config::LockFile::load(&crate::config::lock_file_path(true)).unwrap_or_default();
+        // Only speak when something is actually going to be waited on: a
+        // silent terminal that might sit there for seconds is the complaint
+        // this line answers.
+        if crate::config::any_remote_cache_due(&project_lock, Some(crate::config::REMOTE_CACHE_TTL))
+            || crate::config::any_remote_cache_due(
+                &global_lock,
+                Some(crate::config::REMOTE_CACHE_TTL),
+            )
+        {
+            eprintln!("Refreshing remote source caches…");
+        }
+        crate::config::refresh_remote_caches(&project_lock);
         crate::config::refresh_remote_caches(&global_lock);
     }
 

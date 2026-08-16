@@ -2887,9 +2887,12 @@ fn clone_or_update(source: &str) -> Result<PathBuf> {
         // one guarded fetch, reporting every outcome the way `refresh` does.
         crate::refresh_sources::update_cached_repo(&repo_dir);
     } else {
-        // Fresh shallow clone
+        // Fresh shallow clone. Same builder as every other cache git call:
+        // nothing inherited may redirect it at another repository's index or
+        // objects, and it may not stop to ask a human anything. Nothing is
+        // pinned — there is no cache to pin to yet.
         eprintln!("Cloning {}...", git_url);
-        let status = std::process::Command::new("git")
+        let status = crate::config::git_command_for_cache()
             .args([
                 "clone",
                 "--depth",

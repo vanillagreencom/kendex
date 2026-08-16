@@ -420,6 +420,9 @@ pub(crate) fn report_fetch_outcome(attempt: config::FetchAttempt) {
         config::FetchAttempt::Unwritable(reason) => {
             eprintln!("  Warning: cache cannot be refreshed ({reason}) — using cached version")
         }
+        config::FetchAttempt::OutOfCacheRoot => {
+            eprintln!("  Warning: refusing to fetch outside the source cache — using local copy")
+        }
     }
 }
 

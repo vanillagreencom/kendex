@@ -473,6 +473,15 @@ pub(crate) fn inventory(
         return KindInventory::MissingRoot;
     }
     let mut inv = Inventory::default();
+    // A candidate directory nobody can read yields neither a name nor a parse
+    // failure, so it would look like an item that is simply gone — and the
+    // entry would be reported "removed upstream" while its files sit right
+    // there behind a permission bit.
+    for unreadable in unreadable_candidate_dirs(&roots.paths) {
+        inv.failures
+            .push(format!("{}: permission denied", unreadable.display()));
+        inv.candidates.push(unreadable);
+    }
     let mut record = |path: PathBuf, parsed: Result<String>| {
         match parsed {
             Ok(name) => {
@@ -539,6 +548,31 @@ pub(crate) fn inventory(
     }
     inv.names.sort();
     KindInventory::Readable(inv)
+}
+
+/// Candidate directories under `roots` that cannot be listed. Only a real
+/// permission failure counts: a missing directory is absence, not a fault.
+fn unreadable_candidate_dirs(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if std::fs::read_dir(&path)
+                .err()
+                .is_some_and(|err| err.kind() == std::io::ErrorKind::PermissionDenied)
+            {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 fn catalog_kind_for(kind: crate::config::ItemKind) -> CatalogKind {
@@ -817,6 +851,71 @@ extras = ["theme-packs"]
                 .may_still_be_present("@scope/pkg")
         );
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_item_directory_is_a_discovery_failure_not_a_removal() {
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: `geteuid` reads the calling process's effective uid; it
+        // takes no arguments and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root ignores the permission bits this test relies on
+        }
+        let root = sandbox("unreadable-dir");
+        skill_at(&root, "skills/keeper", "keeper");
+        let locked_dir = root.join("skills").join("secret");
+        fs::create_dir_all(&locked_dir).unwrap();
+        fs::write(locked_dir.join("SKILL.md"), "---\nname: secret\n---\n").unwrap();
+        fs::set_permissions(&locked_dir, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let catalog = crate::mapping::CatalogConfig::default();
+        let inventory = inv(&root, &catalog);
+        let readable = inventory.readable().expect("the ROOT is readable");
+        fs::set_permissions(&locked_dir, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(
+            readable.has_unreadable_candidate(),
+            "an unreadable candidate must be recorded, not ignored"
+        );
+        assert!(
+            readable.may_still_be_present("secret"),
+            "files behind a permission bit are still files: {readable:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_scoped_package_name_matches_its_unscoped_directory() {
+        // The real shape: the lock names `@vg/pi-hooks`, the directory is
+        // `pi-hooks`, and its manifest has been renamed upstream so the name
+        // no longer parses to the locked one. Comparing the full scoped name
+        // against directory names would find nothing and condemn a package
+        // whose files are all still there.
+        let root = sandbox("scoped-basename");
+        let dir = root.join("pi-extensions").join("pi-hooks");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("package.json"),
+            "{\"name\":\"@vg/pi-hooks-renamed\",\"version\":\"1.0.0\",\"keywords\":[\"pi-package\"],\"pi\":{\"extensions\":[]}}",
+        )
+        .unwrap();
+        let catalog = crate::mapping::CatalogConfig::default();
+        let inventory = inventory(&root, crate::config::ItemKind::PiExtension, &catalog);
+        let readable = inventory.readable().expect("root exists and was read");
+        assert!(
+            readable.failures.is_empty(),
+            "the manifest parses fine, so only the name clause can save it"
+        );
+        assert!(
+            readable.has_candidate_named("@vg/pi-hooks"),
+            "the scope must be stripped before comparing to the directory"
+        );
+        assert!(readable.may_still_be_present("@vg/pi-hooks"));
+        // Negative control: a scoped name with no directory at all.
+        assert!(!readable.has_candidate_named("@vg/absent"));
+        assert!(!readable.may_still_be_present("@vg/absent"));
         let _ = fs::remove_dir_all(root);
     }
 

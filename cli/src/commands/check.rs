@@ -198,6 +198,14 @@ pub enum SourceProblem {
     },
     /// Discovery ran, but individual assets failed to parse.
     Discovery { failures: Vec<String> },
+    /// A cache for this source exists but cannot be proven to belong to it,
+    /// so nothing may be installed or verified from it. Distinct from
+    /// `unresolvable`: the remedy is to remove that directory, not to add the
+    /// source again.
+    Unverifiable {
+        entries: Vec<String>,
+        reason: String,
+    },
 }
 
 /// One source's problem, tagged with the lock `source` string it came from.
@@ -284,8 +292,13 @@ pub struct CheckReport {
     /// Any scope has drift, or a cache failure has become persistent.
     /// Independent of `available`.
     pub drift: bool,
-    /// Remote caches that are not up to date (never with --offline).
+    /// Remote caches that are not up to date.
     pub cache_refresh_failures: Vec<CacheRefreshFailure>,
+    /// Why the background cache refresh could not even be started, if it
+    /// could not. A refresh that never runs would otherwise be invisible:
+    /// nothing writes a stamp, so nothing else on the read path notices.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_refresh_error: Option<String>,
     pub scopes: Vec<ScopeReport>,
 }
 
@@ -310,13 +323,30 @@ use crate::path_safety::is_safe_item_name;
 /// agent's context on one report line.
 const DISPLAY_LIMIT: usize = 120;
 
+/// Remove `user:password@` from any URL in `text`. A source string can carry
+/// a token, and this report is injected into an agent's context and copied
+/// into transcripts; the host and path are all a reader needs.
+fn strip_url_userinfo(text: &str) -> String {
+    let Some(scheme_end) = text.find("://") else {
+        return text.to_string();
+    };
+    let after = &text[scheme_end + 3..];
+    // Userinfo ends at the first `@`, and only counts before the path starts.
+    let host_end = after.find('/').unwrap_or(after.len());
+    match after[..host_end].rfind('@') {
+        Some(at) => format!("{}{}", &text[..scheme_end + 3], &after[at + 1..]),
+        None => text.to_string(),
+    }
+}
+
 /// Defensive rendering of text that did not pass through
 /// [`is_safe_item_name`] (source strings, parse failures, agent-declared
-/// skill references): control characters become `?` so nothing can start a
-/// new line or drive a terminal, and anything long is truncated — an item is
-/// never classified on its length, only shortened when shown.
+/// skill references): credentials embedded in a URL are removed, control
+/// characters become `?` so nothing can start a new line or drive a
+/// terminal, and anything long is truncated — an item is never classified on
+/// its length, only shortened when shown.
 fn display_text(text: &str) -> String {
-    let scrubbed: String = text
+    let scrubbed: String = strip_url_userinfo(text)
         .chars()
         .map(|c| if c.is_control() { '?' } else { c })
         .collect();
@@ -362,11 +392,13 @@ pub fn run(scope: ScopeFilter, opts: CheckOptions) -> Result<CheckOutcome> {
 
 /// Compute the report without printing.
 ///
-/// Every read is a local one — the lock, the source trees, the cache stamps —
-/// so this is instant and works offline. Nothing here touches the network: a
-/// cache that is due for a refresh is handed to a detached background process
-/// nobody waits on, and its outcome is read from the stamp by the NEXT check.
-/// That is the whole reason a session start can afford to run this.
+/// Everything the verdict is built from is local — the lock, the source
+/// trees, the cache stamps — so this is instant and works offline. Nothing
+/// here touches the network: a cache that is due for a refresh is handed to a
+/// detached background process nobody waits on, and its outcome is read from
+/// the stamp by the NEXT check. That is the whole reason a session start can
+/// afford to run this. (The one write it may make is converting a stamp left
+/// behind by a killed fetch; see [`config::remote_cache_problem`].)
 pub fn gather(scope: ScopeFilter, opts: CheckOptions) -> Result<CheckReport> {
     let mut scopes = Vec::new();
     let mut cache_refresh_failures = Vec::new();
@@ -390,20 +422,26 @@ pub fn gather(scope: ScopeFilter, opts: CheckOptions) -> Result<CheckReport> {
             scopes.push(scope_report);
         }
     }
+    let mut background_refresh_error = None;
     if refresh_due && !opts.offline {
-        // Best effort by design: a refresh that cannot even be started is not
-        // a reason to fail a check that has already read everything it needs.
-        let _ = config::spawn_detached_cache_refresh(scope.label());
+        // The check itself has already read everything it needs, so this
+        // never fails the run — but a refresh that cannot start will never
+        // start, and silence would leave the caches stale forever.
+        if let Err(err) = config::spawn_detached_cache_refresh(scope.label()) {
+            background_refresh_error = Some(display_text(&err.to_string()));
+        }
     }
     cache_refresh_failures.sort_by(|a, b| a.source.cmp(&b.source));
     let drift = scopes.iter().any(ScopeReport::has_drift)
-        || cache_refresh_failures.iter().any(|f| f.persistent);
+        || cache_refresh_failures.iter().any(|f| f.persistent)
+        || background_refresh_error.is_some();
     Ok(CheckReport {
         version: 1,
         cli_version: env!("CARGO_PKG_VERSION"),
         cli_hash: env!("VSTACK_GIT_HASH"),
         drift,
         cache_refresh_failures,
+        background_refresh_error,
         scopes,
     })
 }
@@ -554,11 +592,23 @@ fn source_issues_for(
             names
         };
         let Some(catalog) = &catalogs[source] else {
-            issues.push(SourceIssue {
-                source: source.to_string(),
-                problem: SourceProblem::Unresolvable {
+            // A source can fail to resolve for two very different reasons,
+            // and telling a user to re-add a source whose cache holds another
+            // repository sends them in a circle.
+            let problem = match config::remote_cache_lookup(source) {
+                config::RemoteCacheLookup::Unverifiable { reason, .. } => {
+                    SourceProblem::Unverifiable {
+                        entries: named(&|_| true),
+                        reason,
+                    }
+                }
+                _ => SourceProblem::Unresolvable {
                     entries: named(&|_| true),
                 },
+            };
+            issues.push(SourceIssue {
+                source: source.to_string(),
+                problem,
             });
             continue;
         };
@@ -813,6 +863,11 @@ pub fn render_report(report: &CheckReport, quiet: bool) -> String {
     for scope in &report.scopes {
         render_scope(&mut out, scope, quiet);
     }
+    if let Some(error) = &report.background_refresh_error {
+        out.push_str(&format!(
+            "\n  source caches could not be refreshed in the background ({error}); run `vstack refresh` to update them\n"
+        ));
+    }
     if !report.cache_refresh_failures.is_empty() {
         out.push('\n');
         for failure in &report.cache_refresh_failures {
@@ -946,6 +1001,17 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
                     let _ = writeln!(out, "    ? {name}");
                 }
             }
+            SourceProblem::Unverifiable { entries, reason } => {
+                let _ = writeln!(
+                    out,
+                    "\n  source {source} has a cache that is not provably its own ({}) — {} item(s) cannot be verified; remove that directory under ~/.vstack/cache and run `vstack add {source}` to re-clone it:",
+                    display_text(reason),
+                    entries.len()
+                );
+                for name in entries {
+                    let _ = writeln!(out, "    ? {name}");
+                }
+            }
             SourceProblem::Discovery { failures } => {
                 let _ = writeln!(
                     out,
@@ -996,9 +1062,13 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
                     .filter(|a| a.source == source)
                     .map(|a| a.name.as_str())
                     .collect();
+                // The source is part of the command, not a footnote: with
+                // two sources offering the same name, an unqualified `vstack
+                // add --skill <name>` installs whichever one resolution
+                // happens to pick.
                 let _ = writeln!(
                     out,
-                    "    + {} from {} (`vstack add {flag} <name>`): {}",
+                    "    + {} (`vstack add {} {flag} <name>`): {}",
                     kind.label_plural(),
                     display_text(source),
                     names.join(", ")
@@ -1515,6 +1585,70 @@ mod scope_report_tests {
     }
 
     #[test]
+    fn a_credential_in_a_source_url_is_never_rendered_into_the_report() {
+        // A token in a source string would otherwise land in an agent's
+        // context and every transcript that quotes it.
+        assert_eq!(
+            display_text("https://user:ghp_secret@github.com/owner/repo"),
+            "https://github.com/owner/repo"
+        );
+        assert_eq!(
+            display_text("ssh://git@example.com/owner/repo"),
+            "ssh://example.com/owner/repo"
+        );
+        // Controls: nothing else is touched, and an `@` in the PATH is not
+        // userinfo.
+        assert_eq!(
+            display_text("https://github.com/owner/repo"),
+            "https://github.com/owner/repo"
+        );
+        assert_eq!(
+            display_text("https://github.com/owner/re@po"),
+            "https://github.com/owner/re@po"
+        );
+        assert_eq!(display_text("/local/path"), "/local/path");
+    }
+
+    #[test]
+    fn an_unverifiable_cache_is_reported_with_its_own_remedy() {
+        with_sandbox("unverifiable-source", |project, _source| {
+            let cache = config::remote_cache_dir("owner/repo").unwrap();
+            std::fs::create_dir_all(cache.join(".git")).unwrap();
+            // Somebody else's clone sitting at this source's cache key.
+            std::fs::write(
+                cache.join(".git").join("config"),
+                "[remote \"origin\"]\n\turl = https://github.com/other/repo.git\n",
+            )
+            .unwrap();
+            install_skill_on_disk(project, "alpha");
+            let mut lock = LockFile::default();
+            let mut entry = locked(&cache, ItemKind::Skill, "alpha");
+            entry.source = "owner/repo".into();
+            lock.add(entry);
+
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert_eq!(report.source_issues.len(), 1, "{report:?}");
+            assert!(
+                matches!(
+                    &report.source_issues[0].problem,
+                    SourceProblem::Unverifiable { entries, reason }
+                        if entries == &vec!["alpha".to_string()]
+                            && reason.contains("other/repo")
+                ),
+                "{report:?}"
+            );
+            let mut out = String::new();
+            render_scope(&mut out, &report, true);
+            assert!(out.contains("not provably its own"), "{out}");
+            assert!(out.contains("remove that directory"), "{out}");
+            assert!(
+                !out.contains("is unreachable"),
+                "the wrong remedy must not appear: {out}"
+            );
+        });
+    }
+
+    #[test]
     fn names_that_would_escape_the_install_roots_are_rejected_for_every_kind() {
         // A crafted lock must not make the session-start check probe outside
         // the roots it owns: each of these is joined into a path if trusted.
@@ -1935,6 +2069,7 @@ mod scope_report_tests {
             cli_version: "0.0.0",
             cli_hash: "abc",
             drift: persistent,
+            background_refresh_error: None,
             cache_refresh_failures: vec![CacheRefreshFailure {
                 source: "owner/repo".into(),
                 age_secs: 86_400,
@@ -1961,6 +2096,7 @@ mod scope_report_tests {
             cli_version: "0.0.0",
             cli_hash: "abc",
             drift: true,
+            background_refresh_error: None,
             cache_refresh_failures: vec![cache_failure(
                 config::RemoteCacheProblem {
                     source: "owner/repo".into(),
@@ -2014,8 +2150,8 @@ mod scope_report_tests {
         assert!(out.contains("`vstack refresh`"), "{out}");
         assert!(out.contains("`vstack remove <name>`"), "{out}");
         assert!(
-            out.contains("skills from owner/repo (`vstack add --skill <name>`): beta"),
-            "{out}"
+            out.contains("skills (`vstack add owner/repo --skill <name>`): beta"),
+            "the suggestion must name the source it came from: {out}"
         );
         assert!(
             !out.contains("✓"),
@@ -2035,6 +2171,7 @@ mod scope_report_tests {
             cli_version: "0.0.0",
             cli_hash: "abc",
             drift: false,
+            background_refresh_error: None,
             cache_refresh_failures: vec![CacheRefreshFailure {
                 source: "owner/repo".into(),
                 age_secs: 7200,
@@ -2079,6 +2216,7 @@ mod scope_report_tests {
             cli_version: "0.0.0",
             cli_hash: "abc",
             drift: true,
+            background_refresh_error: None,
             cache_refresh_failures: Vec::new(),
             scopes: vec![ScopeReport {
                 scope: "project",

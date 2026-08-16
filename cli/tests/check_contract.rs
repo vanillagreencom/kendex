@@ -23,6 +23,9 @@ struct Sandbox {
     project: PathBuf,
     home: PathBuf,
     xdg: PathBuf,
+    /// Directory prepended to PATH once `install_slow_git` has written a shim
+    /// there; empty until then.
+    slow_git: PathBuf,
 }
 
 impl Sandbox {
@@ -44,6 +47,7 @@ impl Sandbox {
         )
         .unwrap();
         Self {
+            slow_git: root.join("slow-git"),
             root,
             source,
             project,
@@ -124,7 +128,44 @@ impl Sandbox {
             .current_dir(&self.project)
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", &self.xdg);
+        if self.slow_git.exists() {
+            command.env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    self.slow_git.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            );
+        }
         command
+    }
+
+    /// Put a `git` on PATH whose FETCH hangs for 30 s and whose every other
+    /// subcommand is the real thing. A fetch the check waits on is then
+    /// impossible to miss, while the local `rev-parse` calls the check makes
+    /// for anchored-root detection stay honest and fast.
+    #[cfg(unix)]
+    fn install_slow_git(&self) {
+        use std::os::unix::fs::PermissionsExt;
+        let real = Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .filter(|path| !path.is_empty())
+            .expect("git is required to run this regression test");
+        fs::create_dir_all(&self.slow_git).unwrap();
+        let shim = self.slow_git.join("git");
+        fs::write(
+            &shim,
+            format!(
+                "#!/bin/sh\nfor arg in \"$@\"; do\n  [ \"$arg\" = fetch ] && {{ sleep 30; exit 1; }}\ndone\nexec {real} \"$@\"\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     fn check(&self, args: &[&str]) -> Output {
@@ -402,6 +443,10 @@ fn a_due_but_unreachable_remote_never_delays_the_check() {
     let stamp = cache.join(".git").join("vstack-fetch-stamp");
     let _ = fs::remove_file(&stamp);
 
+    // From here on, git takes 30 s to answer. The check must not notice.
+    #[cfg(unix)]
+    sb.install_slow_git();
+
     let started = std::time::Instant::now();
     let quiet = sb.check_online(&["--quiet"]);
     let elapsed = started.elapsed();
@@ -416,32 +461,37 @@ fn a_due_but_unreachable_remote_never_delays_the_check() {
         text(&quiet.stderr)
     );
 
-    // The refresh was handed off: the detached process writes the stamp.
+    // The refresh was handed off: the detached child marks the attempt in
+    // flight immediately, then records its verdict when the slow git finally
+    // answers. Either state proves the handoff happened without the check
+    // waiting for it.
     let mut recorded = String::new();
     for _ in 0..100 {
         if let Ok(content) = fs::read_to_string(&stamp) {
             recorded = content;
-            if recorded.starts_with("failed") {
+            if !recorded.is_empty() {
                 break;
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     assert!(
-        recorded.starts_with("failed"),
-        "the detached refresh must record its outcome, got {recorded:?}"
+        recorded.starts_with("pending") || recorded.starts_with("failed"),
+        "the detached refresh must record its progress, got {recorded:?}"
     );
 
-    // The next check reads that outcome — offline too, since it is a disk
-    // read — and one failure is reported without being drift.
+    // A fetch in flight is not a failure: the next check stays clean and
+    // says nothing about it.
     let json = sb.check(&["--json"]);
     let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    let failures = parsed["cache_refresh_failures"].as_array().unwrap();
-    assert_eq!(failures.len(), 1, "{parsed}");
-    assert_eq!(failures[0]["source"], "owner/repo");
-    assert_eq!(failures[0]["persistent"], false);
-    assert_eq!(parsed["drift"], false);
+    assert_eq!(parsed["drift"], false, "{parsed}");
     assert_eq!(json.status.code(), Some(0));
+    if recorded.starts_with("failed") {
+        let failures = parsed["cache_refresh_failures"].as_array().unwrap();
+        assert_eq!(failures.len(), 1, "{parsed}");
+        assert_eq!(failures[0]["source"], "owner/repo");
+        assert_eq!(failures[0]["persistent"], false);
+    }
 }
 
 /// A hook or agent installed into several harnesses is present only when
@@ -611,4 +661,172 @@ fn a_codex_prose_fallback_hook_is_not_drift_before_an_agent_exists() {
     assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
     let err = text(&quiet.stderr);
     assert!(err.contains("guard (hook)"), "{err}");
+}
+
+/// A hook whose name is an ordinary word in the generated agent header ("check",
+/// "add", "run") must still get its safety prose: the idempotency skip and the
+/// presence check have to agree on the anchored marker, not on a bare substring.
+#[test]
+fn a_prose_hook_named_like_a_common_word_is_written_and_verified() {
+    let sb = Sandbox::new("check-codex-word");
+    sb.write_hook_for_event("check", "TaskCompleted");
+    sb.write_agent("rust");
+    let add = |args: &[&str]| {
+        let output = sb
+            .vstack()
+            .args(["add", sb.source.to_str().unwrap()])
+            .args(args)
+            .args(["--harness", "codex", "--no-auto-skills", "-y"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    add(&["--agent", "rust"]);
+    add(&["--hook", "check"]);
+
+    let toml = sb.project.join(".codex/agents/rust.toml");
+    let content = fs::read_to_string(&toml).unwrap();
+    assert!(
+        content.contains("## Safety: check"),
+        "the word `check` in the header must not be mistaken for the block: {content}"
+    );
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(0), "{}", text(&quiet.stderr));
+
+    // Control: losing the block IS drift.
+    fs::write(
+        &toml,
+        content.replace("## Safety: check", "## Safety: something-else"),
+    )
+    .unwrap();
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    assert!(
+        text(&quiet.stderr).contains("check (hook)"),
+        "{}",
+        text(&quiet.stderr)
+    );
+}
+
+/// A natively supported Codex event installs a SCRIPT, whose absence is drift
+/// whether or not the scope has agent TOMLs — the prose-fallback guard must
+/// not silence it.
+#[test]
+fn a_deleted_native_codex_hook_script_is_drift_without_any_agents() {
+    let sb = Sandbox::new("check-codex-native");
+    sb.write_hook_for_event("guard", "PreToolUse");
+    let output = sb
+        .vstack()
+        .args([
+            "add",
+            sb.source.to_str().unwrap(),
+            "--hook",
+            "guard",
+            "--harness",
+            "codex",
+            "--no-auto-skills",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let script = sb.project.join(".codex/hooks/guard.sh");
+    assert!(script.exists(), "a native event installs a script");
+    assert!(
+        !sb.project.join(".codex/agents").exists()
+            || fs::read_dir(sb.project.join(".codex/agents"))
+                .map(|entries| entries.count() == 0)
+                .unwrap_or(true),
+        "this scope deliberately has no Codex agents"
+    );
+
+    let clean = sb.check(&["--quiet"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
+
+    fs::remove_file(&script).unwrap();
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(
+        quiet.status.code(),
+        Some(1),
+        "a deleted native script is drift even with no agents: {}",
+        text(&quiet.stderr)
+    );
+    assert!(
+        text(&quiet.stderr).contains("guard (hook)"),
+        "{}",
+        text(&quiet.stderr)
+    );
+}
+
+/// A cache whose `.git` cannot be written can never record anything, so the
+/// stamp-based report would never mention it and every session would fork
+/// another doomed refresh. The read path has to see it.
+#[cfg(unix)]
+#[test]
+fn a_cache_that_cannot_be_written_is_named_in_the_report() {
+    use std::os::unix::fs::PermissionsExt;
+    if unsafe { libc::geteuid() } == 0 {
+        return; // root ignores the permission bits this test relies on
+    }
+    let sb = Sandbox::new("check-unwritable-cache");
+    let cache = sb.fake_cache("github.com_owner_repo", "https://github.com/owner/repo.git");
+    let skill = cache.join("skills").join("alpha");
+    fs::create_dir_all(&skill).unwrap();
+    fs::create_dir_all(cache.join("agents")).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: alpha\ndescription: alpha\n---\nbody\n",
+    )
+    .unwrap();
+    let output = sb
+        .vstack()
+        .args([
+            "add",
+            "owner/repo",
+            "--skill",
+            "alpha",
+            "--harness",
+            "claude",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "add: {}", text(&output.stderr));
+
+    let git = cache.join(".git");
+    let _ = fs::remove_file(git.join("vstack-fetch-stamp"));
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o500)).unwrap();
+    let json = sb.check(&["--json"]);
+    let quiet = sb.check(&["--quiet"]);
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let failures = parsed["cache_refresh_failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{parsed}");
+    assert_eq!(failures[0]["source"], "owner/repo");
+    assert_eq!(
+        failures[0]["persistent"], true,
+        "a cache that can never refresh cannot resolve itself: {parsed}"
+    );
+    assert!(
+        failures[0]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("cannot be written"),
+        "{parsed}"
+    );
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    assert!(
+        text(&quiet.stderr).contains("owner/repo"),
+        "the quiet path must name it: {}",
+        text(&quiet.stderr)
+    );
 }

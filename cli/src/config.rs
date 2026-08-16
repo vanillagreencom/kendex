@@ -930,11 +930,23 @@ pub fn remote_source_slug(source: &str) -> Option<String> {
     };
 
     let host = host.rsplit('@').next()?; // drop any `user@`
-    let host = host.split(':').next()?; // drop any `:port`
+    // A nonstandard port is part of the endpoint's identity: two services on
+    // one host are two sources, not one cache.
+    let (host, port) = match host.split_once(':') {
+        Some((host, port)) if !port.is_empty() => (host, Some(port)),
+        _ => (host, None),
+    };
+    // Hostnames are case-insensitive, paths are NOT: lowercasing the path
+    // would alias two distinct repositories on a case-sensitive forge.
     let host = host.to_ascii_lowercase();
-    if !is_slug_segment(&host) {
+    if !is_slug_segment(&host) || port.is_some_and(|port| !port.chars().all(|c| c.is_ascii_digit()))
+    {
         return None;
     }
+    let host = match port {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    };
 
     let path = path.trim_start_matches('/').trim_end_matches(".git");
     let mut segments = Vec::new();
@@ -944,7 +956,7 @@ pub fn remote_source_slug(source: &str) -> Option<String> {
         if !is_slug_segment(segment) {
             return None;
         }
-        segments.push(segment.to_ascii_lowercase());
+        segments.push(segment.to_string());
     }
     if segments.is_empty() {
         return None;
@@ -955,11 +967,40 @@ pub fn remote_source_slug(source: &str) -> Option<String> {
 /// Cache directory key for a source: its slug flattened to ONE path
 /// component, so a cache always sits directly under the cache root.
 fn remote_cache_key(source: &str) -> Option<String> {
-    Some(remote_source_slug(source)?.replace('/', "_"))
+    // One path component, and one that every filesystem accepts: `/` and the
+    // port's `:` both become `_`.
+    Some(remote_source_slug(source)?.replace(['/', ':'], "_"))
 }
 
 fn remote_cache_root() -> PathBuf {
     global_base_dir().join(".vstack").join("cache")
+}
+
+/// Is this directory one vstack may fetch into and reset?
+///
+/// Containment, not caller discipline: a cache is ALWAYS a direct child of the
+/// cache root (current key or a legacy one), so anything else — a local source
+/// path, a project root, the checkout vstack is running from — is structurally
+/// unable to reach a mutation, whatever a caller passes. Compared lexically
+/// after normalization so a missing directory still answers.
+pub(crate) fn is_under_remote_cache_root(dir: &Path) -> bool {
+    let normalize = |path: &Path| -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| {
+            let mut normalized = PathBuf::new();
+            for component in path.components() {
+                match component {
+                    std::path::Component::CurDir => {}
+                    std::path::Component::ParentDir => {
+                        normalized.pop();
+                    }
+                    other => normalized.push(other.as_os_str()),
+                }
+            }
+            normalized
+        })
+    };
+    let root = normalize(&remote_cache_root());
+    dir.parent().is_some_and(|parent| normalize(parent) == root)
 }
 
 /// Where a fresh clone of `source` belongs. Existing clones are found with
@@ -1256,17 +1297,18 @@ pub struct RemoteCacheProblem {
 }
 
 /// The problem recorded for a cache, or None when the last attempt succeeded,
-/// none was ever made, or one is in flight right now. Pure disk reads, so
-/// `check` can call it on the session-start path and in `--offline` mode.
+/// none was ever made, or one is in flight right now.
 ///
-/// A `Pending` stamp older than the fetch deadline whose guard is free is an
-/// attempt that was killed before it could record anything; it is converted
-/// to a failure (best effort — a cache that cannot be written still reports)
-/// so an externally killed fetch cannot buy silence for a whole TTL.
+/// Reading is all this does in the ordinary case. The ONE exception is an
+/// abandoned attempt: a `Pending` stamp older than the fetch deadline whose
+/// guard is free belongs to a process that was killed before it could record
+/// anything, and converting it to a failure (a single small write, under the
+/// guard) is what stops an externally killed fetch from buying silence for a
+/// whole TTL.
 pub fn remote_cache_problem(cache_dir: &Path) -> Option<RemoteCacheProblemKind> {
     match read_fetch_stamp(cache_dir)? {
         FetchStamp::Ok => None,
-        FetchStamp::Pending { first_failure } => {
+        FetchStamp::Pending { .. } => {
             if !remote_cache_fetch_due(cache_dir, Some(REMOTE_CACHE_FETCH_DEADLINE)) {
                 return None; // plausibly still running
             }
@@ -1278,28 +1320,85 @@ pub fn remote_cache_problem(cache_dir: &Path) -> Option<RemoteCacheProblemKind> 
                     return Some(RemoteCacheProblemKind::Unwritable { reason });
                 }
             };
-            let now = epoch_now();
-            let first = first_failure.unwrap_or(now);
+            // Re-read under the guard. Waiting for it takes time, and the
+            // fetch we were about to condemn may have finished and written
+            // its own verdict in the meantime; overwriting THAT would record
+            // an up-to-date cache as failing since the attempt began.
+            let (first_failure, started) = match read_fetch_stamp(cache_dir) {
+                Some(FetchStamp::Pending { first_failure })
+                    if remote_cache_fetch_due(cache_dir, Some(REMOTE_CACHE_FETCH_DEADLINE)) =>
+                {
+                    (first_failure, stamp_epoch(cache_dir))
+                }
+                // Somebody finished while we waited: report what they wrote.
+                Some(fresh) => {
+                    drop(guard);
+                    return problem_from_stamp(fresh);
+                }
+                None => {
+                    drop(guard);
+                    return None;
+                }
+            };
+            // The abandoned attempt's own mtime is when it last happened, so
+            // the TTL measures from the attempt rather than from this read.
+            let last = started.unwrap_or_else(epoch_now);
+            let first = first_failure.unwrap_or(last);
             let _ = write_fetch_stamp(
                 cache_dir,
                 FetchStamp::Failed {
                     first,
-                    last: now,
+                    last,
                     cause: Some(FetchFailure::Interrupted),
                 },
             );
             drop(guard);
             Some(RemoteCacheProblemKind::Failing {
                 failing_for: age_since(first),
-                last_attempt: std::time::Duration::ZERO,
+                last_attempt: age_since(last),
                 cause: Some(FetchFailure::Interrupted),
             })
         }
+        stamp => problem_from_stamp(stamp),
+    }
+}
+
+fn problem_from_stamp(stamp: FetchStamp) -> Option<RemoteCacheProblemKind> {
+    match stamp {
+        FetchStamp::Ok | FetchStamp::Pending { .. } => None,
         FetchStamp::Failed { first, last, cause } => Some(RemoteCacheProblemKind::Failing {
             failing_for: age_since(first),
             last_attempt: age_since(last),
             cause,
         }),
+    }
+}
+
+/// When the stamp was last written, as an epoch.
+fn stamp_epoch(cache_dir: &Path) -> Option<u64> {
+    std::fs::metadata(remote_cache_fetch_stamp(cache_dir))
+        .and_then(|meta| meta.modified())
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|since| since.as_secs())
+}
+
+/// Can this cache record anything at all? A cache whose `.git` cannot be
+/// written never produces a stamp, so nothing else on the read path would
+/// ever notice it — the refresh would simply be re-attempted, and fail
+/// silently, at every session start forever.
+fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
+    // A probe file rather than the lock or the stamp: the lock may already
+    // exist from an earlier run (and would then open fine), and writing the
+    // stamp would fake a fresh attempt and suppress the next refresh.
+    let probe = cache_dir.join(".git").join("vstack-write-probe");
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            None
+        }
+        Err(err) => Some(err.to_string()),
     }
 }
 
@@ -1374,17 +1473,25 @@ impl RemoteCacheFetchGuard {
     }
 
     /// Without `flock`, creating the lock file IS taking the lock, so it must
-    /// not be pre-created: `create_new` is the whole mechanism.
+    /// not be pre-created: `create_new` is the whole mechanism. A holder that
+    /// is killed leaves its file behind, and nothing else would ever remove
+    /// it — so a lock older than any fetch could possibly be is taken over,
+    /// by exactly one contender.
     #[cfg(not(unix))]
     fn acquire(cache_dir: &Path) -> GuardAcquire {
         let path = remote_cache_fetch_lock(cache_dir);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => GuardAcquire::Held(Self { path }),
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => GuardAcquire::Busy,
+        match create_lock_file(&path) {
+            Ok(()) => GuardAcquire::Held(Self { path }),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                if take_over_stale_lock(&path, STALE_LOCK_AFTER) {
+                    match create_lock_file(&path) {
+                        Ok(()) => GuardAcquire::Held(Self { path }),
+                        Err(_) => GuardAcquire::Busy,
+                    }
+                } else {
+                    GuardAcquire::Busy
+                }
+            }
             Err(err) => GuardAcquire::Unusable(err.to_string()),
         }
     }
@@ -1397,14 +1504,81 @@ impl Drop for RemoteCacheFetchGuard {
     }
 }
 
-/// Whether a fetch runs under the wall-clock deadline and git's low-speed
-/// abort. Everything that nobody waits on is [`Bounded`](Self::Bounded);
-/// `add` and `refresh` run [`Unbounded`](Self::Unbounded) because a user is
-/// waiting on that specific command and expects it to finish.
+/// A lock this old cannot belong to a live fetch: the wall-clock deadline
+/// bounds every bounded fetch, and an unbounded one is a user waiting at a
+/// terminal. Only the platforms without `flock` need this — elsewhere the
+/// kernel releases the lock when its holder dies.
+#[allow(dead_code)]
+const STALE_LOCK_AFTER: std::time::Duration =
+    std::time::Duration::from_secs(REMOTE_CACHE_FETCH_DEADLINE.as_secs() * 2);
+
+/// Create the lock file, recording who holds it. `AlreadyExists` means
+/// somebody else does.
+#[allow(dead_code)]
+fn create_lock_file(path: &Path) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    // Ownership, so a human looking at a stuck cache can see who left it.
+    writeln!(file, "{} {}", std::process::id(), epoch_now())
+}
+
+/// Take over a lock left behind by a holder that died, and say whether THIS
+/// caller is the one that took it.
+///
+/// The take-over is a rename to a unique name, not an unlink: two contenders
+/// racing here both try to move the same path, and only one rename can find
+/// it, so exactly one of them may go on to create a fresh lock. Unlinking
+/// would let both proceed — and would let a slow contender delete a lock that
+/// a third process had meanwhile created legitimately.
+#[allow(dead_code)]
+fn take_over_stale_lock(path: &Path, stale_after: std::time::Duration) -> bool {
+    let stale = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|age| age >= stale_after);
+    if !stale {
+        return false;
+    }
+    let claim = path.with_extension(format!("taken.{}.{}", std::process::id(), epoch_now()));
+    match std::fs::rename(path, &claim) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&claim);
+            true
+        }
+        // Somebody else got there first — or it is gone already, in which
+        // case they will create the next lock and we should not race them.
+        Err(_) => false,
+    }
+}
+
+/// How long a fetch may run. `Bounded` carries its own deadline because the
+/// two bounded callers want very different ones: the detached background
+/// child can afford a full minute since nobody is waiting on it, while an
+/// interactive path must not hold a terminal for more than a few seconds.
+/// `add` and `refresh` are [`Unbounded`](Self::Unbounded) — a user asked for
+/// that specific fetch and expects it to finish.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchBound {
-    Bounded,
+    Bounded(std::time::Duration),
     Unbounded,
+}
+
+impl FetchBound {
+    /// The background refresh nobody waits on.
+    pub const BACKGROUND: Self = Self::Bounded(REMOTE_CACHE_FETCH_DEADLINE);
+    /// A refresh a user is watching a terminal for.
+    pub const INTERACTIVE: Self = Self::Bounded(std::time::Duration::from_secs(5));
+
+    fn deadline(self) -> Option<std::time::Duration> {
+        match self {
+            Self::Bounded(deadline) => Some(deadline),
+            Self::Unbounded => None,
+        }
+    }
 }
 
 /// What one call to [`fetch_remote_cache`] did.
@@ -1418,6 +1592,8 @@ pub enum FetchAttempt {
     Busy,
     /// The cache cannot be locked or stamped.
     Unwritable(String),
+    /// The path is not a cache directory. Nothing was run.
+    OutOfCacheRoot,
 }
 
 /// Fetch + reset one cache under the guard, recording the outcome in the
@@ -1434,6 +1610,12 @@ pub fn fetch_remote_cache(
     max_age: Option<std::time::Duration>,
     bound: FetchBound,
 ) -> FetchAttempt {
+    // Nothing outside the cache root is ever fetched or reset — see
+    // [`is_under_remote_cache_root`]. This runs before any git process
+    // exists, so a mistaken caller cannot mutate anything at all.
+    if !is_under_remote_cache_root(cache_dir) {
+        return FetchAttempt::OutOfCacheRoot;
+    }
     let guard = match RemoteCacheFetchGuard::acquire(cache_dir) {
         GuardAcquire::Held(guard) => guard,
         GuardAcquire::Busy => return FetchAttempt::Busy,
@@ -1454,20 +1636,41 @@ pub fn fetch_remote_cache(
     }
 
     let mut command = git_in_cache(cache_dir);
-    if bound == FetchBound::Bounded {
+    if let Some(deadline) = bound.deadline() {
+        // Strictly inside the wall-clock kill, or the knob could never fire.
+        let low_speed = REMOTE_CACHE_LOW_SPEED_SECS
+            .min(deadline.as_secs().saturating_sub(1))
+            .max(1);
         command.args([
             "-c",
             "http.lowSpeedLimit=1000",
             "-c",
-            &format!("http.lowSpeedTime={REMOTE_CACHE_LOW_SPEED_SECS}"),
+            &format!("http.lowSpeedTime={low_speed}"),
         ]);
     }
-    let failure = match command
+    command
         .args(["fetch", "origin", "--quiet"])
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    if bound.deadline().is_some() {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: runs between fork and exec, where only async-signal-safe
+        // calls are allowed. `setpgid(0, 0)` is one; it allocates nothing and
+        // only makes this child its own process-group leader, which is what
+        // lets the deadline kill reach git's transport children too.
+        unsafe {
+            command.pre_exec(|| {
+                libc::setpgid(0, 0);
+                // The deadline is enforced by THIS process; if it dies, the
+                // fetch it was bounding must not outlive it as an orphan.
+                #[cfg(target_os = "linux")]
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong);
+                Ok(())
+            });
+        }
+    }
+    let failure = match command.spawn() {
         Err(_) => Some(FetchFailure::GitMissing),
         Ok(child) => match wait_for_fetch(child, bound) {
             FetchWait::Ok => None,
@@ -1503,7 +1706,45 @@ pub fn fetch_remote_cache(
     FetchAttempt::Attempted(failure.is_none())
 }
 
-/// A git invocation PINNED to this cache.
+/// Every environment variable that can point git at a repository, an index,
+/// an object store, or injected configuration. A vstack process inherits its
+/// caller's environment, and the detached refresh child inherits vstack's, so
+/// any of these silently redirects a cache mutation at somebody else's data —
+/// `GIT_INDEX_FILE` alone is enough to write a cache's tree into another
+/// repository's index and leave it unusable.
+const INHERITED_GIT_REPOSITORY_ENV: [&str; 9] = [
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_GRAFT_FILE",
+    "GIT_CONFIG",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+];
+
+/// A git invocation for cache work: nothing inherited may redirect it, and it
+/// may never stop to ask a human anything.
+///
+/// The prompt suppression matters most for the detached refresh child, which
+/// has no terminal: without it, git or ssh can raise a GUI askpass dialog at
+/// session start, or block forever on a credential prompt nobody can answer.
+pub(crate) fn git_command_for_cache() -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    for key in INHERITED_GIT_REPOSITORY_ENV {
+        command.env_remove(key);
+    }
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .env_remove("GIT_ASKPASS")
+        .env_remove("SSH_ASKPASS")
+        .env_remove("DISPLAY");
+    command
+}
+
+/// A cache git invocation PINNED to this cache.
 ///
 /// Without `GIT_DIR`/`GIT_WORK_TREE`, git walks up from its working
 /// directory looking for a repository: a cache whose `.git` is damaged (or
@@ -1513,7 +1754,7 @@ pub fn fetch_remote_cache(
 /// cache. `GIT_CEILING_DIRECTORIES` is belt and braces for any git that still
 /// tries to discover.
 fn git_in_cache(cache_dir: &Path) -> std::process::Command {
-    let mut command = std::process::Command::new("git");
+    let mut command = git_command_for_cache();
     command
         .current_dir(cache_dir)
         .env("GIT_DIR", cache_dir.join(".git"))
@@ -1530,13 +1771,17 @@ enum FetchWait {
 
 /// Wait for `child`, killing it at the deadline when bounded. The kill is the
 /// real bound: git's `http.*` knobs do nothing for an ssh-cloned cache.
+///
+/// The whole process GROUP is killed, not just git: git delegates the
+/// transfer to `ssh` or `git-remote-https` children, and killing only the
+/// parent leaves the transport running with nothing left to bound it.
 fn wait_for_fetch(mut child: std::process::Child, bound: FetchBound) -> FetchWait {
-    if bound == FetchBound::Unbounded {
+    let Some(deadline) = bound.deadline() else {
         return match child.wait() {
             Ok(status) if status.success() => FetchWait::Ok,
             _ => FetchWait::Failed,
         };
-    }
+    };
     let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -1545,20 +1790,40 @@ fn wait_for_fetch(mut child: std::process::Child, bound: FetchBound) -> FetchWai
             Ok(None) => {}
             Err(_) => return FetchWait::Failed,
         }
-        if started.elapsed() >= REMOTE_CACHE_FETCH_DEADLINE {
-            let _ = child.kill();
-            let _ = child.wait();
+        if started.elapsed() >= deadline {
+            kill_process_group(&mut child);
             return FetchWait::TimedOut;
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
 }
 
+fn kill_process_group(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as i32;
+        // SAFETY: `kill` with a negative pid signals the process group whose
+        // leader is `pid`. The child was made its own group leader in
+        // `pre_exec` below, so this reaches git and its transport children
+        // and nothing else. It takes no memory and cannot fail destructively;
+        // ESRCH (already gone) is ignored.
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Refresh cached repos for all remote sources found in installed lock
 /// entries. Called at TUI startup so staleness checks see the latest content;
 /// bounded, because the user is waiting on a UI, not on this.
 pub fn refresh_remote_caches(lock: &LockFile) -> Vec<RemoteCacheProblem> {
-    refresh_remote_caches_older_than(lock, None, FetchBound::Bounded)
+    // TTL-bounded like every other caller: without it the TUI re-fetched every
+    // remote source on every launch — twice, once per scope — and a user
+    // offline or behind a dead VPN watched a blank terminal until each fetch
+    // hit its deadline.
+    refresh_remote_caches_older_than(lock, Some(REMOTE_CACHE_TTL), FetchBound::INTERACTIVE)
 }
 
 /// [`refresh_remote_caches`] with a freshness bound: a cache fetched (or
@@ -1577,6 +1842,11 @@ pub fn refresh_remote_caches_older_than(
             // A fetch in flight elsewhere is not a failure; stay quiet.
             FetchAttempt::Busy => None,
             FetchAttempt::Unwritable(reason) => Some(RemoteCacheProblemKind::Unwritable { reason }),
+            // Unreachable for a directory this function itself resolved, but
+            // reported rather than swallowed if the invariant ever breaks.
+            FetchAttempt::OutOfCacheRoot => Some(RemoteCacheProblemKind::Unwritable {
+                reason: format!("{} is not a cache directory", cache_dir.display()),
+            }),
             FetchAttempt::Attempted(_) | FetchAttempt::Fresh => remote_cache_problem(&cache_dir),
         };
         if let Some(kind) = kind {
@@ -1611,7 +1881,18 @@ pub fn recorded_remote_cache_problems(lock: &LockFile) -> Vec<RemoteCacheProblem
     let mut problems: Vec<RemoteCacheProblem> = cached_remote_sources(lock)
         .into_iter()
         .filter_map(|(source, dir)| {
-            remote_cache_problem(&dir).map(|kind| RemoteCacheProblem { source, kind })
+            let kind = remote_cache_problem(&dir).or_else(|| {
+                // No recorded outcome at all. Either nothing has run yet — in
+                // which case the refresh is about to — or nothing CAN run,
+                // because the cache cannot be written. Only the second is
+                // worth a word, and it is invisible any other way.
+                if read_fetch_stamp(&dir).is_some() {
+                    return None;
+                }
+                cache_unwritable_reason(&dir)
+                    .map(|reason| RemoteCacheProblemKind::Unwritable { reason })
+            })?;
+            Some(RemoteCacheProblem { source, kind })
         })
         .collect();
     problems.sort_by(|a, b| a.source.cmp(&b.source));
@@ -1692,6 +1973,22 @@ mod remote_cache_ttl_tests {
         let dir = cache_root(label);
         write_fake_clone(&dir, "https://github.com/owner/repo.git");
         dir
+    }
+
+    /// Run `body` against a cache inside a throwaway HOME's cache root — the
+    /// only place a fetch is allowed to touch, so anything that mutates has
+    /// to be exercised here.
+    fn with_sandboxed_cache<R>(label: &str, body: impl FnOnce(&Path) -> R) -> R {
+        let root = cache_root(label);
+        let config = root.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let result = crate::test_util::with_home_and_config(&root, &config, || {
+            let dir = remote_cache_dir("owner/repo").expect("shorthand is a remote source");
+            write_fake_clone(&dir, "https://github.com/owner/repo.git");
+            body(&dir)
+        });
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     fn write_fake_clone(dir: &Path, origin: &str) {
@@ -1878,6 +2175,108 @@ mod remote_cache_ttl_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// A checker that waits for the guard must re-read before condemning: the
+    /// fetch it was about to call abandoned may have finished while it
+    /// waited, and overwriting that verdict would record an up-to-date cache
+    /// as failing.
+    #[test]
+    fn a_waiting_checker_never_clobbers_a_fetch_that_just_succeeded() {
+        with_sandboxed_cache("no-clobber", |dir| {
+            // An attempt that looks abandoned: Pending, older than the
+            // deadline, so a checker would normally promote it to Failed.
+            write_fetch_stamp(
+                dir,
+                FetchStamp::Pending {
+                    first_failure: None,
+                },
+            )
+            .unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(remote_cache_fetch_stamp(dir))
+                .unwrap()
+                .set_modified(
+                    std::time::SystemTime::now()
+                        - (REMOTE_CACHE_FETCH_DEADLINE + Duration::from_secs(60)),
+                )
+                .unwrap();
+
+            // The real holder finishes while the checker is waiting for the
+            // guard the holder still owns.
+            let cache = dir.to_path_buf();
+            let winner = std::thread::spawn(move || {
+                let guard = match RemoteCacheFetchGuard::acquire(&cache) {
+                    GuardAcquire::Held(guard) => guard,
+                    _ => panic!("the winner must get the guard first"),
+                };
+                std::thread::sleep(Duration::from_millis(60));
+                write_fetch_stamp(&cache, FetchStamp::Ok).unwrap();
+                drop(guard);
+            });
+            // Give the winner the guard before the checker starts.
+            std::thread::sleep(Duration::from_millis(10));
+
+            let verdict = remote_cache_problem(dir);
+            winner.join().unwrap();
+
+            assert!(
+                verdict.is_none(),
+                "a cache that just refreshed successfully is not failing: {verdict:?}"
+            );
+            assert_eq!(
+                read_fetch_stamp(dir),
+                Some(FetchStamp::Ok),
+                "the winner's verdict must survive"
+            );
+        });
+    }
+
+    /// The TTL applies to the interactive refresh too: without it the TUI
+    /// re-fetched every source on every launch — twice, once per scope — and
+    /// an unreachable remote held a blank terminal until each deadline.
+    #[test]
+    fn a_second_refresh_within_the_ttl_issues_no_fetch() {
+        let root = cache_root("ttl-refresh");
+        let config = root.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        crate::test_util::with_home_and_config(&root, &config, || {
+            let cache = remote_cache_dir("owner/repo").unwrap();
+            write_fake_clone(&cache, "https://github.com/owner/repo.git");
+            let lock = demo_lock("owner/repo");
+
+            refresh_remote_caches(&lock);
+            let stamp = remote_cache_fetch_stamp(&cache);
+            let after_first = std::fs::metadata(&stamp).unwrap().modified().unwrap();
+            assert!(
+                !any_remote_cache_due(&lock, Some(REMOTE_CACHE_TTL)),
+                "the first refresh must satisfy the TTL"
+            );
+
+            refresh_remote_caches(&lock);
+            assert_eq!(
+                std::fs::metadata(&stamp).unwrap().modified().unwrap(),
+                after_first,
+                "a second refresh inside the TTL must not touch the cache at all"
+            );
+
+            // Control: past the TTL it does fetch again.
+            std::fs::File::options()
+                .write(true)
+                .open(&stamp)
+                .unwrap()
+                .set_modified(
+                    std::time::SystemTime::now() - (REMOTE_CACHE_TTL + Duration::from_secs(60)),
+                )
+                .unwrap();
+            refresh_remote_caches(&lock);
+            assert_ne!(
+                std::fs::metadata(&stamp).unwrap().modified().unwrap(),
+                after_first
+            );
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn a_failure_run_is_drift_only_after_it_outlives_two_ttls() {
         let dir = cache_with_git_dir("persistence");
@@ -1922,42 +2321,42 @@ mod remote_cache_ttl_tests {
 
     #[test]
     fn a_failing_run_keeps_its_first_failure_across_retries_and_success_clears_it() {
-        let dir = cache_with_git_dir("first-failure");
-        let first = epoch_now() - 9_000;
-        write_fetch_stamp(
-            &dir,
-            FetchStamp::Failed {
-                first,
-                last: epoch_now() - 8_000,
-                cause: Some(FetchFailure::Fetch),
-            },
-        )
-        .unwrap();
+        with_sandboxed_cache("first-failure", |dir| {
+            let first = epoch_now() - 9_000;
+            write_fetch_stamp(
+                dir,
+                FetchStamp::Failed {
+                    first,
+                    last: epoch_now() - 8_000,
+                    cause: Some(FetchFailure::Fetch),
+                },
+            )
+            .unwrap();
 
-        // A fresh failing attempt against a fake .git: the run's start survives
-        // and the cause is recorded.
-        assert_eq!(
-            fetch_remote_cache(&dir, None, FetchBound::Bounded),
-            FetchAttempt::Attempted(false)
-        );
-        assert_eq!(
-            read_fetch_stamp(&dir),
-            Some(FetchStamp::Failed {
-                first,
-                last: epoch_now(),
-                cause: Some(FetchFailure::Fetch)
-            }),
-            "a retry must not restart the clock"
-        );
-        assert!(
-            failing_for(&dir).is_some_and(|age| age >= Duration::from_secs(8_000)),
-            "age is measured from the FIRST failure"
-        );
+            // A fresh failing attempt against a fake .git: the run's start survives
+            // and the cause is recorded.
+            assert_eq!(
+                fetch_remote_cache(dir, None, FetchBound::BACKGROUND),
+                FetchAttempt::Attempted(false)
+            );
+            assert_eq!(
+                read_fetch_stamp(dir),
+                Some(FetchStamp::Failed {
+                    first,
+                    last: epoch_now(),
+                    cause: Some(FetchFailure::Fetch)
+                }),
+                "a retry must not restart the clock"
+            );
+            assert!(
+                failing_for(dir).is_some_and(|age| age >= Duration::from_secs(8_000)),
+                "age is measured from the FIRST failure"
+            );
 
-        // Control: a success clears the run entirely.
-        write_fetch_stamp(&dir, FetchStamp::Ok).unwrap();
-        assert!(remote_cache_problem(&dir).is_none());
-        let _ = std::fs::remove_dir_all(dir);
+            // Control: a success clears the run entirely.
+            write_fetch_stamp(dir, FetchStamp::Ok).unwrap();
+            assert!(remote_cache_problem(dir).is_none());
+        });
     }
 
     #[test]
@@ -1971,7 +2370,6 @@ mod remote_cache_ttl_tests {
             "https://github.com/owner/repo",
             "https://github.com/owner/repo.git",
             "https://github.com/owner/repo/",
-            "https://github.com/Owner/Repo.git",
             "git@github.com:owner/repo.git",
             "ssh://git@github.com/owner/repo.git",
         ] {
@@ -2000,11 +2398,35 @@ mod remote_cache_ttl_tests {
             remote_cache_dir("https://gitlab.com/group/sub/repo"),
             remote_cache_dir("https://gitlab.com/sub/repo")
         );
-        // Case control: one cache, whatever the user typed.
+        // The HOST is case-insensitive, so it normalizes...
         assert_eq!(
+            remote_source_slug("https://GitHub.com/owner/repo").as_deref(),
+            Some("github.com/owner/repo")
+        );
+        // ...but the PATH is not: two repositories that differ only in case
+        // are two repositories on a case-sensitive forge, and must not share
+        // one cache.
+        assert_eq!(
+            remote_source_slug("https://github.com/Owner/Repo").as_deref(),
+            Some("github.com/Owner/Repo")
+        );
+        assert_ne!(
             remote_cache_dir("https://github.com/Owner/Repo"),
             remote_cache_dir("owner/repo")
         );
+        // A nonstandard port is part of the endpoint's identity.
+        assert_eq!(
+            remote_source_slug("ssh://git@example.com:2222/owner/repo.git").as_deref(),
+            Some("example.com:2222/owner/repo")
+        );
+        assert_ne!(
+            remote_cache_dir("ssh://git@example.com:2222/owner/repo.git"),
+            remote_cache_dir("ssh://git@example.com/owner/repo.git")
+        );
+        // …and the key stays a single path component.
+        let ported = remote_cache_dir("ssh://git@example.com:2222/owner/repo.git").unwrap();
+        assert_eq!(ported.parent(), Some(remote_cache_root().as_path()));
+        assert_eq!(ported.file_name().unwrap(), "example.com_2222_owner_repo");
         // Cleartext transport is refused outright.
         assert!(remote_source_slug("http://github.com/owner/repo").is_none());
         for bad in [
@@ -2098,50 +2520,115 @@ mod remote_cache_ttl_tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// The lock-takeover helper the non-unix guard is built from. It is
+    /// exercised here, on the platform CI actually runs, because a branch
+    /// nobody compiles is a branch nobody can trust — the previous non-unix
+    /// guard shipped dead for exactly that reason.
     #[test]
-    fn fetch_guard_is_exclusive_and_released_when_its_holder_goes_away() {
-        let dir = cache_with_git_dir("guard");
-        let first = match RemoteCacheFetchGuard::acquire(&dir) {
-            GuardAcquire::Held(guard) => guard,
-            _ => panic!("first acquire must win"),
-        };
+    fn a_stale_lock_is_taken_over_by_exactly_one_contender() {
+        let dir = cache_root("stale-lock");
+        std::fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join("vstack-fetch.lock");
+        create_lock_file(&lock).unwrap();
         assert!(
-            matches!(RemoteCacheFetchGuard::acquire(&dir), GuardAcquire::Busy),
-            "a second acquire must be refused while the first is held"
+            create_lock_file(&lock).is_err(),
+            "a held lock refuses a second holder"
         );
-        // A caller that finds the guard held does nothing and says nothing.
-        assert_eq!(
-            fetch_remote_cache(&dir, None, FetchBound::Bounded),
-            FetchAttempt::Busy
-        );
-        drop(first);
+
+        // Fresh: never taken over, whatever a contender wants.
+        assert!(!take_over_stale_lock(&lock, Duration::from_secs(3600)));
+        assert!(lock.exists());
+
+        // Old enough that no live fetch could still hold it: the FIRST
+        // contender wins and the second finds nothing to take.
+        std::fs::File::options()
+            .write(true)
+            .open(&lock)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+        assert!(take_over_stale_lock(&lock, Duration::from_secs(60)));
+        assert!(!take_over_stale_lock(&lock, Duration::from_secs(60)));
+        assert!(!lock.exists(), "the stale lock is gone, not left behind");
+        // And the winner can now hold it.
+        create_lock_file(&lock).unwrap();
+        let recorded = std::fs::read_to_string(&lock).unwrap();
         assert!(
-            matches!(RemoteCacheFetchGuard::acquire(&dir), GuardAcquire::Held(_)),
-            "the lock must be free again once the holder drops it"
+            recorded.starts_with(&std::process::id().to_string()),
+            "the lock records its owner: {recorded:?}"
         );
+        assert!(STALE_LOCK_AFTER > REMOTE_CACHE_FETCH_DEADLINE);
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
+    fn a_legacy_scp_shaped_cache_directory_is_adopted_too() {
+        let root = cache_root("legacy-scp");
+        let config = root.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        crate::test_util::with_home_and_config(&root, &config, || {
+            // The other shape earlier releases wrote: the scp URL flattened.
+            let legacy = remote_cache_root().join("git@github.com:owner_repo");
+            write_fake_clone(&legacy, "git@github.com:owner/repo.git");
+            assert_eq!(
+                remote_cache_lookup("owner/repo"),
+                RemoteCacheLookup::Usable(legacy.clone()),
+                "an scp-shaped clone must be adopted, not abandoned"
+            );
+            // Control: same directory name, different repository — not ours.
+            write_fake_clone(&legacy, "git@github.com:someone/else.git");
+            assert!(matches!(
+                remote_cache_lookup("owner/repo"),
+                RemoteCacheLookup::Unverifiable { .. }
+            ));
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fetch_guard_is_exclusive_and_released_when_its_holder_goes_away() {
+        with_sandboxed_cache("guard", |dir| {
+            let first = match RemoteCacheFetchGuard::acquire(dir) {
+                GuardAcquire::Held(guard) => guard,
+                _ => panic!("first acquire must win"),
+            };
+            assert!(
+                matches!(RemoteCacheFetchGuard::acquire(dir), GuardAcquire::Busy),
+                "a second acquire must be refused while the first is held"
+            );
+            // A caller that finds the guard held does nothing and says nothing.
+            assert_eq!(
+                fetch_remote_cache(dir, None, FetchBound::BACKGROUND),
+                FetchAttempt::Busy
+            );
+            drop(first);
+            assert!(
+                matches!(RemoteCacheFetchGuard::acquire(dir), GuardAcquire::Held(_)),
+                "the lock must be free again once the holder drops it"
+            );
+        });
+    }
+
+    #[test]
     fn a_second_caller_behind_a_fetch_sees_the_fresh_stamp_and_skips() {
-        let dir = cache_with_git_dir("re-due");
-        // First caller: due (no stamp), attempts, fails against a fake .git.
-        assert_eq!(
-            fetch_remote_cache(&dir, Some(Duration::from_secs(3600)), FetchBound::Bounded),
-            FetchAttempt::Attempted(false)
-        );
-        // Second caller with the same bound: the due check re-runs inside the
-        // guard, so the stamp the first caller just wrote suppresses it.
-        assert_eq!(
-            fetch_remote_cache(&dir, Some(Duration::from_secs(3600)), FetchBound::Bounded),
-            FetchAttempt::Fresh
-        );
-        // Control: no bound is always due.
-        assert_eq!(
-            fetch_remote_cache(&dir, None, FetchBound::Bounded),
-            FetchAttempt::Attempted(false)
-        );
-        let _ = std::fs::remove_dir_all(dir);
+        with_sandboxed_cache("re-due", |dir| {
+            // First caller: due (no stamp), attempts, fails against a fake .git.
+            assert_eq!(
+                fetch_remote_cache(dir, Some(Duration::from_secs(3600)), FetchBound::BACKGROUND),
+                FetchAttempt::Attempted(false)
+            );
+            // Second caller with the same bound: the due check re-runs inside the
+            // guard, so the stamp the first caller just wrote suppresses it.
+            assert_eq!(
+                fetch_remote_cache(dir, Some(Duration::from_secs(3600)), FetchBound::BACKGROUND),
+                FetchAttempt::Fresh
+            );
+            // Control: no bound is always due.
+            assert_eq!(
+                fetch_remote_cache(dir, None, FetchBound::BACKGROUND),
+                FetchAttempt::Attempted(false)
+            );
+        });
     }
 
     #[cfg(unix)]
@@ -2152,16 +2639,27 @@ mod remote_cache_ttl_tests {
             return;
         }
         use std::os::unix::fs::PermissionsExt;
-        let dir = cache_with_git_dir("unwritable");
-        let git = dir.join(".git");
-        std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o500)).unwrap();
-        let attempt = fetch_remote_cache(&dir, None, FetchBound::Bounded);
-        std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(
-            matches!(attempt, FetchAttempt::Unwritable(_)),
-            "a .git that cannot be written must surface, not read as clean: {attempt:?}"
-        );
-        let _ = std::fs::remove_dir_all(dir);
+        with_sandboxed_cache("unwritable", |dir| {
+            let git = dir.join(".git");
+            std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o500)).unwrap();
+            let attempt = fetch_remote_cache(dir, None, FetchBound::BACKGROUND);
+            // The READ path must see it too: no stamp can exist, so a cache that
+            // can never refresh would otherwise be invisible forever.
+            let read_path = cache_unwritable_reason(dir);
+            std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(
+                matches!(attempt, FetchAttempt::Unwritable(_)),
+                "a .git that cannot be written must surface, not read as clean: {attempt:?}"
+            );
+            assert!(
+                read_path.is_some(),
+                "the read path must be able to see an unwritable cache"
+            );
+            assert!(
+                cache_unwritable_reason(dir).is_none(),
+                "control: a writable cache reports nothing"
+            );
+        });
     }
 
     #[test]
@@ -2182,7 +2680,7 @@ mod remote_cache_ttl_tests {
                 refresh_remote_caches_older_than(
                     &lock,
                     Some(Duration::from_secs(3600)),
-                    FetchBound::Bounded
+                    FetchBound::BACKGROUND
                 )
                 .is_empty(),
                 "a fresh stamp must suppress the fetch and report nothing"
@@ -2196,8 +2694,11 @@ mod remote_cache_ttl_tests {
             // Zero TTL: due, attempted, and the attempt fails against a fake
             // .git — reported for check to surface.
             assert!(any_remote_cache_due(&lock, Some(Duration::ZERO)));
-            let problems =
-                refresh_remote_caches_older_than(&lock, Some(Duration::ZERO), FetchBound::Bounded);
+            let problems = refresh_remote_caches_older_than(
+                &lock,
+                Some(Duration::ZERO),
+                FetchBound::BACKGROUND,
+            );
             assert_eq!(problems.len(), 1, "{problems:?}");
             assert_eq!(problems[0].source, "owner/repo");
             assert!(
@@ -2238,14 +2739,14 @@ mod remote_cache_ttl_tests {
         };
         // A real remote, so a fetch from the enclosing repository SUCCEEDS —
         // without that, an escape would stop at the failed fetch and this
-        // test would pass for the wrong reason.
+        // test would pass for the wrong reason. git is required, not
+        // optional: skipping here would retire the regression silently.
         let remote = root.join("origin.git");
         std::fs::create_dir_all(&remote).unwrap();
-        if !git(&["init", "-q", "--bare", "-b", "main", "."], &remote) {
-            eprintln!("skipping: git unavailable");
-            let _ = std::fs::remove_dir_all(&root);
-            return;
-        }
+        assert!(
+            git(&["init", "-q", "--bare", "-b", "main", "."], &remote),
+            "git is required to run this regression test"
+        );
         let work = root.join("work");
         std::fs::create_dir_all(&work).unwrap();
         assert!(git(&["init", "-q", "-b", "main", "."], &work));
@@ -2268,22 +2769,191 @@ mod remote_cache_ttl_tests {
         // Local work the enclosing repository has NOT pushed: a stray reset
         // to origin/HEAD would destroy exactly this.
         std::fs::write(&tracked, "uncommitted local work\n").unwrap();
+        let index = work.join(".git").join("index");
+        let index_before = std::fs::read(&index).unwrap();
 
-        // The cache sits INSIDE that repository and its `.git` is a directory
-        // with no repository in it — the shape a half-written cache has.
-        let cache = work.join("nested").join("cache");
-        write_fake_clone(&cache, "https://github.com/owner/repo.git");
+        // The cache root itself lives INSIDE that repository, so the cache is
+        // both a legitimate mutation target and nested in a victim.
+        let home = work.join("home");
+        let config = home.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        crate::test_util::with_home_and_config(&home, &config, || {
+            let cache = remote_cache_dir("owner/repo").unwrap();
+            write_fake_clone(&cache, "https://github.com/owner/repo.git");
 
+            assert_eq!(
+                fetch_remote_cache(&cache, None, FetchBound::BACKGROUND),
+                FetchAttempt::Attempted(false),
+                "a broken cache must fail as a broken cache"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&tracked).unwrap(),
+                "uncommitted local work\n",
+                "the enclosing repository's working tree must be untouched"
+            );
+            assert_eq!(
+                std::fs::read(&index).unwrap(),
+                index_before,
+                "the enclosing repository's index must be untouched"
+            );
+            // The identity lookup answers from the cache's OWN recorded
+            // origin, never by walking up: that value is stamped into the
+            // lock as the source's repository and routes issue reports.
+            assert_eq!(
+                source_repo_from_git_origin(&cache),
+                Some("owner/repo".to_string())
+            );
+            std::fs::write(cache.join(".git").join("config"), "[core]\n").unwrap();
+            assert_eq!(
+                source_repo_from_git_origin(&cache),
+                None,
+                "a cache with no recorded origin has no identity to borrow"
+            );
+        });
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A directory that merely SITS INSIDE a repository is not that
+    /// repository: answering with the enclosing origin stamps the wrong
+    /// `source_repo` into the lock, and `vstack report` then files issues
+    /// against a repo that has nothing to do with the source.
+    #[test]
+    fn a_directory_inside_a_repository_does_not_inherit_that_repositorys_identity() {
+        let root = cache_root("identity");
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str], dir: &Path| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_SYSTEM", "/dev/null")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+        };
+        assert!(
+            git(&["init", "-q", "-b", "main", "."], &root),
+            "git is required to run this regression test"
+        );
+        assert!(git(
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/enclosing/repo.git"
+            ],
+            &root
+        ));
+        // Control: the repository root itself DOES have that identity.
         assert_eq!(
-            fetch_remote_cache(&cache, None, FetchBound::Bounded),
-            FetchAttempt::Attempted(false),
-            "a broken cache must fail as a broken cache"
+            source_repo_from_git_origin(&root),
+            Some("enclosing/repo".to_string())
+        );
+        let inner = root.join("sources").join("local-source");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert_eq!(
+            source_repo_from_git_origin(&inner),
+            None,
+            "a plain subdirectory must not borrow the enclosing repository"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Nothing inherited from the caller's environment may redirect a cache
+    /// git command at another repository's index, objects, or config — the
+    /// same destruction class as discovery escape, through `GIT_INDEX_FILE`
+    /// and its family. Asserted on the command itself, because setting these
+    /// process-wide in a parallel test run would endanger real repositories.
+    #[test]
+    fn cache_git_commands_scrub_every_inherited_repository_pointer() {
+        let command = git_command_for_cache();
+        let envs: std::collections::HashMap<String, Option<String>> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        for key in INHERITED_GIT_REPOSITORY_ENV {
+            assert_eq!(
+                envs.get(key),
+                Some(&None),
+                "{key} must be removed, not inherited"
+            );
+        }
+        // And it may never stop to ask a human anything: the background child
+        // has no terminal to ask in.
+        for key in ["GIT_ASKPASS", "SSH_ASKPASS", "DISPLAY"] {
+            assert_eq!(envs.get(key), Some(&None), "{key} must be removed");
+        }
+        assert_eq!(
+            envs.get("GIT_TERMINAL_PROMPT"),
+            Some(&Some("0".to_string()))
         );
         assert_eq!(
-            std::fs::read_to_string(&tracked).unwrap(),
-            "uncommitted local work\n",
-            "the enclosing repository's working tree must be untouched"
+            envs.get("SSH_ASKPASS_REQUIRE"),
+            Some(&Some("never".to_string()))
         );
+        // The pinned variant keeps all of that and adds the pinning.
+        let pinned = git_in_cache(Path::new("/tmp/whatever"));
+        let pinned: std::collections::HashMap<String, Option<String>> = pinned
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        assert_eq!(pinned.get("GIT_INDEX_FILE"), Some(&None));
+        assert!(pinned.get("GIT_DIR").is_some_and(|dir| dir.is_some()));
+        assert!(pinned.contains_key("GIT_CEILING_DIRECTORIES"));
+    }
+
+    /// Containment, not caller discipline: a directory that is not a cache is
+    /// refused before any git process exists.
+    #[test]
+    fn a_directory_outside_the_cache_root_is_never_fetched_or_reset() {
+        let root = cache_root("containment");
+        let config = root.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        crate::test_util::with_home_and_config(&root, &config, || {
+            // Everything a lock can name that is NOT a cache: a project root,
+            // an absolute local source, a relative one, and a nested path
+            // under the cache root that is not a direct child.
+            let project = root.join("project");
+            std::fs::create_dir_all(project.join(".git")).unwrap();
+            let nested = remote_cache_dir("owner/repo").unwrap().join("inner");
+            std::fs::create_dir_all(&nested).unwrap();
+            for dir in [
+                project.as_path(),
+                root.as_path(),
+                Path::new("."),
+                nested.as_path(),
+            ] {
+                assert_eq!(
+                    fetch_remote_cache(dir, None, FetchBound::BACKGROUND),
+                    FetchAttempt::OutOfCacheRoot,
+                    "{} must be refused",
+                    dir.display()
+                );
+                assert!(
+                    !dir.join(".git").join("vstack-fetch.lock").exists(),
+                    "refusal must happen before anything is created"
+                );
+            }
+            // Control: the real cache directory IS accepted.
+            let cache = remote_cache_dir("owner/repo").unwrap();
+            write_fake_clone(&cache, "https://github.com/owner/repo.git");
+            assert_eq!(
+                fetch_remote_cache(&cache, None, FetchBound::BACKGROUND),
+                FetchAttempt::Attempted(false)
+            );
+        });
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2385,8 +3055,35 @@ pub fn github_slug_eq(left: &str, right: &str) -> bool {
 }
 
 fn source_repo_from_git_origin(source_root: &Path) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["-C", source_root.to_str()?, "remote", "get-url", "origin"])
+    // A cached source is read from its own `.git/config`: asking git would
+    // let discovery walk up out of a half-written cache and answer with the
+    // ENCLOSING repository's origin, which is then stamped into the lock as
+    // this source's identity and routes `vstack report` at the wrong repo.
+    if is_under_remote_cache_root(source_root) {
+        return cache_origin_url(source_root)
+            .as_deref()
+            .and_then(parse_github_slug);
+    }
+    // Local sources still ask git, but the answer must belong to THIS root:
+    // a directory that merely sits inside a repository is not that repository.
+    let root = source_root.to_str()?;
+    let toplevel = git_command_for_cache()
+        .args(["-C", root, "rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !toplevel.status.success() {
+        return None;
+    }
+    let toplevel = PathBuf::from(String::from_utf8_lossy(&toplevel.stdout).trim());
+    let same = std::fs::canonicalize(&toplevel)
+        .ok()
+        .zip(std::fs::canonicalize(source_root).ok())
+        .is_some_and(|(toplevel, root)| toplevel == root);
+    if !same {
+        return None;
+    }
+    let output = git_command_for_cache()
+        .args(["-C", root, "remote", "get-url", "origin"])
         .output()
         .ok()?;
     if !output.status.success() {
