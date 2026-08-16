@@ -78,7 +78,9 @@ while IFS= read -r seg; do
         -*) continue ;;
       esac
     fi
-    stripped=${tok#\"}; stripped=${stripped#\'}
+    # Only a double quote is peeled: a single-quoted operand is a literal
+    # filename the shell never expands, so it is not a variable root.
+    stripped=${tok#\"}
     if [ "$seen_ddash" -eq 1 ]; then
       while [ "${stripped#-}" != "$stripped" ]; do stripped=${stripped#-}; done
     fi
