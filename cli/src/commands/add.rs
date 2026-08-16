@@ -2575,15 +2575,30 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     }
     // Settings seeding is per-checkout runtime state with no catalog
     // counterpart, so it runs for self-source repos too — same rule as
-    // refresh.
-    if !global
-        && let Some(result) = crate::project_settings::ensure_skill_settings(
+    // refresh. It reads the FULL installed set (lock ∪ this selection), not
+    // the selection alone: the seeder dedups same-key templates first-wins,
+    // and a filtered add must not reorder that against what refresh sees.
+    if !global {
+        let selected_names: std::collections::HashSet<&str> =
+            selected_skills.iter().map(|s| s.name.as_str()).collect();
+        let mut settings_skills: Vec<Skill> = selected_skills.clone();
+        for skill in crate::catalog::discover_skills(&source_dir).unwrap_or_default() {
+            if !selected_names.contains(skill.name.as_str())
+                && lock
+                    .entries
+                    .get(&skill.name)
+                    .is_some_and(|e| e.kind == config::ItemKind::Skill)
+            {
+                settings_skills.push(skill);
+            }
+        }
+        if let Some(result) = crate::project_settings::ensure_skill_settings(
             &project_root,
-            &selected_skills,
+            &settings_skills,
             &mut lock.settings_seeds,
-        )?
-    {
-        settings_note = Some(format!("Project settings: {}", result.summary()));
+        )? {
+            settings_note = Some(format!("Project settings: {}", result.summary()));
+        }
     }
 
     // Update lock file
