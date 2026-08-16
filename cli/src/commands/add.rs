@@ -183,7 +183,13 @@ struct ResolvedSource {
 
 fn source_label(source: &str) -> String {
     if Path::new(source).exists() {
-        return format!("local: {source}");
+        // A lock-recorded local path is untrusted text like any other: a
+        // matching directory whose name carries an escape would put it on the
+        // picker row.
+        return format!(
+            "local: {}",
+            crate::refresh_sources::escape_unprintable(source)
+        );
     }
 
     // A registry or lock written by an earlier vstack can still hold a
@@ -482,6 +488,18 @@ mod source_option_tests {
             assert!(!label.contains("token"), "{source}: {label}");
             assert!(label.contains("<redacted>"), "{source}: {label}");
         }
+        // A local path is echoed as recorded, minus anything a terminal would
+        // act on rather than print.
+        let root = std::env::temp_dir().join(format!(
+            "vstack-source-label-\u{1b}[31m-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let label = source_label(&root.to_string_lossy());
+        assert!(!label.contains('\u{1b}'), "{label}");
+        assert!(label.starts_with("local: "), "{label}");
+        let _ = std::fs::remove_dir_all(&root);
+
         // Ordinary sources are untouched.
         assert_eq!(source_label("owner/repo"), "owner/repo");
         assert_eq!(

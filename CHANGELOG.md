@@ -254,22 +254,32 @@
     route cannot churn-loop; the worktree live-lease suite's check count is
     corrected (35, not 20).
 - cli: every git process vstack runs — cache clone/fetch/reset, the cache's
-  work-tree, origin and ssh-config reads, and the repository-identity reads the
-  `.agents/skills` ownership boundary is judged against — is built by one
-  hardened constructor: the `GIT_DIR`/`GIT_WORK_TREE` and `GIT_CONFIG_*`
-  families dropped (an injected `core.fsmonitor`, `core.hooksPath` or
-  `core.sshCommand` names a program git would run) and `GIT_TERMINAL_PROMPT=0`.
+  work-tree, origin and ssh-config reads, the repository-identity reads the
+  `.agents/skills` ownership boundary is judged against, a Pi package's HEAD
+  read, and the source-repository reads behind `vstack report` — is built by one
+  hardened constructor: the `GIT_DIR`/`GIT_WORK_TREE` family dropped, and with
+  it every way an environment hands git configuration to the process it starts
+  (`GIT_CONFIG_PARAMETERS` — which git sets ITSELF for every subprocess of a
+  `git -c key=value` invocation — `GIT_CONFIG`, `GIT_CONFIG_GLOBAL`/`_SYSTEM`/
+  `_NOSYSTEM`, the indexed `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` pairs, and
+  `GIT_EXEC_PATH`), since an injected `core.fsmonitor`, `core.hooksPath` or
+  `core.sshCommand` names a program git RUNS — the last of those was read back
+  and re-exported to the fetch. Plus `GIT_TERMINAL_PROMPT=0`.
   Cache commands additionally drop `GIT_CEILING_DIRECTORIES` and
   `GIT_DISCOVERY_ACROSS_FILESYSTEM`, which are hostile only where vstack owns
   the repository — for the user's own project they are configuration, and
   clearing them changed the answer the anchoring callers fail closed on.
   Network commands take the ssh program git would pick (`GIT_SSH_COMMAND`, then
-  `core.sshCommand`) with its own variant's noninteractive flag —
+  `core.sshCommand`) with its own variant's noninteractive flag APPENDED —
   `-o BatchMode=yes` for OpenSSH, `-batch` for plink/putty/tortoiseplink,
-  nothing for `simple`, honouring `GIT_SSH_VARIANT` then `ssh.variant`. A
-  command that carries arguments of its own (`env FOO=bar ssh`, a wrapper with
-  its own options) and a `GIT_SSH` program are left exactly as git has them:
-  rewriting either corrupts it. `reset --hard` runs only after the cache entry
+  nothing for `simple`, honouring `GIT_SSH_VARIANT` then `ssh.variant`. Git puts
+  the host and upload-pack arguments after the whole string, so a trailing
+  option still applies and a command carrying arguments of its own
+  (`ssh -i key`, `env FOO=bar ssh`) keeps working AND stops prompting — the one
+  prompt `GIT_TERMINAL_PROMPT=0` cannot suppress is ssh's own. An explicit
+  `-o BatchMode=no` the user wrote earlier in their command still wins. A
+  `GIT_SSH` program, and a plink-family command with arguments, are left exactly
+  as git has them. `reset --hard` runs only after the cache entry
   proves to be vstack's own clone: not a symlink, not a redirected `.git`,
   `rev-parse --show-toplevel` is the entry itself, and `origin` is this source
   with no credential in it. A cache whose `core.worktree` pointed at a user
@@ -280,17 +290,26 @@
   non-zero, never rebinding the entry to another source (hooks included) or
   repairing its lock record; the TUI's startup cache refresh skips it, and a
   hook removal that cannot regenerate the affected agents fails instead of
-  leaving them carrying the removed hook. A failed fetch keeps the stale clone
+  leaving them carrying the removed hook. An agent is never rewritten with a
+  hook set the run could not determine: where a locked hook's own source did not
+  resolve, the agent file is left exactly as installed and named in the report,
+  rather than silently losing that hook's frontmatter while its script and its
+  settings.json registration stay. A failed fetch keeps the stale clone
   (warned once, not once per resolve); a failed reset is an error. Remote
   sources resolve to one cache entry per repository identity — every spelling
   of a GitHub repo shares one, two repositories never do — so URL-added sources
   refresh from the clone `add` made: a clone under any older cache name is
   adopted once its own `origin` confirms the repository, and one belonging to a
-  different repository is left where it is. Credential-bearing or
-  plaintext-HTTP source URLs (userinfo token, `user:pass@` in any spelling
+  different repository is left where it is. Only https, ssh, git+ssh and file
+  transports are handed to git: `git://` is unauthenticated and unencrypted and
+  an unknown scheme makes git run a `git-remote-<scheme>` helper, so both are
+  refused — as is a cached entry whose own `origin` uses one. Credential-bearing
+  or plaintext-HTTP source URLs (userinfo token, `user:pass@` in any spelling
   including `user:pass@host:path`, query or fragment, `http://`), URLs whose
-  authority carries whitespace or control characters, and sources starting with
-  `-` are rejected before any git runs and never echoed — including in the
+  authority carries whitespace or control characters, URLs naming no host
+  (`https:///user:token@host/repo` put its credential in the path, where the
+  authority checks could not see it), and sources starting with `-` are rejected
+  before any git runs and never echoed — including in the
   source picker, which used to print a legacy registry entry's token verbatim;
   ssh usernames are kept, and any control or direction-changing character in a
   source string is escaped before it reaches a terminal.

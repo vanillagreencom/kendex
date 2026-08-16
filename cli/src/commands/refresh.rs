@@ -87,6 +87,14 @@ impl RefreshStats {
         });
     }
 
+    /// Record that `item` was left exactly as installed because this run could
+    /// not determine what to write. Reported like a missing item — the run
+    /// exits non-zero naming it — because the installed file no longer matches
+    /// what a successful refresh would produce.
+    fn mark_undetermined(&mut self, item: &str, reason: String) {
+        self.missing.insert(item.to_string(), reason);
+    }
+
     /// Record that `item` has no asset to refresh from: its source resolved
     /// to `root` but does not carry the asset.
     fn mark_missing(&mut self, item: &str, root: &Path) {
@@ -310,6 +318,22 @@ pub fn refresh_items_in_scope(
         .collect();
     let mut regenerated_codex_agents = Vec::new();
 
+    // Hook entries whose own source exists but did not resolve — a remote whose
+    // clone is absent or refused. What such a hook contributes to an agent's
+    // frontmatter cannot be read this run, and regenerating the agent anyway
+    // rewrote it with the hook silently dropped while the hook's script, its
+    // settings.json registration and its lock entry all survived.
+    let undetermined_hooks: Vec<(String, Vec<String>)> = lock
+        .entries
+        .values()
+        .filter(|entry| entry.kind == ItemKind::Hook)
+        .filter(|entry| {
+            config::resolve_source_path(&entry.source).is_none()
+                && crate::refresh_sources::recorded_source_exists(&entry.source)
+        })
+        .map(|entry| (entry.name.clone(), entry.harnesses.clone()))
+        .collect();
+
     // ── Agents ───────────────────────────────────────────────
     for (name, entry) in lock
         .entries
@@ -329,6 +353,25 @@ pub fn refresh_items_in_scope(
             stats.mark_missing(name, &source.root);
             continue;
         };
+        let undetermined: Vec<&str> = undetermined_hooks
+            .iter()
+            .filter(|(_, harnesses)| {
+                harnesses
+                    .iter()
+                    .any(|harness| entry.harnesses.contains(harness))
+            })
+            .map(|(hook, _)| hook.as_str())
+            .collect();
+        if !undetermined.is_empty() {
+            stats.mark_undetermined(
+                name,
+                format!(
+                    "left as installed: hook(s) {} record a source that did not resolve, so this agent's hook set is not known this run",
+                    undetermined.join(", ")
+                ),
+            );
+            continue;
+        }
 
         // Required skills: project list (if present) merged with source additions.
         let source_skills =
@@ -1106,19 +1149,26 @@ pub fn regenerate_agents_after_hook_removal(
         stats.persist_upstream(project_root);
     }
     if stats.has_failures() || stats.has_missing() {
-        let missing = stats
-            .missing
-            .iter()
-            .map(|(item, reason)| format!("{item} ({reason})"))
-            .collect::<Vec<_>>();
+        // Whichever list is non-empty leads: a `0 failure(s)` prefix put the
+        // real cause behind a contradiction.
+        let mut causes = Vec::new();
+        if !stats.missing.is_empty() {
+            causes.push(format!(
+                "not regenerated: {}",
+                stats
+                    .missing
+                    .iter()
+                    .map(|(item, reason)| format!("{item} ({reason})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !stats.failures.is_empty() {
+            causes.push(format!("{} failure(s)", stats.failures.len()));
+        }
         anyhow::bail!(
-            "failed to regenerate agents after hook removal: {} failure(s){}",
-            stats.failures.len(),
-            if missing.is_empty() {
-                String::new()
-            } else {
-                format!("; not regenerated: {}", missing.join(", "))
-            }
+            "failed to regenerate agents after hook removal: {}",
+            causes.join("; ")
         );
     }
 

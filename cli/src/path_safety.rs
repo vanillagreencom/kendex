@@ -639,19 +639,15 @@ mod tests {
         init_repo(&anchored);
         init_repo(&elsewhere);
 
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([OVERRIDE_HELPER, "--exact", "--ignored", "--nocapture"])
-            .env("GIT_DIR", elsewhere.join(".git"))
-            .env("GIT_WORK_TREE", &elsewhere)
-            .env("VSTACK_TEST_ANCHORED_REPO", &anchored)
-            .env("VSTACK_TEST_ELSEWHERE_REPO", &elsewhere)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "the hardened identity reads followed an inherited override\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+        crate::test_util::run_test_helper(
+            OVERRIDE_HELPER,
+            &[
+                ("GIT_DIR", elsewhere.join(".git").as_os_str()),
+                ("GIT_WORK_TREE", elsewhere.as_os_str()),
+                ("VSTACK_TEST_ANCHORED_REPO", anchored.as_os_str()),
+                ("VSTACK_TEST_ELSEWHERE_REPO", elsewhere.as_os_str()),
+            ],
+            None,
         );
 
         let _ = std::fs::remove_dir_all(&root);

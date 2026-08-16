@@ -68,37 +68,40 @@ pub fn source_hook_for_lock_entry<'a>(
     source_hooks: &'a [crate::hook::Hook],
     entry: &crate::config::LockEntry,
 ) -> Option<&'a crate::hook::Hook> {
-    if should_match_entry_source(&entry.source) {
-        if let Some(root) = crate::config::resolve_source_path(&entry.source) {
-            for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
-                if hook_path_is_from_source(hook, &root) {
-                    return Some(hook);
-                }
+    // Resolution is attempted for every recorded shape, exactly as
+    // `refresh_source_for_entry` attempts it. A narrower predicate here left
+    // `./`-relative sources out of the ownership branch entirely: such an entry
+    // borrowed whichever same-named hook sorted first across all loaded
+    // sources, and prune then judged it against that foreign hook's
+    // `harnesses:` list — deleting the installed artifact and the lock entry,
+    // with a success exit, while its own source resolved perfectly well.
+    let resolved = crate::config::resolve_source_path(&entry.source);
+    if let Some(root) = &resolved {
+        for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
+            if hook_path_is_from_source(hook, root) {
+                return Some(hook);
             }
-            return None;
-        }
-        // A source that exists but did not resolve — a remote whose clone is
-        // absent or refused — must not fall through to a same-named hook from
-        // a different source: prune judged the entry against that hook's
-        // `harnesses:` list and uninstalled the difference, and generated agent
-        // frontmatter took its event and matcher.
-        if crate::refresh_sources::recorded_source_exists(&entry.source) {
-            return None;
         }
     }
 
+    // A hook carrying no source path belongs to no source — the pre-lock and
+    // selected-set shape — so matching it by name substitutes nothing.
     for hook in source_hooks.iter().filter(|hook| hook.name == entry.name) {
         if hook.source_path.as_os_str().is_empty() {
             return Some(hook);
         }
     }
 
-    source_hooks.iter().find(|hook| hook.name == entry.name)
-}
+    // Its own source resolved (and holds no such hook), or it exists and did
+    // not resolve — a remote whose clone is absent or refused. Either way the
+    // entry is owned, and no other source's hook stands in for it.
+    if resolved.is_some() || crate::refresh_sources::recorded_source_exists(&entry.source) {
+        return None;
+    }
 
-fn should_match_entry_source(source: &str) -> bool {
-    let path = Path::new(source);
-    source == "." || path.is_absolute() || (source.contains('/') && !source.starts_with('.'))
+    // Only a source string that names nothing at all — a legacy or moved local
+    // source — falls back to matching by name.
+    source_hooks.iter().find(|hook| hook.name == entry.name)
 }
 
 fn hook_path_is_from_source(hook: &crate::hook::Hook, source_root: &Path) -> bool {

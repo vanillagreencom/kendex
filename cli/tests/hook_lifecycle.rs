@@ -1031,6 +1031,9 @@ fn refresh_keeps_a_hook_whose_remote_source_is_not_cached() {
         serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
     lock["entries"]["guard"]["source"] = serde_json::Value::String("owner/repo".into());
     fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+    let agent_path = sandbox.project.join(".claude/agents/rust.md");
+    let agent_before = fs::read_to_string(&agent_path).unwrap();
+    assert!(agent_before.contains(".claude/hooks/guard.sh"), "fixture");
 
     let output = sandbox
         .vstack()
@@ -1050,10 +1053,22 @@ fn refresh_keeps_a_hook_whose_remote_source_is_not_cached() {
         serde_json::json!(["claude-code"]),
         "the lock entry was pruned against another source's hook: {lock}"
     );
-    let claude_agent = fs::read_to_string(sandbox.project.join(".claude/agents/rust.md")).unwrap();
+    let claude_agent = fs::read_to_string(&agent_path).unwrap();
     assert!(
         !claude_agent.contains("PostToolUse"),
         "agent frontmatter took the other source's hook event:\n{claude_agent}"
+    );
+    // The agent is left exactly as installed rather than rewritten without a
+    // hook this run could not read: its script and its settings.json
+    // registration both survive, so dropping it from the frontmatter alone
+    // would be a silent half-uninstall.
+    assert_eq!(
+        claude_agent, agent_before,
+        "the agent was rewritten with a hook set the run could not determine:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rust"),
+        "the agent left untouched must be named:\n{stderr}"
     );
     assert!(
         !output.status.success(),
@@ -1120,9 +1135,174 @@ fn remove_hook_fails_when_the_agent_source_has_no_clone() {
         stderr.contains("regenerate agents"),
         "the failure must name what did not happen:\n{stderr}"
     );
+    // The cause leads; a `0 failure(s)` prefix used to sit in front of it.
+    assert!(
+        !stderr.contains("0 failure(s)"),
+        "the message contradicts itself:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("not regenerated: rust"),
+        "the message must lead with what was not regenerated:\n{stderr}"
+    );
     let claude_agent = fs::read_to_string(sandbox.project.join(".claude/agents/rust.md")).unwrap();
     assert!(
         claude_agent.contains(".claude/hooks/guard.sh"),
         "the stale frontmatter the failure is about:\n{claude_agent}"
     );
+}
+
+/// The removal path regenerates agents from the hooks that remain. A hook whose
+/// own source did not resolve cannot be read, so regenerating anyway rewrote
+/// every agent without it while its script, its settings.json registration and
+/// its lock entry all survived — a silent half-uninstall, with a success exit.
+#[test]
+fn remove_hook_fails_when_another_hooks_source_has_no_clone() {
+    let sandbox = Sandbox::new("remove-hook-uncached-sibling");
+    write_custom_hook(
+        &sandbox.source,
+        "keeper",
+        "PreToolUse",
+        Some("Bash"),
+        None,
+        None,
+    );
+
+    for args in [
+        vec!["--hook", "guard"],
+        vec!["--hook", "keeper"],
+        vec!["--agent", "rust"],
+    ] {
+        let output = sandbox
+            .vstack()
+            .arg("add")
+            .arg(&sandbox.source)
+            .args(args.clone())
+            .args(["--harness", "claude-code", "--copy", "-y"])
+            .output()
+            .unwrap();
+        assert_success(output, &format!("vstack add {args:?}"));
+    }
+    let agent_path = sandbox.project.join(".claude/agents/rust.md");
+    let agent_before = fs::read_to_string(&agent_path).unwrap();
+    assert!(
+        agent_before.contains("keeper.sh"),
+        "fixture: {agent_before}"
+    );
+
+    // Only the sibling hook's source is a remote with no clone under this HOME.
+    let lock_path = sandbox.project.join(".vstack-lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    lock["entries"]["keeper"]["source"] = serde_json::Value::String("owner/repo".into());
+    fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+
+    let output = sandbox
+        .vstack()
+        .args(["remove", "guard", "--scope", "project"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    assert_eq!(
+        fs::read_to_string(&agent_path).unwrap(),
+        agent_before,
+        "the agent was regenerated without the hook that could not be read:\n{stderr}"
+    );
+    assert!(sandbox.project.join(".claude/hooks/keeper.sh").exists());
+    assert!(
+        !output.status.success(),
+        "removal reported success after skipping a hook it could not read:\n{stderr}"
+    );
+    assert!(stderr.contains("keeper"), "{stderr}");
+}
+
+/// A `./`-relative recorded source is as owned as an absolute one. It used to
+/// fall outside the ownership branch entirely, so the entry borrowed whichever
+/// same-named hook sorted first across all loaded sources — and prune then
+/// judged it against that foreign hook's `harnesses:` list, deleting the
+/// artifact and the lock entry with a success exit.
+#[test]
+fn refresh_keeps_a_hook_whose_recorded_source_is_relative() {
+    let sandbox = Sandbox::new("refresh-relative-hook-source");
+    // The other source sorts first among loaded sources (its lock entry `dev`
+    // precedes `guard`), so a name-only fallback picks ITS guard.
+    write_custom_hook(
+        &sandbox.source,
+        "guard",
+        "PostToolUse",
+        Some("Edit|Write"),
+        None,
+        Some("[codex]"),
+    );
+    let relative = sandbox.project.join("vendor/a");
+    fs::create_dir_all(relative.join("hooks")).unwrap();
+    write_hook(&relative, None);
+
+    // An entry from the other source, named so it sorts first among loaded
+    // sources — a name-only fallback then reaches ITS guard.
+    write_custom_hook(
+        &sandbox.source,
+        "alpha",
+        "PreToolUse",
+        Some("Bash"),
+        None,
+        None,
+    );
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&sandbox.source)
+        .args([
+            "--hook",
+            "alpha",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add --hook alpha");
+    let output = sandbox
+        .vstack()
+        .arg("add")
+        .arg(&relative)
+        .args([
+            "--hook",
+            "guard",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert_success(output, "vstack add --hook");
+
+    // The entry records the source the way a project-relative install does.
+    let lock_path = sandbox.project.join(".vstack-lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    lock["entries"]["guard"]["source"] = serde_json::Value::String("./vendor/a".into());
+    fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+
+    let output = sandbox
+        .vstack()
+        .args(["refresh", "--scope", "project"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        sandbox.project.join(".claude/hooks/guard.sh").exists(),
+        "the hook was uninstalled against another source's allowlist:\n{stderr}"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    assert_eq!(
+        saved["entries"]["guard"]["harnesses"],
+        serde_json::json!(["claude-code"]),
+        "{saved}"
+    );
+    assert_success(output, "vstack refresh");
 }

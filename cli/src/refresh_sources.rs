@@ -590,6 +590,7 @@ impl RemoteIdentity {
             if is_plaintext_http(source) {
                 bail!("plaintext HTTP remote sources are not supported: {display}");
             }
+            reject_unsupported_transport(source)?;
             reject_credential_bearing_git_url(source)?;
             source
                 .strip_prefix("git+ssh://")
@@ -660,10 +661,11 @@ fn is_plaintext_http(source: &str) -> bool {
 /// slug for GitHub remotes in any form, otherwise `host/path` with scheme,
 /// userinfo, port-less host case, `.git` and trailing slashes normalized.
 fn remote_identity(git_url: &str) -> Option<String> {
-    if let Some(slug) = config::parse_github_slug(git_url) {
-        return Some(format!("github.com/{slug}"));
-    }
-    let url = parse_remote_url(git_url)?;
+    let Some(url) = parse_remote_url(git_url) else {
+        // The bare `owner/repo` shorthand, which is the one shape that parser
+        // does not describe.
+        return config::parse_github_slug(git_url).map(|slug| format!("github.com/{slug}"));
+    };
     let path = url.path.trim_matches('/');
     let path = path
         .strip_suffix(".git")
@@ -672,7 +674,15 @@ fn remote_identity(git_url: &str) -> Option<String> {
     if path.is_empty() {
         return None;
     }
-    Some(format!("{}/{}", url.host.to_ascii_lowercase(), path))
+    let host = url.host.to_ascii_lowercase();
+    // GitHub owner and repository names are case-insensitive. Deciding that
+    // from the host this parser reports, rather than from a second parser's
+    // case-SENSITIVE prefix match, is what keeps `git@GitHub.com:Owner/Repo`
+    // in the same cache entry as every other spelling of it.
+    if host == "github.com" {
+        return Some(format!("github.com/{}", path.to_ascii_lowercase()));
+    }
+    Some(format!("{host}/{path}"))
 }
 
 /// A cache key is exactly one path component made of `[a-z0-9_-]`, so it can
@@ -831,16 +841,19 @@ fn cache_entry_origin(dir: &Path) -> Option<String> {
 // ---------------------------------------------------------------------------
 // Git invocations
 //
-// Every `git` process vstack runs is built by `hardened_git_command` — the
-// cache commands here and the repository-identity reads in `path_safety`
-// alike. The update path runs `reset --hard`, and git will happily aim that at
-// whatever an inherited `GIT_DIR`/`GIT_WORK_TREE`, a symlinked entry, a
+// EVERY `git` process vstack runs is built by `hardened_git_command`: the cache
+// commands here, the repository-identity reads in `path_safety`, the Pi
+// package's HEAD read, the source-repository read in `config`, and `report`'s
+// origin read. The update path runs `reset --hard`, and git will happily aim
+// that at whatever an inherited `GIT_DIR`/`GIT_WORK_TREE`, a symlinked entry, a
 // redirected `.git`, or the clone's own `core.worktree` names; the identity
 // reads decide which repository an ownership boundary is judged against, and
-// the same inherited variables answer for a different one. Every process here
-// runs unattended, where a credential prompt is a hang. What differs between
-// the two is how much of the environment is hostile: the cache is vstack's own
-// repository, the project is the user's — see `GIT_CACHE_ONLY_ENV_VARS`.
+// the same inherited variables answer for a different one. An inherited
+// `GIT_CONFIG_*` names programs git RUNS (`core.fsmonitor`, `core.hooksPath`,
+// `core.sshCommand`) for any of them. Every process here runs unattended, where
+// a credential prompt is a hang. What differs between callers is how much of
+// the environment is hostile: the cache is vstack's own repository, the project
+// is the user's — see `GIT_CACHE_ONLY_ENV_VARS`.
 // ---------------------------------------------------------------------------
 
 /// Inherited git configuration no vstack command may run under, whichever
@@ -859,9 +872,20 @@ const GIT_INHERITED_ENV_VARS: &[&str] = &[
     "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_NAMESPACE",
+    // Every way an environment hands git configuration to the process it
+    // starts. `GIT_CONFIG_PARAMETERS` is the one git sets ITSELF for every
+    // subprocess of a `git -c key=value` invocation, so it is present in
+    // exactly the hook environment this scrubbing exists for — and an injected
+    // `core.sshCommand` was read back by `configured_ssh_command` and
+    // re-exported to the fetch.
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG",
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_NOSYSTEM",
     "GIT_CONFIG_COUNT",
+    // Names the directory git runs its own helper programs from.
+    "GIT_EXEC_PATH",
 ];
 
 /// Cleared for the cache only. Where the repository is vstack's own clone an
@@ -1002,12 +1026,23 @@ impl SshVariant {
 /// The `GIT_SSH_COMMAND` to set, or `None` to leave git's own selection
 /// untouched.
 ///
-/// Only a bare program token is rewritten. Git runs `GIT_SSH_COMMAND` through
-/// a shell, so a multi-token command may be anything — `env FOO=bar ssh`, a
-/// wrapper with its own arguments — and inserting an option after its first
-/// token corrupts it. A `simple` variant takes no options at all, and a
-/// `GIT_SSH` program is invoked with host and command arguments only. In each
-/// of those `GIT_TERMINAL_PROMPT=0` is what keeps the process unattended.
+/// The option is APPENDED to the command git would run. Git appends
+/// `<host> git-upload-pack <path>` after the whole string, so a trailing option
+/// stays ahead of the positionals — which is what lets a command carrying
+/// arguments of its own (`ssh -i key`, `env FOO=bar ssh`) be made
+/// noninteractive at all: inserting after its first token corrupted it, and
+/// leaving it alone lost batch mode for the commonest spelling there is.
+/// `GIT_TERMINAL_PROMPT=0` does not reach ssh's own host-key prompt, so that
+/// is a hang waiting for a tty.
+///
+/// Appending means an explicit `-o BatchMode=no` earlier in the user's own
+/// command wins, OpenSSH taking the first value it sees. That is the user's
+/// instruction, and it is theirs to give.
+///
+/// `None` — git's selection untouched — for the `simple` variant, which takes
+/// no options at all; for a `GIT_SSH` program, invoked with host and command
+/// arguments only; and for a plink-family command carrying arguments, where
+/// where an option goes is the implementation's business.
 fn batch_mode_ssh_command(
     inherited_command: Option<&str>,
     configured_command: Option<&str>,
@@ -1022,22 +1057,25 @@ fn batch_mode_ssh_command(
     if command.is_none() && non_empty(inherited_program).is_some() {
         return None;
     }
-    let program = command.unwrap_or("ssh");
-    if has_arguments(program) {
-        return None;
-    }
+    let command = command.unwrap_or("ssh");
+    let (program, arguments) = split_program_token(command);
     // `GIT_SSH_VARIANT` outranks `ssh.variant`, as it does in git.
     let variant = non_empty(inherited_variant)
         .and_then(SshVariant::named)
         .or_else(|| non_empty(configured_variant).and_then(SshVariant::named))
         .unwrap_or_else(|| SshVariant::detect(program));
-    let flag = variant.batch_flag()?;
-    Some(format!("{program} {flag}"))
+    match variant {
+        SshVariant::OpenSsh => Some(format!("{command} {}", variant.batch_flag()?)),
+        SshVariant::Plink | SshVariant::TortoisePlink if arguments.trim().is_empty() => {
+            Some(format!("{command} {}", variant.batch_flag()?))
+        }
+        _ => None,
+    }
 }
 
-/// Whether a command string is more than one program token. A quoted token is
-/// one token however much whitespace it contains.
-fn has_arguments(command: &str) -> bool {
+/// A command string split into its program token and the rest. A quoted token
+/// is one token however much whitespace it contains.
+fn split_program_token(command: &str) -> (&str, &str) {
     let end = match command.chars().next() {
         Some(quote @ ('\'' | '"')) => command[1..]
             .find(quote)
@@ -1045,7 +1083,7 @@ fn has_arguments(command: &str) -> bool {
             .unwrap_or(command.len()),
         _ => command.find(char::is_whitespace).unwrap_or(command.len()),
     };
-    !command[end..].trim().is_empty()
+    command.split_at(end)
 }
 
 /// The `git clone` that mints a fresh cache entry. The destination is named on
@@ -1178,6 +1216,12 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
             &format!("its origin carries a credential ({err})"),
         ));
     }
+    // An entry minted before the transport policy — or by anything else — can
+    // hold an origin vstack would refuse as a source. Fetching it would pull
+    // this source's content over that transport anyway.
+    if let Err(err) = reject_unsupported_transport(&origin) {
+        return Err(refusal(remote, &format!("its origin is unusable ({err})")));
+    }
     Ok(())
 }
 
@@ -1302,11 +1346,37 @@ fn redact_token(token: &str) -> String {
 /// verbatim, and a refusal that echoed one would put its terminal escapes on
 /// vstack's own stderr.
 pub(crate) fn remote_source_display(source: &str) -> String {
-    escape_unprintable(&redact_remote_query(&redact_remote_userinfo(source)))
+    escape_unprintable(&redact_stray_userinfo(&redact_remote_query(
+        &redact_remote_userinfo(source),
+    )))
+}
+
+/// Redact anything shaped like `user:secret@` wherever it sits, after the
+/// authority has had its own pass.
+///
+/// A malformed URL puts a credential where the authority redaction cannot see
+/// it — `https:///user:token@host/repo` parses with an EMPTY authority, so the
+/// secret is path text and was echoed verbatim. Redaction has to be
+/// conservative about a shape it could not parse, including for a URL that is
+/// about to be refused: the refusal prints it.
+fn redact_stray_userinfo(text: &str) -> String {
+    text.split_inclusive('/')
+        .map(|segment| {
+            let Some(at) = segment.rfind('@') else {
+                return segment.to_string();
+            };
+            let (userinfo, host) = segment.split_at(at);
+            match userinfo.split_once(':') {
+                // A bare `user@host` is how ssh remotes are spelled.
+                None => segment.to_string(),
+                Some((username, _)) => format!("{username}:<redacted>{host}"),
+            }
+        })
+        .collect()
 }
 
 /// Escape what a terminal would act on rather than print.
-fn escape_unprintable(text: &str) -> String {
+pub(crate) fn escape_unprintable(text: &str) -> String {
     fn is_unprintable(ch: char) -> bool {
         ch.is_control()
             || matches!(ch,
@@ -1324,6 +1394,44 @@ fn escape_unprintable(text: &str) -> String {
             }
         })
         .collect()
+}
+
+/// The transports vstack hands to git. Anything else — `git://`, which is
+/// unauthenticated and unencrypted, and any unknown scheme, which makes git run
+/// a `git-remote-<scheme>` helper — is refused before a process sees it. `file`
+/// is here because a local clone is how a source is exercised offline.
+const SUPPORTED_TRANSPORTS: &[&str] = &["https", "ssh", "git+ssh", "file"];
+
+/// Refuse a URL whose transport vstack does not hand to git, and one that names
+/// no host to reach over a network transport.
+///
+/// The hostless form is not merely malformed: `https:///user:token@host/repo`
+/// parses with an empty authority, so its credential sits in the path where
+/// neither the credential refusal nor the authority redaction could see it, and
+/// git was handed the token as-is.
+pub(crate) fn reject_unsupported_transport(url: &str) -> Result<()> {
+    let Some(parsed) = parse_remote_url(url) else {
+        return Ok(());
+    };
+    let display = remote_source_display(url);
+    // `file://` is the one spelling that legitimately names no host.
+    if parsed.host.is_empty() && !parsed.scheme.eq_ignore_ascii_case("file") {
+        bail!("remote source URL names no host: {display}");
+    }
+    // The scp-like spelling carries no scheme and is ssh by definition.
+    if parsed.scp_like() {
+        return Ok(());
+    }
+    if !SUPPORTED_TRANSPORTS
+        .iter()
+        .any(|transport| parsed.scheme.eq_ignore_ascii_case(transport))
+    {
+        bail!(
+            "remote source transport `{}` is not supported: {display}. Use https, ssh or git+ssh",
+            escape_unprintable(parsed.scheme)
+        );
+    }
+    Ok(())
 }
 
 /// Refuse a git URL that carries a credential. Userinfo on a non-ssh scheme
@@ -1386,10 +1494,15 @@ struct RemoteUrl<'a> {
 }
 
 impl RemoteUrl<'_> {
+    /// The `[user@]host:path` spelling, which carries no scheme and is ssh.
+    fn scp_like(&self) -> bool {
+        self.scheme.is_empty()
+    }
+
     /// Whether a bare `user@` is how this spelling names a remote rather than
     /// a credential. Both ssh spellings carry a username; nothing else does.
     fn allows_bare_username(&self) -> bool {
-        self.scheme.is_empty()
+        self.scp_like()
             || self.scheme.eq_ignore_ascii_case("ssh")
             || self.scheme.eq_ignore_ascii_case("git+ssh")
     }
@@ -2122,7 +2235,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn symlinked_cache_entry_is_refused_on_every_resolution_path() {
-        let root = tmpdir("symlinked-cache-entry");
+        // The fixture label shares no token with any asserted string: the
+        // refusal ends with the cache root path, so a label containing one
+        // would satisfy the assertions whichever refusal fired.
+        let root = tmpdir("borrowed-worktree");
         let checkout = root.join("user-checkout");
         init_git_repo(&checkout);
         std::fs::write(checkout.join("uncommitted.txt"), "precious\n").unwrap();
@@ -2135,9 +2251,9 @@ mod tests {
             std::os::unix::fs::symlink(&checkout, &remote.cache_dir).unwrap();
 
             let err = reject_unowned_cache_entry(&remote).unwrap_err().to_string();
-            assert!(err.contains("symlink"), "{err}");
+            assert!(err.contains("its cache entry is a symlink"), "{err}");
             let err = update_cached_repo(&remote).unwrap_err().to_string();
-            assert!(err.contains("symlink"), "{err}");
+            assert!(err.contains("its cache entry is a symlink"), "{err}");
             // Neither the read-only nor the updating resolution returns the
             // linked checkout as the remote source, and both report the
             // refusal rather than an absent source.
@@ -2146,7 +2262,7 @@ mod tests {
                 resolve_single_source_with("owner/repo", true, true),
             ] {
                 assert!(
-                    matches!(&resolution, SourceResolution::Refused(reason) if reason.contains("symlink")),
+                    matches!(&resolution, SourceResolution::Refused(reason) if reason.contains("its cache entry is a symlink")),
                     "{resolution:?}"
                 );
             }
@@ -2276,13 +2392,10 @@ mod tests {
                 assert_eq!(cache.get(key), Some(value), "{key} differs");
             }
         }
-        let expected = batch_mode_ssh_command(
-            std::env::var("GIT_SSH_COMMAND").ok().as_deref(),
-            configured_ssh_command(&dir).as_deref(),
-            std::env::var("GIT_SSH").ok().as_deref(),
-            std::env::var("GIT_SSH_VARIANT").ok().as_deref(),
-            configured_git_value(&dir, "ssh.variant").as_deref(),
-        );
+        // What the value should BE for given inputs is asserted against
+        // literals in `the_network_command_carries_the_ssh_command_git_would_have_used`;
+        // what this asserts is that the command carries it at all.
+        let expected = network_ssh_command(&dir);
         // Control: with a single-token `core.sshCommand` configured there IS a
         // value to carry, so the equality below cannot pass by both sides
         // being `None`. A runner exporting its own multi-token
@@ -2309,6 +2422,156 @@ mod tests {
             command_env(&cache_clone_command(&remote)),
             command_env(&hardened_git_network_command(&remote_cache_root()))
         );
+    }
+
+    const CONFIG_INJECTION_HELPER: &str = "refresh_sources::tests::inherited_git_config_helper";
+    const SSH_WIRING_HELPER: &str = "refresh_sources::tests::network_ssh_command_helper";
+
+    /// Every way an environment hands git configuration to the process it
+    /// starts is a way to name a program git will RUN — `core.sshCommand` most
+    /// directly, since vstack reads it back and re-exports it to the fetch.
+    /// The list of scrubbed variables cannot be checked by iterating itself, so
+    /// each vector is set in a child process and the resulting git answer is
+    /// what is asserted.
+    #[test]
+    fn no_inherited_git_configuration_reaches_the_commands_vstack_runs() {
+        let root = tmpdir("inherited-git-config");
+        let dir = root.join("work");
+        std::fs::create_dir_all(&dir).unwrap();
+        let injected = root.join("evil-ssh");
+        let config_file = root.join("injected.gitconfig");
+        std::fs::write(
+            &config_file,
+            format!("[core]\n\tsshCommand = {}\n", injected.display()),
+        )
+        .unwrap();
+
+        let parameters = format!("'core.sshCommand={}'", injected.display());
+        let vectors: Vec<Vec<(&str, &std::ffi::OsStr)>> = vec![
+            // The one git sets itself for every subprocess of `git -c ...`.
+            vec![(
+                "GIT_CONFIG_PARAMETERS",
+                std::ffi::OsStr::new(parameters.as_str()),
+            )],
+            vec![("GIT_CONFIG", config_file.as_os_str())],
+            vec![("GIT_CONFIG_GLOBAL", config_file.as_os_str())],
+            vec![
+                ("GIT_CONFIG_COUNT", std::ffi::OsStr::new("1")),
+                ("GIT_CONFIG_KEY_0", std::ffi::OsStr::new("core.sshCommand")),
+                ("GIT_CONFIG_VALUE_0", injected.as_os_str()),
+            ],
+        ];
+        for vector in vectors {
+            let mut env = vector;
+            env.push(("VSTACK_TEST_INJECTED_SSH", injected.as_os_str()));
+            env.push(("VSTACK_TEST_WORK_DIR", dir.as_os_str()));
+            crate::test_util::run_test_helper(CONFIG_INJECTION_HELPER, &env, None);
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[ignore = "driven by no_inherited_git_configuration_reaches_the_commands_vstack_runs, which sets one injection vector per run"]
+    fn inherited_git_config_helper() {
+        let (Some(injected), Some(dir)) = (
+            std::env::var("VSTACK_TEST_INJECTED_SSH").ok(),
+            std::env::var_os("VSTACK_TEST_WORK_DIR"),
+        ) else {
+            return;
+        };
+        let dir = PathBuf::from(dir);
+
+        // Control: an unhardened `git config --get` in this environment DOES
+        // return the injected program, so the assertions below are about the
+        // scrubbing and not about a vector that never worked.
+        let unhardened = std::process::Command::new("git")
+            .args(["config", "--get", "core.sshCommand"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert_eq!(
+            git_stdout_line(&unhardened.stdout),
+            injected,
+            "the injection vector must reach an unhardened git for this to prove anything"
+        );
+
+        assert_ne!(
+            configured_ssh_command(&dir).as_deref(),
+            Some(injected.as_str()),
+            "the injected core.sshCommand was read back"
+        );
+        let network = network_ssh_command(&dir).unwrap_or_default();
+        assert!(
+            !network.contains(&injected),
+            "the injected core.sshCommand was re-exported to the fetch: {network}"
+        );
+
+        // Scrubbing must leave a WORKING git: dropping the indexed pairs while
+        // leaving `GIT_CONFIG_COUNT` set makes every command exit
+        // "missing config key", which is not an answer either.
+        let probe = hardened_git_command(&dir)
+            .args(["config", "--get", "core.noSuchKeyHere"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            probe.status.code(),
+            Some(1),
+            "the hardened command is not a usable git: {}",
+            git_output_summary(&probe)
+        );
+    }
+
+    /// The three environment inputs of [`network_ssh_command`] are only proven
+    /// against literals: an expectation recomputed from the same reads compares
+    /// a value with itself, and dropping any one read is a real regression —
+    /// losing the `GIT_SSH_COMMAND` read overwrites the user's own wrapper.
+    #[test]
+    fn the_network_command_carries_the_ssh_command_git_would_have_used() {
+        let root = tmpdir("network-ssh-wiring");
+        std::fs::create_dir_all(&root).unwrap();
+        for (env, expected) in [
+            (
+                vec![("GIT_SSH_COMMAND", "/opt/user-ssh -i /keys/id")],
+                "/opt/user-ssh -i /keys/id -o BatchMode=yes",
+            ),
+            // A `GIT_SSH` program is invoked with host and command arguments
+            // only, so git's own selection is left alone.
+            (vec![("GIT_SSH", "/opt/user-ssh")], "none"),
+            (
+                vec![("GIT_SSH_COMMAND", "ssh"), ("GIT_SSH_VARIANT", "plink")],
+                "ssh -batch",
+            ),
+            (
+                vec![("GIT_SSH_COMMAND", "ssh"), ("GIT_SSH_VARIANT", "simple")],
+                "none",
+            ),
+        ] {
+            let mut env: Vec<(&str, &std::ffi::OsStr)> = env
+                .iter()
+                .map(|(key, value)| (*key, std::ffi::OsStr::new(*value)))
+                .collect();
+            env.push(("VSTACK_TEST_EXPECTED_SSH", std::ffi::OsStr::new(expected)));
+            env.push(("VSTACK_TEST_WORK_DIR", root.as_os_str()));
+            crate::test_util::run_test_helper(SSH_WIRING_HELPER, &env, None);
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[ignore = "driven by the_network_command_carries_the_ssh_command_git_would_have_used, which sets one input combination per run"]
+    fn network_ssh_command_helper() {
+        let (Some(expected), Some(dir)) = (
+            std::env::var("VSTACK_TEST_EXPECTED_SSH").ok(),
+            std::env::var_os("VSTACK_TEST_WORK_DIR"),
+        ) else {
+            return;
+        };
+        let dir = PathBuf::from(dir);
+        let expected = (expected != "none").then_some(expected);
+        assert_eq!(network_ssh_command(&dir), expected);
+        // And the value the command actually carries is that same one.
+        let network = command_env(&hardened_git_network_command(&dir));
+        assert_eq!(network.get("GIT_SSH_COMMAND").cloned().flatten(), expected);
     }
 
     #[test]
@@ -2369,27 +2632,49 @@ mod tests {
 
     /// A `GIT_SSH_COMMAND` git runs through a shell may be anything —
     /// `env FOO=bar ssh`, a wrapper with its own arguments — and inserting an
-    /// option after its first token corrupts it. Only a bare program token is
-    /// rewritten; everything else keeps `GIT_TERMINAL_PROMPT=0` alone.
+    /// option after its first token corrupts it. Appending keeps the command
+    /// intact AND noninteractive: git puts the host and upload-pack arguments
+    /// after the whole string, so a trailing option is still an option.
     #[test]
-    fn a_command_carrying_arguments_is_left_exactly_as_the_user_wrote_it() {
+    fn a_command_carrying_arguments_is_made_noninteractive_without_being_rewritten() {
         for command in [
-            "env FOO=bar ssh",
             "ssh -i /keys/a",
+            "env FOO=bar ssh",
             "'/my ssh' -v",
-            "ssh -o BatchMode=no -i k",
+            "ssh -o StrictHostKeyChecking=accept-new -i k",
         ] {
+            let expected = format!("{command} -o BatchMode=yes");
+            assert_eq!(
+                batch_mode_ssh_command(Some(command), None, None, None, None).as_deref(),
+                Some(expected.as_str()),
+                "{command}"
+            );
+            assert_eq!(
+                batch_mode_ssh_command(None, Some(command), None, None, None).as_deref(),
+                Some(expected.as_str()),
+                "{command}"
+            );
+        }
+        // The user's own explicit choice stands: OpenSSH takes the first value
+        // it sees, and ours comes after theirs.
+        assert_eq!(
+            batch_mode_ssh_command(Some("ssh -o BatchMode=no -i k"), None, None, None, None)
+                .as_deref(),
+            Some("ssh -o BatchMode=no -i k -o BatchMode=yes")
+        );
+        // Where an option goes is the plink family's business, so a plink
+        // command carrying arguments is left exactly as it is.
+        for command in ["plink -i key", "/usr/bin/tortoiseplink -P 22"] {
             assert_eq!(
                 batch_mode_ssh_command(Some(command), None, None, None, None),
                 None,
                 "{command}"
             );
-            assert_eq!(
-                batch_mode_ssh_command(None, Some(command), None, None, None),
-                None,
-                "{command}"
-            );
         }
+        assert_eq!(
+            batch_mode_ssh_command(Some("/opt/myssh -v"), None, None, None, Some("plink")),
+            None
+        );
     }
 
     /// `-o BatchMode=yes` is OpenSSH's spelling and nobody else's. Git drives
@@ -2516,12 +2801,17 @@ mod tests {
                 assert_eq!(remote.cache_key, shorthand.cache_key, "{spelling}");
             }
 
-            // Every spelling of the same GitHub repo shares the clone.
+            // Every spelling of the same GitHub repo shares the clone —
+            // including a mixed-case HOST, which a case-sensitive prefix match
+            // read as some other forge and gave a second clone of its own.
             for spelling in [
                 "https://github.com/owner/repo.git",
                 "https://github.com/Owner/Repo",
+                "https://GitHub.com/Owner/Repo.git",
                 "git@github.com:owner/repo.git",
+                "git@GitHub.com:Owner/Repo.git",
                 "ssh://git@github.com/owner/repo.git",
+                "ssh://git@GitHub.COM/Owner/Repo.git",
                 "git+ssh://git@github.com/owner/repo.git",
             ] {
                 let remote = RemoteSource::parse(spelling).unwrap().unwrap();
@@ -2973,6 +3263,95 @@ mod tests {
         // A direction override reads as part of the surrounding line, so it is
         // escaped too.
         assert!(!remote_source_display("owner/re\u{202e}po").contains('\u{202e}'));
+    }
+
+    /// A URL git must not be handed is refused before a process sees it, and
+    /// the refusal cannot be the place the credential appears.
+    #[test]
+    fn unsupported_transports_and_hostless_urls_are_refused_before_git_runs() {
+        // An empty authority puts the credential in the PATH, where neither the
+        // authority redaction nor the credential refusal could see it: git was
+        // handed the token and every diagnostic echoed it.
+        let err = RemoteSource::parse("https:///user:ghp_LEAKTEST@host/repo")
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("ghp_LEAKTEST"), "{err}");
+        assert!(err.contains("<redacted>"), "{err}");
+        assert!(err.contains("names no host"), "{err}");
+        assert!(
+            !remote_source_display("https:///user:ghp_LEAKTEST@host/repo").contains("ghp_LEAKTEST")
+        );
+
+        for source in ["https:///owner/repo", "ssh:///owner/repo.git", "git@:owner/repo.git"] {
+            let err = RemoteSource::parse(source).unwrap_err().to_string();
+            assert!(err.contains("names no host"), "{source}: {err}");
+        }
+
+        // `git://` is unauthenticated and unencrypted; an unknown scheme makes
+        // git run a `git-remote-<scheme>` helper.
+        for source in [
+            "git://github.com/owner/repo",
+            "ftp://host/owner/repo.git",
+            "weird://host/owner/repo",
+        ] {
+            let err = RemoteSource::parse(source).unwrap_err().to_string();
+            assert!(err.contains("transport"), "{source}: {err}");
+            assert!(looks_like_remote_source(source), "{source}");
+            assert!(recorded_source_exists(source), "{source}");
+        }
+
+        // The supported transports, in every spelling, still parse.
+        for source in [
+            "https://github.com/Owner/Repo.git",
+            "ssh://git@github.com/Owner/Repo.git",
+            "git+ssh://git@github.com/Owner/Repo.git",
+            "git@github.com:Owner/Repo.git",
+            "file:///srv/mirror/repo.git",
+            "Owner/Repo",
+        ] {
+            RemoteSource::parse(source).unwrap_or_else(|err| panic!("{source}: {err}"));
+        }
+    }
+
+    /// An entry minted before the transport policy can hold an origin vstack
+    /// would refuse as a source; fetching it pulls this source's content over
+    /// that transport anyway.
+    #[test]
+    fn a_cache_entry_whose_origin_uses_an_unsupported_transport_is_refused() {
+        let root = tmpdir("origin-transport");
+        let origin = root.join("origin");
+        init_git_repo(&origin);
+        let home = root.join("home");
+
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            let remote = RemoteSource::parse("owner/repo").unwrap().unwrap();
+            clone_into(&origin, &remote.cache_dir);
+            // Control: an https origin for the same repository is accepted.
+            git(
+                &remote.cache_dir,
+                &["remote", "set-url", "origin", &remote.git_url],
+            );
+            ensure_cache_entry_is_owned(&remote).unwrap();
+
+            git(
+                &remote.cache_dir,
+                &[
+                    "remote",
+                    "set-url",
+                    "origin",
+                    "git://github.com/owner/repo.git",
+                ],
+            );
+            let err = ensure_cache_entry_is_owned(&remote)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("its origin is unusable"), "{err}");
+            assert!(err.contains("transport"), "{err}");
+            // And the update refuses before fetching over it.
+            let err = update_cached_repo(&remote).unwrap_err().to_string();
+            assert!(err.contains("its origin is unusable"), "{err}");
+        });
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
