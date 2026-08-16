@@ -1249,7 +1249,18 @@ if [[ "${SECOND_OPINION_SCRATCH_OUTPUT:-}" == "1" ]]; then SCRATCH_OUTPUT=true; 
 write_owned() {
   if $SCRATCH_OUTPUT; then
     rm -f -- "$1" 2>/dev/null || true
-    ( umask 077 && printf '%s\n' "$2" > "$1" )
+    ( umask 077 && printf '%s\n' "$2" > "$1" ) || return 1
+    # Defense in depth behind the unlink: the unlink can only fail on a
+    # directory this run cannot write, and the redirection would then have
+    # truncated a survivor at its own mode. Unreachable while the clear before
+    # the spawn holds — that clear fails the run on a path it cannot remove, so
+    # no path reaches here unremovable unless its directory changed mid-run —
+    # which is why no test exercises this line alone; scenario 19 proves the
+    # pair. Never fatal: the review is already written, and losing it to a mode
+    # that could not be tightened is the worse outcome, so the shortfall is
+    # stated instead.
+    chmod 600 -- "$1" 2>/dev/null \
+      || echo "→ could not restrict to its owner: $1" >&2
   else
     printf '%s\n' "$2" > "$1"
   fi
