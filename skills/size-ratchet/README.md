@@ -20,19 +20,25 @@ reviewed diff, with the justification on the record.
   skipped. A tracked path containing a tab or newline is refused
   loudly (exit 2; exclude it to skip the gate) — it cannot be represented
   in the line-oriented records. Lines are newline counts (`wc -l`).
-- **Threshold**: default `1000` lines, override via
+- **Threshold**: default `400` lines, override via
   `SIZE_RATCHET_THRESHOLD` (environment > `.env.local` > `.vstack/settings.toml` > `vstack.settings.toml` `[env]` > `.env` >
   default).
+- **Path classes**: `SIZE_RATCHET_CLASSES` maps globs to thresholds so one
+  repo can run more than one number — see [Path classes](#path-classes).
+  Every file resolves to exactly one threshold and every other semantic
+  below is unchanged, per file, against that number.
 - **FAIL** (exit 1) on any of:
-  1. **New offender** — a file over the threshold with no baseline row.
+  1. **New offender** — a file over its threshold with no baseline row.
   2. **Growth** — a baselined file whose actual count exceeds its row.
   3. **Baseline looser than reality** — a row above the file's actual
-     count, a row for a file now at/under the threshold, or a row for a
+     count, a row for a file now at/under its threshold, or a row for a
      file that left the tracked set (deleted, or newly excluded). The
      ratchet must move down; stale slack is a failure, not headroom.
-- **Diagnostics** name the file, its count, and the threshold or baseline
-  row it violated, and state the remedies: *split at a concept seam, or
-  raise the baseline row in this diff with justification*.
+- **Diagnostics** name the file, its count and the baseline row it violated,
+  and — wherever a threshold decided the verdict — that threshold and
+  whether the number came from a class pattern or the default, and state
+  the remedies: *split at a concept seam, or raise the baseline row in this
+  diff with justification*.
 - **`--staged`** counts index blobs for every tracked file rather than
   preferring the worktree copy: what the commit records is the blob, and
   growth staged then reverted in the worktree is invisible to the default
@@ -44,7 +50,7 @@ reviewed diff, with the justification on the record.
   variable still wins over everything. Use it in a pre-commit hook; CI, which
   checks out a clean tree, does not need it.
 - **`--update`** tightens only: it lowers rows to the actual count and
-  removes rows for files now at/under the threshold or no longer counted.
+  removes rows for files now at/under their own threshold or no longer counted.
   It never adds a row and never raises a number, then re-checks — so it
   still exits 1 while growth or new offenders remain. Deliberate growth is
   a hand-edit of the row.
@@ -79,6 +85,38 @@ into a `path<TAB>lines` row, `LC_ALL=C` sorted. That the initial freeze is
 a hand-authored, reviewed diff is the point — every frozen offender enters
 the record deliberately.
 
+## Path classes
+
+`SIZE_RATCHET_CLASSES` gives a repo more than one threshold without any
+local code. It is one line of `pattern=threshold` entries separated by `;`:
+
+```toml
+[env]
+SIZE_RATCHET_THRESHOLD = "400"
+SIZE_RATCHET_CLASSES = "tests/*=800;*/tests/*=800;*.test.*=800"
+```
+
+A file's threshold is the **first** entry whose pattern matches its full
+repo-relative path, else `SIZE_RATCHET_THRESHOLD`. Patterns are the same
+shell globs as the exclusion list (`*` crosses `/`), matched by the same
+matcher. Whitespace around an entry and around its `=` is ignored, and an
+empty entry is skipped.
+
+A directory name takes **both** forms, as above: `*` may match nothing but
+the literal `/` in `*/tests/*` still must be there, so `*/tests/*` covers
+`pkg/tests/x` and never a root-level `tests/x` — that one needs `tests/*`.
+A pattern cannot contain `;`, which separates entries.
+
+Classes move only the number a path is judged against: new-offender,
+growth, and stale-row detection and the tighten-only `--update` all run per
+file against that file's own threshold, and every diagnostic names both the
+number and where it came from (`class */tests/*` or `default`).
+
+A malformed entry — no `=`, an empty pattern, a threshold that is not a
+positive integer — is a config error (exit 2) naming the entry, never a
+silent fall back to the base threshold. Unset or empty is exact
+single-threshold behavior.
+
 ## Exclusion list
 
 `tools/size-ratchet-excludes` by default (`SIZE_RATCHET_EXCLUDES` or
@@ -103,7 +141,8 @@ src/gen/*.rs	generated bindings
 
 | Key | Default | Meaning |
 |---|---|---|
-| `SIZE_RATCHET_THRESHOLD` | `1000` | New-file line threshold. |
+| `SIZE_RATCHET_THRESHOLD` | `400` | Line threshold for paths matching no class. |
+| `SIZE_RATCHET_CLASSES` | *(none)* | Per-path-class thresholds, `pattern=threshold` separated by `;`. |
 | `SIZE_RATCHET_BASELINE` | `tools/size-ratchet-baseline.tsv` | Baseline path. |
 | `SIZE_RATCHET_EXCLUDES` | `tools/size-ratchet-excludes` | Exclusion-list path. |
 
@@ -121,7 +160,8 @@ before resolving anything.
 
 ```toml
 [env]
-SIZE_RATCHET_THRESHOLD = "800"
+SIZE_RATCHET_THRESHOLD = "400"
+SIZE_RATCHET_CLASSES = "tests/*=800;*/tests/*=800"
 ```
 
 ## Migration
@@ -131,6 +171,19 @@ Consumers already running a size ratchet with this exact baseline format
 the existing baseline file where it is and point `SIZE_RATCHET_BASELINE`
 (or `--baseline`) at it. Semantics are unchanged by agreement across repos:
 same three failure directions, same tighten-only `--update`.
+
+A repo adopting the `400` default over a looser one gains offenders in the
+range between the two thresholds. Order matters: declare
+`SIZE_RATCHET_CLASSES` **first**, then freeze. Freezing first baselines
+401–800-line test files that the test class then puts back under their
+threshold, and a row for a file under its threshold is a stale row — an
+immediately failing migration.
+
+`--update` never adds rows, so the freeze is one hand-edit: with the classes
+declared, run the check and turn each reported `new offender` line into a
+`path<TAB>lines` row (see [Seeding a first baseline](#seeding-a-first-baseline)),
+then commit that baseline together with the settings change. Declaring
+`SIZE_RATCHET_THRESHOLD` explicitly keeps the previous number instead.
 
 ## Requirements
 

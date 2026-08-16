@@ -439,6 +439,30 @@ SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructi
 # forced target that runs this session's model is refused. Uncomment only when
 # this project must pin one.
 
+# SIZE RATCHET
+
+# SIZE_RATCHET_THRESHOLD = "400"
+# Used by: size-ratchet. Line threshold for every path that matches no class
+# below. Files already over it are frozen in tools/size-ratchet-baseline.tsv at
+# their current counts and may only shrink. Raising this number is a policy
+# change; lowering it adds baseline rows (see the skill README's Migration).
+
+# SIZE_RATCHET_CLASSES = "tests/*=800;*/tests/*=800;*.test.*=800"
+# Used by: size-ratchet. Per-path-class thresholds: `pattern=threshold` entries
+# separated by `;`, FIRST match wins, unmatched paths take
+# SIZE_RATCHET_THRESHOLD. Patterns are the exclusion list's shell globs against
+# the full repo-relative path (`*` crosses `/`). This is the two-tier shape —
+# implementation 400, test paths 800 — and the patterns above are a starting
+# point: match them to the test layouts this repo actually has. A directory
+# name needs BOTH forms, as above: `*/tests/*` requires a slash-delimited
+# prefix, so a root-level `tests/` needs `tests/*` too. A malformed entry is a
+# config error, not a silent fall back to the base threshold.
+
+# SIZE_RATCHET_BASELINE = "tools/size-ratchet-baseline.tsv"
+# SIZE_RATCHET_EXCLUDES = "tools/size-ratchet-excludes"
+# Used by: size-ratchet. Relocate the baseline TSV / exclusion list. Both are
+# repo-root-relative; the --baseline / --excludes flags override them.
+
 # PRE-COMMIT HOOK
 
 # VSTACK_PRE_COMMIT_RUST_CLIPPY = "off"

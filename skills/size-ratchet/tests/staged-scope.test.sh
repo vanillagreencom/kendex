@@ -10,7 +10,7 @@ SR="$SKILL_DIR/scripts/size-ratchet"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sr-staged.XXXXXX")"
 trap 'rm -rf -- "$TMP"' EXIT
 
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -182,7 +182,7 @@ OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=5 "$SR" --staged 2>&1)" || RC=$?
 OUT=""; RC=0
 OUT="$(cd "$R" && "$SR" --staged --baseline tools/none.tsv 2>&1)" || RC=$?
 case "$OUT" in
-  *"threshold 1000"*) ok "a settings source staged for deletion governs as absent (built-in default applies)" ;;
+  *"threshold 400"*) ok "a settings source staged for deletion governs as absent (built-in default applies)" ;;
   *) bad "staged settings deletion" "rc=$RC out=$OUT" ;;
 esac
 

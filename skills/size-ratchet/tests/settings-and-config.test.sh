@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pins for configuration resolution (env > vstack.settings.toml > default
-# 1000) and for the fail-loud config errors: malformed excludes (reason is
+# 400) and for the fail-loud config errors: malformed excludes (reason is
 # mandatory), malformed/unsorted/duplicated baseline, bad threshold. Config
 # problems are exit 2, never a silent pass or a silent default.
 set -euo pipefail
@@ -11,7 +11,7 @@ SR="$SKILL_DIR/scripts/size-ratchet"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
+unset SIZE_RATCHET_THRESHOLD SIZE_RATCHET_CLASSES SIZE_RATCHET_BASELINE SIZE_RATCHET_EXCLUDES SIZE_RATCHET_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -49,29 +49,36 @@ run_raw() { # [VAR=val ...] [-- script-args...] — run $SR in $R; sets OUT, RC
   OUT="$(cd "$R" && env ${envs[@]+"${envs[@]}"} "$SR" ${args[@]+"${args[@]}"} 2>&1)" || RC=$?
 }
 
-echo "=== threshold resolution: env > settings > default 1000 ==="
+echo "=== threshold resolution: env > settings > default 400 ==="
 new_repo thr
 mkfile f.txt 20
 git -C "$R" add -A
 
 run_raw
-[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 1000"*) true ;; *) false ;; esac \
-  && ok "no env, no settings: 20 lines passes under the built-in default 1000" \
-  || bad "built-in default is 1000" "rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
+  && ok "no env, no settings: 20 lines passes under the built-in default 400" \
+  || bad "built-in default is 400" "rc=$RC out=$OUT"
 
-mkfile huge.txt 1005
+# The default's exact boundary, both sides: at 400 is under it, 401 is over.
+mkfile edge.txt 400
 git -C "$R" add -A
 run_raw
-[ "$RC" -eq 1 ] && case "$OUT" in *"huge.txt — 1005 lines > threshold 1000"*) true ;; *) false ;; esac \
-  && ok "default 1000 can fail (1005-line file) — the default is real, not vacuous" \
-  || bad "default 1000 can fail" "rc=$RC out=$OUT"
-rm "$R/huge.txt"
+[ "$RC" -eq 0 ] && ok "a 400-line file passes the default (at the threshold is not over it)" \
+  || bad "400 lines passes the default" "rc=$RC out=$OUT"
+
+mkfile edge.txt 401
+git -C "$R" add -A
+run_raw
+[ "$RC" -eq 1 ] && case "$OUT" in *"edge.txt — 401 lines > threshold 400 (default)"*) true ;; *) false ;; esac \
+  && ok "a 401-line file is a new offender under the default — 400 is real, not vacuous" \
+  || bad "401 lines fails the default" "rc=$RC out=$OUT"
+rm "$R/edge.txt"
 git -C "$R" add -A
 
 printf '[env]\nSIZE_RATCHET_THRESHOLD = "15"\n' >"$R/vstack.settings.toml"
 run_raw
 [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 15"*) true ;; *) false ;; esac \
-  && ok "settings file overrides the default (20 > 15 fails; 1000 would have passed)" \
+  && ok "settings file overrides the default (20 > 15 fails; 400 would have passed)" \
   || bad "settings file overrides the default" "rc=$RC out=$OUT"
 
 run_raw SIZE_RATCHET_THRESHOLD=25
@@ -183,7 +190,7 @@ rm -f "$R/.env"
 echo "=== an EXISTING non-regular settings path never falls back to defaults ==="
 # A directory (FIFO/socket/device are the same shape) fails -f exactly like
 # an absent file, so the configured settings would be skipped with nothing
-# said and the built-in 1000 would decide.
+# said and the built-in 400 would decide.
 new_repo nonregular
 mkfile f.txt 20
 git -C "$R" add -A
@@ -223,17 +230,17 @@ printf '[env]\nSIZE_RATCHET_THRESHOLD = "15"\n' >"$R/link-target.settings.toml"
 ln -s link-target.settings.toml "$R/link.settings.toml"
 run_raw SIZE_RATCHET_SETTINGS_FILE=link.settings.toml || true
 [ "$RC" -eq 1 ] && case "$OUT" in *"threshold 15"*) true ;; *) false ;; esac \
-  && ok "a RESOLVING symlink reads its target (control: 20 > 15 fails; 1000 would have passed)" \
+  && ok "a RESOLVING symlink reads its target (control: 20 > 15 fails; 400 would have passed)" \
   || bad "a RESOLVING symlink reads its target (control)" "rc=$RC out=$OUT"
 
 # Controls: the two shapes that MUST still resolve to the built-in default.
 run_raw SIZE_RATCHET_SETTINGS_FILE=/dev/null || true
-[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 1000"*) true ;; *) false ;; esac \
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
   && ok "/dev/null still forces the built-in default (control)" \
   || bad "/dev/null still forces the built-in default (control)" "rc=$RC out=$OUT"
 
 run_raw SIZE_RATCHET_SETTINGS_FILE=absent.settings.toml || true
-[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 1000"*) true ;; *) false ;; esac \
+[ "$RC" -eq 0 ] && case "$OUT" in *"threshold 400"*) true ;; *) false ;; esac \
   && ok "an ABSENT plain file still falls back to the built-in default (control)" \
   || bad "an ABSENT plain file still falls back to the built-in default (control)" "rc=$RC out=$OUT"
 
