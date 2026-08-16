@@ -171,6 +171,12 @@ case "${1:-}" in
     [[ -f "$src" ]] || { echo "can't find window: $lane" >&2; exit 1; }
     cat "$src"; exit 0 ;;
   display-message)
+    # `-p '#{pid}'` with no target asks for the server pid.
+    for a in "$@"; do
+      [[ "$a" == '#{pid}' ]] || continue
+      [[ -f "$STUB_DIR/server-pid.txt" ]] && cat "$STUB_DIR/server-pid.txt"
+      exit 0
+    done
     lane=""
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; shift; done
     n=0; [[ -f "$STUB_DIR/cmd-$lane.calls" ]] && n="$(cat "$STUB_DIR/cmd-$lane.calls")"
@@ -591,17 +597,24 @@ assert_not_contains "$out" "EVENT usage-limit" "a healthy lane never fires usage
 # The account is the actionable part: a live claim maps the window to it
 new_case usage_limit_claim
 printf '900 %%3\n' > "$STUB_DIR/panes.txt"
+printf '900\n' > "$STUB_DIR/server-pid.txt"
 mkdir -p "$STATE_DIR/claims"
-printf '900\t%%3\t/home/me/.eclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/a.claim"
+# A same-named window on ANOTHER live server must not answer for this lane —
+# read first by glob order, so name resolution alone would return it.
+printf '%s\t%%3\t/home/me/.otherclaude\tgh-2\t2026-08-16T00:00:00Z\n' "$$" > "$STATE_DIR/claims/a.claim"
+printf '900\t%%3\t/home/me/.eclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/b.claim"
 printf "You've hit your weekly limit\n" > "$STUB_DIR/pane-gh-2.txt"
 err="$TMP_ROOT/e3i"
 out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT usage-limit gh-2 /home/me/.eclaude" \
   "the event names the config dir the lane was claimed on" "$err"
+assert_not_contains "$out" "otherclaude" \
+  "a same-named window on another tmux server never answers for this lane" "$err"
 
 # ... and a claim whose pane is gone is pruned rather than reported
 new_case usage_limit_claim_stale
 printf '900 %%9\n' > "$STUB_DIR/panes.txt"
+printf '900\n' > "$STUB_DIR/server-pid.txt"
 mkdir -p "$STATE_DIR/claims"
 printf '900\t%%3\t/home/me/.eclaude\tgh-2\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/a.claim"
 printf "You've hit your weekly limit\n" > "$STUB_DIR/pane-gh-2.txt"
@@ -707,6 +720,23 @@ out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
   "an idle pass followed by a working one is not the event" "$err"
 assert_not_contains "$out" "EVENT idle-after-return" "a non-consecutive idle reading never fires" "$err"
+
+# A pane keeps its last screen after the harness exits, so a stale prompt
+# under a bare shell is not a question anyone can answer — and firing it every
+# pass would starve the lane-exited that the second pass earns.
+new_case question_bare_shell
+printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
+printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n' > "$STUB_DIR/pane-gh-2.txt"
+err="$TMP_ROOT/e4c"
+out="$(run_watch -- --max-loops 1 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=none" \
+  "a stale prompt under an exited harness is not a question" "$err"
+assert_not_contains "$out" "EVENT question" "an exited lane never fires question" "$err"
+# ...and the second pass reports it as what it is
+err="$TMP_ROOT/e4c2"
+out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-exited gh-2" \
+  "the exited lane is reported as exited rather than starved by its stale prompt" "$err"
 
 # --- 5. heartbeat ----------------------------------------------------------
 new_case heartbeat

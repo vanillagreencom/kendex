@@ -468,10 +468,11 @@ launched=0
 failed=0
 skipped=0
 attempted=0
-# Distinct lanes this run launched on, so the summary cannot attribute a
-# spread batch to whichever lane happened to be last.
-lanes_used=0
-[[ -z "$LANE_ENV" ]] || lanes_used=1
+# The DISTINCT lanes this run launched on, so the summary cannot attribute a
+# spread batch to whichever lane happened to be last — nor inflate the count
+# when a re-pick returns to a lane already used.
+lanes_seen=""
+[[ -z "$LANE_ENV" ]] || lanes_seen="$LANE_ENV"$'\n'
 for raw in "${ITEMS[@]}"; do
   item="$raw"
   if [[ "$TRACKER" == "linear" ]]; then
@@ -527,9 +528,9 @@ for raw in "${ITEMS[@]}"; do
     fi
     if [[ "$next_lane" != "$LANE_ENV" ]]; then
       LANE_ENV="$next_lane"
-      lanes_used=$((lanes_used + 1))
       echo "Lane: $LANE_ENV"
     fi
+    grep -qxF -- "$LANE_ENV" <<<"$lanes_seen" || lanes_seen+="$LANE_ENV"$'\n'
   fi
   # The worktree create is the ownership claim: exit 75 means another session
   # holds this item, which skips it without touching its siblings. Any other
@@ -590,6 +591,7 @@ if [[ "$launched" -eq 0 && "$skipped" -gt 0 ]]; then
   echo "Done: launched 0 handoff session(s)$skipped_note." >&2
   exit 75
 fi
+lanes_used="$(grep -c . <<<"$lanes_seen" || true)"
 if [[ "$lanes_used" -gt 1 ]]; then
   # A re-picked batch ran on several accounts; naming the last one would
   # attribute every session to a lane most of them never touched.

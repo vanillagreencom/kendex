@@ -60,7 +60,7 @@ Choose the launch flags for THIS task before launching — model, effort, and pe
 .agents/skills/orch/scripts/open-terminal --tracker github --repo [OWNER/REPO] --harness [HARNESS] --launch-flags "[FLAGS]" [NUMBERS]
 ```
 
-Add `--lane auto` (or `auto:<harness>`) to launch under the account with the most headroom; it refuses to launch anything when no lane is under the usage threshold, rather than launching into a wall. `--lane <alias>` picks a named lane from `ORCH_LANE_ALIASES`, and `--lane <config-dir>` a literal one.
+Add `--lane auto` (or `auto:<harness>`) to launch under the qualifying account with the fewest launches already in flight, headroom breaking the tie; it refuses to launch anything when no lane is under the usage threshold, rather than launching into a wall. On tmux it re-picks before each further item, so one command spreads a batch across accounts. `--lane <alias>` picks a named lane from `ORCH_LANE_ALIASES`, and `--lane <config-dir>` a literal one.
 
 ### Codex Desktop threads
 

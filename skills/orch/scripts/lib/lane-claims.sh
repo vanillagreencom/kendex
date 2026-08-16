@@ -42,8 +42,8 @@ lane_claims_canon() {
   printf '%s\n' "$p"
 }
 
-# Prune dead claims, print the live ones as `<config dir>\t<window>` lines.
-# $1: claims directory.
+# Prune dead claims, print the live ones as `<config dir>\t<window>\t<server
+# pid>` lines. $1: claims directory.
 lane_claims_read() {
   local dir="$1" live this_server f server pane cfg window created
   [[ -d "$dir" ]] || return 0
@@ -81,7 +81,7 @@ lane_claims_read() {
     # Canonical on the way out, whatever spelling the record carries: the
     # count compares strings, and a hand-written or older record must still
     # land on the account discovery reports.
-    printf '%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window"
+    printf '%s\t%s\t%s\n' "$(lane_claims_canon "$cfg")" "$window" "$server"
   done
 }
 
@@ -90,10 +90,14 @@ lane_claims_count() {
   awk -F'\t' -v d="$(lane_claims_canon "$2")" '$1 == d { n++ } END { print n + 0 }' <<<"$1"
 }
 
-# Config dir claimed by a tmux window, empty when no live claim names it.
-# $1: `lane_claims_read` output, $2: window name.
+# Config dir claimed by a tmux window on one server, empty when no live claim
+# names it. Window names are unique to a server, not across servers, so the
+# server pid is required: without it a same-named window on another socket
+# would answer for this lane's account.
+# $1: `lane_claims_read` output, $2: window name, $3: server pid.
 lane_claims_config_dir() {
-  awk -F'\t' -v w="$2" '$2 == w { print $1; exit }' <<<"$1"
+  [[ -n "${3:-}" ]] || return 0
+  awk -F'\t' -v w="$2" -v s="$3" '$2 == w && $3 == s { print $1; exit }' <<<"$1"
 }
 
 # Record one claim. $1: claims dir, $2: server pid, $3: pane id, $4: config

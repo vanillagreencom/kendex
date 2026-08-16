@@ -410,7 +410,7 @@ lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
 check_lanes() {
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane cmd i cmds="" shell_now="" idle_now="" claims="" claimed
+  local existing lane pane cmd i cmds="" shell_now="" idle_now="" claims="" claimed this_server
   existing="$(tmux list-windows -F '#W' 2>&1)" || die "tmux list-windows failed: $existing"
   for lane in "${LANES[@]}"; do
     if ! grep -qxF -- "$lane" <<<"$existing"; then
@@ -470,16 +470,24 @@ check_lanes() {
     pane="$(cat "$(lane_pane_file "$i")")"
     if grep -Eq -- "$USAGE_LIMIT_RE" <<<"$pane"; then
       claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")")"
-      claimed="$(lane_claims_config_dir "$claims" "$lane")"
+      # Claims from every live tmux server are kept, and window names are not
+      # unique across servers: only a claim recorded on the server that owns
+      # the watched pane can name this lane's account.
+      this_server="$(tmux display-message -p '#{pid}' 2>/dev/null || true)"
+      claimed="$(lane_claims_config_dir "$claims" "$lane" "$this_server")"
       echo "EVENT usage-limit $lane${claimed:+ $claimed}"
       [[ -z "$pane" ]] || pane_tail "$pane"
       pr_watch_context
       exit 0
     fi
   done
+  # A pane keeps its last screen after the harness exits, so a stale prompt
+  # under a bare shell is not a question anyone can answer — and reporting it
+  # every pass would starve the lane-exited its second pass earns.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
+    if is_bare_shell "$(lane_cmd "$cmds" "$i")"; then continue; fi
     pane="$(cat "$(lane_pane_file "$i")")"
     if grep -Eq -- "$QUESTION_RE" <<<"$pane"; then
       echo "EVENT question $lane"

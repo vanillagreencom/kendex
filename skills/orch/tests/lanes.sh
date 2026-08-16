@@ -605,6 +605,15 @@ assert_contains "$partial_out" "CLAUDE_CONFIG_DIR=$H/.eclaude" \
 assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f3 | sort -u | wc -l | tr -d '[:space:]')" "2" \
   "the failed launch's claim is one of two distinct accounts, not a repeat"
 
+# The summary counts DISTINCT lanes: a batch that returns to a lane it already
+# used must not inflate the spread it reports.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+set +e
+three_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-12 CC-13 CC-14 2>&1)
+set -e
+assert_contains "$three_out" "across 2 lanes" \
+  "a third item returning to a used lane still reports two distinct lanes"
+
 # A GUI launch has no pane to keep a claim alive, so a GUI batch records
 # nothing and stays on the lane resolved up front — as `--help` says.
 cat > "$OT_STUB_BIN/ghostty" <<'STUBEOF'
