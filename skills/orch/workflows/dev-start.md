@@ -56,8 +56,11 @@ gh issue view [N] --json labels --jq '.labels[].name'
 
 Dev agents persist for the whole session — never shut one down here; only the caller's finalization step does.
 
-Before EVERY implementation delegation, including each group's delegation in bundled mode, run these three as separate tool calls:
+Before EVERY implementation delegation, including each group's delegation in bundled mode, run these four as separate tool calls:
 
+```bash
+.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
+```
 ```bash
 .agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
 ```
@@ -68,7 +71,7 @@ Before EVERY implementation delegation, including each group's delegation in bun
 .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
 ```
 
-Embed the printed token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line, and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
+`worktree-claim` exit 75 aborts the delegation: another session holds this worktree, and its stderr names the holder — coordinate with that owner, never re-run to take the tree. Exit 1 is an unverifiable guard; stop and report it. Embed its printed token as `[WORKTREE_LEASE]` in the delegation's `Worktree Lease:` line, the round token as `[DEV_ROUND_ID]` in the `Round ID:` line, and arm the watchdog (backgrounded `dev-artifact-check --wait 600 …`) per [SKILL.md § Round Closure](../SKILL.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
 
 After each spawn, persist the session — `"status": "active"` is what reviewer slot accounting counts:
 
@@ -85,6 +88,7 @@ Follow workflow: .agents/skills/dev/workflows/dev-implement.md
 
 Issue: [ISSUE_ID]
 Worktree: [WORKTREE_PATH]
+Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [LABELS]
@@ -96,7 +100,7 @@ Labels: [LABELS]
 
 Group pending sub-issues by `agent:[TYPE]` label and order them per [SKILL.md § Coordination](../SKILL.md#coordination) sequencing. Process groups sequentially: delegate → wait → validate (§ 3) → collect handoff notes → next group.
 
-Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all three § 2 stamps immediately before each group's delegation, so every group's round id scopes its own artifact path and a prior group's receipt can never satisfy this group's check.
+Between groups, read each completed sub-issue's comments for a `Handoff Notes` section and combine them into the next delegation. Re-run all four § 2 stamps immediately before each group's delegation, so every group's round id scopes its own artifact path and a prior group's receipt can never satisfy this group's check, and no group is delegated into a worktree another session has taken.
 
 <delegation_format>
 Ultrathink.
@@ -110,6 +114,7 @@ Sub-Issues:
 ↳ [SUB_ISSUE_3]: [TITLE] | blocked by: [SUB_ISSUE_2]
 
 Worktree: [WORKTREE_PATH]
+Worktree Lease: [WORKTREE_LEASE]
 Round ID: [DEV_ROUND_ID]
 Artifact Key: [ISSUE_ID]
 Labels: [parent labels]

@@ -39,6 +39,7 @@ Persistent state file for orch workflows. Survives context compaction.
   "review_delegated_at": 1769600000,
   "dev_delegated_at": 1769600000,
   "dev_round_id": "1769600000123456789-1837",
+  "worktree_gen": "1769599990-3f7a1c05be24d918",
   "review_skipped": "tiny-docs",
   "json_paths": [
     "tmp/review-security-20260128-100000.json"
@@ -104,6 +105,7 @@ Persistent state file for orch workflows. Survives context compaction.
 | `submit_cycles` | number | Submit-PR iteration count (created-issue re-submit loops) |
 | `review_delegated_at` | number | Epoch seconds of last review delegation — the freshness boundary `review-pr.md` § 3 passes to `review-artifact-check`, so an artifact from an earlier cycle cannot be accepted |
 | `dev_delegated_at` | number | Epoch seconds of last dev/QA delegation (implement, fix, or analysis) — the watchdog deadline for stall escalation. It does not gate artifact acceptance; the round id does |
+| `worktree_gen` | string | The session-guard lease generation this session took possession of the worktree under, recorded by `worktree-claim` at the first round stamp and re-verified at every later one. A lease re-claimed since then no longer records it, and the next stamp refuses instead of delegating a second writer |
 | `dev_round_id` | string | Unique per-delegation round token, minted by `workflow-state new-round-id [ISSUE] dev_round_id` immediately before each dev/QA delegation (implement, fix, or analysis) and embedded in it. It is the completion artifact's identity ([`dev-return.md`](dev-return.md)) and, on a fix round, the delegated-item record's ([`dev-round.md`](dev-round.md)) |
 | `review_skipped` | string | Set to `tiny-docs` when a trivial diff skipped review by rule |
 | `rereview_skipped` | string | Why a fix round routed to submit WITHOUT re-review. Present only when the skip happened, so a by-policy skip is visible after the fact instead of silent |

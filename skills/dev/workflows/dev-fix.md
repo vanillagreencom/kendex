@@ -6,6 +6,14 @@ The workflow for a dev agent receiving a review-fix delegation. Every path is wo
 
 ## 1. Read Context
 
+Verify possession before reading or writing anything else. **Skip if** the delegation carries no `Worktree Lease:` line.
+
+```bash
+.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ARTIFACT_KEY] --expect-gen [WORKTREE_LEASE]
+```
+
+Any non-zero exit ends the round here: change nothing in the worktree and return the command's stderr verbatim.
+
 Use tracker context when present, skipping these reads for an ad-hoc delegation. Understand the prior work, decisions, and handoff notes before evaluating any item.
 
 ```bash

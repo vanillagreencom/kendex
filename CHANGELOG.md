@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- orch: every dev delegation now takes possession of its worktree first. New
+  `scripts/worktree-claim` binds a session to the session-guard lease
+  generation it claimed under (recorded at `worktree_gen` in workflow state),
+  re-verifies it at every round stamp, and passes it to the agent as the
+  delegation's `Worktree Lease:` line — so a second session claiming the same
+  tree makes both the next stamp and the delegated agent's first step exit 75
+  instead of silently sharing the worktree. Previously the lease was claimed
+  once at `start-worktree` and never checked again, and a concurrent writer
+  could reset the tree, rewrite round artifacts, and move the PR head
+  underneath a live round with nothing failing.
 - ci: `CHANGELOG.md` joins the size-ratchet excludes — an append-only log
   grows every PR by design and its seam is release rotation, not a code
   split; the gate was about to block every open PR at 1000 lines.

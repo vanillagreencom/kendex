@@ -77,11 +77,16 @@ Cancel ends the workflow; a selection goes to § 2.
 4. **Stamp the round**, as separate tool calls immediately before delegating, then arm the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
    ```bash
+   .agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
+   ```
+   ```bash
    .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
    ```
    ```bash
    .agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] dev_round_id
    ```
+
+   `worktree-claim` exit 75 aborts the delegation: another session holds this worktree, and its stderr names the holder. Its printed token is the delegation's `Worktree Lease:` line.
 
    Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool — a JSON array of `{"n": [N], "text": "[ITEM_TEXT]"}`, one per delegated item, `[ITEM_TEXT]` being that item's formatted block verbatim — then:
 
@@ -103,6 +108,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Source: [SOURCE]
    Issue: [ISSUE_ID]
    Worktree: [WORKTREE_PATH]
+   Worktree Lease: [WORKTREE_LEASE]
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]

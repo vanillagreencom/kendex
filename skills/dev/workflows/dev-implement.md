@@ -22,6 +22,14 @@ In the sub-issue tree, complete blockers before the issues they block; entries m
 
 Every path is worktree-scoped: `git -C [WORKTREE_PATH] ...` for Bash, `[WORKTREE_PATH]/...` for file tools.
 
+Verify possession before reading or writing anything else. **Skip if** the delegation carries no `Worktree Lease:` line.
+
+```bash
+.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ARTIFACT_KEY] --expect-gen [WORKTREE_LEASE]
+```
+
+Any non-zero exit ends the round here: change nothing in the worktree and return the command's stderr verbatim.
+
 ```bash
 .agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
 git -C [WORKTREE_PATH] fetch origin [BASE_BRANCH_FROM_PREVIOUS_COMMAND]

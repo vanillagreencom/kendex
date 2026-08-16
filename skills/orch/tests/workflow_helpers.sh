@@ -163,6 +163,30 @@ for wf in dev-start dev-fix review-pr-comments ci-fix; do
   assert_file_contains "$doc" 'new-round-id [ISSUE_ID] dev_round_id' "$wf mints a fresh round id before delegating"
 done
 
+# Every path that delegates a writer into the worktree takes possession first.
+# The round token alone binds an artifact to its delegation; it does not stop a
+# second session editing the same tree underneath the round.
+for wf in dev-start dev-fix review-pr-comments ci-fix; do
+  doc="$SKILL_DIR/workflows/$wf.md"
+  assert_file_contains "$doc" 'worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]' \
+    "$wf claims the worktree before delegating"
+done
+
+# The delegated agent re-verifies the same lease, so a delegation that lands in
+# a tree another session has taken fails closed instead of clobbering it. The
+# orch side must therefore pass the token, and the dev side must check it.
+for wf in dev-start dev-fix review-pr-comments; do
+  doc="$SKILL_DIR/workflows/$wf.md"
+  assert_file_contains "$doc" 'Worktree Lease: [WORKTREE_LEASE]' \
+    "$wf carries the lease token into the delegation"
+done
+for wf in dev-implement dev-fix; do
+  doc="$REPO_ROOT/skills/dev/workflows/$wf.md"
+  assert_file_contains "$doc" \
+    'worktree-claim --worktree [WORKTREE_PATH] --issue [ARTIFACT_KEY] --expect-gen [WORKTREE_LEASE]' \
+    "dev $wf verifies the delegated lease before touching the worktree"
+done
+
 # The three artifact-accepting paths must actually run the round-scoped check;
 # accepting on git state alone would take an unfinished round as complete.
 for wf in dev-start dev-fix review-pr-comments; do
@@ -208,7 +232,7 @@ else
   # moment the file is renamed or moved — exactly when it needs asserting.
   fail "reviewer skill not found at $reviewer_skill — the frozen review-artifact-check pin cannot be checked"
 fi
-for script in review-artifact-check dev-return-write resolve-base-branch ci-wait; do
+for script in review-artifact-check dev-return-write resolve-base-branch ci-wait worktree-claim; do
   if [[ -x "$SKILL_DIR/scripts/$script" ]]; then
     pass "cross-skill dependency scripts/$script exists and is executable"
   else

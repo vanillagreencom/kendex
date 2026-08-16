@@ -53,6 +53,9 @@ Infer the agent from the component paths or issue labels. A test failure in conc
 Stamp the round as separate tool calls immediately before delegating, and arm the watchdog per [SKILL.md § Round Closure](../SKILL.md#round-closure):
 
 ```bash
+.agents/skills/orch/scripts/worktree-claim --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
+```
+```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
 ```
 ```bash
