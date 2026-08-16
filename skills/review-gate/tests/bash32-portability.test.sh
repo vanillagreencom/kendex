@@ -47,7 +47,10 @@ for f in ${sh_files[@]+"${sh_files[@]}"}; do
   if [ "${f##*/}" = "$SELF" ]; then
     continue
   fi
-  hits="$(grep -nE "$PATTERN" "$f" || true)"
+  # `--` before the operands: a path beginning with `-` is parsed as options
+  # otherwise. It goes to grep and `bash -n`, which accept it, and NOT to
+  # dirname/basename, which reject it on BSD (see the pattern above).
+  hits="$(grep -nE -- "$PATTERN" "$f" || true)"
   if [ -n "$hits" ]; then
     violations="$violations$(printf '%s\n' "$hits" | sed "s|^|$f:|")$nl"
   fi
@@ -62,7 +65,7 @@ fi
 # discovered set, this file included.
 fail=0
 for f in ${sh_files[@]+"${sh_files[@]}"}; do
-  if ! bash -n "$f"; then
+  if ! bash -n -- "$f"; then
     echo "FAIL: bash -n $f"
     fail=1
   fi
