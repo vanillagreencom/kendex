@@ -879,7 +879,7 @@ pub(crate) fn hardened_git_command(dir: &Path) -> std::process::Command {
 
 /// [`hardened_git_command`] for a command about the cache, where vstack owns
 /// the repository and every inherited answer about where one lives is hostile.
-fn hardened_cache_git_command(dir: &Path) -> std::process::Command {
+fn hardened_cache_git_command(dir: &Path) -> Result<std::process::Command> {
     let mut command = hardened_git_command(dir);
     for key in GIT_CACHE_ONLY_ENV_VARS {
         command.env_remove(key);
@@ -892,8 +892,8 @@ fn hardened_cache_git_command(dir: &Path) -> std::process::Command {
     // cannot hold one is what makes the whole class unreachable. vstack's own
     // clone has no use for a hook.
     command.arg("-c");
-    command.arg(format!("core.hooksPath={}", no_hooks_path().display()));
-    command
+    command.arg(format!("core.hooksPath={}", no_hooks_path()?.display()));
+    Ok(command)
 }
 
 /// [`hardened_cache_git_command`] for a command that may open an ssh
@@ -907,10 +907,10 @@ fn hardened_cache_git_command(dir: &Path) -> std::process::Command {
 /// cache entry, whose `.git/config` is cloned content. `core.sshCommand` there
 /// names a program git runs, so an entry that passes every ownership check
 /// could still execute one; `GIT_SSH_COMMAND` outranks it.
-fn hardened_git_network_command(dir: &Path) -> std::process::Command {
-    let mut command = hardened_cache_git_command(dir);
+fn hardened_git_network_command(dir: &Path) -> Result<std::process::Command> {
+    let mut command = hardened_cache_git_command(dir)?;
     command.env("GIT_SSH_COMMAND", network_ssh_command(dir));
-    command
+    Ok(command)
 }
 
 /// The `GIT_SSH_COMMAND` [`hardened_git_network_command`] sets for `dir`, from
@@ -942,6 +942,7 @@ fn configured_ssh_command(dir: &Path) -> Option<String> {
 fn user_git_value(dir: &Path, key: &str) -> Option<String> {
     ["--global", "--system"].into_iter().find_map(|scope| {
         let output = hardened_cache_git_command(dir)
+            .ok()?
             .args(["config", scope, "--get", key])
             .output()
             .ok()?;
@@ -1086,12 +1087,12 @@ fn split_program_token(command: &str) -> (&str, &str) {
 
 /// The `git clone` that mints a fresh cache entry. The destination is named on
 /// the command line, so this one runs from the cache root.
-fn cache_clone_command(remote: &RemoteSource) -> std::process::Command {
-    let mut command = hardened_git_network_command(&remote_cache_root());
+fn cache_clone_command(remote: &RemoteSource) -> Result<std::process::Command> {
+    let mut command = hardened_git_network_command(&remote_cache_root())?;
     // `--` so a URL is never read as an option, whatever it starts with.
     command.args(["clone", "--depth", "1", "--", &remote.git_url]);
     command.arg(&remote.cache_dir);
-    command
+    Ok(command)
 }
 
 /// The remediation every refusal ends with. The redacted display and the
@@ -1158,7 +1159,7 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
     // Canonicalized on both sides: the cache root is routinely reached through
     // a symlinked home or temp directory. Anything git cannot answer fails
     // closed, naming which of the three ways it failed.
-    let toplevel = hardened_cache_git_command(&remote.cache_dir)
+    let toplevel = hardened_cache_git_command(&remote.cache_dir)?
         .args(["rev-parse", "--show-toplevel"])
         .output()
         .map_err(|err| refusal(remote, &format!("git could not be run to read it: {err}")))?;
@@ -1190,7 +1191,7 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
     // which `--show-toplevel` does not see — it keeps answering with the cache.
     // The fetch then advances the other repository's remote-tracking refs and
     // writes its objects.
-    let common = hardened_cache_git_command(&remote.cache_dir)
+    let common = hardened_cache_git_command(&remote.cache_dir)?
         .args(["rev-parse", "--git-common-dir"])
         .output()
         .map_err(|err| refusal(remote, &format!("git could not be run to read it: {err}")))?;
@@ -1225,7 +1226,7 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
 
     reject_unowned_cache_config(remote)?;
 
-    let output = hardened_cache_git_command(&remote.cache_dir)
+    let output = hardened_cache_git_command(&remote.cache_dir)?
         .args(["remote", "get-url", "origin"])
         .output()
         .with_context(|| format!("reading origin for cached source {}", remote.display))?;
@@ -1270,7 +1271,7 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
 /// through the credential and transport refusals: the write changes which
 /// transport the same repository is reached over, nothing more.
 fn point_cache_origin_at(remote: &RemoteSource) -> Result<()> {
-    let output = hardened_cache_git_command(&remote.cache_dir)
+    let output = hardened_cache_git_command(&remote.cache_dir)?
         .args(["remote", "set-url", "origin", "--", &remote.git_url])
         .output()
         .with_context(|| format!("setting origin for cached source {}", remote.display))?;
@@ -1325,13 +1326,22 @@ fn reject_redirected_cache_metadata(remote: &RemoteSource) -> Result<()> {
                     remote,
                     &format!(
                         "its git metadata redirects {} elsewhere",
-                        escape_unprintable(
-                            &path
-                                .strip_prefix(&git_dir)
-                                .unwrap_or(&path)
-                                .display()
-                                .to_string()
-                        )
+                        entry_name(&git_dir, &path)
+                    ),
+                ));
+            }
+            // A hard link is the same file reached by two names, with no link
+            // to follow and nothing on the path to see: writing the entry's
+            // `config`, its refs or its reflogs would write the other name's
+            // file too. A clone writes every one of them fresh. Unix only — no
+            // stable Rust API reports a link count on Windows.
+            #[cfg(unix)]
+            if meta.is_file() && std::os::unix::fs::MetadataExt::nlink(&meta) > 1 {
+                return Err(refusal(
+                    remote,
+                    &format!(
+                        "its git metadata shares {} with another file, and writing it would write that file",
+                        entry_name(&git_dir, &path)
                     ),
                 ));
             }
@@ -1341,11 +1351,9 @@ fn reject_redirected_cache_metadata(remote: &RemoteSource) -> Result<()> {
         }
     }
 
-    // `.git/config` is the one file vstack WRITES. A hard link makes another
-    // repository's config the same file — one no path check can distinguish,
-    // because there is no link to follow. A clone always writes it fresh.
-    let config = git_dir.join("config");
-    let meta = std::fs::symlink_metadata(&config).map_err(|err| {
+    // `.git/config` is the one file vstack WRITES by name, so it must be there
+    // and be a plain file — a walk says nothing about a path that is missing.
+    let meta = std::fs::symlink_metadata(git_dir.join("config")).map_err(|err| {
         refusal(
             remote,
             &format!("its git configuration could not be read: {err}"),
@@ -1357,14 +1365,14 @@ fn reject_redirected_cache_metadata(remote: &RemoteSource) -> Result<()> {
             "its cache entry does not own its git configuration",
         ));
     }
-    #[cfg(unix)]
-    if std::os::unix::fs::MetadataExt::nlink(&meta) > 1 {
-        return Err(refusal(
-            remote,
-            "its git configuration is a hard link to another file, and writing it would edit that file",
-        ));
-    }
     Ok(())
+}
+
+/// A metadata path as a refusal names it: relative to `.git`, and escaped. The
+/// absolute path is a user location this never prints.
+fn entry_name(git_dir: &Path, path: &Path) -> String {
+    let relative = path.strip_prefix(git_dir).unwrap_or(path);
+    escape_unprintable(&relative.display().to_string())
 }
 
 /// The `core.hooksPath` every cache command runs under: a REGULAR FILE, so no
@@ -1373,16 +1381,43 @@ fn reject_redirected_cache_metadata(remote: &RemoteSource) -> Result<()> {
 /// A file rather than a missing path, because whoever can write the cache root
 /// can create a directory at one; and rather than `/dev/null`, which is a
 /// directory-shaped path on Windows.
-fn no_hooks_path() -> PathBuf {
-    let path = remote_cache_root().join(".no-hooks");
+fn no_hooks_path() -> Result<PathBuf> {
     // Recomputed rather than memoized: the cache root is derived from the home
-    // directory, and a memo would outlive the answer. A path that is already a
-    // directory is left alone — the entry that would use it is refused instead.
-    if !path.is_file() {
-        let _ = std::fs::create_dir_all(remote_cache_root());
-        let _ = std::fs::write(&path, b"");
+    // directory, and a memo would outlive the answer.
+    let root = remote_cache_root();
+    std::fs::create_dir_all(&root)
+        .with_context(|| format!("preparing the cache root {}", root.display()))?;
+    let path = root.join(".no-hooks");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) => {
+            bail!(
+                "refusing to run git: {} could not be created to disable repository hooks: {err}",
+                path.display()
+            )
+        }
     }
-    path
+    // Whether this process created it or found it, it must still be a plain
+    // file: a directory there is a hooks directory, and git would run what it
+    // holds. Fail closed rather than run a command whose hooks are live.
+    let meta = std::fs::symlink_metadata(&path).with_context(|| {
+        format!(
+            "refusing to run git: {} could not be inspected",
+            path.display()
+        )
+    })?;
+    if !meta.is_file() || meta.file_type().is_symlink() {
+        bail!(
+            "refusing to run git: {} must be a regular file so repository hooks cannot run; remove whatever is there and re-run",
+            path.display()
+        );
+    }
+    Ok(path)
 }
 
 /// The settings `git clone` itself writes, and nothing else.
@@ -1428,7 +1463,7 @@ const CACHE_CLONE_CONFIG_KEYS: &[&str] = &[
 /// of dangerous keys: the dangerous set grows with git, the set a clone writes
 /// does not.
 fn reject_unowned_cache_config(remote: &RemoteSource) -> Result<()> {
-    let output = hardened_cache_git_command(&remote.cache_dir)
+    let output = hardened_cache_git_command(&remote.cache_dir)?
         .args(["config", "--local", "--list", "--name-only"])
         .output()
         .map_err(|err| refusal(remote, &format!("git could not be run to read it: {err}")))?;
@@ -1498,7 +1533,7 @@ pub(crate) fn update_cached_repo(remote: &RemoteSource) -> Result<()> {
     // https credentials stopped working keeps failing over https, and a failed
     // fetch is tolerated, so the selected transport silently never runs.
     point_cache_origin_at(remote)?;
-    let fetch = hardened_git_network_command(&remote.cache_dir)
+    let fetch = hardened_git_network_command(&remote.cache_dir)?
         .args(["fetch", "origin", "--quiet"])
         .stdout(std::process::Stdio::null())
         .output()
@@ -1515,7 +1550,7 @@ pub(crate) fn update_cached_repo(remote: &RemoteSource) -> Result<()> {
         );
         return Ok(());
     }
-    let reset = hardened_cache_git_command(&remote.cache_dir)
+    let reset = hardened_cache_git_command(&remote.cache_dir)?
         .args(["reset", "--hard", "origin/HEAD"])
         .stdout(std::process::Stdio::null())
         .output()
@@ -1565,7 +1600,7 @@ pub(crate) fn clone_cached_repo(remote: &RemoteSource) -> Result<()> {
             ));
         }
     }
-    let output = cache_clone_command(remote)
+    let output = cache_clone_command(remote)?
         .stdout(std::process::Stdio::null())
         .output()
         .context("failed to run git clone — is git installed?")?;

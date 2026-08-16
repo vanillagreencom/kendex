@@ -764,11 +764,52 @@ fn update_cached_repo_refuses_a_cache_whose_config_is_a_symlink() {
     std::fs::remove_file(cache.join(".git").join("config")).unwrap();
     std::fs::hard_link(&victim_config, cache.join(".git").join("config")).unwrap();
     let err = update_cached_repo(&remote).unwrap_err().to_string();
-    assert!(err.contains("is a hard link"), "{err}");
+    assert!(err.contains("shares config with another file"), "{err}");
     assert_eq!(
         std::fs::read_to_string(&victim_config).unwrap(),
         before,
         "the victim's configuration was rewritten through a hard link"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A hard link anywhere in the writable metadata is the same file under two
+/// names: a fetch appending to the entry's reflog appends to the victim's.
+#[cfg(unix)]
+#[test]
+fn update_cached_repo_refuses_a_hard_linked_metadata_descendant() {
+    let root = tmpdir("hard-linked-metadata");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+    let victim = root.join("victim");
+    clone_into(&origin, &victim);
+    let cache = root.join("cache").join("owner_repo");
+    clone_into(&origin, &cache);
+    std::fs::write(origin.join("README.md"), "newer\n").unwrap();
+    git(&origin, &["commit", "-q", "-am", "update"]);
+
+    let reflog = ["logs", "refs", "remotes", "origin", "HEAD"]
+        .iter()
+        .fold(std::path::PathBuf::from(".git"), |acc, part| acc.join(part));
+    let victim_reflog = victim.join(&reflog);
+    let before = std::fs::read_to_string(&victim_reflog).unwrap();
+    let entry_reflog = cache.join(&reflog);
+    std::fs::remove_file(&entry_reflog).unwrap();
+    std::fs::hard_link(&victim_reflog, &entry_reflog).unwrap();
+
+    let err = update_cached_repo(&remote_at(&cache, &origin))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("with another file"), "{err}");
+    assert!(
+        !err.contains(&victim.display().to_string()),
+        "the victim path may not be printed: {err}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&victim_reflog).unwrap(),
+        before,
+        "the victim's reflog was appended to by the refused update"
     );
     let _ = std::fs::remove_dir_all(root);
 }
@@ -1187,7 +1228,7 @@ fn git_env_assertions(root: &Path) {
     // loop over the constant would take its own assertion away with any
     // entry deleted from it. What this asserts is the SHAPE the three
     // constructors share.
-    let cache = command_env(&hardened_cache_git_command(&dir));
+    let cache = command_env(&hardened_cache_git_command(&dir).unwrap());
     for (key, value) in &project {
         assert_eq!(cache.get(key), Some(value), "{key} differs for the cache");
     }
@@ -1199,7 +1240,7 @@ fn git_env_assertions(root: &Path) {
     // entry — see `the_cache_entrys_own_config_never_names_the_ssh_program`.
     git(&dir, &["config", "core.sshCommand", "/opt/vstack-test-ssh"]);
     git(&dir, &["config", "ssh.variant", "plink"]);
-    let network = command_env(&hardened_git_network_command(&dir));
+    let network = command_env(&hardened_git_network_command(&dir).unwrap());
     for (key, value) in &cache {
         assert_eq!(
             network.get(key),
@@ -1236,8 +1277,8 @@ fn git_env_assertions(root: &Path) {
     // constructor — for the cache root, which is where it runs.
     let remote = remote_at(&dir, &root.join("origin"));
     assert_eq!(
-        command_env(&cache_clone_command(&remote)),
-        command_env(&hardened_git_network_command(&remote_cache_root()))
+        command_env(&cache_clone_command(&remote).unwrap()),
+        command_env(&hardened_git_network_command(&remote_cache_root()).unwrap())
     );
 }
 
@@ -1538,6 +1579,7 @@ fn inherited_git_env_helper() {
         }
         "index" => {
             let hardened = hardened_cache_git_command(&cache)
+                .unwrap()
                 .arg("ls-files")
                 .output()
                 .unwrap();
@@ -1551,6 +1593,7 @@ fn inherited_git_env_helper() {
         "objects" => {
             assert!(
                 hardened_cache_git_command(&cache)
+                    .unwrap()
                     .args(["cat-file", "-e", "HEAD^{commit}"])
                     .status()
                     .unwrap()
@@ -1567,6 +1610,7 @@ fn inherited_git_env_helper() {
             let sha = crate::test_util::helper_fixture("VSTACK_TEST_ALTERNATE_SHA").unwrap();
             assert!(
                 !hardened_cache_git_command(&cache)
+                    .unwrap()
                     .args(["cat-file", "-e", &sha])
                     .status()
                     .unwrap()
@@ -1584,6 +1628,7 @@ fn inherited_git_env_helper() {
             // The namespace applies to the refs a fetch is served, which is
             // what `update_cached_repo` runs.
             let hardened = hardened_git_network_command(&cache)
+                .unwrap()
                 .args(["ls-remote", "--"])
                 .arg(&cache)
                 .output()
@@ -1614,6 +1659,7 @@ fn inherited_git_env_helper() {
             std::fs::remove_file(&marker).unwrap();
 
             let _ = hardened_git_network_command(&cache)
+                .unwrap()
                 .args(["ls-remote", "--", url])
                 .output()
                 .unwrap();
@@ -1665,6 +1711,7 @@ fn inherited_git_env_helper() {
             let hardened_dest = root.join("hardened-clone");
             std::fs::create_dir_all(&hardened_dest).unwrap();
             let _ = hardened_git_network_command(&hardened_dest)
+                .unwrap()
                 .args(["clone", "-q", "--", &url])
                 .arg(hardened_dest.join("c"))
                 .output()
@@ -1687,6 +1734,7 @@ fn inherited_git_env_helper() {
             std::fs::remove_file(&marker).unwrap();
 
             let _ = hardened_git_network_command(&cache)
+                .unwrap()
                 .args(["ls-remote", "--", &url])
                 .output()
                 .unwrap();
@@ -1698,6 +1746,7 @@ fn inherited_git_env_helper() {
             );
             // Cleared for the cache, where vstack owns the repository.
             let hardened = hardened_cache_git_command(&cache.join("sub"))
+                .unwrap()
                 .args(["rev-parse", "--show-toplevel"])
                 .output()
                 .unwrap();
@@ -1771,7 +1820,7 @@ fn network_ssh_command_helper() {
     let dir = PathBuf::from(crate::test_util::helper_fixture("VSTACK_TEST_WORK_DIR").unwrap());
     assert_eq!(network_ssh_command(&dir), expected);
     // And the value the command actually carries is that same one.
-    let network = command_env(&hardened_git_network_command(&dir));
+    let network = command_env(&hardened_git_network_command(&dir).unwrap());
     assert_eq!(
         network.get("GIT_SSH_COMMAND").cloned().flatten(),
         Some(expected)
@@ -2294,6 +2343,7 @@ fn clone_never_lets_a_url_be_read_as_an_option() {
             &root.join("origin"),
         );
         let args: Vec<String> = cache_clone_command(&remote)
+            .unwrap()
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
@@ -2550,12 +2600,42 @@ fn a_cache_entrys_own_git_hooks_never_run() {
     // The hooks path is a regular FILE, so no `<hooksPath>/<name>` resolves on
     // any platform — a path that merely does not exist can be created by
     // whoever can write the cache root.
-    assert!(no_hooks_path().is_file(), "{}", no_hooks_path().display());
+    let hooks_path = no_hooks_path().unwrap();
+    assert!(hooks_path.is_file(), "{}", hooks_path.display());
     // The update still did its work.
     assert_eq!(
         std::fs::read_to_string(cache.join("README.md")).unwrap(),
         "newer\n"
     );
+}
+
+/// The disabled-hooks sentinel is what keeps a cache command from running the
+/// entry's own hooks, so a directory in its place is not something to work
+/// around: every cache command refuses to run at all.
+#[test]
+fn a_directory_at_the_disabled_hooks_path_refuses_every_cache_command() {
+    let root = tmpdir("no-hooks-directory");
+    let home = root.join("home");
+    crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        // The ordinary case first, so the refusal below is the planted
+        // directory and not a missing cache root.
+        let path = no_hooks_path().unwrap();
+        assert!(path.is_file());
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(path.join("hooks-would-live-here")).unwrap();
+
+        let err = no_hooks_path().unwrap_err().to_string();
+        assert!(err.contains("must be a regular file"), "{err}");
+        // And no cache command is built while that is true.
+        let origin = root.join("origin");
+        init_git_repo(&origin);
+        let remote = RemoteSource::parse("owner/repo").unwrap().unwrap();
+        clone_into(&origin, &remote.cache_dir);
+        let err = update_cached_repo(&remote).unwrap_err().to_string();
+        assert!(err.contains("must be a regular file"), "{err}");
+    });
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// A bare `user@host` is an ssh remote's spelling and a token-only

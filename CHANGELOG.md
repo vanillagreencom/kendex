@@ -301,18 +301,21 @@
   keys naming a program git runs on a repository's behalf (`core.fsmonitor`,
   `core.hooksPath`, a `filter.<driver>.smudge`) grow with git while the set a
   clone writes does not, and `fetch`/`reset --hard` run them. Nothing anywhere
-  under its `.git` may be a symlink, and its `.git/config` must be a regular
-  file with a link count of one: git follows a link at any depth, so a
-  redirected `config` answered every check for another repository and then had
-  its `origin` rewritten, a redirected `refs` or `objects` took what the fetch
-  wrote, and a hard-linked `config` is the same file with no link to follow.
-  `--git-common-dir` answers for the `.git` root alone, which is why the check
-  is a walk. Every cache
+  under its `.git` may be a symlink, nor (on Unix, where a link count is
+  readable) a hard link to another file, and its `.git/config` must be a plain
+  file that is present: git follows a link at any depth, so a redirected
+  `config` answered every check for another repository and then had its
+  `origin` rewritten, a redirected `refs` or `objects` took what the fetch
+  wrote, and a hard-linked `config` or reflog is the same file under two names,
+  with no link to follow. `--git-common-dir` answers for the `.git` root alone,
+  which is why the check is a walk. Every cache
   command runs with `core.hooksPath` pinned at a regular file vstack maintains
   under the cache root, so no `<hooksPath>/<name>` resolves on any platform:
   an entry's own `.git/hooks/` is a directory of programs — git runs
   `reference-transaction` for every ref a fetch writes — that no check on its
-  config or its location can see. A cache whose
+  config or its location can see. That sentinel is fail-closed: if it cannot be
+  created, or something other than a plain file is at its path, no cache
+  command runs at all. A cache whose
   `core.worktree` pointed at a user checkout used to have that checkout's
   tracked files overwritten (VST-256). A
   Reading an entry asks every one of those questions too, not just the
