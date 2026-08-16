@@ -38,7 +38,7 @@ export { connectorCachePath, connectorCacheScopeKey, readCachedConnectors, scope
 export { connectorServersSnapshot, primeConnectorServers } from "./connector-runtime.js";
 import { debug, diagDump, makeCliDebugOptions, moduleInstanceId } from "./debug.js";
 import { preflightClaudeExecutable, resolveClaudeExecutable } from "./claude-executable.js";
-import { appendIntegrityEntry, argKeys, deleteSharedSessionLane, extensionApi, getSharedSession, markSessionForRebuild, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, type SessionState } from "./bridge-state.js";
+import { appendIntegrityEntry, argKeys, deleteSharedSessionLane, extensionApi, getSharedSession, markSessionForRebuild, recordStartedLane, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, takeStartedLane, type SessionState } from "./bridge-state.js";
 import { connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
 import { primeConnectorServers } from "./connector-runtime.js";
 import { cancelScheduledSessionPersistence, conversationFingerprint, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
@@ -1342,13 +1342,6 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 
 // --- Extension registration ---
 
-// The lane each session started in, keyed by its SessionManager. An in-memory
-// session (`pi --no-session`) forks by mutating the SAME SessionManager's id
-// before session_shutdown fires, so the live id there names the fork, not the
-// session being torn down. Keyed per manager (not one slot) so overlapping
-// parent/child session_start events keep their own entries.
-const startedLanes = new WeakMap<object, string>();
-
 export default function (pi: ExtensionAPI) {
 	setExtensionApi(pi);
 	// Disable non-essential Claude Code traffic (update checks, MCP registry, telemetry)
@@ -1384,7 +1377,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	pi.on("session_start", (event, ctx) => runInRequestLane(ctx.sessionManager.getSessionId(), () => {
-		startedLanes.set(ctx.sessionManager, ctx.sessionManager.getSessionId());
+		recordStartedLane(ctx.sessionManager, ctx.sessionManager.getSessionId());
 		recordProjectTrust(ctx);
 		setPiUI(ctx.ui);
 		if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
@@ -1400,10 +1393,9 @@ export default function (pi: ExtensionAPI) {
 		applyProviderRegistration(`session_start:${event.reason}`);
 	}));
 	pi.on("session_shutdown", (_event, ctx) => {
-		const sessionId = startedLanes.get(ctx.sessionManager) ?? ctx.sessionManager.getSessionId();
-		startedLanes.delete(ctx.sessionManager);
+		const sessionId = takeStartedLane(ctx.sessionManager) ?? ctx.sessionManager.getSessionId();
 		runInRequestLane(sessionId, () => {
-			cancelScheduledSessionPersistence();
+			cancelScheduledSessionPersistence(ctx.sessionManager);
 			clearSession("session_shutdown");
 			releaseProviderTokens("session_shutdown");
 		});

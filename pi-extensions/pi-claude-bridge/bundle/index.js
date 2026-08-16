@@ -28701,6 +28701,25 @@ function clearSharedSessionLanes() {
   store.sessions.clear();
   store.defaultSession = null;
 }
+var STARTED_LANES_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.claude-bridge.started-lanes.v1");
+function startedLaneStore() {
+  const host = globalThis;
+  let store = host[STARTED_LANES_SYMBOL];
+  if (!store) {
+    store = /* @__PURE__ */ new WeakMap();
+    host[STARTED_LANES_SYMBOL] = store;
+  }
+  return store;
+}
+function recordStartedLane(sessionManager, sessionId) {
+  startedLaneStore().set(sessionManager, sessionId);
+}
+function takeStartedLane(sessionManager) {
+  const store = startedLaneStore();
+  const sessionId = store.get(sessionManager);
+  store.delete(sessionManager);
+  return sessionId;
+}
 function markSessionForRebuild(opts = {}) {
   const sharedSession = getSharedSession();
   if (!sharedSession) return;
@@ -44805,18 +44824,33 @@ function restoreSharedSessionFromPi(ctx2) {
   });
   debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}, account=${accountProfileId ?? "default"}`);
 }
-var scheduledPersistenceTimers = /* @__PURE__ */ new Set();
-function cancelScheduledSessionPersistence() {
-  for (const timer of scheduledPersistenceTimers) clearTimeout(timer);
-  scheduledPersistenceTimers.clear();
+var SCHEDULED_PERSISTENCE_SYMBOL = /* @__PURE__ */ Symbol.for("vstack.pi.claude-bridge.scheduled-persistence.v1");
+function scheduledPersistenceTimers() {
+  const host = globalThis;
+  let store = host[SCHEDULED_PERSISTENCE_SYMBOL];
+  if (!store) {
+    store = /* @__PURE__ */ new Map();
+    host[SCHEDULED_PERSISTENCE_SYMBOL] = store;
+  }
+  return store;
+}
+function cancelScheduledSessionPersistence(sessionManager) {
+  const timers = scheduledPersistenceTimers();
+  const timer = timers.get(sessionManager);
+  if (timer === void 0) return;
+  clearTimeout(timer);
+  timers.delete(sessionManager);
 }
 function schedulePersistSharedSession(ctxLike) {
   const sharedSession = getSharedSession();
   if (!extensionApi || !sharedSession || !ctxLike?.sessionManager) return;
   const sessionManager = ctxLike.sessionManager;
   const { claudeConfigDir: _omitted, ...snapshot } = sharedSession;
+  const timers = scheduledPersistenceTimers();
+  const superseded = timers.get(sessionManager);
+  if (superseded !== void 0) clearTimeout(superseded);
   const timer = setTimeout(() => {
-    scheduledPersistenceTimers.delete(timer);
+    if (timers.get(sessionManager) === timer) timers.delete(sessionManager);
     try {
       const built = readBuiltSessionContext(sessionManager);
       if (!built) return;
@@ -44838,7 +44872,7 @@ function schedulePersistSharedSession(ctxLike) {
       });
     }
   }, 0);
-  scheduledPersistenceTimers.add(timer);
+  timers.set(sessionManager, timer);
   timer.unref?.();
 }
 function convertAndImportMessages(session, messages, customToolNameToSdk, cwd) {
@@ -46931,7 +46965,6 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   }).finally(releaseEphemeralLane);
   return stream;
 }
-var startedLanes = /* @__PURE__ */ new WeakMap();
 function index_default(pi) {
   setExtensionApi(pi);
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
@@ -46953,7 +46986,7 @@ function index_default(pi) {
     setSharedSession(null);
   };
   pi.on("session_start", (event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => {
-    startedLanes.set(ctx2.sessionManager, ctx2.sessionManager.getSessionId());
+    recordStartedLane(ctx2.sessionManager, ctx2.sessionManager.getSessionId());
     recordProjectTrust(ctx2);
     setPiUI(ctx2.ui);
     if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
@@ -46963,10 +46996,9 @@ function index_default(pi) {
     applyProviderRegistration(`session_start:${event.reason}`);
   }));
   pi.on("session_shutdown", (_event, ctx2) => {
-    const sessionId = startedLanes.get(ctx2.sessionManager) ?? ctx2.sessionManager.getSessionId();
-    startedLanes.delete(ctx2.sessionManager);
+    const sessionId = takeStartedLane(ctx2.sessionManager) ?? ctx2.sessionManager.getSessionId();
     runInRequestLane(sessionId, () => {
-      cancelScheduledSessionPersistence();
+      cancelScheduledSessionPersistence(ctx2.sessionManager);
       clearSession("session_shutdown");
       releaseProviderTokens("session_shutdown");
     });

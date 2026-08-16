@@ -22,6 +22,10 @@ import {
 	resetStack,
 } from "../src/query-state.ts";
 import { currentRequestLaneId, runInRequestLane } from "../src/request-lane.ts";
+import {
+	cancelScheduledSessionPersistence,
+	schedulePersistSharedSession,
+} from "../src/session-persistence.ts";
 
 const model = {
 	id: "claude-haiku-4-5",
@@ -91,6 +95,69 @@ function toolLoopContext(label, resultFor = label, text = `${label}-output`) {
 			{ role: "assistant", content: [{ type: "toolCall", id: `call-${resultFor}`, name: "mytool", arguments: {} }], timestamp: Date.now() },
 			{ role: "toolResult", toolCallId: `call-${resultFor}`, toolName: "mytool", content: [{ type: "text", text }], isError: false, timestamp: Date.now() },
 		],
+	};
+}
+
+function makeFakePi(handlers) {
+	return {
+		on: (event, handler) => { handlers.set(event, handler); },
+		registerCommand: () => {},
+		registerProvider: () => {},
+		events: { emit: () => {} },
+		appendEntry: () => {},
+	};
+}
+
+/** An in-memory session (pi --no-session) forks by mutating the SAME
+ *  SessionManager's id before session_shutdown fires. */
+function makeSession(initialId) {
+	let sessionId = initialId;
+	const sessionManager = {
+		getSessionId: () => sessionId,
+		getEntries: () => [],
+		getCwd: () => process.cwd(),
+		buildSessionContext: () => ({ messages: [] }),
+	};
+	return {
+		sessionManager,
+		ctxLike: { sessionManager, ui: { notify: () => {} }, cwd: process.cwd() },
+		fork: (nextId) => { sessionId = nextId; },
+	};
+}
+
+function seedLane(sessionId) {
+	runInRequestLane(sessionId, () => {
+		ctx().activeQuery = { id: `${sessionId}-query` };
+		__testSetBridgeIntegrityState({ sharedSession: { sessionId: `${sessionId}-session`, cursor: 1, cwd: `/${sessionId}` } });
+	});
+}
+
+/** Extension registration writes under PI_CODING_AGENT_DIR; keep it disposable. */
+async function withAgentDir(run) {
+	const agentDir = mkdtempSync(join(tmpdir(), "bridge-agent-dir-"));
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		return await run();
+	} finally {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		rmSync(agentDir, { recursive: true, force: true });
+	}
+}
+
+function persistCapture() {
+	const entries = [];
+	setExtensionApi({ events: { emit: () => {} }, appendEntry: (type, data) => entries.push({ type, data }) });
+	return entries;
+}
+
+function persistSessionManager(piSessionId) {
+	return {
+		getSessionId: () => piSessionId,
+		getEntries: () => [],
+		getCwd: () => process.cwd(),
+		buildSessionContext: () => ({ messages: [userMessage("hi")] }),
 	};
 }
 
@@ -395,39 +462,10 @@ describe("provider request session lanes", () => {
 		assert.equal(__testSharedSessionLaneCount(), 1, "only the regular turn's session record remains");
 	});
 
-	it("prunes the session that started, not a fork id mutated onto the same in-memory session manager", () => {
-		const agentDir = mkdtempSync(join(tmpdir(), "bridge-agent-dir-"));
-		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = agentDir;
-		const handlers = new Map();
-		const pi = {
-			on: (event, handler) => { handlers.set(event, handler); },
-			registerCommand: () => {},
-			registerProvider: () => {},
-			events: { emit: () => {} },
-			appendEntry: () => {},
-		};
-		try {
-			claudeBridge(pi);
-			// In-memory sessions (pi --no-session) fork by mutating the SAME
-			// SessionManager's id before session_shutdown fires.
-			const makeSession = (initialId) => {
-				let sessionId = initialId;
-				const sessionManager = {
-					getSessionId: () => sessionId,
-					getEntries: () => [],
-					getCwd: () => process.cwd(),
-					buildSessionContext: () => ({ messages: [] }),
-				};
-				return {
-					ctxLike: { sessionManager, ui: { notify: () => {} }, cwd: process.cwd() },
-					fork: (nextId) => { sessionId = nextId; },
-				};
-			};
-			const seedLane = (sessionId) => runInRequestLane(sessionId, () => {
-				ctx().activeQuery = { id: `${sessionId}-query` };
-				__testSetBridgeIntegrityState({ sharedSession: { sessionId: `${sessionId}-session`, cursor: 1, cwd: `/${sessionId}` } });
-			});
+	it("prunes the session that started, not a fork id mutated onto the same in-memory session manager", async () => {
+		await withAgentDir(() => {
+			const handlers = new Map();
+			claudeBridge(makeFakePi(handlers));
 
 			// Two sessions start through the same handlers, the child AFTER the
 			// parent: the parent's fork protection must survive the later start.
@@ -451,10 +489,84 @@ describe("provider request session lanes", () => {
 			handlers.get("session_shutdown")({ reason: "quit" }, child.ctxLike);
 			assert.equal(__testQueryLaneCount(), 0);
 			assert.equal(__testSharedSessionLaneCount(), 0);
-		} finally {
-			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-			rmSync(agentDir, { recursive: true, force: true });
+		});
+	});
+
+	it("prunes the started lane when session_start and session_shutdown reach different module instances", async () => {
+		await withAgentDir(async () => {
+			const primaryHandlers = new Map();
+			const reloadedHandlers = new Map();
+			claudeBridge(makeFakePi(primaryHandlers));
+			// A `/reload` mid-session (or a child agent's own module copy) hands the
+			// shutdown to a separately loaded extension instance.
+			const reloaded = await import(`../src/index.ts?instance=${Date.now()}-${Math.random()}`);
+			reloaded.default(makeFakePi(reloadedHandlers));
+
+			const session = makeSession("original");
+			primaryHandlers.get("session_start")({ reason: "startup" }, session.ctxLike);
+			seedLane("original");
+			// The live session the manager's id names once the fork mutates it.
+			seedLane("forked");
+			assert.equal(__testQueryLaneCount(), 2);
+			assert.equal(__testSharedSessionLaneCount(), 2);
+
+			session.fork("forked");
+			reloadedHandlers.get("session_shutdown")({ reason: "fork" }, session.ctxLike);
+
+			assert.equal(runInRequestLane("original", () => __testGetBridgeIntegrityState().sharedSession), null, "the started session's record is pruned");
+			assert.equal(runInRequestLane("forked", () => __testGetBridgeIntegrityState().sharedSession?.sessionId), "forked-session", "the live fork's record survives");
+			assert.equal(runInRequestLane("forked", () => ctx().activeQuery?.id), "forked-query");
+			assert.equal(__testQueryLaneCount(), 1);
+			assert.equal(__testSharedSessionLaneCount(), 1);
+		});
+	});
+
+	it("shares the started-lane registry across separately loaded extension module instances", async () => {
+		await withAgentDir(async () => {
+			const handlers = new Map();
+			claudeBridge(makeFakePi(handlers));
+			const suffix = `instance=${Date.now()}-${Math.random()}`;
+			const primaryBridgeState = await import("../src/bridge-state.ts");
+			const siblingBridgeState = await import(`../src/bridge-state.ts?${suffix}`);
+
+			const session = makeSession("original");
+			handlers.get("session_start")({ reason: "startup" }, session.ctxLike);
+
+			assert.equal(siblingBridgeState.takeStartedLane(session.sessionManager), "original", "a sibling module instance observes the entry");
+			assert.equal(primaryBridgeState.takeStartedLane(session.sessionManager), undefined, "one registry, one shutdown per start");
+		});
+	});
+
+	it("cancels only the shutting-down session's pending session persist", async () => {
+		const entries = persistCapture();
+		const managerA = persistSessionManager("pi-A");
+		const managerB = persistSessionManager("pi-B");
+		for (const [laneId, sessionManager] of [["A", managerA], ["B", managerB]]) {
+			runInRequestLane(laneId, () => {
+				__testSetBridgeIntegrityState({ sharedSession: { sessionId: `sdk-${laneId}`, cursor: 1, cwd: process.cwd() } });
+				schedulePersistSharedSession({ sessionManager });
+			});
 		}
+
+		cancelScheduledSessionPersistence(managerA);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		assert.deepEqual(entries.map((entry) => entry.data.piSessionId), ["pi-B"], "B's pending persist survives A's shutdown");
+		assert.equal(entries[0].data.sessionId, "sdk-B");
+	});
+
+	it("keeps one pending persist per session manager, writing the latest record", async () => {
+		const entries = persistCapture();
+		const sessionManager = persistSessionManager("pi-A");
+		runInRequestLane("A", () => {
+			for (const cursor of [0, 1]) {
+				__testSetBridgeIntegrityState({ sharedSession: { sessionId: "sdk-A", cursor, cwd: process.cwd() } });
+				schedulePersistSharedSession({ sessionManager });
+			}
+		});
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		assert.equal(entries.length, 1, "the later schedule supersedes the pending one");
+		assert.equal(entries[0].data.cursor, 1);
 	});
 });

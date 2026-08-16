@@ -21,7 +21,7 @@ import {
 	setExtensionApi,
 } from "../src/bridge-state.ts";
 import {
-	cancelScheduledSessionPersistence,
+	__testCancelAllScheduledSessionPersistence,
 	restoreSharedSessionFromPi,
 	schedulePersistSharedSession,
 } from "../src/session-persistence.ts";
@@ -37,14 +37,14 @@ function fingerprint(messages) {
 beforeEach(() => {
 	mkdirSync(cwd, { recursive: true });
 	mkdirSync(profileDir, { recursive: true });
-	cancelScheduledSessionPersistence();
+	__testCancelAllScheduledSessionPersistence();
 	setExtensionApi(undefined);
 	__testSetBridgeIntegrityState({ sharedSession: null, ui: null });
 	delete globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL];
 });
 
 afterEach(() => {
-	cancelScheduledSessionPersistence();
+	__testCancelAllScheduledSessionPersistence();
 	setExtensionApi(undefined);
 	__testSetBridgeIntegrityState({ sharedSession: null, ui: null });
 	delete globalThis[CLAUDE_ACCOUNT_ROUTER_SYMBOL];

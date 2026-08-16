@@ -219,11 +219,40 @@ export function restoreSharedSessionFromPi(ctx: { sessionManager?: unknown; cwd?
 	debug(`restoreSharedSession: restored ${persisted.sessionId.slice(0, 8)}, cursor=${cursor}, account=${accountProfileId ?? "default"}`);
 }
 
-const scheduledPersistenceTimers = new Set<ReturnType<typeof setTimeout>>();
+// One pending persist per SessionManager: cancelling a shutting-down session's
+// persist must not drop a concurrent session's unwritten marker. On globalThis
+// under a versioned symbol for the same reason as the lane registries in
+// bridge-state.ts and query-state.ts — the scheduling and the cancelling module
+// instance can differ. Scheduling again for the same manager REPLACES the
+// pending timer: each fire appends the record's state as of its schedule and
+// restore reads the last marker, so the superseded entry is a stale duplicate.
+const SCHEDULED_PERSISTENCE_SYMBOL = Symbol.for("vstack.pi.claude-bridge.scheduled-persistence.v1");
 
-export function cancelScheduledSessionPersistence(): void {
-	for (const timer of scheduledPersistenceTimers) clearTimeout(timer);
-	scheduledPersistenceTimers.clear();
+type PersistenceTimer = ReturnType<typeof setTimeout>;
+
+function scheduledPersistenceTimers(): Map<object, PersistenceTimer> {
+	const host = globalThis as Record<symbol, unknown>;
+	let store = host[SCHEDULED_PERSISTENCE_SYMBOL] as Map<object, PersistenceTimer> | undefined;
+	if (!store) {
+		store = new Map<object, PersistenceTimer>();
+		host[SCHEDULED_PERSISTENCE_SYMBOL] = store;
+	}
+	return store;
+}
+
+export function cancelScheduledSessionPersistence(sessionManager: object): void {
+	const timers = scheduledPersistenceTimers();
+	const timer = timers.get(sessionManager);
+	if (timer === undefined) return;
+	clearTimeout(timer);
+	timers.delete(sessionManager);
+}
+
+/** Test-only: drop every pending persist so a test file starts clean. */
+export function __testCancelAllScheduledSessionPersistence(): void {
+	const timers = scheduledPersistenceTimers();
+	for (const timer of timers.values()) clearTimeout(timer);
+	timers.clear();
 }
 
 export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknown }): void {
@@ -232,12 +261,15 @@ export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknow
 	// Extension contexts become guarded/stale as soon as shutdown or replacement
 	// starts. Capture the plain SessionManager reference now and cancel the timer
 	// on shutdown rather than dereferencing the ctx proxy from the next tick.
-	const sessionManager = ctxLike.sessionManager;
+	const sessionManager = ctxLike.sessionManager as object;
 	// Persist only the opaque profile id — the resolved config dir is an
 	// account-identifying path and stays in memory (see PersistedBridgeSessionState).
 	const { claudeConfigDir: _omitted, ...snapshot } = sharedSession;
+	const timers = scheduledPersistenceTimers();
+	const superseded = timers.get(sessionManager);
+	if (superseded !== undefined) clearTimeout(superseded);
 	const timer = setTimeout(() => {
-		scheduledPersistenceTimers.delete(timer);
+		if (timers.get(sessionManager) === timer) timers.delete(sessionManager);
 		try {
 			const built = readBuiltSessionContext(sessionManager);
 			if (!built) return;
@@ -263,7 +295,7 @@ export function schedulePersistSharedSession(ctxLike?: { sessionManager?: unknow
 			});
 		}
 	}, 0);
-	scheduledPersistenceTimers.add(timer);
+	timers.set(sessionManager, timer);
 	timer.unref?.();
 }
 

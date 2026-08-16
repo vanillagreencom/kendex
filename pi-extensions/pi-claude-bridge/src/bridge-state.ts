@@ -98,6 +98,41 @@ export function clearSharedSessionLanes(): void {
 	store.defaultSession = null;
 }
 
+// The lane each pi session started in, keyed by its SessionManager. An in-memory
+// session (`pi --no-session`) forks by mutating the SAME SessionManager's id
+// before session_shutdown fires, so the live id there names the fork rather than
+// the session being torn down, and the fallback to it would prune a live
+// sibling. Keyed per manager (not one slot) so overlapping parent/child
+// session_start events keep their own entries, and on globalThis like the
+// registry above because session_start and session_shutdown can reach different
+// module instances (`/reload` mid-session, a child agent's own copy) and both
+// must see the same entry.
+const STARTED_LANES_SYMBOL = Symbol.for("vstack.pi.claude-bridge.started-lanes.v1");
+
+function startedLaneStore(): WeakMap<object, string> {
+	const host = globalThis as Record<symbol, unknown>;
+	let store = host[STARTED_LANES_SYMBOL] as WeakMap<object, string> | undefined;
+	if (!store) {
+		store = new WeakMap<object, string>();
+		host[STARTED_LANES_SYMBOL] = store;
+	}
+	return store;
+}
+
+export function recordStartedLane(sessionManager: object, sessionId: string): void {
+	startedLaneStore().set(sessionManager, sessionId);
+}
+
+/** The lane recorded at this manager's session_start, removed as it is read —
+ *  one shutdown per start. Undefined when no start was recorded (the caller
+ *  falls back to the manager's live id). */
+export function takeStartedLane(sessionManager: object): string | undefined {
+	const store = startedLaneStore();
+	const sessionId = store.get(sessionManager);
+	store.delete(sessionManager);
+	return sessionId;
+}
+
 /** Force the next syncSharedSession down the REBUILD path (no-op without a
  *  session). `forceRotate` additionally rotates the session UUID — set it when
  *  a concurrent CC writer may still be flushing (abort, idle kill); see the
