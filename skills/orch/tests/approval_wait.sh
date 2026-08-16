@@ -99,6 +99,12 @@ dump_stderr() {
   sed 's/^/          /' "$file"
 }
 
+# For checks whose predicate is not a string comparison (exit codes, emptiness).
+pass() {
+  PASS=$((PASS + 1))
+  printf '  ok    %s\n' "$1"
+}
+
 assert_eq() {
   local got="$1" want="$2" name="$3" stderr_file="${4:-}"
   if [[ "$got" == "$want" ]]; then
@@ -1533,6 +1539,91 @@ output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
   env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_REVIEWS_MODE=one_bot_at_head \
     .agents/skills/orch/scripts/approval-wait 1 1 3 --mode review) 2>"$stderr" || true)
 assert_contains "$output" "quorum missing: bot-b" "quorum: the text timeout names the missing logins" "$stderr"
+
+echo "=== a failed emit_result never reports a successful gate ==="
+
+# The waiter must never exit 0 having written no result. emit_result builds the
+# --json object with `jq -n`, so this stub fails EXACTLY that call and passes
+# every parsing invocation through to the real jq — the emission fails while
+# the poll that reached the approved verdict succeeds, which is the shape a
+# closed downstream pipe or a jq/write failure produces in the field.
+REAL_JQ="$(command -v jq)"
+cat > "$TMP_ROOT/bin/jq" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "-n" ]; then
+  echo "jq: emission failed (stub)" >&2
+  exit 5
+fi
+exec "$REAL_JQ" "\$@"
+EOF
+chmod +x "$TMP_ROOT/bin/jq"
+
+# The quorum-less branch: an APPROVED verdict routes straight to
+# emit_result "approved" + exit 0, which is the exact fall-through path.
+stderr="$TMP_ROOT/emitfail.err"
+set +e
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env STUB_APPROVAL_MODE=approved_decision \
+    .agents/skills/orch/scripts/approval-wait 1 1 3 --json) 2>"$stderr")
+emitfail_code=$?
+set -e
+if [ "$emitfail_code" -ne 0 ]; then
+  pass "a failed emit_result does not exit 0 (exit $emitfail_code)"
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n        exit was 0 with stdout: %s\n' \
+    "a failed emit_result does not exit 0" "$output"
+  dump_stderr "$stderr"
+fi
+if [ -z "$output" ]; then
+  pass "a failed emit_result writes no result to stdout"
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n        stdout: %s\n' "a failed emit_result writes no result to stdout" "$output"
+fi
+
+# Same through the quorum gate, whose call site reads the helper's status and
+# so runs its body with errexit disabled — the propagation must be explicit.
+stderr="$TMP_ROOT/emitfail-quorum.err"
+set +e
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env PR_REVIEW_QUORUM="bot-a,bot-b" STUB_APPROVAL_MODE=approved_decision \
+    STUB_REVIEWS_MODE=two_bots_at_head \
+    .agents/skills/orch/scripts/approval-wait 1 1 3 --json) 2>"$stderr")
+quorum_emitfail_code=$?
+set -e
+if [ "$quorum_emitfail_code" -ne 0 ]; then
+  pass "a failed emit_result through the quorum gate does not exit 0 (exit $quorum_emitfail_code)"
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  %s\n        exit was 0 with stdout: %s\n' \
+    "a failed emit_result through the quorum gate does not exit 0" "$output"
+  dump_stderr "$stderr"
+fi
+assert_contains "$(cat "$stderr")" "could not emit the gate result" \
+  "the quorum gate names the emission failure on stderr"
+
+# The deadline's `emit_result "timeout"` is a BARE call followed by `exit 1`,
+# so nothing but errexit stands between a failed emission and that exit 1.
+# Exit 5 (jq's status) proves errexit was in force there; a 1 would mean a
+# `set +e` had migrated above the emit and the propagation was undone.
+stderr="$TMP_ROOT/emitfail-timeout.err"
+set +e
+output=$( (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+  env STUB_APPROVAL_MODE=none \
+    .agents/skills/orch/scripts/approval-wait 1 1 2 --json) 2>"$stderr")
+timeout_emitfail_code=$?
+set -e
+assert_eq "$timeout_emitfail_code" "5" \
+  "a failed emit_result on the bare timeout path propagates jq's status (errexit in force)" "$stderr"
+
+rm -f "$TMP_ROOT/bin/jq"
+
+# Control: with the real jq back, the same invocations DO reach exit 0 — so the
+# two assertions above are proving the emission failure, not a broken fixture.
+output=$(run_wait_json STUB_APPROVAL_MODE=approved_decision 2>"$TMP_ROOT/emitok.err")
+assert_eq "$(json_field "$output" '.status')" "approved" \
+  "control: the same poll approves once emission works again" "$TMP_ROOT/emitok.err"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

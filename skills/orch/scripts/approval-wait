@@ -368,27 +368,54 @@ head_changed_during_wait=false
 # through here (or emit_error) so the script can never finish silently.
 #   status: approved | reviewed | changes_requested | comments | timeout
 #         | proceeded | error
+# Reserved return of quorum_settles_approval meaning "nothing settled this
+# poll, keep polling". It is a VALUE the call site matches on, never a blanket
+# suppression: `quorum_settles_approval || true` would swallow a genuine
+# failure alongside it, and — because a `||` context disables errexit for the
+# whole callee body — would also let a failing emit_result fall through to the
+# `exit 0` below, reporting an approved gate whose JSON was never written.
+QUORUM_KEEP_POLLING=10
+
 # Approval-mode quorum gate shared by both approved-evidence branches: emits
-# and exits on a settled outcome. Success requires the full quorum at head AND
-# zero unresolved threads; open threads settle to "comments" so callers triage
-# instead of idling to the deadline. Keep-polling is the ORDINARY return (0),
-# so call sites need no `|| true` — a blanket suppression there would also
-# disable errexit inside this body and let a failed emit_result fall through
-# to `exit 0`, reporting a gate the caller never received a result for.
+# and exits on a settled outcome, returns QUORUM_KEEP_POLLING when nothing
+# settled. Success requires the full quorum at head AND zero unresolved
+# threads; open threads settle to "comments" so callers triage instead of
+# idling to the deadline.
+#
+# Every emit is propagated EXPLICITLY rather than left to errexit: the call
+# site reads this function's status, which puts the body in a `||` context
+# where errexit is disabled, so `emit_result … || return $?` is the only thing
+# standing between a failed emission and a success exit.
 quorum_settles_approval() {
   if [ -z "$QUORUM_LOGINS" ]; then
-    emit_result "approved"
+    emit_result "approved" || return $?
     exit 0
   fi
   if [ -z "$last_quorum_missing" ] && [ "$last_unresolved" -eq 0 ]; then
-    emit_result "approved"
+    emit_result "approved" || return $?
     exit 0
   fi
   if [ "$last_unresolved" -gt 0 ]; then
-    emit_result "comments"
+    emit_result "comments" || return $?
     exit 1
   fi
-  return 0
+  return "$QUORUM_KEEP_POLLING"
+}
+
+# Run the gate and route its status by VALUE: keep-polling returns to the loop,
+# anything else is a real failure that must not be mistaken for a verdict —
+# the waiter never reports success when its result was not written.
+run_quorum_gate() {
+  local rc=0
+  quorum_settles_approval || rc=$?
+  [ "$rc" -eq "$QUORUM_KEEP_POLLING" ] && return 0
+  # Anything else means the gate SETTLED but its result was not written. A
+  # settled branch exits from inside the helper, so reaching here at all is an
+  # emission failure — and a 0 here would be the fall-through this whole shape
+  # exists to prevent, so it is forced to 1 rather than trusted.
+  [ "$rc" -ne 0 ] || rc=1
+  echo "approval-wait: could not emit the gate result for PR #$PR_NUM in $REPO (exit $rc)" >&2
+  exit "$rc"
 }
 
 emit_result() {
@@ -993,14 +1020,14 @@ while true; do
     fi
   else
     if [ "$last_review_decision" = "APPROVED" ]; then
-      quorum_settles_approval
+      run_quorum_gate
     fi
     if [ "$last_review_decision" = "CHANGES_REQUESTED" ] || [ "$last_changes" -gt 0 ]; then
       emit_result "changes_requested"
       exit 1
     fi
     if [ -z "$last_review_decision" ] && [ "$last_approvals" -gt 0 ]; then
-      quorum_settles_approval
+      run_quorum_gate
     fi
     if [ "$last_unresolved" -gt 0 ]; then
       emit_result "comments"

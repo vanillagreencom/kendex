@@ -79,10 +79,14 @@
 - **Review-thread triage sweep across the last nine merged PRs (#1298).** 67
   unresolved threads re-derived against `main`; the ones still live:
   - orch `approval-wait`: the quorum gate no longer reports a verdict it never
-    emitted — the shared approval gate returns keep-polling as its ordinary
-    status, so call sites drop the blanket `|| true` that also disabled
-    errexit through the helper body, and a failed JSON emit propagates instead
-    of falling through to `exit 0`. `PR_REVIEW_QUORUM` accepts any whitespace
+    emitted. Keep-polling is now a reserved return value (`QUORUM_KEEP_POLLING`)
+    the call site matches on explicitly, replacing the blanket `|| true` that
+    swallowed genuine failures alongside it; every emit inside the helper is
+    propagated by hand, because reading the helper's status disables errexit
+    through its body exactly as `|| true` did; and `emit_result` returns jq's
+    status instead of an unconditional `return 0`. A failed emission can no
+    longer reach `exit 0` — proven by a test that fails only the emission call.
+    `PR_REVIEW_QUORUM` accepts any whitespace
     as a separator (carriage returns included — a CRLF-sourced value no longer
     holds the gate open forever on a login nothing can match). A PARTIAL
     quorum now counts as reviewer engagement, so `PR_REVIEW_ON_TIMEOUT=proceed`
