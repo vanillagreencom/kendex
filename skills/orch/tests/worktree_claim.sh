@@ -79,6 +79,21 @@ assert_eq "$RUN_RC" "1" "main checkout is refused (guard is actually consulted)"
 WORKTREE_SESSION_GUARD="$TMP_ROOT/no-such-guard" run_claim --worktree "$wt_a" --issue VST-1
 assert_eq "$RUN_RC" "1" "unrunnable guard fails closed with exit 1"
 
+# jq reads every lease field the gate compares, so its absence is the same
+# unproven state — and must stay inside the documented 0/1/75 contract rather
+# than escaping as a 127 from the first pipeline that reaches for it.
+# A PATH holding only what the script needs to reach the preflight starves it
+# of jq alone — an empty PATH would starve it of its own interpreter instead,
+# and prove nothing about this check.
+no_jq_path="$TMP_ROOT/no-jq"
+mkdir -p "$no_jq_path"
+ln -s "$(command -v dirname)" "$no_jq_path/dirname"
+no_jq_rc=0
+PATH="$no_jq_path" "$(command -v bash)" "$CLAIM" --worktree "$wt_a" --issue VST-1 \
+  >"$run_out" 2>"$run_err" || no_jq_rc=$?
+assert_eq "$no_jq_rc" "1" "a missing jq fails closed with exit 1, not 127"
+assert_eq "$(grep -c 'jq is required' "$run_err")" "1" "the missing-jq refusal names jq"
+
 echo
 echo "=== usage ==="
 

@@ -5,10 +5,20 @@
 # The guard's lease is keyed to the owner string, which is the issue id, so two
 # sessions working the same issue match each other's lease and an owner
 # comparison alone cannot refuse a sibling writer. The lease's per-claim
-# generation token can. This binds a caller to the token it took possession
-# under and refuses, exit 75, once any other holder — a different issue's
-# lease, a lock taken outside the guard, a sibling's re-claim, or a lease
-# released underneath the expectation — would make the caller a second writer.
+# generation token narrows that: a caller is bound to the token it took
+# possession under, and exits 75 once a different issue's lease, a lock taken
+# outside the guard, or a re-claim since that token was minted would make it a
+# second writer.
+#
+# What it does NOT do is identify the caller. Two orchestrators on one issue
+# share both the lease and the workflow state file that records the token, and
+# no per-session identity is available to tell them apart — a harness tool call
+# is its own session leader and exits with the call, so the pid the guard
+# records is never a live holder, and `refresh` rewrites it to whichever
+# process refreshed. The guarantee here is that they cannot both proceed
+# unaware: the second claim mints a new generation, and the displaced session's
+# next stamp exits 75. Refusing a second implementer outright is
+# `worktree create <ID>`, which surveys worktrees, refs and open PRs.
 #
 # Usage:
 #   worktree-claim --worktree PATH --issue ID [--state-dir DIR]
@@ -48,7 +58,7 @@ GUARD_UNMANAGED=4
 GEN_GRAMMAR='^[0-9]+-[0-9a-f]+$'
 
 usage() {
-	sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '2,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 fail() {
@@ -103,8 +113,12 @@ done
 
 # A guard that cannot run leaves possession unproven, which is the one outcome
 # this gate exists to prevent — so it is a hard failure, never a pass-through.
+# jq reads every lease field this gate compares, so a missing jq is the same
+# unproven state; catching it here keeps the exit contract at 1, not 127.
 [[ -x "$GUARD" ]] \
 	|| fail "worktree-session-guard is not executable at $GUARD; possession cannot be verified"
+command -v jq >/dev/null 2>&1 \
+	|| fail "jq is required to read the guard's lease; possession cannot be verified"
 
 worktree_abs="$(cd -P -- "$worktree" 2>/dev/null && pwd -P)" \
 	|| fail "not a directory: $worktree"
