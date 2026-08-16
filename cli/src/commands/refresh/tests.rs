@@ -1583,3 +1583,136 @@ fn seed_installed_skill_settings_seeds_consumer_projects() {
 
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A refused remote cache is a source that exists. The entry it backs is
+/// reported as not refreshed with the refusal as its reason, is never
+/// reinstalled from another loaded source, keeps its recorded source, and the
+/// run exits non-zero.
+#[test]
+fn refresh_reports_a_refused_remote_cache_instead_of_substituting_another_source() {
+    let root = tmpdir("refused-remote-cache");
+    let project = root.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let home = root.join("home");
+    let cache_root = home.join(".vstack").join("cache");
+
+    // The remote's cache entry: a real clone whose `core.worktree` names a
+    // victim directory holding a same-named tracked file.
+    let origin = root.join("origin");
+    std::fs::create_dir_all(origin.join("skills/demo")).unwrap();
+    std::fs::write(
+        origin.join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Remote demo\n---\n# Demo\n\nRemote body.\n",
+    )
+    .unwrap();
+    assert!(init_repo_with_commit(&origin));
+    let victim = root.join("victim");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join(".vstack-test-base"), "precious\n").unwrap();
+    let cache = cache_root.join("owner_repo");
+    std::fs::create_dir_all(&cache_root).unwrap();
+    // Cloned from the local origin, then pointed at the URL the recorded
+    // source derives, as a clone made by `vstack add owner/repo` would be.
+    assert!(git_ok(
+        &cache_root,
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            cache.to_str().unwrap()
+        ]
+    ));
+    assert!(git_ok(
+        &cache,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/owner/repo.git"
+        ]
+    ));
+    assert!(git_ok(
+        &cache,
+        &["config", "core.worktree", victim.to_str().unwrap()]
+    ));
+
+    // A local source carrying a same-named skill, plus one of its own.
+    let local = root.join("local");
+    for name in ["demo", "other"] {
+        std::fs::create_dir_all(local.join("skills").join(name)).unwrap();
+        std::fs::write(
+            local.join("skills").join(name).join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Local {name}\n---\n# {name}\n\nLocal body.\n"),
+        )
+        .unwrap();
+    }
+
+    let mut lock = LockFile::default();
+    lock.add(LockEntry {
+        name: "demo".into(),
+        kind: ItemKind::Skill,
+        source: "owner/repo".into(),
+        source_repo: None,
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    lock.add(lock_entry(
+        "other",
+        ItemKind::Skill,
+        &local,
+        vec!["claude-code"],
+    ));
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+    // Both are installed already (a lock entry with no files is pruned).
+    let installed_demo =
+        "---\nname: demo\ndescription: Installed demo\n---\n# Demo\n\nInstalled body.\n";
+    for name in ["demo", "other"] {
+        for root in [".agents/skills", ".claude/skills"] {
+            let dir = project.join(root).join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("SKILL.md"), installed_demo).unwrap();
+        }
+    }
+
+    let err = crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+        let err = crate::test_util::with_project_root(&project, || {
+            run(crate::scope::ScopeFilter::Project, false).unwrap_err()
+        });
+        assert!(
+            crate::refresh_sources::cache_refusal_reason("owner/repo")
+                .is_some_and(|reason| reason.contains("does not resolve to its cache entry")),
+            "the refusal names its cause"
+        );
+        err
+    });
+
+    let message = format!("{err:#}");
+    assert!(message.contains("missing from their source"), "{message}");
+    for root in [".agents/skills", ".claude/skills"] {
+        assert_eq!(
+            std::fs::read_to_string(project.join(root).join("demo/SKILL.md")).unwrap(),
+            installed_demo,
+            "the refused entry must not be reinstalled from the local source ({root})"
+        );
+    }
+    assert!(
+        std::fs::read_to_string(project.join(".claude/skills/other/SKILL.md"))
+            .unwrap()
+            .contains("Local body."),
+        "the local entry still refreshes"
+    );
+    let saved = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert_eq!(
+        saved.entries["demo"].source, "owner/repo",
+        "the refused entry keeps its recorded source"
+    );
+    assert_eq!(
+        std::fs::read_to_string(victim.join(".vstack-test-base")).unwrap(),
+        "precious\n",
+        "the redirected worktree must be untouched"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}

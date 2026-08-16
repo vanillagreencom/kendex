@@ -2825,73 +2825,45 @@ fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
 }
 
 fn looks_like_remote(source: &str) -> bool {
-    // owner/repo, https://github.com/..., git@github.com:...
-    source.contains('/') && !source.starts_with('.') && !source.starts_with('/')
-        || source.starts_with("https://")
-        || source.starts_with("git@")
+    crate::refresh_sources::looks_like_remote_source(source)
 }
 
-/// Clone or update a remote repo into ~/.vstack/cache/<owner>/<repo>
+/// Clone or update a remote repo into its entry under `~/.vstack/cache/`.
 fn clone_or_update(source: &str) -> Result<PathBuf> {
-    let cache_dir = crate::config::global_base_dir()
-        .join(".vstack")
-        .join("cache");
-    std::fs::create_dir_all(&cache_dir)?;
+    let remote = crate::refresh_sources::RemoteSource::parse(source)?
+        .ok_or_else(|| anyhow::anyhow!("Source not found: {source}"))?;
+    let display = &remote.display;
 
-    // Normalize source to a git URL and a cache key
-    let (git_url, cache_key) = if source.starts_with("https://") || source.starts_with("git@") {
-        // Full URL — extract owner/repo for cache key
-        let key = source
-            .trim_end_matches('/')
-            .trim_end_matches(".git")
-            .rsplit('/')
-            .take(2)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("_");
-        (source.to_string(), key)
-    } else {
-        // owner/repo shorthand
-        let url = format!("https://github.com/{}.git", source);
-        let key = source.replace('/', "_");
-        (url, key)
-    };
-
-    let repo_dir = cache_dir.join(&cache_key);
-    let display = crate::refresh_sources::remote_source_display(source);
-    crate::refresh_sources::reject_credential_bearing_git_url(&git_url)?;
-
-    if repo_dir.join(".git").exists() {
+    if remote.cache_dir.join(".git").exists() {
         // Update existing clone (handles force-pushed histories). A refusal —
         // the entry is not vstack's own clone — is an error; a failed fetch
         // keeps the stale clone.
         eprintln!("Updating cached repo {display}...");
-        crate::refresh_sources::update_cached_repo_best_effort(&display, &repo_dir)?;
+        crate::refresh_sources::update_cached_repo(&remote)?;
     } else {
         // Fresh shallow clone
         eprintln!("Cloning {display}...");
-        crate::refresh_sources::clone_cached_repo(&display, &git_url, &repo_dir).with_context(
-            || {
-                format!(
-                    "caching {display} failed. For private repos, make sure you have access:\n\
-                     \n\
-                     SSH:   git clone git@github.com:{display}.git\n\
-                     HTTPS: gh auth login\n\
-                     Token: export GH_TOKEN=<your-token>"
-                )
-            },
-        )?;
+        crate::refresh_sources::clone_cached_repo(&remote).with_context(|| {
+            let ssh_hint = crate::config::parse_github_slug(source)
+                .map(|slug| format!("SSH:   git clone git@github.com:{slug}.git\n"))
+                .unwrap_or_default();
+            format!(
+                "caching {display} failed. For private repos, make sure you have access:\n\
+                 \n\
+                 {ssh_hint}\
+                 HTTPS: gh auth login\n\
+                 Token: export GH_TOKEN=<your-token>"
+            )
+        })?;
     }
 
-    if !crate::resolve::is_vstack_source(&repo_dir) {
+    if !crate::resolve::is_vstack_source(&remote.cache_dir) {
         anyhow::bail!(
             "Cloned repo doesn't look like a vstack repo (no catalog table or source item directories found)"
         );
     }
 
-    Ok(repo_dir)
+    Ok(remote.cache_dir)
 }
 
 fn reconcile_agents(

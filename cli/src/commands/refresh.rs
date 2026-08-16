@@ -94,9 +94,15 @@ impl RefreshStats {
 
     /// Record that `item`'s recorded source did not resolve to any loaded
     /// source. The reason names what the lock recorded so the user can see
-    /// which source vanished (or that none was ever recorded).
+    /// which source vanished (or that none was ever recorded) — and a remote
+    /// cache that resolution REFUSED is named as refused rather than as
+    /// absent, which are repaired differently.
     fn mark_source_missing(&mut self, item: &str, recorded_source: &str) {
-        let reason = if recorded_source.trim().is_empty() {
+        let reason = if let Some(refusal) =
+            crate::refresh_sources::cache_refusal_reason(recorded_source)
+        {
+            refusal
+        } else if recorded_source.trim().is_empty() {
             "source not found (none recorded)".to_string()
         } else {
             format!("source not found: {recorded_source}")

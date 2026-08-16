@@ -253,17 +253,26 @@
     requirement and states the concrete reason the triage-then-re-enqueue
     route cannot churn-loop; the worktree live-lease suite's check count is
     corrected (35, not 20).
-- cli: every git process that touches a remote-source cache entry is built by
-  one hardened constructor — `GIT_DIR`/`GIT_WORK_TREE`-family variables
-  dropped, `GIT_TERMINAL_PROMPT=0`, ssh in `BatchMode` — and `reset --hard`
-  runs only after the entry proves to be vstack's own clone: not a symlink,
-  not a redirected `.git`, and `rev-parse --show-toplevel` resolves to the
-  entry itself. A cache whose `core.worktree` pointed at a user checkout used
-  to have that checkout's tracked files overwritten (VST-256). Refused entries
-  fail closed for `add`, `refresh` and the TUI's startup cache refresh.
-  Credential-bearing source URLs (userinfo token, `user:pass@`, query or
-  fragment) are rejected before any git runs and never echoed; ssh usernames
-  are kept.
+- cli: every git process vstack runs — cache clone/fetch/reset, origin and
+  HEAD reads — is built by one hardened constructor: `GIT_DIR`/`GIT_WORK_TREE`-
+  family variables dropped, `GIT_TERMINAL_PROMPT=0`, and for network commands
+  the ssh command git would pick (`GIT_SSH_COMMAND`, `core.sshCommand`,
+  `GIT_SSH`, `ssh`) with `BatchMode=yes` inserted after the program.
+  `reset --hard` runs only after the cache entry proves to be vstack's own
+  clone: not a symlink, not a redirected `.git`, `rev-parse --show-toplevel`
+  is the entry itself, and `origin` is this source with no credential in it.
+  A cache whose `core.worktree` pointed at a user checkout used to have that
+  checkout's tracked files overwritten (VST-256). A refused entry is a source
+  that exists: `add` fails, `refresh` reports the entry as not refreshed with
+  the refusal as its reason and exits non-zero (never rebinding it to another
+  source or repairing its lock record), and the TUI's startup cache refresh
+  skips it. A failed fetch keeps the stale clone; a failed reset is an error.
+  Remote sources resolve to one cache key per repository identity — every
+  spelling of a GitHub repo shares `owner_repo`, other hosts get their own —
+  so URL-added sources refresh from the clone `add` made. Credential-bearing
+  or plaintext-HTTP source URLs (userinfo token, `user:pass@`, query or
+  fragment, `http://`) are rejected before any git runs and never echoed;
+  ssh usernames are kept.
 - decider: index rows are append-only, never re-sorted — the template's
   "date order" clause contradicted its own example and the CLI reads rows
   positionally (VST-263); the schema carries the placement rule.

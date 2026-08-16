@@ -79,6 +79,12 @@ fn resolve_source_records_with(
         }
     }
 
+    // A refused remote cache is a source that exists and must not be
+    // substituted: no fallback stands in for it.
+    if sources.is_empty() && any_source_refused(lock) {
+        return sources;
+    }
+
     // Fallback: walk up from CWD to find a vstack source repo.
     if sources.is_empty()
         && let Ok(mut dir) = std::env::current_dir()
@@ -277,16 +283,25 @@ pub(crate) fn resolve_recorded_source(source: &str) -> Option<PathBuf> {
     resolve_single_source(source)
 }
 
-/// Whether an entry's recorded source still names a usable directory on disk.
+/// Whether an entry's recorded source still names something on disk.
 ///
 /// Deliberately side-effect free (no remote fetch): callers use it in per-entry
-/// loops to decide whether an entry may fall back to a different source.
+/// loops to decide whether an entry may fall back to a different source. A
+/// remote source whose cache entry exists counts as present whether or not
+/// that entry is usable — a refused cache is a refusal to report, never a
+/// missing source to substitute.
 pub(crate) fn recorded_source_exists(source: &str) -> bool {
     let path = Path::new(source);
     if path.is_absolute() {
         return path.is_dir();
     }
-    resolve_recorded_local_source(source).is_some()
+    if resolve_recorded_local_source(source).is_some() {
+        return true;
+    }
+    RemoteSource::parse(source)
+        .ok()
+        .flatten()
+        .is_some_and(|remote| remote.cache_dir.join(".git").exists())
 }
 
 pub(crate) fn resolve_source_path(source: &str) -> Option<PathBuf> {
@@ -307,9 +322,6 @@ fn resolve_single_source_with(
         return Some(p.to_path_buf());
     }
 
-    let looks_like_remote =
-        source.contains('/') && !source.starts_with('.') && !source.starts_with('/');
-
     // Explicit relative local source tokens in locks/registries are
     // project-scoped. Treating them as "walk upward to any vstack source" can
     // rebind a live ./source entry to the checkout running the command from a
@@ -322,46 +334,43 @@ fn resolve_single_source_with(
     // "source" by falling back to the nearest vstack checkout from CWD. Keep
     // that compatibility only after trying the project-relative path, and only
     // for non-discovery calls where the historical fallback existed.
-    if !require_vstack_source && is_bare_local_source(source, looks_like_remote) {
+    if !require_vstack_source && is_bare_local_source(source) {
         if let Some(path) = resolve_relative_local_source(source, false) {
             return Some(path);
         }
         return find_vstack_source_from_cwd();
     }
 
-    // Remote shorthand (owner/repo) — update once during top-level source resolution,
-    // then use the cached clone without side effects from pure attribution/hash paths.
-    let cached = cached_repo_dir(source);
-    if cached.join(".git").exists() {
-        let display = remote_source_display(source);
-        // A cache entry that is not vstack's own directory is some other
-        // checkout; reading it would install that checkout's uncommitted state
-        // as the remote source, so it is refused on every path, not only before
-        // an update.
-        if let Err(err) = reject_unowned_cache_entry(&display, &cached) {
-            eprintln!("  Warning: {err:#}");
+    // Remote shorthand or URL: update once during top-level source resolution,
+    // then use the cached clone without side effects from pure attribution and
+    // hash paths.
+    let remote = match RemoteSource::parse(source) {
+        Ok(Some(remote)) => remote,
+        Ok(None) => return None,
+        Err(err) => {
+            note_refusal(source, &err);
             return None;
         }
-        if update_remote {
-            eprintln!("Updating cached repo {display}...");
-            if let Err(err) = update_cached_repo_best_effort(&display, &cached) {
-                eprintln!("  Warning: {err:#}");
-                return None;
-            }
-        }
-        return Some(cached);
+    };
+    if !remote.cache_dir.join(".git").exists() {
+        return None;
     }
-
-    None
-}
-
-/// The cache entry a remote shorthand source (`owner/repo`) is cloned into.
-pub(crate) fn cached_repo_dir(source: &str) -> PathBuf {
-    remote_cache_root().join(source.replace('/', "_"))
-}
-
-pub(crate) fn remote_cache_root() -> PathBuf {
-    config::global_base_dir().join(".vstack").join("cache")
+    // Filesystem-level ownership is checked on every path: a symlinked entry
+    // or a redirected `.git` is some other checkout, and reading it would
+    // install that checkout's uncommitted state as the remote source. The
+    // git-level worktree check guards the update below.
+    if let Err(err) = reject_unowned_cache_entry(&remote) {
+        note_refusal(&remote.cache_dir.to_string_lossy(), &err);
+        return None;
+    }
+    if update_remote {
+        eprintln!("Updating cached repo {}...", remote.display);
+        if let Err(err) = update_cached_repo(&remote) {
+            note_refusal(&remote.cache_dir.to_string_lossy(), &err);
+            return None;
+        }
+    }
+    Some(remote.cache_dir)
 }
 
 /// Best-effort update of every remote source's cache entry named by a lock.
@@ -370,41 +379,90 @@ pub(crate) fn remote_cache_root() -> PathBuf {
 pub(crate) fn refresh_remote_caches(lock: &config::LockFile) {
     let mut seen = std::collections::HashSet::new();
     for entry in lock.entries.values() {
-        let src = &entry.source;
-        // Only remote sources (owner/repo format)
-        if !(src.contains('/') && !src.starts_with('.') && !src.starts_with('/')) {
+        if !seen.insert(entry.source.clone()) {
             continue;
         }
-        if !seen.insert(src.clone()) {
+        let remote = match RemoteSource::parse(&entry.source) {
+            Ok(Some(remote)) => remote,
+            Ok(None) => continue,
+            Err(err) => {
+                note_refusal(&entry.source, &err);
+                continue;
+            }
+        };
+        if !remote.cache_dir.join(".git").exists() {
             continue;
         }
-        let cached = cached_repo_dir(src);
-        if !cached.join(".git").exists() {
-            continue;
-        }
-        if let Err(err) = update_cached_repo_best_effort(&remote_source_display(src), &cached) {
-            eprintln!("  Warning: {err:#}");
+        if let Err(err) = update_cached_repo(&remote) {
+            note_refusal(&remote.cache_dir.to_string_lossy(), &err);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Refusal registry
+//
+// A refused cache entry is not a missing source. Resolution reports the
+// refusal once per process and remembers it, so refresh can name it as the
+// reason an entry was not refreshed instead of rebinding the entry to another
+// source or repairing its lock record.
+// ---------------------------------------------------------------------------
+
+static REFUSALS: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, String>>> =
+    std::sync::OnceLock::new();
+
+fn refusals() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, String>> {
+    REFUSALS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Record a refusal under `key` (the cache entry path, or the source itself
+/// when it never reached a cache) and print it the first time it is seen.
+fn note_refusal(key: &str, err: &anyhow::Error) {
+    let message = format!("{err:#}");
+    let mut refusals = refusals();
+    if refusals.get(key).is_some_and(|known| known == &message) {
+        return;
+    }
+    eprintln!("  Warning: {message}");
+    refusals.insert(key.to_string(), message);
+}
+
+/// The recorded refusal for a source, if resolution refused it this process.
+pub(crate) fn cache_refusal_reason(source: &str) -> Option<String> {
+    let refusals = refusals();
+    if let Some(reason) = refusals.get(source) {
+        return Some(reason.clone());
+    }
+    let remote = RemoteSource::parse(source).ok()??;
+    refusals
+        .get(remote.cache_dir.to_string_lossy().as_ref())
+        .cloned()
+}
+
+fn any_source_refused(lock: &config::LockFile) -> bool {
+    lock.entries
+        .values()
+        .any(|entry| cache_refusal_reason(&entry.source).is_some())
 }
 
 fn is_explicit_relative_local_source(source: &str) -> bool {
     source == "." || source.starts_with("./") || source.starts_with("../")
 }
 
-fn is_bare_local_source(source: &str, looks_like_remote: bool) -> bool {
+fn is_bare_local_source(source: &str) -> bool {
     !source.is_empty()
         && !source.starts_with('~')
         && !Path::new(source).is_absolute()
-        && !looks_like_remote
+        && !source.contains('/')
+        && !source.contains('\\')
+        && !looks_like_remote_source(source)
 }
 
 fn resolve_recorded_local_source(source: &str) -> Option<PathBuf> {
-    let looks_like_remote =
-        source.contains('/') && !source.starts_with('.') && !source.starts_with('/');
-    if !is_explicit_relative_local_source(source)
-        && !is_bare_local_source(source, looks_like_remote)
-    {
+    if !is_explicit_relative_local_source(source) && !is_bare_local_source(source) {
         return None;
     }
     resolve_relative_local_source(source, false)
@@ -437,12 +495,166 @@ fn find_vstack_source_from_cwd() -> Option<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
-// Remote cache git invocations
+// Remote sources
+// ---------------------------------------------------------------------------
+
+/// A remote source as `vstack add` accepts it — GitHub shorthand `owner/repo`,
+/// or a git URL — resolved to the one place its clone lives and the one URL
+/// git is given. Parsing is where credential-bearing and unsupported inputs
+/// are refused, before any git process sees them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RemoteSource {
+    /// The source as recorded, safe to show: userinfo secrets, query and
+    /// fragment replaced.
+    pub display: String,
+    /// The URL handed to git.
+    pub git_url: String,
+    /// The single path component under [`remote_cache_root`] the clone lives
+    /// in. Derived from the repository identity, so two spellings of one repo
+    /// share a clone and repos on different hosts never do.
+    pub cache_key: String,
+    pub cache_dir: PathBuf,
+}
+
+impl RemoteSource {
+    /// `Ok(None)` when `source` is not remote-shaped (a local path or bare
+    /// name); `Err` when it is remote-shaped but must not be used.
+    pub(crate) fn parse(source: &str) -> Result<Option<Self>> {
+        let source = source.trim();
+        if source.starts_with('~') {
+            return Ok(None);
+        }
+        let display = remote_source_display(source);
+        let git_url = if is_url_shaped(source) {
+            if is_plaintext_http(source) {
+                bail!("plaintext HTTP remote sources are not supported: {display}");
+            }
+            reject_credential_bearing_git_url(source)?;
+            source
+                .strip_prefix("git+ssh://")
+                .map(|rest| format!("ssh://{rest}"))
+                .unwrap_or_else(|| source.to_string())
+        } else if config::parse_github_slug(source).is_some() {
+            // GitHub shorthand: the URL keeps the user's spelling, the key
+            // uses the canonical lowercase slug.
+            format!("https://github.com/{source}.git")
+        } else {
+            return Ok(None);
+        };
+        let identity = remote_identity(&git_url).ok_or_else(|| {
+            anyhow::anyhow!("remote source URL has no repository path: {display}")
+        })?;
+        let cache_key = cache_key_for_identity(&identity);
+        let cache_dir = remote_cache_root().join(&cache_key);
+        Ok(Some(Self {
+            display,
+            git_url,
+            cache_key,
+            cache_dir,
+        }))
+    }
+}
+
+pub(crate) fn looks_like_remote_source(source: &str) -> bool {
+    matches!(RemoteSource::parse(source), Ok(Some(_)) | Err(_))
+}
+
+pub(crate) fn remote_cache_root() -> PathBuf {
+    config::global_base_dir().join(".vstack").join("cache")
+}
+
+/// `scheme://...` (any scheme, any case) or scp-like `user@host:path`.
+fn is_url_shaped(source: &str) -> bool {
+    if let Some(index) = source.find("://") {
+        let scheme = &source[..index];
+        return !scheme.is_empty()
+            && scheme
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'));
+    }
+    // scp-like: `git@github.com:owner/repo.git` — an `@` before the first
+    // `/`, and a `:` after the host.
+    let authority_end = source.find('/').unwrap_or(source.len());
+    let authority = &source[..authority_end];
+    authority.contains('@') && authority.contains(':')
+}
+
+fn is_plaintext_http(source: &str) -> bool {
+    source
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+}
+
+/// The repository a URL names, independent of how it is spelled: a GitHub
+/// slug for GitHub remotes in any form, otherwise `host/path` with scheme,
+/// userinfo, port-less host case, `.git` and trailing slashes normalized.
+fn remote_identity(git_url: &str) -> Option<String> {
+    if let Some(slug) = config::parse_github_slug(git_url) {
+        return Some(format!("github.com/{slug}"));
+    }
+    let (host, path) = if let Some(index) = git_url.find("://") {
+        let rest = &git_url[index + 3..];
+        let (authority, path) = rest.split_once('/')?;
+        let host = authority.rsplit('@').next()?;
+        (host, path)
+    } else {
+        // scp-like `user@host:path`
+        let (authority, path) = git_url.split_once(':')?;
+        let host = authority.rsplit('@').next()?;
+        (host, path)
+    };
+    let path = path.trim_matches('/');
+    let path = path
+        .strip_suffix(".git")
+        .unwrap_or(path)
+        .trim_end_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    Some(format!("{}/{}", host.to_ascii_lowercase(), path))
+}
+
+/// A cache key is exactly one path component made of `[a-z0-9_-]`, so it can
+/// never leave the cache root. GitHub repos keep the `owner_repo` form the
+/// cache always used.
+fn cache_key_for_identity(identity: &str) -> String {
+    let raw = identity.strip_prefix("github.com/").unwrap_or(identity);
+    let mut key = String::with_capacity(raw.len());
+    let mut last_was_sep = false;
+    for ch in raw.chars() {
+        let next = if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_lowercase()
+        } else if ch == '-' {
+            ch
+        } else {
+            '_'
+        };
+        if next == '_' {
+            if last_was_sep {
+                continue;
+            }
+            last_was_sep = true;
+        } else {
+            last_was_sep = false;
+        }
+        key.push(next);
+    }
+    let key = key.trim_matches('_').to_string();
+    if key.is_empty() {
+        "source".to_string()
+    } else {
+        key
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Git invocations
 //
-// Every `git` process that touches a cache entry is built by `cache_git_program`
-// and nothing else: the update path runs `reset --hard`, and git will happily
-// aim that at whatever an inherited `GIT_DIR`/`GIT_WORK_TREE`, a symlinked
-// entry, a redirected `.git`, or the clone's own `core.worktree` names.
+// Every `git` process vstack runs is built by `hardened_git_command`: the
+// update path runs `reset --hard`, and git will happily aim that at whatever
+// an inherited `GIT_DIR`/`GIT_WORK_TREE`, a symlinked entry, a redirected
+// `.git`, or the clone's own `core.worktree` names; and every one of them runs
+// unattended, where a credential prompt is a hang.
 // ---------------------------------------------------------------------------
 
 /// Git's repository- and worktree-locating environment variables. Every one of
@@ -461,50 +673,115 @@ const GIT_LOCATION_ENV_VARS: &[&str] = &[
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 ];
 
-/// The ssh command for a cache git invocation, in batch mode. An inherited
-/// `GIT_SSH_COMMAND` is extended rather than replaced, so a caller's own ssh
-/// binary and options keep working; git appends the host and remote command
-/// after this string, so the added option still lands before them.
-fn batch_mode_ssh_command(inherited: Option<&str>) -> String {
-    let base = inherited
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("ssh");
-    format!("{base} -o BatchMode=yes")
-}
-
-/// The one constructor every cache `git` invocation is built from. Cloning,
-/// reading an origin and updating all run unattended inside an add or refresh:
-/// a credential prompt in any of them hangs the run, and an inherited
-/// repository override in any of them points git outside the cache.
-fn cache_git_program() -> std::process::Command {
+/// A `git` process pinned to `dir`: the working directory decides the
+/// repository, every inherited location override is cleared, and no terminal
+/// prompt can be raised. Local reads and the destructive update alike are
+/// built here; network commands add ssh batch mode via
+/// [`hardened_git_network_command`].
+pub(crate) fn hardened_git_command(dir: &Path) -> std::process::Command {
     let mut command = std::process::Command::new("git");
     for key in GIT_LOCATION_ENV_VARS {
         command.env_remove(key);
     }
     command.env("GIT_TERMINAL_PROMPT", "0");
+    command.current_dir(dir);
+    command
+}
+
+/// [`hardened_git_command`] for a command that may open an ssh connection.
+/// The ssh command git would choose is kept — `GIT_SSH_COMMAND`, else
+/// `core.sshCommand` as configured for `dir`, else `GIT_SSH`, else `ssh`, in
+/// git's own precedence — with `BatchMode=yes` inserted directly after the
+/// program, where it outranks any later option.
+fn hardened_git_network_command(dir: &Path) -> std::process::Command {
+    let mut command = hardened_git_command(dir);
     command.env(
         "GIT_SSH_COMMAND",
-        batch_mode_ssh_command(std::env::var("GIT_SSH_COMMAND").ok().as_deref()),
+        batch_mode_ssh_command(
+            std::env::var("GIT_SSH_COMMAND").ok().as_deref(),
+            configured_ssh_command(dir).as_deref(),
+            std::env::var("GIT_SSH").ok().as_deref(),
+        ),
     );
     command
 }
 
-/// A `git` invocation pinned to an existing cache entry: the working directory
-/// decides the repository, with every inherited override cleared.
-fn cache_git_command(repo_dir: &Path) -> std::process::Command {
-    let mut command = cache_git_program();
-    command.current_dir(repo_dir);
-    command
+/// `core.sshCommand` as git resolves it for `dir` (repository, then global
+/// and system config).
+fn configured_ssh_command(dir: &Path) -> Option<String> {
+    let output = hardened_git_command(dir)
+        .args(["config", "--get", "core.sshCommand"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn batch_mode_ssh_command(
+    inherited_command: Option<&str>,
+    configured_command: Option<&str>,
+    inherited_program: Option<&str>,
+) -> String {
+    fn non_empty(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|v| !v.is_empty())
+    }
+    let base = non_empty(inherited_command)
+        .or_else(|| non_empty(configured_command))
+        .map(str::to_string)
+        // GIT_SSH is a program path, not a shell command; quote it so a path
+        // with spaces survives the move into GIT_SSH_COMMAND.
+        .or_else(|| non_empty(inherited_program).map(shell_quote))
+        .unwrap_or_else(|| "ssh".to_string());
+    let (program, rest) = split_shell_program(&base);
+    format!("{program} -o BatchMode=yes{rest}")
+}
+
+fn shell_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | '+' | '='))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+/// Split a shell command string into its program token and the remainder
+/// (which keeps its leading whitespace). A quoted program token is kept whole.
+fn split_shell_program(command: &str) -> (&str, &str) {
+    let end = match command.chars().next() {
+        Some(quote @ ('\'' | '"')) => command[1..]
+            .find(quote)
+            .map(|index| index + 2)
+            .unwrap_or(command.len()),
+        _ => command.find(char::is_whitespace).unwrap_or(command.len()),
+    };
+    command.split_at(end)
 }
 
 /// The `git clone` that mints a fresh cache entry. The destination is named on
-/// the command line, so this one runs from the caller's working directory.
-fn cache_clone_command(git_url: &str, cache_dir: &Path) -> std::process::Command {
-    let mut command = cache_git_program();
-    command.args(["clone", "--depth", "1", git_url]);
-    command.arg(cache_dir);
+/// the command line, so this one runs from the cache root.
+fn cache_clone_command(remote: &RemoteSource) -> std::process::Command {
+    let mut command = hardened_git_network_command(&remote_cache_root());
+    command.args(["clone", "--depth", "1", &remote.git_url]);
+    command.arg(&remote.cache_dir);
     command
+}
+
+/// The remediation every refusal ends with. The redacted display and the
+/// cache root are safe to print; the key is identity-derived and carries no
+/// userinfo.
+fn refusal(remote: &RemoteSource, what: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "refusing cached source {}: {what}. Remove its cache entry `{}` under {} and re-run",
+        remote.display,
+        remote.cache_key,
+        remote_cache_root().display()
+    )
 }
 
 /// Refuse a cache entry whose contents are not vstack's own directory.
@@ -513,93 +790,151 @@ fn cache_clone_command(git_url: &str, cache_dir: &Path) -> std::process::Command
 /// some other checkout's working tree — one with the same origin passes every
 /// content check — so it must be neither read as the remote source nor be the
 /// target of `reset --hard`. Filesystem checks only; see
-/// [`ensure_cache_entry_is_owned`] for the git-level check that guards updates.
-pub(crate) fn reject_unowned_cache_entry(display: &str, repo_dir: &Path) -> Result<()> {
-    let meta = std::fs::symlink_metadata(repo_dir)
-        .with_context(|| format!("inspecting cached source {display}"))?;
-    // The path is never printed: a cache key is reconstructed from the recorded
-    // source and can embed URL userinfo. `display` is already redacted.
+/// [`ensure_cache_entry_is_owned`] for the git-level checks that guard updates.
+pub(crate) fn reject_unowned_cache_entry(remote: &RemoteSource) -> Result<()> {
+    let meta = std::fs::symlink_metadata(&remote.cache_dir)
+        .with_context(|| format!("inspecting cached source {}", remote.display))?;
     if meta.file_type().is_symlink() {
-        bail!(
-            "refusing cached source {display}: its cache entry is a symlink, and updating it would run destructive git commands outside the cache"
-        );
+        return Err(refusal(
+            remote,
+            "its cache entry is a symlink, and updating it would run destructive git commands outside the cache",
+        ));
     }
     if !meta.is_dir() {
-        bail!("refusing cached source {display}: its cache entry is not a directory");
+        return Err(refusal(remote, "its cache entry is not a directory"));
     }
     // `git clone` always leaves a real `.git` directory. A symlink or a
     // `gitdir:` file there redirects the repository metadata elsewhere, so
     // `reset --hard` would act on a worktree vstack does not own even though
     // the entry itself is a plain directory.
-    let git_meta = std::fs::symlink_metadata(repo_dir.join(".git"))
-        .with_context(|| format!("inspecting git metadata for cached source {display}"))?;
+    let git_meta = std::fs::symlink_metadata(remote.cache_dir.join(".git")).with_context(|| {
+        format!(
+            "inspecting git metadata for cached source {}",
+            remote.display
+        )
+    })?;
     if !git_meta.is_dir() || git_meta.file_type().is_symlink() {
-        bail!("refusing cached source {display}: its cache entry does not own its git metadata");
+        return Err(refusal(
+            remote,
+            "its cache entry does not own its git metadata",
+        ));
     }
     Ok(())
 }
 
 /// The checks that decide whether a cache entry is vstack's to update: the
-/// filesystem checks above, plus asking git where it would act. The
-/// environment is sanitized, but the cache's own `config` can still carry a
-/// `core.worktree` pointing at a user checkout, and no check on the entry or
-/// its `.git` sees that — `reset --hard` would then overwrite the user's copies
-/// of the tracked files. Refuse unless git's answer is the cache entry itself.
-pub(crate) fn ensure_cache_entry_is_owned(display: &str, repo_dir: &Path) -> Result<()> {
-    reject_unowned_cache_entry(display, repo_dir)?;
-    let output = cache_git_command(repo_dir)
+/// filesystem checks above, then two questions for git. Where would it act —
+/// the cache's own `config` can carry a `core.worktree` pointing at a user
+/// checkout, which no check on the entry or its `.git` sees, and `reset --hard`
+/// would then overwrite the user's copies of the tracked files. And whose
+/// clone is this — an entry whose `origin` is a different repository would be
+/// installed as this source after the reset, and one whose `origin` carries a
+/// credential would hand it to the fetch.
+pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
+    reject_unowned_cache_entry(remote)?;
+
+    let output = hardened_git_command(&remote.cache_dir)
         .args(["rev-parse", "--show-toplevel"])
         .output()
-        .with_context(|| format!("resolving the work tree of cached source {display}"))?;
+        .with_context(|| {
+            format!(
+                "resolving the work tree of cached source {}",
+                remote.display
+            )
+        })?;
     if !output.status.success() {
-        bail!(
-            "refusing to update cached source {display}: its work tree could not be resolved: {}",
-            git_output_summary(&output)
-        );
+        return Err(refusal(
+            remote,
+            &format!(
+                "its work tree could not be resolved: {}",
+                git_output_summary(&output)
+            ),
+        ));
     }
-    let toplevel = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let toplevel = PathBuf::from(git_stdout_line(&output.stdout));
     // Canonicalized on both sides: the cache root is routinely reached through
     // a symlinked home or temp directory, and git reports the resolved path. A
     // path that will not canonicalize fails closed.
     let resolved = std::fs::canonicalize(&toplevel).map_err(|err| {
-        anyhow::anyhow!(
-            "refusing to update cached source {display}: its work tree could not be resolved: {err}"
+        refusal(
+            remote,
+            &format!("its work tree could not be resolved: {err}"),
         )
     })?;
-    let expected = std::fs::canonicalize(repo_dir)
-        .map_err(|err| anyhow::anyhow!("refusing to update cached source {display}: {err}"))?;
+    let expected = std::fs::canonicalize(&remote.cache_dir)
+        .map_err(|err| refusal(remote, &err.to_string()))?;
     if resolved != expected {
-        // Neither path is printed: the work tree is the user location this
-        // refuses to touch.
-        bail!(
-            "refusing to update cached source {display}: its git work tree does not resolve to its cache entry, and updating it would run destructive git commands outside the cache"
-        );
+        // The work tree is the user location this refuses to touch; it is not
+        // printed.
+        return Err(refusal(
+            remote,
+            "its git work tree does not resolve to its cache entry, and updating it would run destructive git commands outside the cache",
+        ));
+    }
+
+    let output = hardened_git_command(&remote.cache_dir)
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .with_context(|| format!("reading origin for cached source {}", remote.display))?;
+    if !output.status.success() {
+        return Err(refusal(
+            remote,
+            &format!(
+                "its origin could not be read: {}",
+                git_output_summary(&output)
+            ),
+        ));
+    }
+    let origin = git_stdout_line(&output.stdout);
+    if remote_identity(&origin) != remote_identity(&remote.git_url) {
+        return Err(refusal(
+            remote,
+            &format!(
+                "its origin is {}, not this source",
+                remote_source_display(&origin)
+            ),
+        ));
+    }
+    if let Err(err) = reject_credential_bearing_git_url(&origin) {
+        return Err(refusal(
+            remote,
+            &format!("its origin carries a credential ({err})"),
+        ));
     }
     Ok(())
 }
 
-/// Bring a cache entry to `origin/HEAD`. Refuses an entry vstack does not own;
-/// otherwise a failed fetch or reset is an error the caller decides about.
-pub(crate) fn update_cached_repo(display: &str, repo_dir: &Path) -> Result<()> {
-    ensure_cache_entry_is_owned(display, repo_dir)?;
-    fetch_and_reset_owned_cache(display, repo_dir)
+/// Git's single-line stdout without the trailing newline — and only that, so a
+/// path with legitimate trailing whitespace is left intact.
+fn git_stdout_line(stdout: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stdout);
+    let text = text.strip_suffix('\n').unwrap_or(&text);
+    text.strip_suffix('\r').unwrap_or(text).to_string()
 }
 
-/// The destructive step itself. Private so that every caller has passed
-/// through [`ensure_cache_entry_is_owned`] first.
-fn fetch_and_reset_owned_cache(display: &str, repo_dir: &Path) -> Result<()> {
-    let fetch = cache_git_command(repo_dir)
+/// Bring a cache entry to `origin/HEAD`.
+///
+/// Refuses an entry vstack does not own — that error propagates, because the
+/// entry's contents are some other checkout's and must not be installed. A
+/// failed fetch is tolerated: the clone is still the requested source at an
+/// older revision, so it is kept and the reset skipped. A failed reset is an
+/// error: the entry is no longer known to match any revision.
+pub(crate) fn update_cached_repo(remote: &RemoteSource) -> Result<()> {
+    ensure_cache_entry_is_owned(remote)?;
+    let display = &remote.display;
+    let fetch = hardened_git_network_command(&remote.cache_dir)
         .args(["fetch", "origin", "--quiet"])
         .stdout(std::process::Stdio::null())
         .output()
         .with_context(|| format!("running git fetch for cached source {display}"))?;
     if !fetch.status.success() {
-        bail!(
-            "git fetch failed for cached source {display}: {}",
+        eprintln!(
+            "  Warning: git fetch failed for cached source {display}: {}; using cached version",
             git_output_summary(&fetch)
         );
+        return Ok(());
     }
-    let reset = cache_git_command(repo_dir)
+    let reset = hardened_git_command(&remote.cache_dir)
         .args(["reset", "--hard", "origin/HEAD"])
         .stdout(std::process::Stdio::null())
         .output()
@@ -613,35 +948,19 @@ fn fetch_and_reset_owned_cache(display: &str, repo_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Update a cache in place, tolerating a failed fetch but not a refusal.
-///
-/// The two failures are not the same news. A fetch that failed leaves a cache
-/// vstack owns, whose stale contents are still the requested source at an
-/// older revision, so callers may use it. A refusal means the entry's contents
-/// are some other checkout's working tree, and returning it would install that
-/// tree's uncommitted state as the remote source; that error propagates.
-pub(crate) fn update_cached_repo_best_effort(display: &str, repo_dir: &Path) -> Result<()> {
-    ensure_cache_entry_is_owned(display, repo_dir)?;
-    if let Err(err) = fetch_and_reset_owned_cache(display, repo_dir) {
-        eprintln!("  Warning: {err:#}; using cached version");
-    }
-    Ok(())
-}
-
-/// Shallow-clone `git_url` into a fresh cache entry.
-pub(crate) fn clone_cached_repo(display: &str, git_url: &str, cache_dir: &Path) -> Result<()> {
-    reject_credential_bearing_git_url(git_url)?;
-    if let Some(parent) = cache_dir.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating source cache {}", parent.display()))?;
-    }
-    let output = cache_clone_command(git_url, cache_dir)
+/// Shallow-clone the remote into its cache entry.
+pub(crate) fn clone_cached_repo(remote: &RemoteSource) -> Result<()> {
+    let root = remote_cache_root();
+    std::fs::create_dir_all(&root)
+        .with_context(|| format!("creating source cache {}", root.display()))?;
+    let output = cache_clone_command(remote)
         .stdout(std::process::Stdio::null())
         .output()
         .context("failed to run git clone — is git installed?")?;
     if !output.status.success() {
         bail!(
-            "git clone failed for {display}: {}",
+            "git clone failed for {}: {}",
+            remote.display,
             git_output_summary(&output)
         );
     }
@@ -658,7 +977,7 @@ fn git_output_summary(output: &std::process::Output) -> String {
         .join("\n");
     let sanitized = combined
         .split_whitespace()
-        .map(redact_remote_userinfo)
+        .map(redact_token)
         .collect::<Vec<_>>()
         .join(" ");
     if sanitized.is_empty() {
@@ -666,6 +985,25 @@ fn git_output_summary(output: &std::process::Output) -> String {
     } else {
         sanitized
     }
+}
+
+/// Redact one whitespace-delimited token of git output: URLs (with or without
+/// git's quoting around them) lose userinfo secrets and query/fragment;
+/// anything else is left alone.
+fn redact_token(token: &str) -> String {
+    if !token.contains("://") {
+        return token.to_string();
+    }
+    let start = token
+        .find(|ch: char| ch.is_ascii_alphanumeric())
+        .unwrap_or(0);
+    let (prefix, rest) = token.split_at(start);
+    let end = rest
+        .rfind(|ch: char| !matches!(ch, '\'' | '"' | '.' | ',' | ';' | ':' | ')' | ']'))
+        .map(|index| index + 1)
+        .unwrap_or(rest.len());
+    let (url, suffix) = rest.split_at(end);
+    format!("{prefix}{}{suffix}", remote_source_display(url))
 }
 
 // ---------------------------------------------------------------------------
@@ -1141,19 +1479,29 @@ mod tests {
     // Remote cache git hardening
     // -----------------------------------------------------------------------
 
+    /// Test-side git: unhardened with respect to the ownership checks under
+    /// test, but never redirected by an inherited location override.
     fn git(repo: &Path, args: &[&str]) {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(repo)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .output()
-            .unwrap();
+        let mut command = std::process::Command::new("git");
+        for key in GIT_LOCATION_ENV_VARS {
+            command.env_remove(key);
+        }
+        let output = command.args(args).current_dir(repo).output().unwrap();
         assert!(
             output.status.success(),
             "git {args:?} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn git_stdout(repo: &Path, args: &[&str]) -> String {
+        let mut command = std::process::Command::new("git");
+        for key in GIT_LOCATION_ENV_VARS {
+            command.env_remove(key);
+        }
+        let output = command.args(args).current_dir(repo).output().unwrap();
+        assert!(output.status.success(), "git {args:?} failed");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
     /// A committed repository at `dir` with `README.md` tracked.
@@ -1168,43 +1516,65 @@ mod tests {
         git(dir, &["commit", "-q", "-m", "init"]);
     }
 
+    fn file_url(path: &Path) -> String {
+        format!("file://{}", path.display())
+    }
+
+    /// A remote whose clone lives at `cache` and whose origin is `origin`.
+    fn remote_at(cache: &Path, origin: &Path) -> RemoteSource {
+        RemoteSource {
+            display: "owner/repo".to_string(),
+            git_url: file_url(origin),
+            cache_key: cache.file_name().unwrap().to_string_lossy().into_owned(),
+            cache_dir: cache.to_path_buf(),
+        }
+    }
+
+    /// Clone `origin` into `cache` the way vstack would have.
+    fn clone_into(origin: &Path, cache: &Path) {
+        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        git(
+            cache.parent().unwrap(),
+            &["clone", "-q", &file_url(origin), cache.to_str().unwrap()],
+        );
+    }
+
     /// The reproduced escape's fixture: a real cache directory owning a real
     /// `.git` — so every filesystem check passes — cloned from `origin`, whose
     /// own `core.worktree` names the victim directory. The victim holds a file
     /// the upstream repo also tracks, with different contents.
     struct RedirectedCache {
         root: PathBuf,
-        cache: PathBuf,
+        remote: RemoteSource,
         victim: PathBuf,
     }
 
-    fn redirected_cache(label: &str) -> RedirectedCache {
-        let root = tmpdir(label);
+    fn redirected_cache_at(root: &Path, cache: &Path) -> RedirectedCache {
         let origin = root.join("origin");
         init_git_repo(&origin);
         let victim = root.join("victim");
         std::fs::create_dir_all(&victim).unwrap();
         std::fs::write(victim.join("README.md"), "precious\n").unwrap();
-        let cache = root.join("cache").join("owner_repo");
-        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        clone_into(&origin, cache);
         git(
-            &root,
-            &[
-                "clone",
-                "-q",
-                origin.to_str().unwrap(),
-                cache.to_str().unwrap(),
-            ],
-        );
-        git(
-            &cache,
+            cache,
             &["config", "core.worktree", victim.to_str().unwrap()],
         );
         RedirectedCache {
-            root,
-            cache,
+            root: root.to_path_buf(),
+            remote: remote_at(cache, &origin),
             victim,
         }
+    }
+
+    fn redirected_cache(label: &str) -> RedirectedCache {
+        let root = tmpdir(label);
+        let cache = root.join("cache").join("owner_repo");
+        redirected_cache_at(&root, &cache)
+    }
+
+    fn victim_readme(fx: &RedirectedCache) -> String {
+        std::fs::read_to_string(fx.victim.join("README.md")).unwrap()
     }
 
     /// Control for the fixture: the unhardened update main used to run really
@@ -1213,16 +1583,9 @@ mod tests {
     #[test]
     fn control_unhardened_reset_in_a_worktree_redirected_cache_clobbers_the_victim() {
         let fx = redirected_cache("control-clobber");
-        let status = std::process::Command::new("git")
-            .args(["reset", "--hard", "origin/HEAD"])
-            .current_dir(&fx.cache)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success());
+        git(&fx.remote.cache_dir, &["reset", "--hard", "origin/HEAD"]);
         assert_eq!(
-            std::fs::read_to_string(fx.victim.join("README.md")).unwrap(),
+            victim_readme(&fx),
             "upstream\n",
             "the fixture must reproduce the escape for the refusal tests to mean anything"
         );
@@ -1233,32 +1596,15 @@ mod tests {
     fn update_cached_repo_refuses_a_cache_whose_worktree_points_outside_it() {
         let fx = redirected_cache("refuse-redirected-worktree");
 
-        let err = update_cached_repo("owner/repo", &fx.cache)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("refusing to update"), "{err}");
+        let err = update_cached_repo(&fx.remote).unwrap_err().to_string();
+        assert!(err.contains("refusing cached source owner/repo"), "{err}");
         assert!(err.contains("does not resolve to its cache entry"), "{err}");
+        assert!(err.contains("Remove its cache entry `owner_repo`"), "{err}");
         assert!(
-            !err.contains(&fx.cache.display().to_string())
-                && !err.contains(&fx.victim.display().to_string()),
-            "neither the cache path nor the victim path may be printed: {err}"
+            !err.contains(&fx.victim.display().to_string()),
+            "the victim path may not be printed: {err}"
         );
-        assert_eq!(
-            std::fs::read_to_string(fx.victim.join("README.md")).unwrap(),
-            "precious\n",
-            "the redirected worktree must be untouched"
-        );
-
-        // The best-effort path refuses too — a refusal is not a tolerated
-        // fetch failure.
-        let err = update_cached_repo_best_effort("owner/repo", &fx.cache)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("refusing to update"), "{err}");
-        assert_eq!(
-            std::fs::read_to_string(fx.victim.join("README.md")).unwrap(),
-            "precious\n"
-        );
+        assert_eq!(victim_readme(&fx), "precious\n");
         let _ = std::fs::remove_dir_all(fx.root);
     }
 
@@ -1268,22 +1614,13 @@ mod tests {
         let origin = root.join("origin");
         init_git_repo(&origin);
         let cache = root.join("cache").join("owner_repo");
-        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
-        git(
-            &root,
-            &[
-                "clone",
-                "-q",
-                origin.to_str().unwrap(),
-                cache.to_str().unwrap(),
-            ],
-        );
+        clone_into(&origin, &cache);
         std::fs::write(origin.join("README.md"), "newer\n").unwrap();
         git(&origin, &["commit", "-q", "-am", "update"]);
         // Local edits in the cache are vstack's to discard.
         std::fs::write(cache.join("README.md"), "scribble\n").unwrap();
 
-        update_cached_repo("owner/repo", &cache).unwrap();
+        update_cached_repo(&remote_at(&cache, &origin)).unwrap();
 
         assert_eq!(
             std::fs::read_to_string(cache.join("README.md")).unwrap(),
@@ -1293,57 +1630,129 @@ mod tests {
     }
 
     #[test]
-    fn best_effort_update_tolerates_a_failed_fetch_and_keeps_the_stale_cache() {
-        let root = tmpdir("best-effort-fetch-fail");
+    fn update_tolerates_a_failed_fetch_and_keeps_the_stale_cache() {
+        let root = tmpdir("fetch-fail");
         let origin = root.join("origin");
         init_git_repo(&origin);
         let cache = root.join("cache").join("owner_repo");
-        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
-        git(
-            &root,
-            &[
-                "clone",
-                "-q",
-                origin.to_str().unwrap(),
-                cache.to_str().unwrap(),
-            ],
-        );
+        clone_into(&origin, &cache);
+        let remote = remote_at(&cache, &origin);
         std::fs::remove_dir_all(&origin).unwrap();
 
-        update_cached_repo_best_effort("owner/repo", &cache).unwrap();
+        update_cached_repo(&remote).unwrap();
         assert_eq!(
             std::fs::read_to_string(cache.join("README.md")).unwrap(),
             "upstream\n"
         );
-        // The strict form reports the same fetch failure instead.
-        let err = update_cached_repo("owner/repo", &cache)
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_reports_a_failed_reset_as_an_error() {
+        let root = tmpdir("reset-fail");
+        let origin = root.join("origin");
+        init_git_repo(&origin);
+        let cache = root.join("cache").join("owner_repo");
+        clone_into(&origin, &cache);
+        // The fetch succeeds; the reset cannot take the index lock.
+        std::fs::write(cache.join(".git").join("index.lock"), "").unwrap();
+
+        let err = update_cached_repo(&remote_at(&cache, &origin))
             .unwrap_err()
             .to_string();
-        assert!(err.contains("git fetch failed"), "{err}");
+        assert!(err.contains("git reset failed"), "{err}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_refuses_a_cache_whose_origin_is_another_repository() {
+        let root = tmpdir("origin-mismatch");
+        let origin = root.join("origin");
+        init_git_repo(&origin);
+        let other = root.join("other");
+        init_git_repo(&other);
+        let cache = root.join("cache").join("owner_repo");
+        clone_into(&other, &cache);
+
+        let err = update_cached_repo(&remote_at(&cache, &origin))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("its origin is"), "{err}");
+        assert!(err.contains("not this source"), "{err}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_refuses_a_cache_whose_origin_carries_a_credential() {
+        let root = tmpdir("origin-credential");
+        let cache = root.join("cache").join("owner_repo");
+        init_git_repo(&cache);
+        // Identity-equal to the clean expected URL: userinfo normalizes away,
+        // so the mismatch check alone would accept this and then fetch with
+        // the token.
+        git(
+            &cache,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://cache-token@github.com/Owner/Repo.git",
+            ],
+        );
+        let remote = RemoteSource::parse("owner/repo").unwrap().unwrap();
+        let remote = RemoteSource {
+            cache_dir: cache.clone(),
+            ..remote
+        };
+
+        let err = update_cached_repo(&remote).unwrap_err().to_string();
+        assert!(err.contains("carries a credential"), "{err}");
+        assert!(!err.contains("cache-token"), "{err}");
+
+        // A clean origin with the same identity passes the origin checks.
+        git(
+            &cache,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/Owner/Repo.git",
+            ],
+        );
+        ensure_cache_entry_is_owned(&remote).unwrap();
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[cfg(unix)]
     #[test]
-    fn cache_entry_that_is_a_symlink_is_refused_before_any_git_runs() {
+    fn symlinked_cache_entry_is_refused_on_every_resolution_path() {
         let root = tmpdir("symlinked-cache-entry");
         let checkout = root.join("user-checkout");
         init_git_repo(&checkout);
         std::fs::write(checkout.join("uncommitted.txt"), "precious\n").unwrap();
         std::fs::write(checkout.join("README.md"), "precious\n").unwrap();
-        let cache = root.join("cache").join("owner_repo");
+        let home = root.join("home");
+        let cache = home.join(".vstack").join("cache").join("owner_repo");
         std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&checkout, &cache).unwrap();
 
-        let err = reject_unowned_cache_entry("owner/repo", &cache)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("symlink"), "{err}");
-        assert!(!err.contains(&cache.display().to_string()), "{err}");
-        let err = update_cached_repo("owner/repo", &cache)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("symlink"), "{err}");
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            let remote = RemoteSource::parse("owner/repo").unwrap().unwrap();
+            assert_eq!(remote.cache_dir, cache);
+            let err = reject_unowned_cache_entry(&remote).unwrap_err().to_string();
+            assert!(err.contains("symlink"), "{err}");
+            let err = update_cached_repo(&remote).unwrap_err().to_string();
+            assert!(err.contains("symlink"), "{err}");
+            // Neither the read-only nor the updating resolution returns the
+            // linked checkout as the remote source.
+            assert_eq!(resolve_source_path("owner/repo"), None);
+            assert_eq!(resolve_single_source("owner/repo"), None);
+            assert!(recorded_source_exists("owner/repo"));
+            assert!(
+                cache_refusal_reason("owner/repo").is_some_and(|r| r.contains("symlink")),
+                "the refusal is remembered for the refresh report"
+            );
+        });
         assert_eq!(
             std::fs::read_to_string(checkout.join("README.md")).unwrap(),
             "precious\n"
@@ -1364,10 +1773,9 @@ mod tests {
         let cache = root.join("cache").join("owner_repo");
         std::fs::create_dir_all(&cache).unwrap();
         std::os::unix::fs::symlink(checkout.join(".git"), cache.join(".git")).unwrap();
+        let remote = remote_at(&cache, &checkout);
 
-        let err = update_cached_repo("owner/repo", &cache)
-            .unwrap_err()
-            .to_string();
+        let err = update_cached_repo(&remote).unwrap_err().to_string();
         assert!(err.contains("does not own its git metadata"), "{err}");
 
         // A `gitdir:` file is the same redirection by another spelling.
@@ -1377,9 +1785,7 @@ mod tests {
             format!("gitdir: {}\n", checkout.join(".git").display()),
         )
         .unwrap();
-        let err = update_cached_repo("owner/repo", &cache)
-            .unwrap_err()
-            .to_string();
+        let err = update_cached_repo(&remote).unwrap_err().to_string();
         assert!(err.contains("does not own its git metadata"), "{err}");
         assert_eq!(
             std::fs::read_to_string(checkout.join("README.md")).unwrap(),
@@ -1403,81 +1809,245 @@ mod tests {
     }
 
     #[test]
-    fn every_cache_git_invocation_is_non_interactive_and_drops_location_overrides() {
-        let cache_dir = Path::new("/vstack/cache/owner_repo");
-        let update = command_env(&cache_git_command(cache_dir));
+    fn every_git_invocation_is_non_interactive_and_drops_location_overrides() {
+        let root = tmpdir("git-env");
+        let home = root.join("home");
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            git_env_assertions(&root)
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn git_env_assertions(root: &Path) {
+        let dir = remote_cache_root().join("owner_repo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let local = command_env(&hardened_git_command(&dir));
         // Control: a bare `git` carries none of it, so the assertions below
         // are claims about the hardening and not about two empty maps.
-        assert_ne!(command_env(&std::process::Command::new("git")), update);
+        assert_ne!(command_env(&std::process::Command::new("git")), local);
 
         for key in GIT_LOCATION_ENV_VARS {
             assert_eq!(
-                update.get(*key),
+                local.get(*key),
                 Some(&None),
-                "{key} is not cleared: {update:?}"
+                "{key} is not cleared: {local:?}"
             );
         }
         assert_eq!(
-            update
+            local
                 .get("GIT_TERMINAL_PROMPT")
                 .cloned()
                 .flatten()
                 .as_deref(),
             Some("0")
         );
+
+        let network = command_env(&hardened_git_network_command(&dir));
+        for (key, value) in &local {
+            assert_eq!(
+                network.get(key),
+                Some(value),
+                "{key} differs on the network path"
+            );
+        }
         assert!(
-            update
+            network
                 .get("GIT_SSH_COMMAND")
                 .cloned()
                 .flatten()
-                .is_some_and(|v| v.contains("BatchMode=yes")),
-            "{update:?}"
+                .is_some_and(|v| v.contains("-o BatchMode=yes")),
+            "{network:?}"
         );
-        // Cloning is as unattended as updating and must be built by the same
+        // Cloning is as unattended as fetching and must be built by the same
         // constructor.
+        let remote = remote_at(&dir, &root.join("origin"));
+        assert_eq!(command_env(&cache_clone_command(&remote)), network);
+    }
+
+    #[test]
+    fn batch_mode_ssh_command_follows_git_precedence_and_outranks_later_options() {
+        // Nothing configured.
         assert_eq!(
-            command_env(&cache_clone_command(
+            batch_mode_ssh_command(None, None, None),
+            "ssh -o BatchMode=yes"
+        );
+        assert_eq!(
+            batch_mode_ssh_command(Some("   "), None, None),
+            "ssh -o BatchMode=yes"
+        );
+        // GIT_SSH_COMMAND outranks core.sshCommand outranks GIT_SSH.
+        assert_eq!(
+            batch_mode_ssh_command(
+                Some("ssh -i /keys/a"),
+                Some("/opt/ssh -i /keys/b"),
+                Some("/x")
+            ),
+            "ssh -o BatchMode=yes -i /keys/a"
+        );
+        assert_eq!(
+            batch_mode_ssh_command(None, Some("/opt/ssh -i /keys/b"), Some("/x")),
+            "/opt/ssh -o BatchMode=yes -i /keys/b"
+        );
+        assert_eq!(
+            batch_mode_ssh_command(None, None, Some("/path with space/ssh")),
+            "'/path with space/ssh' -o BatchMode=yes"
+        );
+        // An inherited BatchMode=no is outranked: OpenSSH takes the first
+        // value it sees, and ours comes directly after the program.
+        assert_eq!(
+            batch_mode_ssh_command(Some("ssh -o BatchMode=no -i k"), None, None),
+            "ssh -o BatchMode=yes -o BatchMode=no -i k"
+        );
+        // A quoted program token stays whole.
+        assert_eq!(
+            batch_mode_ssh_command(Some("'/my ssh' -v"), None, None),
+            "'/my ssh' -o BatchMode=yes -v"
+        );
+    }
+
+    #[test]
+    fn configured_core_ssh_command_survives_into_the_network_command() {
+        if std::env::var_os("GIT_SSH_COMMAND").is_some() {
+            // The environment outranks config by design; nothing to check here.
+            return;
+        }
+        let root = tmpdir("core-ssh-command");
+        let repo = root.join("repo");
+        init_git_repo(&repo);
+        git(
+            &repo,
+            &["config", "core.sshCommand", "/opt/ssh -i /keys/id"],
+        );
+
+        let env = command_env(&hardened_git_network_command(&repo));
+        assert_eq!(
+            env.get("GIT_SSH_COMMAND").cloned().flatten().as_deref(),
+            Some("/opt/ssh -o BatchMode=yes -i /keys/id")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_source_parse_derives_one_key_per_repository_identity() {
+        let root = tmpdir("remote-parse");
+        let home = root.join("home");
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            let cache_root = home.join(".vstack").join("cache");
+            let shorthand = RemoteSource::parse("Owner/Repo").unwrap().unwrap();
+            assert_eq!(shorthand.git_url, "https://github.com/Owner/Repo.git");
+            assert_eq!(shorthand.cache_key, "owner_repo");
+            assert_eq!(shorthand.cache_dir, cache_root.join("owner_repo"));
+            assert_eq!(shorthand.display, "Owner/Repo");
+
+            // Every spelling of the same GitHub repo shares the clone.
+            for spelling in [
                 "https://github.com/owner/repo.git",
-                cache_dir
-            )),
-            update
-        );
+                "https://github.com/Owner/Repo",
+                "git@github.com:owner/repo.git",
+                "ssh://git@github.com/owner/repo.git",
+                "git+ssh://git@github.com/owner/repo.git",
+            ] {
+                let remote = RemoteSource::parse(spelling).unwrap().unwrap();
+                assert_eq!(remote.cache_key, "owner_repo", "{spelling}");
+            }
+            assert_eq!(
+                RemoteSource::parse("git+ssh://git@github.com/owner/repo.git")
+                    .unwrap()
+                    .unwrap()
+                    .git_url,
+                "ssh://git@github.com/owner/repo.git"
+            );
+
+            // Another host never shares a key with GitHub, and two hosts never
+            // share one with each other.
+            let gitlab = RemoteSource::parse("https://gitlab.com/owner/repo.git")
+                .unwrap()
+                .unwrap();
+            assert_eq!(gitlab.cache_key, "gitlab_com_owner_repo");
+            let gitea = RemoteSource::parse("ssh://git@gitea.example.org:2222/owner/repo.git")
+                .unwrap()
+                .unwrap();
+            assert_ne!(gitea.cache_key, gitlab.cache_key);
+            assert_ne!(gitea.cache_key, shorthand.cache_key);
+
+            // Not remote-shaped.
+            for local in ["/abs/path", "./vendor", "../vstack", "name", "", "~/x"] {
+                assert_eq!(RemoteSource::parse(local).unwrap(), None, "{local}");
+            }
+        });
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn batch_mode_ssh_command_extends_an_inherited_command() {
-        assert_eq!(batch_mode_ssh_command(None), "ssh -o BatchMode=yes");
-        assert_eq!(batch_mode_ssh_command(Some("   ")), "ssh -o BatchMode=yes");
-        assert_eq!(
-            batch_mode_ssh_command(Some("ssh -i /keys/id_ed25519")),
-            "ssh -i /keys/id_ed25519 -o BatchMode=yes"
-        );
+    fn remote_source_cache_keys_are_always_one_safe_path_component() {
+        let root = tmpdir("remote-keys");
+        let home = root.join("home");
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            for source in [
+                "a/..",
+                "../x/y",
+                "https://host/../..",
+                "https://host/a/../b.git",
+                "https://host/%2e%2e/x",
+                "git@host:../x",
+                "https://host/a\\b/c",
+                "https://host//",
+                "https://Ünïcode.example/o/r",
+            ] {
+                let Ok(Some(remote)) = RemoteSource::parse(source) else {
+                    continue;
+                };
+                let key = &remote.cache_key;
+                assert!(!key.is_empty(), "{source}");
+                assert!(!key.contains('/') && !key.contains('\\'), "{source}: {key}");
+                assert!(key != "." && key != "..", "{source}: {key}");
+                assert!(
+                    key.chars().all(|ch| ch.is_ascii_lowercase()
+                        || ch.is_ascii_digit()
+                        || matches!(ch, '_' | '-')),
+                    "{source}: {key}"
+                );
+                assert_eq!(
+                    remote.cache_dir.parent(),
+                    Some(remote_cache_root().as_path()),
+                    "{source}"
+                );
+            }
+        });
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn credential_bearing_urls_are_rejected_and_never_echoed() {
-        for url in [
+    fn remote_source_parse_refuses_credentials_and_plaintext_before_any_git_runs() {
+        for source in [
             "https://token@github.com/Owner/Repo.git",
+            "HTTPS://token@github.com/Owner/Repo.git",
             "https://user:token@github.com/Owner/Repo.git",
             "ssh://git:token@github.com/Owner/Repo.git",
+            "git+ssh://git:token@github.com/Owner/Repo.git",
             "https://github.com/Owner/Repo.git?access_token=token",
             "https://github.com/Owner/Repo.git#token",
+            "https://token@evil.example/Owner/Repo.git?k=token",
         ] {
-            let err = reject_credential_bearing_git_url(url)
-                .unwrap_err()
-                .to_string();
-            assert!(!err.contains("token"), "{url}: {err}");
-            assert!(err.contains("<redacted>"), "{url}: {err}");
+            let err = RemoteSource::parse(source).unwrap_err().to_string();
+            assert!(!err.contains("token"), "{source}: {err}");
+            assert!(err.contains("<redacted>"), "{source}: {err}");
+            assert!(looks_like_remote_source(source), "{source}");
         }
+        let err = RemoteSource::parse("http://github.com/Owner/Repo.git")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("plaintext HTTP"), "{err}");
+
         // Legitimate usernames and shorthand are kept.
-        for url in [
+        for source in [
             "https://github.com/Owner/Repo.git",
             "ssh://git@github.com/Owner/Repo.git",
             "git+ssh://git@github.com/Owner/Repo.git",
             "git@github.com:Owner/Repo.git",
             "Owner/Repo",
         ] {
-            reject_credential_bearing_git_url(url).unwrap_or_else(|err| panic!("{url}: {err}"));
+            RemoteSource::parse(source).unwrap_or_else(|err| panic!("{source}: {err}"));
         }
         assert_eq!(
             remote_source_display("https://user:token@github.com/Owner/Repo.git?k=secret"),
@@ -1491,74 +2061,137 @@ mod tests {
     }
 
     #[test]
-    fn clone_cached_repo_refuses_a_credential_bearing_url_before_running_git() {
-        let root = tmpdir("clone-credential");
-        let cache = root.join("cache").join("owner_repo");
-        let err = clone_cached_repo(
-            "https://<redacted>@github.com/Owner/Repo.git",
-            "https://token@github.com/Owner/Repo.git",
-            &cache,
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("credential-bearing"), "{err}");
-        assert!(!cache.exists(), "no clone may be attempted");
+    fn git_output_summary_redacts_query_tokens_and_userinfo_in_urls() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::default(),
+            stdout: Vec::new(),
+            stderr: b"fatal: unable to access 'https://x@github.com/o/r.git?access_token=secret/': 403\nhint: see https://docs.example/help#anchor".to_vec(),
+        };
+        let summary = git_output_summary(&output);
+        assert!(!summary.contains("secret"), "{summary}");
+        assert!(!summary.contains("x@"), "{summary}");
+        assert!(summary.contains("fatal: unable to access"), "{summary}");
+        assert!(
+            summary.contains("'https://<redacted>@github.com/o/r.git?<redacted>':"),
+            "{summary}"
+        );
+        // A fragment is redacted; the surrounding prose is untouched.
+        assert!(
+            summary.contains("hint: see https://docs.example/help#<redacted>"),
+            "{summary}"
+        );
+    }
+
+    #[test]
+    fn clone_cached_repo_makes_a_shallow_clone_in_the_cache_root() {
+        let root = tmpdir("clone");
+        let origin = root.join("origin");
+        init_git_repo(&origin);
+        std::fs::write(origin.join("README.md"), "second\n").unwrap();
+        git(&origin, &["commit", "-q", "-am", "second"]);
+        let home = root.join("home");
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            let cache = remote_cache_root().join("owner_repo");
+            assert!(!cache.exists());
+            clone_cached_repo(&remote_at(&cache, &origin)).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(cache.join("README.md")).unwrap(),
+                "second\n"
+            );
+            assert_eq!(
+                git_stdout(&cache, &["rev-parse", "--is-shallow-repository"]),
+                "true"
+            );
+            // The fresh clone is owned and updatable.
+            update_cached_repo(&remote_at(&cache, &origin)).unwrap();
+        });
         let _ = std::fs::remove_dir_all(root);
     }
 
     /// The whole-lock best-effort refresh the TUI runs at startup uses the same
-    /// guarded update: a redirected cache entry is refused, and the victim
-    /// stays untouched.
+    /// guarded update: a redirected cache entry is refused and the victim
+    /// stays untouched; an owned entry is updated. Asserted directly after the
+    /// call, so a no-op loop body cannot pass on the strength of later calls.
     #[test]
     fn refresh_remote_caches_refuses_a_redirected_entry_and_updates_an_owned_one() {
-        let fx = redirected_cache("refresh-remote-caches");
-        let home = fx.root.join("home");
+        let root = tmpdir("refresh-remote-caches");
+        let home = root.join("home");
         let cache_root = home.join(".vstack").join("cache");
-        std::fs::create_dir_all(&cache_root).unwrap();
-        // The redirected fixture becomes the cache entry for `owner/repo`.
-        std::fs::rename(&fx.cache, cache_root.join("owner_repo")).unwrap();
+        let fx = redirected_cache_at(&root, &cache_root.join("owner_repo"));
         // An owned entry for `other/repo` with a newer origin.
-        let origin = fx.root.join("other-origin");
+        let origin = root.join("other-origin");
         init_git_repo(&origin);
         let owned = cache_root.join("other_repo");
-        git(
-            &fx.root,
-            &[
-                "clone",
-                "-q",
-                origin.to_str().unwrap(),
-                owned.to_str().unwrap(),
-            ],
-        );
+        clone_into(&origin, &owned);
         std::fs::write(origin.join("README.md"), "newer\n").unwrap();
         git(&origin, &["commit", "-q", "-am", "update"]);
-
+        // The origin check runs against the recorded source, so record the
+        // sources these clones really came from.
         let mut lock = config::LockFile::default();
-        lock.add(lock_entry("demo", "owner/repo"));
-        lock.add(lock_entry("scout", "other/repo"));
+        lock.add(lock_entry("demo", &file_url(&root.join("origin"))));
+        lock.add(lock_entry("scout", &file_url(&origin)));
 
         crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
-            assert_eq!(cached_repo_dir("owner/repo"), cache_root.join("owner_repo"));
+            // Pin the fixture clones to the keys the recorded sources derive.
+            let demo = RemoteSource::parse(&file_url(&root.join("origin")))
+                .unwrap()
+                .unwrap();
+            let scout = RemoteSource::parse(&file_url(&origin)).unwrap().unwrap();
+            std::fs::rename(&fx.remote.cache_dir, &demo.cache_dir).unwrap();
+            std::fs::rename(&owned, &scout.cache_dir).unwrap();
+
             refresh_remote_caches(&lock);
-            // The updating resolution refuses the entry instead of returning
-            // it; the owned one updates and resolves.
-            assert_eq!(resolve_single_source("owner/repo"), None);
+
             assert_eq!(
-                resolve_single_source("other/repo").as_deref(),
-                Some(owned.as_path())
+                victim_readme(&fx),
+                "precious\n",
+                "the redirected worktree must be untouched"
+            );
+            assert_eq!(
+                std::fs::read_to_string(scout.cache_dir.join("README.md")).unwrap(),
+                "newer\n",
+                "the owned entry must be updated by refresh_remote_caches itself"
+            );
+            assert!(cache_refusal_reason(&file_url(&root.join("origin"))).is_some());
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A refused remote is a source that exists: no entry falls back to another
+    /// loaded source, and no CWD or registry fallback stands in for it.
+    #[test]
+    fn refused_remote_source_is_never_substituted() {
+        let root = tmpdir("refused-no-substitute");
+        let home = root.join("home");
+        let cache_root = home.join(".vstack").join("cache");
+        let fx = redirected_cache_at(&root, &cache_root.join("owner_repo"));
+        let other_source = make_vstack_source(&root, "other");
+        std::fs::create_dir_all(other_source.join("skills/demo")).unwrap();
+
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            // Control: the test process runs inside a vstack checkout, so a
+            // lock whose sole source is genuinely absent does fall back to it.
+            let mut absent = config::LockFile::default();
+            absent.add(lock_entry("demo", "nobody/nothing"));
+            assert!(
+                !resolve_source_records(&absent).is_empty(),
+                "control: the CWD fallback must be reachable for the refusal case to prove anything"
+            );
+
+            let mut lock = config::LockFile::default();
+            lock.add(lock_entry("demo", "owner/repo"));
+            let records = resolve_source_records(&lock);
+            assert!(records.is_empty(), "{records:?}");
+            assert!(cache_refusal_reason("owner/repo").is_some());
+
+            // With another source loaded, the refused entry does not rebind
+            // to it.
+            let sources = vec![RefreshSource::from_root(&other_source)];
+            assert!(
+                refresh_source_for_entry(&sources, &lock_entry("demo", "owner/repo")).is_none()
             );
         });
-
-        assert_eq!(
-            std::fs::read_to_string(fx.victim.join("README.md")).unwrap(),
-            "precious\n",
-            "the redirected worktree must be untouched"
-        );
-        assert_eq!(
-            std::fs::read_to_string(owned.join("README.md")).unwrap(),
-            "newer\n",
-            "the owned entry must still be updated"
-        );
-        let _ = std::fs::remove_dir_all(fx.root);
+        assert_eq!(victim_readme(&fx), "precious\n");
+        let _ = std::fs::remove_dir_all(root);
     }
 }

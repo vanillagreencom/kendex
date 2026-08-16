@@ -827,12 +827,6 @@ fn collect_key_values(prefix: &str, table: &toml::value::Table, name: &str, out:
     }
 }
 
-/// Refresh cached repos for all remote sources found in installed lock entries.
-/// Called once at TUI startup so staleness checks see the latest content.
-pub fn refresh_remote_caches(lock: &LockFile) {
-    crate::refresh_sources::refresh_remote_caches(lock);
-}
-
 /// Resolve a lock entry's source string to an actual directory path.
 /// Handles "." by walking up from CWD to find a vstack source repo,
 /// and absolute paths directly.
@@ -913,8 +907,8 @@ pub fn github_slug_eq(left: &str, right: &str) -> bool {
 }
 
 fn source_repo_from_git_origin(source_root: &Path) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["-C", source_root.to_str()?, "remote", "get-url", "origin"])
+    let output = crate::refresh_sources::hardened_git_command(source_root)
+        .args(["remote", "get-url", "origin"])
         .output()
         .ok()?;
     if !output.status.success() {

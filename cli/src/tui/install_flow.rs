@@ -109,10 +109,10 @@ pub fn run_install_flow(
     if has_installed {
         let project_lock = crate::config::LockFile::load(&crate::config::lock_file_path(false))
             .unwrap_or_default();
-        crate::config::refresh_remote_caches(&project_lock);
+        crate::refresh_sources::refresh_remote_caches(&project_lock);
         let global_lock =
             crate::config::LockFile::load(&crate::config::lock_file_path(true)).unwrap_or_default();
-        crate::config::refresh_remote_caches(&global_lock);
+        crate::refresh_sources::refresh_remote_caches(&global_lock);
     }
 
     let prev_harnesses: HashSet<String> = installed
