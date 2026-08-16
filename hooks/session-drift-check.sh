@@ -8,10 +8,11 @@
 # harnesses: [claude-code, codex]
 # ---
 
-# No `set -e`: a session must start no matter what this hook hits.
-set -uo pipefail
+# Strict, and a session must still start no matter what this hook hits: every
+# command that can legitimately fail is guarded so this always reaches exit 0.
+set -euo pipefail
 
-INPUT=$(cat)
+INPUT=$(cat || true)
 
 if [ "${VSTACK_DRIFT_HOOK:-}" = "off" ]; then
   exit 0
@@ -47,8 +48,10 @@ if ! cd "$PROJECT_DIR" 2>/dev/null; then
   exit 0
 fi
 
-OUTPUT=$(vstack "${ARGS[@]}" 2>&1)
-RC=$?
+# vstack's exit code IS the classification; under errexit a bare failing
+# assignment would abort before `RC=$?` could run.
+RC=0
+OUTPUT=$(vstack "${ARGS[@]}" 2>&1) || RC=$?
 
 case "$RC" in
   0)

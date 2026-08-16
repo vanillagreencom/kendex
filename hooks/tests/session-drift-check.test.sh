@@ -98,6 +98,23 @@ assert_eq "$rc" 0 "exits 0 when the check itself fails"
 assert_contains "$out" "vstack check could not run (exit 2)" "names the failure and exit code"
 assert_contains "$out" "Error: loading lock file" "carries the check's own diagnostic"
 
+echo "session-drift-check: unreadable stdin"
+# Strict mode must not let a failed payload read abort the session start.
+# A `cat` stub that fails stands in for a harness that hands the hook no
+# readable stdin.
+FAILCAT_BIN="$TMP_ROOT/failcat"
+mkdir -p "$FAILCAT_BIN"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$FAILCAT_BIN/cat"
+chmod +x "$FAILCAT_BIN/cat"
+set +e
+out="$(env -u CLAUDE_PROJECT_DIR -u VSTACK_DRIFT_HOOK -u VSTACK_DRIFT_HOOK_AVAILABLE \
+  PATH="$FAILCAT_BIN:$BIN_DIR:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
+  FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" </dev/null 2>/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" 0 "exits 0 when the payload read fails"
+assert_eq "$out" "$REPORT" "still relays the report when the payload read fails"
+
 echo "session-drift-check: environment switches"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" VSTACK_DRIFT_HOOK=off
 assert_eq "$out" "" "VSTACK_DRIFT_HOOK=off silences the hook"

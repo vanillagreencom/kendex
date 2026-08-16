@@ -366,19 +366,28 @@ fn scrub_source_credentials(text: &str) -> String {
     text.to_string()
 }
 
+/// Characters a shell passes through untouched, so an argument built only
+/// from them needs no quoting at all.
+fn is_shell_safe(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '@' | ':' | '=' | '-')
+}
+
 /// A source rendered INSIDE a copy-paste command: credential- and
 /// control-scrubbed like prose, but never truncated — an elided argument is
-/// a command that cannot work — and quoted when it contains whitespace.
+/// a command that cannot work — and single-quoted whenever it holds anything
+/// a shell would interpret, so the pasted command runs on the literal string
+/// rather than on whatever `$`, backtick, or quote it happened to contain.
 fn command_arg(text: &str) -> String {
     let scrubbed: String = scrub_source_credentials(text)
         .chars()
         .map(|c| if c.is_control() { '?' } else { c })
         .collect();
-    if scrubbed.chars().any(char::is_whitespace) {
-        format!("\"{scrubbed}\"")
-    } else {
-        scrubbed
+    if !scrubbed.is_empty() && scrubbed.chars().all(is_shell_safe) {
+        return scrubbed;
     }
+    // POSIX single-quoting: nothing inside `'…'` is special, and the one
+    // character that cannot appear there is spliced back in as `'\''`.
+    format!("'{}'", scrubbed.replace('\'', r"'\''"))
 }
 
 /// Defensive rendering of text that did not pass through
@@ -1693,12 +1702,65 @@ mod scope_report_tests {
         assert_eq!(command_arg(&long), long, "commands never truncate");
         assert_eq!(
             command_arg("/sources/my repos/vstack"),
-            "\"/sources/my repos/vstack\""
+            "'/sources/my repos/vstack'"
         );
         assert_eq!(
             command_arg("ssh://git@example.com/owner/repo"),
             "ssh://git@example.com/owner/repo"
         );
+    }
+
+    #[test]
+    fn a_command_argument_quotes_every_shell_metacharacter() {
+        // Plain slugs and URLs stay bare — quoting everything would make the
+        // common line noisier for no gain.
+        assert_eq!(command_arg("owner/repo"), "owner/repo");
+        assert_eq!(command_arg("~/sources/vstack"), "'~/sources/vstack'");
+
+        // Anything the shell would interpret is neutralised by single quotes.
+        assert_eq!(command_arg("/src/say\"hi\""), "'/src/say\"hi\"'");
+        assert_eq!(command_arg("/src/$VAR/repo"), "'/src/$VAR/repo'");
+        assert_eq!(command_arg("/src/`id`/repo"), "'/src/`id`/repo'");
+        assert_eq!(command_arg("/src/back\\slash"), "'/src/back\\slash'");
+        assert_eq!(command_arg("/src/a;rm -rf b"), "'/src/a;rm -rf b'");
+
+        // The one character single quotes cannot hold is spliced, so the
+        // shell still sees exactly one argument.
+        assert_eq!(command_arg("/src/it's/repo"), r"'/src/it'\''s/repo'");
+
+        // An empty source still has to render as an argument, not vanish.
+        assert_eq!(command_arg(""), "''");
+    }
+
+    #[test]
+    fn a_quoted_command_argument_survives_a_real_shell() {
+        // Round-tripping through a real shell is the only proof that a
+        // rendered argument pastes as the literal source and not as some
+        // other command.
+        for raw in [
+            "/sources/my repos/vstack",
+            "/src/say\"hi\"",
+            "/src/$VAR/repo",
+            "/src/`id`/repo",
+            "/src/back\\slash",
+            "/src/it's/repo",
+            "/src/a;rm -rf b",
+            "owner/repo",
+            "",
+        ] {
+            let arg = command_arg(raw);
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("printf '%s' {arg}"))
+                .output()
+                .expect("sh runs");
+            assert!(out.status.success(), "sh parsed {arg}");
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                raw,
+                "{arg} must expand back to the literal source"
+            );
+        }
     }
 
     #[test]
