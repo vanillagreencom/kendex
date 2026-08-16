@@ -73,6 +73,7 @@ run_hook 'cd y && { rm -rf $X/z; }';     assert_eq "$rc" 2 'a group-wrapped rm i
 run_hook "$(printf 'rm\t-rf\t%s' '$X')"; assert_eq "$rc" 2 'tab-separated rm -rf is refused'
 run_hook 'rm -rf -- -$DIR/sub';          assert_eq "$rc" 2 'a dash-leading operand after -- is still a variable root'
 run_hook 'rm -rf $LOGS/*.log';           assert_eq "$rc" 2 'a glob in the operand does not disturb classification'
+run_hook 'rm -rf "${X+x:?}/save"';       assert_eq "$rc" 2 'an unset-guarded alternative whose text contains :? can expand empty and is refused'
 
 echo "=== block-unsafe-rm: the refusal names the cause and the rewrite ==="
 run_hook 'rm -rf $CACHE/$KEY'
@@ -105,6 +106,12 @@ echo "=== block-unsafe-rm: enforcement without jq ==="
 run_hook_path "$NOJQ_BIN" 'rm -rf "$P/save"';        assert_eq "$rc" 2 'without jq, an escaped-quote payload is still decoded and refused'
 run_hook_path "$NOJQ_BIN" 'rm -rf -- "${P:?}/save"'; assert_eq "$rc" 0 'without jq, the ${P:?} form still passes'
 run_hook_path "/nonexistent" 'git status --short';   assert_eq "$rc" 0 'a command without rm completes with no external tool reachable'
+set +e
+printf '%s' '{"tool_input":{"command":"rm -rf $X' \
+  | env -i HOME="$HOME" PWD="$PWD" TMPDIR=/tmp PATH="$NOJQ_BIN" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
+set -e
+assert_eq "$rc" 2 'without jq, an unterminated command string refuses'
+assert_contains "$ERR_FILE" 'could not decode' 'the no-jq refusal names the cause'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

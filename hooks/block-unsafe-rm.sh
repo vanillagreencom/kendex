@@ -33,6 +33,15 @@ else
   # Escape-aware fallback: the value may carry \" and \\ inside it.
   COMMAND=$(printf '%s' "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"\([^"\\]\|\\.\)*"' | head -1 \
     | sed 's/^"command"[[:space:]]*:[[:space:]]*"//;s/"$//;s/\\"/"/g;s/\\\\/\\/g' 2>/dev/null || true)
+  # Same fail-closed contract as the jq branch: a payload that names a
+  # command the fallback could not decode (e.g. an unterminated string) is
+  # refused, not skipped. A decoded-empty command ("command":"") still passes.
+  if [ -z "$COMMAND" ] \
+    && printf '%s' "$INPUT" | grep -q '"command"' \
+    && ! printf '%s' "$INPUT" | grep -Eq '"command"[[:space:]]*:[[:space:]]*""'; then
+    echo "block-unsafe-rm: could not decode the command from the hook payload; refusing rather than skipping the guard" >&2
+    exit 2
+  fi
 fi
 
 # One rm invocation per line: split on command separators, then keep the
@@ -71,7 +80,20 @@ while IFS= read -r seg; do
       while [ "${stripped#-}" != "$stripped" ]; do stripped=${stripped#-}; done
     fi
     case "$stripped" in
-      \$\{[A-Za-z_]*:\?*) continue ;;   # ${NAME:?} — cannot expand empty
+      \$\{[A-Za-z_]*:\?*)
+        # Safe only when everything before the first :? is a plain
+        # identifier: ${NAME:?} aborts on empty, but ${X+x:?} is an
+        # unset-guarded ALTERNATIVE whose text merely contains :? and can
+        # still expand empty.
+        _name=${stripped#??}
+        _name=${_name%%:\?*}
+        case "$_name" in
+          *[!A-Za-z0-9_]*) ;;   # not ${IDENTIFIER:?} — falls through below
+          *) continue ;;        # ${NAME:?} — cannot expand empty
+        esac
+        ;;
+    esac
+    case "$stripped" in
       \$*)
         {
           echo "Recursive rm on a variable-rooted path stalls the session: the harness stops on"
