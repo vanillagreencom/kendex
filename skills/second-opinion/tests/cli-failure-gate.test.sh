@@ -1176,5 +1176,35 @@ assert_file_contains "$s13_err" "$s13_out.failed.json" "the path that refused it
 assert_file_contains "$s13_err" "could not be preserved anywhere" "the loss is still stated"
 assert_file_contains "$s13_err" "hit your usage limit" "the provider cause still reaches stderr"
 
+# --- Scenario 14: a home that exists but will not hold a file ----------------
+# `mkdir -p` succeeds on a directory that already exists and denies writes, so
+# resolving a home is not being able to create in one. The record still has to
+# reach somewhere and keep its exit class, and the operator has to be told the
+# configured home was not the somewhere.
+echo "=== scenario 14: an unwritable artifact home -> temp fallback, cause and class kept ==="
+if $CAN_DENY_BY_MODE; then
+  s14_tmp="$TMP_ROOT/tmpdir14"
+  s14_home="$TMP_ROOT/home14"
+  rm -rf "$s14_tmp" "$s14_home"; mkdir -p "$s14_tmp" "$s14_home"; chmod 0555 "$s14_home"
+  s14_err="$TMP_ROOT/s14.stderr"
+  printf '0' > "$COUNTER"
+  rc14=0
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s14_tmp" \
+    SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+    SECOND_OPINION_ARTIFACT_DIR="$s14_home" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s14_err"
+  rc14=$?
+  set -e
+  chmod 0700 "$s14_home"
+  assert_eq "$rc14" "5" "an unwritable home keeps EXIT_CLI_FAILED (5)"
+  assert_file_contains "$s14_err" "artifact home unusable" "the home is named as unusable"
+  assert_file_contains "$s14_err" "record kept in system temp instead" "the record still reaches somewhere"
+  assert_file_contains "$s14_err" "hit your usage limit" "the provider cause still reaches stderr"
+  assert_eq "$(ls "$s14_home" | wc -l | tr -d ' ')" "0" "nothing was written into the unwritable home"
+else
+  skip "unwritable artifact home: running as root, a mode-denied directory is still writable"
+fi
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

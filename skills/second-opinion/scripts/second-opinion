@@ -1218,6 +1218,17 @@ artifact_home() {
   ARTIFACT_HOME="$dir"
 }
 
+# The home resolved but will not hold a file — it filled, its permissions
+# changed, or it was never writable and `mkdir -p` said nothing because it
+# already existed. Stated once and then forgotten, so every later allocation
+# goes straight to the fallback rather than retrying the same refusal and
+# repeating the line. One wording for both consumers: an operator reading this
+# has one condition to act on, not two spellings of it.
+artifact_home_unusable() {
+  echo "→ artifact home unusable, falling back to system temp: $ARTIFACT_HOME" >&2
+  ARTIFACT_HOME=""
+}
+
 artifact_file() {
   local kind="$1"
   artifact_home
@@ -1228,7 +1239,10 @@ artifact_file() {
     # case via the canonicalized $CWD), so the template can never begin with
     # `-`. That also avoids relying on `--` in mktemp, whose support for it is
     # not uniform across the BSD/macOS target.
-    ARTIFACT_PATH=$(mktemp "$ARTIFACT_HOME/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || ARTIFACT_PATH=""
+    ARTIFACT_PATH=$(mktemp "$ARTIFACT_HOME/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || {
+      artifact_home_unusable
+      ARTIFACT_PATH=""
+    }
   fi
   if [[ -z "$ARTIFACT_PATH" ]]; then
     # System temp is the last resort, and it can refuse too (a read-only or
@@ -1659,8 +1673,7 @@ if $MULTI_LANE; then
         # already paid for one. Said once — forgetting the home keeps every
         # later lane from retrying it and from repeating the line.
         lane_out=$(mktemp "$ARTIFACT_HOME/${MODE}-lane-${lane}.XXXXXX" 2>/dev/null) || {
-          echo "→ artifact home unusable, lanes fall back to system temp: $ARTIFACT_HOME" >&2
-          ARTIFACT_HOME=""
+          artifact_home_unusable
           lane_out=""
         }
       fi
