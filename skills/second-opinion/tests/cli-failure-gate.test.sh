@@ -1178,9 +1178,9 @@ assert_file_contains "$s13_err" "hit your usage limit" "the provider cause still
 
 # --- Scenario 14: a home that exists but will not hold a file ----------------
 # `mkdir -p` succeeds on a directory that already exists and denies writes, so
-# resolving a home is not being able to create in one. The record still has to
-# reach somewhere and keep its exit class, and the operator has to be told the
-# configured home was not the somewhere.
+# resolving a home is not the same as being able to create in it. The record
+# still has to reach somewhere and keep its exit class, and the operator has to
+# be told the configured home was not the somewhere.
 echo "=== scenario 14: an unwritable artifact home -> temp fallback, cause and class kept ==="
 if $CAN_DENY_BY_MODE; then
   s14_tmp="$TMP_ROOT/tmpdir14"
@@ -1201,7 +1201,8 @@ if $CAN_DENY_BY_MODE; then
   assert_file_contains "$s14_err" "artifact home unusable" "the home is named as unusable"
   assert_file_contains "$s14_err" "record kept in system temp instead" "the record still reaches somewhere"
   assert_file_contains "$s14_err" "hit your usage limit" "the provider cause still reaches stderr"
-  assert_eq "$(ls "$s14_home" | wc -l | tr -d ' ')" "0" "nothing was written into the unwritable home"
+  assert_eq "$(find "$s14_home" -mindepth 1 2>/dev/null | head -1)" "" \
+    "nothing was written into the unwritable home"
 else
   skip "unwritable artifact home: running as root, a mode-denied directory is still writable"
 fi

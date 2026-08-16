@@ -1218,9 +1218,9 @@ artifact_home() {
   ARTIFACT_HOME="$dir"
 }
 
-# The home resolved but will not hold a file — it filled, its permissions
-# changed, or it was never writable and `mkdir -p` said nothing because it
-# already existed. Stated once and then forgotten, so every later allocation
+# The home resolved but will not hold a file — it ran out of space, its
+# permissions changed, or it was never writable and `mkdir -p` said nothing
+# because it already existed. Stated once and then forgotten, so every later allocation
 # goes straight to the fallback rather than retrying the same refusal and
 # repeating the line. One wording for both consumers: an operator reading this
 # has one condition to act on, not two spellings of it.
