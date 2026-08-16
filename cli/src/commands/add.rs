@@ -186,6 +186,9 @@ fn source_label(source: &str) -> String {
         return format!("local: {source}");
     }
 
+    // A registry or lock written by an earlier vstack can still hold a
+    // credential URL; a picker row is one of the places that would print it.
+    let source = crate::refresh_sources::remote_source_display(source);
     let trimmed = source
         .trim_end_matches('/')
         .trim_end_matches(".git")
@@ -464,6 +467,32 @@ mod auto_include_agent_skills_tests {
 #[cfg(test)]
 mod source_option_tests {
     use super::*;
+
+    /// A registry or lock written by an earlier vstack can still hold a
+    /// credential URL — exactly the strings the parser now refuses. The picker
+    /// row that renders it must not be where the token is printed.
+    #[test]
+    fn source_label_never_prints_a_credential() {
+        for source in [
+            "https://user:token@github.com/owner/repo.git",
+            "https://token@github.com/owner/repo.git",
+            "https://user:to ken@github.com/owner/repo.git",
+        ] {
+            let label = source_label(source);
+            assert!(!label.contains("token"), "{source}: {label}");
+            assert!(label.contains("<redacted>"), "{source}: {label}");
+        }
+        // Ordinary sources are untouched.
+        assert_eq!(source_label("owner/repo"), "owner/repo");
+        assert_eq!(
+            source_label("https://github.com/owner/repo.git"),
+            "owner/repo"
+        );
+        assert_eq!(
+            source_label("ssh://git@github.com/owner/repo.git"),
+            "ssh://git@github.com/owner/repo"
+        );
+    }
 
     fn tmpdir(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -2800,7 +2829,9 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
 fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
     match source {
         Some(path) if Path::new(path).exists() => Ok(std::fs::canonicalize(path)?),
-        Some(source) if looks_like_remote(source) => clone_or_update(source),
+        Some(source) if crate::refresh_sources::looks_like_remote_source(source) => {
+            clone_or_update(source)
+        }
         Some(source) => {
             anyhow::bail!(
                 "Source not found: {source}\n\
@@ -2824,17 +2855,13 @@ fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
     }
 }
 
-fn looks_like_remote(source: &str) -> bool {
-    crate::refresh_sources::looks_like_remote_source(source)
-}
-
 /// Clone or update a remote repo into its entry under `~/.vstack/cache/`.
 fn clone_or_update(source: &str) -> Result<PathBuf> {
     let remote = crate::refresh_sources::RemoteSource::parse(source)?
         .ok_or_else(|| anyhow::anyhow!("Source not found: {source}"))?;
     let display = &remote.display;
 
-    if remote.cache_dir.join(".git").exists() {
+    if crate::refresh_sources::cache_entry_present(&remote) {
         // Update existing clone (handles force-pushed histories). A refusal —
         // the entry is not vstack's own clone — is an error; a failed fetch
         // keeps the stale clone.

@@ -254,25 +254,33 @@
     route cannot churn-loop; the worktree live-lease suite's check count is
     corrected (35, not 20).
 - cli: every git process vstack runs — cache clone/fetch/reset, origin and
-  HEAD reads — is built by one hardened constructor: `GIT_DIR`/`GIT_WORK_TREE`-
-  family variables dropped, `GIT_TERMINAL_PROMPT=0`, and for network commands
-  the ssh command git would pick (`GIT_SSH_COMMAND`, `core.sshCommand`,
-  `GIT_SSH`, `ssh`) with `BatchMode=yes` inserted after the program.
-  `reset --hard` runs only after the cache entry proves to be vstack's own
-  clone: not a symlink, not a redirected `.git`, `rev-parse --show-toplevel`
-  is the entry itself, and `origin` is this source with no credential in it.
-  A cache whose `core.worktree` pointed at a user checkout used to have that
-  checkout's tracked files overwritten (VST-256). A refused entry is a source
-  that exists: `add` fails, `refresh` reports the entry as not refreshed with
-  the refusal as its reason and exits non-zero (never rebinding it to another
-  source or repairing its lock record), and the TUI's startup cache refresh
-  skips it. A failed fetch keeps the stale clone; a failed reset is an error.
-  Remote sources resolve to one cache key per repository identity — every
-  spelling of a GitHub repo shares `owner_repo`, other hosts get their own —
-  so URL-added sources refresh from the clone `add` made. Credential-bearing
-  or plaintext-HTTP source URLs (userinfo token, `user:pass@`, query or
-  fragment, `http://`) are rejected before any git runs and never echoed;
-  ssh usernames are kept.
+  HEAD reads, and the repository-identity reads the `.agents/skills` ownership
+  boundary is judged against — is built by one hardened constructor:
+  `GIT_DIR`/`GIT_WORK_TREE`-family variables dropped, `GIT_TERMINAL_PROMPT=0`,
+  and for network commands the ssh command git would pick (`GIT_SSH_COMMAND`,
+  then `core.sshCommand`) carrying its own variant's noninteractive flag —
+  `-o BatchMode=yes` for OpenSSH, `-batch` for plink/putty/tortoiseplink,
+  nothing for `simple`, honouring an explicit `ssh.variant`. A `GIT_SSH`
+  program is left exactly as git has it. `reset --hard` runs only after the
+  cache entry proves to be vstack's own clone: not a symlink, not a redirected
+  `.git`, `rev-parse --show-toplevel` is the entry itself, and `origin` is this
+  source with no credential in it. A cache whose `core.worktree` pointed at a
+  user checkout used to have that checkout's tracked files overwritten
+  (VST-256). A remote source is a source whether or not its clone is present or
+  usable: `add` fails, `refresh` reports the entry as not refreshed naming the
+  real cause — the refusal, or a cache that is not on this machine — and exits
+  non-zero, never rebinding the entry to another source or repairing its lock
+  record; the TUI's startup cache refresh skips it. A failed fetch keeps the
+  stale clone (warned once, not once per resolve); a failed reset is an error.
+  Remote sources resolve to one cache entry per repository identity — every
+  spelling of a GitHub repo shares one, two repositories never do — so
+  URL-added sources refresh from the clone `add` made, and a clone made under
+  the older cache name is adopted rather than orphaned. Credential-bearing or
+  plaintext-HTTP source URLs (userinfo token, `user:pass@`, query or fragment,
+  `http://`), URLs whose authority carries whitespace or control characters,
+  and sources starting with `-` are rejected before any git runs and never
+  echoed — including in the source picker, which used to print a legacy
+  registry entry's token verbatim; ssh usernames are kept.
 - decider: index rows are append-only, never re-sorted — the template's
   "date order" clause contradicted its own example and the CLI reads rows
   positionally (VST-263); the schema carries the placement rule.

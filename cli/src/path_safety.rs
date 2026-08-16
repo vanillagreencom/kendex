@@ -102,12 +102,10 @@ fn git_output_path(bytes: &[u8]) -> Option<PathBuf> {
 /// is not inside a Git repository or the answer cannot be resolved — callers
 /// fail closed.
 pub(crate) fn git_toplevel(dir: &Path) -> Option<PathBuf> {
-    // `.arg(dir)` passes the path as raw OS bytes — a non-UTF-8 path must
-    // not silently skip repository detection (to_str() would return None
-    // and defeat anchoring on a perfectly valid Unix path).
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    // The hardened constructor pins the working directory and drops the
+    // `GIT_DIR`/`GIT_WORK_TREE` family: an inherited override would answer for
+    // a different repository than the one being anchored against.
+    let output = crate::refresh_sources::hardened_git_command(dir)
         .args(["rev-parse", "--show-toplevel"])
         .output()
         .ok()?;
@@ -121,9 +119,7 @@ pub(crate) fn git_toplevel(dir: &Path) -> Option<PathBuf> {
 /// is not inside a Git repository, when git is unavailable, or when the answer
 /// cannot be resolved — every one of which must fail closed at the call site.
 pub(crate) fn git_common_dir(dir: &Path) -> Option<PathBuf> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let output = crate::refresh_sources::hardened_git_command(dir)
         .args(["rev-parse", "--git-common-dir"])
         .output()
         .ok()?;
@@ -148,9 +144,7 @@ pub(crate) fn git_common_dir(dir: &Path) -> Option<PathBuf> {
 /// git is unavailable, or when either answer cannot be resolved — callers
 /// must fail closed.
 pub(crate) fn git_repo_identity(dir: &Path) -> Option<(PathBuf, PathBuf)> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let output = crate::refresh_sources::hardened_git_command(dir)
         .args(["rev-parse", "--git-common-dir", "--show-toplevel"])
         .output()
         .ok()?;

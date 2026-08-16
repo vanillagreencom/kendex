@@ -620,7 +620,7 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
         });
 
         let source_records = crate::refresh_sources::resolve_source_records(&lock);
-        let sources = crate::refresh_sources::load_refresh_sources(&source_records);
+        let sources = crate::refresh_sources::load_refresh_sources(&source_records.sources);
         let source_hooks = crate::refresh_sources::all_source_hooks(&sources);
 
         let pruned = crate::commands::refresh::prune_hook_harnesses(
@@ -656,6 +656,7 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
             &mut project_config,
             &project_root,
             Some(&refresh_names),
+            &source_records.refused,
         );
 
         if !scope_global {
@@ -691,7 +692,7 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
         let now = config::now_iso();
         for (name, entry) in lock.entries.iter_mut() {
             if stats.successful_items.contains(name) {
-                crate::commands::refresh::sync_lock_entry_source_repo(&source_records, entry);
+                crate::commands::refresh::sync_lock_entry_source_repo(&source_records.sources, entry);
                 entry.installed_at = now.clone();
                 entry.source_hash = config::compute_source_hash(entry);
             }

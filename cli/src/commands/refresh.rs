@@ -44,6 +44,10 @@ pub struct RefreshStats {
     /// report can never fall through to "unchanged" with the stored hash —
     /// that silently masked an entry whose source had stopped providing it.
     pub missing: BTreeMap<String, String>,
+    /// Recorded source string → why source resolution refused it. Handed in
+    /// once by the caller so an entry backed by a refused source is reported
+    /// as refused rather than as absent.
+    refused_sources: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,21 +97,30 @@ impl RefreshStats {
     }
 
     /// Record that `item`'s recorded source did not resolve to any loaded
-    /// source. The reason names what the lock recorded so the user can see
-    /// which source vanished (or that none was ever recorded) — and a remote
-    /// cache that resolution REFUSED is named as refused rather than as
-    /// absent, which are repaired differently.
+    /// source.
     fn mark_source_missing(&mut self, item: &str, recorded_source: &str) {
-        let reason = if let Some(refusal) =
-            crate::refresh_sources::cache_refusal_reason(recorded_source)
-        {
-            refusal
-        } else if recorded_source.trim().is_empty() {
-            "source not found (none recorded)".to_string()
-        } else {
-            format!("source not found: {recorded_source}")
-        };
+        let reason = self.unresolved_source_reason(recorded_source);
         self.missing.insert(item.to_string(), reason);
+    }
+
+    /// Why a recorded source produced nothing. A refused source and a remote
+    /// whose clone is not on this machine are both sources that exist — saying
+    /// "source not found" for either is the wrong cause, and it is the cause
+    /// that tells the user whether to clear a cache entry or run `vstack add`.
+    fn unresolved_source_reason(&self, recorded_source: &str) -> String {
+        if let Some(refusal) = self.refused_sources.get(recorded_source) {
+            return refusal.clone();
+        }
+        if crate::refresh_sources::looks_like_remote_source(recorded_source) {
+            return format!(
+                "remote cache not present — run `vstack add {}`",
+                crate::refresh_sources::remote_source_display(recorded_source)
+            );
+        }
+        if recorded_source.trim().is_empty() {
+            return "source not found (none recorded)".to_string();
+        }
+        format!("source not found: {recorded_source}")
     }
 
     pub fn has_failures(&self) -> bool {
@@ -228,8 +241,12 @@ pub fn refresh_items_in_scope(
     project_config: &mut ProjectConfig,
     project_root: &Path,
     name_filter: Option<&[String]>,
+    refused_sources: &BTreeMap<String, String>,
 ) -> RefreshStats {
-    let mut stats = RefreshStats::default();
+    let mut stats = RefreshStats {
+        refused_sources: refused_sources.clone(),
+        ..RefreshStats::default()
+    };
     let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
     let all_hooks = all_source_hooks(sources);
 
@@ -1060,8 +1077,8 @@ pub fn regenerate_agents_after_hook_removal(
         return Ok(());
     }
 
-    let source_records = resolve_source_records(lock);
-    let sources = load_refresh_sources(&source_records);
+    let records = resolve_source_records(lock);
+    let sources = load_refresh_sources(&records.sources);
     if sources.is_empty() {
         return Ok(());
     }
@@ -1073,6 +1090,7 @@ pub fn regenerate_agents_after_hook_removal(
         project_config,
         project_root,
         Some(&agent_names),
+        &records.refused,
     );
     if !global {
         stats.persist_upstream(project_root);
@@ -1184,7 +1202,9 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     // Resolve source directories once per refresh. Cached remote sources update
     // during resolution; reusing this list avoids duplicate git fetch/reset
     // cycles for pruning and aggregation.
-    let source_records = resolve_source_records(&lock);
+    let records = resolve_source_records(&lock);
+    let source_records = records.sources;
+    let refused_sources = records.refused;
     let source_dirs: Vec<_> = source_records
         .iter()
         .map(|source| source.root.clone())
@@ -1278,6 +1298,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         &mut project_config,
         &project_root,
         None,
+        &refused_sources,
     );
 
     if !global {
