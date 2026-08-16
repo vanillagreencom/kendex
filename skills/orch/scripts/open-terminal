@@ -54,13 +54,15 @@ Options:
                     --harness; `auto:<h>` picks for harness <h>; a config dir
                     is used literally; any other value is looked up as a lane
                     alias. Refuses to launch when no lane is under the usage
-                    threshold, rather than launching into a wall. Every tmux
-                    window launched under a lane records a claim (see `lanes
-                    --help`), live while its pane is, and `auto` re-picks
-                    before each further item, so a batch spreads across
-                    accounts instead of stacking on one. A re-pick that
-                    qualifies no lane stops the batch, leaving the items
-                    already launched alone.
+                    threshold, rather than launching into a wall. On tmux
+                    lanes only: every window launched under a lane records a
+                    claim (see `lanes --help`), live while its pane is, and
+                    `auto` re-picks before each further item, so a batch
+                    spreads across accounts instead of stacking on one. A
+                    re-pick that qualifies no lane stops the batch, leaving
+                    the items already launched alone. A GUI launch has no
+                    pane to keep a claim alive, so a GUI batch stays on the
+                    lane resolved up front.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -465,6 +467,11 @@ repo="$(resolve_repo)"
 launched=0
 failed=0
 skipped=0
+attempted=0
+# Distinct lanes this run launched on, so the summary cannot attribute a
+# spread batch to whichever lane happened to be last.
+lanes_used=0
+[[ -z "$LANE_ENV" ]] || lanes_used=1
 for raw in "${ITEMS[@]}"; do
   item="$raw"
   if [[ "$TRACKER" == "linear" ]]; then
@@ -490,13 +497,18 @@ for raw in "${ITEMS[@]}"; do
     wt_id="issue-$item"
     title="gh-$item"
   fi
-  # `--lane auto` is re-resolved per item once one lane is up: the claim the
-  # previous launch recorded is what moves this item off that account, and a
-  # single upfront pick puts a whole batch on one lane. Still ahead of this
-  # item's worktree, so a stopped batch leaves no orphan tree behind. A pick
-  # that can no longer prove a lane stops the batch rather than launching onto
-  # an account nothing vouched for.
-  if [[ "$LANE_AUTO" == true && "$launched" -gt 0 ]]; then
+  # `--lane auto` is re-resolved for every item after the first: the claim the
+  # previous window recorded is what moves this item off that account, and a
+  # single upfront pick puts a whole batch on one lane. The trigger is "an
+  # earlier item was attempted", never "an earlier item succeeded" — a window
+  # that was created and then failed its brief still holds that account, and
+  # its claim must still be read. Still ahead of this item's worktree, so a
+  # stopped batch leaves no orphan tree behind. A pick that can no longer
+  # prove a lane stops the batch rather than launching onto an account nothing
+  # vouched for. tmux only: a claim's liveness handle is a pane, so on a GUI
+  # surface a re-pick would re-read numbers nothing has moved.
+  attempted=$((attempted + 1))
+  if [[ "$LANE_AUTO" == true && "$TERMINAL_MODE" == "tmux" && "$attempted" -gt 1 ]]; then
     lane_rc=0
     next_lane="$(pick_auto_lane)" || lane_rc=$?
     if [[ "$lane_rc" -ne 0 ]]; then
@@ -515,6 +527,7 @@ for raw in "${ITEMS[@]}"; do
     fi
     if [[ "$next_lane" != "$LANE_ENV" ]]; then
       LANE_ENV="$next_lane"
+      lanes_used=$((lanes_used + 1))
       echo "Lane: $LANE_ENV"
     fi
   fi
@@ -577,7 +590,11 @@ if [[ "$launched" -eq 0 && "$skipped" -gt 0 ]]; then
   echo "Done: launched 0 handoff session(s)$skipped_note." >&2
   exit 75
 fi
-if [[ -n "$LANE_ENV" ]]; then
+if [[ "$lanes_used" -gt 1 ]]; then
+  # A re-picked batch ran on several accounts; naming the last one would
+  # attribute every session to a lane most of them never touched.
+  echo "Done: launched $launched handoff session(s)$skipped_note across $lanes_used lanes (see the Lane: lines above)."
+elif [[ -n "$LANE_ENV" ]]; then
   echo "Done: launched $launched handoff session(s)$skipped_note on lane $LANE_ENV."
 else
   echo "Done: launched $launched handoff session(s)$skipped_note."

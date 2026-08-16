@@ -381,6 +381,11 @@ OT_TMUX_LOG="$TMP_ROOT/lanes.tmux-log"
 cat > "$OT_STUB_BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
+# $OT_TMUX_FAIL names one tmux subcommand that fails after logging, so a case
+# can leave a window created and claimed while the launch itself fails.
+if [[ -n "${OT_TMUX_FAIL:-}" && "${1:-}" == "$OT_TMUX_FAIL" ]]; then
+  exit 1
+fi
 # A server whose pid is this test process: claims recorded against it are
 # genuinely live, so `lanes pick` sees them the way it would on a real server.
 # $OT_TMUX_PANES counts the windows created; every one is reported by
@@ -547,6 +552,37 @@ assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f3 | sort -u | wc
   "a two-item --lane auto batch spreads across two accounts"
 assert_contains "$auto_out" "CLAUDE_CONFIG_DIR=$H/.claude" "the first item takes the lane with the most headroom"
 assert_contains "$auto_out" "CLAUDE_CONFIG_DIR=$H/.eclaude" "the second item is re-picked onto the unclaimed lane"
+assert_contains "$auto_out" "across 2 lanes" \
+  "the summary reports the spread rather than attributing every session to the last lane"
+
+# A window that was created and then failed its launch still holds that
+# account: the re-pick trigger is an attempted item, never a successful one.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+set +e
+partial_out=$(OT_TMUX_FAIL=send-keys run_ot_auto --harness claude --lane auto --cmd "true" CC-8 CC-9 2>&1)
+set -e
+assert_contains "$partial_out" "CLAUDE_CONFIG_DIR=$H/.eclaude" \
+  "a claimed window whose launch failed still moves the next item off that lane"
+assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f3 | sort -u | wc -l | tr -d '[:space:]')" "2" \
+  "the failed launch's claim is one of two distinct accounts, not a repeat"
+
+# A GUI launch has no pane to keep a claim alive, so a GUI batch records
+# nothing and stays on the lane resolved up front — as `--help` says.
+cat > "$OT_STUB_BIN/ghostty" <<'STUBEOF'
+#!/usr/bin/env bash
+exit 0
+STUBEOF
+chmod +x "$OT_STUB_BIN/ghostty"
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+set +e
+gui_out=$(run_ot_auto --ghostty --harness claude --lane auto --cmd "true" CC-10 CC-11 2>&1)
+gui_rc=$?
+set -e
+assert_eq "$gui_rc" "0" "a GUI batch launches"
+assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "0" \
+  "a GUI launch records no claim: nothing could ever prune it"
+assert_contains "$gui_out" "on lane CLAUDE_CONFIG_DIR=$H/.claude" \
+  "a GUI batch reports the single lane it resolved up front"
 
 # The re-pick refuses on the same terms as the first: a batch whose remaining
 # items cannot be placed stops instead of launching onto an unvouched account.
