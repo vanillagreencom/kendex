@@ -716,8 +716,9 @@ fn cache_key_for_identity(identity: &str) -> String {
 /// `/` replaced by `_`, and the resolver keyed every spelling on the latter —
 /// so an upgrade that only reproduces one of them leaves the clone `add` made
 /// orphaned, and the source then fails as "not present" with a clone on disk.
-/// Keys equal to the current one, or that are not one usable directory name,
-/// are dropped.
+/// No derivation here can produce a `/`, so the only spelling that could name
+/// something other than one entry under the cache root is a `\` the source
+/// carried — a separator on Windows — and that key is dropped.
 fn legacy_cache_keys(source: &str, cache_key: &str) -> Vec<String> {
     let mut keys = vec![source.replace('/', "_")];
     // Released `add` accepted exactly these two URL spellings, and keyed both
@@ -743,13 +744,7 @@ fn legacy_cache_keys(source: &str, cache_key: &str) -> Vec<String> {
     }
     let mut usable: Vec<String> = Vec::new();
     for key in keys {
-        let ok = !key.is_empty()
-            && key != "."
-            && key != ".."
-            && key != cache_key
-            && !key.contains(['/', '\\'])
-            && !usable.contains(&key);
-        if ok {
+        if !key.contains('\\') && !usable.contains(&key) {
             usable.push(key);
         }
     }
@@ -2418,12 +2413,26 @@ mod tests {
                 "{program}"
             );
         }
-        // An explicit ssh.variant outranks detection in both directions.
-        assert_eq!(
-            batch_mode_ssh_command(Some("/opt/myssh"), None, None, None, Some("tortoiseplink"))
-                .as_deref(),
-            Some("/opt/myssh -batch")
-        );
+        // A quoted program token is unquoted before its basename decides:
+        // `'/usr/bin/plink'` ends in `plink'`, which detects as OpenSSH and
+        // takes an option plink rejects.
+        for program in ["'/usr/bin/plink'", "\"/usr/bin/plink\""] {
+            assert_eq!(
+                batch_mode_ssh_command(Some(program), None, None, None, None).as_deref(),
+                Some(format!("{program} -batch").as_str()),
+                "{program}"
+            );
+        }
+        // An explicit ssh.variant outranks detection in both directions, in
+        // every spelling git accepts for it.
+        for variant in ["tortoiseplink", "plink", "putty"] {
+            assert_eq!(
+                batch_mode_ssh_command(Some("/opt/myssh"), None, None, None, Some(variant))
+                    .as_deref(),
+                Some("/opt/myssh -batch"),
+                "{variant}"
+            );
+        }
         assert_eq!(
             batch_mode_ssh_command(Some("plink"), None, None, None, Some("ssh")).as_deref(),
             Some("plink -o BatchMode=yes")
@@ -2592,6 +2601,62 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// The keys are joined onto the cache root, so a candidate that is not one
+    /// entry under it would name a directory outside the cache — and adoption
+    /// renames whatever it names.
+    #[test]
+    fn every_legacy_cache_key_is_one_entry_under_the_cache_root() {
+        let keys = |source: &str| {
+            RemoteIdentity::parse(source)
+                .unwrap_or_else(|err| panic!("{source}: {err}"))
+                .unwrap_or_else(|| panic!("{source} is not remote-shaped"))
+                .legacy_cache_keys
+        };
+        for source in [
+            "Owner/Repo",
+            "https://github.com/Owner/Repo.git",
+            "git@github.com:Owner/Repo.git",
+            "https://gitlab.com/o/r",
+            "ssh://git@gitea.example.org:2222/o/r.git",
+            "https://host/a\\b/c",
+            "git@host:../x",
+        ] {
+            for key in keys(source) {
+                assert!(
+                    !key.is_empty()
+                        && key != "."
+                        && key != ".."
+                        && !key.contains('/')
+                        && !key.contains('\\'),
+                    "{source}: {key:?}"
+                );
+            }
+        }
+        // Released `add`'s keys are the reason this is not one candidate.
+        assert!(
+            keys("https://github.com/Owner/Repo.git").contains(&"Owner_Repo".to_string()),
+            "{:?}",
+            keys("https://github.com/Owner/Repo.git")
+        );
+        assert!(
+            keys("git@github.com:Owner/Repo.git")
+                .contains(&"git@github.com:Owner_Repo".to_string()),
+            "{:?}",
+            keys("git@github.com:Owner/Repo.git")
+        );
+        // Two schemes deriving the same key list it once.
+        let shorthand = keys("owner/repo");
+        assert_eq!(
+            shorthand.iter().filter(|key| *key == "owner_repo").count(),
+            1,
+            "{shorthand:?}"
+        );
+        // A `\` the source carried is a separator on Windows, so those
+        // candidates are dropped — and the one that survives is what keeps the
+        // case from passing on an empty list.
+        assert!(!keys("https://host/a\\b/c").is_empty());
+    }
+
     /// A clone made before the key became identity-derived is adopted, not
     /// orphaned: without the rename every existing cache entry reads as absent
     /// on the first refresh after the upgrade. Released `add` keyed a URL on
@@ -2713,27 +2778,40 @@ mod tests {
     /// is quietly reinstalled from somewhere else.
     #[test]
     fn remote_sources_git_must_not_be_handed_are_refused_at_parse() {
-        for source in [
+        // The secret each case carries, where it carries one — bound per case
+        // so the leak assertion cannot pass on a string that never held it.
+        for (source, secret) in [
             // git reads a leading `-` as an option, not a repository.
-            "--upload-pack=evil@host:repo.git",
+            ("--upload-pack=evil@host:repo.git", None),
             // A malformed authority stops userinfo parsing, and the secret
             // then reaches git and every diagnostic unredacted.
-            "https://user:to ken@github.com/owner/repo.git",
-            "https://user:to\tken@github.com/owner/repo.git",
+            (
+                "https://user:to ken@github.com/owner/repo.git",
+                Some("to ken"),
+            ),
+            (
+                "https://user:to\tken@github.com/owner/repo.git",
+                Some("to\tken"),
+            ),
         ] {
-            let err = RemoteSource::parse(source)
-                .unwrap_err()
-                .to_string()
-                .to_lowercase();
-            assert!(!err.contains("ken"), "{source}: {err}");
+            let err = RemoteSource::parse(source).unwrap_err().to_string();
+            if let Some(secret) = secret {
+                assert!(source.contains(secret), "{source}: fixture");
+                assert!(!err.contains(secret), "{source}: {err}");
+                assert!(!err.contains("ken"), "{source}: {err}");
+                // The whole authority is redacted for display even when it is
+                // malformed, so no diagnostic can carry the secret.
+                assert!(!remote_source_display(source).contains("ken"), "{source}");
+            }
             assert!(looks_like_remote_source(source), "{source}");
             assert!(recorded_source_exists(source), "{source}");
         }
-        // The whole authority is redacted for display even when it is
-        // malformed, so a diagnostic never carries the secret.
-        assert!(
-            !remote_source_display("https://user:to ken@github.com/owner/repo.git").contains("ken")
-        );
+        // A bare local source starting with `-` is not remote-shaped at all:
+        // the shape gate runs before the leading-dash refusal, so such a
+        // directory is never reported as a refused remote.
+        assert_eq!(RemoteSource::parse("-my-source-dir").unwrap(), None);
+        assert!(!looks_like_remote_source("-my-source-dir"));
+        assert!(!recorded_source_exists("-my-source-dir"));
     }
 
     #[test]

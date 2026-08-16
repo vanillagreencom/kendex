@@ -594,4 +594,111 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    /// The name of the helper below, as libtest filters it.
+    const OVERRIDE_HELPER: &str = "path_safety::tests::git_location_override_helper";
+
+    fn temp_repo_root(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "vstack_{label}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    fn init_repo(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git init failed in {}", dir.display());
+    }
+
+    /// These three reads decide which repository an ownership boundary is
+    /// judged against, and git answers an inherited `GIT_DIR`/`GIT_WORK_TREE`
+    /// in preference to the directory it is pointed at — so an override
+    /// exported by whatever invoked vstack (a git hook, a shell) would anchor
+    /// every check to a repository the user never named.
+    ///
+    /// Proving that needs the override in a process's environment, and
+    /// mutating this one's would leak into every test running beside it. The
+    /// assertions therefore run in a child: this same test binary, re-invoked
+    /// for the ignored helper below with the overrides set.
+    #[test]
+    fn identity_reads_ignore_an_inherited_git_location_override() {
+        let root = temp_repo_root("git_location_override");
+        let anchored = root.join("anchored");
+        let elsewhere = root.join("elsewhere");
+        init_repo(&anchored);
+        init_repo(&elsewhere);
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([OVERRIDE_HELPER, "--exact", "--ignored", "--nocapture"])
+            .env("GIT_DIR", elsewhere.join(".git"))
+            .env("GIT_WORK_TREE", &elsewhere)
+            .env("VSTACK_TEST_ANCHORED_REPO", &anchored)
+            .env("VSTACK_TEST_ELSEWHERE_REPO", &elsewhere)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "the hardened identity reads followed an inherited override\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[ignore = "driven by identity_reads_ignore_an_inherited_git_location_override, which supplies the repositories and the overrides"]
+    fn git_location_override_helper() {
+        let (Some(anchored), Some(elsewhere)) = (
+            std::env::var_os("VSTACK_TEST_ANCHORED_REPO"),
+            std::env::var_os("VSTACK_TEST_ELSEWHERE_REPO"),
+        ) else {
+            // Run directly (`--ignored` with no filter); there is nothing to
+            // assert without the fixture the parent builds.
+            return;
+        };
+        let anchored = std::fs::canonicalize(PathBuf::from(anchored)).unwrap();
+        let elsewhere = std::fs::canonicalize(PathBuf::from(elsewhere)).unwrap();
+
+        // Control: an unhardened `git` in `anchored` answers for `elsewhere`,
+        // so the assertions below are about the hardening and not about an
+        // override that never took effect.
+        let unhardened = std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(&anchored)
+            .output()
+            .unwrap();
+        let unhardened = git_output_path(&unhardened.stdout)
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        assert_eq!(
+            unhardened, elsewhere,
+            "the fixture must actually redirect git for this test to prove anything"
+        );
+
+        assert_eq!(git_toplevel(&anchored), Some(anchored.clone()));
+        assert_eq!(
+            git_common_dir(&anchored),
+            Some(anchored.join(".git").canonicalize().unwrap())
+        );
+        assert_eq!(
+            git_repo_identity(&anchored),
+            Some((
+                anchored.join(".git").canonicalize().unwrap(),
+                anchored.clone()
+            ))
+        );
+    }
 }

@@ -1963,18 +1963,22 @@ fn refresh_reports_a_refused_remote_cache_instead_of_substituting_another_source
 /// reached by a different route.
 #[test]
 fn a_remote_entry_is_never_rebound_when_its_clone_is_refused_or_absent() {
-    for (label, source, expected_reason) in [
+    // The secret is bound per case: only the credential URL carries one, and a
+    // leak assertion on the others would pass on a string that never held it.
+    for (label, source, expected_reason, secret) in [
         (
             "legacy-credential-url",
             "https://user:token@github.com/owner/repo.git",
             "credential-bearing",
+            Some("token"),
         ),
         (
             "legacy-plaintext-url",
             "http://github.com/owner/repo.git",
             "plaintext HTTP",
+            None,
         ),
-        ("no-cache", "owner/repo", "remote cache not present"),
+        ("no-cache", "owner/repo", "remote cache not present", None),
     ] {
         let root = tmpdir(label);
         let project = root.join("project");
@@ -2045,7 +2049,14 @@ fn a_remote_entry_is_never_rebound_when_its_clone_is_refused_or_absent() {
                     "{label}: {:?}",
                     stats.missing
                 );
-                assert!(!stats.missing["demo"].contains("token"), "{label}");
+                if let Some(secret) = secret {
+                    assert!(source.contains(secret), "{label}: fixture");
+                    assert!(
+                        !stats.missing["demo"].contains(secret),
+                        "{label}: {:?}",
+                        stats.missing
+                    );
+                }
                 err
             })
         });
