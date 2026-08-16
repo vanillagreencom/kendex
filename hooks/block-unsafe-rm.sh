@@ -29,6 +29,13 @@ if command -v jq >/dev/null 2>&1; then
     echo "block-unsafe-rm: hook payload is not valid JSON; refusing rather than skipping the guard" >&2
     exit 2
   fi
+elif ! command -v grep >/dev/null 2>&1 || ! command -v sed >/dev/null 2>&1 \
+  || ! command -v head >/dev/null 2>&1 || ! command -v awk >/dev/null 2>&1 \
+  || ! command -v tr >/dev/null 2>&1; then
+  # An rm-bearing payload reached this point (the fast exit above passed it),
+  # and with neither jq nor the text tools nothing can decode it.
+  echo "block-unsafe-rm: no jq and no usable text tools to decode the payload; refusing rather than skipping the guard" >&2
+  exit 2
 else
   # Escape-aware fallback: the value may carry \" and \\ inside it.
   COMMAND=$(printf '%s' "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"\([^"\\]\|\\.\)*"' | head -1 \
@@ -83,7 +90,14 @@ while IFS= read -r seg; do
     *) continue ;;
   esac
   # Recursive form: -r/-R anywhere in a short-option cluster, or --recursive.
-  printf '%s' "$seg" | grep -Eq '(^|[[:space:]])(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)([[:space:]]|$)' || continue
+  # Quotes do not change what rm receives — `rm "-rf"` and `rm -r""f` both
+  # pass -rf — so the flag scan reads a quote-folded copy of the segment.
+  flat=$(printf '%s' "$seg" | tr -d "\"'")
+  printf '%s' "$flat" | grep -Eq '(^|[[:space:]])(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)([[:space:]]|$)' || continue
+  # A redirection target belongs to the shell, never to rm: the operator and
+  # its target drop out before operand classification, so `> $LOG` on a
+  # literal-path rm is not a variable root.
+  seg=$(printf '%s' "$seg" | sed -E 's/[0-9]*(>>?|<<?)[[:space:]]*[^[:space:]]+//g')
   # Any operand (not an option) that begins with a variable expansion whose
   # value can be empty: $NAME, ${NAME}, "$NAME/…", ${NAME:-…}. The one form
   # that cannot expand empty is ${NAME:?…}, which the harness accepts.
@@ -107,6 +121,7 @@ while IFS= read -r seg; do
     stripped=$tok
     while :; do
       case "$stripped" in
+        \$\'\'*) stripped=${stripped#\$\'\'} ;;
         \"\"*) stripped=${stripped#\"\"} ;;
         \'\'*) stripped=${stripped#\'\'} ;;
         *) break ;;

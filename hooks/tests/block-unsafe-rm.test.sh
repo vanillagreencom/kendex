@@ -46,7 +46,7 @@ run_hook() { # command -> rc, stderr in ERR_FILE
 # A PATH without jq exercises the escape-aware fallback decoder.
 NOJQ_BIN="$TMP_ROOT/nojq"
 mkdir -p "$NOJQ_BIN"
-for tool in cat sed grep head awk; do
+for tool in cat sed grep head awk tr; do
   real="$(command -v "$tool" 2>/dev/null || true)"
   [ -n "$real" ] || continue
   ln -sf "$real" "$NOJQ_BIN/$tool"
@@ -77,6 +77,9 @@ run_hook 'rm -rf "${X+x:?}/save"';       assert_eq "$rc" 2 'an unset-guarded alt
 run_hook 'true & rm -rf "$X/sub"';       assert_eq "$rc" 2 'a lone ampersand separates commands too'
 run_hook 'if true; then rm -rf "$X/sub"; fi'; assert_eq "$rc" 2 'a control-keyword prefix does not hide the rm'
 run_hook 'while x; do rm -rf $Y; done';  assert_eq "$rc" 2 'a do-prefixed rm inside a loop is refused'
+run_hook 'rm "-rf" "$X/sub"';            assert_eq "$rc" 2 'a quoted -rf flag still counts as recursive'
+run_hook 'rm -r""f "$X/sub"';            assert_eq "$rc" 2 'a concatenation-split -rf flag still counts as recursive'
+run_hook "rm -rf \$''\$X/sub";           assert_eq "$rc" 2 'an empty ANSI-C literal does not hide the variable root'
 run_hook 'rm -rf ""$X/sub';              assert_eq "$rc" 2 'an empty double-quote pair does not hide the variable root'
 run_hook "rm -rf ''\$X/sub";             assert_eq "$rc" 2 'an empty single-quote pair does not hide the variable root'
 set +e
@@ -97,6 +100,8 @@ run_hook 'rm -rf "${VAR1:?}/x"';         assert_eq "$rc" 0 'digits after the fir
 run_hook 'rm -rf -- "-${P:?}/x"';        assert_eq "$rc" 0 'a dash-leading ${P:?} operand after -- passes'
 run_hook "rm -rf '\$X'";                 assert_eq "$rc" 0 'a single-quoted operand is a literal filename, not an expansion'
 run_hook "rm -rf \$'/var/tmp/safe'";     assert_eq "$rc" 0 'an ANSI-C quoted operand is a literal, not a variable root'
+run_hook 'rm -rf /var/tmp/safe > $LOG';  assert_eq "$rc" 0 'a variable redirection target is not an rm operand'
+run_hook 'rm -rf $X > /var/tmp/log';     assert_eq "$rc" 2 'stripping redirects does not lose a real variable operand'
 run_hook 'rm -rf "${TMP_ROOT:?}"';       assert_eq "$rc" 0 'a bare ${TMP_ROOT:?} passes'
 run_hook 'rm -rf /var/tmp/x';            assert_eq "$rc" 0 'a literal absolute path passes'
 run_hook 'rm -rf ./build';               assert_eq "$rc" 0 'a literal relative path passes'
@@ -117,6 +122,7 @@ echo "=== block-unsafe-rm: enforcement without jq ==="
 run_hook_path "$NOJQ_BIN" 'rm -rf "$P/save"';        assert_eq "$rc" 2 'without jq, an escaped-quote payload is still decoded and refused'
 run_hook_path "$NOJQ_BIN" 'rm -rf -- "${P:?}/save"'; assert_eq "$rc" 0 'without jq, the ${P:?} form still passes'
 run_hook_path "/nonexistent" 'git status --short';   assert_eq "$rc" 0 'a command without rm completes with no external tool reachable'
+run_hook_path "/nonexistent" 'rm -rf $X';            assert_eq "$rc" 2 'an rm payload with no decode tools refuses rather than skipping the guard'
 set +e
 printf '%s' '{"tool_input":{"command":"rm -rf $X' \
   | env -i HOME="$HOME" PWD="$PWD" TMPDIR=/tmp PATH="$NOJQ_BIN" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
