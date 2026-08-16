@@ -418,12 +418,13 @@ export function detailsWithTruncation(details: SubagentDetails, prepared: Prepar
 export function createTranscriptAppender(
 	transcriptPath: string,
 	appendFile: (path: string, data: string) => Promise<void> = (p, data) => fs.promises.appendFile(p, data, { encoding: "utf-8" }),
+	onError: (error: unknown) => void = () => undefined,
 ): { append: (record: Record<string, unknown>) => void; settled: () => Promise<void> } {
 	let chain: Promise<void> = Promise.resolve();
 	return {
 		append(record) {
 			const line = `${JSON.stringify({ ts: new Date().toISOString(), ...record })}\n`;
-			chain = chain.then(() => appendFile(transcriptPath, line)).catch(() => undefined);
+			chain = chain.then(() => appendFile(transcriptPath, line)).catch((error) => onError(error));
 		},
 		settled: () => chain,
 	};
@@ -609,7 +610,11 @@ async function runSingleAgentAttempt(
 	let tmpPromptPath: string | null = null;
 	const oneShotTaskId = createTaskId(agent.name);
 	const transcriptPath = oneShotTranscriptPath(runtimeRoot, agent.name, oneShotTaskId);
-	const transcript = createTranscriptAppender(transcriptPath);
+	// A dropped record leaves the transcript incomplete for whoever reads the
+	// final answer out of it, so a write failure surfaces on the result.
+	const transcript = createTranscriptAppender(transcriptPath, undefined, (error) =>
+		appendResultDiagnostic(currentResult, `transcript write failed (${transcriptPath}): ${stringifyError(error)}`),
+	);
 	const appendTranscript = transcript.append;
 
 	const currentResult: SingleResult = {
@@ -929,8 +934,9 @@ async function runSingleAgentAttempt(
 				// format moved -- skipping it on any path restores the silent failure this
 				// accumulator exists to prevent.
 				const diagnostic = partialAssistantMessageDiagnostic(partialMessageState);
-				// Route through result diagnostics, not the transcript alone: appendTranscript drops
-				// write failures, so a transcript-only signal has no second chance to surface.
+				// Route through result diagnostics, not the transcript alone: a failed
+				// transcript write is itself only a diagnostic, so a transcript-only
+				// signal has no second chance to surface.
 				const emitDiagnostic = () => {
 					if (!diagnostic) return;
 					appendResultDiagnostic(currentResult, diagnostic);

@@ -30,18 +30,20 @@ test("transcript records land in call order when an earlier write finishes late"
 	assert.deepEqual(order, [1, 2]);
 });
 
-test("a failed write does not block the next record", async () => {
+test("a failed write is reported and does not block the next record", async () => {
 	let landed = "";
 	let call = 0;
+	const errors: string[] = [];
 	const appendFile = (_path: string, data: string): Promise<void> => {
 		call += 1;
 		if (call === 1) return Promise.reject(new Error("disk full"));
 		landed += data;
 		return Promise.resolve();
 	};
-	const appender = createTranscriptAppender("/dev/null", appendFile);
+	const appender = createTranscriptAppender("/dev/null", appendFile, (error) => errors.push(String(error)));
 	appender.append({ n: 1 });
 	appender.append({ n: 2 });
 	await appender.settled();
 	assert.deepEqual(landed.trim().split("\n").map((line) => JSON.parse(line).n), [2]);
+	assert.deepEqual(errors, ["Error: disk full"]);
 });

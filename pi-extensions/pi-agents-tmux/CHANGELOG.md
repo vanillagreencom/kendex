@@ -4,7 +4,7 @@
 
 ### 2.8.2
 
-- Oneshot transcript records are written strictly in event order. Each record was a separate concurrent `appendFile` call; such calls land in any order under load, so a transcript could carry an earlier `message_end` after the final buffered partial and `getFinalOutput`/last-assistant-text extraction reported the wrong message (vstack#1311). Appends now run through one ordered chain (`createTranscriptAppender`); a failed write never blocks the next record.
+- Oneshot transcript records are written strictly in event order. Each record was a separate concurrent `appendFile` call; such calls land in any order under load, so a transcript could carry an earlier `message_end` after the final buffered partial and `getFinalOutput`/last-assistant-text extraction reported the wrong message (vstack#1311). Appends now run through one ordered chain (`createTranscriptAppender`); a failed write never blocks the next record and surfaces on the result as a `transcript write failed` diagnostic instead of being dropped.
 
 ### 2.8.1
 
