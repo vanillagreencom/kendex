@@ -147,7 +147,7 @@ fi
 
 echo "=== lane workflow-run-syntax: a run: block bash cannot parse ==="
 seed workflow
-if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys, yaml; sys.exit(0 if sys.version_info >= (3, 7) else 1)' >/dev/null 2>&1; then
   mkdir -p "$R/.github/workflows"
   # The defect that motivated the lane: an apostrophe in a comment INSIDE a
   # single-quoted jq program ends the quote, and the next `|` line is a bash

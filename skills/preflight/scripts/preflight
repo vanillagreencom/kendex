@@ -405,7 +405,7 @@ for _, job in jobs.items():
                 sys.stdout.write("%d\t%s\n" % (first, raw.strip()))
 '
 HAVE_WORKFLOW_PY=0
-have python3 && python3 -c 'import yaml' >/dev/null 2>&1 && HAVE_WORKFLOW_PY=1
+have python3 && python3 -c 'import sys, yaml; sys.exit(0 if sys.version_info >= (3, 7) else 1)' >/dev/null 2>&1 && HAVE_WORKFLOW_PY=1
 HAVE_SHELLCHECK=0
 have shellcheck && HAVE_SHELLCHECK=1
 HAVE_TOML=none

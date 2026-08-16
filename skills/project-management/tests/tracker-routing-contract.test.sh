@@ -35,7 +35,7 @@ require_fixed() {
 extract() {
   local file="$1" start="$2" end="$3" label="$4"
   local out="$tmp/$label.md"
-  sed -En "/$start/,/$end/p" "$file" >"$out"
+  sed -En "/$start/,/$end/p" -- "$file" >"$out"
   printf '%s' "$out"
   [[ -s "$out" ]]
 }
