@@ -1304,11 +1304,12 @@ run "negative retry delay is a config error" "" 2
 # What a valid delay IS belongs to the predicate, which validates it before
 # any read — so the repo's committed value is driven through it rather than
 # re-derived here. A committed value the predicate refuses fails this case,
-# naming REVIEW_GATE_API_RETRY_DELAY_SECONDS. The delay is only slept inside
-# the retry loop after a failed read, so no wall time rides on its size.
+# naming the key and the offending value (run() discards the predicate's own
+# stderr). The delay is only slept inside the retry loop after a failed
+# read, so no wall time rides on its size.
 reset
 CFG_API_DELAY="$ACTIVE_API_DELAY"
-run "committed REVIEW_GATE_API_RETRY_DELAY_SECONDS is a value the predicate accepts" awaiting
+run "committed REVIEW_GATE_API_RETRY_DELAY_SECONDS ('$ACTIVE_API_DELAY') is a value the predicate accepts" awaiting
 
 # Multi-page pagination merges (VST-35): the shim serves <name>.page2.json
 # concatenated after page 1 under --paginate, so the `jq -s` page merges are

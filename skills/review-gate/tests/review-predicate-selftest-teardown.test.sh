@@ -40,7 +40,9 @@ JOBCONTROL_MARK="JOBCONTROL-LEFT-ENABLED"
 # read and every kill goes through this, so a recycled number can neither
 # read as a survivor nor be killed by this test's own cleanup.
 is_ours() {
-  case "$(ps -p "$1" -o args= 2>/dev/null || true)" in
+  # -ww: BSD/macOS ps truncates to 79 columns off a terminal, and the marker
+  # sits at the tail of a long temp path.
+  case "$(ps -ww -p "$1" -o args= 2>/dev/null || true)" in
     *"$marker"*) return 0 ;;
   esac
   return 1
@@ -87,6 +89,7 @@ mkdir -p "$work/bin"
 probe="$work/bin/$marker-probe"
 descendant="$work/bin/$marker-descendant"
 waiter="$work/bin/$marker-wait"
+stubborn="$work/bin/$marker-stubborn-probe"
 
 # The selftest stand-in. Its descendant stands for the gh-shim/jq layer:
 # a child of the selftest, two levels below the job the wrapper signals.
@@ -118,28 +121,41 @@ while [ "$(grep -c . "$RG_TEARDOWN_PIDS" || true)" -lt "$RG_TEARDOWN_EXPECT" ]; 
   sleep 0.05
 done
 WAITER
-chmod +x "$probe" "$descendant" "$waiter"
+# A probe that IGNORES TERM, so its group outlives the TERM sweep and only
+# the KILL escalation can clear it. Its descendant still dies on TERM; the
+# group stays up because this one does not.
+cat >"$stubborn" <<STUBBORN
+#!/usr/bin/env bash
+trap '' TERM
+echo \$\$ >>"\$RG_TEARDOWN_PIDS"
+"$descendant" &
+while :; do sleep 1; done
+STUBBORN
+chmod +x "$probe" "$descendant" "$waiter" "$stubborn"
 
 # The exact wrapper lines each edit rewrites. A miss is not silent: awk
 # records how many times each fired and the counts are asserted per variant.
 L_SELFTEST='SELFTEST="$(cd "$TEST_DIR/../scripts" && pwd)/review-predicate-selftest.sh"'
 L_ABORT='replay modetypo "$work/modetypo" REVIEW_GATE_MODE=offf'
-L_SIGNAL='    signal_replays TERM'
-L_SETTLE='    settle || { signal_replays KILL; settle || true; }'
-L_KILL='    kill "-$1" "-$p" 2>/dev/null || kill "-$1" "$p" 2>/dev/null || true'
+L_SWEEP='    sweep_replays "$leaders"'
+L_KILL='    kill "-$sig" "-$p" 2>/dev/null || kill "-$sig" "$p" 2>/dev/null || true'
 L_SETPLUSM='  set +m'
+L_POLLS='settle_polls=100'
 
-# variant OUT MODE LEAK PERPID NOJC — the wrapper with its selftest replaced
-# by the probe and an abort injected once two replays are outstanding. MODE
-# is `exit` for the early-exit arm, or the name of a signal the wrapper
-# sends itself for the trap arm. The three flags neuter, in turn, teardown's
-# signalling, its group kill, and the post-launch `set +m`.
+# variant OUT MODE EDITS [STUB] — the wrapper with its selftest replaced by
+# STUB (the ordinary probe unless given) and an abort injected once two
+# replays are outstanding. MODE is `exit` for the early-exit arm, or the
+# name of a signal the wrapper sends itself for the trap arm. EDITS is a
+# space-separated set: `leak` neuters teardown's sweep, `perpid` narrows its
+# group kill to the leader pid, `nojc` drops the post-launch `set +m`, and
+# `fast` shrinks the settle budget for variants that would otherwise spend
+# it twice over.
 variant() {
-  local out="$1" mode="$2" leak="$3" perpid="$4" nojc="$5"
-  awk -v stub="$probe" -v waiter="$waiter" -v mark="$JOBCONTROL_MARK" \
-      -v mode="$mode" -v leak="$leak" -v perpid="$perpid" -v nojc="$nojc" \
-      -v l_self="$L_SELFTEST" -v l_abort="$L_ABORT" -v l_signal="$L_SIGNAL" \
-      -v l_settle="$L_SETTLE" -v l_kill="$L_KILL" -v l_setplusm="$L_SETPLUSM" \
+  local out="$1" mode="$2" edits=" $3 " stub="${4:-$probe}"
+  awk -v stub="$stub" -v waiter="$waiter" -v mark="$JOBCONTROL_MARK" \
+      -v mode="$mode" -v edits="$edits" \
+      -v l_self="$L_SELFTEST" -v l_abort="$L_ABORT" -v l_sweep="$L_SWEEP" \
+      -v l_kill="$L_KILL" -v l_setplusm="$L_SETPLUSM" -v l_polls="$L_POLLS" \
       -v counts="$out.counts" '
     $0 == l_self { print "SELFTEST=\"" stub "\""; n_self++; next }
     $0 == l_abort {
@@ -153,14 +169,14 @@ variant() {
       n_abort++
       next
     }
-    leak == "1" && $0 == l_signal { print "    :"; n_leak1++; next }
-    leak == "1" && $0 == l_settle { print "    :"; n_leak2++; next }
-    perpid == "1" && $0 == l_kill { print "    kill \"-$1\" \"$p\" 2>/dev/null || true"; n_perpid++; next }
-    nojc == "1" && $0 == l_setplusm { print "  :"; n_nojc++; next }
+    index(edits, " leak ") && $0 == l_sweep { print "    :"; n_leak++; next }
+    index(edits, " perpid ") && $0 == l_kill { print "    kill \"-$sig\" \"$p\" 2>/dev/null || true"; n_perpid++; next }
+    index(edits, " nojc ") && $0 == l_setplusm { print "  :"; n_nojc++; next }
+    index(edits, " fast ") && $0 == l_polls { print "settle_polls=2"; n_fast++; next }
     { print }
     END {
-      print (n_self + 0) " " (n_abort + 0) " " (n_leak1 + 0) " " (n_leak2 + 0) \
-        " " (n_perpid + 0) " " (n_nojc + 0) > counts
+      print (n_self + 0) " " (n_abort + 0) " " (n_leak + 0) \
+        " " (n_perpid + 0) " " (n_nojc + 0) " " (n_fast + 0) > counts
     }
   ' "$WRAPPER" >"$out"
   chmod +x "$out"
@@ -208,15 +224,17 @@ started() {
   return 0
 }
 
-#       out                            mode    leak perpid nojc
-variant "$work/owning.test.sh"          exit    0    0      0
-variant "$work/sigterm.test.sh"         TERM    0    0      0
-variant "$work/sighup.test.sh"          HUP     0    0      0
-variant "$work/leaking.test.sh"         exit    1    0      0
-variant "$work/perpid.test.sh"          exit    0    1      0
-variant "$work/nojobcontrol.test.sh"    exit    0    0      1
+#       out                            mode  edits           stub
+variant "$work/owning.test.sh"          exit  ""
+variant "$work/sigterm.test.sh"         TERM  ""
+variant "$work/sighup.test.sh"          HUP   ""
+variant "$work/leaking.test.sh"         exit  "leak"
+variant "$work/perpid.test.sh"          exit  "perpid fast"
+variant "$work/nojobcontrol.test.sh"    exit  "nojc"
+variant "$work/stubborn.test.sh"        exit  ""              "$stubborn"
 for spec in "owning 1 1 0 0 0 0" "sigterm 1 1 0 0 0 0" "sighup 1 1 0 0 0 0" \
-            "leaking 1 1 1 1 0 0" "perpid 1 1 0 0 1 0" "nojobcontrol 1 1 0 0 0 1"; do
+            "leaking 1 1 1 0 0 0" "perpid 1 1 0 1 0 1" "nojobcontrol 1 1 0 0 1 0" \
+            "stubborn 1 1 0 0 0 0"; do
   name="${spec%% *}"
   want="${spec#* }"
   got="$(cat "$work/$name.test.sh.counts")"
@@ -279,6 +297,24 @@ if [ "$fail" -eq 0 ]; then
       || note "a wrapper with the post-launch 'set +m' removed did not trip the job-control probe — the probe cannot fail, so the check above is vacuous"
     survivors="$(alive_settled)"
     [ "$survivors" -eq 0 ] || reap
+  fi
+
+  # --- the KILL escalation, on a tree that ignores TERM -------------------
+  # The probe here refuses TERM, so the settle budget has to expire and the
+  # escalation has to fire — the branch and the budget are otherwise
+  # executed by no test at all. The run must still end, and end cleanly.
+  started_at="$SECONDS"
+  rc="$(run_variant "$work/stubborn.test.sh")"
+  elapsed=$((SECONDS - started_at))
+  if started "$work/stubborn.test.sh" "$rc" 9; then
+    survivors="$(alive_settled)"
+    [ "$survivors" -eq 0 ] \
+      || note "a replay tree that ignores TERM survived teardown — the KILL escalation did not reach it"
+    grep -q "replay(s) survived TERM" "$work/stubborn.test.sh.out" \
+      || note "teardown escalated to KILL without reporting it"
+    [ "$elapsed" -lt 25 ] \
+      || note "teardown took ${elapsed}s against a TERM-ignoring replay tree — the settle budget is not bounding it"
+    reap
   fi
 fi
 

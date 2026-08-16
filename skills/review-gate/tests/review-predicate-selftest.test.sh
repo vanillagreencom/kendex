@@ -13,8 +13,10 @@
 # independent (own cwd, own settings, own scratch dir), so they run
 # concurrently: each fixture block launches its replay as soon as it is
 # built, and the assertions read the recorded outputs after `wait`. Teardown
-# runs on EXIT, INT, TERM and HUP; SIGKILL is unrecoverable by construction,
-# so only a hard-killed run leaves replays and a scratch dir behind.
+# runs on EXIT, INT, TERM and HUP, and reports what it terminates; a signal
+# it does not trap (SIGKILL, SIGQUIT) leaves the replay tree and the scratch
+# dir behind, since each replay sits in its own process group rather than
+# the runner's.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,52 +36,78 @@ work="$(mktemp -d)"
 # GROUP reaches the selftest and its gh-shim/jq descendants; signalling the
 # leader alone reaches only the subshell.
 torn_down=""
-# The targets come from bash's own job table, never from a list we keep:
+# 100 polls, 0.05s apart: a five-second budget per settle.
+settle_polls=100
+# The leaders come from bash's own job table, never from a list we keep:
 # bash reaps exited background children on SIGCHLD, long before any wait, so
 # a remembered pid can be a number the OS has already handed to someone else
 # — and TERM to a recycled leader hits that whole unrelated group. `jobs -pr`
 # lists running jobs only, and lists them from the moment of the fork, so it
 # also cannot miss a replay signalled between its launch and its bookkeeping.
-signal_replays() {
-  local p
-  for p in $(jobs -pr); do
-    kill "-$1" "-$p" 2>/dev/null || kill "-$1" "$p" 2>/dev/null || true
+# It is read ONCE per teardown, and that one reading is what gets reported,
+# signalled and waited on.
+signal_groups() {
+  local sig="$1" p
+  for p in $2; do
+    kill "-$sig" "-$p" 2>/dev/null || kill "-$sig" "$p" 2>/dev/null || true
   done
 }
-# settle — wait for the replay jobs to clear, but only for a budget: a member
-# that ignores TERM must not hang the run's exit.
+# live_groups LEADERS — how many of those process GROUPS still hold a member.
+# The group is the object that was signalled, and it is the only object worth
+# polling: a leader exits the moment its TERM trap fires, so the job table
+# empties while the selftest and its gh-shim/jq children are still winding
+# down, and `rm -rf "$work"` must not race their last writes.
+live_groups() {
+  local p n=0
+  for p in $1; do
+    if kill -0 "-$p" 2>/dev/null; then
+      n=$((n + 1))
+    fi
+  done
+  echo "$n"
+}
 settle() {
   local i=0
-  while [ -n "$(jobs -pr)" ]; do
+  while [ "$(live_groups "$1")" -ne 0 ]; do
     i=$((i + 1))
-    if [ "$i" -gt 100 ]; then
+    if [ "$i" -gt "$settle_polls" ]; then
       return 1
     fi
     sleep 0.05
   done
   return 0
 }
+# sweep_replays LEADERS — TERM, then KILL whatever outlived the budget. Both
+# escalations report: the one path where teardown fails at its job must not
+# be the one path that says nothing.
+sweep_replays() {
+  signal_groups TERM "$1"
+  if settle "$1"; then
+    return 0
+  fi
+  echo "review-predicate-selftest.test: $(live_groups "$1") replay(s) survived TERM — escalating to KILL" >&2
+  signal_groups KILL "$1"
+  if ! settle "$1"; then
+    echo "review-predicate-selftest.test: $(live_groups "$1") replay(s) still alive after KILL — removing $work regardless" >&2
+  fi
+}
 teardown() {
-  local in_flight p
+  local leaders in_flight
   if [ -z "$torn_down" ]; then
     torn_down=1
+    leaders="$(jobs -pr)"
     # An abort from a fixture block kills replays mid-flight and deletes the
     # .out/.rc evidence they were writing, which in a CI log otherwise reads
-    # exactly like a completed run with one failed assertion. Counted from
-    # the same job table the sweep below signals, and silent on the normal
-    # path, where the assertions' wait has already left nothing outstanding.
-    in_flight=0
-    for p in $(jobs -pr); do
-      in_flight=$((in_flight + 1))
-    done
+    # exactly like a completed run with one failed assertion. Silent on the
+    # normal path, where the assertions' wait has left nothing outstanding.
+    in_flight="$(live_groups "$leaders")"
     if [ "$in_flight" -ne 0 ]; then
       echo "review-predicate-selftest.test: aborting with $in_flight replay(s) in flight — terminating them and removing $work" >&2
     fi
-    signal_replays TERM
-    settle || { signal_replays KILL; settle || true; }
+    sweep_replays "$leaders"
   fi
-  # Outside the guard: a second signal during the settle above re-enters
-  # here, and the scratch dir has to go on that path too.
+  # Outside the guard: a second signal during the sweep above re-enters here,
+  # and the scratch dir has to go on that path too.
   rm -rf "$work"
 }
 # EXIT keeps the run's own status; only the signal paths exit 130.
@@ -93,6 +121,10 @@ trap 'teardown; exit 130' INT TERM HUP
 replay() {
   local label="$1" dir="$2"
   shift 2
+  # The child's own scratch dir lands inside ours, so a replay killed by an
+  # untrapped signal — which never runs its EXIT trap — cannot strand a
+  # mktemp tree: teardown's `rm -rf "$work"` sweeps it with everything else.
+  mkdir -p "$work/$label.tmp"
   # Job control ONLY around the launch: the backgrounded subshell becomes a
   # process group leader and everything it forks inherits that group (a
   # subshell does not re-enable job control), which is what lets teardown
@@ -110,7 +142,14 @@ replay() {
       echo 1 >"$work/$label.rc"
       exit 1
     fi
-    env "$@" "$SELFTEST" &
+    # Only what this fixture plants: an exported REVIEW_GATE_* value
+    # outranks a settings file by design, so a developer's environment would
+    # otherwise mask the very typo a fixture plants. Explicit VAR=value
+    # arguments are re-applied by env below and so still win.
+    for v in $(env | sed -n 's/^\(REVIEW_GATE_[A-Za-z0-9_]*\)=.*/\1/p'); do
+      unset "$v"
+    done
+    env TMPDIR="$work/$label.tmp" ${1+"$@"} "$SELFTEST" &
     child=$!
     trap 'kill "$child" 2>/dev/null' TERM INT
     rc=0
@@ -138,11 +177,20 @@ replay defaults "$work/defaults"
 mkdir -p "$work/modetypo"
 replay modetypo "$work/modetypo" REVIEW_GATE_MODE=offf
 # --- layer 1c: the committed-delay-typo guard must itself be falsifiable ----
-# A settings FILE, not env: the delay is pinned to 0 inside every case, so
-# only the standalone active-value check can see the planted value.
+# A settings FILE, not env: the delay is pinned to 0 inside every behavior
+# case, so only the case that drives the ACTIVE value sees what is planted.
+# The file is bound explicitly, so the fixture reads what it planted rather
+# than whatever cwd resolution finds.
 mkdir -p "$work/delaytypo"
 printf '[env]\nREVIEW_GATE_API_RETRY_DELAY_SECONDS = "two"\n' >"$work/delaytypo/vstack.settings.toml"
-replay delaytypo "$work/delaytypo"
+replay delaytypo "$work/delaytypo" REVIEW_GATE_SETTINGS_FILE="$work/delaytypo/vstack.settings.toml"
+# Same fixture, with a VALID delay exported the way a developer's shell
+# would export it. Environment outranks a settings file by design, so
+# without replay()'s scrub of the namespace that value masks the planted
+# typo and the guard's own control reports a false failure.
+export REVIEW_GATE_API_RETRY_DELAY_SECONDS=0
+replay delaytypoenv "$work/delaytypo" REVIEW_GATE_SETTINGS_FILE="$work/delaytypo/vstack.settings.toml"
+unset REVIEW_GATE_API_RETRY_DELAY_SECONDS
 
 # --- layer 2: the selftest must exercise CONFIGURED values ------------------
 mkdir -p "$work/configured"
@@ -473,6 +521,14 @@ if passed delaytypo; then
   note "selftest passed with a planted non-integer REVIEW_GATE_API_RETRY_DELAY_SECONDS — the committed-delay guard no longer fires"
 else
   grep -q "REVIEW_GATE_API_RETRY_DELAY_SECONDS" "$work/delaytypo.out" || note "the planted-invalid-delay failure does not name REVIEW_GATE_API_RETRY_DELAY_SECONDS"
+fi
+# The same planted typo must still fail with a VALID value exported: a
+# fixture that reads the invoking environment instead of what it planted
+# reports a false failure on any developer machine that exports the key.
+if passed delaytypoenv; then
+  note "selftest passed with a planted non-integer delay while a VALID one was exported — the fixture reads the environment instead of what it plants"
+else
+  grep -q "REVIEW_GATE_API_RETRY_DELAY_SECONDS" "$work/delaytypoenv.out" || note "the exported-valid-delay control's failure does not name REVIEW_GATE_API_RETRY_DELAY_SECONDS"
 fi
 
 # --- layer 2: the selftest must exercise CONFIGURED values ------------------
