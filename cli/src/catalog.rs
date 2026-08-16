@@ -328,21 +328,38 @@ pub(crate) struct Inventory {
     /// Every candidate item path (file for agents/hooks, directory for the
     /// packaged kinds), parseable or not.
     pub candidates: Vec<PathBuf>,
+    /// No configured path for this kind exists in the source. Discovery
+    /// returned nothing because the root is gone, not because the source
+    /// stopped shipping the kind — `refresh` cannot fix that.
+    pub missing_root: bool,
 }
 
 impl Inventory {
-    /// True when a candidate path is named after `name` — the physical
-    /// footprint of an item independent of whether it parsed.
-    pub fn has_candidate_named(&self, name: &str) -> bool {
-        self.candidates.iter().any(|path| {
-            path.file_stem()
-                .and_then(|stem| stem.to_str())
-                .is_some_and(|stem| stem == name)
-                || path
-                    .file_name()
-                    .and_then(|file| file.to_str())
-                    .is_some_and(|file| file == name)
-        })
+    /// True when this item may still have a physical footprint in the source,
+    /// so "removed upstream" is not proven.
+    ///
+    /// Two ways it can be present without appearing in [`names`](Self::names):
+    /// a candidate path named after it whose manifest no longer parses, and —
+    /// because a directory need not be named after the item it declares
+    /// (`pi-extensions/pi-hooks` ships `@vanillagreen/pi-hooks`) — any
+    /// unparseable candidate at all, whose name is by definition unknown.
+    pub fn may_still_be_present(&self, name: &str) -> bool {
+        if !self.failures.is_empty() {
+            return true;
+        }
+        // Directories are never named with the npm scope, so compare on the
+        // last component of a scoped package name.
+        let basename = name.rsplit('/').next().unwrap_or(name);
+        !basename.is_empty()
+            && self.candidates.iter().any(|path| {
+                path.file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| stem == basename)
+                    || path
+                        .file_name()
+                        .and_then(|file| file.to_str())
+                        .is_some_and(|file| file == basename)
+            })
     }
 }
 
@@ -351,7 +368,17 @@ impl Inventory {
 /// root); per-item parse failures land in [`Inventory::failures`].
 pub(crate) fn inventory(source_root: &Path, kind: crate::config::ItemKind) -> Result<Inventory> {
     use crate::config::ItemKind;
-    let mut inv = Inventory::default();
+    // Strict: `[catalog]` decides where this kind lives, so scanning the
+    // default roots after a parse failure would inventory a layout the source
+    // does not use and call the difference drift.
+    crate::mapping::MappingConfig::load_strict(source_root)
+        .context("reading catalog configuration")?;
+    let mut inv = Inventory {
+        missing_root: !expand_configured_paths(source_root, catalog_kind_for(kind))?
+            .iter()
+            .any(|path| path.exists()),
+        ..Inventory::default()
+    };
     let mut record = |path: PathBuf, parsed: Result<String>| {
         match parsed {
             Ok(name) => {
@@ -399,6 +426,16 @@ pub(crate) fn inventory(source_root: &Path, kind: crate::config::ItemKind) -> Re
     }
     inv.names.sort();
     Ok(inv)
+}
+
+fn catalog_kind_for(kind: crate::config::ItemKind) -> CatalogKind {
+    match kind {
+        crate::config::ItemKind::Agent => CatalogKind::Agents,
+        crate::config::ItemKind::Skill => CatalogKind::Skills,
+        crate::config::ItemKind::Hook => CatalogKind::Hooks,
+        crate::config::ItemKind::PiExtension => CatalogKind::PiExtensions,
+        crate::config::ItemKind::Extra => CatalogKind::Extras,
+    }
 }
 
 pub(crate) fn find_item_path(

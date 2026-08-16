@@ -43,6 +43,7 @@ fi
 # Enter it separately so only vstack's own exit code drives classification.
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 if ! cd "$PROJECT_DIR" 2>/dev/null; then
+  echo "vstack check could not run: project directory $PROJECT_DIR is not accessible; drift status unknown"
   exit 0
 fi
 

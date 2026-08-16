@@ -1,3 +1,5 @@
+import { statSync } from "node:fs";
+
 import { runCommandAsync } from "./process.js";
 
 /**
@@ -8,12 +10,14 @@ import { runCommandAsync } from "./process.js";
  *   1 → drift (relay the report to the agent verbatim)
  *   2+ → the check itself failed (say so once, with its diagnostic)
  *   spawn failure → no vstack binary; one line saying so
+ *   unusable cwd → one line naming the directory; never silence
  */
 export type DriftCheckResult =
 	| { kind: "clean" }
 	| { kind: "drift"; report: string }
 	| { kind: "failed"; exitCode: number; report: string }
-	| { kind: "unavailable" };
+	| { kind: "unavailable" }
+	| { kind: "unusable-cwd"; cwd: string };
 
 export interface DriftCheckOptions {
 	/** Pass `--no-available` so the report omits not-yet-installed suggestions. */
@@ -31,6 +35,14 @@ export function driftCheckArgs(options: Pick<DriftCheckOptions, "includeAvailabl
 
 export async function runDriftCheck(cwd: string, options: DriftCheckOptions): Promise<DriftCheckResult> {
 	const binary = options.binary ?? "vstack";
+	// A spawn into a directory that does not exist fails with the same ENOENT
+	// a missing binary does, so an unreadable cwd would otherwise be reported
+	// as "vstack is not on PATH" — or, worse, read as clean.
+	try {
+		if (!statSync(cwd).isDirectory()) return { kind: "unusable-cwd", cwd };
+	} catch {
+		return { kind: "unusable-cwd", cwd };
+	}
 	const result = await runCommandAsync(binary, driftCheckArgs(options), cwd, options.timeoutMs);
 	// The human report is stderr; stdout is reserved for --json.
 	const report = `${result.stderr}${result.stdout}`.trim();
@@ -50,6 +62,8 @@ export function driftMessage(result: DriftCheckResult): string | undefined {
 			return undefined;
 		case "unavailable":
 			return "vstack drift check skipped: vstack is not on PATH";
+		case "unusable-cwd":
+			return `vstack check could not run: project directory ${result.cwd} is not accessible; drift status unknown`;
 		case "drift":
 			return result.report;
 		case "failed":

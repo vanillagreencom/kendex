@@ -59,19 +59,32 @@ pub enum HookTarget {
 }
 
 impl MappingConfig {
+    /// Forgiving load for install-time attribution: an unreadable or malformed
+    /// source `vstack.toml` degrades to defaults rather than blocking an
+    /// install over a mapping table.
     pub fn load(source_dir: &Path) -> Self {
+        Self::load_strict(source_dir).unwrap_or_default()
+    }
+
+    /// Load for paths that must not silently substitute defaults. `[catalog]`
+    /// decides where every item kind lives, so a verification pass that fell
+    /// back to the default roots would classify a source against a layout it
+    /// does not use. A missing file is still the default config — that is a
+    /// source without custom mapping, not a broken one.
+    pub fn load_strict(source_dir: &Path) -> anyhow::Result<Self> {
+        use anyhow::Context as _;
         let path = source_dir.join("vstack.toml");
         if !path.exists() {
-            return Self::default();
+            return Ok(Self::default());
         }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            return Self::default();
-        };
-        let mut parsed: Self = toml::from_str(&content).unwrap_or_default();
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let mut parsed: Self =
+            toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
         let (legacy, by_harness) = crate::project_config::parse_agent_frontmatter_tables(&content);
         parsed.agent_frontmatter = legacy;
         parsed.agent_frontmatter_by_harness = by_harness;
-        parsed
+        Ok(parsed)
     }
 
     pub fn skills_for_agent(
@@ -332,6 +345,35 @@ mod tests {
         assert!(config.agent_skills.is_empty());
         assert!(config.role_skills.is_empty());
         assert!(config.hook_events.is_empty());
+        assert!(
+            MappingConfig::load_strict(std::path::Path::new("/nonexistent/path")).is_ok(),
+            "a source without vstack.toml is not a broken source"
+        );
+    }
+
+    #[test]
+    fn strict_load_fails_on_malformed_toml_where_the_forgiving_one_defaults() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack-mapping-strict-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("vstack.toml"), "[catalog]\nskills = [\n").unwrap();
+
+        let err = MappingConfig::load_strict(&dir).unwrap_err();
+        assert!(format!("{err:#}").contains("parsing"), "{err:#}");
+        // Control: the forgiving loader silently substitutes the defaults —
+        // which is exactly why verification paths must not use it.
+        assert_eq!(
+            MappingConfig::load(&dir).catalog,
+            CatalogConfig::default(),
+            "the forgiving loader must still degrade to defaults"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

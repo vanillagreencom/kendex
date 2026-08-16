@@ -1893,6 +1893,7 @@ dependencies = [
  "clap",
  "crossterm 0.28.1",
  "dirs",
+ "libc",
  "ratatui",
  "regex-lite",
  "serde",

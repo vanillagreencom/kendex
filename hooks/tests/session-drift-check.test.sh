@@ -125,7 +125,8 @@ done
 echo "session-drift-check: unusable project directory"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" CLAUDE_PROJECT_DIR="$TMP_ROOT/does-not-exist"
 assert_eq "$rc" 0 "missing project dir exits 0"
-assert_eq "$out" "" "missing project dir prints nothing (a failed cd is not drift)"
+assert_contains "$out" "vstack check could not run: project directory $TMP_ROOT/does-not-exist is not accessible" \
+  "missing project dir says drift status is unknown rather than reading as clean"
 assert_eq "$(cat "$ARGS_LOG")" "" "missing project dir never invokes vstack"
 
 echo "session-drift-check: no vstack on PATH"

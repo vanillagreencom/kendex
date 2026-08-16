@@ -125,13 +125,15 @@ fn verify_entry(entry: &LockEntry, global: bool) -> VerifyRow {
         current == entry.source_hash
     };
 
-    // Per-kind install check.
-    let (install_ok, note) = match entry.kind {
-        ItemKind::PiExtension => verify_pi_install(&entry.name, global),
-        ItemKind::Skill => verify_skill_install(&entry.name, &entry.harnesses, global),
-        ItemKind::Agent => verify_agent_install(&entry.name, &entry.harnesses, global),
-        ItemKind::Hook => verify_hook_install(&entry.name, &entry.harnesses, global),
-        ItemKind::Extra => (None, None),
+    // Per-kind install check: presence first (shared with `check`), then the
+    // byte comparison only Pi packages support.
+    let (install_ok, note) = match missing_install(entry, global) {
+        Some(note) => (Some(false), Some(note)),
+        None => match entry.kind {
+            ItemKind::PiExtension => verify_pi_bytes(&entry.name, global),
+            ItemKind::Extra => (None, None),
+            _ => (Some(true), None),
+        },
     };
 
     VerifyRow {
@@ -143,11 +145,33 @@ fn verify_entry(entry: &LockEntry, global: bool) -> VerifyRow {
     }
 }
 
-fn verify_pi_install(name: &str, global: bool) -> (Option<bool>, Option<String>) {
-    let install_dir = config::pi_packages_dir(global).join(name);
-    if !install_dir.is_dir() {
-        return (Some(false), Some("install path missing".into()));
+/// Is every artifact this lock entry claims to have installed still on disk?
+/// `None` when nothing is missing, otherwise the human note naming what is.
+///
+/// `check` shares this so its phantom report covers every kind rather than
+/// skills alone — a deleted agent file or Pi package is exactly the incomplete
+/// install a session-start check exists to surface. Callers must validate
+/// `entry.name` before calling: the name is joined into install paths.
+pub(crate) fn missing_install(entry: &LockEntry, global: bool) -> Option<String> {
+    let missing = |(ok, note): (Option<bool>, Option<String>)| match ok {
+        Some(false) => note.or_else(|| Some("install path missing".into())),
+        _ => None,
+    };
+    match entry.kind {
+        ItemKind::PiExtension => (!config::pi_packages_dir(global).join(&entry.name).is_dir())
+            .then(|| "install path missing".to_string()),
+        ItemKind::Skill => missing(verify_skill_install(&entry.name, &entry.harnesses, global)),
+        ItemKind::Agent => missing(verify_agent_install(&entry.name, &entry.harnesses, global)),
+        ItemKind::Hook => missing(verify_hook_install(&entry.name, &entry.harnesses, global)),
+        // Extras have no single recorded install path to check.
+        ItemKind::Extra => None,
     }
+}
+
+/// Byte comparison of an installed Pi package against its source. Presence is
+/// [`missing_install`]'s job; this runs only once the install dir exists.
+fn verify_pi_bytes(name: &str, global: bool) -> (Option<bool>, Option<String>) {
+    let install_dir = config::pi_packages_dir(global).join(name);
     // Locate source dir for this package by reading the source-index sidecar.
     let source_dir = match locate_pi_source(name, global) {
         Some(p) => p,

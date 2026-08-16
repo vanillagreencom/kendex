@@ -86,6 +86,25 @@ describe("drift-check classification", () => {
 		}
 	});
 
+	test("an unusable cwd is named rather than blamed on a missing binary", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-hooks-drift-cwd-"));
+		const missing = join(root, "gone");
+		try {
+			const result = await runDriftCheck(missing, { includeAvailable: true, timeoutMs: 5000, binary: "vstack" });
+			expect(result).toEqual({ kind: "unusable-cwd", cwd: missing });
+			expect(driftMessage(result)).toBe(
+				`vstack check could not run: project directory ${missing} is not accessible; drift status unknown`,
+			);
+			// Control: the same call in a real directory reaches the binary,
+			// so the guard is not swallowing every run.
+			await withFake("0", "", async ({ binary, root: real }) => {
+				expect(await runDriftCheck(real, { includeAvailable: true, timeoutMs: 5000, binary })).toEqual({ kind: "clean" });
+			});
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	test("includeAvailable=false passes --no-available", () => {
 		expect(driftCheckArgs({ includeAvailable: false })).toEqual(["check", "--quiet", "--no-available"]);
 		expect(driftCheckArgs({ includeAvailable: true })).toEqual(["check", "--quiet"]);

@@ -390,30 +390,66 @@ fn find_vstack_source_from_cwd() -> Option<PathBuf> {
 }
 
 /// Pull latest changes for a cached remote repo.
+///
+/// Routed through [`config::fetch_remote_cache`] so the guard, the stamp and
+/// the fetch itself are one mechanism: a refresh running beside a session-start
+/// check can never reset the tree the check is reading, and a successful
+/// refresh clears the failure the check would otherwise keep reporting. Runs
+/// unbounded — a user is waiting on this one and expects it to finish.
 fn update_cached_repo(repo_dir: &std::path::Path) {
     eprintln!("Updating cached repo...");
-    let fetch = std::process::Command::new("git")
-        .args(["fetch", "origin", "--quiet"])
-        .current_dir(repo_dir)
-        .status();
-    match fetch {
-        Ok(s) if s.success() => {
-            let reset = std::process::Command::new("git")
-                .args(["reset", "--hard", "origin/HEAD"])
-                .current_dir(repo_dir)
-                .stderr(std::process::Stdio::null())
-                .status();
-            if !reset.is_ok_and(|s| s.success()) {
-                eprintln!("  Warning: git reset failed — cached repo may be stale");
-            }
+    match config::fetch_remote_cache(repo_dir, None, false) {
+        config::FetchAttempt::Attempted(true) | config::FetchAttempt::Fresh => {}
+        config::FetchAttempt::Attempted(false) => {
+            eprintln!("  Warning: git fetch failed — using cached version")
         }
-        Ok(_) => eprintln!("  Warning: git fetch failed — using cached version"),
-        Err(_) => eprintln!("  Warning: git not available — using cached version"),
+        config::FetchAttempt::Busy => {
+            eprintln!(
+                "  Warning: another vstack process is refreshing this cache — using cached version"
+            )
+        }
+        config::FetchAttempt::Unwritable(reason) => {
+            eprintln!("  Warning: cache cannot be refreshed ({reason}) — using cached version")
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// VST-258: `vstack add` records the source string it was given, URL forms
+    /// included. Every remote form must therefore resolve to the ONE cache the
+    /// clone wrote, or `check` reports a perfectly good source unreachable at
+    /// every session start and `refresh` falls back to a different source.
+    #[test]
+    fn every_remote_url_form_resolves_to_the_cache_its_clone_wrote() {
+        let root = tmpdir("remote-url-forms");
+        let config = root.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        crate::test_util::with_home_and_config(&root, &config, || {
+            let cache = config::remote_cache_dir("owner/repo").unwrap();
+            std::fs::create_dir_all(cache.join(".git")).unwrap();
+            for source in [
+                "owner/repo",
+                "https://github.com/owner/repo",
+                "https://github.com/owner/repo.git",
+                "git@github.com:owner/repo.git",
+                "ssh://git@github.com/owner/repo.git",
+            ] {
+                assert_eq!(
+                    resolve_source_path(source).as_ref(),
+                    Some(&cache),
+                    "{source}"
+                );
+            }
+            // Control: an unrelated repo does not resolve to this cache.
+            assert!(
+                resolve_source_path("https://github.com/other/repo").is_none(),
+                "a source with no cache must not resolve"
+            );
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     use super::*;
     use crate::config::{InstallMethod, LockEntry};
     use std::cell::RefCell;

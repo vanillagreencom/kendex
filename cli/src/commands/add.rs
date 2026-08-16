@@ -2838,42 +2838,34 @@ fn clone_or_update(source: &str) -> Result<PathBuf> {
         .join("cache");
     std::fs::create_dir_all(&cache_dir)?;
 
-    // Normalize source to a git URL and a cache key
-    let (git_url, cache_key) = if source.starts_with("https://") || source.starts_with("git@") {
-        // Full URL — extract owner/repo for cache key
-        let key = source
-            .trim_end_matches('/')
-            .trim_end_matches(".git")
-            .rsplit('/')
-            .take(2)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("_");
-        (source.to_string(), key)
+    // Normalize source to a git URL and a cache key. The key comes from the
+    // one slug function `check` and `refresh` also use, so a URL-form source
+    // and its `owner/repo` shorthand land in the SAME cache — otherwise the
+    // lock records a source neither of them can resolve.
+    let git_url = if source.starts_with("https://")
+        || source.starts_with("http://")
+        || source.starts_with("ssh://")
+        || source.starts_with("git@")
+    {
+        source.to_string()
     } else {
-        // owner/repo shorthand
-        let url = format!("https://github.com/{}.git", source);
-        let key = source.replace('/', "_");
-        (url, key)
+        format!("https://github.com/{source}.git")
+    };
+    let Some(repo_dir) = crate::config::remote_cache_dir(source) else {
+        anyhow::bail!(
+            "`{source}` is not a source vstack can fetch: use `owner/repo`, an https:// URL, or git@host:owner/repo"
+        );
     };
 
-    let repo_dir = cache_dir.join(&cache_key);
-
     if repo_dir.join(".git").exists() {
-        // Update existing clone (handles force-pushed histories)
+        // Update existing clone (handles force-pushed histories) through the
+        // one guarded fetch, so it cannot reset the tree a concurrent check is
+        // reading and its success clears that check's stale-cache warning.
         eprintln!("Updating cached repo...");
-        let fetch = std::process::Command::new("git")
-            .args(["fetch", "origin", "--quiet"])
-            .current_dir(&repo_dir)
-            .status();
-        if fetch.is_ok_and(|s| s.success()) {
-            let _ = std::process::Command::new("git")
-                .args(["reset", "--hard", "origin/HEAD"])
-                .current_dir(&repo_dir)
-                .stderr(std::process::Stdio::null())
-                .status();
+        if let crate::config::FetchAttempt::Attempted(false) =
+            crate::config::fetch_remote_cache(&repo_dir, None, false)
+        {
+            eprintln!("  Warning: git fetch failed — using cached version");
         }
     } else {
         // Fresh shallow clone

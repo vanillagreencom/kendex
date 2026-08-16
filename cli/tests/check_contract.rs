@@ -62,18 +62,47 @@ impl Sandbox {
         .unwrap();
     }
 
+    fn write_agent(&self, name: &str) {
+        let dir = self.source.join("agents");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(format!("{name}.md")),
+            format!(
+                "---\nname: {name}\ndescription: {name}\nmodel: sonnet\nrole: engineer\n---\nbody\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn write_hook(&self, name: &str) {
+        let dir = self.source.join("hooks");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(format!("{name}.sh")),
+            format!(
+                "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: PreToolUse\n# matcher: Bash\n# description: {name}\n# ---\nexit 0\n"
+            ),
+        )
+        .unwrap();
+    }
+
     /// Install `name` on disk and record it in the lock with the CURRENT
     /// source hash, computed by the binary itself via `add`.
     fn install(&self, name: &str) {
+        self.install_kind("--skill", name);
+    }
+
+    fn install_kind(&self, flag: &str, name: &str) {
         let output = self
             .vstack()
             .args([
                 "add",
                 self.source.to_str().unwrap(),
-                "--skill",
+                flag,
                 name,
                 "--harness",
                 "claude",
+                "--no-auto-skills",
                 "-y",
             ])
             .output()
@@ -212,4 +241,97 @@ fn corrupt_lock_exits_two() {
             text(&output.stderr)
         );
     }
+}
+
+/// VST-258 review round 2: the phantom case must cover every kind. A source
+/// hash that has not moved is not evidence the install is intact.
+#[test]
+fn a_deleted_agent_or_hook_install_is_drift_even_when_the_source_is_unchanged() {
+    let sb = Sandbox::new("check-phantom-kinds");
+    sb.write_skill("alpha", "one");
+    sb.write_agent("rust");
+    sb.write_hook("guard");
+    sb.install("alpha");
+    sb.install_kind("--agent", "rust");
+    sb.install_kind("--hook", "guard");
+
+    // Control: a complete install is clean and silent.
+    let clean = sb.check(&["--quiet"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
+    assert!(clean.stderr.is_empty(), "{}", text(&clean.stderr));
+
+    let agent = sb.project.join(".claude/agents/rust.md");
+    let hook = sb.project.join(".claude/hooks/guard.sh");
+    assert!(
+        agent.exists() && hook.exists(),
+        "add must have written both"
+    );
+    fs::remove_file(&agent).unwrap();
+    fs::remove_file(&hook).unwrap();
+
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    let err = text(&quiet.stderr);
+    assert!(err.contains("missing from disk"), "{err}");
+    assert!(err.contains("rust (agent)"), "{err}");
+    assert!(err.contains("guard (hook)"), "{err}");
+
+    let json = sb.check(&["--json"]);
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let phantom = parsed["scopes"][0]["phantom"].as_array().unwrap();
+    let mut kinds: Vec<&str> = phantom
+        .iter()
+        .map(|p| p["kind"].as_str().unwrap())
+        .collect();
+    kinds.sort();
+    assert_eq!(kinds, vec!["agent", "hook"], "{parsed}");
+}
+
+/// A lock entry whose name is not a single safe path component is never
+/// resolved against the filesystem and never rendered back to the agent.
+#[test]
+fn a_traversal_lock_name_is_rejected_rather_than_resolved() {
+    let sb = Sandbox::new("check-traversal");
+    sb.write_skill("alpha", "one");
+    sb.install("alpha");
+
+    let raw = fs::read_to_string(lock_path(&sb.project)).unwrap();
+    let mut lock: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let entry = lock["entries"]["alpha"].clone();
+    for hostile in ["../escape", "/tmp/escape", "a/b", ".hidden"] {
+        let mut copy = entry.clone();
+        copy["name"] = serde_json::Value::String(hostile.to_string());
+        lock["entries"][hostile] = copy;
+    }
+    fs::write(lock_path(&sb.project), lock.to_string()).unwrap();
+
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    let err = text(&quiet.stderr);
+    assert!(err.contains("<invalid name>"), "{err}");
+    assert!(!err.contains("escape"), "never echoed verbatim: {err}");
+
+    let json = sb.check(&["--json"]);
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let mut rejected: Vec<&str> = parsed["scopes"][0]["invalid_names"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["name"].as_str().unwrap())
+        .collect();
+    rejected.sort();
+    assert_eq!(
+        rejected,
+        vec!["../escape", ".hidden", "/tmp/escape", "a/b"],
+        "{parsed}"
+    );
+    // Control: the valid sibling still classifies normally.
+    assert!(
+        parsed["scopes"][0]["invalid_names"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["name"] != "alpha"),
+        "{parsed}"
+    );
 }
