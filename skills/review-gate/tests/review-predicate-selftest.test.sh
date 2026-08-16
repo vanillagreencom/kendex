@@ -516,11 +516,13 @@ fi
 # --- layer 1c: the committed-delay-typo guard must itself be falsifiable ----
 # reset() pins the delay to 0 for every case, so a committed non-integer
 # would otherwise pass the battery while the live predicate exits 2 on
-# every evaluation. The standalone check must fail naming the key.
+# every evaluation. The case that drives the ACTIVE value must fail naming
+# the key — anchored on the FAIL line, because that case name is printed by
+# PASSING runs too and a bare match would be satisfied by its own ok line.
 if passed delaytypo; then
   note "selftest passed with a planted non-integer REVIEW_GATE_API_RETRY_DELAY_SECONDS — the committed-delay guard no longer fires"
 else
-  grep -q "REVIEW_GATE_API_RETRY_DELAY_SECONDS" "$work/delaytypo.out" || note "the planted-invalid-delay failure does not name REVIEW_GATE_API_RETRY_DELAY_SECONDS"
+  grep -q "^FAIL.*REVIEW_GATE_API_RETRY_DELAY_SECONDS" "$work/delaytypo.out" || note "the planted-invalid-delay failure does not name REVIEW_GATE_API_RETRY_DELAY_SECONDS"
 fi
 # The same planted typo must still fail with a VALID value exported: a
 # fixture that reads the invoking environment instead of what it planted
@@ -528,7 +530,7 @@ fi
 if passed delaytypoenv; then
   note "selftest passed with a planted non-integer delay while a VALID one was exported — the fixture reads the environment instead of what it plants"
 else
-  grep -q "REVIEW_GATE_API_RETRY_DELAY_SECONDS" "$work/delaytypoenv.out" || note "the exported-valid-delay control's failure does not name REVIEW_GATE_API_RETRY_DELAY_SECONDS"
+  grep -q "^FAIL.*REVIEW_GATE_API_RETRY_DELAY_SECONDS" "$work/delaytypoenv.out" || note "the exported-valid-delay control's failure does not name REVIEW_GATE_API_RETRY_DELAY_SECONDS"
 fi
 
 # --- layer 2: the selftest must exercise CONFIGURED values ------------------

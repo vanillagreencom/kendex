@@ -256,6 +256,13 @@ if [ "$fail" -eq 0 ]; then
     # actually had in flight — a silent one reads like a completed run.
     grep -q "aborting with $RG_TEARDOWN_REPLAYS replay(s) in flight" "$work/owning.test.sh.out" \
       || note "an abort with $RG_TEARDOWN_REPLAYS replays in flight did not report them on stderr"
+    # And it must get there on the FIRST sweep. A sweep that reaches only
+    # some of the replays still tears down — the escalation collects the
+    # rest — so nothing else here would notice that every abort had started
+    # costing the whole settle budget.
+    if grep -q "replay(s) survived TERM" "$work/owning.test.sh.out"; then
+      note "the owning arm needed the KILL escalation — teardown's first TERM sweep no longer reaches every replay"
+    fi
   fi
 
   # --- the signal arms: the same, reached through the trap ----------------
