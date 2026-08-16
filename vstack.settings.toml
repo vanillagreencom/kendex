@@ -113,3 +113,67 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bot
 # consumer-side copies and any future one here. Declared so the selftest's
 # dead-glob gate (undeclared no-match globs FAIL) knows it is deliberate.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = "*CLAUDE.md"
+
+# The review-gate ENGINE's one-switch per-repo gate disable — resolved by
+# approval-wait --resolve-mode ahead of every reviewer-gate key: "off"
+# prints mode off (the wait loop is skipped; the engine keeps the required
+# gate status green with a disabled-by-settings attestation). Only the
+# exact value "off" narrows; anything else leaves PR_REVIEW_GATE
+# authoritative (the engine predicate fails loud on bad values). Listed
+# here because orch consumes it even where the review-gate skill is not
+# installed.
+REVIEW_GATE_MODE = "enforce"
+
+# Used by: orch (`approval-wait`). Total review-wait budget in seconds — the
+# per-repo quiet period before the on-timeout policy applies — used when the
+# caller passes no max_wait positional arg (an explicit arg always wins).
+PR_REVIEW_WAIT_SECS = "900"
+
+# Used by: orch (`approval-wait`). Reviewer logins separated by commas or
+# whitespace, on ONE line (the settings loader reads a value per line) — that
+# must EACH have a review pinned to the current head, with zero unresolved
+# threads, before the review gate opens, in either mode. The multi-bot
+# enqueue gate: one bot's pass cannot open the gate while a listed sibling
+# has not yet reacted to this head; findings hold the gate as threads.
+# Empty = off. The wait deadline still bounds it, but PR_REVIEW_ON_TIMEOUT
+# = "proceed" needs EVERY listed reviewer silent: a partial quorum is
+# engagement, so it ends in a timeout rather than proceeding.
+PR_REVIEW_QUORUM = ""
+
+# Used by: orch (`dev-fix`). How workflow decision points behave. "ask"
+# (default) presents decision points to the user. Review findings disposition
+# (`review-pr` § 4/§ 7, `review` § 4) is by rule in EVERY mode — no mode
+# presents a selection menu over findings. "auto-recommended" executes the
+# workflow's recommended option and logs "auto-selected: [option] — [reason]"
+# in the round record (workflow-state auto_decisions) — for fleet launchers
+# whose workers would otherwise serialize on one supervisor. Decision-record
+# revisits and scope expansion beyond the issue ALWAYS ask, in every mode;
+# merge is governed by ORCH_MERGE_AUTONOMY.
+ORCH_DECISION_MODE = "ask"
+
+# Used by: orch (`start-worktree` § 5.5, `submit-pr` § 6.2). "ask" (default)
+# presents the merge decision; "auto" merges without asking once every merge
+# gate is green. MERGE_READY = false never auto-merges.
+ORCH_MERGE_AUTONOMY = "ask"
+
+# Used by: orch (`open-terminal`). Bounded seconds per brief-delivery
+# verification pass on tmux claude handoff lanes (one initial pass plus one
+# after the single re-send). Positive integer; values over 120 are clamped.
+ORCH_TMUX_VERIFY_SECS = "15"
+
+# Used by: orch (`lanes`, `open-terminal --lane`). Optional alias overlay for
+# multi-account machines: comma-separated `<config-dir-name>=<alias>` pairs
+# giving discovered lanes meaningful names, usable as `--lane <alias>`. The
+# lane INVENTORY is always discovered (~/.claude plus any ~/.*claude* dir, and
+# ~/.codex), so adding an account needs no edit here — this only renames what
+# discovery already found. ORCH_LANE_DIRS (colon-separated) covers a layout
+# discovery cannot reach.
+# Used by: orch (`review-pr` § 5). Space-separated path globs; a changed file
+# matching one adds the needs-perf-test QA signal to the review's QA routing.
+# QA_PERF_PATHS = "src/hot/* engine/src/*"
+
+# ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
+
+# Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
+# flight.
+ORCH_OVERSEER_LANES = "3"
