@@ -199,8 +199,10 @@ awk -F'\t' -v dir="$TMP" -v listfile="$TMP/files.list" '
 ' "$TMP/files.list" "$TMP/added.tsv"
 
 git ls-files >"$TMP/tracked.list" || env_error "git ls-files failed"
-# Every directory that holds tracked files, at every depth.
-awk -F/ '{ p = ""; for (i = 1; i < NF; i++) { p = (i == 1 ? $i : p "/" $i); print p } }' "$TMP/tracked.list" | LC_ALL=C sort -u >"$TMP/trackeddirs"
+# Every directory that holds tracked files, at every depth — plus the
+# directories of the untracked files in scope, so a new doc under a new
+# directory is judged as it will be once committed.
+{ cat "$TMP/tracked.list"; tr '\0' '\n' <"$TMP/untracked.z"; } | awk -F/ '{ p = ""; for (i = 1; i < NF; i++) { p = (i == 1 ? $i : p "/" $i); print p } }' | LC_ALL=C sort -u >"$TMP/trackeddirs"
 
 # --- shared helpers ----------------------------------------------------------
 content_of() { # IDX PATH -> inspectable content path on stdout; nonzero if unavailable
@@ -381,6 +383,39 @@ def strip_expressions(text):
         out.append("X")
         i = k
     return "".join(out)
+# The line (1-based, within the block) of the first `${{` that never
+# closes, else 0. Detected separately so the placeholder pass stays simple.
+def unterminated_expression_line(text):
+    i = 0
+    n = len(text)
+    while i < n:
+        j = text.find("${{", i)
+        if j < 0:
+            return 0
+        k = j + 3
+        closed = False
+        while k < n:
+            c = text[k]
+            if c == "\x27":
+                k += 1
+                while k < n:
+                    if text[k] == "\x27":
+                        if k + 1 < n and text[k + 1] == "\x27":
+                            k += 2
+                            continue
+                        break
+                    k += 1
+                k += 1
+                continue
+            if text.startswith("}}", k):
+                closed = True
+                k += 2
+                break
+            k += 1
+        if not closed:
+            return text.count("\n", 0, j) + 1
+        i = k
+    return 0
 # With no shell declared anywhere, GitHub runs bash on Linux/macOS runners and
 # PowerShell on Windows ones. An implicit shell is bash only when every
 # runs-on label is a plain ubuntu-* or macos-* label; an expression, a
@@ -439,6 +474,11 @@ for _, job in jobs.items():
         if run.style in ("|", ">"):
             first += 1
         folded = run.style == ">"
+        bad = unterminated_expression_line(run.value)
+        if bad:
+            at = first if folded else first + bad - 1
+            sys.stdout.write("%d\tunterminated GitHub expression: ${{ without a closing }}\n" % at)
+            continue
         body = strip_expressions(run.value)
         with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as t:
             t.write(body)

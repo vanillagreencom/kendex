@@ -203,6 +203,13 @@ jobs:
       - name: sh step
         shell: sh
         run: echo "unterminated
+  openexpr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: expression never closes
+        run: |
+          echo start
+          echo ${{ github.sha
 YML
   # A workflow-level non-bash default survives a job-level `defaults` that
   # only sets working-directory.
@@ -231,6 +238,7 @@ YML
   fires "a workflow file that is not valid YAML is a finding at the parser's line" ".github/workflows/bad.yml:4: [workflow-run-syntax] workflow YAML did not parse"
   fires "a bash given as an executable path (/bin/bash {0}) is in scope" ".github/workflows/ci.yml:43: [workflow-run-syntax]"
   fires "a shell: sh step is parsed too" ".github/workflows/ci.yml:49: [workflow-run-syntax]"
+  fires "an unterminated \${{ is a finding at its line, never a swallowed tail" ".github/workflows/ci.yml:56: [workflow-run-syntax] unterminated GitHub expression"
   case "$OUT" in
     *"ci.yml:8: "* | *"ci.yml:18: "* | *"ci.yml:27: "* | *"ci.yml:32: "* | *"ci.yml:37: "* | *"defaults.yml"*)
       bad "clean (8), python (18), implicit-pwsh Windows (27), expression runner (32), self-hosted runner (37) and inherited-pwsh (defaults.yml) steps contribute no findings" "out=$OUT" ;;

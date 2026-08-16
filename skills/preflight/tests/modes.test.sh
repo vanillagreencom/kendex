@@ -85,6 +85,18 @@ if [ "$RC" -eq 0 ] && ! has "never-added.md"; then
 else
   bad "--staged sees only the index, so the untracked file is out of scope" "rc=$RC out=$OUT"
 fi
+# A new doc under a NEW directory is judged as it will be once committed:
+# its citation of a missing sibling fires even though nothing tracked lives
+# in that directory yet.
+seed newdir
+mkdir -p "$R/docs/new"
+printf '# New\n\nSee `docs/new/missing.md`.\n' >"$R/docs/new/guide.md"
+run_pf
+if [ "$RC" -eq 1 ] && has "docs/new/guide.md:3: [docs-cited-paths] cites a path that does not exist: docs/new/missing.md"; then
+  ok "an untracked doc in an untracked directory has its dead citation reported"
+else
+  bad "an untracked doc in an untracked directory has its dead citation reported" "rc=$RC out=$OUT"
+fi
 
 echo "=== --staged judges staged bytes even when the worktree has moved on ==="
 seed rewound
