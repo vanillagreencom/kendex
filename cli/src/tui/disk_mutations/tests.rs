@@ -995,6 +995,56 @@ fn inline_update_reports_an_entry_whose_source_is_gone() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// Extras are applied, not installed — the refresh pass has no branch for
+/// them, so a stale extra picked from the Updates tab used to count as
+/// neither done nor failed ("Updated 0 item(s)"). It must be reported with
+/// the command that actually re-applies it, and the rest of the request must
+/// still refresh.
+#[test]
+fn inline_update_reports_extras_as_not_refreshable_and_refreshes_the_rest() {
+    let root = tmpdir("inline-update-extra");
+    let project = root.join("project");
+    let source = root.join("source");
+    std::fs::create_dir_all(&project).unwrap();
+
+    let mut hook = hook_fixture("guard", None);
+    hook.script = "#!/usr/bin/env bash\nexit 0\n".into();
+    hook.source_path = source.join("hooks/guard.sh");
+    write_source_hook(&source, &hook);
+
+    let mut lock = LockFile::default();
+    lock.add(hook_lock_entry("guard", &source));
+    lock.add(LockEntry {
+        name: "vanillagreen-themes".into(),
+        kind: ItemKind::Extra,
+        source: source.to_string_lossy().into_owned(),
+        source_repo: None,
+        harnesses: Vec::new(),
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: "stale".into(),
+    });
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    let report = crate::test_util::with_project_root(&project, || {
+        crate::installer::install_hook(&hook, Harness::ClaudeCode, false, &[]).unwrap();
+        perform_inline_update(&["guard".to_string(), "vanillagreen-themes".to_string()])
+    });
+
+    assert_eq!(report.attempted, 2);
+    assert_eq!(report.completed, 1, "the hook still refreshes: {report:?}");
+    assert_eq!(
+        report.failed,
+        vec![
+            "vanillagreen-themes: extras are not refreshed here — reapply with `vstack apply vanillagreen-themes`"
+                .to_string()
+        ],
+        "report: {report:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// Updating a hook regenerates every installed agent so its hook payload
 /// stays current. An agent that cannot be regenerated is a real outcome the
 /// user must see, but it is not an item they asked to update — the message

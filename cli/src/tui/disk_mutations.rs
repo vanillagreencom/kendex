@@ -547,6 +547,7 @@ fn reinstall_codex_hooks_for_moved_agents(
 pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
     let mut report = DiskMutationReport::new(names.len());
     let mut completed_names = std::collections::HashSet::new();
+    let mut extras_reported = std::collections::HashSet::new();
     let project_root = config::project_root();
 
     for scope_global in [false, true] {
@@ -554,6 +555,28 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
         let Ok(mut lock) = config::LockFile::load(&lock_path) else {
             continue;
         };
+        // Extras are applied, not installed: the refresh pass has no branch
+        // for them, so a requested extra would count as neither done nor
+        // failed. Say so, and keep it out of the refresh below.
+        let is_extra = |name: &String| {
+            lock.entries
+                .get(name)
+                .is_some_and(|entry| entry.kind == ItemKind::Extra)
+        };
+        for name in names.iter().filter(|name| is_extra(name)) {
+            if extras_reported.insert(name.clone()) {
+                report.fail(
+                    name,
+                    format!("extras are not refreshed here — reapply with `vstack apply {name}`"),
+                );
+            }
+        }
+        let names: Vec<String> = names
+            .iter()
+            .filter(|name| !is_extra(name))
+            .cloned()
+            .collect();
+        let names = names.as_slice();
         if !names.iter().any(|n| lock.entries.contains_key(n)) {
             continue;
         }
