@@ -68,6 +68,11 @@ assert_matches "$table" 'Re-arm on `ejected`, `disarmed` and' \
   "the outcomes section routes only genuine disarm verdicts to re-arm"
 assert_matches "$table" '`dequeued` means late review findings' \
   "the outcomes section routes dequeued to findings triage, not re-arm"
+assert_matches "$table" 'is a CI repair first' \
+  "the outcomes section requires the CI repair before re-arming an ejected head"
+readme_src=$(cat "$REPO_ROOT/skills/github/README.md")
+assert_matches "$readme_src" 'exits 75 when the PR is queued or auto-merge is armed' \
+  "README states the volatile 75 contract"
 assert_matches "$table" 'await-mergeable` is not that' \
   "the outcomes section states await-mergeable is not the ejection watcher"
 

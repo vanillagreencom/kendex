@@ -64,6 +64,11 @@ the current diff and cannot be acted on.
 It is also policy, not mechanism — the gate binds only merges routed through
 `pr-merge`, so a raw `gh pr merge` or the GitHub UI still bypasses it.
 
+`pr-merge --auto` exits 75 when the PR is queued or auto-merge is armed. That
+state is volatile — an ejection or a failed protection check disarms it
+silently — so the caller keeps re-running a watcher until the PR is `MERGED`
+and re-arms after repairing what ejected it (SKILL.md § PR Merge Outcomes).
+
 Where branch protection *is* enabled, the opposite problem appears: after a
 rebase or force-push an outdated thread can become unreachable in the UI —
 the link 404s and the PR shows no conversations while still refusing to merge.

@@ -141,8 +141,10 @@ in sibling skills — install orch and review-gate beside this one):
 returns `ejected`/`disarmed` with its cause, or `queued` (run it again); a
 re-run carries no memory of the earlier run, so an ejection between two runs
 comes back as `not_queued`/`never_armed`. Re-arm on `ejected`, `disarmed` and
-that memoryless `not_queued`; `dequeued` means late review findings — triage
-them first; `closed` and `unknown` are terminal, not a re-arm. The review-gate
+that memoryless `not_queued` — after repairing what the cause names (a
+`merge_group_failed`/`check_failed` cause is a CI repair first, else the same
+head ejects again); `dequeued` means late review findings — triage them
+first; `closed` and `unknown` are terminal, not a re-arm. The review-gate
 reducer
 `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
 pass that prints `disarmed … (re-arm)` lines. On a disarm, re-arm with

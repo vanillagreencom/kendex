@@ -376,7 +376,7 @@ volatile_note() {
     # read fails the placeholder keeps the shape and says so.
     repo="$(gh_with_token "$auth_token" repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; keep watching until MERGED" >&2
-    echo "  Watch, re-running until MERGED (neither call is durable — queue-wait exits at its poll budget, pr-watch.sh is one pass), with the orch and review-gate skills installed: .agents/skills/orch/scripts/queue-wait $pr_num (re-arm on ejected/disarmed/not_queued; dequeued = triage the late findings first; closed/unknown = stop) or GH_REPO=${repo:-<owner/repo — repository read failed>} .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines); re-arm with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
+    echo "  Watch, re-running until MERGED (neither call is durable — queue-wait exits at its poll budget, pr-watch.sh is one pass), with the orch and review-gate skills installed: .agents/skills/orch/scripts/queue-wait $pr_num (re-arm on ejected/disarmed/not_queued after repairing what the cause names — a failed merge-group/check is a CI repair first; dequeued = triage the late findings first; closed/unknown = stop) or GH_REPO=${repo:-<owner/repo — repository read failed>} .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines); re-arm with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
 }
 
 # Read one authoritative post-mutation snapshot. `gh pr view --json` does not
