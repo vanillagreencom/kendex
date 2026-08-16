@@ -539,8 +539,8 @@ BOT_ALT="${BOT_ALT#|}"
 BOT_ALT="${BOT_ALT%|}"
 [ -n "$BOT_ALT" ] || BOT_ALT='qodo|copilot|coderabbit|codex|devin'
 BOT_ATTR_RE="\\(($BOT_ALT)([^A-Za-z0-9_)-][^)]*)?((pr ?)?#[0-9]+|[^A-Za-z0-9_]r[0-9]{6,})([^A-Za-z0-9_)][^)]*)?\\)"
-BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_])per +((the|a) +)?($BOT_ALT)('s)? +(review|pass|feedback|suggestion|comment|finding)s?[[:punct:]]*[[:space:]]*\$"
-BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_])($BOT_ALT)('s)? +review +of +(pr ?)?#[0-9]+"
+BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_-])per +((the|a) +)?($BOT_ALT)('s)? +(review|pass|feedback|suggestion|comment|finding)s?[[:punct:]]*[[:space:]]*\$"
+BOT_ATTR_RE="$BOT_ATTR_RE|(^|[^A-Za-z0-9_-])($BOT_ALT)('s)? +review +of +(pr ?)?#[0-9]+"
 : >"$TMP/tok.ok"
 : >"$TMP/tok.bad"
 

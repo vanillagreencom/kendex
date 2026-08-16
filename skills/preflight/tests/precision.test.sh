@@ -124,6 +124,7 @@ printf '# rust = "Read docs/gone.md before coding."\n# Read docs/gone.md.\nkey =
   printf 'Rules live in .github/copilot-instructions.md, per copilot instructions convention.\n'
   printf 'The option landed upstream (codex-cli PR #123), not here.\n'
   printf 'The gate records one status per Codex review before it queues anything.\n'
+  printf 'See the open-codex review of #12 for the upstream fix.\n'
 } >"$R/README.md"
 # The changelog is the sanctioned home for rationale, and a test tree sets
 # its own rules — an attribution in either is nobody's finding.
@@ -143,9 +144,9 @@ printf 'Hardened per qodo review.\n' >>"$R/README.md"
 printf '# and a source line whose citation is dead: docs/gone.md\n' >>"$R/scripts/cites.sh"
 git -C "$R" add -A
 run_pf
-fires "the benign fixture is not clean because nothing ran" "README.md:23: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+fires "the benign fixture is not clean because nothing ran" "README.md:24: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "the benign source file is not clean because nothing ran" "scripts/cites.sh:11: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
-fires "the same benign bot mentions do not shield a real credit beside them" "README.md:24: [reviewer-attribution]"
+fires "the same benign bot mentions do not shield a real credit beside them" "README.md:25: [reviewer-attribution]"
 
 echo "=== violations on lines this diff did not touch stay invisible ==="
 seed untouched
