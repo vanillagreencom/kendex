@@ -1,0 +1,3 @@
+# CHANGELOG.md is append-at-top: two branches each adding a bullet under
+# Unreleased conflict on every rebase; the union driver keeps both.
+CHANGELOG.md merge=union
