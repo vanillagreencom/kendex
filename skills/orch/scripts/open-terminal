@@ -12,6 +12,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # need one already check $WORKTREE_CLI and report it by name.
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
 SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
+# The claim store is shared with `lanes` and `oversee-watch`, which resolve it
+# from the CALLER's checkout — and this script's own root is the checkout it
+# is installed in, which a worktree's `.agents` symlink makes a different one.
+# Writing where the readers do not look would silently defeat the claims.
+CLAIM_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # shellcheck source=lib/vstack-env.sh
 source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
@@ -416,7 +421,7 @@ open_tmux() {
   # identity — and never fatal: a launch that worked is not a failure because
   # its bookkeeping did not.
   if [[ -n "$LANE_ENV" && -n "$server" ]]; then
-    if ! lane_claim_write "$(lane_claims_dir "$PROJECT_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title"; then
+    if ! lane_claim_write "$(lane_claims_dir "$CLAIM_ROOT")" "$server" "$pane" "${LANE_ENV#*=}" "$title"; then
       # This launch stands, but the next `auto` pick cannot see it: the batch
       # stops at the top of the next item rather than stacking blind.
       CLAIM_WRITE_FAILED=true

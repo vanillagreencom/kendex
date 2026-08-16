@@ -683,12 +683,14 @@ cat > "$OWNED_STUB" <<'STUBEOF'
 n=0; [[ -f "$OWNED_COUNT" ]] && n="$(cat "$OWNED_COUNT")"
 n=$((n + 1)); printf '%s' "$n" > "$OWNED_COUNT"
 [[ "$n" -eq 1 ]] || exit 75
-d="$(mktemp -d)"; printf '%s\n' "$d"
+# Under the suite's own root, which its trap removes.
+d="$(mktemp -d "$OWNED_ROOT/wt.XXXXXX")"; printf '%s\n' "$d"
 STUBEOF
 chmod +x "$OWNED_STUB"
 rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES" "$TMP_ROOT/owned-count"
 set +e
 owned_out=$(LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OWNED_COUNT="$TMP_ROOT/owned-count" \
+  OWNED_ROOT="$TMP_ROOT" \
   GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
   OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
   PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OWNED_STUB" \
@@ -697,6 +699,28 @@ set -e
 assert_contains "$owned_out" "on lane CLAUDE_CONFIG_DIR=$H/.claude" \
   "a lane picked for an owned item is not counted as one the batch ran on"
 assert_contains "$owned_out" "skipped 1 (owned by another session)" "the owned item is still skipped"
+
+# The claim store belongs to the CALLER's checkout, not the one the script is
+# installed in: `.agents` in a worktree points back at the main checkout, so a
+# script-derived root would write where `lanes` never looks.
+SCRIPTREPO="$TMP_ROOT/scriptrepo"; CALLERREPO="$TMP_ROOT/callerrepo"
+mkdir -p "$SCRIPTREPO/scripts/lib" "$CALLERREPO"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTREPO/scripts/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$SCRIPTREPO/scripts/lib/"
+chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes"
+git -C "$SCRIPTREPO" init -q; git -C "$CALLERREPO" init -q
+rm -f "$OT_TMUX_PANES"
+set +e
+( cd "$CALLERREPO" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  "$SCRIPTREPO/scripts/open-terminal" --harness claude --lane auto --cmd "true" CC-20 ) >/dev/null 2>&1
+set -e
+assert_eq "$(ls -1 "$CALLERREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]')" "1" \
+  "the claim lands in the caller checkout, where lanes reads it"
+assert_eq "$(ls -1 "$SCRIPTREPO"/tmp/oversee-watch/claims 2>/dev/null | wc -l | tr -d '[:space:]')" "0" \
+  "nothing is written under the checkout the script is installed in"
 
 # A GUI launch has no pane to keep a claim alive, so a GUI batch records
 # nothing and stays on the lane resolved up front — as `--help` says.
