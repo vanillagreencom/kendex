@@ -146,10 +146,13 @@
   or invoked) when no eligible model remains. `review` collects
   `SECOND_OPINION_COUNT` opinions (default 1); 2+ is the former multi-lane
   union, now opt-in breadth. `SECOND_OPINION_REVIEW_TARGETS` is no longer
-  read (a set value is named on stderr). Migration for settings seeded from
-  the old top-level example: a `SECOND_OPINION_TARGET` that names the
-  session's own model is now refused rather than honoured — remove the key
-  (the refusal names what the roster would pick). Pi/OpenCode/Cursor and undetected
+  read (a set value is named on stderr). **Migration, consumer repos:** sweep
+  every file these keys are seeded into — `vstack.settings.toml`, `.env.local`
+  AND any `.env.local.example` or `.env.example`, which carry their own copies
+  and are what a new checkout copies from. Drop `SECOND_OPINION_REVIEW_TARGETS`
+  wherever it appears, and drop a `SECOND_OPINION_TARGET` that names the
+  session's own model: it is now refused rather than honoured (the refusal names
+  what the roster would pick). Pi/OpenCode/Cursor and undetected
   sessions must set `SECOND_OPINION_CURRENT_MODEL` (model ids normalize;
   `none` = no session model) or are refused; a declared identity the roster
   does not spell is refused too. A shortfall against
@@ -184,7 +187,9 @@
   different model (where nothing can catch it) — either way a silent same-model
   review. The one exemption is a project value that agrees with a positively
   detected `claude`/`codex` harness: it changes nothing and is simply not used.
-  Migration: move the key out of your settings file and into the session.
+  Migration: move the key out of every project file that carries it —
+  `vstack.settings.toml`, `.env`, `.vstack/settings.toml`, `.env.local` and any
+  `.env.local.example` — and export it in the sessions that need it.
   Model ids also canonicalize with their provider prefix
   (`openai-codex/gpt-5.6-sol` → codex, `anthropic/claude-opus-4` → claude). The
   roster-spelling refusal applies only to DECLARED identities: a detected

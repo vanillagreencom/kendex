@@ -1138,6 +1138,57 @@ else
   echo "  skip  scenario 33: ps hides script ancestors on this platform"
 fi
 
+echo "=== scenario 33e: the agreeing-value exemption survives the recursive lane launch ==="
+# The settings loader EXPORTS a project-file value, so each recursive lane child
+# would find it already in its environment and read it as caller-supplied —
+# promoting a value the parent resolved as agreeing-with-detection into a
+# DECLARED one, which carries the roster-spelling guard and refuses the very
+# lanes the parent just selected. The parent then exits 4 with no union, losing
+# the exemption exactly when breadth was requested.
+if $ANCESTOR_VISIBLE; then
+  reset_counts
+  rm -f "$TMP_ROOT/out33e.json" "$s33_proj/.env" "$s33_proj/.env.local"
+  write_s33_settings codex
+  rc33s=0
+  set +e
+  env -u SECOND_OPINION_CURRENT_MODEL \
+    SECOND_OPINION_MODELS="claude my-model" SECOND_OPINION_COUNT=2 \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+    SECOND_OPINION_MY_MODEL_CMD="$TMP_ROOT/bin/lane-extra" \
+    SECOND_OPINION_MY_MODEL_MODEL=deepseek \
+    "$TMP_ROOT/fake/codex" "$S33" review --range HEAD --cwd "$WORK" \
+    --output "$TMP_ROOT/out33e.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
+  rc33s=$?
+  set -e
+  assert_eq "$rc33s" "0" "a multi-lane run under an agreeing project value exits 0"
+  assert_eq "$(count lane-claude)" "1" "the claude lane runs"
+  assert_eq "$(count lane-extra)" "1" "the deepseek lane runs"
+  assert_jq "$TMP_ROOT/out33e.json" '.agent' "external-union(claude+my-model)" "a union artifact is produced"
+  grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" \
+    && fail "a lane child re-read the exported project value as a caller declaration"
+  # control: a value the CALLER exported really is session-scoped, and the lanes
+  # still inherit it — the child must not lose a genuine declaration either.
+  # The roster names codex so the declared identity is spelled (it is then a
+  # known identity and excluded), leaving the other two as the fan-out.
+  reset_counts
+  rm -f "$TMP_ROOT/out33f.json"
+  rc33t=0
+  set +e
+  env SECOND_OPINION_CURRENT_MODEL=codex \
+    SECOND_OPINION_MODELS="claude my-model codex" SECOND_OPINION_COUNT=2 \
+    SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/lane-claude" \
+    SECOND_OPINION_MY_MODEL_CMD="$TMP_ROOT/bin/lane-extra" \
+    SECOND_OPINION_MY_MODEL_MODEL=deepseek \
+    "$TMP_ROOT/fake/pi" "$S33" review --range HEAD --cwd "$WORK" \
+    --output "$TMP_ROOT/out33f.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
+  rc33t=$?
+  set -e
+  assert_eq "$rc33t" "0" "control: a caller-exported identity still fans out"
+  assert_eq "$(( $(count lane-claude) + $(count lane-extra) ))" "2" "control: both lanes still run"
+else
+  echo "  skip  scenario 33e: ps hides script ancestors on this platform"
+fi
+
 echo "=== scenario 33c: only the [env] table of a settings file declares the key ==="
 # vstack_load_settings_file reads no other table and skips comments, so naming a
 # file on a bare textual match sends the operator to edit a line that never

@@ -713,6 +713,54 @@ assert_eq "$rc10g" "5" "(b5) a dash-leading TMPDIR still exits 5"
 assert_eq "$(find "$s10g_base/-dashtmp" -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
   "(b5) the cleanup traps leave no temp files behind under a dash-leading TMPDIR"
 
+# (b6) clearing is scoped to what the MODE can write. challenge and quick emit
+# free text with no verdict contract, no sidecars and no lanes — clearing buys
+# them nothing and costs the caller their file every time the run fails before
+# the write, which is the same delete-what-we-never-write shape as the sibling
+# case above, reached through a mode instead of a filename.
+for s10h_mode in quick challenge; do
+  s10h_out="$TMP_ROOT/out/review10h-$s10h_mode.txt"
+  printf 'MY IMPORTANT FILE\n' > "$s10h_out"
+  printf '0' > "$COUNTER"
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+    STUB_COUNTER="$COUNTER" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+    "$SECOND_OPINION" "$s10h_mode" "is this safe?" --cwd "$WORK" --output "$s10h_out" \
+      >/dev/null 2>"$TMP_ROOT/s10h.stderr"
+  rc10h=$?
+  set -e
+  assert_eq "$rc10h" "1" "($s10h_mode) a failing run still exits 1"
+  assert_file_exists "$s10h_out" "($s10h_mode) --output is not deleted by a mode that may write nothing there"
+  assert_eq "$(cat "$s10h_out")" "MY IMPORTANT FILE" "($s10h_mode) the caller's file is byte-identical"
+done
+# control: a successful quick run still replaces it, so nothing was broken
+s10h_out="$TMP_ROOT/out/review10h-quick.txt"
+printf 'MY IMPORTANT FILE\n' > "$s10h_out"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+  STUB_COUNTER="$COUNTER" STUB_RC=0 STUB_STDOUT="ANSWER" \
+  "$SECOND_OPINION" quick "is this safe?" --cwd "$WORK" --output "$s10h_out" \
+    >/dev/null 2>"$TMP_ROOT/s10h.stderr"
+set -e
+assert_eq "$(cat "$s10h_out")" "ANSWER" "control: a successful quick run still writes --output"
+
+# audit writes the artifact and its sidecars but never fans out, so it must
+# clear the one and leave the other alone.
+s10i_out="$TMP_ROOT/out/review10i.json"
+printf '%s\n' "$S10_STALE" > "$s10i_out"
+printf '%s\n' "$S10_STALE" > "$s10i_out.claude.json"
+printf '0' > "$COUNTER"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+  STUB_COUNTER="$COUNTER" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" audit "look at this" --cwd "$WORK" --output "$s10i_out" \
+    >/dev/null 2>"$TMP_ROOT/s10i.stderr"
+rc10i=$?
+set -e
+assert_eq "$rc10i" "5" "audit keeps the no-verdict exit class"
+assert_file_absent "$s10i_out" "audit clears the artifact it does write"
+assert_file_exists "$s10i_out.claude.json" "audit leaves a lane family it can never produce"
+
 # (c) control: a successful run over a stale artifact replaces it
 s10c_out="$TMP_ROOT/out/review10c.json"
 s10c_err="$TMP_ROOT/s10c.stderr"

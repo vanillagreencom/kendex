@@ -338,14 +338,35 @@ clear_output_family() {
   fi
 }
 
-if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" ]]; then
-  # A directory here can never become the artifact, and rm would report it as a
-  # bare "Is a directory" from inside the clearing. Named as its own pre-flight
-  # cause instead.
-  if [[ -d "$OUTPUT_PATH" ]]; then
-    echo "Error: --output is a directory, not a file path: $OUTPUT_PATH" >&2
-    exit 1
-  fi
+# Clear exactly what THIS MODE can write, and nothing more. Deleting a path the
+# run will not itself write is the shape behind three separate findings on this
+# change — a sibling claimed by its name, a mode that writes no artifact, a lane
+# family a mode never produces — so the gate is stated as a capability rather
+# than a list of exclusions:
+#
+#   review   the artifact, its sidecars, and the per-lane families
+#   audit    the artifact and its sidecars; audit never fans out, so it can
+#            produce no <output>.<target>.json and must not remove one
+#   others   nothing. challenge/quick write free text with no verdict contract,
+#            no sidecars and no lanes — clearing buys them nothing and costs the
+#            caller their file whenever the run fails before the write. detect
+#            and a run with no mode write nothing at all.
+CLEAR_ARTIFACT=false
+CLEAR_LANES=false
+case "$MODE" in
+  review) CLEAR_ARTIFACT=true; CLEAR_LANES=true ;;
+  audit)  CLEAR_ARTIFACT=true ;;
+esac
+
+# Validation, not deletion, so it covers every mode that could write there: a
+# directory can never become the artifact, and rm/printf would report it as a
+# bare "Is a directory" from inside the clearing or the final write.
+if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" && -d "$OUTPUT_PATH" ]]; then
+  echo "Error: --output is a directory, not a file path: $OUTPUT_PATH" >&2
+  exit 1
+fi
+
+if [[ -n "$OUTPUT_PATH" ]] && $CLEAR_ARTIFACT; then
   # path_dir stands in for dirname, which cannot take the `--` marker portably.
   # mkdir's own message carries the errno, so it is folded into the named cause
   # rather than sent to /dev/null — a named error the operator cannot act on is
@@ -355,43 +376,45 @@ if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" ]]; then
     exit 1
   fi
   clear_output_family "$OUTPUT_PATH"
-  # The per-lane family too: <output>.<target>.json is a complete, schema-valid
-  # review carrying its own verdict, so one left by an earlier multi-lane run is
-  # the same stale pass. The multi-lane loop below only clears the lanes THIS
-  # run selects, which is nothing at all when the run refuses or resolves to a
-  # single lane.
-  #
-  # The names this run may itself write — the roster and a forced target — are
-  # cleared unconditionally. Those paths are derived from the caller's own
-  # --output and this run is about to write them, so a survivor there would be
-  # both a stale pass and an inode the run writes through.
-  while IFS= read -r clear_name; do
-    [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
-    clear_output_family "$OUTPUT_PATH.$clear_name.json"
-  done < <(printf '%s\n' "$FORCED_TARGET"; roster_entries)
-  # A target since RENAMED or REMOVED leaves a lane artifact no later run's
-  # roster names, so the prefix is also swept for siblings outside that set.
-  # These are NOT paths this run would write, so a filename cannot authorize
-  # deleting one: `report.json.notes.json` is both a legal-looking lane name and
-  # an ordinary user file, and destroying something the skill never wrote is
-  # worse than the stale-lane gap the sweep exists to close. A sibling is
-  # removed only when its CONTENT is a review this skill emitted — the shape its
-  # own gates require of every artifact it writes.
-  #
-  # "$OUTPUT_PATH". is quoted, so glob metacharacters IN THE CALLER'S PATH
-  # (report[1].json) match literally; only the trailing * is a pattern. The name
-  # test is a cheap pre-filter that keeps jq off every sibling — it carries no
-  # safety role and no test covers it alone, because the content check is the
-  # only thing authorizing a deletion. Removing it changes no outcome.
-  for clear_candidate in "$OUTPUT_PATH".*; do
-    [[ -f "$clear_candidate" ]] || continue        # nothing matched, or not a file
-    clear_name="${clear_candidate#"$OUTPUT_PATH".}"
-    [[ "$clear_name" == *.json ]] || continue
-    clear_name="${clear_name%.json}"
-    [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
-    is_own_review_artifact "$clear_candidate" || continue
-    clear_output_family "$clear_candidate"
-  done
+  if $CLEAR_LANES; then
+    # The per-lane family too: <output>.<target>.json is a complete, schema-valid
+    # review carrying its own verdict, so one left by an earlier multi-lane run is
+    # the same stale pass. The multi-lane loop below only clears the lanes THIS
+    # run selects, which is nothing at all when the run refuses or resolves to a
+    # single lane.
+    #
+    # The names this run may itself write — the roster and a forced target — are
+    # cleared unconditionally. Those paths are derived from the caller's own
+    # --output and this run is about to write them, so a survivor there would be
+    # both a stale pass and an inode the run writes through.
+    while IFS= read -r clear_name; do
+      [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+      clear_output_family "$OUTPUT_PATH.$clear_name.json"
+    done < <(printf '%s\n' "$FORCED_TARGET"; roster_entries)
+    # A target since RENAMED or REMOVED leaves a lane artifact no later run's
+    # roster names, so the prefix is also swept for siblings outside that set.
+    # These are NOT paths this run would write, so a filename cannot authorize
+    # deleting one: `report.json.notes.json` is both a legal-looking lane name and
+    # an ordinary user file, and destroying something the skill never wrote is
+    # worse than the stale-lane gap the sweep exists to close. A sibling is
+    # removed only when its CONTENT is a review this skill emitted — the shape its
+    # own gates require of every artifact it writes.
+    #
+    # "$OUTPUT_PATH". is quoted, so glob metacharacters IN THE CALLER'S PATH
+    # (report[1].json) match literally; only the trailing * is a pattern. The name
+    # test is a cheap pre-filter that keeps jq off every sibling — it carries no
+    # safety role and no test covers it alone, because the content check is the
+    # only thing authorizing a deletion. Removing it changes no outcome.
+    for clear_candidate in "$OUTPUT_PATH".*; do
+      [[ -f "$clear_candidate" ]] || continue        # nothing matched, or not a file
+      clear_name="${clear_candidate#"$OUTPUT_PATH".}"
+      [[ "$clear_name" == *.json ]] || continue
+      clear_name="${clear_name%.json}"
+      [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+      is_own_review_artifact "$clear_candidate" || continue
+      clear_output_family "$clear_candidate"
+    done
+  fi
 fi
 
 [[ -z "$PARSE_ERROR" ]] || { echo "Error: $PARSE_ERROR" >&2; exit 1; }
@@ -1443,6 +1466,18 @@ if $MULTI_LANE; then
     # unattributed; the loss is reported in the same shape as the other capture
     # losses instead.
     (
+      # PROVENANCE, not the string, is what a lane must inherit. The settings
+      # loader EXPORTS a project-file SECOND_OPINION_CURRENT_MODEL, so a child
+      # would find it already in its environment and read it as caller-supplied
+      # — promoting a value this run resolved as detected (or as agreeing with
+      # detection, which detection wins) into a DECLARED one, which carries the
+      # roster-spelling guard and refuses the very lanes the parent just
+      # selected. Dropping it unless the CALLER really set it makes the child
+      # re-derive exactly as the parent did: same process tree, same project
+      # files, same answer.
+      if [[ "$CURRENT_MODEL_SOURCE" != "session" ]]; then
+        unset SECOND_OPINION_CURRENT_MODEL
+      fi
       exec 4>&2 2>/dev/null
       if exec 3>"$lane_err"; then
         exec 2>&4 4>&-
