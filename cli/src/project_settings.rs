@@ -393,9 +393,8 @@ fn assigned_keys(content: &str) -> BTreeSet<String> {
         .lines()
         .filter(|line| !is_table_header(line))
         .filter_map(|line| {
-            // Raw key, before any quote handling: assignment_key trims
-            // quotes, which would make `"KEY" = ...` (invisible to the
-            // shell reader) indistinguishable from a bare `KEY = ...`.
+            // Same bare-identifier rule as assignment_key, spelled out here
+            // so the mirrored shell-reader semantics stay in one screenful.
             let trimmed = line.trim_start();
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 return None;
