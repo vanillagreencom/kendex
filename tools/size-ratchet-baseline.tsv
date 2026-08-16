@@ -1,3 +1,4 @@
+CHANGELOG.md	1089
 cli/src/agent.rs	1074
 cli/src/commands/add.rs	3029
 cli/src/commands/apply.rs	2778
@@ -38,7 +39,9 @@ skills/orch/tests/approval_wait.sh	1634
 skills/review-gate/scripts/review-predicate-selftest.sh	2626
 skills/review-gate/scripts/review-predicate.sh	1149
 skills/review-gate/tests/pr-watch.test.sh	1158
-skills/second-opinion/scripts/second-opinion	1537
+skills/second-opinion/scripts/second-opinion	2370
+skills/second-opinion/tests/cli-failure-gate.test.sh	1153
+skills/second-opinion/tests/review-dual-model.test.sh	1516
 skills/worktree/scripts/worktree	4077
 skills/worktree/scripts/worktree-session-guard	1194
 skills/worktree/tests/worktree_session_guard.sh	1284
