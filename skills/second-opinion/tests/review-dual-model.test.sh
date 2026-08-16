@@ -1012,6 +1012,29 @@ if $ANCESTOR_VISIBLE; then
   run_s33 claude SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 || rc33e=$?
   assert_eq "$rc33e" "0" "control: a project value agreeing with detection proceeds"
   assert_eq "$(count lane-codex)" "1" "control: the agreeing session still gets the cross-model target"
+  # ...and it carries NO roster-spelling requirement, because the operator never
+  # typed it for this session: it only repeats what detection already knew. A
+  # roster naming just the cross-model target is the most natural configuration
+  # there is and must work — the same regression already fixed for plain
+  # detection, re-entering through the project-sourced path.
+  reset_counts
+  rm -f "$TMP_ROOT/out33.json"
+  write_s33_settings claude
+  rc33m=0
+  run_s33 claude SECOND_OPINION_MODELS="codex" SECOND_OPINION_COUNT=1 || rc33m=$?
+  assert_eq "$rc33m" "0" "an agreeing project value with a target-only roster exits 0"
+  assert_eq "$(count lane-codex)" "1" "an agreeing project value with a target-only roster dispatches codex"
+  assert_eq "$(count lane-claude)" "0" "the session's own model is still never dispatched to"
+  grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" \
+    && fail "an agreeing project value is wrongly held to the roster spelling"
+  # the mirrored harness, so the agreement path is pinned on both arms
+  reset_counts
+  rm -f "$TMP_ROOT/out33.json"
+  write_s33_settings codex
+  rc33n=0
+  run_s33 codex SECOND_OPINION_MODELS="claude" SECOND_OPINION_COUNT=1 || rc33n=$?
+  assert_eq "$rc33n" "0" "an agreeing project value in a detected codex session exits 0"
+  assert_eq "$(count lane-claude)" "1" "an agreeing project value in a detected codex session dispatches claude"
   # the mirrored detected harness: the codex arm of the cross-check is its own
   # case and would otherwise be unpinned by a suite that only ever runs claude
   reset_counts

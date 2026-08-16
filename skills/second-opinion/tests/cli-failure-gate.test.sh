@@ -613,6 +613,79 @@ for s10d_bad in --timeout=abc --bogus; do
   assert_family_cleared "$s10d_out" "($s10d_bad)"
 done
 
+# (b3) a lane artifact belonging to a target the roster no longer names is
+# still a complete, schema-valid review with its own verdict — the guarantee is
+# written without an exception for renamed or retired targets. Bystanders that
+# merely share the prefix must survive: only a middle segment shaped like a
+# legal target name identifies a file as one of ours.
+s10e_out="$TMP_ROOT/out/review10e.json"
+s10e_err="$TMP_ROOT/s10e.stderr"
+seed_stale_family "$s10e_out"
+printf '%s\n' "$S10_STALE" > "$s10e_out.retired-model.json"
+printf '%s\n' "$S10_STALE" > "$s10e_out.retired-model.json.failed.json"
+printf '%s\n' "$S10_STALE" > "$s10e_out.orphan-lane.json.raw.txt"   # sidecar with no artifact
+# bystanders: the caller's own files under the same prefix
+printf 'MINE\n' > "$s10e_out.bak"
+printf 'MINE\n' > "$s10e_out.notes.md"
+printf 'MINE\n' > "${s10e_out}X"
+printf 'MINE\n' > "$s10e_out.two.words.json"
+rc10e=0
+STUB_RC=1 STUB_STDERR="$QUOTA_ERR" run_review "$s10e_out" "$s10e_err" || rc10e=$?
+assert_eq "$rc10e" "5" "(b3) the run over a retired lane artifact still exits 5"
+assert_file_absent "$s10e_out.retired-model.json" "(b3) a retired target's lane artifact is cleared"
+assert_file_absent "$s10e_out.retired-model.json.failed.json" "(b3) the retired lane's sidecar is cleared"
+assert_file_absent "$s10e_out.orphan-lane.json.raw.txt" "(b3) an orphaned lane sidecar is cleared"
+assert_file_exists "$s10e_out.bak" "(b3) bystander .bak survives"
+assert_file_exists "$s10e_out.notes.md" "(b3) bystander .notes.md survives"
+assert_file_exists "${s10e_out}X" "(b3) bystander with no separating dot survives"
+assert_file_exists "$s10e_out.two.words.json" "(b3) a middle segment that is not a legal target name survives"
+
+# (b4) the prefix scan must hold for the two hostile --output shapes the rest of
+# the file already guards: a leading '-' (which rm/mkdir would read as flags —
+# hence `--` everywhere) and glob metacharacters in the caller's own path (the
+# scan quotes the prefix, so `[1]` matches literally instead of as a class).
+for s10f_name in "-dash-review.json" "review[1].json"; do
+  s10f_out="$TMP_ROOT/out/$s10f_name"
+  rm -f -- "$TMP_ROOT/out/"*review*.json* 2>/dev/null || true
+  printf '%s\n' "$S10_STALE" > "$s10f_out"
+  # A RETIRED name, so only the prefix scan can clear it — a roster name would
+  # be cleared by the enumerated pass and prove nothing about the scan.
+  printf '%s\n' "$S10_STALE" > "$s10f_out.retired-model.json"
+  printf 'MINE\n' > "$s10f_out.bak"
+  rc10f=0
+  STUB_RC=1 STUB_STDERR="$QUOTA_ERR" run_review "$s10f_out" "$TMP_ROOT/s10f.stderr" || rc10f=$?
+  assert_eq "$rc10f" "5" "($s10f_name) still exits 5"
+  assert_file_absent "$s10f_out" "($s10f_name) stale artifact cleared"
+  assert_file_absent "$s10f_out.retired-model.json" "($s10f_name) the scan still reaches a retired lane artifact"
+  assert_file_exists "$s10f_out.bak" "($s10f_name) bystander survives"
+  rm -f -- "$s10f_out.bak" "$s10f_out.failed.json"
+done
+
+# (b5) the cleanup traps run rm on mktemp paths, so a TMPDIR whose name starts
+# with '-' makes every one of those paths start with '-' too. Without the `--`
+# separator rm parses them as flags, the removal silently fails behind its
+# `|| true`, and the run leaks its prompt and stderr temp files.
+#
+# TMPDIR must be RELATIVE for this: an absolute one yields /…/-dashtmp/tmp.X,
+# which begins with '/' and rm parses happily. Run from a scratch cwd so the
+# relative name resolves there and mktemp hands back `-dashtmp/tmp.X`.
+s10g_base="$TMP_ROOT/dashrun"
+rm -rf -- "$s10g_base"; mkdir -p -- "$s10g_base/-dashtmp"
+s10g_out="$TMP_ROOT/out/review10g.json"
+rm -f -- "$s10g_out" "$s10g_out.failed.json"
+printf '0' > "$COUNTER"
+set +e
+( cd "$s10g_base" && PATH="$TMP_ROOT/bin:$PATH" TMPDIR="-dashtmp" \
+    SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+    STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s10g_out" \
+      >/dev/null 2>"$TMP_ROOT/s10g.stderr" )
+rc10g=$?
+set -e
+assert_eq "$rc10g" "5" "(b5) a dash-leading TMPDIR still exits 5"
+assert_eq "$(find "$s10g_base/-dashtmp" -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "(b5) the cleanup traps leave no temp files behind under a dash-leading TMPDIR"
+
 # (c) control: a successful run over a stale artifact replaces it
 s10c_out="$TMP_ROOT/out/review10c.json"
 s10c_err="$TMP_ROOT/s10c.stderr"

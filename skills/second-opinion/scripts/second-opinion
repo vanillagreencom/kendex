@@ -332,8 +332,39 @@ if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" ]]; then
   # review carrying its own verdict, so one left by an earlier multi-lane run is
   # the same stale pass. The multi-lane loop below only clears the lanes THIS
   # run selects, which is nothing at all when the run refuses or resolves to a
-  # single lane. The candidate set is finite and already known here: every
-  # syntactically valid roster entry, plus a forced target.
+  # single lane.
+  #
+  # The configured roster is not enough on its own: a target since RENAMED or
+  # REMOVED leaves an artifact no later run's roster names, and the guarantee is
+  # written without that exception. So the directory is scanned for anything
+  # sitting under this artifact's prefix, and each candidate must prove it is
+  # one of ours before anything is removed — its middle segment has to be a
+  # legal target name, the same shape the roster walk enforces. That keeps the
+  # never-glob-a-caller's-prefix rule intact in substance: `report.json.bak`,
+  # `report.json.notes.md` and `report.jsonX` all fail the test and survive.
+  #
+  # "$OUTPUT_PATH". is quoted, so glob metacharacters IN THE CALLER'S PATH
+  # (report[1].json) match literally; only the trailing * is a pattern.
+  for clear_candidate in "$OUTPUT_PATH".*; do
+    [[ -e "$clear_candidate" || -L "$clear_candidate" ]] || continue   # nothing matched
+    clear_name="${clear_candidate#"$OUTPUT_PATH".}"
+    # A lane's own sidecars carry the lane artifact's name plus a managed
+    # suffix; strip one so an orphaned sidecar still identifies its lane.
+    case "$clear_name" in
+      *.raw.txt)         clear_name="${clear_name%.raw.txt}" ;;
+      *.retry.txt)       clear_name="${clear_name%.retry.txt}" ;;
+      *.failed.json)     clear_name="${clear_name%.failed.json}" ;;
+      *.noreview.json)   clear_name="${clear_name%.noreview.json}" ;;
+      *.incomplete.json) clear_name="${clear_name%.incomplete.json}" ;;
+    esac
+    [[ "$clear_name" == *.json ]] || continue
+    clear_name="${clear_name%.json}"
+    [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+    clear_output_family "$OUTPUT_PATH.$clear_name.json"
+  done
+  # The configured roster and a forced target are cleared unconditionally too:
+  # the scan above only sees what EXISTS, and these are the names this run may
+  # itself write.
   while IFS= read -r clear_name; do
     [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
     clear_output_family "$OUTPUT_PATH.$clear_name.json"
@@ -457,6 +488,16 @@ resolve_current_model() {
     CURRENT_MODEL=$(canon_identity "$SECOND_OPINION_CURRENT_MODEL")
     if $CURRENT_MODEL_IS_SESSION_SCOPED; then
       CURRENT_MODEL_SOURCE="session"
+    elif [[ "$CURRENT_MODEL" == "$CURRENT_HARNESS" ]] \
+         && [[ "$CURRENT_HARNESS" == "claude" || "$CURRENT_HARNESS" == "codex" ]]; then
+      # A project value that only repeats what detection already established
+      # adds nothing — it is redundant, not a declaration. Classify it as
+      # DETECTED so nothing downstream treats it as a typed value: a declared
+      # identity carries a roster-spelling requirement, and applying that to a
+      # value the operator never typed for this session refuses the most
+      # natural configuration there is (a roster naming only the cross-model
+      # target). Same regression already fixed once for plain detection.
+      CURRENT_MODEL_SOURCE="detected"
     else
       CURRENT_MODEL_SOURCE="project"
     fi
@@ -674,9 +715,9 @@ if [[ -z "$CURRENT_MODEL" ]]; then
 elif [[ "$CURRENT_MODEL_SOURCE" == "project" ]]; then
   case "$CURRENT_HARNESS" in
     claude|codex)
-      if [[ "$CURRENT_MODEL" != "$CURRENT_HARNESS" ]]; then
-        SESSION_SKIP_REASON="project settings declare model $CURRENT_MODEL but this session is a detected $CURRENT_HARNESS harness${SESSION_DECLARING_FILES:+ (declared in $SESSION_DECLARING_FILES)} — SECOND_OPINION_CURRENT_MODEL is session-scoped and cannot be right for every session in one repo; remove it there and export it in the environment of the sessions that need it (Pi, OpenCode, Cursor)"
-      fi
+      # Only a CONTRADICTION reaches here: a project value agreeing with
+      # detection was reclassified as detected in resolve_current_model.
+      SESSION_SKIP_REASON="project settings declare model $CURRENT_MODEL but this session is a detected $CURRENT_HARNESS harness${SESSION_DECLARING_FILES:+ (declared in $SESSION_DECLARING_FILES)} — SECOND_OPINION_CURRENT_MODEL is session-scoped and cannot be right for every session in one repo; remove it there and export it in the environment of the sessions that need it (Pi, OpenCode, Cursor)"
       ;;
     *)
       SESSION_SKIP_REASON="model $CURRENT_MODEL comes from project settings${SESSION_DECLARING_FILES:+ ($SESSION_DECLARING_FILES)}, not from this session, and $CURRENT_HARNESS fronts a selectable model that detection cannot check it against — remove it there and export SECOND_OPINION_CURRENT_MODEL in this session's environment"
@@ -1026,10 +1067,10 @@ derive_review_scope() {
   if ! diff_files=$(git -C "$cwd" -c core.quotePath=false diff --name-only $range 2>"$git_err"); then
     jq -n --arg range "$range" --arg cwd "$cwd" --arg detail "$(head -5 "$git_err")" \
       '{error: "Cannot derive review scope: git diff failed for range \($range)", cwd: $cwd, detail: $detail}' >&2
-    rm -f "$git_err"
+    rm -f -- "$git_err"
     exit "$EXIT_NO_SCOPE"
   fi
-  rm -f "$git_err"
+  rm -f -- "$git_err"
 
   if [[ -z "$diff_files" ]]; then
     jq -n --arg range "$range" --arg cwd "$cwd" --arg branch "$REVIEW_BRANCH" \
@@ -1275,12 +1316,12 @@ if $MULTI_LANE; then
     # failure would both override a delivered two-lane union with a non-zero
     # status and skip everything below it. Every command in this trap is
     # guarded for that reason.
-    rm -rf "$LANE_TMP_DIR" || true
+    rm -rf -- "$LANE_TMP_DIR" || true
     # Stdout-mode lane artifacts plus each child's own sidecar family
     # (<art>.noreview.json, <art>.raw.txt, …): the mktemp name makes the glob
     # unambiguous, and a glob that matches nothing is a no-op for rm -f.
     for art in ${LANE_TMP_FILES[@]+"${LANE_TMP_FILES[@]}"}; do
-      rm -f "$art" "$art".* || true
+      rm -f -- "$art" "$art".* || true
     done
   }
   trap 'cleanup_lanes' EXIT
@@ -1610,7 +1651,7 @@ PROMPT_TMP=$(mktemp)
 # Guarded for the same reason as cleanup_lanes: an EXIT trap whose last command
 # fails REPLACES the run's exit status, so a temp directory that turned
 # read-only under the run would rewrite a documented 4/5 into rm's status.
-trap 'rm -f "$PROMPT_TMP" || true' EXIT
+trap 'rm -f -- "$PROMPT_TMP" || true' EXIT
 printf '%s\n' "$PROMPT" > "$PROMPT_TMP"
 
 STDERR_TMP=$(mktemp)
@@ -1619,7 +1660,7 @@ STDERR_TMP=$(mktemp)
 # preserve_raw_and_fail are deliberately NOT tracked here — they are the durable
 # record of a lost or reformatted response.
 RETRY_PROMPT_TMP=""
-trap 'rm -f "$PROMPT_TMP" "$STDERR_TMP" "$RETRY_PROMPT_TMP" || true' EXIT
+trap 'rm -f -- "$PROMPT_TMP" "$STDERR_TMP" "$RETRY_PROMPT_TMP" || true' EXIT
 
 # --- Invoke external CLI ------------------------------------------------------
 

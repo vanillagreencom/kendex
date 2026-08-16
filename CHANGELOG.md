@@ -159,14 +159,18 @@
   review/audit records written without `--output`. `detect` prints the
   target(s) a review would run.
 - second-opinion: no run can hand a caller a stale pass. `--output`, every
-  `<output>.<target>.json` lane artifact the roster could produce, and the
-  managed sidecars of both (`.raw.txt`, `.retry.txt`, `.failed.json`,
-  `.noreview.json`, `.incomplete.json`) are DELETED at startup, before target
-  selection and before any CLI runs, so no exit past the argument loop leaves a
-  previous run's artifact standing — external review is advisory, and callers
-  are told to continue past its non-zero exits. `--help` and `detect` are
-  excluded; neither writes anything. Reusing one `--output` path across runs is
-  now safe, and pointing `--output` at a file you want to keep is not.
+  `<output>.<target>.json` lane artifact beside it, and the managed sidecars of
+  both (`.raw.txt`, `.retry.txt`, `.failed.json`, `.noreview.json`,
+  `.incomplete.json`) are DELETED at startup, before target selection and before
+  any CLI runs, so no exit past the argument loop leaves a previous run's
+  artifact standing — external review is advisory, and callers are told to
+  continue past its non-zero exits. Lane artifacts include those left by a
+  target since renamed or removed from `SECOND_OPINION_MODELS`: a file is taken
+  as one of ours only when its middle segment is shaped like a legal target
+  name, so anything else sharing the prefix (`<output>.bak`,
+  `<output>.notes.md`) is left alone. `--help` and `detect` are excluded;
+  neither writes anything. Reusing one `--output` path across runs is now safe,
+  and pointing `--output` at a file you want to keep is not.
 - second-opinion: `SECOND_OPINION_CURRENT_MODEL` is SESSION-scoped and must be
   exported in the environment of the session that needs it. **A value reaching
   a run from any project file — `.env`, `vstack.settings.toml`,
