@@ -43,8 +43,8 @@ By default the skill runs exactly ONE reviewer: the highest-priority entry in `S
 | `SECOND_OPINION_<NAME>_CMD` | `SECOND_OPINION_PI_DEEPSEEK_CMD = "pi -p --model deepseek/deepseek-v4-pro"` | Full command for roster entry `pi-deepseek` (`claude` and `codex` have built-in commands) |
 | `SECOND_OPINION_<NAME>_MODEL` | `SECOND_OPINION_PI_DEEPSEEK_MODEL = "deepseek"` | The model that entry fronts, when it is not the entry's own name |
 | `SECOND_OPINION_COUNT` | `"2"` | Opinions a `review` collects; 2+ runs up to that many distinct models and unions the findings |
-| `SECOND_OPINION_CURRENT_MODEL` | `"claude"` (or `"opus"`, `"gpt-5.6-sol"`, `"none"`) | The model your session runs. Detected for Claude Code and Codex; required in Pi, OpenCode, Cursor and undetected shells — `none` says there is no session model (CI, plain terminal) |
-| `SECOND_OPINION_ARTIFACT_DIR` | `"tmp/second-opinion"` | Where records land when you pass no `--output` (relative to `--cwd`) |
+| `SECOND_OPINION_CURRENT_MODEL` | `"claude"` (or `"opus"`, `"gpt-5.6-sol"`, `"openai-codex/gpt-5.6-sol"`, `"none"`) | The model your session runs. Detected for Claude Code and Codex; required in Pi, OpenCode, Cursor and undetected shells — `none` says there is no session model (CI, plain terminal) |
+| `SECOND_OPINION_ARTIFACT_DIR` | `"tmp/second-opinion"` | Where records land when you pass no `--output` (relative to `--cwd`, or `~/…`/absolute) |
 | `SECOND_OPINION_REVIEW_INSTRUCTIONS` | `"AGENTS.md review-bots.md .github/instructions/*.instructions.md"` | Repo instruction files appended to the review prompt; empty disables |
 | `SECOND_OPINION_TIMEOUT` | `"300"` | Seconds to wait for the external CLI |
 
@@ -60,12 +60,12 @@ Project installs seed `vstack.settings.toml` from this skill's `vstack.settings.
 |----------|---------|---------|
 | `SECOND_OPINION_MODELS` | `claude codex` | Priority-ordered roster; the first available entry that is not your session's model wins |
 | `SECOND_OPINION_COUNT` | `1` | Opinions a `review` collects; 2+ runs up to that many distinct models and unions the findings, deduped by location (a shortfall is reported and marked degraded) |
-| `SECOND_OPINION_CURRENT_MODEL` | (unset) | The model your session runs, when the CLI cannot tell (Pi, OpenCode, Cursor, undetected — required there; `none` = no session model); Claude Code and Codex are detected. Model ids normalize (`opus` → claude, `gpt-*` → codex); a value the roster does not know is refused |
+| `SECOND_OPINION_CURRENT_MODEL` | (unset) | The model your session runs, when the CLI cannot tell (Pi, OpenCode, Cursor, undetected — required there; `none` = no session model); Claude Code and Codex are detected. Model ids normalize, provider prefix included (`opus`, `anthropic/claude-opus-4` → claude; `gpt-*`, `openai-codex/gpt-*` → codex); a value you set here that the roster does not know is refused (a detected one is not — the roster may name only the target) |
 | `SECOND_OPINION_<NAME>_MODEL` | `<name>` | The model a roster entry runs, when it differs from its name (a Pi lane fronting Claude: `claude`) |
 | `SECOND_OPINION_<NAME>_CMD` | (none) | Full command for a roster entry — another model CLI is a settings entry, not new code |
 | `SECOND_OPINION_TARGET` | (unset) | Force one target; refused if it is your session's model |
 | `SECOND_OPINION_TIMEOUT` | `300` | Max seconds to wait |
-| `SECOND_OPINION_ARTIFACT_DIR` | `tmp/second-opinion` | Where records land when you pass no `--output` (relative to `--cwd`; falls back to a temp file, loudly, if it cannot be created or is a symlink) |
+| `SECOND_OPINION_ARTIFACT_DIR` | `tmp/second-opinion` | Where records land when you pass no `--output` (relative to `--cwd`, or `~/…`/absolute; git-ignored on creation; falls back to a temp file, loudly, if it cannot be created or is a symlink) |
 | `SECOND_OPINION_REVIEW_INSTRUCTIONS` | (see above) | Instruction-file globs appended to the review prompt; set empty to disable |
 
 ### Default commands
@@ -90,4 +90,4 @@ The orch `submit-pr` workflow also runs `review` as a local pre-PR review of the
 
 Review artifacts stamp `qa_metadata.reviewed_head` (the reviewed worktree's HEAD commit) so callers can budget review passes **per pushed head** — GitHub bots re-review every push, and a new head is a new round, not a spend against a per-submission cap.
 
-The wrapper guarantees a "pass" artifact always corresponds to a complete review that actually happened: the `timestamp` is wrapper-stamped rather than model-supplied, the scope is derived from the worktree instead of being left to the model, and a response that is incomplete, self-reported as no-review, or never delivered is preserved beside the artifact rather than becoming it. Any run that ends without a verdict also clears whatever a previous run left at `--output`, so reusing one path can never hand a caller a stale pass. See SKILL.md § Error Handling for the exit-code contract.
+The wrapper guarantees a "pass" artifact always corresponds to a complete review that actually happened: the `timestamp` is wrapper-stamped rather than model-supplied, the scope is derived from the worktree instead of being left to the model, and a response that is incomplete, self-reported as no-review, or never delivered is preserved beside the artifact rather than becoming it. Any run that ends without a verdict has already cleared whatever a previous run left at `--output` — the artifact, its lane artifacts, and their sidecars — so reusing one path can never hand a caller a stale pass. See SKILL.md § Error Handling for the exit-code contract.

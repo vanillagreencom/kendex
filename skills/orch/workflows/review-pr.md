@@ -98,6 +98,8 @@ External review runs automatically alongside the internal panel when available, 
 
 A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anything else sets it `true` with that output as `EXTERNAL_TARGET`.
 
+Output of `none` is a settings gap, not a missing skill: stderr carries a JSON object whose `candidates` name each reason. Tell the user once — `External review skipped — [REASON]. Fix in vstack.settings.toml [env]: SECOND_OPINION_CURRENT_MODEL / SECOND_OPINION_MODELS` — then continue.
+
 ### 2.2 Launch And Delegate
 
 Spawn each reviewer in `REVIEWERS_TO_LAUNCH`, resolving Codex spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`. In **wave mode**, restrict this section to `[WAVE]` — the first up-to-`REVIEWER_SLOTS` reviewers in `[AGENTS]` not yet in `review_wave_done` — and reset the tracking on entry from § 2.1 (skip the reset when re-entering from § 3.2 for the next wave of the same cycle):

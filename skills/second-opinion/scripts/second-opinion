@@ -34,9 +34,6 @@ PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
 source "$SCRIPT_DIR/lib/vstack-env.sh"
 vstack_load_project_env "$PROJECT_ROOT"
 
-# Dependency check
-command -v jq >/dev/null 2>&1 || { echo "Error: jq is required but not found" >&2; exit 1; }
-
 # Portability: macOS lacks timeout, try gtimeout fallback
 if ! command -v timeout >/dev/null 2>&1; then
   if command -v gtimeout >/dev/null 2>&1; then
@@ -189,63 +186,114 @@ HELP
 }
 
 # --- Argument parsing ---------------------------------------------------------
+# A malformed argument does not exit here: it records PARSE_ERROR and stops the
+# loop, so the stale-output clearing below still runs on whatever --output was
+# already parsed. Reported the moment clearing is done. `--help` is the one
+# in-loop exit — a help request must never delete anything.
 
+PARSE_ERROR=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     review|challenge|audit|quick|detect)
       MODE="$1"; shift ;;
-    --prompt)    [[ $# -ge 2 ]] || { echo "Error: --prompt requires a value" >&2; exit 1; }; PROMPT_FILE="$2"; shift 2 ;;
+    --prompt)    [[ $# -ge 2 ]] || { PARSE_ERROR="--prompt requires a value"; break; }; PROMPT_FILE="$2"; shift 2 ;;
     --prompt=*)  PROMPT_FILE="${1#--prompt=}"; shift ;;
-    --output)    [[ $# -ge 2 ]] || { echo "Error: --output requires a value" >&2; exit 1; }; OUTPUT_PATH="$2"; shift 2 ;;
+    --output)    [[ $# -ge 2 ]] || { PARSE_ERROR="--output requires a value"; break; }; OUTPUT_PATH="$2"; shift 2 ;;
     --output=*)  OUTPUT_PATH="${1#--output=}"; shift ;;
-    --target|--provider)  [[ $# -ge 2 ]] || { echo "Error: $1 requires a value" >&2; exit 1; }; TARGET="$2"; shift 2 ;;
+    --target|--provider)  [[ $# -ge 2 ]] || { PARSE_ERROR="$1 requires a value"; break; }; TARGET="$2"; shift 2 ;;
     --target=*)  TARGET="${1#--target=}"; shift ;;
     --provider=*) TARGET="${1#--provider=}"; shift ;;
-    --range)     [[ $# -ge 2 ]] || { echo "Error: --range requires a value" >&2; exit 1; }; RANGE="$2"; shift 2 ;;
+    --range)     [[ $# -ge 2 ]] || { PARSE_ERROR="--range requires a value"; break; }; RANGE="$2"; shift 2 ;;
     --range=*)   RANGE="${1#--range=}"; shift ;;
-    --cwd)       [[ $# -ge 2 ]] || { echo "Error: --cwd requires a value" >&2; exit 1; }; CWD="$2"; shift 2 ;;
+    --cwd)       [[ $# -ge 2 ]] || { PARSE_ERROR="--cwd requires a value"; break; }; CWD="$2"; shift 2 ;;
     --cwd=*)     CWD="${1#--cwd=}"; shift ;;
-    --timeout)   [[ $# -ge 2 ]] || { echo "Error: --timeout requires a value" >&2; exit 1; }; TIMEOUT="$2"; shift 2 ;;
+    --timeout)   [[ $# -ge 2 ]] || { PARSE_ERROR="--timeout requires a value"; break; }; TIMEOUT="$2"; shift 2 ;;
     --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
     -h|--help)   show_help; exit 0 ;;
     --*)
-      echo "Error: unknown flag: $1" >&2; exit 1 ;;
+      PARSE_ERROR="unknown flag: $1"
+      # Keep parsing: a later --output still names an artifact this run must not
+      # leave standing as a stale pass.
+      shift ;;
     *)
       # Non-flag arg after mode → treat as inline prompt text
       if [[ -n "$MODE" && -z "$PROMPT_FILE" ]]; then
         INLINE_PROMPT="$1"; shift
       else
-        echo "Error: unknown argument: $1" >&2; exit 1
+        PARSE_ERROR="unknown argument: $1"; shift
       fi
       ;;
   esac
 done
-
-[[ -n "$MODE" ]] || { echo "Error: mode required (review|challenge|audit|quick|detect)" >&2; exit 1; }
-[[ "$TIMEOUT" =~ ^[0-9]+$ ]] || { echo "Error: --timeout must be a positive integer" >&2; exit 1; }
 
 # --- Stale designated output ---------------------------------------------------
 # Every no-verdict path — a target refusal, a timeout, a CLI failure, an
 # unusable response — leaves OUTPUT_PATH unwritten and returns non-zero. External
 # review is advisory, so callers are told to continue past that non-zero; a
 # PREVIOUS run's artifact still sitting at the same path is then read as THIS
-# run's pass. Clear the designated artifact and the exact sidecar family this
-# script writes before target selection and before any invocation, so the
-# single-lane path has the same guarantee the union artifact already had.
+# run's pass. Clear every artifact this script can write under the designated
+# path before target selection and before any invocation, so the single-lane
+# path has the same guarantee the union artifact already had.
 #
-# --output is caller input and may begin with '-', which these utilities would
-# parse as options: `--` marks the end of options, and path_dir stands in for
-# dirname, which cannot take that marker portably. Suffixes are enumerated
-# rather than globbed because the path is the CALLER's — `"$OUTPUT_PATH".*`
-# would take anything else of theirs under the same prefix. Keep in step with
-# preserve_cli_failure_and_fail, preserve_raw_response, preserve_raw_and_fail
-# and preserve_no_review_and_fail, the only writers of these sidecars.
+# This runs FIRST among the post-parse checks — ahead of the deferred parse
+# error, the jq dependency check, the mode check and the --timeout validation —
+# so exit 1 does not split into clearing and non-clearing halves: no exit past
+# the argument loop leaves a previous run's artifact behind. `detect` is the one
+# deliberate exclusion: it writes nothing and takes no --output.
+
+DEFAULT_MODELS="claude codex"
+FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
+
+# The roster, one entry per line, split with globbing off: an entry is a name,
+# never a pattern.
+roster_entries() {
+  local raw t
+  raw="${SECOND_OPINION_MODELS:-$DEFAULT_MODELS}"
+  raw="${raw//,/ }"
+  set -f
+  for t in $raw; do printf '%s\n' "$t"; done
+  set +f
+}
+
+# One artifact and the five sidecar suffixes this script writes beside it.
+# Enumerated rather than globbed because the path is the CALLER's —
+# `"$1".*` would take anything else of theirs under the same prefix. Keep in
+# step with preserve_cli_failure_and_fail, preserve_raw_response,
+# preserve_raw_and_fail and preserve_no_review_and_fail, the only writers.
+# `--` marks the end of options: --output is caller input and may begin with
+# '-', which rm would otherwise parse as flags.
+clear_output_family() {
+  rm -f -- "$1" \
+    "$1.raw.txt" "$1.retry.txt" "$1.failed.json" \
+    "$1.noreview.json" "$1.incomplete.json"
+}
+
 if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" ]]; then
-  mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
-  rm -f -- "$OUTPUT_PATH" \
-    "$OUTPUT_PATH.raw.txt" "$OUTPUT_PATH.retry.txt" "$OUTPUT_PATH.failed.json" \
-    "$OUTPUT_PATH.noreview.json" "$OUTPUT_PATH.incomplete.json"
+  # path_dir stands in for dirname, which cannot take the `--` marker portably.
+  if ! mkdir -p -- "$(path_dir "$OUTPUT_PATH")" 2>/dev/null; then
+    echo "Error: cannot create the --output parent directory: $(path_dir "$OUTPUT_PATH")" >&2
+    exit 1
+  fi
+  clear_output_family "$OUTPUT_PATH"
+  # The per-lane family too: <output>.<target>.json is a complete, schema-valid
+  # review carrying its own verdict, so one left by an earlier multi-lane run is
+  # the same stale pass. The multi-lane loop below only clears the lanes THIS
+  # run selects, which is nothing at all when the run refuses or resolves to a
+  # single lane. The candidate set is finite and already known here: every
+  # syntactically valid roster entry, plus a forced target.
+  while IFS= read -r clear_name; do
+    [[ "$clear_name" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || continue
+    clear_output_family "$OUTPUT_PATH.$clear_name.json"
+  done < <(printf '%s\n' "$FORCED_TARGET"; roster_entries)
 fi
+
+[[ -z "$PARSE_ERROR" ]] || { echo "Error: $PARSE_ERROR" >&2; exit 1; }
+
+# Dependency check
+command -v jq >/dev/null 2>&1 || { echo "Error: jq is required but not found" >&2; exit 1; }
+
+[[ -n "$MODE" ]] || { echo "Error: mode required (review|challenge|audit|quick|detect)" >&2; exit 1; }
+[[ "$TIMEOUT" =~ ^[0-9]+$ ]] || { echo "Error: --timeout must be a positive integer" >&2; exit 1; }
 
 # --- Harness detection --------------------------------------------------------
 
@@ -255,20 +303,32 @@ detect_current_harness() {
   # while its own process is the innermost harness — the process tree is the
   # authoritative signal and the markers are the fallback for when it cannot
   # be read. Bash tool PPID is the shell, not the harness, so walk upward.
+  #
+  # Names match EXACTLY. Each of these launchers has a stable argv0, so a prefix
+  # match buys nothing and costs precision: `cursor*` claims the Cursor editor
+  # itself, making every plain shell in its integrated terminal a multi-model
+  # harness that refuses until an identity is declared, and `codex*`/`claude*`
+  # claim any wrapper script or monitor that happens to share the prefix. The
+  # Cursor agent's own binary is `cursor-agent`.
   local pid=$$
   local ancestor_cmd
   while pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') && [[ -n "$pid" && "$pid" != "0" && "$pid" != "1" ]]; do
     ancestor_cmd=$(ps -o comm= -p "$pid" 2>/dev/null || echo "")
     ancestor_cmd="${ancestor_cmd##*/}"
     case "$ancestor_cmd" in
-      claude*) echo "claude"; return ;;
-      codex*)  echo "codex"; return ;;
-      pi|pi-*) echo "pi"; return ;;
-      opencode*) echo "opencode"; return ;;
-      cursor*) echo "cursor"; return ;;
+      claude)       echo "claude"; return ;;
+      codex)        echo "codex"; return ;;
+      pi)           echo "pi"; return ;;
+      opencode)     echo "opencode"; return ;;
+      cursor-agent) echo "cursor"; return ;;
     esac
   done
-  if [[ -n "${CODEX_SANDBOX:-}" ]]; then
+  # Codex's own runtime markers are checked BEFORE the Claude ones: a sandboxed
+  # Codex tool process can have no visible Codex ancestor while still carrying
+  # Claude markers INHERITED from an outer session, and the innermost harness is
+  # the one that owns this process. CODEX_SANDBOX names the sandbox on macOS;
+  # the Linux landlock path sets only CODEX_SANDBOX_NETWORK_DISABLED.
+  if [[ -n "${CODEX_SANDBOX:-}" ]] || [[ -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ]]; then
     echo "codex"
     return
   fi
@@ -312,6 +372,12 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 canon_identity() {
   local id
   id=$(lower "$1")
+  # Provider-qualified ids — openai-codex/gpt-5.6-sol, openai/gpt-5.6-sol,
+  # anthropic/claude-opus-4 — are exactly what Pi and OpenCode show an operator,
+  # and those are the operators REQUIRED to declare an identity. Canonicalize on
+  # the component after the final slash so the value their harness shows them
+  # is the value that works.
+  id="${id##*/}"
   case "$id" in
     claude*|opus*|sonnet*|haiku*) printf 'claude' ;;
     gpt*|o[0-9]*|codex*)          printf 'codex' ;;
@@ -321,10 +387,15 @@ canon_identity() {
 
 CURRENT_HARNESS=""
 CURRENT_MODEL=""
+# Whether the identity was DECLARED (SECOND_OPINION_CURRENT_MODEL) rather than
+# detected. Only a declared value can carry a typo, so only a declared value is
+# held to the roster-spelling check.
+CURRENT_MODEL_DECLARED=false
 resolve_current_model() {
   CURRENT_HARNESS=$(detect_current_harness)
   if [[ -n "${SECOND_OPINION_CURRENT_MODEL:-}" ]]; then
     CURRENT_MODEL=$(canon_identity "$SECOND_OPINION_CURRENT_MODEL")
+    CURRENT_MODEL_DECLARED=true
     return
   fi
   case "$CURRENT_HARNESS" in
@@ -398,24 +469,12 @@ target_available() {
 [[ -n "${SECOND_OPINION_REVIEW_TARGETS:-}" ]] \
   && echo "→ SECOND_OPINION_REVIEW_TARGETS is not read; the roster is SECOND_OPINION_MODELS" >&2
 
-DEFAULT_MODELS="claude codex"
 COUNT="${SECOND_OPINION_COUNT:-1}"
 [[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "Error: SECOND_OPINION_COUNT must be a positive integer" >&2; exit 1; }
 WANT=1
 [[ "$MODE" == "review" || "$MODE" == "detect" ]] && WANT="$COUNT"
 
 resolve_current_model
-
-# The roster, one entry per line, split with globbing off: an entry is a name,
-# never a pattern.
-roster_entries() {
-  local raw t
-  raw="${SECOND_OPINION_MODELS:-$DEFAULT_MODELS}"
-  raw="${raw//,/ }"
-  set -f
-  for t in $raw; do printf '%s\n' "$t"; done
-  set +f
-}
 
 REVIEW_LANES=()
 SELECTED_MODELS=()
@@ -424,7 +483,7 @@ SELECTED_MODELS=()
 # first again.
 SEEN_NAMESPACES=()
 # Whether any roster entry carries the session's identity — the check that a
-# declared identity is spelled the way the roster spells it. A full pass over
+# DECLARED identity is spelled the way the roster spells it. A full pass over
 # valid names, independent of where the walk stops.
 roster_has_current() {
   local t
@@ -490,7 +549,6 @@ walk_roster() {
 # trusted while the identity that excludes from it is not trustworthy.
 SESSION_REFUSED=false
 
-FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
 if [[ -z "$CURRENT_MODEL" ]]; then
   # No identity to compare against: no target can be shown to be a different
   # model, so none is taken. The refusal below carries the one reason.
@@ -500,13 +558,18 @@ if [[ -z "$CURRENT_MODEL" ]]; then
   else
     skip_target "session" "model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
   fi
-elif [[ "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then
-  # A declared identity the roster does not spell excludes nothing, which is
-  # what a typo looks like — and what a session running a model the roster
-  # does not know looks like. Either way the operator decides: name the model
-  # in SECOND_OPINION_MODELS (a command is optional; it is then a known
-  # identity and excluded) or fix the declaration. `none` is the declared
-  # absence of a session model and matches nothing by design.
+elif $CURRENT_MODEL_DECLARED && [[ "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then
+  # A DECLARED identity the roster does not spell excludes nothing, which is
+  # what a typo in SECOND_OPINION_CURRENT_MODEL looks like — and what a session
+  # running a model the roster does not know looks like. Either way the operator
+  # decides: name the model in SECOND_OPINION_MODELS (a command is optional; it
+  # is then a known identity and excluded) or fix the declaration. `none` is the
+  # declared absence of a session model and matches nothing by design.
+  #
+  # Declared only. A DETECTED identity was never typed, so it cannot be a typo,
+  # and the roster is the priority list of review TARGETS — naming just the
+  # cross-model one is the most natural configuration there is. It excludes
+  # nothing and the walk proceeds.
   #
   # Checked BEFORE the force branch, not inside the roster walk: a misspelled
   # identity and a --target naming the very model that identity misspells is
@@ -596,17 +659,24 @@ fi
 ARTIFACT_PATH=""
 
 # Canonical spelling of a relative home, so the vet and the physical-equality
-# rule both work on one form: strip leading `./`, collapse repeated slashes,
-# drop trailing slashes. `tmp/second-opinion/` and `./tmp/second-opinion` name
-# the same directory as `tmp/second-opinion` and must land in it — the raw
-# setting would otherwise be rejected for an empty or `.` component and every
-# record would silently fall back to system temp. Purely lexical: a `..` or an
-# interior `.` that survives is still the vet's to refuse.
+# rule both work on one form. `tmp/second-opinion/`, `./tmp/second-opinion` and
+# `.//tmp/second-opinion` all name the same directory as `tmp/second-opinion`
+# and must land in it — the raw setting would otherwise be rejected for an empty
+# or `.` component and every record would silently fall back to system temp.
+# The empty result is the reviewed repo root itself (`.`, `./`), which gets its
+# own accurate message rather than an escape reason.
+#
+# Order is load-bearing: repeated slashes collapse FIRST, or `.//x` strips its
+# leading `./` into the absolute-looking `/x`. Purely lexical — a `..` that
+# survives is still the vet's to refuse.
 normalize_relative_home() {
   local rel="$1"
-  while [[ "$rel" == ./* ]]; do rel="${rel#./}"; done
   while [[ "$rel" == *//* ]]; do rel="${rel//\/\//\/}"; done
+  while [[ "$rel" == ./* ]]; do rel="${rel#./}"; done
+  while [[ "$rel" == */./* ]]; do rel="${rel//\/.\//\/}"; done
+  while [[ "$rel" == */. ]]; do rel="${rel%/.}"; done
   while [[ "$rel" == */ ]]; do rel="${rel%/}"; done
+  if [[ "$rel" == "." ]]; then rel=""; fi
   printf '%s' "$rel"
 }
 
@@ -637,11 +707,50 @@ vet_relative_home() {
   return 0
 }
 
+# The default home is under the reviewed checkout, so a failed review must not
+# leave untracked files in the user's working tree — that trips "working tree
+# must be clean" gates and gets swept into a `git add -A`. A `*` ignore file
+# inside the home makes it invisible to git with no action from the consumer.
+# Written only when absent, and never allowed to fail the run.
+#
+# RELATIVE homes only. An absolute or `~/…` home is a location the operator
+# named deliberately, outside the checkout by intent; dropping an ignore file
+# into it would be writing to a directory that is not ours to configure —
+# `SECOND_OPINION_ARTIFACT_DIR="~"` would seed $HOME/.gitignore with `*`.
+seed_artifact_home_ignore() {
+  local ignore="$1/.gitignore"
+  [[ -e "$ignore" ]] && return 0
+  printf '*\n' > "$ignore" 2>/dev/null || true
+}
+
 artifact_file() {
   local kind="$1" dir rel reason phys_root phys_dir
   dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
   ARTIFACT_PATH=""
-  if [[ "$dir" == /* ]]; then
+  # `~/...` is the spelling vstack's other path settings accept (WORKTREE_BASE_DIR
+  # among them), and a settings file is not shell input, so nothing expanded it.
+  # Expand before the absolute test, or the tilde passes the component vet and a
+  # directory literally named `~` appears inside the reviewed checkout.
+  # shellcheck disable=SC2088  # the literal, unexpanded tilde IS the input here
+  if [[ "$dir" == "~" ]]; then
+    dir="${HOME:-}"
+    [[ -n "$dir" ]] || echo "→ artifact home rejected (~ used but HOME is not set)" >&2
+  elif [[ "$dir" == "~/"* ]]; then
+    # ${dir:2}, not ${dir#~/}: an unquoted ~ in a strip pattern is itself
+    # tilde-expanded, so the prefix would never match.
+    if [[ -n "${HOME:-}" ]]; then
+      dir="$HOME/${dir:2}"
+    else
+      echo "→ artifact home rejected (~ used but HOME is not set): $dir" >&2
+      dir=""
+    fi
+  elif [[ "$dir" == "~"* ]]; then
+    echo "→ artifact home rejected (~user expansion is not supported): $dir" >&2
+    dir=""
+  fi
+  if [[ -z "$dir" ]]; then
+    : # already rejected above
+  elif [[ "$dir" == /* ]]; then
     (umask 077 && mkdir -p -- "$dir") 2>/dev/null \
       || { echo "→ artifact home not creatable: $dir" >&2; dir=""; }
   else
@@ -665,6 +774,8 @@ artifact_file() {
         if [[ -z "$phys_root" || "$phys_dir" != "$phys_root/$rel" ]]; then
           echo "→ artifact home rejected (resolves outside the reviewed repo): $dir -> ${phys_dir:-?}" >&2
           dir=""
+        else
+          seed_artifact_home_ignore "$dir"
         fi
       fi
     else
@@ -676,9 +787,30 @@ artifact_file() {
     ARTIFACT_PATH=$(mktemp "$dir/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || ARTIFACT_PATH=""
   fi
   if [[ -z "$ARTIFACT_PATH" ]]; then
-    ARTIFACT_PATH=$(mktemp)
-    echo "→ record kept in system temp instead: $ARTIFACT_PATH" >&2
+    # System temp is the last resort, and it can refuse too (a read-only or
+    # full TMPDIR). An unguarded mktemp would then die under `set -e` and the
+    # run would exit 1 without ever reporting the provider cause it was on its
+    # way to report — losing both the record AND its documented 4/5 exit class.
+    # A record is a diagnostic: leaving ARTIFACT_PATH empty lets the caller say
+    # so inline and keep the classification.
+    ARTIFACT_PATH=$(mktemp 2>/dev/null) || ARTIFACT_PATH=""
+    if [[ -n "$ARTIFACT_PATH" ]]; then
+      echo "→ record kept in system temp instead: $ARTIFACT_PATH" >&2
+    else
+      echo "→ no writable location for the record — reporting the cause inline instead" >&2
+    fi
   fi
+}
+
+# Write a record, or report that it could not be stored. Never fails the run:
+# a record is a diagnostic, and losing it must not change the exit class the
+# caller is on its way to. Echoes the stored path, empty when nothing was
+# stored.
+store_record() {
+  local path="$1" content="$2"
+  [[ -n "$path" ]] || return 0
+  printf '%s\n' "$content" > "$path" 2>/dev/null || return 0
+  printf '%s' "$path"
 }
 
 # --- Review scope derivation (review mode) ------------------------------------
@@ -1325,7 +1457,10 @@ fi
 
 # Write prompt to temp file — use printf to avoid echo interpreting leading dashes
 PROMPT_TMP=$(mktemp)
-trap 'rm -f "$PROMPT_TMP"' EXIT
+# Guarded for the same reason as cleanup_lanes: an EXIT trap whose last command
+# fails REPLACES the run's exit status, so a temp directory that turned
+# read-only under the run would rewrite a documented 4/5 into rm's status.
+trap 'rm -f "$PROMPT_TMP" || true' EXIT
 printf '%s\n' "$PROMPT" > "$PROMPT_TMP"
 
 STDERR_TMP=$(mktemp)
@@ -1334,7 +1469,7 @@ STDERR_TMP=$(mktemp)
 # preserve_raw_and_fail are deliberately NOT tracked here — they are the durable
 # record of a lost or reformatted response.
 RETRY_PROMPT_TMP=""
-trap 'rm -f "$PROMPT_TMP" "$STDERR_TMP" "$RETRY_PROMPT_TMP"' EXIT
+trap 'rm -f "$PROMPT_TMP" "$STDERR_TMP" "$RETRY_PROMPT_TMP" || true' EXIT
 
 # --- Invoke external CLI ------------------------------------------------------
 
@@ -1395,10 +1530,9 @@ preserve_cli_failure_and_fail() {
   else
     artifact_file failed; sidecar="$ARTIFACT_PATH"
   fi
-  jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
+  sidecar=$(store_record "$sidecar" "$(jq -n --arg target "$TARGET_CLI" --arg reason "$reason" \
         --arg cause "$cause" --arg cause_source "$cause_source" --arg stdout "$partial" \
-    '{error: "external CLI failed before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout}' \
-    > "$sidecar"
+    '{error: "external CLI failed before producing a review", target: $target, reason: $reason, cause: $cause, cause_source: $cause_source, partial_stdout: $stdout}')")
 
   jq -n --arg target "$TARGET_CLI" --arg reason "$reason" --arg sidecar "$sidecar" \
     '{error: "\($target) \($reason) — refusing to write a review artifact", response: $sidecar}' >&2
@@ -1407,7 +1541,11 @@ preserve_cli_failure_and_fail() {
     echo "--- cause (${cause_source}) ---" >&2
     printf '%s\n' "$cause" >&2
   fi
-  echo "→ failed invocation preserved: $sidecar" >&2
+  if [[ -n "$sidecar" ]]; then
+    echo "→ failed invocation preserved: $sidecar" >&2
+  else
+    echo "→ failed invocation could not be preserved anywhere — the cause above is the whole record" >&2
+  fi
   exit "$EXIT_CLI_FAILED"
 }
 
@@ -1548,7 +1686,9 @@ preserve_raw_response() {
   else
     artifact_file raw; RAW_PRESERVED_PATH="$ARTIFACT_PATH"
   fi
-  printf '%s\n' "$raw" > "$RAW_PRESERVED_PATH"
+  RAW_PRESERVED_PATH=$(store_record "$RAW_PRESERVED_PATH" "$raw")
+  [[ -n "$RAW_PRESERVED_PATH" ]] \
+    || echo "→ raw first response could not be stored anywhere" >&2
 }
 
 # Persist the raw (and optional retry) response so a lost review is auditable,
@@ -1564,19 +1704,16 @@ preserve_raw_and_fail() {
     raw_path="$RAW_PRESERVED_PATH"
   elif [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
-    raw_path="${OUTPUT_PATH}.raw.txt"
-    printf '%s\n' "$raw" > "$raw_path"
+    raw_path=$(store_record "${OUTPUT_PATH}.raw.txt" "$raw")
   else
-    artifact_file raw; raw_path="$ARTIFACT_PATH"
-    printf '%s\n' "$raw" > "$raw_path"
+    artifact_file raw; raw_path=$(store_record "$ARTIFACT_PATH" "$raw")
   fi
   if [[ -n "$retry" ]]; then
     if [[ -n "$OUTPUT_PATH" ]]; then
-      retry_path="${OUTPUT_PATH}.retry.txt"
+      retry_path=$(store_record "${OUTPUT_PATH}.retry.txt" "$retry")
     else
-      artifact_file retry; retry_path="$ARTIFACT_PATH"
+      artifact_file retry; retry_path=$(store_record "$ARTIFACT_PATH" "$retry")
     fi
-    printf '%s\n' "$retry" > "$retry_path"
   fi
 
   if [[ -n "$retry_path" ]]; then
@@ -1588,7 +1725,11 @@ preserve_raw_and_fail() {
     jq -n --arg target "$TARGET_CLI" --argjson len "${#raw}" --arg rawpath "$raw_path" \
       '{error: "Failed to extract JSON from \($target) response after retry", raw_length: $len, raw_response: $rawpath}' >&2
   fi
-  echo "→ raw response preserved: $raw_path" >&2
+  if [[ -n "$raw_path" ]]; then
+    echo "→ raw response preserved: $raw_path" >&2
+  else
+    echo "→ raw response could not be preserved anywhere — the excerpt below is the whole record" >&2
+  fi
   echo "--- First 30 lines of raw response ---" >&2
   printf '%s\n' "$raw" | head -30 >&2
   exit 1
@@ -1659,11 +1800,15 @@ preserve_no_review_and_fail() {
   else
     artifact_file "$suffix"; sidecar="$ARTIFACT_PATH"
   fi
-  printf '%s\n' "$json" > "$sidecar"
+  sidecar=$(store_record "$sidecar" "$json")
 
   jq -n --arg target "$TARGET_CLI" --arg errmsg "$errmsg" --arg sidecar "$sidecar" \
     '{error: "\($target) \($errmsg) — refusing to write a review artifact", response: $sidecar}' >&2
-  echo "→ rejected response preserved: $sidecar" >&2
+  if [[ -n "$sidecar" ]]; then
+    echo "→ rejected response preserved: $sidecar" >&2
+  else
+    echo "→ rejected response could not be preserved anywhere — the error above is the whole record" >&2
+  fi
   exit "$EXIT_NO_REVIEW"
 }
 
@@ -1730,7 +1875,8 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
           incomplete
       fi
       echo "→ retry recovered valid JSON (${#JSON} bytes)" >&2
-      echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2
+      [[ -n "$RAW_PRESERVED_PATH" ]] \
+        && echo "→ raw first response preserved: $RAW_PRESERVED_PATH" >&2 || true
       RESULT="$JSON"
     else
       echo "→ retry response still not parseable" >&2

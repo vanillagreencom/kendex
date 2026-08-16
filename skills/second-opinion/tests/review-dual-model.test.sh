@@ -338,7 +338,7 @@ grep -q "skipping codex: runs the same model as this session" "$TMP_ROOT/last.st
 # `ps -o comm=` reports the interpreter rather than the script, the wrapper is
 # invisible and those scenarios cannot run.
 mkdir -p "$TMP_ROOT/fake"
-for h in claude pi codex cursor; do
+for h in claude pi codex cursor-agent cursor codex-wrapper; do
   printf '#!/bin/bash\n"$@"\n' > "$TMP_ROOT/fake/$h"
   chmod +x "$TMP_ROOT/fake/$h"
 done
@@ -491,10 +491,12 @@ if $ANCESTOR_VISIBLE; then
   run_under pi SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" || true
   assert_eq "$(count lane-codex)" "1" "control: declared Pi-on-claude session gets codex"
   assert_eq "$(count lane-claude)" "0" "control: declared Pi-on-claude session never gets claude"
-  # undeclared Cursor session: same fail-closed path
+  # undeclared Cursor session: same fail-closed path. `cursor-agent` is the
+  # agent's own binary — the bare `cursor` name belongs to the editor and must
+  # NOT establish a harness identity (scenario 31).
   reset_counts
   rc19c=0
-  run_under cursor SECOND_OPINION_MODELS="codex claude" || rc19c=$?
+  run_under cursor-agent SECOND_OPINION_MODELS="codex claude" || rc19c=$?
   assert_eq "$rc19c" "1" "undeclared Cursor session exits 1"
   assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "undeclared Cursor session invokes no CLI"
   grep -q "cursor fronts a selectable model" "$TMP_ROOT/last.stderr" || fail "Cursor refusal does not name the harness"
@@ -639,7 +641,6 @@ assert_eq "$rc29" "1" "forced target under a misspelled identity exits 1"
 assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "forced target under a misspelled identity invokes no CLI"
 assert_file_absent "$TMP_ROOT/out29.json" "forced target under a misspelled identity writes no artifact"
 grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" || fail "forced refusal does not name the identity gap"
-grep -q "without it the roster would select" "$TMP_ROOT/last.stderr" && fail "identity refusal wrongly advises about the force"
 # detect takes the same path — a forced target must not make it report a target
 reset_counts
 rc29b=0
@@ -663,6 +664,67 @@ assert_eq "$rc29c" "0" "control: spelled identity with a cross-model force exits
 assert_eq "$(count lane-codex)" "1" "control: the forced cross-model target runs"
 assert_eq "$(count lane-claude)" "0" "control: the session's own model still never runs"
 
+echo "=== scenario 29b: an identity refusal never advises about a settings-seeded force ==="
+# The hint that names what the roster would have picked is only useful when the
+# FORCE is what refused. When the session's own identity is what refused, that
+# pick is computed from the same untrustworthy identity, so it must stay silent.
+# The force has to come from the environment: with --target the hint branch is
+# already disqualified before the identity flag is ever consulted.
+reset_counts
+rc29d=0
+run_multi "$TMP_ROOT/out29d.json" SECOND_OPINION_CURRENT_MODEL=codxe SECOND_OPINION_TARGET=codex || rc29d=$?
+assert_eq "$rc29d" "1" "settings-forced target under a misspelled identity exits 1"
+assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "settings-forced identity refusal invokes no CLI"
+grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" || fail "settings-forced refusal does not name the identity gap"
+grep -q "without it the roster would select" "$TMP_ROOT/last.stderr" && fail "identity refusal wrongly advises about SECOND_OPINION_TARGET"
+
+echo "=== scenario 29c: a DETECTED identity the roster does not name excludes nothing ==="
+# The roster is the priority list of review TARGETS. Naming only the
+# cross-model one is the most natural configuration there is, and the
+# typo guard — which exists for a value the operator TYPED — must not
+# turn it into a refusal.
+if $ANCESTOR_VISIBLE; then
+  reset_counts
+  rm -f "$TMP_ROOT/out-under.json"
+  rc29e=0
+  run_under claude SECOND_OPINION_MODELS="codex" SECOND_OPINION_COUNT=1 || rc29e=$?
+  assert_eq "$rc29e" "0" "target-only roster from a detected session exits 0"
+  assert_eq "$(count lane-codex)" "1" "target-only roster dispatches the cross-model target"
+  grep -q "matches no roster identity" "$TMP_ROOT/last.stderr" && fail "a detected identity is wrongly held to the roster spelling"
+else
+  reset_counts
+  rc29e=0
+  run_multi "$TMP_ROOT/out29e.json" SECOND_OPINION_CURRENT_MODEL= CLAUDECODE=1 \
+    SECOND_OPINION_MODELS="codex" SECOND_OPINION_COUNT=1 || rc29e=$?
+  assert_eq "$rc29e" "0" "target-only roster from a detected session exits 0"
+  assert_eq "$(count lane-codex)" "1" "target-only roster dispatches the cross-model target"
+fi
+# forced target from the same session: the force is honoured, not refused
+reset_counts
+rc29f=0
+set +e
+env -u SECOND_OPINION_CURRENT_MODEL CLAUDECODE=1 SECOND_OPINION_MODELS="codex" \
+  SECOND_OPINION_CODEX_CMD="$TMP_ROOT/bin/lane-codex" \
+  "$SECOND_OPINION" review --target codex --range HEAD --cwd "$WORK" \
+  --output "$TMP_ROOT/out29f.json" >/dev/null 2>"$TMP_ROOT/last.stderr"
+rc29f=$?
+set -e
+assert_eq "$rc29f" "0" "--target under a detected identity the roster omits exits 0"
+assert_eq "$(count lane-codex)" "1" "--target under a detected identity is honoured"
+
+echo "=== scenario 29d: provider-qualified model ids canonicalize ==="
+# Pi and OpenCode show an operator ids like openai-codex/gpt-5.6-sol, and those
+# are exactly the operators required to declare an identity. Each must resolve
+# to the same identity as its bare form.
+for pair in "anthropic/claude-opus-4:claude" "openai/gpt-5.6-sol:codex" "openai-codex/gpt-5.6-sol:codex"; do
+  qualified="${pair%%:*}"; expect="${pair##*:}"
+  other=codex; [[ "$expect" == "codex" ]] && other=claude
+  reset_counts
+  run_multi "$TMP_ROOT/out29g.json" SECOND_OPINION_CURRENT_MODEL="$qualified" SECOND_OPINION_COUNT=1 || true
+  assert_eq "$(count "lane-$expect")" "0" "$qualified resolves to $expect and is excluded"
+  assert_eq "$(count "lane-$other")" "1" "$qualified session gets $other"
+done
+
 echo "=== scenario 30: no harness ancestor, no declaration -> the not-detected refusal ==="
 # The `unknown` harness has no model, and its refusal is the only one that names
 # the CI/plain-terminal escape. Under any harness runner the ancestor walk finds
@@ -680,7 +742,7 @@ found=none
 while pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') && [[ -n "$pid" && "$pid" != "0" && "$pid" != "1" ]]; do
   c=$(ps -o comm= -p "$pid" 2>/dev/null || echo "")
   c="${c##*/}"
-  case "$c" in claude*|codex*|pi|pi-*|opencode*|cursor*) found="$c"; break ;; esac
+  case "$c" in claude|codex|pi|opencode|cursor-agent) found="$c"; break ;; esac
 done
 printf '%s' "$found" > "$1"
 SH
@@ -695,21 +757,26 @@ SH
 fi
 
 if $DETACHED_HIDES_ANCESTOR; then
-  # run_detached <rc-file> <stderr-file> <env assignments...>: the run is
-  # reparented away from this process tree, so its exit code comes back through
-  # a file rather than $?.
+  # run_detached <wrapper|-> <rc-file> <stderr-file> <env assignments...>: the
+  # run is reparented away from this process tree, so its exit code comes back
+  # through a file rather than $?. <wrapper> is an ancestor to interpose (a
+  # harness-shaped name), or `-` for none. Every harness marker is unset; a
+  # caller assignment can put one back, since env applies assignments after its
+  # own -u options.
   run_detached() {
-    local rcfile="$1" errfile="$2"; shift 2
+    local wrapper="$1" rcfile="$2" errfile="$3"; shift 3
     rm -f "$rcfile" "$errfile"
     {
       printf '#!/usr/bin/env bash\n'
       printf 'env -u CLAUDECODE -u CLAUDE_CODE -u CLAUDE_PROJECT_DIR -u CODEX_SANDBOX \\\n'
+      printf '    -u CODEX_SANDBOX_NETWORK_DISABLED \\\n'
       printf '    -u PI_CODING_AGENT_DIR -u OPENCODE -u CURSOR_AGENT -u CURSOR_TRACE_ID \\\n'
       printf '    -u SECOND_OPINION_CURRENT_MODEL \\\n'
       printf '    SECOND_OPINION_CLAUDE_CMD=%q SECOND_OPINION_CODEX_CMD=%q \\\n' \
         "$TMP_ROOT/bin/lane-claude" "$TMP_ROOT/bin/lane-codex"
       local assign
       for assign in "$@"; do printf '    %q \\\n' "$assign"; done
+      [[ "$wrapper" == "-" ]] || printf '    %q \\\n' "$TMP_ROOT/fake/$wrapper"
       printf '    %q review --range HEAD --cwd %q --output %q >/dev/null 2>%q\n' \
         "$SECOND_OPINION" "$WORK" "$TMP_ROOT/out30.json" "$errfile"
       printf 'printf %%s $? > %q\n' "$rcfile"
@@ -722,7 +789,7 @@ if $DETACHED_HIDES_ANCESTOR; then
 
   reset_counts
   rm -f "$TMP_ROOT/out30.json"
-  run_detached "$TMP_ROOT/rc30" "$TMP_ROOT/last.stderr" \
+  run_detached - "$TMP_ROOT/rc30" "$TMP_ROOT/last.stderr" \
     SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1
   assert_eq "$(cat "$TMP_ROOT/rc30" 2>/dev/null || echo TIMEOUT)" "1" "undetected session exits 1"
   assert_eq "$(( $(count lane-claude) + $(count lane-codex) ))" "0" "undetected session invokes no CLI"
@@ -734,12 +801,56 @@ if $DETACHED_HIDES_ANCESTOR; then
   # control: the same detached session declaring none dispatches
   reset_counts
   rm -f "$TMP_ROOT/out30.json"
-  run_detached "$TMP_ROOT/rc30b" "$TMP_ROOT/last.stderr" \
+  run_detached - "$TMP_ROOT/rc30b" "$TMP_ROOT/last.stderr" \
     SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1 SECOND_OPINION_CURRENT_MODEL=none
   assert_eq "$(cat "$TMP_ROOT/rc30b" 2>/dev/null || echo TIMEOUT)" "0" "control: none declared in an undetected session exits 0"
   assert_eq "$(count lane-claude)" "1" "control: none dispatches the roster's first entry"
+
+  echo "=== scenario 31: only a harness's own executable name establishes an identity ==="
+  # A prefix match claims the Cursor EDITOR (`cursor`) and any wrapper or
+  # monitor sharing a prefix (`codex-wrapper`), turning an ordinary shell into a
+  # multi-model harness that refuses until an identity is declared. Detached, so
+  # the walk sees the interposed name and nothing else.
+  for bystander in cursor codex-wrapper; do
+    reset_counts
+    rm -f "$TMP_ROOT/out30.json"
+    run_detached "$bystander" "$TMP_ROOT/rc31" "$TMP_ROOT/last.stderr" \
+      SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1
+    grep -q "harness not detected" "$TMP_ROOT/last.stderr" \
+      || fail "an ancestor named $bystander was read as a harness identity"
+  done
+  # control: the agent's own binary name still does establish one
+  reset_counts
+  rm -f "$TMP_ROOT/out30.json"
+  run_detached cursor-agent "$TMP_ROOT/rc31b" "$TMP_ROOT/last.stderr" \
+    SECOND_OPINION_MODELS="claude codex" SECOND_OPINION_COUNT=1
+  assert_eq "$(cat "$TMP_ROOT/rc31b" 2>/dev/null || echo TIMEOUT)" "1" "control: cursor-agent ancestor still refuses"
+  grep -q "cursor fronts a selectable model" "$TMP_ROOT/last.stderr" \
+    || fail "control: cursor-agent ancestor is not identified as the cursor harness"
+
+  echo "=== scenario 32: Codex's own markers outrank inherited Claude markers ==="
+  # A sandboxed Codex tool process can have no visible Codex ancestor while
+  # still carrying CLAUDECODE from an outer session. Reading the inherited
+  # marker first would identify the session as claude and dispatch to codex —
+  # its own model.
+  for codex_marker in CODEX_SANDBOX=seatbelt CODEX_SANDBOX_NETWORK_DISABLED=1; do
+    reset_counts
+    rm -f "$TMP_ROOT/out30.json"
+    run_detached - "$TMP_ROOT/rc32" "$TMP_ROOT/last.stderr" \
+      CLAUDECODE=1 "$codex_marker" SECOND_OPINION_MODELS="codex claude" SECOND_OPINION_COUNT=1
+    assert_eq "$(cat "$TMP_ROOT/rc32" 2>/dev/null || echo TIMEOUT)" "0" "$codex_marker with CLAUDECODE exits 0"
+    assert_eq "$(count lane-codex)" "0" "$codex_marker with CLAUDECODE never dispatches to codex"
+    assert_eq "$(count lane-claude)" "1" "$codex_marker with CLAUDECODE gets claude"
+  done
+  # control: the Claude marker alone still identifies a Claude session
+  reset_counts
+  rm -f "$TMP_ROOT/out30.json"
+  run_detached - "$TMP_ROOT/rc32b" "$TMP_ROOT/last.stderr" \
+    CLAUDECODE=1 SECOND_OPINION_MODELS="codex claude" SECOND_OPINION_COUNT=1
+  assert_eq "$(count lane-codex)" "1" "control: CLAUDECODE alone gets codex"
+  assert_eq "$(count lane-claude)" "0" "control: CLAUDECODE alone never dispatches to claude"
 else
-  echo "  skip  scenario 30: no detachment on this platform that hides the harness ancestor"
+  echo "  skip  scenarios 30-32: no detachment on this platform that hides the harness ancestor"
 fi
 
 echo

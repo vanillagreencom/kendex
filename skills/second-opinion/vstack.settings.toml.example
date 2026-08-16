@@ -41,7 +41,9 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reas
 SECOND_OPINION_TIMEOUT = "300"
 
 # Used by: second-opinion. Home for review/audit records written without
-# --output, relative to --cwd (absolute paths are taken as-is).
+# --output, relative to --cwd ("~/..." and absolute paths are taken as given).
+# The default is inside the reviewed checkout; the script seeds the directory
+# with a "*" .gitignore on creation so records never dirty the working tree.
 SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 
 # Used by: second-opinion (review mode). Glob list of repo instruction files

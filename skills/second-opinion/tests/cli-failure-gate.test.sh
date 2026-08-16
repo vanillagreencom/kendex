@@ -96,6 +96,9 @@ n=$(cat "$STUB_COUNTER" 2>/dev/null || echo 0)
 n=$((n + 1))
 printf '%s' "$n" > "$STUB_COUNTER"
 cat > /dev/null            # drain the prompt on stdin
+# Turn a directory read-only mid-run: the wrapper's own temp files already
+# exist, so this reaches only the record allocation that happens after the CLI.
+[[ -n "${STUB_LOCK_DIR:-}" ]] && chmod 0500 "$STUB_LOCK_DIR"
 [[ "${STUB_SLEEP:-0}" != "0" ]] && sleep "$STUB_SLEEP"
 [[ -n "${STUB_STDERR:-}" ]] && printf '%s\n' "$STUB_STDERR" >&2
 [[ -n "${STUB_STDOUT:-}" ]] && printf '%s' "$STUB_STDOUT"
@@ -382,7 +385,7 @@ rm -rf "$WORK/tmp"
 # checkout, and both must land in the named home rather than being read as an
 # empty or `.` component and sent to system temp with an escape reason nobody
 # can act on.
-for s9_spelling in "tmp/second-opinion/" "./tmp/second-opinion"; do
+for s9_spelling in "tmp/second-opinion/" "./tmp/second-opinion" ".//tmp/second-opinion" "tmp/./second-opinion"; do
   reset9
   run9 "$s9_spelling"
   assert_eq "$rc9" "5" "($s9_spelling) still exits EXIT_CLI_FAILED (5)"
@@ -393,6 +396,72 @@ for s9_spelling in "tmp/second-opinion/" "./tmp/second-opinion"; do
   fallback_used && fail "($s9_spelling) fell back to TMPDIR instead of the named home" \
     || pass "($s9_spelling) no system-temp fallback"
 done
+
+# (g) both spellings of the repo root share one accurate reason — neither is an
+# escape, and a wrong diagnostic is what sends an operator looking for a
+# containment bug that is not there.
+for s9_root in "." "./"; do
+  reset9
+  run9 "$s9_root"
+  assert_eq "$rc9" "5" "($s9_root) still exits EXIT_CLI_FAILED (5)"
+  assert_file_contains "$s9_err" "names the reviewed repo root" "($s9_root) is diagnosed as the repo root"
+  grep -q "escapes the reviewed repo" "$s9_err" && fail "($s9_root) is wrongly diagnosed as an escape"
+  fallback_used && pass "($s9_root) record fell back to TMPDIR" || fail "($s9_root) no fallback record"
+done
+
+# (h) `~/…` is the spelling vstack's other path settings accept, and a settings
+# file is not shell input — unexpanded it would create a directory literally
+# named `~` inside the reviewed checkout.
+s9_home="$TMP_ROOT/fakehome"
+rm -rf "$s9_home"; mkdir -p "$s9_home"
+reset9
+set +e
+PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" HOME="$s9_home" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  SECOND_OPINION_ARTIFACT_DIR="~/so-records" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s9_err"
+rc9=$?
+set -e
+assert_eq "$rc9" "5" "(~/so-records) still exits EXIT_CLI_FAILED (5)"
+[[ -n "$(ls "$s9_home"/so-records/review-claude-failed.* 2>/dev/null | head -1 || true)" ]] \
+  && pass "(~/so-records) expands to \$HOME" \
+  || fail "(~/so-records) record did not land under $s9_home/so-records"
+assert_file_absent "$WORK/~" "(~/so-records) no literal ~ directory in the reviewed checkout"
+assert_file_absent "$s9_home/so-records/.gitignore" "an operator-named home outside the checkout is not given a .gitignore"
+
+# bare `~` expands to $HOME too, and must not seed $HOME/.gitignore with `*`
+reset9
+rm -rf "$s9_home"; mkdir -p "$s9_home"
+set +e
+PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" HOME="$s9_home" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  SECOND_OPINION_ARTIFACT_DIR="~" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s9_err"
+set -e
+[[ -n "$(ls "$s9_home"/review-claude-failed.* 2>/dev/null | head -1 || true)" ]] \
+  && pass "(~) expands to \$HOME" || fail "(~) record did not land in $s9_home"
+assert_file_absent "$s9_home/.gitignore" "a bare ~ home never seeds \$HOME/.gitignore"
+
+# ~user is not expanded and must not become a literal directory either
+reset9
+set +e
+PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s9_tmp" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  SECOND_OPINION_ARTIFACT_DIR="~someuser/records" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s9_err"
+set -e
+assert_file_contains "$s9_err" "~user expansion is not supported" "~user is refused, not taken literally"
+assert_file_absent "$WORK/~someuser" "~user leaves no literal directory in the reviewed checkout"
+
+# (i) the artifact home is git-ignored on creation, so records never dirty the
+# reviewed working tree
+reset9
+run9 tmp/second-opinion
+assert_file_exists "$WORK/tmp/second-opinion/.gitignore" "artifact home is seeded with a .gitignore"
+assert_eq "$(cat "$WORK/tmp/second-opinion/.gitignore")" "*" ".gitignore ignores everything in the home"
+assert_eq "$(git -C "$WORK" status --porcelain -- tmp/second-opinion | wc -l | tr -d ' ')" "0" \
+  "records under the artifact home do not show up as untracked changes"
+
 reset9
 rm -rf "$WORK/tmp"
 
@@ -402,36 +471,86 @@ echo "=== scenario 10: a no-verdict run never leaves a PREVIOUS run's artifact a
 # as this run's verdict — the fail-open the union path already prevented, on the
 # single-lane path that is now the default.
 S10_STALE='{"agent":"external-claude","timestamp":"2020-01-01T00:00:00Z","verdict":"pass","summary":"STALE ARTIFACT FROM A PREVIOUS RUN","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}'
+# Every path this script can write under a designated --output. Each entry is
+# independent data, not one behavior: seeding only some of them would leave a
+# dropped or mistyped suffix in the rm list undetectable.
+S10_SIDECARS="raw.txt retry.txt failed.json noreview.json incomplete.json"
+S10_LANES="claude codex"
+
+# seed_stale_family <output>: the artifact, its five sidecars, and the lane
+# family the roster could have produced on an earlier run at the same path.
+seed_stale_family() {
+  local base="$1" suffix lane
+  printf '%s\n' "$S10_STALE" > "$base"
+  for suffix in $S10_SIDECARS; do printf '%s\n' "$S10_STALE" > "$base.$suffix"; done
+  for lane in $S10_LANES; do
+    printf '%s\n' "$S10_STALE" > "$base.$lane.json"
+    for suffix in $S10_SIDECARS; do printf '%s\n' "$S10_STALE" > "$base.$lane.json.$suffix"; done
+  done
+}
+
+# assert_family_cleared <output> <label> [keep-suffix]: every seeded path is
+# gone, except one suffix this run legitimately rewrote.
+assert_family_cleared() {
+  local base="$1" label="$2" keep="${3:-}" suffix lane
+  assert_file_absent "$base" "$label: stale pass artifact cleared"
+  for suffix in $S10_SIDECARS; do
+    [[ "$suffix" == "$keep" ]] && continue
+    assert_file_absent "$base.$suffix" "$label: stale .$suffix cleared"
+  done
+  for lane in $S10_LANES; do
+    assert_file_absent "$base.$lane.json" "$label: stale $lane lane artifact cleared"
+    for suffix in $S10_SIDECARS; do
+      assert_file_absent "$base.$lane.json.$suffix" "$label: stale $lane .$suffix cleared"
+    done
+  done
+}
 
 # (a) single-lane provider failure
 s10_out="$TMP_ROOT/out/review10.json"
 s10_err="$TMP_ROOT/s10.stderr"
-printf '%s\n' "$S10_STALE" > "$s10_out"
-printf '%s\n' "$S10_STALE" > "$s10_out.noreview.json"
+seed_stale_family "$s10_out"
 rc10=0
 STUB_RC=1 STUB_STDERR="$QUOTA_ERR" run_review "$s10_out" "$s10_err" || rc10=$?
 assert_eq "$rc10" "5" "(a) provider failure over a stale artifact still exits 5"
-assert_file_absent "$s10_out" "(a) stale pass artifact is cleared, not left as this run's verdict"
-assert_file_absent "$s10_out.noreview.json" "(a) stale managed sidecar is cleared too"
+assert_family_cleared "$s10_out" "(a)" failed.json
 assert_file_exists "$s10_out.failed.json" "(a) this run's own failure record is still written"
+assert_file_contains "$s10_out.failed.json" "hit your usage limit" "(a) the failure record is this run's, not the stale one"
 
 # (b) target-selection refusal, before any invocation
 s10b_out="$TMP_ROOT/out/review10b.json"
 s10b_err="$TMP_ROOT/s10b.stderr"
-printf '%s\n' "$S10_STALE" > "$s10b_out"
+seed_stale_family "$s10b_out"
 printf '0' > "$COUNTER"
 rc10b=0
 set +e
 PATH="$TMP_ROOT/bin:$PATH" \
-  SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude" \
-  SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude codex" \
+  SECOND_OPINION_CODEX_MODEL=claude \
+  SECOND_OPINION_CLAUDE_CMD="$STUB" SECOND_OPINION_CODEX_CMD="$STUB" STUB_COUNTER="$COUNTER" \
   "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s10b_out" \
     >/dev/null 2>"$s10b_err"
 rc10b=$?
 set -e
 assert_eq "$rc10b" "1" "(b) same-model roster still refuses with exit 1"
 assert_eq "$(cat "$COUNTER")" "0" "(b) refusal invokes no CLI"
-assert_file_absent "$s10b_out" "(b) refusal clears the stale artifact rather than blessing it"
+assert_family_cleared "$s10b_out" "(b)"
+
+# (b2) the pre-flight exits clear too — once the invocation parses, exit 1 does
+# not split into clearing and non-clearing halves.
+s10d_out="$TMP_ROOT/out/review10d.json"
+for s10d_bad in --timeout=abc --bogus; do
+  seed_stale_family "$s10d_out"
+  set +e
+  PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+    STUB_COUNTER="$COUNTER" \
+    "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s10d_out" "$s10d_bad" \
+      >/dev/null 2>"$TMP_ROOT/s10d.stderr"
+  rc10d=$?
+  set -e
+  assert_eq "$rc10d" "1" "($s10d_bad) exits 1"
+  assert_family_cleared "$s10d_out" "($s10d_bad)"
+done
 
 # (c) control: a successful run over a stale artifact replaces it
 s10c_out="$TMP_ROOT/out/review10c.json"
@@ -441,6 +560,53 @@ rc10c=0
 STUB_RC=0 STUB_STDOUT="$GOOD_JSON" run_review "$s10c_out" "$s10c_err" || rc10c=$?
 assert_eq "$rc10c" "0" "(c) control: success path still exits 0"
 assert_eq "$(jq -r '.summary' "$s10c_out")" "Clean" "(c) control: artifact is this run's review, not the stale one"
+
+echo "=== scenario 11: an uncreatable --output parent is a named pre-flight error ==="
+# The clearing block has to create the parent before it can clear inside it. A
+# bare `mkdir: cannot create directory` under set -e would be a failure mode
+# the exit-code contract does not name.
+s11_ro="$TMP_ROOT/readonly-parent"
+rm -rf "$s11_ro"; mkdir -p "$s11_ro"; chmod 0500 "$s11_ro"
+s11_err="$TMP_ROOT/s11.stderr"
+printf '0' > "$COUNTER"
+rc11=0
+set +e
+PATH="$TMP_ROOT/bin:$PATH" SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" \
+  STUB_COUNTER="$COUNTER" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s11_ro/sub/review.json" \
+    >/dev/null 2>"$s11_err"
+rc11=$?
+set -e
+chmod 0700 "$s11_ro"
+assert_eq "$rc11" "1" "uncreatable --output parent exits 1"
+assert_file_contains "$s11_err" "cannot create the --output parent directory" "the cause is named, not a bare mkdir error"
+assert_eq "$(cat "$COUNTER")" "0" "uncreatable --output parent invokes no CLI"
+
+echo "=== scenario 12: no writable location at all keeps the exit class and the cause ==="
+# The artifact home and system temp can both refuse (read-only, full). An
+# unguarded final mktemp would die under set -e at exit 1, losing both the
+# record AND the documented no-verdict classification the run was carrying.
+# The wrapper needs temp space of its own for the prompt, so TMPDIR cannot
+# start read-only: the stub locks it once its own files exist, leaving only the
+# record allocation to fail.
+s12_err="$TMP_ROOT/s12.stderr"
+s12_tmp="$TMP_ROOT/tmpdir12"
+rm -rf "$s12_tmp" "$WORK/tmp"; mkdir -p "$s12_tmp"
+printf '0' > "$COUNTER"
+rc12=0
+set +e
+PATH="$TMP_ROOT/bin:$PATH" TMPDIR="$s12_tmp" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  SECOND_OPINION_ARTIFACT_DIR="/proc/no-such-home/second-opinion" \
+  STUB_LOCK_DIR="$s12_tmp" STUB_RC=1 STUB_STDERR="$QUOTA_ERR" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" >/dev/null 2>"$s12_err"
+rc12=$?
+set -e
+chmod 0700 "$s12_tmp"
+assert_eq "$rc12" "5" "unstorable record keeps EXIT_CLI_FAILED (5)"
+assert_file_contains "$s12_err" "no writable location for the record" "the storage loss is stated"
+assert_file_contains "$s12_err" "hit your usage limit" "the provider cause still reaches stderr"
+assert_file_contains "$s12_err" "refusing to write a review artifact" "the error JSON is still emitted"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
