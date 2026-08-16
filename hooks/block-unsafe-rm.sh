@@ -52,7 +52,16 @@ fi
 # newline in a sed replacement is a GNU extension BSD sed lacks, and this
 # hook runs on the macOS Bash 3.2 target too.
 SEGMENTS=$(printf '%s\n' "$COMMAND" \
-  | awk '{ gsub(/\t/, " "); gsub(/\\t/, " "); gsub(/\\n/, "\n"); gsub(/&&|\|\||;|\|/, "\n"); print }')
+  | awk '{ blob = blob $0 "\n" }
+      END {
+        gsub(/\t/, " ", blob); gsub(/\\t/, " ", blob)
+        gsub(/\\n/, "\n", blob)
+        # A backslash-newline is a continuation of ONE shell word list, so it
+        # folds to a space before the separator split.
+        gsub(/\\\n/, " ", blob)
+        gsub(/&&|\|\||;|\|/, "\n", blob)
+        printf "%s", blob
+      }')
 
 while IFS= read -r seg; do
   seg=$(printf '%s' "$seg" | sed 's/^[[:space:]({$`]*//')
@@ -78,9 +87,19 @@ while IFS= read -r seg; do
         -*) continue ;;
       esac
     fi
-    # Only a double quote is peeled: a single-quoted operand is a literal
-    # filename the shell never expands, so it is not a variable root.
-    stripped=${tok#\"}
+    # Leading EMPTY quote pairs contribute nothing to the word — `""$X` and
+    # `''$X` are still variable roots — so they peel off repeatedly. After
+    # that only a double quote is peeled: a single-quoted run is a literal
+    # the shell never expands, so it is not a variable root.
+    stripped=$tok
+    while :; do
+      case "$stripped" in
+        \"\"*) stripped=${stripped#\"\"} ;;
+        \'\'*) stripped=${stripped#\'\'} ;;
+        *) break ;;
+      esac
+    done
+    stripped=${stripped#\"}
     if [ "$seen_ddash" -eq 1 ]; then
       while [ "${stripped#-}" != "$stripped" ]; do stripped=${stripped#-}; done
     fi

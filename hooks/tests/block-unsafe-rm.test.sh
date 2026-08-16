@@ -74,6 +74,12 @@ run_hook "$(printf 'rm\t-rf\t%s' '$X')"; assert_eq "$rc" 2 'tab-separated rm -rf
 run_hook 'rm -rf -- -$DIR/sub';          assert_eq "$rc" 2 'a dash-leading operand after -- is still a variable root'
 run_hook 'rm -rf $LOGS/*.log';           assert_eq "$rc" 2 'a glob in the operand does not disturb classification'
 run_hook 'rm -rf "${X+x:?}/save"';       assert_eq "$rc" 2 'an unset-guarded alternative whose text contains :? can expand empty and is refused'
+run_hook 'rm -rf ""$X/sub';              assert_eq "$rc" 2 'an empty double-quote pair does not hide the variable root'
+run_hook "rm -rf ''\$X/sub";             assert_eq "$rc" 2 'an empty single-quote pair does not hide the variable root'
+set +e
+printf '%s' '{"tool_input":{"command":"rm \\\n-rf $X/sub"}}' | "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
+set -e
+assert_eq "$rc" 2 'a backslash-newline continuation still reads as one rm invocation'
 
 echo "=== block-unsafe-rm: the refusal names the cause and the rewrite ==="
 run_hook 'rm -rf $CACHE/$KEY'
