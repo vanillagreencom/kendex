@@ -42,12 +42,12 @@ script_src=$(cat "$PR_MERGE")
 # Both 75 exits route through the one note (queued and classic auto-merge).
 assert_count "$script_src" '^[[:space:]]*volatile_note "\$pr_num"$' 2 \
   "both exit-75 paths emit the volatility note"
-assert_matches "$script_src" 'VOLATILE.*disarms it silently' \
-  "the note states an ejection disarms silently"
-assert_matches "$script_src" 'queue-wait \$pr_num' \
-  "the note names queue-wait as the watcher"
-assert_matches "$script_src" 'pr-watch\.sh' \
-  "the note names the pr-watch reducer"
+assert_matches "$script_src" 'VOLATILE.*an ejection or a failed protection check disarms it silently' \
+  "the note states an ejection or a failed protection check disarms silently"
+assert_matches "$script_src" '\.agents/skills/orch/scripts/queue-wait \$pr_num' \
+  "the note names queue-wait by its runnable path"
+assert_matches "$script_src" '\.agents/skills/review-gate/scripts/pr-watch\.sh' \
+  "the note names the pr-watch reducer by its runnable path"
 
 table=$(sed -n '/^### PR Merge Outcomes$/,/^### /p' "$SKILL_MD")
 assert_count "$table" '^\| `75` \| MERGE PENDING \(volatile\)' 2 \
@@ -56,7 +56,7 @@ assert_matches "$table" 'keep watching until MERGED' \
   "the 75 rows say the caller keeps watching until MERGED"
 assert_matches "$table" 'queue-wait <N>' \
   "the outcomes section names queue-wait as the required follow-up"
-assert_matches "$table" 'await-mergeable. is not that' \
+assert_matches "$table" 'await-mergeable` is not that' \
   "the outcomes section states await-mergeable is not the ejection watcher"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

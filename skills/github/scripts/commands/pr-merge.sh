@@ -365,13 +365,14 @@ gh_with_token() {
     fi
 }
 
-# Exit 75 is not a resting state: a merge-group failure ejects the entry and
-# GitHub disarms auto-merge with it, silently — an armed PR can sit open,
-# gate-clear, and unwatched. Every 75 exit says so and names the watchers.
+# Exit 75 is not a resting state: a merge-group failure ejects the entry, a
+# failed protection check drops classic auto-merge, and GitHub disarms the PR
+# silently either way — it can sit open, gate-clear, and unwatched. Every 75
+# exit says so and names runnable watchers.
 volatile_note() {
     local pr_num="$1"
-    echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection disarms it silently; keep watching until MERGED" >&2
-    echo "  Watch with: orch queue-wait $pr_num (verdict ejected/disarmed) or review-gate pr-watch.sh (disarmed lines); re-arm with pr-merge $pr_num --auto" >&2
+    echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; keep watching until MERGED" >&2
+    echo "  Watch with: .agents/skills/orch/scripts/queue-wait $pr_num (verdict ejected/disarmed) or .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines); re-arm with github.sh pr-merge $pr_num --auto" >&2
 }
 
 # Read one authoritative post-mutation snapshot. `gh pr view --json` does not
