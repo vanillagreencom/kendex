@@ -186,25 +186,34 @@ pub fn run(scope: ScopeFilter) -> Result<()> {
         eprintln!("\n{scope_label} scope: {} item(s)", lock.entries.len());
 
         let mut outdated = 0;
+        let mut unresolved = 0;
         for entry in lock.entries.values() {
             let status = check_staleness(entry);
-            if status == "outdated" {
-                outdated += 1;
-            }
             let icon = match status {
                 "ok" => "✓",
                 "outdated" => "!",
                 _ => "?",
             };
-            eprintln!(
-                "  {icon} {} ({}){}",
-                entry.name,
-                entry.kind,
-                if status == "outdated" {
-                    "  ← outdated"
-                } else {
-                    ""
+            let detail = match status {
+                "outdated" => "  ← outdated".to_string(),
+                "unresolved" => {
+                    format!(
+                        "  ← {}",
+                        crate::refresh_sources::absent_source_reason(&entry.source)
+                    )
                 }
+                _ => String::new(),
+            };
+            match status {
+                "outdated" => outdated += 1,
+                "unresolved" => unresolved += 1,
+                _ => {}
+            }
+            eprintln!("  {icon} {} ({}){detail}", entry.name, entry.kind);
+        }
+        if unresolved > 0 {
+            eprintln!(
+                "\n  {unresolved} item(s) could not be compared — their source did not resolve"
             );
         }
 
@@ -303,6 +312,12 @@ pub fn run(scope: ScopeFilter) -> Result<()> {
 }
 
 fn check_staleness(entry: &LockEntry) -> &'static str {
+    // An entry whose source did not resolve has no hash to compare, which is
+    // not the same answer as content that changed — and only one of the two is
+    // fixed by `vstack add`ing the item again.
+    if config::resolve_source_path(&entry.source).is_none() {
+        return "unresolved";
+    }
     if config::is_source_changed(entry) {
         "outdated"
     } else {

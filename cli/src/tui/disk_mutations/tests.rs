@@ -1424,7 +1424,7 @@ fn tui_remove_hook_fails_when_no_source_resolves_at_all() {
 #[test]
 #[ignore = "driven by tui_remove_hook_fails_when_no_source_resolves_at_all, which supplies a working directory outside any vstack source"]
 fn remove_hook_no_source_helper() {
-    let Some(root) = std::env::var_os("VSTACK_TEST_ROOT") else {
+    let Some(root) = crate::test_util::helper_fixture("VSTACK_TEST_ROOT") else {
         return;
     };
     let root = PathBuf::from(root);

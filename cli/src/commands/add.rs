@@ -767,6 +767,40 @@ role: engineer
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// A refused source is not an absent one here either: walking past it
+    /// installs items from a different source over the ones already installed.
+    #[test]
+    fn resolve_source_for_app_fails_rather_than_replacing_a_refused_project_source() {
+        let root = tmpdir("refused-project-source");
+        let project_root = root.join("project");
+        std::fs::create_dir_all(&project_root).unwrap();
+        // A fallback that WOULD resolve: the walk from CWD finds this
+        // checkout's own vstack source, so the chain has somewhere to go.
+        assert!(
+            std::env::current_dir()
+                .unwrap()
+                .ancestors()
+                .any(crate::resolve::is_vstack_source),
+            "control: the fallback chain must have a source to reach"
+        );
+
+        let mut registry = config::SourceRegistry::default();
+        registry.remember_for_project(
+            &project_root,
+            "https://user:ghp_TESTTOKEN@github.com/owner/repo.git",
+        );
+
+        let Err(err) = resolve_source_for_app(None, &registry, &project_root) else {
+            panic!("a refused project source must not fall through");
+        };
+        let err = format!("{err:#}");
+        assert!(err.contains("credential-bearing"), "{err}");
+        assert!(!err.contains("ghp_TESTTOKEN"), "{err}");
+        assert!(err.contains("<redacted>"), "{err}");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn resolve_source_for_app_records_local_source_git_identity() {
         let root = tmpdir("source-repo-local");
@@ -1880,7 +1914,7 @@ fn resolve_source_for_app(
             // intentionally project-scoped: choosing a repo while working in
             // one project must not silently change the source used by another.
             if let Some(current) = registry.current_for_project(project_root)
-                && let Ok(dir) = resolve_source(Some(current))
+                && let Some(dir) = resolve_remembered_source(current)?
                 && usable(&dir)
             {
                 return Ok(ResolvedSource {
@@ -1896,7 +1930,7 @@ fn resolve_source_for_app(
             // lock file. Use that before any global/default source so a
             // project's repo choice remains stable across invocations.
             if let Some(current) = source_from_project_lock(project_root)
-                && let Ok(dir) = resolve_source(Some(&current))
+                && let Some(dir) = resolve_remembered_source(&current)?
                 && usable(&dir)
             {
                 return Ok(ResolvedSource {
@@ -2842,6 +2876,29 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     }
 
     Ok(())
+}
+
+/// Resolve a source the project remembered — the registry's selection, or the
+/// one its lock records — for the fallback chain.
+///
+/// `Ok(None)` is the one outcome that may walk on: a local candidate that names
+/// nothing. A remote that is refused, an unowned cache entry or a failed clone
+/// is an ERROR, because continuing past it installs items from a different
+/// source over the ones already installed — the same refused-is-not-absent
+/// fail-open the refresh side closed.
+fn resolve_remembered_source(source: &str) -> Result<Option<PathBuf>> {
+    if Path::new(source).exists() {
+        return Ok(Some(std::fs::canonicalize(source)?));
+    }
+    if crate::refresh_sources::looks_like_remote_source(source) {
+        return clone_or_update(source).map(Some).with_context(|| {
+            format!(
+                "resolving the source this project is set to use ({})",
+                crate::refresh_sources::remote_source_display(source)
+            )
+        });
+    }
+    Ok(None)
 }
 
 fn resolve_source(source: Option<&str>) -> Result<PathBuf> {

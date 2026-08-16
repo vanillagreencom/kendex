@@ -351,6 +351,20 @@ fn resolve_recorded_source_resolution(source: &str) -> SourceResolution {
     resolve_single_source_with(source, true, true)
 }
 
+/// Why a recorded source produced nothing, for a caller holding no refusal map
+/// of its own. One wording, so `refresh`, `check` and `verify` name the same
+/// cause and the same command for the same state.
+pub(crate) fn absent_source_reason(source: &str) -> String {
+    if looks_like_remote_source(source) {
+        format!(
+            "remote cache not present — run `vstack add {}`",
+            remote_source_display(source)
+        )
+    } else {
+        "source not found".to_string()
+    }
+}
+
 /// Whether an entry's recorded source still names a source of its own.
 ///
 /// Deliberately side-effect free (no remote fetch): callers use it in per-entry
@@ -734,9 +748,18 @@ const GIT_INHERITED_ENV_VARS: &[&str] = &[
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_SYSTEM",
     "GIT_CONFIG_NOSYSTEM",
+    // Clearing the count is what drops the indexed `GIT_CONFIG_KEY_n` /
+    // `GIT_CONFIG_VALUE_n` pairs with it: git reads them only up to this
+    // number, so without it they are not configuration at all.
     "GIT_CONFIG_COUNT",
     // Names the directory git runs its own helper programs from.
     "GIT_EXEC_PATH",
+    // Both name a program run to obtain credentials, which is the same
+    // inherited-program class as `core.sshCommand`. `GIT_TERMINAL_PROMPT=0`
+    // does not neutralise them: an askpass program is used INSTEAD of the
+    // terminal, not because of it.
+    "GIT_ASKPASS",
+    "SSH_ASKPASS",
 ];
 
 /// Cleared for the cache only. Where the repository is vstack's own clone an
@@ -755,17 +778,6 @@ pub(crate) fn hardened_git_command(dir: &Path) -> std::process::Command {
     let mut command = std::process::Command::new("git");
     for key in GIT_INHERITED_ENV_VARS {
         command.env_remove(key);
-    }
-    // The indexed pairs are read only up to `GIT_CONFIG_COUNT`, which is
-    // cleared above; they are dropped as well so nothing depends on that.
-    if let Some(count) = std::env::var("GIT_CONFIG_COUNT")
-        .ok()
-        .and_then(|count| count.trim().parse::<usize>().ok())
-    {
-        for index in 0..count.min(4096) {
-            command.env_remove(format!("GIT_CONFIG_KEY_{index}"));
-            command.env_remove(format!("GIT_CONFIG_VALUE_{index}"));
-        }
     }
     command.env("GIT_TERMINAL_PROMPT", "0");
     command.current_dir(dir);
@@ -1130,6 +1142,37 @@ pub(crate) fn clone_cached_repo(remote: &RemoteSource) -> Result<()> {
     let root = remote_cache_root();
     std::fs::create_dir_all(&root)
         .with_context(|| format!("creating source cache {}", root.display()))?;
+    // `git clone` FOLLOWS a symlink at its destination, writing the repository
+    // into the link target — outside the cache root — and `add` then installs
+    // from there, with the ownership refusal only arriving on a later refresh.
+    // Every other write path proves the entry is vstack's own directory before
+    // touching it; this is the one that did not.
+    match std::fs::symlink_metadata(&remote.cache_dir) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(refusal(
+                remote,
+                &format!("its cache entry could not be inspected: {err}"),
+            ));
+        }
+        Ok(meta) if meta.is_dir() => {
+            let empty = std::fs::read_dir(&remote.cache_dir)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false);
+            if !empty {
+                return Err(refusal(
+                    remote,
+                    "its cache entry already exists and is not an empty directory",
+                ));
+            }
+        }
+        Ok(_) => {
+            return Err(refusal(
+                remote,
+                "its cache entry is not a directory vstack can clone into",
+            ));
+        }
+    }
     let output = cache_clone_command(remote)
         .stdout(std::process::Stdio::null())
         .output()
@@ -2217,13 +2260,6 @@ mod tests {
         // are claims about the hardening and not about two empty maps.
         assert_ne!(command_env(&std::process::Command::new("git")), project);
 
-        for key in GIT_INHERITED_ENV_VARS {
-            assert_eq!(
-                project.get(*key),
-                Some(&None),
-                "{key} is not cleared: {project:?}"
-            );
-        }
         assert_eq!(
             project
                 .get("GIT_TERMINAL_PROMPT")
@@ -2232,20 +2268,15 @@ mod tests {
                 .as_deref(),
             Some("0")
         );
-        // The user's own project keeps its discovery configuration: clearing
-        // it changed the answer the callers that anchor against a project
-        // fail closed on.
-        for key in GIT_CACHE_ONLY_ENV_VARS {
-            assert_eq!(project.get(*key), None, "{key} is cleared for a project");
-        }
-
+        // WHICH variables are cleared, and what clearing each one buys, is
+        // asserted behaviourally in
+        // `no_inherited_git_environment_reaches_the_commands_vstack_runs` — a
+        // loop over the constant would take its own assertion away with any
+        // entry deleted from it. What this asserts is the SHAPE the three
+        // constructors share.
         let cache = command_env(&hardened_cache_git_command(&dir));
-        for key in GIT_INHERITED_ENV_VARS.iter().chain(GIT_CACHE_ONLY_ENV_VARS) {
-            assert_eq!(
-                cache.get(*key),
-                Some(&None),
-                "{key} is not cleared for the cache: {cache:?}"
-            );
+        for (key, value) in &project {
+            assert_eq!(cache.get(key), Some(value), "{key} differs for the cache");
         }
 
         // The network path is the cache path plus exactly one variable, whose
@@ -2299,20 +2330,34 @@ mod tests {
         );
     }
 
-    const CONFIG_INJECTION_HELPER: &str = "refresh_sources::tests::inherited_git_config_helper";
+    const INHERITED_ENV_HELPER: &str = "refresh_sources::tests::inherited_git_env_helper";
     const SSH_WIRING_HELPER: &str = "refresh_sources::tests::network_ssh_command_helper";
 
-    /// Every way an environment hands git configuration to the process it
-    /// starts is a way to name a program git will RUN — `core.sshCommand` most
-    /// directly, since vstack reads it back and re-exports it to the fetch.
-    /// The list of scrubbed variables cannot be checked by iterating itself, so
-    /// each vector is set in a child process and the resulting git answer is
-    /// what is asserted.
+    /// Every variable the constructor scrubs, proven by what git DOES with it
+    /// rather than by the name appearing in a list — a test that iterates the
+    /// constant it checks removes an entry from its own assertion.
+    ///
+    /// Each row sets one variable in a child process and asserts the effect,
+    /// against an unhardened control in the same environment. The table must
+    /// name every entry of both constants, so adding one without covering it,
+    /// or deleting one, fails here.
     #[test]
-    fn no_inherited_git_configuration_reaches_the_commands_vstack_runs() {
-        let root = tmpdir("inherited-git-config");
-        let dir = root.join("work");
-        std::fs::create_dir_all(&dir).unwrap();
+    fn no_inherited_git_environment_reaches_the_commands_vstack_runs() {
+        let root = tmpdir("inherited-git-env");
+        let cache = root.join("cache-entry");
+        init_git_repo(&cache);
+        std::fs::create_dir_all(cache.join("sub")).unwrap();
+        let project = root.join("project");
+        init_git_repo(&project);
+        std::fs::create_dir_all(project.join("sub")).unwrap();
+        let alternate = root.join("alternate");
+        init_git_repo(&alternate);
+        // Content of its own, so its commit cannot be the byte-identical
+        // object the cache repository already holds.
+        std::fs::write(alternate.join("README.md"), "alternate\n").unwrap();
+        git(&alternate, &["commit", "-q", "-am", "alternate"]);
+        let alternate_sha = git_stdout(&alternate, &["rev-parse", "HEAD"]);
+
         let injected = root.join("evil-ssh");
         let config_file = root.join("injected.gitconfig");
         std::fs::write(
@@ -2320,80 +2365,390 @@ mod tests {
             format!("[core]\n\tsshCommand = {}\n", injected.display()),
         )
         .unwrap();
-
         let parameters = format!("'core.sshCommand={}'", injected.display());
-        let vectors: Vec<Vec<(&str, &std::ffi::OsStr)>> = vec![
-            // The one git sets itself for every subprocess of `git -c ...`.
-            vec![(
+        let marker = root.join("marker-ran");
+        let exec_dir = root.join("exec-path");
+        write_marker_program(&exec_dir.join("git-remote-https"), &marker);
+        let askpass = root.join("askpass.sh");
+        write_marker_program(&askpass, &marker);
+        let alternate_objects = alternate.join(".git/objects");
+        let empty = root.join("empty-objects");
+        std::fs::create_dir_all(&empty).unwrap();
+        let empty_index = root.join("empty-index");
+        std::fs::write(&empty_index, b"").unwrap();
+        let port = serve_unauthorized();
+        let port = port.to_string();
+        let ceiling = format!("{}:{}", cache.display(), project.display());
+
+        // One row per scrubbed variable. `None` is a variable whose effect
+        // cannot be observed from a test, stated with the reason.
+        let vectors: Vec<(&str, Option<(&str, Vec<(&str, &std::ffi::OsStr)>)>)> = vec![
+            // The location family is driven by path_safety's own child test,
+            // which asserts all three identity reads answer for the directory
+            // they were pointed at.
+            ("GIT_DIR", None),
+            ("GIT_WORK_TREE", None),
+            ("GIT_COMMON_DIR", None),
+            (
+                "GIT_INDEX_FILE",
+                Some(("index", vec![("GIT_INDEX_FILE", empty_index.as_os_str())])),
+            ),
+            (
+                "GIT_OBJECT_DIRECTORY",
+                Some(("objects", vec![("GIT_OBJECT_DIRECTORY", empty.as_os_str())])),
+            ),
+            (
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                Some((
+                    "alternates",
+                    vec![(
+                        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                        alternate_objects.as_os_str(),
+                    )],
+                )),
+            ),
+            (
+                "GIT_NAMESPACE",
+                Some((
+                    "namespace",
+                    vec![("GIT_NAMESPACE", std::ffi::OsStr::new("ns"))],
+                )),
+            ),
+            (
                 "GIT_CONFIG_PARAMETERS",
-                std::ffi::OsStr::new(parameters.as_str()),
-            )],
-            vec![("GIT_CONFIG", config_file.as_os_str())],
-            vec![("GIT_CONFIG_GLOBAL", config_file.as_os_str())],
-            vec![
-                ("GIT_CONFIG_COUNT", std::ffi::OsStr::new("1")),
-                ("GIT_CONFIG_KEY_0", std::ffi::OsStr::new("core.sshCommand")),
-                ("GIT_CONFIG_VALUE_0", injected.as_os_str()),
-            ],
+                Some((
+                    "config",
+                    vec![(
+                        "GIT_CONFIG_PARAMETERS",
+                        std::ffi::OsStr::new(parameters.as_str()),
+                    )],
+                )),
+            ),
+            (
+                "GIT_CONFIG",
+                Some(("config", vec![("GIT_CONFIG", config_file.as_os_str())])),
+            ),
+            (
+                "GIT_CONFIG_GLOBAL",
+                Some((
+                    "config",
+                    vec![("GIT_CONFIG_GLOBAL", config_file.as_os_str())],
+                )),
+            ),
+            (
+                "GIT_CONFIG_SYSTEM",
+                Some((
+                    "config",
+                    vec![("GIT_CONFIG_SYSTEM", config_file.as_os_str())],
+                )),
+            ),
+            // Suppresses system config rather than injecting anything, so
+            // there is no effect to observe: with it scrubbed and honoured
+            // alike, git reads the system config vstack would have read.
+            ("GIT_CONFIG_NOSYSTEM", None),
+            (
+                "GIT_CONFIG_COUNT",
+                Some((
+                    "config",
+                    vec![
+                        ("GIT_CONFIG_COUNT", std::ffi::OsStr::new("1")),
+                        ("GIT_CONFIG_KEY_0", std::ffi::OsStr::new("core.sshCommand")),
+                        ("GIT_CONFIG_VALUE_0", injected.as_os_str()),
+                    ],
+                )),
+            ),
+            (
+                "GIT_EXEC_PATH",
+                Some(("exec-path", vec![("GIT_EXEC_PATH", exec_dir.as_os_str())])),
+            ),
+            (
+                "GIT_ASKPASS",
+                Some(("askpass", vec![("GIT_ASKPASS", askpass.as_os_str())])),
+            ),
+            (
+                "SSH_ASKPASS",
+                Some((
+                    "askpass",
+                    vec![
+                        ("SSH_ASKPASS", askpass.as_os_str()),
+                        // git prefers its own; set both so the vector proves
+                        // the one it is named for.
+                        ("GIT_ASKPASS", askpass.as_os_str()),
+                    ],
+                )),
+            ),
+            (
+                "GIT_CEILING_DIRECTORIES",
+                Some((
+                    "ceiling",
+                    vec![(
+                        "GIT_CEILING_DIRECTORIES",
+                        std::ffi::OsStr::new(ceiling.as_str()),
+                    )],
+                )),
+            ),
+            // Needs a filesystem boundary between a repository and its
+            // working directory, which a test cannot create.
+            ("GIT_DISCOVERY_ACROSS_FILESYSTEM", None),
         ];
-        for vector in vectors {
-            let mut env = vector;
+
+        let covered: std::collections::BTreeSet<&str> =
+            vectors.iter().map(|(name, _)| *name).collect();
+        let scrubbed: std::collections::BTreeSet<&str> = GIT_INHERITED_ENV_VARS
+            .iter()
+            .chain(GIT_CACHE_ONLY_ENV_VARS)
+            .copied()
+            .collect();
+        assert_eq!(
+            covered, scrubbed,
+            "every scrubbed variable needs a row here, and every row a variable"
+        );
+
+        for (name, vector) in &vectors {
+            let Some((case, vector)) = vector else {
+                continue;
+            };
+            let mut env = vector.clone();
+            env.push(("VSTACK_TEST_VECTOR", std::ffi::OsStr::new(case)));
+            env.push(("VSTACK_TEST_CACHE_REPO", cache.as_os_str()));
+            env.push(("VSTACK_TEST_PROJECT_REPO", project.as_os_str()));
             env.push(("VSTACK_TEST_INJECTED_SSH", injected.as_os_str()));
-            env.push(("VSTACK_TEST_WORK_DIR", dir.as_os_str()));
-            crate::test_util::run_test_helper(CONFIG_INJECTION_HELPER, &env, None);
+            env.push(("VSTACK_TEST_MARKER", marker.as_os_str()));
+            env.push((
+                "VSTACK_TEST_ALTERNATE_SHA",
+                std::ffi::OsStr::new(alternate_sha.as_str()),
+            ));
+            env.push(("VSTACK_TEST_HTTP_PORT", std::ffi::OsStr::new(port.as_str())));
+            let _ = std::fs::remove_file(&marker);
+            crate::test_util::run_test_helper(INHERITED_ENV_HELPER, &env, None);
+            assert!(!marker.exists(), "{name}: a marker program ran");
         }
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// A program that records that it ran, then fails.
+    fn write_marker_program(path: &Path, marker: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!(
+                "#!/usr/bin/env bash\nprintf ran > {}\nexit 1\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    /// A local HTTP endpoint that always demands basic auth — what makes git
+    /// reach for an askpass program. Returns its port.
+    fn serve_unauthorized() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for stream in listener.incoming().take(32) {
+                let Ok(mut stream) = stream else { continue };
+                let mut buffer = [0u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"vstack\"\r\nContent-Length: 0\r\n\r\n",
+                );
+            }
+        });
+        port
+    }
+
     #[test]
-    #[ignore = "driven by no_inherited_git_configuration_reaches_the_commands_vstack_runs, which sets one injection vector per run"]
-    fn inherited_git_config_helper() {
-        let (Some(injected), Some(dir)) = (
-            std::env::var("VSTACK_TEST_INJECTED_SSH").ok(),
-            std::env::var_os("VSTACK_TEST_WORK_DIR"),
-        ) else {
+    #[ignore = "driven by no_inherited_git_environment_reaches_the_commands_vstack_runs, which sets one vector per run"]
+    fn inherited_git_env_helper() {
+        // `None` only when run directly; a driver that lost an env entry
+        // panics rather than asserting nothing.
+        let Some(case) = crate::test_util::helper_fixture("VSTACK_TEST_VECTOR") else {
             return;
         };
-        let dir = PathBuf::from(dir);
+        let cache =
+            PathBuf::from(crate::test_util::helper_fixture("VSTACK_TEST_CACHE_REPO").unwrap());
+        let unhardened = |dir: &Path, args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap()
+        };
 
-        // Control: an unhardened `git config --get` in this environment DOES
-        // return the injected program, so the assertions below are about the
-        // scrubbing and not about a vector that never worked.
-        let unhardened = std::process::Command::new("git")
-            .args(["config", "--get", "core.sshCommand"])
-            .current_dir(&dir)
-            .output()
-            .unwrap();
-        assert_eq!(
-            git_stdout_line(&unhardened.stdout),
-            injected,
-            "the injection vector must reach an unhardened git for this to prove anything"
-        );
+        match case.as_str() {
+            "config" => {
+                let injected =
+                    crate::test_util::helper_fixture("VSTACK_TEST_INJECTED_SSH").unwrap();
+                // Control: an unhardened `git config --get` in this environment
+                // DOES return the injected program.
+                assert_eq!(
+                    git_stdout_line(
+                        &unhardened(&cache, &["config", "--get", "core.sshCommand"]).stdout
+                    ),
+                    injected,
+                    "the vector must reach an unhardened git for this to prove anything"
+                );
+                assert_ne!(
+                    configured_ssh_command(&cache).as_deref(),
+                    Some(injected.as_str()),
+                    "the injected core.sshCommand was read back"
+                );
+                let network = network_ssh_command(&cache).unwrap_or_default();
+                assert!(
+                    !network.contains(&injected),
+                    "the injected core.sshCommand was re-exported to the fetch: {network}"
+                );
+                // Scrubbing must leave a WORKING git: dropping the indexed
+                // pairs while leaving `GIT_CONFIG_COUNT` set makes every
+                // command exit "missing config key", which is not an answer.
+                let probe = hardened_git_command(&cache)
+                    .args(["config", "--get", "core.noSuchKeyHere"])
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    probe.status.code(),
+                    Some(1),
+                    "the hardened command is not a usable git: {}",
+                    git_output_summary(&probe)
+                );
+            }
+            "index" => {
+                let hardened = hardened_cache_git_command(&cache)
+                    .arg("ls-files")
+                    .output()
+                    .unwrap();
+                assert_eq!(git_stdout_line(&hardened.stdout), "README.md");
+                assert_ne!(
+                    git_stdout_line(&unhardened(&cache, &["ls-files"]).stdout),
+                    "README.md",
+                    "the vector must change an unhardened answer"
+                );
+            }
+            "objects" => {
+                assert!(
+                    hardened_cache_git_command(&cache)
+                        .args(["cat-file", "-e", "HEAD^{commit}"])
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                assert!(
+                    !unhardened(&cache, &["cat-file", "-e", "HEAD^{commit}"])
+                        .status
+                        .success(),
+                    "the vector must change an unhardened answer"
+                );
+            }
+            "alternates" => {
+                let sha = crate::test_util::helper_fixture("VSTACK_TEST_ALTERNATE_SHA").unwrap();
+                assert!(
+                    !hardened_cache_git_command(&cache)
+                        .args(["cat-file", "-e", &sha])
+                        .status()
+                        .unwrap()
+                        .success(),
+                    "an inherited alternate object store answered for the cache"
+                );
+                assert!(
+                    unhardened(&cache, &["cat-file", "-e", &sha])
+                        .status
+                        .success(),
+                    "the vector must change an unhardened answer"
+                );
+            }
+            "namespace" => {
+                // The namespace applies to the refs a fetch is served, which is
+                // what `update_cached_repo` runs.
+                let hardened = hardened_git_network_command(&cache)
+                    .args(["ls-remote", "--"])
+                    .arg(&cache)
+                    .output()
+                    .unwrap();
+                assert!(
+                    git_stdout_line(&hardened.stdout).contains("refs/heads/"),
+                    "no refs listed: {}",
+                    git_output_summary(&hardened)
+                );
+                assert!(
+                    unhardened(&cache, &["ls-remote", "--", &cache.to_string_lossy()])
+                        .stdout
+                        .is_empty(),
+                    "the vector must change an unhardened answer"
+                );
+            }
+            "exec-path" => {
+                let marker =
+                    PathBuf::from(crate::test_util::helper_fixture("VSTACK_TEST_MARKER").unwrap());
+                let url = "https://127.0.0.1:1/x.git";
+                // Control: git runs the helper program the inherited exec path
+                // provides, on this exact command.
+                let _ = unhardened(&cache, &["ls-remote", "--", url]);
+                assert!(
+                    marker.exists(),
+                    "the vector must reach an unhardened git for this to prove anything"
+                );
+                std::fs::remove_file(&marker).unwrap();
 
-        assert_ne!(
-            configured_ssh_command(&dir).as_deref(),
-            Some(injected.as_str()),
-            "the injected core.sshCommand was read back"
-        );
-        let network = network_ssh_command(&dir).unwrap_or_default();
-        assert!(
-            !network.contains(&injected),
-            "the injected core.sshCommand was re-exported to the fetch: {network}"
-        );
+                let _ = hardened_git_network_command(&cache)
+                    .args(["ls-remote", "--", url])
+                    .output()
+                    .unwrap();
+                assert!(!marker.exists(), "git ran the inherited remote helper");
+            }
+            "askpass" => {
+                let marker =
+                    PathBuf::from(crate::test_util::helper_fixture("VSTACK_TEST_MARKER").unwrap());
+                let port = crate::test_util::helper_fixture("VSTACK_TEST_HTTP_PORT").unwrap();
+                let url = format!("http://127.0.0.1:{port}/x.git");
+                let _ = unhardened(&cache, &["ls-remote", "--", &url]);
+                assert!(
+                    marker.exists(),
+                    "the vector must reach an unhardened git for this to prove anything"
+                );
+                std::fs::remove_file(&marker).unwrap();
 
-        // Scrubbing must leave a WORKING git: dropping the indexed pairs while
-        // leaving `GIT_CONFIG_COUNT` set makes every command exit
-        // "missing config key", which is not an answer either.
-        let probe = hardened_git_command(&dir)
-            .args(["config", "--get", "core.noSuchKeyHere"])
-            .output()
-            .unwrap();
-        assert_eq!(
-            probe.status.code(),
-            Some(1),
-            "the hardened command is not a usable git: {}",
-            git_output_summary(&probe)
-        );
+                let _ = hardened_git_network_command(&cache)
+                    .args(["ls-remote", "--", &url])
+                    .output()
+                    .unwrap();
+                assert!(!marker.exists(), "git ran the inherited askpass program");
+            }
+            "ceiling" => {
+                let project = PathBuf::from(
+                    crate::test_util::helper_fixture("VSTACK_TEST_PROJECT_REPO").unwrap(),
+                );
+                // Cleared for the cache, where vstack owns the repository.
+                let hardened = hardened_cache_git_command(&cache.join("sub"))
+                    .args(["rev-parse", "--show-toplevel"])
+                    .output()
+                    .unwrap();
+                assert!(
+                    hardened.status.success(),
+                    "an inherited ceiling stopped the cache read: {}",
+                    git_output_summary(&hardened)
+                );
+                assert!(
+                    !unhardened(&cache.join("sub"), &["rev-parse", "--show-toplevel"])
+                        .status
+                        .success(),
+                    "the vector must change an unhardened answer"
+                );
+                // Honoured for the user's own project, where it is their
+                // configuration rather than something hostile.
+                assert_eq!(
+                    crate::path_safety::git_toplevel(&project.join("sub")),
+                    None,
+                    "the project read must answer as the user's git would"
+                );
+            }
+            other => panic!("unknown vector {other}"),
+        }
     }
 
     /// The three environment inputs of [`network_ssh_command`] are only proven
@@ -2435,13 +2790,10 @@ mod tests {
     #[test]
     #[ignore = "driven by the_network_command_carries_the_ssh_command_git_would_have_used, which sets one input combination per run"]
     fn network_ssh_command_helper() {
-        let (Some(expected), Some(dir)) = (
-            std::env::var("VSTACK_TEST_EXPECTED_SSH").ok(),
-            std::env::var_os("VSTACK_TEST_WORK_DIR"),
-        ) else {
+        let Some(expected) = crate::test_util::helper_fixture("VSTACK_TEST_EXPECTED_SSH") else {
             return;
         };
-        let dir = PathBuf::from(dir);
+        let dir = PathBuf::from(crate::test_util::helper_fixture("VSTACK_TEST_WORK_DIR").unwrap());
         let expected = (expected != "none").then_some(expected);
         assert_eq!(network_ssh_command(&dir), expected);
         // And the value the command actually carries is that same one.
@@ -3113,6 +3465,53 @@ mod tests {
             redact_token("'https://user:tok@github.com/owner/rep\u{00f6}'"),
             "'https://user:<redacted>@github.com/owner/rep\u{00f6}'"
         );
+    }
+
+    /// `git clone` follows a symlink at its destination, so the clone path had
+    /// to prove the entry is vstack's own directory before running git — every
+    /// other write path already does.
+    #[cfg(unix)]
+    #[test]
+    fn clone_refuses_a_cache_entry_that_is_not_an_empty_directory_of_its_own() {
+        let root = tmpdir("clone-destination");
+        let origin = root.join("origin");
+        init_git_repo(&origin);
+        let outside = root.join("user-checkout");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("precious.txt"), "precious\n").unwrap();
+        let home = root.join("home");
+
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            let remote = remote_at(&remote_cache_root().join("owner_repo"), &origin);
+            std::fs::create_dir_all(remote.cache_dir.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&outside, &remote.cache_dir).unwrap();
+
+            let err = clone_cached_repo(&remote).unwrap_err().to_string();
+            assert!(
+                err.contains("not a directory vstack can clone into"),
+                "{err}"
+            );
+            assert!(
+                !outside.join(".git").exists(),
+                "the clone was written into the link target"
+            );
+            assert_eq!(
+                std::fs::read_to_string(outside.join("precious.txt")).unwrap(),
+                "precious\n"
+            );
+            std::fs::remove_file(&remote.cache_dir).unwrap();
+
+            // A directory holding someone else's files is refused too; an
+            // empty one is what a fresh clone lands in.
+            std::fs::create_dir_all(&remote.cache_dir).unwrap();
+            std::fs::write(remote.cache_dir.join("stray.txt"), "x\n").unwrap();
+            let err = clone_cached_repo(&remote).unwrap_err().to_string();
+            assert!(err.contains("not an empty directory"), "{err}");
+            std::fs::remove_file(remote.cache_dir.join("stray.txt")).unwrap();
+            clone_cached_repo(&remote).unwrap();
+            assert!(remote.cache_dir.join(".git").is_dir());
+        });
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

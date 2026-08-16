@@ -261,10 +261,14 @@
   it every way an environment hands git configuration to the process it starts
   (`GIT_CONFIG_PARAMETERS` — which git sets ITSELF for every subprocess of a
   `git -c key=value` invocation — `GIT_CONFIG`, `GIT_CONFIG_GLOBAL`/`_SYSTEM`/
-  `_NOSYSTEM`, the indexed `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` pairs, and
-  `GIT_EXEC_PATH`), since an injected `core.fsmonitor`, `core.hooksPath` or
-  `core.sshCommand` names a program git RUNS — the last of those was read back
-  and re-exported to the fetch. Plus `GIT_TERMINAL_PROMPT=0`.
+  `_NOSYSTEM` and the indexed `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` pairs), since
+  an injected `core.fsmonitor`, `core.hooksPath` or `core.sshCommand` names a
+  program git RUNS — the last of those was read back and re-exported to the
+  fetch. The programs an environment can name directly go with them:
+  `GIT_EXEC_PATH`, whose directory supplies the `git-remote-<transport>` helper
+  a fetch executes, and `GIT_ASKPASS`/`SSH_ASKPASS`, which are used INSTEAD of
+  the terminal and so are not covered by `GIT_TERMINAL_PROMPT=0` — which is set
+  too.
   Cache commands additionally drop `GIT_CEILING_DIRECTORIES` and
   `GIT_DISCOVERY_ACROSS_FILESYSTEM`, which are hostile only where vstack owns
   the repository — for the user's own project they are configuration, and
@@ -291,10 +295,16 @@
   repairing its lock record; the TUI's startup cache refresh skips it, and a
   hook removal that cannot regenerate the affected agents fails instead of
   leaving them carrying the removed hook. An agent is never rewritten with a
-  hook set the run could not determine: where a locked hook's own source did not
-  resolve, the agent file is left exactly as installed and named in the report,
-  rather than silently losing that hook's frontmatter while its script and its
-  settings.json registration stay. A failed fetch keeps the stale clone
+  hook set the run could not determine — whether the hook's source did not
+  resolve or no longer carries it, the agent file is left exactly as installed
+  and named in the report, rather than silently losing that hook's frontmatter
+  while its script and its settings.json registration stay. `check` and
+  `verify` name the same cause and the same command as `refresh` for a source
+  that did not resolve, instead of calling it outdated or reporting a bare
+  `src:!`. `add` no longer walks past a refused source to a different one: a
+  credential, transport, ownership or clone failure on the source a project
+  selected is an error naming it, not a silent fall-back that installs from
+  somewhere else. A failed fetch keeps the stale clone
   (warned once, not once per resolve); a failed reset is an error. Remote
   sources resolve to one cache entry per repository identity — every spelling
   of a GitHub repo shares one, two repositories never do — so URL-added sources

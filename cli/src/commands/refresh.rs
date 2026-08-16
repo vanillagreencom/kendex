@@ -50,6 +50,15 @@ pub struct RefreshStats {
     refused_sources: crate::refresh_sources::SourceRefusals,
 }
 
+/// A locked hook the run could not read, and why. Every agent installed for
+/// one of its harnesses is left exactly as installed rather than regenerated
+/// without it.
+struct UndeterminedHook {
+    name: String,
+    harnesses: Vec<String>,
+    reason: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RefreshFailure {
     pub item: String,
@@ -121,13 +130,8 @@ impl RefreshStats {
         }
         // Only a pass that resolved sources can say a clone is not on this
         // machine; a caller that brought its own source never looked.
-        if self.refused_sources.attempted_resolution()
-            && crate::refresh_sources::looks_like_remote_source(recorded_source)
-        {
-            return format!(
-                "remote cache not present — run `vstack add {}`",
-                crate::refresh_sources::remote_source_display(recorded_source)
-            );
+        if self.refused_sources.attempted_resolution() {
+            return crate::refresh_sources::absent_source_reason(recorded_source);
         }
         if recorded_source.trim().is_empty() {
             return "source not found (none recorded)".to_string();
@@ -318,20 +322,27 @@ pub fn refresh_items_in_scope(
         .collect();
     let mut regenerated_codex_agents = Vec::new();
 
-    // Hook entries whose own source exists but did not resolve — a remote whose
-    // clone is absent or refused. What such a hook contributes to an agent's
-    // frontmatter cannot be read this run, and regenerating the agent anyway
-    // rewrote it with the hook silently dropped while the hook's script, its
-    // settings.json registration and its lock entry all survived.
-    let undetermined_hooks: Vec<(String, Vec<String>)> = lock
+    // Hook entries this run cannot read. Asked of the same function the agent
+    // frontmatter is built from, so the two can never disagree about which
+    // entries have no hook: a narrower proxy for it missed a source that
+    // resolved but no longer carries the hook, and a bare source name that
+    // resolves to an unrelated ancestor — and the agent was then regenerated
+    // with the hook silently dropped while its script, its settings.json
+    // registration and its lock entry all survived.
+    let undetermined_hooks: Vec<UndeterminedHook> = lock
         .entries
         .values()
         .filter(|entry| entry.kind == ItemKind::Hook)
-        .filter(|entry| {
-            config::resolve_source_path(&entry.source).is_none()
-                && crate::refresh_sources::recorded_source_exists(&entry.source)
+        .filter(|entry| crate::resolve::source_hook_for_lock_entry(&all_hooks, entry).is_none())
+        .map(|entry| UndeterminedHook {
+            name: entry.name.clone(),
+            harnesses: entry.harnesses.clone(),
+            reason: if config::resolve_source_path(&entry.source).is_none() {
+                stats.unresolved_source_reason(&entry.source)
+            } else {
+                "its source no longer carries it".to_string()
+            },
         })
-        .map(|entry| (entry.name.clone(), entry.harnesses.clone()))
         .collect();
 
     // ── Agents ───────────────────────────────────────────────
@@ -353,20 +364,20 @@ pub fn refresh_items_in_scope(
             stats.mark_missing(name, &source.root);
             continue;
         };
-        let undetermined: Vec<&str> = undetermined_hooks
+        let undetermined: Vec<String> = undetermined_hooks
             .iter()
-            .filter(|(_, harnesses)| {
-                harnesses
+            .filter(|hook| {
+                hook.harnesses
                     .iter()
                     .any(|harness| entry.harnesses.contains(harness))
             })
-            .map(|(hook, _)| hook.as_str())
+            .map(|hook| format!("{} ({})", hook.name, hook.reason))
             .collect();
         if !undetermined.is_empty() {
             stats.mark_undetermined(
                 name,
                 format!(
-                    "left as installed: hook(s) {} record a source that did not resolve, so this agent's hook set is not known this run",
+                    "left as installed: this agent's hook set is not known this run — {}",
                     undetermined.join(", ")
                 ),
             );
@@ -1167,7 +1178,9 @@ pub fn regenerate_agents_after_hook_removal(
             causes.push(format!("{} failure(s)", stats.failures.len()));
         }
         anyhow::bail!(
-            "failed to regenerate agents after hook removal: {}",
+            "failed to regenerate agents after hook removal: {}. \
+             The hook and its lock entry are already removed; \
+             re-run `vstack refresh` once the source above resolves",
             causes.join("; ")
         );
     }

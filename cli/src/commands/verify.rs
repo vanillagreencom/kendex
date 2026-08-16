@@ -134,6 +134,21 @@ fn verify_entry(entry: &LockEntry, global: bool) -> VerifyRow {
         ItemKind::Extra => (None, None),
     };
 
+    // A source that did not resolve has no hash to compare; saying only `src:!`
+    // leaves the user to guess between changed content and a cache that is not
+    // on this machine, which are fixed by different commands.
+    let note = match (
+        (!source_ok).then(|| config::resolve_source_path(&entry.source).is_none()),
+        note,
+    ) {
+        (Some(true), Some(note)) => Some(format!(
+            "{}; {note}",
+            crate::refresh_sources::absent_source_reason(&entry.source)
+        )),
+        (Some(true), None) => Some(crate::refresh_sources::absent_source_reason(&entry.source)),
+        (_, note) => note,
+    };
+
     VerifyRow {
         kind,
         name,

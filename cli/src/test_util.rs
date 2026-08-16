@@ -101,6 +101,7 @@ pub(crate) fn run_test_helper(
 ) {
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command.args([helper, "--exact", "--ignored", "--nocapture"]);
+    command.env(DRIVEN, "1");
     for (key, value) in env {
         command.env(key, value);
     }
@@ -118,4 +119,25 @@ pub(crate) fn run_test_helper(
         stdout.contains("1 passed"),
         "{helper} did not run — the filter matched no test\nstdout:\n{stdout}"
     );
+}
+
+/// Set on every child [`run_test_helper`] starts, so a helper can tell a driven
+/// run from the bare `cargo test -- --ignored` one.
+const DRIVEN: &str = "VSTACK_TEST_DRIVEN";
+
+/// A fixture value the driver was supposed to supply.
+///
+/// `None` only when this helper was not driven at all — the bare `--ignored`
+/// run, where there is nothing to assert. When a driver DID start it, a missing
+/// variable means the driver's env table lost an entry, which would otherwise
+/// leave the helper asserting nothing, reporting `1 passed`, and the guard
+/// disarmed.
+pub(crate) fn helper_fixture(name: &str) -> Option<String> {
+    if std::env::var_os(DRIVEN).is_none() {
+        return None;
+    }
+    Some(
+        std::env::var(name)
+            .unwrap_or_else(|_| panic!("{name} was not supplied by the driver that started this")),
+    )
 }

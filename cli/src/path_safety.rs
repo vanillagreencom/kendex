@@ -656,14 +656,12 @@ mod tests {
     #[test]
     #[ignore = "driven by identity_reads_ignore_an_inherited_git_location_override, which supplies the repositories and the overrides"]
     fn git_location_override_helper() {
-        let (Some(anchored), Some(elsewhere)) = (
-            std::env::var_os("VSTACK_TEST_ANCHORED_REPO"),
-            std::env::var_os("VSTACK_TEST_ELSEWHERE_REPO"),
-        ) else {
-            // Run directly (`--ignored` with no filter); there is nothing to
-            // assert without the fixture the parent builds.
+        // `None` only when run directly (`--ignored` with no driver); a
+        // driver that lost an env entry panics rather than asserting nothing.
+        let Some(anchored) = crate::test_util::helper_fixture("VSTACK_TEST_ANCHORED_REPO") else {
             return;
         };
+        let elsewhere = crate::test_util::helper_fixture("VSTACK_TEST_ELSEWHERE_REPO").unwrap();
         let anchored = std::fs::canonicalize(PathBuf::from(anchored)).unwrap();
         let elsewhere = std::fs::canonicalize(PathBuf::from(elsewhere)).unwrap();
 
