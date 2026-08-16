@@ -24,11 +24,29 @@ note() { echo "FAIL: $1"; fail=1; }
 [ -x "$SELFTEST" ] || { echo "FAIL: not executable: $SELFTEST"; exit 1; }
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-# An interrupted run tears down its background replays too (their PIDs
-# accumulate in replay_pids as each is launched).
+# ONE teardown on every exit path. Replays are launched from inside the
+# fixture blocks, so an early exit from a later block (set -e, a failed
+# mkdir, an aborted assertion) is an ordinary path, and it must not delete
+# the scratch dir out from under the replays still running against it.
+# Each replay leads its own process group (see replay()), so signalling the
+# GROUP reaches the selftest and its gh-shim/jq descendants; signalling the
+# recorded pid alone reaches only the subshell.
 replay_pids=""
-trap 'kill $replay_pids 2>/dev/null || true; wait; exit 130' INT TERM
+torn_down=""
+teardown() {
+  if [ -n "$torn_down" ]; then
+    return 0
+  fi
+  torn_down=1
+  for p in $replay_pids; do
+    kill -TERM "-$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
+  rm -rf "$work"
+}
+# EXIT keeps the run's own status; only the signal paths exit 130.
+trap teardown EXIT
+trap 'teardown; exit 130' INT TERM
 
 # replay LABEL DIR [VAR=value ...] — run the selftest in DIR with the given
 # environment, in the background; stdout+stderr land in $work/LABEL.out and
@@ -37,10 +55,19 @@ trap 'kill $replay_pids 2>/dev/null || true; wait; exit 130' INT TERM
 replay() {
   local label="$1" dir="$2"
   shift 2
+  # Job control ONLY around the launch: the backgrounded subshell becomes a
+  # process group leader and everything it forks inherits that group (a
+  # subshell does not re-enable job control), which is what lets teardown
+  # own the whole tree. Leaving -m on would also give every later foreground
+  # command its own group and the terminal, so a Ctrl-C would land there
+  # instead of here and teardown would never run.
+  set -m
   (
     # The redirect is on the subshell, so a failed cd still leaves a .out
     # naming the missing fixture; the selftest runs as a child the subshell
     # forwards TERM/INT to, so an interrupted wrapper takes it down too.
+    # Stdin is /dev/null because a group-led background job that touched the
+    # terminal would stop on SIGTTIN and hang every wait.
     if ! cd "$dir"; then
       echo 1 >"$work/$label.rc"
       exit 1
@@ -51,8 +78,9 @@ replay() {
     rc=0
     wait "$child" || rc=$?
     echo "$rc" >"$work/$label.rc"
-  ) >"$work/$label.out" 2>&1 &
+  ) </dev/null >"$work/$label.out" 2>&1 &
   replay_pids="$replay_pids $!"
+  set +m
 }
 # passed LABEL — the recorded exit status of that replay was 0. A missing
 # record (the subshell never wrote one) reads as failure, never as pass.
@@ -361,6 +389,11 @@ replay deadglob "$work/deadglob"
 # Bare `wait` returns 0 regardless of the children's statuses; each replay's
 # own status is in its .rc file.
 wait
+# Every replay has exited, so nothing here is teardown's to signal any more.
+# Dropping the pids keeps the exit path from sending TERM to whatever the OS
+# has since handed those numbers to — this battery forks tens of thousands
+# of times, so recycled pids are not hypothetical.
+replay_pids=""
 chmod 644 "$work/cyclic/unreadable.settings.toml"
 
 # --- layer 1: built-in defaults ---------------------------------------------
