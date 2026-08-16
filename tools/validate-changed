@@ -391,6 +391,8 @@ EOF_EXEC
     || { echo "FAILED: git ls-files failed while listing SKILL.md files for the vstack-report lint"; return 1; }
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    # An index entry whose file is gone is a pending deletion, not a doc.
+    [ -f "$f" ] || continue
     if ! grep -qF 'vstack report' "$f"; then
       echo "missing \`vstack report\` guidance: $f"
       fail=1

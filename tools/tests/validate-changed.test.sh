@@ -553,6 +553,14 @@ assert_line "lint list failure" "FAILED: git ls-files failed while listing scrip
 assert_line "lint list failure" "FAILED LANE: lint:shell"
 reset_tree
 
+# A skill removed from the working tree (deletion not yet staged) is a
+# pending deletion, not a doc missing its routing line.
+touch_path skills/withtests/SKILL.md
+rm "$REPO/skills/notests/SKILL.md"
+run
+assert_no_line "deleted SKILL.md" "missing \`vstack report\` guidance: skills/notests/SKILL.md"
+reset_tree
+
 # --- 20. --help ------------------------------------------------------------------
 run --help
 assert_rc "--help" 0
