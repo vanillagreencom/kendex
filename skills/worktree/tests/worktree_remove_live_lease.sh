@@ -16,7 +16,12 @@ GUARD_SCRIPT="$WORKTREE_PACKAGE_DIR/scripts/worktree-session-guard"
 
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 SLEEPER_PID=""
+# A backgrounded external command is a forked copy of this shell until it
+# execs; a signal that lands in that window makes the CHILD run this EXIT
+# trap and delete TMP_ROOT under the running test. Only the test process
+# itself may clean up.
 cleanup() {
+  [[ "$BASHPID" == "$$" ]] || return 0
   [[ -n "$SLEEPER_PID" ]] && kill "$SLEEPER_PID" 2>/dev/null
   rm -rf "$TMP_ROOT"
 }
@@ -187,9 +192,11 @@ make_repo "$DEAD_ROOT/main"
 git -C "$DEAD_ROOT/main" worktree add -q -b issue-dead "$DEAD_ROOT/trees/issue-dead" main
 DEAD_WT="$DEAD_ROOT/trees/issue-dead"
 "$GUARD_SCRIPT" claim "$DEAD_WT" --owner issue-dead >/dev/null
-sleep 300 &
+# A pid that died on its own: signalling a just-forked job races its exec —
+# the signal either hits the pre-exec child (which then runs this shell's
+# EXIT trap) or is lost, leaving the sleeper alive for its full duration.
+sleep 0 &
 DEAD_PID=$!
-kill "$DEAD_PID"
 wait "$DEAD_PID" 2>/dev/null || true
 plant_lease_pid "$DEAD_ROOT/main/.git/worktrees/issue-dead/locked" "$DEAD_PID"
 

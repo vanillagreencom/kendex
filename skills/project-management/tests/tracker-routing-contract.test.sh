@@ -29,17 +29,20 @@ require_fixed() {
   grep -Fq -- "$needle" "$file" || fail "$desc missing in ${file#"$SKILL_DIR"/}"
 }
 
-# extract <file> <start-pattern> <end-pattern> <label> → prints scratch path
+# extract <file> <start-pattern> <end-pattern> <label> → prints scratch path.
+# ERE, like `require`: `\(` and `\)` are literal parentheses in both.
 extract() {
   local file="$1" start="$2" end="$3" label="$4"
   local out="$tmp/$label.md"
-  sed -n "/$start/,/$end/p" "$file" >"$out"
-  [[ -s "$out" ]] || fail "could not extract $label from ${file#"$SKILL_DIR"/}"
+  sed -En "/$start/,/$end/p" "$file" >"$out"
   printf '%s' "$out"
 }
 
+# An empty region is a failed extraction, never a vacuously Linear-free one:
+# `fail` inside the caller's $(...) only leaves that subshell.
 assert_linear_free() {
   local region="$1" label="$2"
+  [[ -s "$region" ]] || fail "could not extract the $label region"
   ! grep -Fq 'linear.sh' "$region" || fail "$label contains a Linear command"
 }
 

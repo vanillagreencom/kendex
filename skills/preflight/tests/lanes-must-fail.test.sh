@@ -145,6 +145,46 @@ else
   skipped "data-syntax TOML must-fail control" "no taplo and no python3 with tomllib"
 fi
 
+echo "=== lane workflow-run-syntax: a run: block bash cannot parse ==="
+seed workflow
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+  mkdir -p "$R/.github/workflows"
+  # The defect that motivated the lane: an apostrophe in a comment INSIDE a
+  # single-quoted jq program ends the quote, and the next `|` line is a bash
+  # syntax error. A GitHub expression sits on a clean line so the placeholder
+  # substitution is exercised too; a python step must be left alone.
+  cat >"$R/.github/workflows/ci.yml" <<'YML'
+name: ci
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: fine
+        run: echo "${{ github.sha }}"
+      - name: broken
+        run: |
+          set -euo pipefail
+          out="$(jq -n 'add
+            # one attempt's runs
+            | length')"
+          echo "$out"
+      - name: not shell
+        shell: python
+        run: print("this isn't bash")
+YML
+  git -C "$R" add -A
+  run_pf
+  fires "an unparseable run: block fails, attributed to workflow-run-syntax at the offending file line" ".github/workflows/ci.yml:14: [workflow-run-syntax]"
+  case "$OUT" in
+    *"ci.yml:8: "* | *"ci.yml:18: "*)
+      bad "the clean step (line 8) and the python step (line 18) contribute no findings" "out=$OUT" ;;
+    *) ok "the clean step (line 8) and the python step (line 18) contribute no findings" ;;
+  esac
+else
+  skipped "workflow-run-syntax must-fail control" "no python3 with PyYAML"
+fi
+
 echo "=== the verdict line counts findings and changed files ==="
 seed verdict
 printf '# Guide\n\nNothing here yet.\n\nTODO: one.\nTODO: two.\n' >"$R/docs/guide.md"

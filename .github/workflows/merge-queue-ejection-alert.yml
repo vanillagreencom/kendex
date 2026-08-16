@@ -90,10 +90,11 @@ jobs:
               | (if ($recent | length) > 0 then $recent else . end)
               | sort_by(.created_at)
               # ATTEMPT cluster: a re-armed unchanged PR reuses the branch
-              # name, so the window can span attempts. One attempt's runs
-              # start together — keep only runs within 30 minutes of the
-              # newest, excluding an earlier attempt's completed failure
-              # from ever shadowing the current one.
+              # name, so the window can span attempts. The runs of one
+              # attempt start together — keep only runs within 30 minutes
+              # of the newest, so the completed failure of an earlier
+              # attempt never shadows the current one. (No apostrophes in
+              # these comments: they sit inside a single-quoted jq program.)
               | (map(.created_at) | max) as $newest
               | map(select(.created_at >= ($newest | sub("Z$"; "") | strptime("%Y-%m-%dT%H:%M:%S") | mktime | . - 1800 | strftime("%Y-%m-%dT%H:%M:%SZ"))))
               # Selection within the attempt: newest failure-shaped run;

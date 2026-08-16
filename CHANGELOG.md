@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- ci: the merge-queue ejection alert's comment/intake step never ran — an
+  apostrophe in a comment inside its single-quoted jq program ended the
+  quote and the step died on a bash syntax error. Fixed, and preflight
+  gains a `workflow-run-syntax` lane: `bash -n` over every `run:` block of
+  a changed workflow file (expressions placeholdered, non-shell steps
+  skipped), reported at the file line.
+- worktree tests: `worktree_remove_live_lease.sh` failed most merge-queue
+  runs and stalled the surviving ones five minutes. Signalling a
+  just-forked `sleep 300 &` raced its exec: the pre-exec child ran the
+  test's EXIT trap and deleted the fixture, or the signal was lost and the
+  sleeper lived out its timer. The dead pid now comes from a job that
+  exits on its own and the cleanup trap runs only in the test process.
+- project-management tests: `tracker-routing-contract` failed open on the
+  GitHub-route Linear-free check — its sed pattern was BRE (parens grouped,
+  never matched) and the extraction failure inside `$(...)` could not stop
+  the run. ERE now, and an empty region fails the assertion.
 - agents: the seven engineer/analyst agents (generalist, iced, planner,
   researcher, rust, scout, tpm) drop the house "never trust a green check"
   blockquote — the rule's canonical homes are `code-quality` § Prove Your
