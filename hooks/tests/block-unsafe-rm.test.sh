@@ -112,6 +112,11 @@ printf '%s' '{"tool_input":{"command":"rm -rf $X' \
 set -e
 assert_eq "$rc" 2 'without jq, an unterminated command string refuses'
 assert_contains "$ERR_FILE" 'could not decode' 'the no-jq refusal names the cause'
+set +e
+printf '%s' '{"tool_input":{"command":"rm\t-rf\t$X/sub"}}' \
+  | env -i HOME="$HOME" PWD="$PWD" TMPDIR=/tmp PATH="$NOJQ_BIN" "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE"; rc=$?
+set -e
+assert_eq "$rc" 2 'without jq, JSON tab escapes still separate rm from its flags'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

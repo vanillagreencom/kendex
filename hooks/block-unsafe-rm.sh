@@ -52,7 +52,7 @@ fi
 # newline in a sed replacement is a GNU extension BSD sed lacks, and this
 # hook runs on the macOS Bash 3.2 target too.
 SEGMENTS=$(printf '%s\n' "$COMMAND" \
-  | awk '{ gsub(/\t/, " "); gsub(/\\n/, "\n"); gsub(/&&|\|\||;|\|/, "\n"); print }')
+  | awk '{ gsub(/\t/, " "); gsub(/\\t/, " "); gsub(/\\n/, "\n"); gsub(/&&|\|\||;|\|/, "\n"); print }')
 
 while IFS= read -r seg; do
   seg=$(printf '%s' "$seg" | sed 's/^[[:space:]({$`]*//')
