@@ -363,6 +363,67 @@ fn remote_slug_keys_on_host_and_normalizes_every_accepted_form() {
 }
 
 #[test]
+fn the_clone_url_names_the_endpoint_the_cache_key_names() {
+    // An scp-style source with a non-`git` SSH user is a git URL already:
+    // rewriting it against github.com would clone an unrelated repository
+    // into the cache keyed on gitlab.example.
+    assert_eq!(
+        remote_git_url("alice@gitlab.example:team/repo").as_deref(),
+        Some("alice@gitlab.example:team/repo")
+    );
+    assert_eq!(
+        remote_source_slug("alice@gitlab.example:team/repo").as_deref(),
+        Some("gitlab.example/team/repo")
+    );
+    // Every form that keys a cache is cloned from that same host.
+    for source in [
+        "owner/repo",
+        "https://github.com/owner/repo.git",
+        "git@github.com:owner/repo",
+        "ssh://git@example.com:2222/owner/repo.git",
+        "https://gitlab.example/group/sub/repo",
+        "alice@gitlab.example:team/repo",
+    ] {
+        let url = remote_git_url(source).unwrap_or_else(|| panic!("{source} must be fetchable"));
+        assert_eq!(
+            remote_source_slug(&url),
+            remote_source_slug(source),
+            "{source} must clone from the endpoint its cache is keyed on"
+        );
+    }
+    // Only the shorthand is rewritten; everything else passes through
+    // verbatim, port, `.git` suffix and credentials included.
+    assert_eq!(
+        remote_git_url("owner/repo").as_deref(),
+        Some("https://github.com/owner/repo.git")
+    );
+    assert_eq!(
+        remote_git_url("owner/repo/").as_deref(),
+        Some("https://github.com/owner/repo.git")
+    );
+    for url in [
+        "git@github.com:owner/repo",
+        "https://github.com/owner/repo",
+        "ssh://git@example.com:2222/owner/repo.git",
+        "https://user:token@github.com/owner/repo.git",
+    ] {
+        assert_eq!(remote_git_url(url).as_deref(), Some(url), "{url}");
+    }
+    // A source vstack cannot key is a source it cannot fetch — cleartext
+    // transport and local paths alike.
+    for bad in [
+        "http://github.com/owner/repo",
+        "/abs/path",
+        "./rel",
+        "a/b/c",
+        "owner",
+        "",
+    ] {
+        assert!(remote_git_url(bad).is_none(), "{bad:?}");
+    }
+}
+
+#[test]
 fn remote_cache_dir_stays_directly_under_the_cache_root() {
     let dir = remote_cache_dir("owner/repo").unwrap();
     let root = global_base_dir().join(".vstack").join("cache");

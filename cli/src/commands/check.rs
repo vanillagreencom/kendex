@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 mod render;
 
-pub(crate) use render::display_text;
+pub(crate) use render::{command_arg, display_text};
 use render::{humanize_age, render_report, scrub_source_credentials};
 
 fn skill_disk_path(global: bool, name: &str) -> PathBuf {

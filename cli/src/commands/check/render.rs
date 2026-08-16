@@ -61,7 +61,7 @@ fn is_shell_safe(c: char) -> bool {
 /// a command that cannot work — and single-quoted whenever it holds anything
 /// a shell would interpret, so the pasted command runs on the literal string
 /// rather than on whatever `$`, backtick, or quote it happened to contain.
-fn command_arg(text: &str) -> String {
+pub(crate) fn command_arg(text: &str) -> String {
     let scrubbed: String = scrub_source_credentials(text)
         .chars()
         .map(|c| if c.is_control() { '?' } else { c })

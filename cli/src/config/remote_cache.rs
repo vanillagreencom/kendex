@@ -62,6 +62,68 @@ fn is_slug_segment(segment: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
+/// The shape of an accepted remote source.
+enum RemoteSourceForm<'a> {
+    /// Already a git URL — `https://host/path`, `ssh://[user@]host/path`, or
+    /// scp-style `[user@]host:path`. `host` may still carry `user@` and
+    /// `:port`.
+    GitUrl { host: &'a str, path: &'a str },
+    /// `owner/repo`, which means github.com.
+    GitHubShorthand,
+}
+
+/// The ONE definition of what each remote form looks like. The cache key
+/// ([`remote_source_slug`]) and the URL git is handed ([`remote_git_url`])
+/// both derive from it, so a source can never be keyed as one endpoint and
+/// cloned from another.
+fn remote_source_form(trimmed: &str) -> Option<RemoteSourceForm<'_>> {
+    if let Some(rest) = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("ssh://"))
+    {
+        let (host, path) = rest.split_once('/')?;
+        return Some(RemoteSourceForm::GitUrl { host, path });
+    }
+    if trimmed.contains("://") {
+        // Includes http:// — see [`remote_source_slug`].
+        return None;
+    }
+    if let Some((user_host, path)) = trimmed.split_once(':') {
+        // scp-style `[user@]host:owner/repo`; shorthand has no colon. A `/`
+        // before the colon means the colon sits inside a path, not after a
+        // host.
+        if user_host.contains('/') {
+            return None;
+        }
+        return Some(RemoteSourceForm::GitUrl {
+            host: user_host,
+            path,
+        });
+    }
+    // No transport: the only remaining remote form is GitHub shorthand,
+    // which is exactly two segments. A local path — absolute, `./x`,
+    // `a/b/c` — is not a remote source and must never key a cache.
+    is_remote_source_slug(trimmed).then_some(RemoteSourceForm::GitHubShorthand)
+}
+
+/// The URL git is handed for a remote source, or None when the source is not
+/// one vstack can fetch — the same answer [`remote_source_slug`] gives, since
+/// vstack only ever clones into a cache it can key.
+///
+/// The GitHub shorthand is the only form rewritten. Every other accepted form
+/// is already a git URL and passes through verbatim, credentials, port and
+/// `.git` suffix included: rewriting `alice@gitlab.example:team/repo` into a
+/// github.com URL would clone an unrelated repository into the cache the slug
+/// says belongs to gitlab.example.
+pub fn remote_git_url(source: &str) -> Option<String> {
+    let trimmed = source.trim_end_matches('/');
+    remote_source_slug(trimmed)?;
+    match remote_source_form(trimmed)? {
+        RemoteSourceForm::GitUrl { .. } => Some(trimmed.to_string()),
+        RemoteSourceForm::GitHubShorthand => Some(format!("https://github.com/{trimmed}.git")),
+    }
+}
+
 /// The canonical identity of a remote source: `host/path…`, lowercased.
 ///
 /// Every accepted form maps here — `owner/repo` shorthand (GitHub),
@@ -75,27 +137,9 @@ fn is_slug_segment(segment: &str) -> bool {
 /// `source` is not a remote form.
 pub fn remote_source_slug(source: &str) -> Option<String> {
     let trimmed = source.trim_end_matches('/');
-    let (host, path) = if let Some(rest) = trimmed.strip_prefix("https://") {
-        rest.split_once('/')?
-    } else if let Some(rest) = trimmed.strip_prefix("ssh://") {
-        rest.split_once('/')?
-    } else if trimmed.contains("://") {
-        // Includes http:// — see above.
-        return None;
-    } else if let Some((user_host, path)) = trimmed.split_once(':') {
-        // scp-style `git@host:owner/repo`; shorthand has no colon.
-        if user_host.contains('/') {
-            return None;
-        }
-        (user_host, path)
-    } else {
-        // No transport: the only remaining remote form is GitHub shorthand,
-        // which is exactly two segments. A local path — absolute, `./x`,
-        // `a/b/c` — is not a remote source and must never key a cache.
-        if !is_remote_source_slug(trimmed) {
-            return None;
-        }
-        ("github.com", trimmed)
+    let (host, path) = match remote_source_form(trimmed)? {
+        RemoteSourceForm::GitUrl { host, path } => (host, path),
+        RemoteSourceForm::GitHubShorthand => ("github.com", trimmed),
     };
 
     let host = host.rsplit('@').next()?; // drop any `user@`
