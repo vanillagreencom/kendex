@@ -23,13 +23,14 @@
 #                 command is a bare shell on two consecutive passes — the
 #                 harness under it exited (session limit, crash, quit) and
 #                 the slot is free
-#   5. usage-limit a listed lane's harness is still the pane's current
-#                 command and its pane shows the account's limit banner —
-#                 one pass, and the claimed config dir when a live lane
-#                 claim names the window
+#   5. usage-limit a listed lane whose harness has not exited (its pane's
+#                 current command is not a bare shell) shows the account's
+#                 limit banner — one pass, and the claimed config dir when a
+#                 live lane claim names the window
 #   6. question   a listed lane's pane shows a question/selection prompt
-#   7. idle-after-return a listed lane's pane sits at its harness input
-#                 prompt with no work in flight on two consecutive passes
+#   7. idle-after-return a listed lane whose harness has not exited sits at
+#                 its input prompt with no work in flight on two consecutive
+#                 passes
 #   8. heartbeat  after --max-loops passes with no event
 #
 # Output on the first event: `EVENT <kind> ...` on stdout — one line, except
@@ -131,8 +132,9 @@ Events, checked in this order every pass:
                              crash, quit — and the lane's slot is free (last
                              40 non-empty pane lines follow, carrying why)
   EVENT usage-limit <lane> [<config-dir>]
-                             the harness is still the pane's current command
-                             and the pane shows the account's limit banner
+                             the harness has not exited (the pane's current
+                             command is not a bare shell) and the pane shows
+                             the account's limit banner
                              (`You've hit your … limit`, `/usage-credits`,
                              `Usage limit reached`, out of credits): the
                              account is spent and every lane on it follows.
@@ -143,13 +145,13 @@ Events, checked in this order every pass:
   EVENT question <lane>      the lane's pane shows a question/selection
                              prompt (last 40 non-empty pane lines follow)
   EVENT idle-after-return <lane>
-                             the pane sits at the harness input prompt (`❯`
-                             composer, Codex's submit hint) with no work in
-                             flight (no interrupt hint, no background-shell
-                             hint, no streaming token counter) on two
-                             consecutive passes: the round is over and the
-                             lane is waiting on the overseer (last 40
-                             non-empty pane lines follow)
+                             the harness has not exited and its pane sits at
+                             the input prompt (`❯` composer, Codex's submit
+                             hint) with no work in flight (no interrupt hint,
+                             no background-shell hint, no streaming token
+                             counter) on two consecutive passes: the round is
+                             over and the lane is waiting on the overseer
+                             (last 40 non-empty pane lines follow)
   EVENT heartbeat            --max-loops passes with no event (open PR list
                              follows: number, head branch, title)
 

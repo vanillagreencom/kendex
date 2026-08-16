@@ -50,14 +50,17 @@ Options:
   --ghostty         Open Ghostty/GUI terminals
   --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
-                    account with the most headroom for --harness; `auto:<h>`
-                    picks for harness <h>; a config dir is used literally; any
-                    other value is looked up as a lane alias. Refuses to launch
-                    when no lane is under the usage threshold, rather than
-                    launching into a wall. Every tmux window launched under a
-                    lane records a claim (see `lanes --help`), live while its
-                    pane is, so the next `pick` counts this launch before the
-                    account's usage numbers move.
+                    qualifying account with the fewest launches in flight for
+                    --harness; `auto:<h>` picks for harness <h>; a config dir
+                    is used literally; any other value is looked up as a lane
+                    alias. Refuses to launch when no lane is under the usage
+                    threshold, rather than launching into a wall. Every tmux
+                    window launched under a lane records a claim (see `lanes
+                    --help`), live while its pane is, and `auto` re-picks
+                    before each further item, so a batch spreads across
+                    accounts instead of stacking on one. A re-pick that
+                    qualifies no lane stops the batch, leaving the items
+                    already launched alone.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -196,6 +199,9 @@ fi
 #
 # The lane becomes an env prefix on the launched command rather than a different
 # binary, so it works whether or not the machine has a shell alias per account.
+LANE_AUTO=false
+LANE_HARNESS=""
+pick_auto_lane() { "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT"; }
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
     auto|auto:*)
@@ -204,8 +210,10 @@ if [[ -n "$LANE" ]]; then
       [[ -n "$lane_harness" ]] || lane_harness="$HARNESS"
       [[ -n "$lane_harness" ]] || { echo "Error: --lane auto needs --harness, or use --lane auto:<harness>" >&2; exit 1; }
       [[ -x "$LANES_CLI" ]] || { echo "Error: lanes helper not found at $LANES_CLI" >&2; exit 1; }
+      LANE_AUTO=true
+      LANE_HARNESS="$lane_harness"
       lane_rc=0
-      LANE_ENV="$("$LANES_CLI" pick --harness "$lane_harness" --max-pct "$LANE_MAX_PCT")" || lane_rc=$?
+      LANE_ENV="$(pick_auto_lane)" || lane_rc=$?
       if [[ "$lane_rc" -ne 0 ]]; then
         # lanes exits 3 for "every lane is over the threshold" and 1 for a real
         # failure. Both stop the launch; only the first is the operator's call.
@@ -481,6 +489,34 @@ for raw in "${ITEMS[@]}"; do
     [[ -n "$repo" ]] || { echo "Error: --repo OWNER/REPO required when gh repo cannot resolve" >&2; exit 1; }
     wt_id="issue-$item"
     title="gh-$item"
+  fi
+  # `--lane auto` is re-resolved per item once one lane is up: the claim the
+  # previous launch recorded is what moves this item off that account, and a
+  # single upfront pick puts a whole batch on one lane. Still ahead of this
+  # item's worktree, so a stopped batch leaves no orphan tree behind. A pick
+  # that can no longer prove a lane stops the batch rather than launching onto
+  # an account nothing vouched for.
+  if [[ "$LANE_AUTO" == true && "$launched" -gt 0 ]]; then
+    lane_rc=0
+    next_lane="$(pick_auto_lane)" || lane_rc=$?
+    if [[ "$lane_rc" -ne 0 ]]; then
+      if [[ "$lane_rc" -eq 3 ]]; then
+        echo "Error: no $LANE_HARNESS lane under ${LANE_MAX_PCT}% used for $item; stopping after $launched launch(es)." >&2
+      else
+        echo "Error: could not re-resolve a lane for $item (lanes exited $lane_rc); stopping after $launched launch(es)." >&2
+      fi
+      failed=$((failed + 1))
+      break
+    fi
+    if [[ "$next_lane" == *"'"* ]]; then
+      echo "Error: lane config dir contains a single quote; cannot render a safe launch command: $next_lane" >&2
+      failed=$((failed + 1))
+      break
+    fi
+    if [[ "$next_lane" != "$LANE_ENV" ]]; then
+      LANE_ENV="$next_lane"
+      echo "Lane: $LANE_ENV"
+    fi
   fi
   # The worktree create is the ownership claim: exit 75 means another session
   # holds this item, which skips it without touching its siblings. Any other

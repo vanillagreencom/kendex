@@ -81,8 +81,8 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `orch-env` | Effective value of a vstack `[env]` setting (process env > `vstack.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Launch-only terminal handoff; model, effort, and permission flags come from `--launch-flags`. `--help` |
-| `lanes` | Enumerate harness auth lanes and their live usage; `pick` prints the launch env prefix for the lane with the most headroom, exit 3 when none qualifies. `--help` |
-| `oversee-watch` | Block until the fleet needs the overseer, then print one `EVENT` line: a new pr-watch attention line, a live `--item`'s PR merged, a lane window gone, a lane whose harness exited under a live window, a lane pane at a question prompt, or a heartbeat. `--help` |
+| `lanes` | Enumerate harness auth lanes, their live usage, and the launches already in flight on each; `pick` prints the launch env prefix for the qualifying lane with the fewest in-flight claims, headroom breaking the tie, exit 3 when none qualifies. `--help` |
+| `oversee-watch` | Block until the fleet needs the overseer, then print one `EVENT` line: a new pr-watch attention line, a live `--item`'s PR merged, a lane window gone, a lane whose harness exited under a live window, a lane whose account hit its limit with the harness still up, a lane pane at a question prompt, a lane idle at its prompt after a round, or a heartbeat. `--help` |
 
 The three waiters share a bounded env-first GitHub auth ladder and exit `3` on hard auth failure — [references/gates.md](references/gates.md).
 

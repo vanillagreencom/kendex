@@ -249,12 +249,16 @@ chmod +x "$CLAIM_BIN/tmux"
 
 CLAIM_STATE="$TMP_ROOT/claim-state"
 PANES="$TMP_ROOT/panes.txt"
-printf '900 %%1\n900 %%2\n' > "$PANES"
+LIVE_PID="$$"
+# Above pid_max on every platform this runs on (2^22 on Linux, 99999 on
+# macOS), so `kill -0` can never find it: a tmux server provably gone.
+DEAD_PID=2147483647
+printf '%s %%1\n%s %%2\n' "$LIVE_PID" "$LIVE_PID" > "$PANES"
 export FIXTURE_DIR="$TMP_ROOT/fix1"
 
-write_claim() { # <name> <pane id> <config dir> <window>
+write_claim() { # <name> <server pid> <pane id> <config dir> <window>
   mkdir -p "$CLAIM_STATE/claims"
-  printf '900\t%s\t%s\t%s\t2026-08-16T00:00:00Z\n' "$2" "$3" "$4" > "$CLAIM_STATE/claims/$1.claim"
+  printf '%s\t%s\t%s\t%s\t2026-08-16T00:00:00Z\n' "$2" "$3" "$4" "$5" > "$CLAIM_STATE/claims/$1.claim"
 }
 run_lanes_claims() {
   LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$CLAIM_STATE" \
@@ -268,7 +272,7 @@ assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$NOCLAIMS")" "
 assert_eq "$(run_lanes_claims pick --harness claude)" "CLAUDE_CONFIG_DIR=$H/.claude" \
   "with nothing in flight, pick still takes the most headroom"
 
-write_claim one "%1" "$H/.claude" "vst-1"
+write_claim one "$LIVE_PID" "%1" "$H/.claude" "vst-1"
 CLAIMED="$(run_lanes_claims list --harness claude --json)"
 assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$CLAIMED")" "1" \
   "a live claim is counted against its lane"
@@ -287,13 +291,13 @@ assert_eq "$(run_lanes_claims pick --harness claude)" "CLAUDE_CONFIG_DIR=$H/.ecl
 run_lanes_claims pick --harness claude --max-pct 15 >/dev/null 2>&1
 assert_eq "$?" "3" "a claimed lane does not lower the threshold for the rest"
 
-write_claim two "%2" "$H/.eclaude" "vst-2"
+write_claim two "$LIVE_PID" "%2" "$H/.eclaude" "vst-2"
 assert_eq "$(run_lanes_claims pick --harness claude)" "CLAUDE_CONFIG_DIR=$H/.claude" \
   "with claims tied, headroom breaks the tie"
 
 # A claim whose pane is gone is pruned on read: a finished lane must not hold
 # its account out of the fleet forever.
-printf '900 %%2\n' > "$PANES"
+printf '%s %%2\n' "$LIVE_PID" > "$PANES"
 PRUNED="$(run_lanes_claims list --harness claude --json)"
 assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$PRUNED")" "0" \
   "a claim whose pane is gone stops counting"
@@ -304,9 +308,46 @@ assert_eq "$([[ -f "$CLAIM_STATE/claims/two.claim" ]] && echo yes || echo no)" "
 
 # Pane ids restart at %0 on a new tmux server, so the server pid is half the
 # liveness key: without it a claim outliving its server matches a stranger.
-printf '901 %%2\n' > "$PANES"
+rm -f "$CLAIM_STATE"/claims/*.claim
+write_claim stale "$DEAD_PID" "%2" "$H/.eclaude" "vst-2"
 assert_eq "$(jq -r '.[] | select(.alias=="eclaude") | .claims' <<<"$(run_lanes_claims list --harness claude --json)")" "0" \
   "a claim from a dead tmux server never matches a reused pane id"
+
+# `tmux list-panes` sees one server. A claim on another socket — or one this
+# process could not enumerate at all — is judged by whether its server still
+# runs: deleting what could not be measured would report a busy account free.
+rm -f "$CLAIM_STATE"/claims/*.claim
+: > "$PANES"
+write_claim foreign "$LIVE_PID" "%5" "$H/.claude" "vst-3"
+UNSEEN="$(run_lanes_claims list --harness claude --json)"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$UNSEEN")" "1" \
+  "a claim this enumeration cannot see still counts while its server runs"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/foreign.claim" ]] && echo yes || echo no)" "yes" \
+  "an unmeasurable claim is kept, not deleted"
+
+# The same read with the enumeration itself failing, not merely empty.
+FAIL_BIN="$TMP_ROOT/fail-bin"; mkdir -p "$FAIL_BIN"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$FAIL_BIN/tmux"; chmod +x "$FAIL_BIN/tmux"
+BROKEN="$(LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$CLAIM_STATE" \
+  PATH="$FAIL_BIN:$PATH" "$LANES" list --harness claude --json)"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$BROKEN")" "1" \
+  "a failed pane enumeration does not empty the claim store"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/foreign.claim" ]] && echo yes || echo no)" "yes" \
+  "a failed enumeration deletes nothing"
+
+# ...and a claim whose server is gone is still pruned when nothing enumerates.
+write_claim gone "$DEAD_PID" "%6" "$H/.eclaude" "vst-4"
+GONE="$(run_lanes_claims list --harness claude --json)"
+assert_eq "$(jq -r '.[] | select(.alias=="eclaude") | .claims' <<<"$GONE")" "0" \
+  "a claim whose server is gone is pruned even with nothing to enumerate"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/gone.claim" ]] && echo yes || echo no)" "no" \
+  "the gone-server claim file is removed"
+
+# A malformed record is not a lane: it is dropped rather than counted forever.
+printf 'not-a-pid\t\tstuff\n' > "$CLAIM_STATE/claims/junk.claim"
+run_lanes_claims list --harness claude --json >/dev/null
+assert_eq "$([[ -f "$CLAIM_STATE/claims/junk.claim" ]] && echo yes || echo no)" "no" \
+  "a malformed claim record is dropped on read"
 
 echo "=== argument handling ==="
 
@@ -340,10 +381,19 @@ OT_TMUX_LOG="$TMP_ROOT/lanes.tmux-log"
 cat > "$OT_STUB_BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
+# A server whose pid is this test process: claims recorded against it are
+# genuinely live, so `lanes pick` sees them the way it would on a real server.
+# $OT_TMUX_PANES counts the windows created; every one is reported by
+# list-panes, giving each launch its own pane id.
+n=0; [[ -f "${OT_TMUX_PANES:-}" ]] && n="$(cat "$OT_TMUX_PANES")"
 case "${1:-}" in
   # `-P -F '#{pid} #{pane_id}'`: the server pid and pane id of the new window,
   # the two halves of a lane claim's liveness key.
-  new-window) echo "9911 %7" ;;
+  new-window)
+    n=$((n + 1)); [[ -z "${OT_TMUX_PANES:-}" ]] || printf '%s' "$n" > "$OT_TMUX_PANES"
+    echo "$OT_TMUX_SERVER_PID %$n" ;;
+  list-panes)
+    i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
   list-windows) echo "1" ;;
   display-message) echo "stub" ;;
 esac
@@ -353,7 +403,8 @@ chmod +x "$OT_STUB_BIN/worktree" "$OT_STUB_BIN/gh" "$OT_STUB_BIN/tmux"
 # Every open-terminal launch below runs with the claim store redirected out of
 # the repository: a test must never write into the checkout it is testing.
 OT_STATE="$TMP_ROOT/ot-state"
-run_ot() { TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OVERSEE_WATCH_STATE_DIR="$OT_STATE" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
+OT_TMUX_PANES="$TMP_ROOT/ot-panes"
+run_ot() { TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
 
 # Assert against what a user actually sees, not against a parse of the source.
 # --help must work with no git repository in sight. It used to die with git's
@@ -401,7 +452,7 @@ fi
 # GH_ISSUE_PATTERN is pinned here so the assertion tests lane resolution rather
 # than whatever issue convention the surrounding checkout happens to configure.
 run_ot_aliased() { LANES_HOME="$H" ORCH_LANE_ALIASES="$1" ORCH_LANES_FETCH_CMD="$FETCHER" \
-  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
   PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "${@:2}"; }
 
 set +e
@@ -428,7 +479,7 @@ git -C "$COLLIDE" init -q -b main
 set +e
 collide_out=$( (cd "$COLLIDE" && LANES_HOME="$H" ORCH_LANE_ALIASES="eclaude=work" \
   ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
   PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$OPEN_TERMINAL" --harness claude --lane work --cmd "true" CC-1) 2>&1 )
 collide_rc=$?
@@ -449,7 +500,7 @@ git -C "$BARE" init -q -b main
 set +e
 bare_out=$( (cd "$BARE" && LANES_HOME="$H" ORCH_LANE_ALIASES="eclaude=work" \
   ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
   PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
   "$OPEN_TERMINAL" --harness claude --lane somelane --cmd "true" CC-1) 2>&1 )
 bare_rc=$?
@@ -460,23 +511,72 @@ assert_contains "$bare_out" "CLAUDE_CONFIG_DIR=somelane" \
 
 # A tmux lane launched under a resolved lane records its claim, so the next
 # pick counts the launch before the account's usage numbers move.
-rm -rf "$OT_STATE"
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
 run_ot_aliased "eclaude=work" --harness claude --lane work --cmd "true" CC-2 >/dev/null 2>&1
 assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f3)" "$H/.eclaude" \
   "a tmux launch under a lane records a claim naming that lane's config dir"
 assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f4)" "CC-2" \
   "the claim names the tmux window it belongs to"
-assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f2)" "%7" \
+assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f2)" "%1" \
   "the claim carries the pane id that keeps it prunable"
 
 # A launch with no lane resolved records nothing: there is no account to claim.
 rm -rf "$OT_STATE"
 noclaim_out=$(OVERSEE_WATCH_STATE_DIR="$OT_STATE" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" PATH="$OT_STUB_BIN:$PATH" \
+  TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" \
+  PATH="$OT_STUB_BIN:$PATH" \
   WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" --harness claude --cmd "true" CC-3 2>&1)
 assert_contains "$noclaim_out" "Opened tmux window" "the laneless launch still opened its window"
 assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "0" \
   "a launch with no --lane records no claim"
+
+# `--lane auto` over a batch: the claim each launch records must move the next
+# item off that account, or one invocation puts the whole fleet on one lane —
+# the failure the claims exist to prevent.
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES"
+run_ot_auto() { LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" "$OPEN_TERMINAL" "$@"; }
+set +e
+auto_out=$(run_ot_auto --harness claude --lane auto --cmd "true" CC-4 CC-5 2>&1)
+auto_rc=$?
+set -e
+assert_eq "$auto_rc" "0" "a two-item --lane auto batch launches both items"
+assert_eq "$(cat "$OT_STATE"/claims/*.claim 2>/dev/null | cut -f3 | sort -u | wc -l | tr -d '[:space:]')" "2" \
+  "a two-item --lane auto batch spreads across two accounts"
+assert_contains "$auto_out" "CLAUDE_CONFIG_DIR=$H/.claude" "the first item takes the lane with the most headroom"
+assert_contains "$auto_out" "CLAUDE_CONFIG_DIR=$H/.eclaude" "the second item is re-picked onto the unclaimed lane"
+
+# The re-pick refuses on the same terms as the first: a batch whose remaining
+# items cannot be placed stops instead of launching onto an unvouched account.
+# The lanes go unmeasurable between the two picks (every usage query fails),
+# which is exactly the state `pick` refuses on.
+cat > "$TMP_ROOT/fetch-flaky" <<'STUB'
+#!/usr/bin/env bash
+# Serves $FLAKY_OK usage queries, then fails every one after that.
+n=0; [[ -f "$FLAKY_COUNT" ]] && n="$(cat "$FLAKY_COUNT")"
+n=$((n + 1)); printf '%s' "$n" > "$FLAKY_COUNT"
+[[ "$n" -le "${FLAKY_OK:-3}" ]] || exit 1
+f="$FIXTURE_DIR/$(basename "$2").json"
+[[ -f "$f" ]] || exit 1
+cat "$f"
+STUB
+chmod +x "$TMP_ROOT/fetch-flaky"
+rm -rf "$OT_STATE"; rm -f "$OT_TMUX_PANES" "$TMP_ROOT/flaky-count"
+set +e
+stop_out=$(LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch-flaky" \
+  FLAKY_COUNT="$TMP_ROOT/flaky-count" FLAKY_OK=3 \
+  GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$OT_TMUX_LOG" \
+  OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$OT_TMUX_PANES" OVERSEE_WATCH_STATE_DIR="$OT_STATE" \
+  PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+  "$OPEN_TERMINAL" --harness claude --lane auto --cmd "true" CC-6 CC-7 2>&1)
+stop_rc=$?
+set -e
+assert_eq "$stop_rc" "1" "a batch that cannot place its next item exits nonzero"
+assert_contains "$stop_out" "stopping after 1 launch(es)" "the refusal says how far the batch got"
+assert_eq "$(ls -1 "$OT_STATE/claims" 2>/dev/null | wc -l | tr -d '[:space:]')" "1" \
+  "the item that could not be placed was never launched"
 
 # Hermeticity proof: every window the launch-success cases created must have
 # gone through the stub. An empty log means a real tmux server took the call.
