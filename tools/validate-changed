@@ -27,6 +27,8 @@
 #   vstack.settings.toml.example
 #                           the suites whose settings-example-sync tests read
 #                           the root template (orch, linear, review-gate)
+#   vstack.toml             cli/scripts/integration-check.sh (it installs from
+#                           this repository root)
 #   cross-suite reads — a suite whose tests read another area's files runs
 #   for changes there too (a mapped suite with no tests is a failure):
 #     skills/**, agents/**  skill:orch (repo-wide doc lints over skills/*/
@@ -231,6 +233,11 @@ else
           want_skill "$name" || NO_LANE+=("$path (skills/$name has no tests)")
         done
         ;;
+      vstack.toml)
+        # The integration check installs from this repository root, so the
+        # source catalog and its mappings are exercised there.
+        want_cli_integration=1
+        ;;
       *)
         NO_LANE+=("$path")
         ;;
@@ -357,7 +364,14 @@ run_lint_shell() {
   # executable file is what that add corrects. The index mode only names
   # which side dropped the bit; a path gone from the working tree is a
   # deletion, not a lint subject.
+  # Both scans read their file lists first: a `git ls-files` failure is a
+  # lint failure, never an empty list that passes.
+  local exec_list report_list
+  exec_list="$(lint_files 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' 'tools/tests/*.sh' 'tools/validate-changed')" \
+    || { echo "FAILED: git ls-files failed while listing scripts for the exec-bit lint"; return 1; }
+  exec_list="$(printf '%s\n' "$exec_list" | grep -v '/scripts/lib/' || true)"
   while IFS= read -r f; do
+    [ -n "$f" ] || continue
     [ -e "$f" ] || continue
     [ -x "$f" ] && continue
     mode="$(git ls-files -s -- "$f" | cut -d' ' -f1)"
@@ -369,14 +383,21 @@ run_lint_shell() {
       echo "not executable in working tree: $f"
     fi
     fail=1
-  done < <(lint_files 'skills/*/tests/*.sh' 'skills/*/scripts/*' 'hooks/tests/*.sh' 'tools/tests/*.sh' 'tools/validate-changed' | grep -v '/scripts/lib/' || true)
+  done <<EOF_EXEC
+$exec_list
+EOF_EXEC
   # skills point reports at `vstack report`
+  report_list="$(lint_files 'skills/*/SKILL.md')" \
+    || { echo "FAILED: git ls-files failed while listing SKILL.md files for the vstack-report lint"; return 1; }
   while IFS= read -r f; do
+    [ -n "$f" ] || continue
     if ! grep -qF 'vstack report' "$f"; then
       echo "missing \`vstack report\` guidance: $f"
       fail=1
     fi
-  done < <(lint_files 'skills/*/SKILL.md')
+  done <<EOF_REPORT
+$report_list
+EOF_REPORT
   return "$fail"
 }
 

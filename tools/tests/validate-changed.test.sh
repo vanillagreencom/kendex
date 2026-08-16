@@ -526,6 +526,33 @@ assert_line "bundle drifting from a fresh build" "FAILED LANE: pi:pi-claude-brid
 reset_tree
 git -C "$REPO" reset -q --hard HEAD~1
 
+# --- 19c. root vstack.toml -> the integration check; lints fail closed -------
+touch_path vstack.toml
+run --dry-run
+assert_lane "vstack.toml" "cli:integration-check"
+assert_no_line "vstack.toml" "no suite lane:"
+reset_tree
+
+# A git failure while listing lint inputs is a lint failure, never an empty
+# list that passes: shadow `git` so `ls-files --cached --others` fails.
+GITSTUB="$TMP/gitstub"
+mkdir -p "$GITSTUB"
+REAL_GIT="$(command -v git)"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'case "$*" in\n'
+  printf '  *"ls-files --cached --others"*) echo "fatal: index file corrupt" >&2; exit 128 ;;\n'
+  printf 'esac\n'
+  printf 'exec %s "$@"\n' "$REAL_GIT"
+} >"$GITSTUB/git"
+chmod +x "$GITSTUB/git"
+touch_path skills/withtests/SKILL.md
+PATH="$GITSTUB:$PATH" run
+assert_rc "lint list failure" 1
+assert_line "lint list failure" "FAILED: git ls-files failed while listing scripts for the exec-bit lint"
+assert_line "lint list failure" "FAILED LANE: lint:shell"
+reset_tree
+
 # --- 20. --help ------------------------------------------------------------------
 run --help
 assert_rc "--help" 0
