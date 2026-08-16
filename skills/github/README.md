@@ -64,10 +64,27 @@ the current diff and cannot be acted on.
 It is also policy, not mechanism — the gate binds only merges routed through
 `pr-merge`, so a raw `gh pr merge` or the GitHub UI still bypasses it.
 
+## Exit 75 recovery
+
 `pr-merge --auto` exits 75 when the PR is queued or auto-merge is armed. That
 state is volatile — an ejection or a failed protection check disarms it
-silently — so the caller keeps re-running a watcher until the PR is `MERGED`
-and re-arms after repairing what ejected it (SKILL.md § PR Merge Outcomes).
+silently — so the caller keeps re-running a watcher until the PR is `MERGED`;
+neither watcher is durable, and both live in sibling skills (install orch and
+review-gate beside this one):
+
+- `.agents/skills/orch/scripts/queue-wait <N>` polls to a bounded budget and
+  returns `ejected`/`disarmed` with its cause, or `queued` (run it again). A
+  re-run carries no memory of the earlier run, so an ejection between two runs
+  comes back as `not_queued`/`never_armed`.
+- `GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
+  pass that prints `disarmed … (re-arm)` lines.
+
+Route the verdict: re-arm on `ejected`, `disarmed` and the memoryless
+`not_queued` — after repairing what the cause names (a
+`merge_group_failed`/`check_failed` cause is a CI repair first, else the same
+head ejects again); `dequeued` means late review findings — triage them first;
+`closed` and `unknown` are terminal. Re-arm with
+`.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.
 
 Where branch protection *is* enabled, the opposite problem appears: after a
 rebase or force-push an outdated thread can become unreachable in the UI —

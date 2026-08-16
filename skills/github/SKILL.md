@@ -132,25 +132,15 @@ parsing stderr:
 | `1`  | BLOCKED | `BLOCKED PR #N` | Nothing merged, queued, or armed |
 | `1`  | BLOCKED | `CLOSED (not merged) PR #N` | PR is closed unmerged; nothing attempted |
 
-Exit `75` is not a resting state. A merge-group failure ejects the queue entry
-and GitHub disarms auto-merge with it — the PR sits open, gate-clear, and
-merges nothing. The caller that armed it keeps watching until the PR is
-`MERGED`, re-running the watcher because neither call is durable (both live
-in sibling skills — install orch and review-gate beside this one):
-`.agents/skills/orch/scripts/queue-wait <N>` polls to a bounded budget and
-returns `ejected`/`disarmed` with its cause, or `queued` (run it again); a
-re-run carries no memory of the earlier run, so an ejection between two runs
-comes back as `not_queued`/`never_armed`. Re-arm on `ejected`, `disarmed` and
-that memoryless `not_queued` — after repairing what the cause names (a
-`merge_group_failed`/`check_failed` cause is a CI repair first, else the same
-head ejects again); `dequeued` means late review findings — triage them
-first; `closed` and `unknown` are terminal, not a re-arm. The review-gate
-reducer
-`GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` is one
-pass that prints `disarmed … (re-arm)` lines. On a disarm, re-arm with
-`.agents/skills/github/scripts/github.sh pr-merge <N> --auto`.
-`await-mergeable` is not that watcher — it returns as soon as GitHub computes
-a merge state.
+Exit `75` is not a resting state: an ejection or a failed protection check
+disarms it silently and the PR sits open, gate-clear, merging nothing. The
+caller that armed it keeps re-running a watcher until the PR is `MERGED`
+(`.agents/skills/orch/scripts/queue-wait <N>` or the review-gate reducer
+`GH_REPO=<owner/repo> .agents/skills/review-gate/scripts/pr-watch.sh` — neither
+is durable) and re-arms with `.agents/skills/github/scripts/github.sh pr-merge
+<N> --auto` after repairing what the cause names; verdict routing is in
+README.md § Exit 75 recovery. `await-mergeable` is not that watcher — it
+returns as soon as GitHub computes a merge state.
 
 A PR that has left `OPEN` is terminal and short-circuits every mode before any
 check, auth, or mutation: `mergeable` is permanently `UNKNOWN` after a merge,

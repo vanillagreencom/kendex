@@ -48,12 +48,14 @@ assert_matches "$script_src" '\.agents/skills/orch/scripts/queue-wait \$pr_num' 
   "the note names queue-wait by its runnable path"
 assert_matches "$script_src" 'GH_REPO=\$\{repo:-<owner/repo — repository read failed>\} \.agents/skills/review-gate/scripts/pr-watch\.sh' \
   "the note names the pr-watch reducer by its runnable path, with the GH_REPO it requires (failure named, never a bare placeholder)"
-assert_matches "$script_src" 'remote\.origin\.url' \
-  "the repository is resolved locally (origin remote), never by a network read on the exit path"
+assert_matches "$script_src" 'git config --get "remote\.\$remote_name\.url"' \
+  "the repository is resolved locally (the resolved remote), never by a network read on the exit path"
 assert_matches "$script_src" 'gh-resolved' \
   "gh's configured default repository (a fork's upstream) wins over origin"
 assert_matches "$script_src" '\*\[!A-Za-z0-9\._/-\]\*\) repo=""' \
   "only an OWNER/REPO-shaped value is printed into the pasteable command"
+assert_matches "$script_src" '^[[:space:]]*\*\) repo="" ;;' \
+  "a slash-less value is refused too"
 if grep -qE 'repo view|gh api|gh pr' <<<"$(sed -n '/^volatile_note() {/,/^}/p' "$PR_MERGE")"; then
   FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "volatile_note makes no gh request"
 else
@@ -65,23 +67,25 @@ assert_count "$table" '^\| `75` \| MERGE PENDING \(volatile\)' 2 \
   "both 75 rows of the outcomes table are marked volatile"
 assert_matches "$table" 'keep watching until MERGED' \
   "the 75 rows say the caller keeps watching until MERGED"
-assert_matches "$table" 're-running the watcher because neither call is durable' \
-  "the outcomes section states the watcher must be re-run (no durable watcher)"
+assert_matches "$table" 'neither\s*$|neither$|— neither' \
+  "the outcomes section states no watcher is durable"
 assert_matches "$script_src" 're-running until MERGED' \
   "the note says to re-run the watcher until MERGED"
 assert_matches "$table" 'queue-wait <N>' \
   "the outcomes section names queue-wait as the required follow-up"
-assert_matches "$table" 'github\.sh pr-merge <N> --auto' \
+assert_matches "$(tr '\n' ' ' <<<"$table")" 'github\.sh pr-merge <N> --auto' \
   "the outcomes section names the re-arm by its installed entry point"
-assert_matches "$table" 'Re-arm on `ejected`, `disarmed` and' \
-  "the outcomes section routes only genuine disarm verdicts to re-arm"
-assert_matches "$table" '`dequeued` means late review findings' \
-  "the outcomes section routes dequeued to findings triage, not re-arm"
-assert_matches "$table" 'is a CI repair first' \
-  "the outcomes section requires the CI repair before re-arming an ejected head"
-readme_src=$(cat "$REPO_ROOT/skills/github/README.md")
+assert_matches "$table" 'README\.md § Exit 75 recovery' \
+  "the outcomes section points at the README recovery section (progressive disclosure)"
+readme_src=$(sed -n '/^## Exit 75 recovery$/,/^## /p' "$REPO_ROOT/skills/github/README.md")
 assert_matches "$readme_src" 'exits 75 when the PR is queued or auto-merge is armed' \
   "README states the volatile 75 contract"
+assert_matches "$readme_src" 're-arm on `ejected`, `disarmed` and' \
+  "README routes only genuine disarm verdicts to re-arm"
+assert_matches "$readme_src" '`dequeued` means late review findings' \
+  "README routes dequeued to findings triage, not re-arm"
+assert_matches "$readme_src" 'is a CI repair first' \
+  "README requires the CI repair before re-arming an ejected head"
 assert_matches "$table" 'await-mergeable` is not that' \
   "the outcomes section states await-mergeable is not the ejection watcher"
 
