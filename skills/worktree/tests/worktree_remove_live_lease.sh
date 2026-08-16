@@ -21,7 +21,7 @@ SLEEPER_PID=""
 # trap and delete TMP_ROOT under the running test. Only the test process
 # itself may clean up.
 cleanup() {
-  [[ "$BASHPID" == "$$" ]] || return 0
+  [[ "${BASHPID:-$$}" == "$$" ]] || return 0
   [[ -n "$SLEEPER_PID" ]] && kill "$SLEEPER_PID" 2>/dev/null
   rm -rf "$TMP_ROOT"
 }

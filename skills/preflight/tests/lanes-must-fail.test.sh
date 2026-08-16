@@ -172,10 +172,18 @@ jobs:
       - name: not shell
         shell: python
         run: print("this isn't bash")
+      - name: folded
+        run: >
+          echo one
+          echo "unterminated
 YML
+  # Invalid YAML is a finding at the parser's line, never a silent skip.
+  printf 'name: bad\non: push\njobs:\n\tx: 1\n' >"$R/.github/workflows/bad.yml"
   git -C "$R" add -A
   run_pf
   fires "an unparseable run: block fails, attributed to workflow-run-syntax at the offending file line" ".github/workflows/ci.yml:14: [workflow-run-syntax]"
+  fires "a folded (>) block reports at its first line, since bash never sees its source lines" ".github/workflows/ci.yml:21: [workflow-run-syntax]"
+  fires "a workflow file that is not valid YAML is a finding at the parser's line" ".github/workflows/bad.yml:4: [workflow-run-syntax] workflow YAML did not parse"
   case "$OUT" in
     *"ci.yml:8: "* | *"ci.yml:18: "*)
       bad "the clean step (line 8) and the python step (line 18) contribute no findings" "out=$OUT" ;;

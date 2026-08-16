@@ -303,7 +303,11 @@ with open(path, "r", encoding="utf-8") as fh:
     text = fh.read()
 try:
     root = yaml.compose(text)
-except Exception:
+except yaml.YAMLError as exc:
+    mark = getattr(exc, "problem_mark", None)
+    line = mark.line + 1 if mark is not None else 1
+    problem = getattr(exc, "problem", None) or str(exc).splitlines()[0]
+    sys.stdout.write("%d\tworkflow YAML did not parse: %s\n" % (line, problem))
     sys.exit(0)
 def mapping(node):
     if not isinstance(node, yaml.MappingNode):
@@ -341,10 +345,15 @@ for _, job in jobs.items():
         if not is_bash(shell if shell is not None else job_shell):
             continue
         # Block scalars (| >) start their content on the line after the key;
-        # flow/plain scalars start on the key line itself.
+        # flow/plain scalars start on the key line itself. A folded scalar
+        # (>) has had its newlines collapsed before bash sees it, so its
+        # diagnostics cannot be mapped to a source line: they land on the
+        # first line of the block. (No apostrophes here: this Python lives in
+        # a single-quoted bash string.)
         first = run.start_mark.line + 1
         if run.style in ("|", ">"):
             first += 1
+        folded = run.style == ">"
         body = re.sub(r"\$\{\{.*?\}\}", "X", run.value, flags=re.S)
         with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as t:
             t.write(body)
@@ -358,7 +367,8 @@ for _, job in jobs.items():
         for raw in res.stderr.splitlines():
             m = re.match(r"^.*?: line (\d+): (.*)$", raw)
             if m:
-                sys.stdout.write("%d\t%s\n" % (first + int(m.group(1)) - 1, m.group(2)))
+                at = first if folded else first + int(m.group(1)) - 1
+                sys.stdout.write("%d\t%s\n" % (at, m.group(2)))
             elif raw.strip():
                 sys.stdout.write("%d\t%s\n" % (first, raw.strip()))
 '

@@ -29,13 +29,15 @@ require_fixed() {
   grep -Fq -- "$needle" "$file" || fail "$desc missing in ${file#"$SKILL_DIR"/}"
 }
 
-# extract <file> <start-pattern> <end-pattern> <label> → prints scratch path.
-# ERE, like `require`: `\(` and `\)` are literal parentheses in both.
+# extract <file> <start-pattern> <end-pattern> <label> → prints scratch path;
+# nonzero when the region is empty. Patterns are ERE (`sed -E`), the same
+# dialect as `require`'s `grep -E`: write `\(` for a literal parenthesis.
 extract() {
   local file="$1" start="$2" end="$3" label="$4"
   local out="$tmp/$label.md"
   sed -En "/$start/,/$end/p" "$file" >"$out"
   printf '%s' "$out"
+  [[ -s "$out" ]]
 }
 
 # An empty region is a failed extraction, never a vacuously Linear-free one:
