@@ -241,8 +241,14 @@ echo "=== in-flight lane claims ==="
 CLAIM_BIN="$TMP_ROOT/claim-bin"; mkdir -p "$CLAIM_BIN"
 cat > "$CLAIM_BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
-# list-panes -a -F '<server pid> <pane id>' → the lines of $TMUX_PANES_FILE
-[[ "${1:-}" == "list-panes" && -f "${TMUX_PANES_FILE:-}" ]] && cat "$TMUX_PANES_FILE"
+# list-panes -a -F '<server pid> <pane id>' → the lines of $TMUX_PANES_FILE,
+# or of $TMUX_PANES_FILE.<N> on the Nth call when that file exists, so a case
+# can change what the server reports between two enumerations.
+[[ "${1:-}" == "list-panes" ]] || exit 0
+n=0; [[ -f "${TMUX_PANES_FILE:-}.calls" ]] && n="$(cat "$TMUX_PANES_FILE.calls")"
+n=$((n + 1)); [[ -z "${TMUX_PANES_FILE:-}" ]] || printf '%s' "$n" > "$TMUX_PANES_FILE.calls"
+src="$TMUX_PANES_FILE.$n"; [[ -f "$src" ]] || src="$TMUX_PANES_FILE"
+[[ -f "$src" ]] && cat "$src"
 exit 0
 STUBEOF
 chmod +x "$CLAIM_BIN/tmux"
@@ -406,6 +412,35 @@ else
   assert_eq "$([[ -f "$CLAIM_STATE/claims/keepme.claim" ]] && echo yes || echo no)" "yes" \
     "an unreadable claim file is left in place"
 fi
+
+# A claim written between the pane snapshot and the read that would prune it
+# must survive: another launcher's window is exactly what this store exists to
+# see. The first enumeration misses it, the second finds it.
+rm -f "$CLAIM_STATE"/claims/*.claim "$PANES.calls"
+printf '%s %%1\n' "$LIVE_PID" > "$PANES.1"        # snapshot: this server, not that pane
+printf '%s %%1\n%s %%4\n' "$LIVE_PID" "$LIVE_PID" > "$PANES.2"   # re-check: the window is up
+printf '%s %%4\n' "$LIVE_PID" > "$PANES"
+write_claim racer "$LIVE_PID" "%4" "$H/.claude" "vst-8"
+RACED="$(run_lanes_claims list --harness claude --json)"
+rm -f "$PANES.1" "$PANES.2" "$PANES.calls"
+assert_eq "$(jq -r '.[] | select(.alias=="claude") | .claims' <<<"$RACED")" "1" \
+  "a claim written after the pane snapshot is not pruned by it"
+assert_eq "$([[ -f "$CLAIM_STATE/claims/racer.claim" ]] && echo yes || echo no)" "yes" \
+  "the raced claim file survives"
+
+# A config dir carrying a backslash is a real path, and the count must see it:
+# `awk -v` would expand the escape and match nothing.
+rm -f "$CLAIM_STATE"/claims/*.claim
+BSDIR="$H/.back\tclaude"
+mkdir -p "$BSDIR"
+cp "$H/.claude/.credentials.json" "$BSDIR/.credentials.json"
+claude_usage 10 20 5 "Opus" > "$FIXTURE_DIR/$(basename "$BSDIR").json"
+printf '%s %%5\n' "$LIVE_PID" > "$PANES"
+write_claim backslash "$LIVE_PID" "%5" "$BSDIR" "vst-9"
+BS_OUT="$(run_lanes_claims list --harness claude --json)"
+assert_eq "$(jq -r --arg d "$BSDIR" '.[] | select(.config_dir==$d) | .claims' <<<"$BS_OUT")" "1" \
+  "a backslash-bearing config dir still counts its live claim"
+rm -rf "$BSDIR"; rm -f "$CLAIM_STATE"/claims/*.claim
 
 # A malformed record is not a lane: it is dropped rather than counted forever.
 printf 'not-a-pid\t\tstuff\n' > "$CLAIM_STATE/claims/junk.claim"

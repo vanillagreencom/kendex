@@ -48,6 +48,7 @@ lane_claims_canon() {
 # the caller knows whether it is deciding or reporting.
 lane_claims_read() {
   local dir="$1" live this_server f server pane cfg window created rc=0
+  local rechecked=0 live_now
   # Absent is genuinely empty; anything else that is not a directory is a
   # misconfiguration, and an unreadable store is not an empty one. Reporting
   # no claims for either would report every busy account as free.
@@ -84,12 +85,26 @@ lane_claims_read() {
       rm -f -- "$f"
       continue
     fi
-    if ! grep -qxF -- "$server $pane" <<<"$live"; then
-      # Absent from its own server's pane list, or on a server that is gone.
-      if [[ "$server" == "$this_server" ]] || ! kill -0 "$server" 2>/dev/null; then
-        rm -f -- "$f"
-        continue
+    live_now=0
+    if grep -qxF -- "$server $pane" <<<"$live"; then
+      live_now=1
+    elif [[ "$server" == "$this_server" ]]; then
+      # The pane list predates this record: another launcher can create its
+      # window and write its claim in between, and deleting that record would
+      # hand a running account straight back out. One re-enumeration settles
+      # every same-server miss in this pass.
+      if [[ "$rechecked" -eq 0 ]]; then
+        rechecked=1
+        live="$(tmux list-panes -a -F '#{pid} #{pane_id}' 2>/dev/null)" || live=""
       fi
+      if grep -qxF -- "$server $pane" <<<"$live"; then live_now=1; fi
+    elif kill -0 "$server" 2>/dev/null; then
+      # A server this process cannot enumerate, still running.
+      live_now=1
+    fi
+    if [[ "$live_now" -eq 0 ]]; then
+      rm -f -- "$f"
+      continue
     fi
     # Canonical on the way out, whatever spelling the record carries: the
     # count compares strings, and a hand-written or older record must still
@@ -101,7 +116,11 @@ lane_claims_read() {
 
 # Live claims against one config dir. $1: `lane_claims_read` output, $2: dir.
 lane_claims_count() {
-  awk -F'\t' -v d="$(lane_claims_canon "$2")" '$1 == d { n++ } END { print n + 0 }' <<<"$1"
+  # Through the environment, never `awk -v`: that form expands backslash
+  # escapes, and a config dir carrying a backslash would then match no record
+  # and report a busy account as free.
+  LANE_CLAIMS_DIR_Q="$(lane_claims_canon "$2")" \
+    awk -F'\t' '$1 == ENVIRON["LANE_CLAIMS_DIR_Q"] { n++ } END { print n + 0 }' <<<"$1"
 }
 
 # Config dir claimed for one pane, empty when no live claim names it. The key
