@@ -35,7 +35,7 @@ From the shell:
 
 ## Setup
 
-By default the skill runs exactly ONE reviewer: the highest-priority entry in `SECOND_OPINION_MODELS` that is available and is not the model your session runs. A Claude Code session gets Codex, a Codex session gets Claude, and nothing needs configuring beyond having the other CLI installed and logged in. Everything else is one key in `vstack.settings.toml` under `[env]`:
+By default the skill runs exactly ONE reviewer: the highest-priority entry in `SECOND_OPINION_MODELS` that is available and is not the model your session runs. A Claude Code session gets Codex, a Codex session gets Claude, and nothing needs configuring beyond having the other CLI installed and logged in. From anywhere else — Pi, OpenCode, Cursor, a plain shell — set `SECOND_OPINION_CURRENT_MODEL` first; those clients front a model the script cannot probe, and a run refuses until you declare it. Everything else is one key in `vstack.settings.toml` under `[env]`:
 
 | Key | Working example | What it does |
 |-----|-----------------|--------------|
@@ -52,7 +52,7 @@ By default the skill runs exactly ONE reviewer: the highest-priority entry in `S
 
 ## Configuration
 
-All optional — defaults work out of the box. Set shared, non-sensitive defaults in `vstack.settings.toml` under `[env]`. Existing `.env.local` values still work and should be reserved for personal overrides.
+Defaults work out of the box in a **detected Claude Code or Codex session** — there every key below is optional. Any other client must declare its session model: Pi, OpenCode, Cursor and undetected shells front a model the script cannot probe, so a run there refuses until `SECOND_OPINION_CURRENT_MODEL` names the model the session runs (or `none` when there is no session model, as in CI or a plain terminal). Set shared, non-sensitive defaults in `vstack.settings.toml` under `[env]`. Existing `.env.local` values still work and should be reserved for personal overrides.
 
 Project installs seed `vstack.settings.toml` from this skill's `vstack.settings.toml.example` when the file is missing, or merge any missing second-opinion keys into an existing file without overwriting user values.
 
@@ -90,4 +90,4 @@ The orch `submit-pr` workflow also runs `review` as a local pre-PR review of the
 
 Review artifacts stamp `qa_metadata.reviewed_head` (the reviewed worktree's HEAD commit) so callers can budget review passes **per pushed head** — GitHub bots re-review every push, and a new head is a new round, not a spend against a per-submission cap.
 
-The wrapper guarantees a "pass" artifact always corresponds to a complete review that actually happened: the `timestamp` is wrapper-stamped rather than model-supplied, the scope is derived from the worktree instead of being left to the model, and a response that is incomplete, self-reported as no-review, or never delivered is preserved beside the artifact rather than becoming it. See SKILL.md § Error Handling for the exit-code contract.
+The wrapper guarantees a "pass" artifact always corresponds to a complete review that actually happened: the `timestamp` is wrapper-stamped rather than model-supplied, the scope is derived from the worktree instead of being left to the model, and a response that is incomplete, self-reported as no-review, or never delivered is preserved beside the artifact rather than becoming it. Any run that ends without a verdict also clears whatever a previous run left at `--output`, so reusing one path can never hand a caller a stale pass. See SKILL.md § Error Handling for the exit-code contract.

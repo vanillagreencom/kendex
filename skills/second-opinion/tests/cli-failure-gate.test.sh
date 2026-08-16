@@ -377,5 +377,70 @@ grep -q "artifact home rejected" "$s9_err" && fail "(d) control: symlinked --cwd
 rm -f "$s9_link_cwd"
 rm -rf "$WORK/tmp"
 
+# (e)/(f) the ordinary spellings of the same directory. A trailing slash and a
+# leading ./ are how operators write a relative path; neither leaves the
+# checkout, and both must land in the named home rather than being read as an
+# empty or `.` component and sent to system temp with an escape reason nobody
+# can act on.
+for s9_spelling in "tmp/second-opinion/" "./tmp/second-opinion"; do
+  reset9
+  run9 "$s9_spelling"
+  assert_eq "$rc9" "5" "($s9_spelling) still exits EXIT_CLI_FAILED (5)"
+  [[ -n "$(ls "$WORK"/tmp/second-opinion/review-claude-failed.* 2>/dev/null | head -1 || true)" ]] \
+    && pass "($s9_spelling) record lands in the intended home" \
+    || fail "($s9_spelling) record did not land under $WORK/tmp/second-opinion"
+  grep -q "artifact home rejected" "$s9_err" && fail "($s9_spelling) wrongly rejected"
+  fallback_used && fail "($s9_spelling) fell back to TMPDIR instead of the named home" \
+    || pass "($s9_spelling) no system-temp fallback"
+done
+reset9
+rm -rf "$WORK/tmp"
+
+echo "=== scenario 10: a no-verdict run never leaves a PREVIOUS run's artifact at --output ==="
+# External review is advisory, so callers are told to continue past a non-zero
+# exit. A stale pass artifact surviving at the designated --output is then read
+# as this run's verdict — the fail-open the union path already prevented, on the
+# single-lane path that is now the default.
+S10_STALE='{"agent":"external-claude","timestamp":"2020-01-01T00:00:00Z","verdict":"pass","summary":"STALE ARTIFACT FROM A PREVIOUS RUN","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}'
+
+# (a) single-lane provider failure
+s10_out="$TMP_ROOT/out/review10.json"
+s10_err="$TMP_ROOT/s10.stderr"
+printf '%s\n' "$S10_STALE" > "$s10_out"
+printf '%s\n' "$S10_STALE" > "$s10_out.noreview.json"
+rc10=0
+STUB_RC=1 STUB_STDERR="$QUOTA_ERR" run_review "$s10_out" "$s10_err" || rc10=$?
+assert_eq "$rc10" "5" "(a) provider failure over a stale artifact still exits 5"
+assert_file_absent "$s10_out" "(a) stale pass artifact is cleared, not left as this run's verdict"
+assert_file_absent "$s10_out.noreview.json" "(a) stale managed sidecar is cleared too"
+assert_file_exists "$s10_out.failed.json" "(a) this run's own failure record is still written"
+
+# (b) target-selection refusal, before any invocation
+s10b_out="$TMP_ROOT/out/review10b.json"
+s10b_err="$TMP_ROOT/s10b.stderr"
+printf '%s\n' "$S10_STALE" > "$s10b_out"
+printf '0' > "$COUNTER"
+rc10b=0
+set +e
+PATH="$TMP_ROOT/bin:$PATH" \
+  SECOND_OPINION_CURRENT_MODEL=claude SECOND_OPINION_MODELS="claude" \
+  SECOND_OPINION_CLAUDE_CMD="$STUB" STUB_COUNTER="$COUNTER" \
+  "$SECOND_OPINION" review --range HEAD --cwd "$WORK" --output "$s10b_out" \
+    >/dev/null 2>"$s10b_err"
+rc10b=$?
+set -e
+assert_eq "$rc10b" "1" "(b) same-model roster still refuses with exit 1"
+assert_eq "$(cat "$COUNTER")" "0" "(b) refusal invokes no CLI"
+assert_file_absent "$s10b_out" "(b) refusal clears the stale artifact rather than blessing it"
+
+# (c) control: a successful run over a stale artifact replaces it
+s10c_out="$TMP_ROOT/out/review10c.json"
+s10c_err="$TMP_ROOT/s10c.stderr"
+printf '%s\n' "$S10_STALE" > "$s10c_out"
+rc10c=0
+STUB_RC=0 STUB_STDOUT="$GOOD_JSON" run_review "$s10c_out" "$s10c_err" || rc10c=$?
+assert_eq "$rc10c" "0" "(c) control: success path still exits 0"
+assert_eq "$(jq -r '.summary' "$s10c_out")" "Clean" "(c) control: artifact is this run's review, not the stale one"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

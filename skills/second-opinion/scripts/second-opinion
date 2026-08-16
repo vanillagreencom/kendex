@@ -224,6 +224,29 @@ done
 [[ -n "$MODE" ]] || { echo "Error: mode required (review|challenge|audit|quick|detect)" >&2; exit 1; }
 [[ "$TIMEOUT" =~ ^[0-9]+$ ]] || { echo "Error: --timeout must be a positive integer" >&2; exit 1; }
 
+# --- Stale designated output ---------------------------------------------------
+# Every no-verdict path — a target refusal, a timeout, a CLI failure, an
+# unusable response — leaves OUTPUT_PATH unwritten and returns non-zero. External
+# review is advisory, so callers are told to continue past that non-zero; a
+# PREVIOUS run's artifact still sitting at the same path is then read as THIS
+# run's pass. Clear the designated artifact and the exact sidecar family this
+# script writes before target selection and before any invocation, so the
+# single-lane path has the same guarantee the union artifact already had.
+#
+# --output is caller input and may begin with '-', which these utilities would
+# parse as options: `--` marks the end of options, and path_dir stands in for
+# dirname, which cannot take that marker portably. Suffixes are enumerated
+# rather than globbed because the path is the CALLER's — `"$OUTPUT_PATH".*`
+# would take anything else of theirs under the same prefix. Keep in step with
+# preserve_cli_failure_and_fail, preserve_raw_response, preserve_raw_and_fail
+# and preserve_no_review_and_fail, the only writers of these sidecars.
+if [[ -n "$OUTPUT_PATH" && "$MODE" != "detect" ]]; then
+  mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
+  rm -f -- "$OUTPUT_PATH" \
+    "$OUTPUT_PATH.raw.txt" "$OUTPUT_PATH.retry.txt" "$OUTPUT_PATH.failed.json" \
+    "$OUTPUT_PATH.noreview.json" "$OUTPUT_PATH.incomplete.json"
+fi
+
 # --- Harness detection --------------------------------------------------------
 
 detect_current_harness() {
@@ -462,32 +485,41 @@ walk_roster() {
   done < <(roster_entries)
 }
 
+# Set when the session's own identity is what refused, undeclared or unspelled.
+# The forced-target hint below is then wrong advice: the roster's pick cannot be
+# trusted while the identity that excludes from it is not trustworthy.
+SESSION_REFUSED=false
+
 FORCED_TARGET="${TARGET:-${SECOND_OPINION_TARGET:-}}"
 if [[ -z "$CURRENT_MODEL" ]]; then
   # No identity to compare against: no target can be shown to be a different
   # model, so none is taken. The refusal below carries the one reason.
+  SESSION_REFUSED=true
   if [[ "$CURRENT_HARNESS" == "unknown" ]]; then
     skip_target "session" "harness not detected and model undeclared — set SECOND_OPINION_CURRENT_MODEL to the model this session runs, or to none when there is no session model (CI, plain terminal)"
   else
     skip_target "session" "model undeclared — $CURRENT_HARNESS fronts a selectable model; set SECOND_OPINION_CURRENT_MODEL to the model this session runs"
   fi
-elif [[ -n "$FORCED_TARGET" ]]; then
-  # A force asks for exactly one opinion.
-  WANT=1
-  consider_target "$FORCED_TARGET" || true
-else
-  walk_roster "$WANT"
+elif [[ "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then
   # A declared identity the roster does not spell excludes nothing, which is
   # what a typo looks like — and what a session running a model the roster
   # does not know looks like. Either way the operator decides: name the model
   # in SECOND_OPINION_MODELS (a command is optional; it is then a known
   # identity and excluded) or fix the declaration. `none` is the declared
   # absence of a session model and matches nothing by design.
-  if [[ "$CURRENT_MODEL" != "none" ]] && ! roster_has_current; then
-    REVIEW_LANES=()
-    SELECTED_MODELS=()
-    skip_target "session" "model $CURRENT_MODEL matches no roster identity — add it to SECOND_OPINION_MODELS (a command is optional) or fix SECOND_OPINION_CURRENT_MODEL; none declares that this session has no model"
-  fi
+  #
+  # Checked BEFORE the force branch, not inside the roster walk: a misspelled
+  # identity and a --target naming the very model that identity misspells is
+  # exactly the case the guard exists for, and a force must not be the way past
+  # it. Nothing has been selected at this point, so there is nothing to undo.
+  SESSION_REFUSED=true
+  skip_target "session" "model $CURRENT_MODEL matches no roster identity — add it to SECOND_OPINION_MODELS (a command is optional) or fix SECOND_OPINION_CURRENT_MODEL; none declares that this session has no model"
+elif [[ -n "$FORCED_TARGET" ]]; then
+  # A force asks for exactly one opinion.
+  WANT=1
+  consider_target "$FORCED_TARGET" || true
+else
+  walk_roster "$WANT"
 fi
 
 if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
@@ -499,9 +531,11 @@ if [[ ${#REVIEW_LANES[@]} -eq 0 ]]; then
     '{error: "no eligible cross-model target — refusing to run a second opinion", current_model: $current, candidates: $candidates}' >&2
   # A force that came from project settings rather than the command line is a
   # seeded value nobody typed today: name what the roster would have picked so
-  # the settings fix is one edit. Only when the force is what refused — an
-  # undeclared session is fixed by a different key.
-  if [[ -n "$CURRENT_MODEL" && -z "$TARGET" && -n "${SECOND_OPINION_TARGET:-}" ]]; then
+  # the settings fix is one edit. Only when the force is what refused — a
+  # session whose own identity is undeclared or unspelled is fixed by a
+  # different key, and the pick this walk would name is computed from that same
+  # untrustworthy identity.
+  if ! $SESSION_REFUSED && [[ -z "$TARGET" && -n "${SECOND_OPINION_TARGET:-}" ]]; then
     SKIP_REASONS=()
     walk_roster 1 2>/dev/null
     if [[ ${#REVIEW_LANES[@]} -gt 0 ]]; then
@@ -561,6 +595,21 @@ fi
 # ARTIFACT_PATH; never exits.
 ARTIFACT_PATH=""
 
+# Canonical spelling of a relative home, so the vet and the physical-equality
+# rule both work on one form: strip leading `./`, collapse repeated slashes,
+# drop trailing slashes. `tmp/second-opinion/` and `./tmp/second-opinion` name
+# the same directory as `tmp/second-opinion` and must land in it — the raw
+# setting would otherwise be rejected for an empty or `.` component and every
+# record would silently fall back to system temp. Purely lexical: a `..` or an
+# interior `.` that survives is still the vet's to refuse.
+normalize_relative_home() {
+  local rel="$1"
+  while [[ "$rel" == ./* ]]; do rel="${rel#./}"; done
+  while [[ "$rel" == *//* ]]; do rel="${rel//\/\//\/}"; done
+  while [[ "$rel" == */ ]]; do rel="${rel%/}"; done
+  printf '%s' "$rel"
+}
+
 # Relative-home vetting, before anything is created. Prints the rejection
 # reason and returns 1; silent 0 when the path is safe to create.
 vet_relative_home() {
@@ -589,30 +638,39 @@ vet_relative_home() {
 }
 
 artifact_file() {
-  local kind="$1" dir reason phys_root phys_dir
+  local kind="$1" dir rel reason phys_root phys_dir
   dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
   ARTIFACT_PATH=""
   if [[ "$dir" == /* ]]; then
     (umask 077 && mkdir -p -- "$dir") 2>/dev/null \
       || { echo "→ artifact home not creatable: $dir" >&2; dir=""; }
-  elif reason=$(vet_relative_home "$dir"); then
-    dir="$CWD/$dir"
-    if ! (umask 077 && mkdir -p -- "$dir") 2>/dev/null; then
-      echo "→ artifact home not creatable: $dir" >&2
-      dir=""
-    else
-      # The one rule: what was created is exactly the named path under the
-      # reviewed checkout's physical root.
-      phys_root="$(cd "$CWD" 2>/dev/null && pwd -P)" || phys_root=""
-      phys_dir="$(cd "$dir" 2>/dev/null && pwd -P)" || phys_dir=""
-      if [[ -z "$phys_root" || "$phys_dir" != "$phys_root/${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}" ]]; then
-        echo "→ artifact home rejected (resolves outside the reviewed repo): $dir -> ${phys_dir:-?}" >&2
-        dir=""
-      fi
-    fi
   else
-    echo "→ artifact home rejected ($reason): $CWD/$dir" >&2
-    dir=""
+    rel="$(normalize_relative_home "$dir")"
+    if [[ -z "$rel" ]]; then
+      echo "→ artifact home rejected (names the reviewed repo root, not a subdirectory): $dir" >&2
+      dir=""
+    elif reason=$(vet_relative_home "$rel"); then
+      dir="$CWD/$rel"
+      if ! (umask 077 && mkdir -p -- "$dir") 2>/dev/null; then
+        echo "→ artifact home not creatable: $dir" >&2
+        dir=""
+      else
+        # The one rule: what was created is exactly the named path under the
+        # reviewed checkout's physical root. Defense in depth behind the
+        # pre-creation vet, which already refuses every escape the tests can
+        # construct — only the accept-control (a --cwd reached through a
+        # symlink) exercises this branch.
+        phys_root="$(cd "$CWD" 2>/dev/null && pwd -P)" || phys_root=""
+        phys_dir="$(cd "$dir" 2>/dev/null && pwd -P)" || phys_dir=""
+        if [[ -z "$phys_root" || "$phys_dir" != "$phys_root/$rel" ]]; then
+          echo "→ artifact home rejected (resolves outside the reviewed repo): $dir -> ${phys_dir:-?}" >&2
+          dir=""
+        fi
+      fi
+    else
+      echo "→ artifact home rejected ($reason): $CWD/$rel" >&2
+      dir=""
+    fi
   fi
   if [[ -n "$dir" ]]; then
     ARTIFACT_PATH=$(mktemp "$dir/${MODE}-${TARGET_CLI}-${kind}.XXXXXX" 2>/dev/null) || ARTIFACT_PATH=""
@@ -937,18 +995,6 @@ if $MULTI_LANE; then
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  # This run promises "no artifact when every lane fails" — a union artifact
-  # left by a PREVIOUS run at the same path would read as a fresh pass to a
-  # caller that continues past the advisory failure. Clear it before lanes
-  # spawn.
-  # --output is caller input and may begin with '-', which every one of these
-  # utilities would parse as options: `--` marks the end of options, and
-  # path_dir stands in for dirname, which cannot take that marker portably.
-  if [[ -n "$OUTPUT_PATH" ]]; then
-    mkdir -p -- "$(path_dir "$OUTPUT_PATH")"
-    rm -f -- "$OUTPUT_PATH"
-  fi
-
   SELF="$SCRIPT_DIR/$(basename -- "${BASH_SOURCE[0]}")"
   LANE_OUTS=()
   LANE_ERRS=()
@@ -964,13 +1010,15 @@ if $MULTI_LANE; then
   for lane in "${REVIEW_LANES[@]}"; do
     if [[ -n "$OUTPUT_PATH" ]]; then
       lane_out="${OUTPUT_PATH}.${lane}.json"
-      # Same policy as the stale union artifact above, applied to this lane's
-      # family: a previous run's lane artifact is misleading whether or not
-      # this run overwrites it, and the umask only governs files the child
-      # CREATES — writing through a surviving inode keeps that inode's old
-      # mode, so a family left at 0644 would stay world-readable through every
-      # later run. Unremovable here means the artifact family cannot be
-      # guaranteed clean, which is worth failing on before any model spend.
+      # Same policy as the designated-output clearing after argument parsing,
+      # applied to this lane's own family — that pass cleared the union path
+      # and its sidecars, not the per-lane ones. A previous run's lane artifact
+      # is misleading whether or not this run overwrites it, and the umask only
+      # governs files the child CREATES — writing through a surviving inode
+      # keeps that inode's old mode, so a family left at 0644 would stay
+      # world-readable through every later run. Unremovable here means the
+      # artifact family cannot be guaranteed clean, which is worth failing on
+      # before any model spend.
       #
       # Every suffix the recursive writer can produce, enumerated rather than
       # globbed: this path is the CALLER's, so `"$lane_out".*` would also take

@@ -114,6 +114,8 @@ On script failure (non-zero exit), stderr contains a JSON error object:
 | 5 | `review`/`audit`: the external CLI never produced a review — non-zero exit (quota, auth, network) or empty response on a zero exit. Distinct from 4: 4 is a model that answered unusably, 5 is a lane that never answered | Report; partial output is preserved as `<output>.failed.json` (under `SECOND_OPINION_ARTIFACT_DIR` without `--output`; a multi-lane stdout run keeps no lane records — see references/multi-lane.md) and the CLI's own error text — from whichever stream it used, stderr or stdout — is echoed on stderr |
 | 124 | Timeout (default 300s) | Report timeout, suggest `--timeout` increase or narrower `--range` |
 
+**No exit above ever leaves a previous run's artifact behind.** `--output` and the managed sidecars (`.raw.txt`, `.retry.txt`, `.failed.json`, `.noreview.json`, `.incomplete.json`) are cleared before target selection and before any CLI runs, so a refusal, timeout, or unusable response cannot be read as a pass by a caller that continues past the advisory non-zero exit.
+
 Multi-lane review maps lane failures into the same contract: a failing lane is recorded inside the union artifact (`qa_metadata.lanes`, `coverage: "degraded"`) with the run still exiting 0; only when **every** lane fails does the run exit 4 (at least one lane answered unusably) or 5 (no lane answered), writing no artifact.
 
 If the script fails during the orch `review-pr` or `submit-pr` (local pre-PR review) workflows, **continue** — external review is advisory.
