@@ -218,46 +218,84 @@ assert_eq "$(guard_status_code "$ENV_WT" "$ENV_ROOT/main" --owner issue-envown)"
 kill "$ENV_SLEEPER" 2>/dev/null || true
 wait "$ENV_SLEEPER" 2>/dev/null || true
 
-echo "=== compare-and-release refuses a lease rewritten after the liveness check ==="
+echo "=== compare-and-release refuses a lease re-claimed after the liveness check ==="
 
 # The liveness verdict and the release are two guard calls; a sibling that
-# claims or refreshes in between rewrites the lease pid. `release --expect-pid`
-# is what makes the pair atomic — it re-reads the pid under the same lock.
+# claims in between mints a new lease GENERATION. `release --expect-gen` is
+# what makes the pair atomic — it re-reads the generation under the same lock.
+# The token is the claim's, not the pid's, because the OS reuses pids.
 CAS_ROOT="$TMP_ROOT/cas"
 make_repo "$CAS_ROOT/main"
 git -C "$CAS_ROOT/main" worktree add -q -b issue-cas "$CAS_ROOT/trees/issue-cas" main
 CAS_WT="$CAS_ROOT/trees/issue-cas"
 "$GUARD_SCRIPT" claim "$CAS_WT" --owner issue-cas >/dev/null
 CAS_LOCK="$CAS_ROOT/main/.git/worktrees/issue-cas/locked"
+lease_gen() { sed -n 's/.* gen=\([^ ]*\) .*/\1/p' "$1"; }
+cas_gen_before="$(lease_gen "$CAS_LOCK")"
 cas_pid_before="$(sed -n 's/.* pid=\([0-9]*\) .*/\1/p' "$CAS_LOCK")"
 
-# Control: the release DOES go through when the lease still records the pid
-# the caller checked — without this the refusal below would prove nothing.
+if [[ -n "$cas_gen_before" ]]; then
+  pass "a claim records a lease generation"
+else
+  fail "a claim records a lease generation"
+fi
+
+# A refresh continues the SAME claim, so it must carry the generation across:
+# a token that rotated per heartbeat would refuse every release that took more
+# than one heartbeat to decide.
+"$GUARD_SCRIPT" refresh "$CAS_WT" --owner issue-cas >/dev/null
+assert_eq "$(lease_gen "$CAS_LOCK")" "$cas_gen_before" \
+  "a refresh carries the generation across unchanged"
+
+# Control: the release DOES go through when the lease still records the
+# generation the caller checked — without this the refusals below prove nothing.
 set +e
 cas_ok_out=$("$GUARD_SCRIPT" release "$CAS_WT" --owner issue-cas --repo "$CAS_ROOT/main" \
-  --expect-pid "$cas_pid_before" 2>"$CAS_ROOT/cas-ok.err")
+  --expect-gen "$cas_gen_before" 2>"$CAS_ROOT/cas-ok.err")
 cas_ok_code=$?
 set -e
-assert_eq "$cas_ok_code" "0" "control: --expect-pid matching the lease releases it"
+assert_eq "$cas_ok_code" "0" "control: --expect-gen matching the lease releases it"
 assert_contains "$cas_ok_out" "released $CAS_WT" "control: the matching release is reported"
 
-# Now the racing case: re-claim, then release naming the pid seen BEFORE.
+# The racing case: re-claim, then release naming the generation seen BEFORE.
 "$GUARD_SCRIPT" claim "$CAS_WT" --owner issue-cas >/dev/null
 sleep 300 &
 CAS_SLEEPER=$!
 plant_lease_pid "$CAS_LOCK" "$CAS_SLEEPER"
 set +e
 "$GUARD_SCRIPT" release "$CAS_WT" --owner issue-cas --repo "$CAS_ROOT/main" \
-  --expect-pid "$cas_pid_before" >/dev/null 2>"$CAS_ROOT/cas.err"
+  --expect-gen "$cas_gen_before" >/dev/null 2>"$CAS_ROOT/cas.err"
 cas_code=$?
 set -e
-assert_eq "$cas_code" "75" "--expect-pid refuses a lease whose pid changed since the check"
-assert_contains "$(cat "$CAS_ROOT/cas.err")" "changed since it was checked" \
-  "the refusal says the lease changed under the caller"
-assert_contains "$(cat "$CAS_ROOT/cas.err")" "expected pid=$cas_pid_before" \
-  "the refusal names the pid the caller checked"
+assert_eq "$cas_code" "75" "--expect-gen refuses a lease re-claimed since the check"
+assert_contains "$(cat "$CAS_ROOT/cas.err")" "re-claimed since it was checked" \
+  "the refusal says the lease was re-claimed under the caller"
+assert_contains "$(cat "$CAS_ROOT/cas.err")" "expected gen=$cas_gen_before" \
+  "the refusal names the generation the caller checked"
 assert_eq "$(guard_status_code "$CAS_WT" "$CAS_ROOT/main" --owner issue-cas)" "0" \
-  "the refreshed lease survives the compare-and-release refusal"
+  "the re-claimed lease survives the compare-and-release refusal"
+
+# THE PID-REUSE CASE. The replacement claim is planted with the SAME pid the
+# caller checked, which is what the OS does when it reuses a freed pid. A pid
+# compare passes here and unlocks a live lease; only the generation refuses.
+cas_reuse_gen="$(lease_gen "$CAS_LOCK")"
+plant_lease_pid "$CAS_LOCK" "$cas_pid_before"
+assert_eq "$(sed -n 's/.* pid=\([0-9]*\) .*/\1/p' "$CAS_LOCK")" "$cas_pid_before" \
+  "the replacement claim records the same pid the caller checked (reuse)"
+if [[ "$cas_reuse_gen" != "$cas_gen_before" ]]; then
+  pass "the replacement claim carries a different generation despite the reused pid"
+else
+  fail "the replacement claim carries a different generation despite the reused pid"
+fi
+set +e
+"$GUARD_SCRIPT" release "$CAS_WT" --owner issue-cas --repo "$CAS_ROOT/main" \
+  --expect-gen "$cas_gen_before" >/dev/null 2>"$CAS_ROOT/cas-reuse.err"
+cas_reuse_code=$?
+set -e
+assert_eq "$cas_reuse_code" "75" \
+  "a replacement claim on a REUSED pid is still refused (the pid compare would have released it)"
+assert_eq "$(guard_status_code "$CAS_WT" "$CAS_ROOT/main" --owner issue-cas)" "0" \
+  "the live lease survives the reused-pid release attempt"
 kill "$CAS_SLEEPER" 2>/dev/null || true
 wait "$CAS_SLEEPER" 2>/dev/null || true
 

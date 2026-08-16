@@ -2542,9 +2542,12 @@ pid_is_self_or_ancestor() {
 # records no usable pid.
 issue_release_permits_removal() {
   local wt="$1" owner="$2" status rc=0 err_file pid host
-  # The pid this verdict was reached on, for the caller's compare-and-release;
-  # empty when the lease records none, which is also the permit-by-default case.
-  LEASE_VERIFIED_PID=""
+  # The lease GENERATION this verdict was reached on, for the caller's
+  # compare-and-release; empty when the lease records none, which is also the
+  # permit-by-default case. The generation, not the pid: a pid is reused by the
+  # OS, so a claim taken by a new session after the recorded one exited can
+  # carry the same number and pass a pid compare.
+  LEASE_VERIFIED_GEN=""
   if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-lease-status.XXXXXX")"; then
     echo "Error: could not create a scratch file to verify the session lease of $wt; refusing to remove it." >&2
     return 1
@@ -2562,10 +2565,12 @@ issue_release_permits_removal() {
   rm -f "$err_file"
   pid="$(session_lease_field "$status" pid || true)"
   host="$(session_lease_field "$status" host || true)"
+  # Captured before the permit-by-default exits below, so every path that
+  # permits a removal still binds the release to the lease it was read from.
+  LEASE_VERIFIED_GEN="$(session_lease_field "$status" generation || true)"
   # pid 1 is init, never a claiming session; a lease recording it is corrupt,
   # and the ancestor walk would call it everyone's ancestor.
   [[ "$pid" =~ ^[1-9][0-9]*$ && "$pid" != "1" ]] || return 0
-  LEASE_VERIFIED_PID="$pid"
   [[ "$host" == "$(session_guard_host)" ]] || return 0
   # Equal-session short-circuit: covers a reparented (orphaned) shell of the
   # claiming session that the PPID walk below can no longer reach.
@@ -2625,16 +2630,16 @@ release_own_session_lease() {
   # the string match proves nothing the argument did not. Only an env-ladder
   # identity DISTINCT from the issue is the session naming itself. `remove
   # --force` skips exactly this refusal, nothing else.
-  local expect_pid_args=()
+  local expect_gen_args=()
   if [[ "$owner" == "$issue_owner" && "$force" != true ]]; then
     issue_release_permits_removal "$wt" "$owner" || return 1
     # Bind the release to the lease that verdict was reached on: a sibling that
-    # claims or refreshes between the two guard calls rewrites the pid, and the
-    # release refuses rather than unlocking a live claim (see --expect-pid).
-    [[ -n "$LEASE_VERIFIED_PID" ]] && expect_pid_args=(--expect-pid "$LEASE_VERIFIED_PID")
+    # claims between the two guard calls mints a new generation, and the
+    # release refuses rather than unlocking a live claim (see --expect-gen).
+    [[ -n "$LEASE_VERIFIED_GEN" ]] && expect_gen_args=(--expect-gen "$LEASE_VERIFIED_GEN")
   fi
   if ! "$SESSION_GUARD" release "$wt" --owner "$owner" --repo "$PROJECT_ROOT" \
-    "${expect_pid_args[@]+"${expect_pid_args[@]}"}" >/dev/null; then
+    "${expect_gen_args[@]+"${expect_gen_args[@]}"}" >/dev/null; then
     echo "Error: could not release this session's guard lease on $wt; refusing to remove it." >&2
     echo "  Release it, then retry: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
     return 1

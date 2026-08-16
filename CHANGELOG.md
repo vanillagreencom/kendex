@@ -103,7 +103,13 @@
     `worktree-session-guard release --expect-pid` re-reads the pid under the
     same lock that serializes claim/refresh/release, so a sibling that claimed
     or refreshed between the check and the release is refused instead of
-    unlocked.
+    unlocked. The compare token is a per-claim GENERATION (`gen=` in the lease,
+    `generation` in `status` JSON), minted at claim and carried across
+    refreshes: a pid is reused by the OS, so a replacement claim landing on the
+    recorded pid would have passed a pid compare and unlocked a live lease.
+  - orch `queue-wait`: an `errors` field that is present but not an array is a
+    malformed body, not an empty error set — `{}` and `""` both measure zero
+    length and would have been counted as a clean page.
   - orch `queue-wait`: a GraphQL response carrying both data and a top-level
     `errors` array is a failed read, not a thread count — partial data can no
     longer undercount the blockers the late-findings guard exists to see. A

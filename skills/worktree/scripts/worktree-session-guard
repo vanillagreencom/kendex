@@ -115,10 +115,11 @@ Options:
                      release, sweep.
   --stale            release: also accept a foreign lease past the TTL.
   --force            release: accept a foreign lease regardless of age.
-  --expect-pid PID   release: compare-and-release. Refuse (exit 75) unless the
-                     lease still records this pid, so a decision taken from an
-                     earlier `status` read cannot unlock a lease a sibling
-                     claimed or refreshed in between.
+  --expect-gen TOKEN release: compare-and-release. Refuse (exit 75) unless the
+                     lease still records this generation (the `generation`
+                     field of `status`), so a decision taken from an earlier
+                     `status` read cannot unlock a lease a sibling claimed in
+                     between — including one that landed on a reused pid.
   --dry-run          sweep: report what would be released, release nothing.
   --repo DIR         Any checkout of the target repository (default: current
                      directory). Applies to: release, status, list, sweep;
@@ -547,14 +548,43 @@ lease_description() {
 	esac
 }
 
+# A token minted once per CLAIM and carried across refreshes untouched. It is
+# what `release --expect-gen` compares, because a pid cannot answer the
+# question that compare asks: the OS reuses pids, so a claim taken by a new
+# session after the recorded one exited can record the very same number, and a
+# pid compare would then unlock a live lease it was built to protect. Random
+# bytes make the token unique across claims regardless of pid or clock.
+new_lease_generation() {
+	local rand=''
+	if [[ -r /dev/urandom ]]; then
+		rand="$(od -An -tx1 -N8 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+	fi
+	# $RANDOM is seeded per shell, so two claims in the same second on the same
+	# host still differ; the pid and epoch keep the fallback ordered and
+	# readable when urandom is unavailable.
+	[[ "$rand" =~ ^[0-9a-f]{16}$ ]] || rand="$$$RANDOM$RANDOM"
+	printf '%s-%s\n' "$(now_epoch)" "$rand"
+}
+
 lease_line() {
-	local owner="$1" host="$2" claimed_epoch="$3" heartbeat_epoch="$4"
+	local owner="$1" host="$2" claimed_epoch="$3" heartbeat_epoch="$4" generation="$5"
 	local claimed_iso heartbeat_iso
 	claimed_iso="$(iso_from_epoch "$claimed_epoch")"
 	heartbeat_iso="$(iso_from_epoch "$heartbeat_epoch")"
-	printf '%s %s owner=%s pid=%s host=%s claimed=%s claimed_epoch=%s heartbeat=%s heartbeat_epoch=%s' \
+	printf '%s %s owner=%s pid=%s host=%s gen=%s claimed=%s claimed_epoch=%s heartbeat=%s heartbeat_epoch=%s' \
 		"$GUARD_MARKER" "$GUARD_VERSION" "$owner" "$(session_leader_pid)" "$host" \
-		"$claimed_iso" "$claimed_epoch" "$heartbeat_iso" "$heartbeat_epoch"
+		"$generation" "$claimed_iso" "$claimed_epoch" "$heartbeat_iso" "$heartbeat_epoch"
+}
+
+# A generation the guard did not write, or one lost to a truncated lease, is
+# not a compare token: minting a fresh one here would make every subsequent
+# --expect-gen mismatch, which refuses rather than releases. That is the safe
+# direction, and it keeps the field's only writer this one function.
+lease_generation_or_new() {
+	local existing="$1" generation
+	generation="$(lease_field "$existing" gen || true)"
+	[[ "$generation" =~ ^[0-9]+-[0-9a-f]+$ ]] || generation="$(new_lease_generation)"
+	printf '%s\n' "$generation"
 }
 
 # An epoch the guard did not write is not trusted arithmetic input: past int64
@@ -580,14 +610,18 @@ lease_age_seconds() {
 # writer.
 rewrite_lease() {
 	local registration="$1" owner="$2" existing="$3" now="$4"
-	local lock_file="$1/locked" tmp_file lease claimed_epoch
+	local lock_file="$1/locked" tmp_file lease claimed_epoch generation
 
 	[[ -f "$lock_file" ]] || fail "worktree is not locked: $registration"
 	# A corrupted claim time is replaced rather than carried forward, so it
 	# cannot reach iso_from_epoch and abort the refresh with a date(1) error.
 	claimed_epoch="$(lease_field "$existing" claimed_epoch || true)"
 	epoch_is_sane "$claimed_epoch" || claimed_epoch="$now"
-	lease="$(lease_line "$owner" "$(sanitize_host)" "$claimed_epoch" "$now")"
+	# A refresh continues the SAME claim, so the generation is carried across
+	# unchanged: a compare token that rotated on every heartbeat would refuse
+	# every release that took more than one heartbeat to decide.
+	generation="$(lease_generation_or_new "$existing")"
+	lease="$(lease_line "$owner" "$(sanitize_host)" "$claimed_epoch" "$now" "$generation")"
 
 	tmp_file="$lock_file.ht-tmp.$$"
 	printf '%s\n' "$lease" >"$tmp_file" || {
@@ -642,7 +676,7 @@ json_escape() {
 emit_status_json() {
 	local worktree="$1" state="$2" lease="$3" now="$4" present="$5"
 	local locked=false managed=false
-	local owner='' pid='' host='' claimed_at='' heartbeat_at='' age=-1
+	local owner='' pid='' host='' generation='' claimed_at='' heartbeat_at='' age=-1
 
 	[[ "$state" == "$LOCK_STATE_NONE" ]] || locked=true
 	if [[ "$state" == "$LOCK_STATE_REASON" ]] && lease_is_ours "$lease"; then
@@ -650,14 +684,16 @@ emit_status_json() {
 		owner="$(lease_field "$lease" owner || true)"
 		pid="$(lease_field "$lease" pid || true)"
 		host="$(lease_field "$lease" host || true)"
+		generation="$(lease_field "$lease" gen || true)"
 		claimed_at="$(lease_field "$lease" claimed || true)"
 		heartbeat_at="$(lease_field "$lease" heartbeat || true)"
 		age="$(lease_age_seconds "$lease" "$now" || printf '%s' -1)"
 	fi
 
-	printf '{"path":"%s","directory_present":%s,"locked":%s,"managed":%s,"owner":"%s","pid":"%s","host":"%s","claimed_at":"%s","heartbeat_at":"%s","heartbeat_age_seconds":%s,"lock_reason":"%s"}\n' \
+	printf '{"path":"%s","directory_present":%s,"locked":%s,"managed":%s,"owner":"%s","pid":"%s","host":"%s","generation":"%s","claimed_at":"%s","heartbeat_at":"%s","heartbeat_age_seconds":%s,"lock_reason":"%s"}\n' \
 		"$(json_escape "$worktree")" "$present" "$locked" "$managed" \
 		"$(json_escape "$owner")" "$(json_escape "$pid")" "$(json_escape "$host")" \
+		"$(json_escape "$generation")" \
 		"$(json_escape "$claimed_at")" "$(json_escape "$heartbeat_at")" \
 		"$age" "$(json_escape "$lease")"
 }
@@ -805,7 +841,7 @@ cmd_claim() {
 		return 0
 	fi
 
-	lease="$(lease_line "$owner" "$(sanitize_host)" "$now" "$now")"
+	lease="$(lease_line "$owner" "$(sanitize_host)" "$now" "$now" "$(new_lease_generation)")"
 	git -C "$repo" worktree lock --reason "$lease" "$worktree" \
 		|| fail "failed to lock worktree: $worktree"
 	printf 'claimed %s\n' "$worktree"
@@ -843,8 +879,8 @@ cmd_refresh() {
 
 cmd_release() {
 	local repo="$1" target="$2" owner="$3" ttl_minutes="$4" allow_stale="$5" force="$6"
-	local expect_pid="${7:-}"
-	local worktree registration existing_owner existing_pid age now rc=0
+	local expect_gen="${7:-}"
+	local worktree registration existing_owner existing_gen age now rc=0
 
 	resolve_worktree "$repo" "$target" false
 	worktree="$RESOLVED_WORKTREE"
@@ -867,16 +903,19 @@ cmd_release() {
 	existing_owner="$(lease_field "$LEASE_TEXT" owner || true)"
 	# Compare-and-release: the owner match proves only the same ISSUE, so a
 	# caller that decided this lease was safe to release from a SEPARATE
-	# `status` read passes the pid that decision was made on. Re-reading it
-	# here — under the same guard lock that serializes claim/refresh/release —
-	# is what makes the decision and the release atomic: a sibling that
-	# claimed or refreshed in between rewrote the pid, and this refuses
-	# instead of unlocking its live lease.
-	if [[ -n "$expect_pid" ]]; then
-		existing_pid="$(lease_field "$LEASE_TEXT" pid || true)"
-		if [[ "$existing_pid" != "$expect_pid" ]]; then
-			printf 'worktree-session-guard: %s changed since it was checked (expected pid=%s, lease records pid=%s); refusing to release: %s\n' \
-				"$worktree" "$expect_pid" "${existing_pid:-none}" "$LEASE_TEXT" >&2
+	# `status` read passes the GENERATION that decision was made on.
+	# Re-reading it here — under the same guard lock that serializes
+	# claim/refresh/release — is what makes the decision and the release
+	# atomic: a sibling that claimed in between minted a new generation, and
+	# this refuses instead of unlocking its live lease. The token is the
+	# claim's, not the pid's, so a claim that lands on a REUSED pid is still
+	# refused; a refresh of the same claim carries it across and still
+	# releases.
+	if [[ -n "$expect_gen" ]]; then
+		existing_gen="$(lease_field "$LEASE_TEXT" gen || true)"
+		if [[ "$existing_gen" != "$expect_gen" ]]; then
+			printf 'worktree-session-guard: %s was re-claimed since it was checked (expected gen=%s, lease records gen=%s); refusing to release: %s\n' \
+				"$worktree" "$expect_gen" "${existing_gen:-none}" "$LEASE_TEXT" >&2
 			exit "$EXIT_OWNED"
 		fi
 	fi
@@ -1044,7 +1083,7 @@ main() {
 
 	local target='' repo='' owner="${VSTACK_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"
 	local ttl_minutes="$DEFAULT_TTL_MINUTES"
-	local allow_stale=false force=false dry_run=false owner_explicit=false expect_pid=''
+	local allow_stale=false force=false dry_run=false owner_explicit=false expect_gen=''
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1078,11 +1117,11 @@ main() {
 			force=true
 			shift
 			;;
-		--expect-pid)
-			[[ $# -ge 2 ]] || fail "--expect-pid requires a value"
-			require_flag_applies --expect-pid "$command" "release"
-			[[ "$2" =~ ^[1-9][0-9]*$ ]] || fail "--expect-pid takes a positive pid, got: $2"
-			expect_pid="$2"
+		--expect-gen)
+			[[ $# -ge 2 ]] || fail "--expect-gen requires a value"
+			require_flag_applies --expect-gen "$command" "release"
+			[[ "$2" =~ ^[0-9]+-[0-9a-f]+$ ]] || fail "--expect-gen takes a lease generation token, got: $2"
+			expect_gen="$2"
 			shift 2
 			;;
 		--dry-run)
@@ -1139,7 +1178,7 @@ main() {
 	case "$command" in
 	claim) cmd_claim "$repo" "$target" "$owner" ;;
 	refresh) cmd_refresh "$repo" "$target" "$owner" ;;
-	release) cmd_release "$repo" "$target" "$owner" "$ttl_minutes" "$allow_stale" "$force" "$expect_pid" ;;
+	release) cmd_release "$repo" "$target" "$owner" "$ttl_minutes" "$allow_stale" "$force" "$expect_gen" ;;
 	status) cmd_status "$repo" "$target" "$owner" ;;
 	list) cmd_list "$repo" ;;
 	sweep) cmd_sweep "$repo" "$ttl_minutes" "$dry_run" ;;

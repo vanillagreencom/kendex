@@ -622,9 +622,16 @@ count_unresolved_threads() {
     # A top-level `errors` array means the response is PARTIAL, however
     # well-shaped the data beside it looks — counting it would undercount the
     # blockers this guard exists to see, so it is a failed read like any other.
+    # An `errors` field that is present but NOT an array is a malformed body,
+    # never an empty error set: `{}` and `""` both measure zero length, which
+    # would have read as "no errors" and counted the partial data beside them.
     page_result=$(jq -r '
-      if (type == "object" and ((.errors? // []) | length) > 0)
-        then error("graphql errors") else . end
+      if (type != "object") then .
+        elif (has("errors") and ((.errors | type) != "array"))
+          then error("malformed graphql errors")
+        elif ((.errors? // []) | length) > 0
+          then error("graphql errors")
+        else . end
       | (.data // .) as $d
       | ($d.repository.pullRequest.reviewThreads?) as $rt
       | if ($rt | type) != "object" then error("bad reviewThreads")

@@ -307,6 +307,12 @@ t_cursor_stuck='{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo
 # the query failed. The thread set beside it is a partial view, so counting it
 # would undercount the blockers the guard exists to see.
 t_partial_errors='{"errors":[{"message":"Something went wrong"}],"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false}]}}}}}'
+# An `errors` field that is present but not an ARRAY is a malformed body. Both
+# of these measure zero length, so a length-only check reads them as "no
+# errors" and counts the data beside them — the empty object is the shape that
+# slips through, and the empty string is the same hole in another type.
+t_object_errors='{"errors":{},"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false}]}}}}}'
+t_string_errors='{"errors":"","data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"isResolved":false}]}}}}}'
 dq_ok='{"data":{"dequeuePullRequest":{"mergeQueueEntry":{"id":"MQE_1"}}}}'
 dq_err='{"errors":[{"message":"Pull request is not in the merge queue"}]}'
 am_ok='{"data":{"disablePullRequestAutoMerge":{"clientMutationId":null}}}'
@@ -653,15 +659,18 @@ assert_contains "$(cat "$err")" "thread fetch failed 3 consecutive" "consecutive
 # plants an unresolved node, so a fail-open reader would dequeue and a
 # read-as-empty reader would stay silent without the warning): a null
 # reviewThreads, a non-boolean isResolved, a hasNextPage with a null cursor,
-# a hasNextPage whose cursor never advances, and a 200 whose well-shaped data
-# rides alongside a top-level GraphQL errors array.
-for shape in rt_null bad_bool cursor_null cursor_stuck partial_errors; do
+# a hasNextPage whose cursor never advances, a 200 whose well-shaped data
+# rides alongside a top-level GraphQL errors array, and the two zero-length
+# non-array `errors` fields that a length-only check would wave through.
+for shape in rt_null bad_bool cursor_null cursor_stuck partial_errors object_errors string_errors; do
   case "$shape" in
     rt_null) body="$t_rt_null" ;;
     bad_bool) body="$t_bad_bool" ;;
     cursor_null) body="$t_cursor_null" ;;
     cursor_stuck) body="$t_cursor_stuck" ;;
     partial_errors) body="$t_partial_errors" ;;
+    object_errors) body="$t_object_errors" ;;
+    string_errors) body="$t_string_errors" ;;
   esac
   new_case "guard_shape_$shape"
   write_fixture state last "$pr_open"
