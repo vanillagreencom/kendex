@@ -249,12 +249,12 @@ assert_lane "hooks" "lint:shell"
 assert_no_lane "hooks" "skill:"
 reset_tree
 
-# --- 8. cli/** -> cargo test only (integration check is --all only) ------------
+# --- 8. cli/** -> cargo test + integration check (AGENTS.md requires both) -----
 touch_path cli/src/main.rs
 run --dry-run
 assert_lane "cli" "cli:cargo-test"
 assert_line "cli" "cargo test --manifest-path cli/Cargo.toml"
-assert_no_lane "cli" "cli:integration-check"
+assert_lane "cli" "cli:integration-check"
 assert_no_lane "cli" "lint:shell"
 reset_tree
 

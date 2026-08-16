@@ -20,7 +20,7 @@
 #   hooks/**                bash hooks/tests/*.sh
 #   tools/**                bash tools/tests/*.sh
 #   cli/**                  cargo test --manifest-path cli/Cargo.toml
-#                           (cli/scripts/integration-check.sh only under --all)
+#                           (plus cli/scripts/integration-check.sh — AGENTS.md requires it after CLI changes)
 #   pi-extensions/<name>/** that extension's CI suite, install steps included
 #   skills/ hooks/ tools/   the shell shard's lints (executable bits,
 #                           `vstack report` guidance)
@@ -215,6 +215,7 @@ else
         ;;
       cli/*)
         want_cli=1
+        want_cli_integration=1
         ;;
       pi-extensions/*/*)
         name="${path#pi-extensions/}"
@@ -276,7 +277,7 @@ done
 [ "$want_hooks" -eq 1 ] && add_lane "hooks" "bash hooks/tests/*.sh"
 [ "$want_tools" -eq 1 ] && add_lane "tools" "bash tools/tests/*.sh"
 [ "$want_cli" -eq 1 ] && add_lane "cli:cargo-test" "cargo test --manifest-path cli/Cargo.toml"
-[ "$want_cli_integration" -eq 1 ] && add_lane "cli:integration-check" "cli/scripts/integration-check.sh (slow; --all only)"
+[ "$want_cli_integration" -eq 1 ] && add_lane "cli:integration-check" "cli/scripts/integration-check.sh"
 for name in "${PI_SUITES[@]}"; do
   in_list "$name" "${want_pis[@]+"${want_pis[@]}"}" || continue
   case "$name" in
