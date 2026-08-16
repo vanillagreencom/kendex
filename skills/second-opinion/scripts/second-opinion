@@ -1148,7 +1148,7 @@ ARTIFACT_HOME=""
 ARTIFACT_HOME_RESOLVED=false
 
 artifact_home() {
-  local dir rel reason phys_root phys_dir home_created=false
+  local dir rel reason phys_root phys_dir home_probe home_created=false
   if $ARTIFACT_HOME_RESOLVED; then return 0; fi
   ARTIFACT_HOME_RESOLVED=true
   dir="${SECOND_OPINION_ARTIFACT_DIR:-tmp/second-opinion}"
@@ -1208,6 +1208,20 @@ artifact_home() {
       fi
     else
       echo "→ artifact home rejected ($reason): $CWD/$rel" >&2
+      dir=""
+    fi
+  fi
+  # A home is only a home if this run can create in it. `mkdir -p` succeeds on a
+  # directory that already exists and denies writes, and every consumer would
+  # then choose it and fail at its own write — a lane after the model call it
+  # has already paid for, leaving a run that spent twice and published no union.
+  # So the home proves itself the way the records do, with an exclusive create,
+  # before anything is placed in it.
+  if [[ -n "$dir" ]]; then
+    if home_probe=$(mktemp "$dir/.probe.XXXXXX" 2>/dev/null); then
+      rm -f -- "$home_probe" 2>/dev/null || true
+    else
+      echo "→ artifact home not writable: $dir" >&2
       dir=""
     fi
   fi

@@ -183,8 +183,7 @@ assert_owner_only() {
 
 # The paired direction, and the control for every owner-only assertion: a file
 # this tool did not write must come out at the CALLER's umask, or a restriction
-# leaking past its own artifacts reads as "merely more restrictive". Read bits
-# only; `find -perm` over `stat`, whose flags differ GNU/BSD.
+# leaking past its own artifacts reads as "merely more restrictive".
 assert_group_other_readable() {
   local path="$1" name="$2"
   if [[ -n "$(find "$path" -maxdepth 0 -perm -g+r -perm -o+r 2>/dev/null)" ]]; then
@@ -246,8 +245,8 @@ mkdir -p "$TMP_ROOT/bin"
 
 # Blocks until a lane review lands in the artifact home and prints its path —
 # $1 an exact agent name, empty for any lane. A handshake that gave up quietly
-# would leave its scenario green having exercised nothing, so a timeout is a
-# hard failure of the stub that called it, and of the lane.
+# would leave its scenario green having exercised nothing, so a timeout fails
+# the stub that called it, and its lane.
 cat > "$TMP_ROOT/bin/lane-wait-review" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
@@ -434,8 +433,7 @@ SH
 # Lane stub that answers with $1 and then removes every regular FILE under $2 —
 # a tmp reaper unlinking files rather than the directories `lane-reap` takes,
 # the actor a lane review in shared temp space could not survive. $3 is the
-# sibling's agent name: the stub holds until that lane's review lands in the
-# artifact home, so the clearing is a handshake rather than a race.
+# sibling's agent name it waits for, so the clearing is a handshake, not a race.
 cat > "$TMP_ROOT/bin/lane-reap-files" <<SH
 #!/usr/bin/env bash
 set -euo pipefail
@@ -917,9 +915,8 @@ assert_stderr_has "capture could not be opened" "the lost capture is reported on
 
 # --- Scenario 17: a reaper that removes temp FILES ---------------------------
 # The stdout-mode residual: while a lane's review sat in shared temp space, an
-# actor unlinking temp FILES — rather than the one directory the run creates
-# there — still cost that lane its findings. A review that lives in the artifact
-# home leaves that actor the log replay and nothing else.
+# actor unlinking temp FILES — not just the one directory the run creates there
+# — cost that lane its findings. In the artifact home it costs the log replay.
 echo "=== scenario 17: temp FILES removed mid-run (stdout) -> union intact ==="
 rc17=0
 run_lanes "$ANSWER_CLAUDE" \
@@ -933,8 +930,8 @@ assert_no_leftovers "the run still leaves nothing behind"
 
 # --- Scenario 18: the same reaper, pointed at the artifact home --------------
 # The control for 17: an actor that reaches the home DOES cost that lane, which
-# is what proves the reaper removes files at all and that the review is in the
-# home — without it, 17 passes for a reaper that never worked.
+# proves the reaper removes files at all — without it, 17 passes for a reaper
+# that never worked.
 echo "=== scenario 18: the artifact home reaped -> that lane is lost, loudly ==="
 rc18=0
 run_lanes "$ANSWER_CLAUDE" \
@@ -979,6 +976,23 @@ single19="$TMP_ROOT/out19-single.json"
 assert_group_other_readable "$STATE/single.session" "single-lane leaves the CLI's session file the same way"
 assert_group_other_readable "$STATE/single.cache" "single-lane leaves the CLI's cache directory the same way"
 assert_group_other_readable "$single19" "a caller's own --output follows the caller's umask"
+
+# --- Scenario 20: a home that exists but denies writes ----------------------
+# `mkdir -p` succeeds on a directory that already exists and refuses writes, so
+# a home chosen on that alone sends every lane to a path it cannot create, after
+# the model calls are paid for, with no union at all.
+echo "=== scenario 20: an unwritable artifact home -> lanes fall back, union ships ==="
+ro_home="$TMP_ROOT/ro-home"
+mkdir -p "$ro_home" && chmod 555 "$ro_home"
+if [[ -w "$ro_home" ]]; then
+  skip "scenario 20: a 0555 directory is writable by this user (effectively privileged), so an unwritable home cannot be built here"
+else
+  rc20=0
+  ( export SECOND_OPINION_ARTIFACT_DIR="$ro_home"; run_lanes "$ANSWER_CLAUDE" "$ANSWER_CODEX" ) || rc20=$?
+  assert_eq "$rc20" "0" "an unwritable home does not cost the run"
+  assert_jq "$TMP_ROOT/last.stdout" '.qa_metadata.coverage' "full" "both lanes still answered"
+  assert_stderr_has "artifact home not writable" "the fallback names its reason"
+fi
 
 echo
 printf 'pass: %d   fail: %d   skip: %d\n' "$PASS" "$FAIL" "$SKIP"
