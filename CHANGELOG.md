@@ -177,8 +177,12 @@
   (`<output>.notes.json`), or sharing the review schema under another agent (an
   internal `reviewer-*` artifact — that schema is a shared contract, not a
   signature), is never removed, and nothing outside `--output`'s own name space
-  is ever touched. Reusing one `--output` path across runs is now safe, and
-  pointing `--output` at a file you want to keep is not.
+  is ever touched. The `agent` field is wrapper-stamped like `timestamp`
+  (`external-<target>` for a lane, `external-union(...)` for a union),
+  overwriting whatever the provider returned, so the marker is this skill's own
+  assertion of authorship rather than something a provider may omit. Reusing one
+  `--output` path across runs is now safe, and pointing `--output` at a file you
+  want to keep is not.
 - second-opinion: `SECOND_OPINION_CURRENT_MODEL` is SESSION-scoped and must be
   exported in the environment of the session that needs it. **A value reaching
   a run from any project file — `.env`, `vstack.settings.toml`,

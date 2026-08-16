@@ -809,6 +809,33 @@ assert_eq "$rc10i" "5" "audit keeps the no-verdict exit class"
 assert_file_absent "$s10i_out" "audit clears the artifact it does write"
 assert_file_exists "$s10i_out.claude.json" "audit leaves a lane family it can never produce"
 
+# (b7) the marker is OURS to assert, not the provider's to supply. A response
+# with a missing or foreign `agent` passes the schema gate untouched, so without
+# stamping, an artifact this skill genuinely wrote would lack the marker its own
+# sweep requires — unreclaimable the moment its target left the roster, with the
+# ownership rule enforced on the consumer side only.
+for s10j_agent in 'null' '"someone-elses-reviewer"'; do
+  s10j_out="$TMP_ROOT/out/review10j.json"
+  rm -f -- "$s10j_out" "$s10j_out".*
+  s10j_resp="$(printf '{"agent":%s,"timestamp":"2020-01-01T00:00:00Z","verdict":"pass","summary":"provider text","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}' "$s10j_agent")"
+  rc10j=0
+  STUB_RC=0 STUB_STDOUT="$s10j_resp" run_review "$s10j_out" "$TMP_ROOT/s10j.stderr" || rc10j=$?
+  assert_eq "$rc10j" "0" "(agent=$s10j_agent) the run still succeeds"
+  assert_eq "$(jq -r '.agent' "$s10j_out")" "external-claude" \
+    "(agent=$s10j_agent) the artifact is written with this skill's own marker"
+  assert_eq "$(jq -r '.summary' "$s10j_out")" "provider text" \
+    "(agent=$s10j_agent) the rest of the provider's review is untouched"
+  # ...and because it now carries the marker, a later run reclaims it once its
+  # target is no longer in the roster: the producer and consumer rules meet.
+  s10j_lane="$TMP_ROOT/out/review10j-sweep.json"
+  rm -f -- "$s10j_lane" "$s10j_lane".*
+  cp -- "$s10j_out" "$s10j_lane.retired-model.json"
+  rc10j2=0
+  STUB_RC=1 STUB_STDERR="$QUOTA_ERR" run_review "$s10j_lane" "$TMP_ROOT/s10j.stderr" || rc10j2=$?
+  assert_file_absent "$s10j_lane.retired-model.json" \
+    "(agent=$s10j_agent) the stamped artifact is reclaimed when its target leaves the roster"
+done
+
 # (c) control: a successful run over a stale artifact replaces it
 s10c_out="$TMP_ROOT/out/review10c.json"
 s10c_err="$TMP_ROOT/s10c.stderr"
@@ -861,6 +888,33 @@ assert_file_contains "$s11_err" "--output is a directory" "the directory cause i
 grep -q "Is a directory" "$s11_err" && fail "a directory at --output leaks a bare rm error"
 assert_eq "$(cat "$COUNTER")" "0" "a directory at --output invokes no CLI"
 rmdir "$s11d"
+
+# (b8) caller-supplied paths that BEGIN with '-' must not be re-parsed as
+# options by anything they reach. --prompt lands in `cat`, and --cwd is the
+# prefix of nearly every other path the script builds, so it is canonicalized to
+# an absolute path once rather than hardened at each consumer. Relative names
+# from a scratch cwd, because an absolute path can never start with a dash.
+s10k_dir="$TMP_ROOT/dashpaths"
+rm -rf -- "$s10k_dir"; mkdir -p -- "$s10k_dir/-dashcwd"
+printf 'MY PROMPT TEXT\n' > "$s10k_dir/-dash-prompt.txt"
+cat > "$TMP_ROOT/bin/echo-cli" <<'SH'
+#!/usr/bin/env bash
+cat                      # echo the prompt back so the test can see it arrived
+SH
+chmod +x "$TMP_ROOT/bin/echo-cli"
+set +e
+s10k_out=$( cd "$s10k_dir" && PATH="$TMP_ROOT/bin:$PATH" \
+  SECOND_OPINION_TARGET=claude SECOND_OPINION_CLAUDE_CMD="$TMP_ROOT/bin/echo-cli" \
+  "$SECOND_OPINION" quick --prompt -dash-prompt.txt --cwd -dashcwd 2>"$TMP_ROOT/s10k.stderr" )
+rc10k=$?
+set -e
+assert_eq "$rc10k" "0" "(b8) dash-leading --prompt and --cwd are accepted"
+if printf '%s' "$s10k_out" | grep -Fq "MY PROMPT TEXT"; then
+  pass "(b8) the dash-leading prompt reaches the CLI intact"
+else
+  fail "(b8) the dash-leading prompt did not reach the CLI"
+  sed -n '1,5p' "$TMP_ROOT/s10k.stderr" >&2
+fi
 
 echo "=== scenario 11b: an unclearable previous artifact is a named cause, not a bare rm error ==="
 # The clearing runs before anything else, so a directory that denies write makes

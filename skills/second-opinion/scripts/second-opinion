@@ -317,12 +317,12 @@ roster_entries() {
 #           an `external-` agent is a value only this skill's own pipeline
 #           produces. Anything else is somebody else's file.
 #
-# The PREFIX is the whole test: the suffix is model-supplied and does not track
-# the lane name (a `deepseek` lane routinely writes `external-deep…`, whatever
-# the model calls itself), so tying it to the filename would strand real
-# artifacts. A model that ignores the schema instruction entirely writes an
-# artifact this sweep will not reclaim — the safe direction, and the reason the
-# roster's own names are cleared by name rather than by content.
+# The PREFIX is the whole test. The writer stamps `external-<target>` over
+# whatever the provider returned, so a current artifact's suffix does track its
+# lane — but a union carries `external-union(...)`, and an artifact written by
+# an earlier version carries whatever the model chose, so matching the suffix
+# against the filename would strand both. The prefix accepts every shape this
+# skill has ever produced and nothing another tool produces.
 #
 # Read through a redirection, never a path operand: the name is built from the
 # caller's --output and may begin with '-'.
@@ -929,8 +929,16 @@ else
   TARGET_CLI="${REVIEW_LANES[0]}"
 fi
 
-# Validate CWD
+# Validate CWD, then canonicalize it to an ABSOLUTE path. --cwd is caller input
+# and may legitimately begin with '-', and it is the prefix of nearly every
+# other path this script builds (instruction files, the artifact home, the
+# lane scratch templates) — so a leading dash there would be re-parsed as
+# options by every command those paths reach. Fixing it once at the source
+# closes the class, rather than adding `--` to each consumer and waiting for
+# the next one. `pwd`, not `pwd -P`: a symlinked --cwd stays the path the
+# caller named, which the artifact-home containment rule resolves separately.
 [[ -d "$CWD" ]] || { echo "Error: --cwd directory not found: $CWD" >&2; exit 1; }
+CWD="$(cd -- "$CWD" && pwd)" || { echo "Error: --cwd is not usable: $CWD" >&2; exit 1; }
 
 if $MULTI_LANE; then
   echo "→ second-opinion: targets=$(IFS=+; echo "${REVIEW_LANES[*]}") mode=$MODE (multi-lane) current=$CURRENT_MODEL cwd=$CWD timeout=${TIMEOUT}s" >&2
@@ -1179,7 +1187,7 @@ derive_review_scope() {
   # walk and misname files in the prompt's changed-file list.
   # shellcheck disable=SC2086
   if ! diff_files=$(git -C "$cwd" -c core.quotePath=false diff --name-only $range 2>"$git_err"); then
-    jq -n --arg range "$range" --arg cwd "$cwd" --arg detail "$(head -5 "$git_err")" \
+    jq -n --arg range "$range" --arg cwd "$cwd" --arg detail "$(head -5 -- "$git_err")" \
       '{error: "Cannot derive review scope: git diff failed for range \($range)", cwd: $cwd, detail: $detail}' >&2
     rm -f -- "$git_err"
     exit "$EXIT_NO_SCOPE"
@@ -1234,9 +1242,9 @@ emit_instruction_file() {
   case "$matched" in *$'\n'"$f"$'\n'*) return 0 ;; esac
   matched="${matched}${f}"$'\n'
   printf -- '--- %s ---\n' "$f"
-  head -c "$REVIEW_INSTRUCTIONS_FILE_CAP" "$CWD/$f" 2>/dev/null || true
+  head -c "$REVIEW_INSTRUCTIONS_FILE_CAP" -- "$CWD/$f" 2>/dev/null || true
   # Size from metadata (GNU/BSD stat), no second read of the bytes.
-  size=$(stat -c%s "$CWD/$f" 2>/dev/null || stat -f%z "$CWD/$f" 2>/dev/null || echo 0)
+  size=$(stat -c%s -- "$CWD/$f" 2>/dev/null || stat -f%z -- "$CWD/$f" 2>/dev/null || echo 0)
   if [[ "$size" -gt "$REVIEW_INSTRUCTIONS_FILE_CAP" ]]; then
     printf '\n[truncated at %s bytes]\n' "$REVIEW_INSTRUCTIONS_FILE_CAP"
   else
@@ -1317,7 +1325,7 @@ build_review_prompt() {
   local schema
   if [[ -f "$schema_file" ]]; then
     # Replace placeholder tokens with runtime values
-    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$schema_file")
+    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" -- "$schema_file")
   else
     echo "Error: schema file not found: $schema_file" >&2
     exit 1
@@ -1370,7 +1378,7 @@ PROMPT
 read_prompt() {
   if [[ -n "$PROMPT_FILE" ]]; then
     [[ -f "$PROMPT_FILE" ]] || { echo "Error: prompt file not found: $PROMPT_FILE" >&2; exit 1; }
-    cat "$PROMPT_FILE"
+    cat -- "$PROMPT_FILE"
   elif [[ -n "$INLINE_PROMPT" ]]; then
     printf '%s\n' "$INLINE_PROMPT"
   elif [[ ! -t 0 ]]; then
@@ -1566,7 +1574,7 @@ if $MULTI_LANE; then
     # exit 5 is diagnosed — goes to /dev/null on the success path, where no
     # verdict assertion would ever notice. The `jq … 2>&1 >/dev/null` capture
     # further down wants the opposite order and is correct as written.
-    if ! sed "s/^/[${lane}] /" "${LANE_ERRS[$i]}" >&2 2>/dev/null; then
+    if ! sed "s/^/[${lane}] /" -- "${LANE_ERRS[$i]}" >&2 2>/dev/null; then
       echo "→ lane stderr replay unavailable (scratch capture unreadable): $lane" >&2
     fi
     lane_ok=false
@@ -1834,7 +1842,7 @@ preserve_cli_failure_and_fail() {
   # and made a capped lane read as broken. Fall back to the tail of captured
   # stdout so the reason surfaces whichever stream carried it.
   if [[ -s "$STDERR_TMP" ]]; then
-    cause=$(head -20 "$STDERR_TMP")
+    cause=$(head -20 -- "$STDERR_TMP")
     cause_source="${TARGET_CLI} stderr"
   elif [[ -n "$partial" ]]; then
     cause=$(printf '%s\n' "$partial" | tail -20)
@@ -1881,7 +1889,7 @@ elif [[ $EXIT_CODE -ne 0 ]]; then
   echo "{\"error\": \"$TARGET_CLI exited with code $EXIT_CODE\", \"target\": \"$TARGET_CLI\"}" >&2
   if [[ -s "$STDERR_TMP" ]]; then
     echo "--- stderr ---" >&2
-    head -20 "$STDERR_TMP" >&2
+    head -20 -- "$STDERR_TMP" >&2
   fi
   exit 1
 fi
@@ -1893,7 +1901,7 @@ if [[ ${#RESULT} -eq 0 ]]; then
   echo "{\"error\": \"$TARGET_CLI returned empty response — check CLI auth and configuration\", \"target\": \"$TARGET_CLI\"}" >&2
   if [[ -s "$STDERR_TMP" ]]; then
     echo "--- stderr ---" >&2
-    head -20 "$STDERR_TMP" >&2
+    head -20 -- "$STDERR_TMP" >&2
   fi
   exit 1
 fi
@@ -1969,7 +1977,7 @@ build_retry_prompt() {
   local schema_file="$SCRIPT_DIR/../schemas/review-finding-prompt.md"
   local schema=""
   if [[ -f "$schema_file" ]]; then
-    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" "$schema_file")
+    schema=$(sed "s/external-TARGET/external-${TARGET_CLI}/g; s/ISO_8601/$(date -u +%Y-%m-%dT%H:%M:%SZ)/g" -- "$schema_file")
   fi
   cat <<RETRY
 Your previous response to the request below ${problem}. This is a single fresh session with no prior turns and no session history — there is no earlier message and nothing was "delivered above" or "previously". Complete the request below and output the COMPLETE JSON object in THIS response. If your previous response already contains your findings, serialize them without changing them; otherwise perform the request now using the scope it specifies. Output ONLY the JSON object — no prose before or after.
@@ -2235,12 +2243,19 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   # requested/selected opinion counts (review mode): a review asked for more
   # breadth than the roster could supply reads as degraded coverage, in the
   # artifact and not only on stderr.
+  # agent is OURS to assert, not the provider's to supply. The consumer side
+  # will only remove a scanned sibling that carries an `external-…` marker, and
+  # a provider is free to return a missing or foreign `agent` that still passes
+  # the schema gate — leaving an artifact this skill genuinely wrote unmarked,
+  # and so unreclaimable once its target leaves the roster. Overwriting here
+  # makes "we wrote it" and "it carries our marker" the same statement.
   if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
       --argjson raw_bytes "$RAW_RESPONSE_BYTES" \
       --argjson retry_bytes "${RETRY_RESPONSE_BYTES:-null}" \
       --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" \
-      --arg mode "$MODE" \
-      '.timestamp = $ts
+      --arg mode "$MODE" --arg agent "external-${TARGET_CLI}" \
+      '.agent = $agent
+       | .timestamp = $ts
        | (if $head == "" then . else .qa_metadata.reviewed_head = $head end)
        | .qa_metadata.raw_response_bytes = $raw_bytes
        | (if $retry_bytes == null then .
