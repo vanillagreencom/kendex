@@ -67,6 +67,20 @@ impl SourceResolution {
         Self::Refused(format!("{err:#}"))
     }
 
+    /// What to report when this produced no root — the refusal, or why the
+    /// source is absent. `None` when it resolved.
+    ///
+    /// One place decides it, so `refresh`, `check` and `verify` name the same
+    /// cause for the same state. Telling a refused source to `vstack add`
+    /// itself sends the user back to the refusal.
+    pub(crate) fn unresolved_note(&self, source: &str) -> Option<String> {
+        match self {
+            Self::Resolved(_) => None,
+            Self::Refused(reason) => Some(reason.clone()),
+            Self::Absent => Some(absent_source_reason(source)),
+        }
+    }
+
     /// The resolved directory for the callers that only ever had an `Option`
     /// to act on, reporting a refusal to the user on the way past.
     fn or_warn(self, key: &str) -> Option<PathBuf> {
@@ -384,7 +398,15 @@ pub(crate) fn recorded_source_exists(source: &str) -> bool {
 }
 
 pub(crate) fn resolve_source_path(source: &str) -> Option<PathBuf> {
-    resolve_single_source_with(source, false, false).or_warn(source)
+    source_path_resolution(source).or_warn(source)
+}
+
+/// The resolution [`resolve_source_path`] performs, with the distinction it
+/// discards: a source that exists and was REFUSED is not one that is absent,
+/// and the two are repaired differently. Reads the cache as it stands — no
+/// fetch — so a caller that only reports on state does not update one.
+pub(crate) fn source_path_resolution(source: &str) -> SourceResolution {
+    resolve_single_source_with(source, false, false)
 }
 
 fn resolve_single_source_with(

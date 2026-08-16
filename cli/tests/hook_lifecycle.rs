@@ -1040,11 +1040,11 @@ fn refresh_keeps_a_hook_whose_remote_source_is_not_cached() {
         .args(["refresh", "--scope", "project"])
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stdout).into_owned()
+    let combined = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
     assert!(
         sandbox.project.join(".claude/hooks/guard.sh").exists(),
-        "the installed hook artifact was removed:\n{stderr}"
+        "the installed hook artifact was removed:\n{combined}"
     );
     let lock = fs::read_to_string(&lock_path).unwrap();
     let lock: serde_json::Value = serde_json::from_str(&lock).unwrap();
@@ -1064,15 +1064,15 @@ fn refresh_keeps_a_hook_whose_remote_source_is_not_cached() {
     // would be a silent half-uninstall.
     assert_eq!(
         claude_agent, agent_before,
-        "the agent was rewritten with a hook set the run could not determine:\n{stderr}"
+        "the agent was rewritten with a hook set the run could not determine:\n{combined}"
     );
     assert!(
-        stderr.contains("rust"),
-        "the agent left untouched must be named:\n{stderr}"
+        combined.contains("rust"),
+        "the agent left untouched must be named:\n{combined}"
     );
     assert!(
         !output.status.success(),
-        "an entry whose source has no clone must not report success:\n{stderr}"
+        "an entry whose source has no clone must not report success:\n{combined}"
     );
 }
 
@@ -1305,11 +1305,11 @@ fn refresh_keeps_a_hook_whose_recorded_source_is_relative() {
         .args(["refresh", "--scope", "project"])
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stdout).into_owned()
+    let combined = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
     assert!(
         sandbox.project.join(".claude/hooks/guard.sh").exists(),
-        "the hook was uninstalled against another source's allowlist:\n{stderr}"
+        "the hook was uninstalled against another source's allowlist:\n{combined}"
     );
     let saved: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
@@ -1441,26 +1441,26 @@ fn refresh_leaves_the_agent_alone_when_a_bare_hook_source_is_not_the_loaded_one(
         .args(["refresh", "--scope", "project"])
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stdout).into_owned()
+    let combined = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(
         fs::read_to_string(&agent_path).unwrap(),
         agent_before,
-        "the agent was rewritten without a hook the run could not read:\n{stderr}"
+        "the agent was rewritten without a hook the run could not read:\n{combined}"
     );
     assert!(
-        stderr.contains("rust"),
-        "the agent left untouched must be named:\n{stderr}"
+        combined.contains("rust"),
+        "the agent left untouched must be named:\n{combined}"
     );
     // The cause has to be the true one: that source carries `guard`.
     assert!(
-        stderr.contains("did not load it"),
-        "the report must name the state it is actually in:\n{stderr}"
+        combined.contains("did not load it"),
+        "the report must name the state it is actually in:\n{combined}"
     );
     assert!(
-        !stderr.contains("no longer carries it"),
-        "the report claims a source lacks a hook it holds:\n{stderr}"
+        !combined.contains("no longer carries it"),
+        "the report claims a source lacks a hook it holds:\n{combined}"
     );
 
     let _ = fs::remove_dir_all(outside);

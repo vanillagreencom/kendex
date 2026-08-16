@@ -188,27 +188,17 @@ pub fn run(scope: ScopeFilter) -> Result<()> {
         let mut outdated = 0;
         let mut unresolved = 0;
         for entry in lock.entries.values() {
-            let status = check_staleness(entry);
-            let icon = match status {
-                "ok" => "✓",
-                "outdated" => "!",
-                _ => "?",
-            };
-            let detail = match status {
-                "outdated" => "  ← outdated".to_string(),
-                "unresolved" => {
-                    format!(
-                        "  ← {}",
-                        crate::refresh_sources::absent_source_reason(&entry.source)
-                    )
+            let (icon, detail) = match check_staleness(entry) {
+                Staleness::Ok => ("✓", String::new()),
+                Staleness::Outdated => {
+                    outdated += 1;
+                    ("!", "  ← outdated".to_string())
                 }
-                _ => String::new(),
+                Staleness::Unresolved(cause) => {
+                    unresolved += 1;
+                    ("?", format!("  ← {cause}"))
+                }
             };
-            match status {
-                "outdated" => outdated += 1,
-                "unresolved" => unresolved += 1,
-                _ => {}
-            }
             eprintln!("  {icon} {} ({}){detail}", entry.name, entry.kind);
         }
         if unresolved > 0 {
@@ -311,17 +301,33 @@ pub fn run(scope: ScopeFilter) -> Result<()> {
     Ok(())
 }
 
-fn check_staleness(entry: &LockEntry) -> &'static str {
-    // An entry whose source did not resolve has no hash to compare, which is
-    // not the same answer as content that changed — and only one of the two is
-    // fixed by `vstack add`ing the item again.
-    if config::resolve_source_path(&entry.source).is_none() {
-        return "unresolved";
-    }
-    if config::is_source_changed(entry) {
-        "outdated"
-    } else {
-        "ok"
+/// What `check` can say about one entry.
+enum Staleness {
+    Ok,
+    Outdated,
+    /// No source root to compare against, and why — a refusal and an absent
+    /// cache are different states with different remedies.
+    Unresolved(String),
+}
+
+fn check_staleness(entry: &LockEntry) -> Staleness {
+    // Resolved once: the comparison needs the root, and the report needs the
+    // cause when there is none. Hashing through `is_source_changed` would
+    // resolve the same source a second time.
+    let resolution = crate::refresh_sources::source_path_resolution(&entry.source);
+    match &resolution {
+        crate::refresh_sources::SourceResolution::Resolved(root) => {
+            if config::is_source_changed_in(entry, root) {
+                Staleness::Outdated
+            } else {
+                Staleness::Ok
+            }
+        }
+        _ => Staleness::Unresolved(
+            resolution
+                .unresolved_note(&entry.source)
+                .unwrap_or_else(|| "source not found".to_string()),
+        ),
     }
 }
 

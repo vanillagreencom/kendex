@@ -929,10 +929,18 @@ pub fn source_repo_for_source(source_root: Option<&Path>, recorded_source: &str)
 
 /// Compute source hash for a lock entry based on its kind.
 pub fn compute_source_hash(entry: &LockEntry) -> String {
-    let source_root = match resolve_source_path(&entry.source) {
-        Some(p) => p,
-        None => return String::new(),
-    };
+    match resolve_source_path(&entry.source) {
+        Some(root) => compute_source_hash_in(entry, &root),
+        None => String::new(),
+    }
+}
+
+/// [`compute_source_hash`] against an already-resolved source root, for a
+/// caller that resolved it itself — `check` and `verify` resolve once to
+/// report the cause when there is no root, and would otherwise resolve a
+/// second time here.
+pub fn compute_source_hash_in(entry: &LockEntry, source_root: &Path) -> String {
+    let source_root = source_root.to_path_buf();
     let proj_root = project_root();
 
     let mut state = FNV_OFFSET;
@@ -1038,8 +1046,18 @@ pub fn is_source_changed(entry: &LockEntry) -> bool {
     if entry.source_hash.is_empty() {
         return false; // No hash stored — assume fresh (legacy lock)
     }
-    let current = compute_source_hash(entry);
-    current != entry.source_hash
+    // An unresolved source hashes to nothing, which reads as changed — that is
+    // what puts a vanished-source entry in the TUI's Updates list, where
+    // picking it reports the source as gone.
+    compute_source_hash(entry) != entry.source_hash
+}
+
+/// [`is_source_changed`] against an already-resolved source root.
+pub fn is_source_changed_in(entry: &LockEntry, source_root: &Path) -> bool {
+    if entry.source_hash.is_empty() {
+        return false; // No hash stored — assume fresh (legacy lock)
+    }
+    compute_source_hash_in(entry, source_root) != entry.source_hash
 }
 
 /// Discovered item on disk that was installed by vstack.
@@ -2070,6 +2088,57 @@ mod source_registry_tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), first);
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    /// `check` and `verify` resolve a recorded source once — to report the
+    /// cause when there is none — and hash against the root they got. Hashing
+    /// through the resolving entry point would resolve the same source a
+    /// second time, including a second pass through the refusal paths.
+    #[test]
+    fn hashing_against_a_resolved_root_does_not_consult_the_recorded_source() {
+        let root = std::env::temp_dir().join(format!(
+            "vstack-hash-in-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let source = root.join("source");
+        fs::create_dir_all(source.join("skills/demo")).unwrap();
+        fs::write(
+            source.join("skills/demo/SKILL.md"),
+            "---\nname: demo\ndescription: Demo\n---\n# Demo\n",
+        )
+        .unwrap();
+
+        // The entry records a source that names nothing on this machine.
+        let entry = LockEntry {
+            name: "demo".into(),
+            kind: ItemKind::Skill,
+            source: "owner/no-such-repo".into(),
+            source_repo: None,
+            harnesses: vec!["claude-code".into()],
+            method: InstallMethod::Copy,
+            installed_at: "2026-07-03T00:00:00Z".into(),
+            source_hash: String::new(),
+        };
+
+        let home = root.join("home");
+        crate::test_util::with_home_and_config(&home, &home.join(".config"), || {
+            assert_eq!(
+                compute_source_hash(&entry),
+                String::new(),
+                "control: resolving that source yields no root, so no hash"
+            );
+            assert_ne!(
+                compute_source_hash_in(&entry, &source),
+                String::new(),
+                "the caller's resolved root is what is hashed"
+            );
+        });
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

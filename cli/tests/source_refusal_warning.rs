@@ -116,12 +116,75 @@ fn check_and_verify_name_the_same_cause_as_refresh() {
             .env("PI_CODING_AGENT_DIR", root.join("pi"))
             .output()
             .unwrap();
-        let text = String::from_utf8_lossy(&output.stderr).into_owned()
+        let combined = String::from_utf8_lossy(&output.stderr).into_owned()
             + &String::from_utf8_lossy(&output.stdout);
-        assert!(text.contains(expected), "vstack {command}:\n{text}");
+        assert!(combined.contains(expected), "vstack {command}:\n{combined}");
         assert!(
-            !text.contains("outdated"),
-            "vstack {command} calls an unresolved source outdated:\n{text}"
+            !combined.contains("outdated"),
+            "vstack {command} calls an unresolved source outdated:\n{combined}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A source vstack REFUSED is not one that is absent, and `vstack add` is not
+/// its remedy — running it refuses again. All three commands must name the
+/// refusal itself, as `refresh` already did.
+#[test]
+fn check_and_verify_report_a_refusal_rather_than_the_re_clone_advice() {
+    let root = unique_temp_dir("refused-source-diagnostics");
+    let project = root.join("project");
+    let home = root.join("home");
+    fs::create_dir_all(project.join(".claude/skills/demo")).unwrap();
+    fs::create_dir_all(project.join(".agents/skills/demo")).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    let skill = "---\nname: demo\ndescription: Demo\nlicense: MIT\n---\n# Demo\n";
+    fs::write(project.join(".claude/skills/demo/SKILL.md"), skill).unwrap();
+    fs::write(project.join(".agents/skills/demo/SKILL.md"), skill).unwrap();
+    // Refused before any git runs, so the case needs no cache entry.
+    fs::write(
+        project.join(".vstack-lock.json"),
+        r#"{
+  "version": 1,
+  "entries": {
+    "demo": {
+      "name": "demo",
+      "kind": "skill",
+      "source": "git://github.com/owner/repo.git",
+      "harnesses": ["claude-code"],
+      "method": "copy",
+      "installed_at": "2026-07-03T00:00:00Z",
+      "source_hash": "deadbeef"
+    }
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    for command in ["check", "verify", "refresh"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_vstack"))
+            .arg(command)
+            .current_dir(&project)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("PI_CODING_AGENT_DIR", root.join("pi"))
+            .output()
+            .unwrap();
+        let combined = String::from_utf8_lossy(&output.stderr).into_owned()
+            + &String::from_utf8_lossy(&output.stdout);
+        assert!(
+            combined.contains("transport `git` is not supported"),
+            "vstack {command} must name the refusal:\n{combined}"
+        );
+        assert!(
+            !combined.contains("remote cache not present"),
+            "vstack {command} sends the user back to the refusal:\n{combined}"
+        );
+        assert!(
+            !combined.contains("outdated"),
+            "vstack {command} calls a refused source outdated:\n{combined}"
         );
     }
 
