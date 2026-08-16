@@ -396,7 +396,7 @@ fn command_arg(text: &str) -> String {
 /// characters become `?` so nothing can start a new line or drive a
 /// terminal, and anything long is truncated — an item is never classified on
 /// its length, only shortened when shown.
-fn display_text(text: &str) -> String {
+pub(crate) fn display_text(text: &str) -> String {
     let scrubbed: String = scrub_source_credentials(text)
         .chars()
         .map(|c| if c.is_control() { '?' } else { c })
@@ -801,7 +801,10 @@ fn available_for(
     let installed_kinds: HashSet<ItemKind> = entries.iter().map(|e| e.kind).collect();
     let mut sources: Vec<&str> = catalogs.keys().copied().collect();
     sources.sort();
-    let mut seen: HashSet<&str> = HashSet::new();
+    // Dedupe on the OFFER, not the name: two sources shipping a skill of the
+    // same name are two different implementations, and the add command is
+    // source-qualified precisely so the user picks which one.
+    let mut seen: HashSet<(&str, ItemKind, &str)> = HashSet::new();
     for source in sources {
         let Some(catalog) = &catalogs[source] else {
             continue;
@@ -818,7 +821,10 @@ fn available_for(
                     || crate::pi_extension::legacy_names_for(name)
                         .iter()
                         .any(|legacy| lock_names.contains(legacy));
-                if installed || !is_safe_item_name(kind, name) || !seen.insert(name.as_str()) {
+                if installed
+                    || !is_safe_item_name(kind, name)
+                    || !seen.insert((source, kind, name.as_str()))
+                {
                     continue;
                 }
                 available.push(AvailableItem {
@@ -829,7 +835,12 @@ fn available_for(
             }
         }
     }
-    available.sort_by(|a, b| a.name.cmp(&b.name));
+    available.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.kind.label_short().cmp(b.kind.label_short()))
+            .then_with(|| a.source.cmp(&b.source))
+    });
     available
 }
 
@@ -930,13 +941,15 @@ pub fn render_report(report: &CheckReport, quiet: bool) -> String {
     }
     if !report.cache_refresh_failures.is_empty() {
         out.push('\n');
-        for failure in &report.cache_refresh_failures {
+        let shown = shown_count(quiet, report.cache_refresh_failures.len());
+        for failure in &report.cache_refresh_failures[..shown] {
             out.push_str(&format!(
                 "  source cache {} is not up to date — {}; results may be stale — run `vstack refresh` to retry it now\n",
                 display_text(&failure.source),
                 failure.reason
             ));
         }
+        overflow_line(&mut out, "  ", shown, report.cache_refresh_failures.len());
     }
     out
 }
@@ -949,14 +962,42 @@ fn humanize_age(secs: u64) -> String {
     }
 }
 
+/// How many lines a single section may spend in the quiet report. The quiet
+/// report is relayed verbatim into an agent's context by both session
+/// adapters, so its size is bounded BY CONSTRUCTION rather than by how large
+/// an inventory happens to be. Headers keep the true counts; the full listing
+/// is one `vstack check` away.
+const QUIET_SECTION_LIMIT: usize = 10;
+
+/// How many of `total` entries this mode renders.
+fn shown_count(quiet: bool, total: usize) -> usize {
+    if quiet {
+        total.min(QUIET_SECTION_LIMIT)
+    } else {
+        total
+    }
+}
+
+/// The `… and M more` line for whatever a capped section left out.
+fn overflow_line(out: &mut String, indent: &str, shown: usize, total: usize) {
+    if total > shown {
+        out.push_str(&format!(
+            "{indent}… and {} more (run `vstack check` for the full report)\n",
+            total - shown
+        ));
+    }
+}
+
 /// One drift section: a header line and one `glyph name (kind)` line per
-/// item, with the item's own detail when the header cannot carry it.
-fn section(out: &mut String, header: &str, glyph: char, items: &[Item]) {
+/// item, with the item's own detail when the header cannot carry it. Capped
+/// in quiet mode; the header's count is always the true total.
+fn section(out: &mut String, header: &str, glyph: char, items: &[Item], quiet: bool) {
     if items.is_empty() {
         return;
     }
     out.push_str(&format!("\n  {} {header}:\n", items.len()));
-    for item in items {
+    let shown = shown_count(quiet, items.len());
+    for item in &items[..shown] {
         let detail = item
             .detail
             .as_deref()
@@ -968,6 +1009,18 @@ fn section(out: &mut String, header: &str, glyph: char, items: &[Item]) {
             item.kind
         ));
     }
+    overflow_line(out, "    ", shown, items.len());
+}
+
+/// The `? <name>` list a source problem attaches to its header. Capped in
+/// quiet mode; the header above it already carries the true count.
+fn render_entry_names(out: &mut String, entries: &[String], quiet: bool) {
+    use std::fmt::Write as _;
+    let shown = shown_count(quiet, entries.len());
+    for name in &entries[..shown] {
+        let _ = writeln!(out, "    ? {name}");
+    }
+    overflow_line(out, "    ", shown, entries.len());
 }
 
 fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
@@ -994,24 +1047,28 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
         "outdated — run `vstack refresh` to update",
         '!',
         &report.outdated,
+        quiet,
     );
     section(
         out,
         "no longer in source — run `vstack remove <name>`",
         '✗',
         &report.removed,
+        quiet,
     );
     section(
         out,
         "installed on disk but missing from lock — run `vstack add` to recover",
         '?',
         &report.orphaned,
+        quiet,
     );
     section(
         out,
         "in lock but missing from disk — run `vstack add` to clean up, or `vstack remove <name>`",
         '✗',
         &report.phantom,
+        quiet,
     );
 
     if !report.missing_skill_refs.is_empty() {
@@ -1025,7 +1082,8 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
             "\n  {} agent(s) reference uninstalled skill(s):",
             agents.len()
         );
-        for r in &report.missing_skill_refs {
+        let shown = shown_count(quiet, report.missing_skill_refs.len());
+        for r in &report.missing_skill_refs[..shown] {
             let skill = display_text(&r.skill);
             let _ = writeln!(
                 out,
@@ -1033,6 +1091,7 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
                 r.agent
             );
         }
+        overflow_line(out, "    ", shown, report.missing_skill_refs.len());
     }
 
     for issue in &report.source_issues {
@@ -1045,9 +1104,7 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
                     entries.len(),
                     command_arg(&issue.source),
                 );
-                for name in entries {
-                    let _ = writeln!(out, "    ? {name}");
-                }
+                render_entry_names(out, entries, quiet);
             }
             SourceProblem::Unreadable { entries, reasons } => {
                 let _ = writeln!(
@@ -1055,12 +1112,12 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
                     "\n  source {source} cannot be inventoried — {} item(s) cannot be verified; fix the source layout, refresh cannot:",
                     entries.len()
                 );
-                for reason in reasons {
+                let shown = shown_count(quiet, reasons.len());
+                for reason in &reasons[..shown] {
                     let _ = writeln!(out, "    ✗ {}", display_text(reason));
                 }
-                for name in entries {
-                    let _ = writeln!(out, "    ? {name}");
-                }
+                overflow_line(out, "    ", shown, reasons.len());
+                render_entry_names(out, entries, quiet);
             }
             SourceProblem::Unverifiable { entries, reason } => {
                 let _ = writeln!(
@@ -1070,9 +1127,7 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
                     entries.len(),
                     command_arg(&issue.source),
                 );
-                for name in entries {
-                    let _ = writeln!(out, "    ? {name}");
-                }
+                render_entry_names(out, entries, quiet);
             }
             SourceProblem::Discovery { failures } => {
                 let _ = writeln!(
@@ -1080,9 +1135,11 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
                     "\n  source {source} has {} asset(s) that could not be read — fix them upstream before trusting refresh:",
                     failures.len()
                 );
-                for failure in failures {
+                let shown = shown_count(quiet, failures.len());
+                for failure in &failures[..shown] {
                     let _ = writeln!(out, "    ✗ {}", display_text(failure));
                 }
+                overflow_line(out, "    ", shown, failures.len());
             }
         }
     }
@@ -1093,9 +1150,11 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
             "\n  {} name(s) rejected (unsafe to render or resolve) — inspect the lock file and installed agents by hand:",
             report.invalid_names.len()
         );
-        for item in &report.invalid_names {
+        let shown = shown_count(quiet, report.invalid_names.len());
+        for item in &report.invalid_names[..shown] {
             let _ = writeln!(out, "    ✗ <invalid name> ({})", item.kind);
         }
+        overflow_line(out, "    ", shown, report.invalid_names.len());
     }
 
     if !report.available.is_empty() {
@@ -1124,16 +1183,22 @@ fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
                     .filter(|a| a.source == source)
                     .map(|a| a.name.as_str())
                     .collect();
+                let shown = shown_count(quiet, names.len());
+                let overflow = if names.len() > shown {
+                    format!(", … and {} more", names.len() - shown)
+                } else {
+                    String::new()
+                };
                 // The source is part of the command, not a footnote: with
                 // two sources offering the same name, an unqualified `vstack
                 // add --skill <name>` installs whichever one resolution
                 // happens to pick.
                 let _ = writeln!(
                     out,
-                    "    + {} (`vstack add {} {flag} <name>`): {}",
+                    "    + {} (`vstack add {} {flag} <name>`): {}{overflow}",
                     kind.label_plural(),
                     command_arg(source),
-                    names.join(", ")
+                    names[..shown].join(", ")
                 );
             }
         }
@@ -2251,6 +2316,106 @@ mod scope_report_tests {
         });
     }
 
+    /// Install a codex-native hook exactly as `vstack add` does, so presence
+    /// is checked against the artifacts the installer really writes.
+    fn install_codex_hook(source: &Path, name: &str) {
+        let hook =
+            crate::hook::Hook::from_file(&source.join("hooks").join(format!("{name}.sh"))).unwrap();
+        crate::installer::install_hook(&hook, crate::harness::Harness::Codex, false, &[]).unwrap();
+    }
+
+    fn codex_hook_lock(source: &Path, name: &str) -> LockFile {
+        let mut entry = locked(source, ItemKind::Hook, name);
+        entry.harnesses = vec!["codex".into()];
+        let mut lock = LockFile::default();
+        lock.add(entry);
+        lock
+    }
+
+    fn phantom_note(report: &ScopeReport) -> String {
+        report
+            .phantom
+            .iter()
+            .filter_map(|item| item.detail.clone())
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    #[test]
+    fn a_codex_native_hook_needs_its_registration_not_just_its_script() {
+        with_sandbox("codex-registration", |project, source| {
+            write_hook(source, "guard");
+            install_codex_hook(source, "guard");
+            let lock = codex_hook_lock(source, "guard");
+
+            // Control: the full native install is clean.
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(report.phantom.is_empty(), "control: {report:?}");
+
+            // The script survives, the registration does not — codex will
+            // never run this hook, so it is drift.
+            let hooks_json = project.join(".codex").join("hooks.json");
+            assert!(hooks_json.exists(), "installer must register the hook");
+            std::fs::remove_file(&hooks_json).unwrap();
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert_eq!(names(&report.phantom), vec!["guard"], "{report:?}");
+            assert!(
+                phantom_note(&report).contains("script present but not registered"),
+                "{report:?}"
+            );
+            assert!(report.has_drift());
+        });
+    }
+
+    #[test]
+    fn a_codex_hooks_json_naming_another_script_is_not_this_hook() {
+        with_sandbox("codex-other-script", |project, source| {
+            write_hook(source, "guard");
+            install_codex_hook(source, "guard");
+            let lock = codex_hook_lock(source, "guard");
+
+            // A registration for `pre-guard.sh` must not answer for
+            // `guard.sh`: presence parses the JSON and compares file names,
+            // never a substring of the file body.
+            let hooks_json = project.join(".codex").join("hooks.json");
+            let content = std::fs::read_to_string(&hooks_json).unwrap();
+            std::fs::write(&hooks_json, content.replace("guard.sh", "pre-guard.sh")).unwrap();
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(
+                phantom_note(&report).contains("script present but not registered"),
+                "{report:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn a_disabled_codex_hooks_feature_is_drift() {
+        with_sandbox("codex-feature-off", |project, source| {
+            write_hook(source, "guard");
+            install_codex_hook(source, "guard");
+            let lock = codex_hook_lock(source, "guard");
+
+            let config = project.join(".codex").join("config.toml");
+            let content = std::fs::read_to_string(&config).unwrap();
+            assert!(content.contains("hooks = true"), "control: {content}");
+            std::fs::write(&config, content.replace("hooks = true", "hooks = false")).unwrap();
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert_eq!(names(&report.phantom), vec!["guard"], "{report:?}");
+            assert!(
+                phantom_note(&report).contains("hooks feature disabled"),
+                "{report:?}"
+            );
+
+            // And a config file that never mentions the feature at all.
+            std::fs::remove_file(&config).unwrap();
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(
+                phantom_note(&report).contains("hooks feature disabled"),
+                "{report:?}"
+            );
+        });
+    }
+
     #[test]
     fn pi_legacy_lock_name_is_neither_removed_nor_offered_again() {
         with_sandbox("pi-legacy", |_project, source| {
@@ -2490,6 +2655,104 @@ mod scope_report_tests {
             quiet.contains("beta") && quiet.contains("is not up to date"),
             "{quiet}"
         );
+    }
+
+    #[test]
+    fn the_quiet_report_is_bounded_per_section_while_counts_stay_exact() {
+        let many: Vec<Item> = (0..25)
+            .map(|i| Item::new(format!("item-{i:02}"), ItemKind::Skill))
+            .collect();
+        let refs: Vec<MissingSkillRef> = (0..14)
+            .map(|i| MissingSkillRef {
+                agent: format!("agent-{i:02}"),
+                skill: format!("skill-{i:02}"),
+            })
+            .collect();
+        let report = CheckReport {
+            version: 1,
+            cli_version: "0.0.0",
+            cli_hash: "abc",
+            drift: true,
+            background_refresh_error: None,
+            cache_refresh_failures: Vec::new(),
+            scopes: vec![ScopeReport {
+                scope: "project",
+                installed: 25,
+                outdated: many.clone(),
+                missing_skill_refs: refs,
+                source_issues: vec![SourceIssue {
+                    source: "owner/repo".into(),
+                    problem: SourceProblem::Discovery {
+                        failures: (0..13)
+                            .map(|i| format!("asset-{i:02} is unreadable"))
+                            .collect(),
+                    },
+                }],
+                ..ScopeReport::default()
+            }],
+        };
+
+        let quiet = render_report(&report, true);
+        let item_lines = quiet.matches("(skill)").count();
+        assert_eq!(item_lines, QUIET_SECTION_LIMIT, "{quiet}");
+        assert!(quiet.contains("25 outdated"), "count stays exact: {quiet}");
+        assert!(
+            quiet.contains("… and 15 more (run `vstack check` for the full report)"),
+            "{quiet}"
+        );
+        assert_eq!(
+            quiet.matches("references skill").count(),
+            QUIET_SECTION_LIMIT
+        );
+        assert!(quiet.contains("… and 4 more"), "{quiet}");
+        assert_eq!(quiet.matches("is unreadable").count(), QUIET_SECTION_LIMIT);
+        assert!(quiet.contains("… and 3 more"), "{quiet}");
+        // Bounded by construction: a section cannot outgrow the cap however
+        // large the inventory is.
+        assert!(quiet.lines().count() < 45, "{quiet}");
+
+        // Control: the interactive report is still complete.
+        let full = render_report(&report, false);
+        assert_eq!(full.matches("(skill)").count(), 25, "{full}");
+        assert_eq!(full.matches("is unreadable").count(), 13, "{full}");
+        assert!(!full.contains("and 15 more"), "{full}");
+    }
+
+    #[test]
+    fn each_offering_source_keeps_its_own_suggestion_line() {
+        with_sandbox("available-sources", |project, source| {
+            // Two sources shipping a skill of the same name are two different
+            // implementations; the add command is source-qualified so the
+            // user can pick, which needs both offers on the report.
+            let other = source.parent().unwrap().join("other-source");
+            std::fs::create_dir_all(&other).unwrap();
+            write_skill(source, "alpha", "one");
+            write_skill(source, "shared", "from first");
+            write_skill(&other, "beta", "two");
+            write_skill(&other, "shared", "from second");
+            install_skill_on_disk(project, "alpha");
+            install_skill_on_disk(project, "beta");
+            let mut lock = LockFile::default();
+            lock.add(locked(source, ItemKind::Skill, "alpha"));
+            lock.add(locked(&other, ItemKind::Skill, "beta"));
+
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            let offers: Vec<(&str, &str)> = report
+                .available
+                .iter()
+                .map(|a| (a.name.as_str(), a.source.as_str()))
+                .collect();
+            assert_eq!(
+                offers.iter().filter(|(name, _)| *name == "shared").count(),
+                2,
+                "both offering sources must survive: {offers:?}"
+            );
+
+            let mut out = String::new();
+            render_scope(&mut out, &report, false);
+            assert!(out.contains(&source.to_string_lossy().to_string()), "{out}");
+            assert!(out.contains(&other.to_string_lossy().to_string()), "{out}");
+        });
     }
 
     #[test]

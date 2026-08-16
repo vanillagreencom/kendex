@@ -127,16 +127,7 @@ pub fn run_install_flow(
         let mut problems = crate::config::refresh_remote_caches(&project_lock);
         problems.extend(crate::config::refresh_remote_caches(&global_lock));
         for problem in problems {
-            let detail = match &problem.kind {
-                crate::config::RemoteCacheProblemKind::Failing { cause, .. } => cause
-                    .map_or("the refresh did not complete", |cause| cause.describe())
-                    .to_string(),
-                crate::config::RemoteCacheProblemKind::Unwritable { reason } => reason.clone(),
-            };
-            eprintln!(
-                "Warning: source {} cache is not up to date ({detail}) — using cached content",
-                problem.source
-            );
+            eprintln!("{}", cache_problem_warning(&problem));
         }
     }
 
@@ -667,6 +658,25 @@ fn open_remove_source_confirm(
         body,
         super::render::theme::STATUS_DANGER,
     ));
+}
+
+/// The warning line for a cache the announced refresh could not update.
+///
+/// Every field goes through the check report's own scrub: a source may carry
+/// `user:token@` in its userinfo, and this line lands in terminal scrollback
+/// and captured logs exactly like the report does.
+fn cache_problem_warning(problem: &crate::config::RemoteCacheProblem) -> String {
+    let detail = match &problem.kind {
+        crate::config::RemoteCacheProblemKind::Failing { cause, .. } => cause
+            .map_or("the refresh did not complete", |cause| cause.describe())
+            .to_string(),
+        crate::config::RemoteCacheProblemKind::Unwritable { reason } => reason.clone(),
+    };
+    format!(
+        "Warning: source {} cache is not up to date ({}) — using cached content",
+        crate::commands::check::display_text(&problem.source),
+        crate::commands::check::display_text(&detail)
+    )
 }
 
 fn repo_dialog_remove_cursor(state: &mut FlowState) -> Result<Option<InstallFlowResult>> {
@@ -2497,6 +2507,21 @@ mod tests {
 
     fn key(code: KeyCode) -> crossterm::event::KeyEvent {
         crossterm::event::KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn the_refresh_warning_never_prints_a_credential() {
+        let problem = crate::config::RemoteCacheProblem {
+            source: "https://user:ghp_secrettoken@github.com/owner/repo".into(),
+            kind: crate::config::RemoteCacheProblemKind::Unwritable {
+                reason: "cache directory is read-only".into(),
+            },
+        };
+        let line = cache_problem_warning(&problem);
+        assert!(!line.contains("ghp_secrettoken"), "{line}");
+        assert!(!line.contains("user:"), "{line}");
+        assert!(line.contains("github.com/owner/repo"), "{line}");
+        assert!(line.contains("read-only"), "{line}");
     }
 
     fn agent_fixture(name: &str) -> Agent {

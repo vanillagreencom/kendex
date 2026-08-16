@@ -383,6 +383,132 @@ fn install_hook_codex_native(hook: &Hook, codex_event: &str, global: bool) -> Re
     Ok(())
 }
 
+/// Why a codex-native hook that HAS its script still never runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodexNativeGap {
+    /// Nothing in `<root>/hooks.json` points codex at the script.
+    NotRegistered,
+    /// `[features] hooks` is not on, so codex ignores `hooks.json` entirely.
+    FeatureDisabled,
+}
+
+impl CodexNativeGap {
+    pub(crate) fn describe(self) -> &'static str {
+        match self {
+            Self::NotRegistered => "script present but not registered",
+            Self::FeatureDisabled => "hooks feature disabled",
+        }
+    }
+}
+
+/// What stands between an installed codex-native hook script and codex
+/// actually running it. The script alone proves nothing: codex only executes
+/// what `hooks.json` registers, and only while `[features] hooks = true`.
+/// Reads exactly the two artifacts [`install_hook_codex_native`] writes, so
+/// install and presence answer from the same evidence.
+pub(crate) fn codex_native_hook_gaps(
+    global: bool,
+    hook_name: &str,
+    codex_event: &str,
+) -> Vec<CodexNativeGap> {
+    let root = codex_root(global);
+    let script_path = root.join("hooks").join(format!("{hook_name}.sh"));
+    let owned = codex_owned_hook_commands(global, hook_name, &script_path);
+    let mut gaps = Vec::new();
+    if !codex_hook_is_registered(&root.join("hooks.json"), codex_event, hook_name, &owned) {
+        gaps.push(CodexNativeGap::NotRegistered);
+    }
+    if !codex_hooks_feature_enabled(&root.join("config.toml")) {
+        gaps.push(CodexNativeGap::FeatureDisabled);
+    }
+    gaps
+}
+
+/// Is this hook's script registered under `codex_event` in `hooks.json`?
+///
+/// The file is PARSED, never substring-searched: `hooks.json` naming
+/// `pre-check.sh` must not answer for `check.sh`. A handler counts when its
+/// command is one vstack itself renders, or — for a command a user reshaped
+/// by hand — when a whitespace-delimited token's file name is exactly
+/// `<name>.sh`.
+fn codex_hook_is_registered(
+    hooks_json: &Path,
+    codex_event: &str,
+    hook_name: &str,
+    owned_commands: &[String],
+) -> bool {
+    let Ok(content) = std::fs::read_to_string(hooks_json) else {
+        return false;
+    };
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    doc.get("hooks")
+        .and_then(|hooks| hooks.get(codex_event))
+        .and_then(|entries| entries.as_array())
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry
+                    .get("hooks")
+                    .and_then(|handlers| handlers.as_array())
+                    .is_some_and(|handlers| {
+                        handlers.iter().any(|handler| {
+                            handler
+                                .get("command")
+                                .and_then(|command| command.as_str())
+                                .is_some_and(|command| {
+                                    command_matches_owned_hook_command(command, owned_commands)
+                                        || command_targets_hook_script(command, hook_name)
+                                })
+                        })
+                    })
+            })
+        })
+}
+
+/// Does this command run `<hook_name>.sh`? File-name equality on each token,
+/// so no `notfoo.sh` ever answers for `foo.sh`.
+fn command_targets_hook_script(command: &str, hook_name: &str) -> bool {
+    let wanted = format!("{hook_name}.sh");
+    let quotes = |c: char| c == '"' || c == '\'';
+    command.split_whitespace().any(|token| {
+        token
+            .trim_matches(quotes)
+            .rsplit('/')
+            .next()
+            .is_some_and(|file| file.trim_matches(quotes) == wanted)
+    })
+}
+
+/// Is `[features] hooks = true` set? A missing file, a missing key, and an
+/// explicit `false` all mean codex runs no hooks at all.
+fn codex_hooks_feature_enabled(config_path: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(config_path) else {
+        return false;
+    };
+    let mut in_features = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "[features]" {
+            in_features = true;
+            continue;
+        }
+        if in_features && is_toml_table_header(trimmed) {
+            in_features = false;
+        }
+        if !in_features {
+            continue;
+        }
+        if toml_assignment_key(line) == Some("hooks") {
+            // The value may carry a trailing comment; the first word is it.
+            return toml_assignment_value(line)
+                .and_then(|value| value.split_whitespace().next())
+                .is_some_and(|value| value.trim_matches('"') == "true");
+        }
+    }
+    false
+}
+
 /// Migrate deprecated Codex config keys for the selected scope without
 /// creating a config file or enabling hooks when no native hook is installed.
 pub fn migrate_codex_config(global: bool) -> Result<()> {

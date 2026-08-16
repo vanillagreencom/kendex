@@ -181,18 +181,27 @@ struct ResolvedSource {
     persist: bool,
 }
 
+/// How a source is shown to a human — the scope summary and the TUI source
+/// selector both print this. Display only: selection and installation carry
+/// the raw source, and this string is credential-scrubbed because a
+/// `https://user:token@host/…` remote would otherwise print its token into
+/// terminal scrollback and captured logs.
 fn source_label(source: &str) -> String {
     if Path::new(source).exists() {
         return format!("local: {source}");
     }
 
-    let trimmed = source
+    // Scrub BEFORE trimming: a `https://user:token@github.com/…` remote does
+    // not start with the bare prefix, so trimming first would leave the whole
+    // URL — token included — as the label.
+    let scrubbed = crate::commands::check::display_text(source);
+    scrubbed
         .trim_end_matches('/')
         .trim_end_matches(".git")
         .trim_start_matches("https://github.com/")
         .trim_start_matches("http://github.com/")
-        .trim_start_matches("git@github.com:");
-    trimmed.to_string()
+        .trim_start_matches("git@github.com:")
+        .to_string()
 }
 
 fn build_source_options(
@@ -2917,7 +2926,12 @@ fn clone_or_update(source: &str, interactive: bool) -> Result<PathBuf> {
         // nothing inherited may redirect it at another repository's index or
         // objects, and it may not stop to ask a human anything. Nothing is
         // pinned — there is no cache to pin to yet.
-        eprintln!("Cloning {}...", git_url);
+        // Scrubbed: a `https://user:token@host/…` remote must not print its
+        // token into terminal scrollback or a captured CI log.
+        eprintln!(
+            "Cloning {}...",
+            crate::commands::check::display_text(&git_url)
+        );
         let status = crate::config::git_command_for_cache()
             .args([
                 "clone",
@@ -2937,6 +2951,7 @@ fn clone_or_update(source: &str, interactive: bool) -> Result<PathBuf> {
                  Token: export GH_TOKEN=<your-token>"
             );
         }
+        crate::config::record_cache_clone(&repo_dir);
     }
 
     if !crate::resolve::is_vstack_source(&repo_dir) {

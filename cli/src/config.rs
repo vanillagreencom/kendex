@@ -967,9 +967,28 @@ pub fn remote_source_slug(source: &str) -> Option<String> {
 /// Cache directory key for a source: its slug flattened to ONE path
 /// component, so a cache always sits directly under the cache root.
 fn remote_cache_key(source: &str) -> Option<String> {
-    // One path component, and one that every filesystem accepts: `/` and the
-    // port's `:` both become `_`.
-    Some(remote_source_slug(source)?.replace(['/', ':'], "_"))
+    Some(encode_remote_cache_key(&remote_source_slug(source)?))
+}
+
+/// Flatten a slug to ONE path component, INJECTIVELY. Percent-encoding is
+/// what makes it injective: `_` is a legal character inside a slug segment,
+/// so the old `/`→`_` flattening mapped `github.com/a_b/c` and
+/// `github.com/a/b_c` onto one directory, and whichever cloned first left the
+/// other unverifiable — two valid sources that could not coexist on one
+/// machine. `%` is escaped first so the escapes themselves cannot collide,
+/// and `:` (a port) goes too, which every filesystem accepts and Windows
+/// requires.
+fn encode_remote_cache_key(slug: &str) -> String {
+    let mut key = String::with_capacity(slug.len());
+    for ch in slug.chars() {
+        match ch {
+            '%' => key.push_str("%25"),
+            '/' => key.push_str("%2F"),
+            ':' => key.push_str("%3A"),
+            other => key.push(other),
+        }
+    }
+    key
 }
 
 fn remote_cache_root() -> PathBuf {
@@ -1046,6 +1065,8 @@ fn legacy_remote_cache_dirs(source: &str) -> Vec<PathBuf> {
     };
     let root = remote_cache_root();
     vec![
+        // Pre-percent-encoding: the whole slug flattened with `_`.
+        root.join(slug.replace(['/', ':'], "_")),
         root.join(format!("{owner}_{repo}")),
         root.join(format!("git@{host}:{owner}_{repo}")),
     ]
@@ -1090,10 +1111,19 @@ pub fn remote_cache_lookup(source: &str) -> RemoteCacheLookup {
     let Some(canonical) = remote_cache_dir(source) else {
         return RemoteCacheLookup::NotRemote;
     };
-    let mut candidates = vec![canonical];
-    candidates.extend(legacy_remote_cache_dirs(source));
+    // Only the CANONICAL directory can be unverifiable. A legacy-key
+    // directory that does not prove out simply belongs to somebody else —
+    // its key is lossy by construction, so refusing on it would let one
+    // source's old cache permanently block a different source that merely
+    // flattens to the same legacy name.
+    let mut candidates = vec![(canonical, true)];
+    candidates.extend(
+        legacy_remote_cache_dirs(source)
+            .into_iter()
+            .map(|dir| (dir, false)),
+    );
     let mut first_problem = None;
-    for dir in candidates {
+    for (dir, canonical) in candidates {
         if !dir.join(".git").exists() {
             continue;
         }
@@ -1101,7 +1131,7 @@ pub fn remote_cache_lookup(source: &str) -> RemoteCacheLookup {
             Some(origin) if remote_source_slug(&origin) == remote_source_slug(source) => {
                 return RemoteCacheLookup::Usable(dir);
             }
-            Some(origin) => {
+            Some(origin) if canonical => {
                 first_problem.get_or_insert(RemoteCacheLookup::Unverifiable {
                     reason: format!(
                         "cache {} was cloned from {origin}",
@@ -1110,7 +1140,7 @@ pub fn remote_cache_lookup(source: &str) -> RemoteCacheLookup {
                     dir,
                 });
             }
-            None => {
+            None if canonical => {
                 first_problem.get_or_insert(RemoteCacheLookup::Unverifiable {
                     reason: format!(
                         "cache {} records no origin URL",
@@ -1119,6 +1149,7 @@ pub fn remote_cache_lookup(source: &str) -> RemoteCacheLookup {
                     dir,
                 });
             }
+            _ => {}
         }
     }
     first_problem.unwrap_or(RemoteCacheLookup::Absent)
@@ -1264,6 +1295,17 @@ fn write_fetch_stamp(cache_dir: &Path, stamp: FetchStamp) -> std::io::Result<()>
         } => format!("failed {first} {last} {}\n", cause.token()),
     };
     std::fs::write(remote_cache_fetch_stamp(cache_dir), content)
+}
+
+/// Record a fresh clone as an up-to-date fetch.
+///
+/// A clone IS the newest possible fetch, but it writes no stamp of its own,
+/// and [`remote_cache_fetch_due`] reads an unstamped cache as due — so
+/// without this the very next `check` spawns a background refresh of a clone
+/// made seconds ago. Best-effort: a cache that cannot be stamped is only
+/// refreshed more often than it needs to be, never wrong.
+pub fn record_cache_clone(cache_dir: &Path) {
+    let _ = write_fetch_stamp(cache_dir, FetchStamp::Ok);
 }
 
 /// True when the cache has not been fetched within `max_age`. `None` means
@@ -2239,6 +2281,25 @@ mod remote_cache_ttl_tests {
     }
 
     #[test]
+    fn a_fresh_clone_is_trusted_for_its_full_ttl() {
+        // A clone is the newest possible fetch. Unstamped, the TTL predicate
+        // reads it as due and the next `check` spawns a background refresh of
+        // a cache made seconds ago.
+        let dir = cache_with_git_dir("cloned");
+        assert!(
+            remote_cache_fetch_due(&dir, Some(REMOTE_CACHE_TTL)),
+            "control: an unstamped clone is due"
+        );
+        record_cache_clone(&dir);
+        assert!(!remote_cache_fetch_due(&dir, Some(REMOTE_CACHE_TTL)));
+        assert_eq!(read_fetch_stamp(&dir), Some(FetchStamp::Ok));
+        // And it is a clean stamp: nothing reports the fresh clone as a
+        // failing cache.
+        assert!(remote_cache_problem(&dir).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn fresh_stamp_suppresses_fetch_until_ttl_passes() {
         let dir = cache_with_git_dir("fresh");
         write_fetch_stamp(&dir, FetchStamp::Ok).unwrap();
@@ -2616,7 +2677,10 @@ mod remote_cache_ttl_tests {
         // …and the key stays a single path component.
         let ported = remote_cache_dir("ssh://git@example.com:2222/owner/repo.git").unwrap();
         assert_eq!(ported.parent(), Some(remote_cache_root().as_path()));
-        assert_eq!(ported.file_name().unwrap(), "example.com_2222_owner_repo");
+        assert_eq!(
+            ported.file_name().unwrap(),
+            "example.com%3A2222%2Fowner%2Frepo"
+        );
         // Cleartext transport is refused outright.
         assert!(remote_source_slug("http://github.com/owner/repo").is_none());
         for bad in [
@@ -2643,7 +2707,25 @@ mod remote_cache_ttl_tests {
         let dir = remote_cache_dir("owner/repo").unwrap();
         let root = global_base_dir().join(".vstack").join("cache");
         assert_eq!(dir.parent(), Some(root.as_path()));
-        assert_eq!(dir.file_name().unwrap(), "github.com_owner_repo");
+        assert_eq!(dir.file_name().unwrap(), "github.com%2Fowner%2Frepo");
+    }
+
+    #[test]
+    fn distinct_sources_never_share_a_cache_directory() {
+        // `_` is legal inside a slug segment, so flattening `/` to `_` mapped
+        // these two valid, DIFFERENT repositories onto one directory.
+        let underscore_owner = remote_cache_dir("https://github.com/a_b/c").unwrap();
+        let underscore_repo = remote_cache_dir("https://github.com/a/b_c").unwrap();
+        assert_ne!(underscore_owner, underscore_repo);
+        // Both still sit directly under the cache root, which is what keeps
+        // every cache mutation inside the containment check.
+        let root = remote_cache_root();
+        for dir in [&underscore_owner, &underscore_repo] {
+            assert_eq!(dir.parent(), Some(root.as_path()));
+            assert!(is_under_remote_cache_root(dir), "{dir:?}");
+        }
+        // And nothing escapes the root through the key itself.
+        assert!(remote_cache_dir("https://github.com/../../etc").is_none());
     }
 
     #[test]
@@ -2700,12 +2782,13 @@ mod remote_cache_ttl_tests {
             );
 
             // Control: a legacy directory holding a DIFFERENT repo is not
-            // adopted just because its name matches.
+            // adopted just because its name matches. It is not refused
+            // either — a legacy key is lossy, so a mismatch means the
+            // directory belongs to somebody else, and this source simply has
+            // no cache yet.
             write_fake_clone(&legacy, "https://github.com/other/repo.git");
-            assert!(matches!(
-                remote_cache_lookup("owner/repo"),
-                RemoteCacheLookup::Unverifiable { .. }
-            ));
+            assert_eq!(remote_cache_lookup("owner/repo"), RemoteCacheLookup::Absent);
+            assert!(usable_remote_cache("owner/repo").is_none());
         });
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2851,6 +2934,31 @@ mod remote_cache_ttl_tests {
     }
 
     #[test]
+    fn a_pre_encoding_cache_is_adopted_and_never_blocks_its_colliding_twin() {
+        let root = cache_root("legacy-flat");
+        let config = root.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        crate::test_util::with_home_and_config(&root, &config, || {
+            // What the `_`-flattened key wrote for `github.com/a_b/c`.
+            let legacy = remote_cache_root().join("github.com_a_b_c");
+            write_fake_clone(&legacy, "https://github.com/a_b/c.git");
+            assert_eq!(
+                remote_cache_lookup("https://github.com/a_b/c"),
+                RemoteCacheLookup::Usable(legacy.clone()),
+                "an existing clone must be adopted, not re-cloned"
+            );
+            // The source that used to collide with it now has no cache of
+            // its own — and is free to clone one, rather than being refused
+            // forever because somebody else's directory shares the old key.
+            assert_eq!(
+                remote_cache_lookup("https://github.com/a/b_c"),
+                RemoteCacheLookup::Absent
+            );
+        });
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn a_legacy_scp_shaped_cache_directory_is_adopted_too() {
         let root = cache_root("legacy-scp");
         let config = root.join("config");
@@ -2864,12 +2972,10 @@ mod remote_cache_ttl_tests {
                 RemoteCacheLookup::Usable(legacy.clone()),
                 "an scp-shaped clone must be adopted, not abandoned"
             );
-            // Control: same directory name, different repository — not ours.
+            // Control: same directory name, different repository — not ours,
+            // and not a refusal either (see the legacy adoption test).
             write_fake_clone(&legacy, "git@github.com:someone/else.git");
-            assert!(matches!(
-                remote_cache_lookup("owner/repo"),
-                RemoteCacheLookup::Unverifiable { .. }
-            ));
+            assert_eq!(remote_cache_lookup("owner/repo"), RemoteCacheLookup::Absent);
         });
         let _ = std::fs::remove_dir_all(root);
     }

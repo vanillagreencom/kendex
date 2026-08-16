@@ -313,13 +313,31 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> (Option<bool>, Option
                 let root = crate::installer::codex_root(global);
                 let script = root.join("hooks").join(format!("{name}.sh"));
                 let has_script = script.exists();
-                let has_prose = !has_script && codex_agent_has_prose(&root, name);
-                if !has_script && !has_prose {
-                    // A NATIVE hook's script is drift no matter what agents
-                    // exist; only a true prose-fallback event waits for an
-                    // agent TOML to live in.
-                    if codex_hook_is_native(entry) == Some(true) || codex_scope_has_agents(&root) {
-                        missing.push(format!("{h}: no script and no prose"));
+                let native_event = codex_hook_native_event(entry);
+                match native_event {
+                    // A native hook is installed only when codex will
+                    // RUN it: the script, its `hooks.json` registration,
+                    // and the `hooks` feature. Any one of the three
+                    // missing is a hook that silently never fires.
+                    Some(Some(codex_event)) => {
+                        if !has_script {
+                            missing.push(format!("{h}: script missing"));
+                        } else {
+                            for gap in
+                                crate::installer::codex_native_hook_gaps(global, name, codex_event)
+                            {
+                                missing.push(format!("{h}: {}", gap.describe()));
+                            }
+                        }
+                    }
+                    // Prose fallback, or a source we cannot resolve to
+                    // decide: either artifact answers, and a scope with no
+                    // codex agents has nothing to miss.
+                    _ => {
+                        let has_prose = !has_script && codex_agent_has_prose(&root, name);
+                        if !has_script && !has_prose && codex_scope_has_agents(&root) {
+                            missing.push(format!("{h}: no script and no prose"));
+                        }
                     }
                 }
             }
@@ -338,20 +356,22 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> (Option<bool>, Option
     }
 }
 
-/// Whether this hook's event has a native Codex handler, read from the hook
+/// The Codex event this hook installs natively under, read from the hook
 /// definition in its resolved source. The INSTALLED artifacts cannot answer
-/// this: a deleted `hooks.json` takes the registration's evidence with it,
-/// and any name probe of that file mistakes `pre-check.sh` for `check.sh` —
-/// while the event in the source definition is exactly what decided native
-/// vs prose at install time. `None` when the source cannot be resolved; the
-/// source problem is reported in its own right, and presence then falls back
-/// to the prose rule so an unanswerable question cannot invent unclearable
-/// drift.
-fn codex_hook_is_native(entry: &LockEntry) -> Option<bool> {
+/// whether a hook is native: a deleted `hooks.json` takes the registration's
+/// evidence with it, while the event in the source definition is exactly what
+/// decided native vs prose at install time — and it also names the key the
+/// registration must sit under.
+///
+/// `None` when the source cannot be resolved (the source problem is reported
+/// in its own right, and presence then falls back to the prose rule so an
+/// unanswerable question cannot invent unclearable drift); `Some(None)` when
+/// the source is readable and the event has no Codex equivalent.
+fn codex_hook_native_event(entry: &LockEntry) -> Option<Option<&'static str>> {
     let root = config::resolve_source_path(&entry.source)?;
     let path = crate::catalog::find_item_path(&root, ItemKind::Hook, &entry.name)?;
     let hook = crate::hook::Hook::from_file(&path).ok()?;
-    Some(crate::installer::codex_event_for(&hook.event).is_some())
+    Some(crate::installer::codex_event_for(&hook.event))
 }
 
 /// Does this scope have any Codex agent for a prose fallback to live in?
