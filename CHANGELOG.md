@@ -300,11 +300,15 @@
   but the settings `git clone` writes — checked as an allowlist, because the
   keys naming a program git runs on a repository's behalf (`core.fsmonitor`,
   `core.hooksPath`, a `filter.<driver>.smudge`) grow with git while the set a
-  clone writes does not, and `fetch`/`reset --hard` run them. Every cache
-  command additionally runs with `core.hooksPath` pinned at a directory holding
-  no hooks: an entry's own `.git/hooks/` is a directory of programs — git runs
-  `reference-transaction` for every ref a fetch writes — that no check on its
-  config or its location can see. A cache whose
+  clone writes does not, and `fetch`/`reset --hard` run them. Its `.git/config`
+  must additionally be a regular file of its own: git follows a symlink there,
+  so a link to another repository's config answered every check for that
+  repository and then had its `origin` rewritten. Every cache
+  command runs with `core.hooksPath` pinned at `/dev/null` — a path that is
+  never a directory on any platform, so no hook is ever found: an entry's own
+  `.git/hooks/` is a directory of programs — git runs `reference-transaction`
+  for every ref a fetch writes — that no check on its config or its location
+  can see. A cache whose
   `core.worktree` pointed at a user checkout used to have that checkout's
   tracked files overwritten (VST-256). A
   Reading an entry asks every one of those questions too, not just the

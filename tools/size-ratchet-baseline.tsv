@@ -8,8 +8,8 @@ cli/src/config.rs	3895
 cli/src/installer.rs	3784
 cli/src/pi_extension.rs	2857
 cli/src/project_config.rs	4892
-cli/src/refresh_sources.rs	1860
-cli/src/refresh_sources/tests.rs	2885
+cli/src/refresh_sources.rs	1878
+cli/src/refresh_sources/tests.rs	2926
 cli/src/tui/disk_mutations/tests.rs	1533
 cli/src/tui/install_flow.rs	2659
 cli/src/tui/multiselect.rs	1095

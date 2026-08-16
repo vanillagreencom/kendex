@@ -720,6 +720,47 @@ fn update_cached_repo_refuses_a_cache_config_that_names_a_program() {
     }
 }
 
+/// `.git/config` is the one file vstack writes, and git follows a symlink
+/// there like any other: every check answers for the repository at the far end,
+/// and then `remote set-url` edits ITS origin.
+#[cfg(unix)]
+#[test]
+fn update_cached_repo_refuses_a_cache_whose_config_is_a_symlink() {
+    let root = tmpdir("symlinked-config");
+    let origin = root.join("origin");
+    init_git_repo(&origin);
+    let victim = root.join("victim");
+    clone_into(&origin, &victim);
+    let cache = root.join("cache").join("owner_repo");
+    clone_into(&origin, &cache);
+
+    let victim_config = victim.join(".git").join("config");
+    let before = std::fs::read_to_string(&victim_config).unwrap();
+    std::fs::remove_file(cache.join(".git").join("config")).unwrap();
+    std::os::unix::fs::symlink(&victim_config, cache.join(".git").join("config")).unwrap();
+
+    let remote = RemoteSource {
+        git_url: format!("{}/", file_url(&origin)),
+        ..remote_at(&cache, &origin)
+    };
+    let err = update_cached_repo(&remote).unwrap_err().to_string();
+
+    assert!(err.contains("refusing cached source owner/repo"), "{err}");
+    assert!(err.contains("does not own its git configuration"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&victim_config).unwrap(),
+        before,
+        "the victim's configuration was rewritten by the refused update"
+    );
+    // The read-only path refuses it too — reading the entry would read the
+    // victim's repository.
+    assert!(matches!(
+        source_path_resolution(&format!("file://{}", origin.display())),
+        SourceResolution::Absent | SourceResolution::Refused(_)
+    ));
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// The gate is an allowlist, so it must still accept exactly what a clone
 /// writes — otherwise every cache entry is refused and the refusal proves
 /// nothing.

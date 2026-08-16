@@ -1218,6 +1218,24 @@ pub(crate) fn ensure_cache_entry_is_owned(remote: &RemoteSource) -> Result<()> {
         ));
     }
 
+    // `.git/config` is the one file vstack WRITES, and git follows a symlink
+    // there like any other: a link to another repository's config makes every
+    // check above answer for that repository, and then `remote set-url` edits
+    // it. Required to be a regular file of the entry's own.
+    let config_meta = std::fs::symlink_metadata(remote.cache_dir.join(".git").join("config"))
+        .with_context(|| {
+            format!(
+                "inspecting git configuration for cached source {}",
+                remote.display
+            )
+        })?;
+    if !config_meta.is_file() || config_meta.file_type().is_symlink() {
+        return Err(refusal(
+            remote,
+            "its cache entry does not own its git configuration",
+        ));
+    }
+
     reject_unowned_cache_config(remote)?;
 
     let output = hardened_cache_git_command(&remote.cache_dir)
