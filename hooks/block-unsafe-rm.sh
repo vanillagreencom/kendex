@@ -48,8 +48,11 @@ fi
 # segments that start with rm (optionally under sudo/env prefixes are out of
 # scope — the shape the harness prompts on is a plain rm). Tabs count as the
 # word separators they are, and a leading subshell/group/substitution opener
-# is peeled so `(rm …` and `$(rm …` classify like `rm …`.
-SEGMENTS=$(printf '%s\n' "$COMMAND" | tr '\t' ' ' | sed 's/\\n/\n/g' | sed -E 's/(&&|\|\||;|\|)/\n/g')
+# is peeled so `(rm …` and `$(rm …` classify like `rm …`. awk, not sed: a
+# newline in a sed replacement is a GNU extension BSD sed lacks, and this
+# hook runs on the macOS Bash 3.2 target too.
+SEGMENTS=$(printf '%s\n' "$COMMAND" \
+  | awk '{ gsub(/\t/, " "); gsub(/\\n/, "\n"); gsub(/&&|\|\||;|\|/, "\n"); print }')
 
 while IFS= read -r seg; do
   seg=$(printf '%s' "$seg" | sed 's/^[[:space:]({$`]*//')

@@ -46,7 +46,7 @@ run_hook() { # command -> rc, stderr in ERR_FILE
 # A PATH without jq exercises the escape-aware fallback decoder.
 NOJQ_BIN="$TMP_ROOT/nojq"
 mkdir -p "$NOJQ_BIN"
-for tool in cat sed grep head tr; do
+for tool in cat sed grep head awk; do
   real="$(command -v "$tool" 2>/dev/null || true)"
   [ -n "$real" ] || continue
   ln -sf "$real" "$NOJQ_BIN/$tool"
