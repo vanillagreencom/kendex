@@ -5,7 +5,9 @@
 # Outcomes (distinct exit codes + messages):
 #   0   MERGED                 — merge completed immediately
 #   0   ALREADY MERGED         — PR was already merged; nothing attempted
-#   75  QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active
+#   75  QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active;
+#                                 VOLATILE: a queue ejection disarms it silently,
+#                                 so the caller keeps watching until MERGED
 #   1   BLOCKED                — checks failed; no merge attempted, none queued
 #   1   CLOSED (not merged)    — PR is closed unmerged; nothing attempted
 #
@@ -78,6 +80,7 @@ Modes:
 Exit codes:
   0    MERGED / ALREADY MERGED — merge completed now, or the PR was already merged
   75   QUEUED / AUTO-MERGE     — merge queue entry or classic auto-merge is active
+                                 (volatile: an ejection disarms it silently — keep watching)
   1    BLOCKED / CLOSED        — checks failed or the PR is closed unmerged; nothing queued
 
 Examples:
@@ -362,6 +365,15 @@ gh_with_token() {
     fi
 }
 
+# Exit 75 is not a resting state: a merge-group failure ejects the entry and
+# GitHub disarms auto-merge with it, silently — an armed PR can sit open,
+# gate-clear, and unwatched. Every 75 exit says so and names the watchers.
+volatile_note() {
+    local pr_num="$1"
+    echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection disarms it silently; keep watching until MERGED" >&2
+    echo "  Watch with: orch queue-wait $pr_num (verdict ejected/disarmed) or review-gate pr-watch.sh (disarmed lines); re-arm with pr-merge $pr_num --auto" >&2
+}
+
 # Read one authoritative post-mutation snapshot. `gh pr view --json` does not
 # expose merge-queue membership, so required-queue repositories need GraphQL.
 # Fall back to the classic `gh pr view` fields when the queue query itself is
@@ -644,13 +656,13 @@ main() {
 
     if [ "$post_in_queue" = "true" ] || [ "$post_queue_entry" = "true" ]; then
         echo "QUEUED IN MERGE QUEUE PR #$pr_num — queueState=${post_queue_state:-active}" >&2
-        echo "  Track with: github.sh await-mergeable $pr_num" >&2
+        volatile_note "$pr_num"
         exit 75
     fi
 
     if [ "$post_auto" = "true" ]; then
         echo "AUTO-MERGE ENABLED PR #$pr_num — will fire when CI + branch protection clear" >&2
-        echo "  Track with: github.sh await-mergeable $pr_num" >&2
+        volatile_note "$pr_num"
         exit 75
     fi
 

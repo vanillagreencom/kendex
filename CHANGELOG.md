@@ -12,6 +12,11 @@
   once at `start-worktree` and never checked again, and a concurrent writer
   could reset the tree, rewrite round artifacts, and move the PR head
   underneath a live round with nothing failing.
+- github: `pr-merge` exit 75 (queued / auto-merge armed) now states on stderr
+  that the state is volatile — a merge-group ejection disarms it silently —
+  and names the watcher (`queue-wait`, `pr-watch.sh`) and the re-arm; the
+  SKILL.md outcomes table says the same, and that `await-mergeable` is not
+  that watcher (VST-295).
 - ci: `CHANGELOG.md` joins the size-ratchet excludes — an append-only log
   grows every PR by design and its seam is release rotation, not a code
   split; the gate was about to block every open PR at 1000 lines.

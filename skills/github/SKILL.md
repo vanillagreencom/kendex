@@ -127,10 +127,18 @@ parsing stderr:
 |------|---------|-------------|------|
 | `0`  | MERGED | `MERGED PR #N` | Merge completed immediately |
 | `0`  | MERGED | `ALREADY MERGED PR #N <mergedAt>` | PR was merged before the call; nothing attempted |
-| `75` | MERGE PENDING | `QUEUED IN MERGE QUEUE PR #N` | A required GitHub merge queue has an active entry |
-| `75` | MERGE PENDING | `AUTO-MERGE ENABLED PR #N` | Classic auto-merge is armed until protection clears |
+| `75` | MERGE PENDING (volatile) | `QUEUED IN MERGE QUEUE PR #N` | A required GitHub merge queue has an active entry — an ejection disarms it silently; keep watching until MERGED |
+| `75` | MERGE PENDING (volatile) | `AUTO-MERGE ENABLED PR #N` | Classic auto-merge is armed until protection clears — a protection failure disarms it silently; keep watching until MERGED |
 | `1`  | BLOCKED | `BLOCKED PR #N` | Nothing merged, queued, or armed |
 | `1`  | BLOCKED | `CLOSED (not merged) PR #N` | PR is closed unmerged; nothing attempted |
+
+Exit `75` is not a resting state. A merge-group failure ejects the queue entry
+and GitHub disarms auto-merge with it — the PR sits open, gate-clear, and
+merges nothing. The caller that armed it keeps a watcher running until the PR
+is `MERGED`: the orch skill's `queue-wait <N>` (returns `ejected`/`disarmed`
+with its cause) or the review-gate reducer `pr-watch.sh` (`disarmed … (re-arm)`
+lines), then re-arms with `pr-merge <N> --auto`. `await-mergeable` is not that
+watcher — it returns as soon as GitHub computes a merge state.
 
 A PR that has left `OPEN` is terminal and short-circuits every mode before any
 check, auth, or mutation: `mergeable` is permanently `UNKNOWN` after a merge,
