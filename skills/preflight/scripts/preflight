@@ -324,9 +324,30 @@ def shell_of(node):
     s = scalar(m.get("shell"))
     return s
 def is_bash(shell):
-    if shell is None:
-        return True
     return re.match(r"^(bash|sh)(\s|$)", shell.strip()) is not None
+# With no shell declared anywhere, GitHub runs bash on Linux/macOS runners and
+# PowerShell on Windows ones. An implicit shell is bash only when every
+# runs-on label is a plain, non-Windows string; an expression or a Windows
+# label leaves the default unresolved and the step is skipped.
+def implicit_shell_is_bash(jm):
+    ro = jm.get("runs-on")
+    labels = []
+    if isinstance(ro, yaml.ScalarNode):
+        labels = [ro.value]
+    elif isinstance(ro, yaml.SequenceNode):
+        labels = [n.value for n in ro.value if isinstance(n, yaml.ScalarNode)]
+    elif isinstance(ro, yaml.MappingNode):
+        lab = mapping(ro).get("labels")
+        if isinstance(lab, yaml.ScalarNode):
+            labels = [lab.value]
+        elif isinstance(lab, yaml.SequenceNode):
+            labels = [n.value for n in lab.value if isinstance(n, yaml.ScalarNode)]
+    if not labels:
+        return False
+    for label in labels:
+        if "${{" in label or "windows" in label.lower():
+            return False
+    return True
 top = mapping(root)
 default_shell = shell_of(mapping(top.get("defaults")).get("run")) if "defaults" in top else None
 jobs = mapping(top.get("jobs"))
@@ -342,7 +363,11 @@ for _, job in jobs.items():
         if not isinstance(run, yaml.ScalarNode):
             continue
         shell = scalar(sm.get("shell"))
-        if not is_bash(shell if shell is not None else job_shell):
+        effective = shell if shell is not None else job_shell
+        if effective is None:
+            if not implicit_shell_is_bash(jm):
+                continue
+        elif not is_bash(effective):
             continue
         # Block scalars (| >) start their content on the line after the key;
         # flow/plain scalars start on the key line itself. A folded scalar

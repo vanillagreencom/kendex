@@ -176,6 +176,16 @@ jobs:
         run: >
           echo one
           echo "unterminated
+  win:
+    runs-on: windows-latest
+    steps:
+      - name: implicit pwsh
+        run: if ($true) { Write-Host "not bash" }
+  matrix:
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: unresolved default shell
+        run: if ($true) { Write-Host "not bash" }
 YML
   # Invalid YAML is a finding at the parser's line, never a silent skip.
   printf 'name: bad\non: push\njobs:\n\tx: 1\n' >"$R/.github/workflows/bad.yml"
@@ -185,9 +195,9 @@ YML
   fires "a folded (>) block reports at its first line, since bash never sees its source lines" ".github/workflows/ci.yml:21: [workflow-run-syntax]"
   fires "a workflow file that is not valid YAML is a finding at the parser's line" ".github/workflows/bad.yml:4: [workflow-run-syntax] workflow YAML did not parse"
   case "$OUT" in
-    *"ci.yml:8: "* | *"ci.yml:18: "*)
-      bad "the clean step (line 8) and the python step (line 18) contribute no findings" "out=$OUT" ;;
-    *) ok "the clean step (line 8) and the python step (line 18) contribute no findings" ;;
+    *"ci.yml:8: "* | *"ci.yml:18: "* | *"ci.yml:27: "* | *"ci.yml:32: "*)
+      bad "the clean step (8), the python step (18), the implicit-pwsh Windows step (27) and the unresolved-runner step (32) contribute no findings" "out=$OUT" ;;
+    *) ok "the clean step (8), the python step (18), the implicit-pwsh Windows step (27) and the unresolved-runner step (32) contribute no findings" ;;
   esac
 else
   skipped "workflow-run-syntax must-fail control" "no python3 with PyYAML"
