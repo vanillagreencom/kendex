@@ -59,12 +59,25 @@ SEGMENTS=$(printf '%s\n' "$COMMAND" \
         # A backslash-newline is a continuation of ONE shell word list, so it
         # folds to a space before the separator split.
         gsub(/\\\n/, " ", blob)
-        gsub(/&&|\|\||;|\|/, "\n", blob)
+        # Every ; | & separates commands — the doubled forms collapse into
+        # an empty segment between two newlines, which matches nothing.
+        gsub(/[;|&]/, "\n", blob)
         printf "%s", blob
       }')
 
 while IFS= read -r seg; do
-  seg=$(printf '%s' "$seg" | sed 's/^[[:space:]({$`]*//')
+  # Peel whatever can stand between a separator and the command word:
+  # subshell/group/substitution openers and the shell control keywords, so
+  # `then rm …`, `do rm …`, and `( rm …` all classify as `rm …`.
+  while :; do
+    case "$seg" in
+      [[:space:]]* | '('* | '{'* | '$'* | '`'*)
+        seg=$(printf '%s' "$seg" | sed 's/^[[:space:]({$`]*//') ;;
+      then\ * | do\ * | else\ * | elif\ * | if\ * | while\ * | until\ * | time\ * | '!'\ *)
+        seg=${seg#* } ;;
+      *) break ;;
+    esac
+  done
   case "$seg" in
     rm\ *) ;;
     *) continue ;;

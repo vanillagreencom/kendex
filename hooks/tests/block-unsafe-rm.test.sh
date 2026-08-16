@@ -74,6 +74,9 @@ run_hook "$(printf 'rm\t-rf\t%s' '$X')"; assert_eq "$rc" 2 'tab-separated rm -rf
 run_hook 'rm -rf -- -$DIR/sub';          assert_eq "$rc" 2 'a dash-leading operand after -- is still a variable root'
 run_hook 'rm -rf $LOGS/*.log';           assert_eq "$rc" 2 'a glob in the operand does not disturb classification'
 run_hook 'rm -rf "${X+x:?}/save"';       assert_eq "$rc" 2 'an unset-guarded alternative whose text contains :? can expand empty and is refused'
+run_hook 'true & rm -rf "$X/sub"';       assert_eq "$rc" 2 'a lone ampersand separates commands too'
+run_hook 'if true; then rm -rf "$X/sub"; fi'; assert_eq "$rc" 2 'a control-keyword prefix does not hide the rm'
+run_hook 'while x; do rm -rf $Y; done';  assert_eq "$rc" 2 'a do-prefixed rm inside a loop is refused'
 run_hook 'rm -rf ""$X/sub';              assert_eq "$rc" 2 'an empty double-quote pair does not hide the variable root'
 run_hook "rm -rf ''\$X/sub";             assert_eq "$rc" 2 'an empty single-quote pair does not hide the variable root'
 set +e
