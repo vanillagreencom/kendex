@@ -16,9 +16,11 @@
 #   4. question   a listed lane's pane shows a question/selection prompt
 #   5. heartbeat  after --max-loops passes with no event
 #
-# Output on the first event: `EVENT <kind> ...` on stdout, followed by
-# supporting lines (the merged PR list, the pane tail, or the open PR list for
-# a heartbeat), then the latest pr-watch attention lines when there are any.
+# Output on the first event: `EVENT <kind> ...` on stdout — one line, except
+# `merged`, which prints one `EVENT merged` line per merged item so the
+# overseer advances every finished lane in one wake — followed by supporting
+# lines (the pane tail, or the open PR list for a heartbeat), then the latest
+# pr-watch attention lines when there are any.
 # Silence on stdout never means "fine": every exit path prints an EVENT line
 # or a stderr error.
 #
@@ -60,8 +62,9 @@ usage() {
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO] [LANE_WINDOW...]
 
-Blocks until the fleet needs the overseer, prints one `EVENT <kind> ...` line
-(plus supporting lines), and exits 0. Re-run it after handling the event, with
+Blocks until the fleet needs the overseer, prints one event — an `EVENT
+<kind> ...` line, or for `merged` one `EVENT merged` line per merged item —
+plus supporting lines, and exits 0. Re-run it after handling the event, with
 the lanes still live: drop a merged item and a dead lane's window, keep
 --since as the fleet's start.
 

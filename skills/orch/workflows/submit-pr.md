@@ -10,9 +10,11 @@ Run a local pre-PR review, push, create or update the PR, triage review comments
 
 **Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 7) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number.
 
-**With a PR number**: `github.sh pr-issue [PR_NUMBER] --format=text` gives `ISSUE_ID`; `worktree exists`/`worktree path` give `WT_PATH`, or ask before creating one when already inside the PR checkout. Resolve `TRACKER` and `ISSUE_REF` per [Tracker Resolution](../SKILL.md#tracker-resolution). With no argument, `WT_PATH` is the current directory.
+**With a PR number**: `github.sh pr-issue [PR_NUMBER] --format=text` gives `ISSUE_ID`; `worktree exists`/`worktree path` give `WT_PATH`, or ask before creating one when already inside the PR checkout. With no argument, `WT_PATH` is the current directory.
 
 **Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
+
+**Every path** — PR number, standalone, or managed (`issue_id` arrives, the tracker reference does not) — then resolves `TRACKER` and `ISSUE_REF` from `ISSUE_ID` per [Tracker Resolution](../SKILL.md#tracker-resolution); the PR body's `Closes` line renders `ISSUE_REF` only.
 
 ---
 
