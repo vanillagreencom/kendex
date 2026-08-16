@@ -24,6 +24,15 @@ scripts/integration-check.sh
 
 Do not validate by running `cargo run -- add .. --all --copy` from inside this checkout: `vstack add` resolves PROJECT scope by walking up from the current directory to the nearest project root, which is this checkout itself — so that command installs every item into the source working copy, not a temp dir.
 
+## Source cache refresh
+
+Remote sources are cloned under `~/.vstack/cache/`. Concurrency and process rules the user-facing docs deliberately omit:
+
+- Fetching an existing cache is serialized by a per-cache lock that every writing command takes. The first clone creates the cache rather than mutating it, so it is not covered by that lock.
+- `check` never fetches inline. A cache past its six-hour TTL is handed to a detached `vstack cache-refresh` that nobody waits on; its outcome is recorded and reported at the next session. `--offline` skips the handoff entirely.
+- When the background refresh cannot even be spawned (a sandbox denying process creation, for instance), `check` reports it on its own line — informational, never drift.
+- `vstack refresh` fetches synchronously and unbounded; only the background refresh and the wizard's startup fetch are bounded and credential-free.
+
 ## Skill / Pi extension test surfaces
 
 The CLI does not run skill or extension tests during ordinary commands. Each test surface lives next to the code it covers, except source-only cross-boundary installation checks, which stay in `scripts/integration-check.sh` so they are not shipped in an installed skill:

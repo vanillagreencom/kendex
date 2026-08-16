@@ -78,11 +78,16 @@ export function runCommandAsync(command: string, args: string[], cwd: string, ti
 
 		timer = setTimeout(() => {
 			timedOut = true;
-			killChild("SIGTERM");
+			// Scheduled before the SIGTERM, and inert once the run has settled:
+			// an escalation assigned after a kill that settles the promise in the
+			// same turn is a timer no settle path holds a handle to, and it would
+			// later signal a pid the OS may have recycled onto another process.
 			killTimer = setTimeout(() => {
+				if (settled) return;
 				killChild("SIGKILL");
 				finish(-1, `\n${command} ${args.join(" ")} timed out after ${Math.max(1, timeoutMs)}ms and was killed.`);
 			}, 1000);
+			killChild("SIGTERM");
 		}, Math.max(1, timeoutMs));
 
 		child.stdout?.on("data", (chunk) => appendChunk(stdout, chunk, stdoutBytes, maxBuffer));

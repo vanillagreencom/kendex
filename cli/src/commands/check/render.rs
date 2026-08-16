@@ -181,13 +181,15 @@ fn section(out: &mut String, header: &str, glyph: char, items: &[Item], quiet: b
     overflow_line(out, "    ", shown, items.len());
 }
 
-/// The `? <name>` list a source problem attaches to its header. Capped in
+/// The `? <name>` list a source problem attaches to its header. Every name is
+/// scrubbed here rather than at the caller, so the module's guarantee — nothing
+/// reaches the report unscrubbed — holds at the point of rendering. Capped in
 /// quiet mode; the header above it already carries the true count.
 fn render_entry_names(out: &mut String, entries: &[String], quiet: bool) {
     use std::fmt::Write as _;
     let shown = shown_count(quiet, entries.len());
     for name in &entries[..shown] {
-        let _ = writeln!(out, "    ? {name}");
+        let _ = writeln!(out, "    ? {}", display_text(name));
     }
     overflow_line(out, "    ", shown, entries.len());
 }

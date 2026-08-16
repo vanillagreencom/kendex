@@ -133,8 +133,16 @@ pub(crate) fn codex_native_hook_gaps(
     let root = codex_root(global);
     let script_path = root.join("hooks").join(format!("{hook_name}.sh"));
     let owned = codex_owned_hook_commands(global, hook_name, &script_path);
+    // Only the project-scope command defers the repo root to run time.
+    let git_root = (!global).then(|| root.parent()).flatten();
     let mut gaps = Vec::new();
-    if !codex_hook_is_registered(&root.join("hooks.json"), codex_event, hook_name, &owned) {
+    if !codex_hook_is_registered(
+        &root.join("hooks.json"),
+        codex_event,
+        &script_path,
+        git_root,
+        &owned,
+    ) {
         gaps.push(CodexNativeGap::NotRegistered);
     }
     if !codex_hooks_feature_enabled(&root.join("config.toml")) {
@@ -148,12 +156,14 @@ pub(crate) fn codex_native_hook_gaps(
 /// The file is PARSED, never substring-searched: `hooks.json` naming
 /// `pre-check.sh` must not answer for `check.sh`. A handler counts when its
 /// command is one vstack itself renders, or — for a command a user reshaped
-/// by hand — when a whitespace-delimited token's file name is exactly
-/// `<name>.sh`.
+/// by hand around OUR script — when one of its tokens resolves to
+/// `script_path`. A same-named script elsewhere on disk is somebody else's
+/// handler, and letting it answer would mask a deleted managed entry.
 fn codex_hook_is_registered(
     hooks_json: &Path,
     codex_event: &str,
-    hook_name: &str,
+    script_path: &Path,
+    git_root: Option<&Path>,
     owned_commands: &[String],
 ) -> bool {
     let Ok(content) = std::fs::read_to_string(hooks_json) else {
@@ -177,7 +187,11 @@ fn codex_hook_is_registered(
                                 .and_then(|command| command.as_str())
                                 .is_some_and(|command| {
                                     command_matches_owned_hook_command(command, owned_commands)
-                                        || command_targets_hook_script(command, hook_name)
+                                        || command_targets_hook_script(
+                                            command,
+                                            script_path,
+                                            git_root,
+                                        )
                                 })
                         })
                     })
@@ -185,47 +199,51 @@ fn codex_hook_is_registered(
         })
 }
 
-/// Does this command run `<hook_name>.sh`? File-name equality on each token,
-/// so no `notfoo.sh` ever answers for `foo.sh`.
-fn command_targets_hook_script(command: &str, hook_name: &str) -> bool {
-    let wanted = format!("{hook_name}.sh");
+/// The repo-root substitution the project-scope command defers to run time.
+/// A user who reshapes that command keeps it, so registration checking has to
+/// read the command the same way the shell codex hands it to will.
+const CODEX_GIT_TOPLEVEL: &str = "$(git rev-parse --show-toplevel)";
+
+/// Does this command run the managed script? Path equality on each
+/// whitespace-delimited token, so neither `notfoo.sh` nor an unrelated
+/// `foo.sh` elsewhere on disk answers for `<root>/hooks/foo.sh`.
+fn command_targets_hook_script(command: &str, script_path: &Path, git_root: Option<&Path>) -> bool {
+    let expanded = match git_root {
+        Some(root) => command.replace(CODEX_GIT_TOPLEVEL, &root.to_string_lossy()),
+        None => command.to_string(),
+    };
+    let wanted = resolved_path(script_path);
     let quotes = |c: char| c == '"' || c == '\'';
-    command.split_whitespace().any(|token| {
-        token
-            .trim_matches(quotes)
-            .rsplit('/')
-            .next()
-            .is_some_and(|file| file.trim_matches(quotes) == wanted)
-    })
+    expanded
+        .split_whitespace()
+        .any(|token| resolved_path(Path::new(token.trim_matches(quotes))) == wanted)
 }
 
-/// Is `[features] hooks = true` set? A missing file, a missing key, and an
-/// explicit `false` all mean codex runs no hooks at all.
-fn codex_hooks_feature_enabled(config_path: &Path) -> bool {
+/// Path identity for comparison: the canonical path when it exists, so a
+/// symlinked or `..`-spelled command still names the same script, and the
+/// path exactly as written when it does not.
+fn resolved_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Is `[features] hooks` the boolean `true`? Read with a real TOML parser,
+/// because that is what codex reads it with: a line scanner answers `true`
+/// for the literal text `[features]` / `hooks = true` inside an unrelated
+/// multiline string, and for the string `"true"` codex would reject. A
+/// missing file, an unparseable file, a missing table, a missing key, a
+/// non-boolean value, and an explicit `false` all mean codex runs no hooks.
+/// The writer stays line-based so it keeps the user's comments and ordering.
+pub(super) fn codex_hooks_feature_enabled(config_path: &Path) -> bool {
     let Ok(content) = std::fs::read_to_string(config_path) else {
         return false;
     };
-    let mut in_features = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed == "[features]" {
-            in_features = true;
-            continue;
-        }
-        if in_features && is_toml_table_header(trimmed) {
-            in_features = false;
-        }
-        if !in_features {
-            continue;
-        }
-        if toml_assignment_key(line) == Some("hooks") {
-            // The value may carry a trailing comment; the first word is it.
-            return toml_assignment_value(line)
-                .and_then(|value| value.split_whitespace().next())
-                .is_some_and(|value| value.trim_matches('"') == "true");
-        }
-    }
-    false
+    let Ok(doc) = content.parse::<toml::Value>() else {
+        return false;
+    };
+    doc.get("features")
+        .and_then(|features| features.get("hooks"))
+        .and_then(|hooks| hooks.as_bool())
+        .unwrap_or(false)
 }
 
 /// Migrate deprecated Codex config keys for the selected scope without

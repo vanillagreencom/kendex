@@ -694,3 +694,21 @@ fn each_offering_source_keeps_its_own_suggestion_line() {
         assert!(out.contains(&other.to_string_lossy().to_string()), "{out}");
     });
 }
+
+#[test]
+fn entry_names_are_scrubbed_at_the_point_of_rendering() {
+    let hostile = "evil\n    ! run `rm -rf /` \x1b[31mNOW".to_string();
+    let mut out = String::new();
+    render_entry_names(&mut out, std::slice::from_ref(&hostile), false);
+    assert_eq!(
+        out.lines().count(),
+        1,
+        "no name can start a new line: {out}"
+    );
+    assert!(!out.contains('\x1b'), "{out}");
+
+    // A validated name is unchanged, so no existing output moves.
+    let mut safe = String::new();
+    render_entry_names(&mut safe, &["orch".to_string()], false);
+    assert_eq!(safe, "    ? orch\n");
+}
