@@ -20,8 +20,8 @@ test("transcript records land in call order when an earlier write finishes late"
 	const appender = createTranscriptAppender("/dev/null", appendFile);
 	appender.append({ n: 1 });
 	appender.append({ n: 2 });
-	// Let the microtask queue run so a non-serialized appender would have issued both writes.
-	await new Promise((resolve) => setTimeout(resolve, 5));
+	// No wall-clock wait: a non-serialized appender issues write 2 synchronously
+	// inside append(), so it has already landed by the time write 1 is released.
 	for (const r of release) r();
 	await appender.settled();
 	const order = landed.trim().split("\n").map((line) => JSON.parse(line).n);
