@@ -68,7 +68,16 @@ now_epoch="$(date -u +%s)" || config_error "could not read the clock"
 while IFS=$'\t' read -r iid ititle istate iupdated; do
   [ -n "$iid" ] || continue
   updated_epoch="$(date -u -d "$iupdated" +%s 2>/dev/null)" || updated_epoch=""
-  [ -n "$updated_epoch" ] || continue
+  if [ -z "$updated_epoch" ]; then
+    # BSD date has no -d; parse the ISO stamp with -j -f (fractional part
+    # and zone dropped — whole-second precision is plenty for an hours
+    # threshold).
+    trimmed="${iupdated%%.*}"
+    trimmed="${trimmed%Z}"
+    updated_epoch="$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$trimmed" +%s 2>/dev/null)" || updated_epoch=""
+  fi
+  # A timestamp neither form can read must never silently shrink the check.
+  [ -n "$updated_epoch" ] || config_error "could not parse updatedAt '$iupdated' for $iid — the started-stale check cannot run"
   age_hours=$(((now_epoch - updated_epoch) / 3600))
   [ "$age_hours" -ge "$STALE_HOURS" ] || continue
   branch="$(printf '%s' "$iid" | tr '[:upper:]' '[:lower:]')"
