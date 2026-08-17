@@ -144,6 +144,26 @@ test("native pane-session message records render as content, not failures", () =
 	assert.match(out, /^ \[0:00\] assistant · pane says hi$/);
 });
 
+test("pane-session timestamp field yields elapsed stamps, string or numeric", () => {
+	const out = formatTranscriptForDisplay([
+		line({ message: { content: [{ text: "one", type: "text" }], role: "user" }, timestamp: at(0), type: "message" }),
+		line({ message: { content: [{ text: "two", type: "text" }], role: "assistant" }, timestamp: Date.parse(at(83)), type: "message" }),
+	].join("\n"));
+	assert.match(out, /\[0:00\] user · one/);
+	assert.match(out, /\[1:23\] assistant · two/);
+	assert.doesNotMatch(out, /--:--/);
+});
+
+test("a mixed text+toolCall message keeps its compact tool-call row", () => {
+	const out = formatTranscriptForDisplay(line({
+		message: { content: [{ text: "let me check", type: "text" }, { name: "bash", type: "toolCall" }], role: "assistant" },
+		timestamp: at(0),
+		type: "message",
+	}));
+	assert.match(out, /assistant · let me check/);
+	assert.match(out, /assistant · 1 tool call: bash/);
+});
+
 test("benign lifecycle records are neutral rows; trouble-shaped ones are not", () => {
 	const benign = formatTranscriptForDisplay(line({ ts: at(0), type: "settled_shutdown" }));
 	assert.match(benign, /^ \[0:00\] settled_shutdown/);

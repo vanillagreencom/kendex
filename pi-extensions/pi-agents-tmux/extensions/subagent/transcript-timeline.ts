@@ -94,8 +94,10 @@ function messageContentRows(message: any): Array<Pick<TimelineRow, "kind" | "det
 			toolNames.push(stringValue(part.name) ?? stringValue(part.toolName) ?? stringValue(part.tool_name) ?? "tool");
 		}
 	}
-	// A tool-call-only assistant message reads as its calls, never as raw JSON.
-	if (rows.length === 0 && toolNames.length > 0) return [{ kind: role, detail: `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"}: ${toolNames.join(", ")}` }];
+	// Tool calls always surface as a compact row — pane sessions have no
+	// separate tool_execution_* records, so this is their only trace — and a
+	// tool-call-only message reads as its calls, never as raw JSON.
+	if (toolNames.length > 0) rows.push({ kind: role, detail: `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"}: ${toolNames.join(", ")}` });
 	if (rows.length === 0) return [{ kind: role, detail: `(no text, ${formatByteSize(payloadByteSize(message))})` }];
 	return rows;
 }
@@ -117,7 +119,10 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 	// complete — id-less same-named calls pair first-started-first-ended.
 	const openTools = new Map<string, Array<{ row: TimelineRow; startedAtMs?: number; label: string }>>();
 	const stampFor = (record: any): { stamp: string; atMs?: number } => {
-		const atMs = Date.parse(record?.ts ?? "");
+		// One-shot writer records stamp `ts`; native pane session entries stamp
+		// `timestamp` (ISO string or epoch ms).
+		const raw = record?.ts ?? record?.timestamp;
+		const atMs = typeof raw === "number" ? raw : Date.parse(raw ?? "");
 		if (!Number.isFinite(atMs)) return { stamp: "--:--" };
 		if (firstTs === undefined) firstTs = atMs;
 		return { atMs, stamp: formatElapsedStamp(atMs - firstTs) };
