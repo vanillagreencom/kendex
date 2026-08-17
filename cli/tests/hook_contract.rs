@@ -745,6 +745,121 @@ fn a_deregistered_hook_stops_reading_as_enforced() {
 }
 
 #[test]
+fn a_registration_with_a_stale_matcher_stops_reading_as_enforced() {
+    let sandbox = Sandbox::new("stale-matcher");
+    assert_success(
+        sandbox.add(&[
+            "--hook",
+            "probe",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add",
+    );
+    // The registration fires for a different tool set than the definition
+    // declares: what runs is not what the contract row claims.
+    let settings_path = sandbox.project.join(".claude/settings.json");
+    let settings = fs::read_to_string(&settings_path).unwrap();
+    fs::write(
+        &settings_path,
+        settings.replace("\"matcher\": \"Bash\"", "\"matcher\": \"Edit\""),
+    )
+    .unwrap();
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("claude-code: unsupported (artifact missing)"),
+        "a registration with a different matcher still reads as enforced:\n{text}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_broken_pi_package_symlink_stops_reading_as_enforced() {
+    let sandbox = Sandbox::new("pi-broken-symlink");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "pi", "--copy", "-y"]),
+        "vstack add",
+    );
+    let package = sandbox.source.join("pi-extensions/pi-hooks");
+    fs::create_dir_all(package.join("extensions")).unwrap();
+    fs::write(
+        package.join("package.json"),
+        r#"{"name":"@vanillagreen/pi-hooks","version":"1.0.0","description":"probe carrier","keywords":["pi-package"],"pi":{"extensions":["./extensions/hooks.js"]}}"#,
+    )
+    .unwrap();
+    fs::write(package.join("extensions/hooks.js"), "export default {};\n").unwrap();
+    assert_success(
+        sandbox.add(&["--pi-extension", "pi-hooks", "--harness", "pi", "-y"]),
+        "vstack add --pi-extension",
+    );
+    // The deployed directory becomes a symlink whose target is gone: Pi
+    // cannot load it, and a link that dangles must not read as deployed.
+    let deployed = sandbox.project.join(".pi/packages/@vanillagreen/pi-hooks");
+    fs::remove_dir_all(&deployed).unwrap();
+    std::os::unix::fs::symlink(sandbox.root.join("no-such-target"), &deployed).unwrap();
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("pi: unsupported (pi-hooks not installed)"),
+        "a broken package symlink still reads as enforced:\n{text}"
+    );
+}
+
+#[test]
+fn refresh_refuses_an_uncovered_event_before_pruning_harnesses() {
+    let sandbox = Sandbox::new("refresh-uncovered-before-prune");
+    assert_success(
+        sandbox.add(&[
+            "--hook",
+            "probe",
+            "--harness",
+            "claude-code",
+            "--harness",
+            "cursor",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add",
+    );
+    let rule = sandbox.project.join(".cursor/rules/safety-probe.mdc");
+    assert!(rule.is_file(), "cursor rule was not installed");
+    // The source simultaneously leaves the contract and narrows harnesses:
+    // nothing — prune included — may act on a definition install refuses.
+    write_probe_hook(&sandbox.source, "probe", "Notification");
+    let path = sandbox.source.join("hooks/probe.sh");
+    let script = fs::read_to_string(&path).unwrap();
+    fs::write(
+        &path,
+        script.replace("# safety:", "# harnesses: [claude-code]\n# safety:"),
+    )
+    .unwrap();
+    let output = sandbox
+        .vstack()
+        .args(["refresh", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "refresh accepted an event the contract does not cover"
+    );
+    assert!(
+        rule.is_file(),
+        "the prune pass removed artifacts before the uncovered event was refused"
+    );
+}
+
+#[test]
 fn refresh_refuses_an_uncovered_event_before_touching_agents() {
     let sandbox = Sandbox::new("refresh-uncovered-event");
     assert_success(

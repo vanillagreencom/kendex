@@ -92,15 +92,17 @@ fn owns_exactly(owned_commands: &[String]) -> impl Fn(&str) -> bool + '_ {
 fn hooks_object_has_owned_entry_for_event(
     hooks_obj: &serde_json::Map<String, serde_json::Value>,
     event: &str,
+    matcher: Option<&str>,
     owns: OwnsCommand<'_>,
 ) -> bool {
     hooks_obj
         .get(event)
         .and_then(|value| value.as_array())
         .is_some_and(|entries| {
-            entries
-                .iter()
-                .any(|entry| hook_entry_mentions_owned_command(entry, owns))
+            entries.iter().any(|entry| {
+                entry.get("matcher").and_then(|value| value.as_str()) == matcher
+                    && hook_entry_mentions_owned_command(entry, owns)
+            })
         })
 }
 
@@ -115,10 +117,16 @@ fn claude_settings_path(global: bool) -> PathBuf {
 }
 
 /// Whether Claude Code's settings still carry this hook's registration under
-/// its declared event. A settings file that cannot be read or parsed reports
-/// unregistered: a level is a claim, and a registration nothing can read
-/// backs none — and one under another event runs at the wrong time.
-pub(crate) fn claude_hook_registered(global: bool, name: &str, event: &str) -> bool {
+/// its declared event and matcher. A settings file that cannot be read or
+/// parsed reports unregistered: a level is a claim, and a registration
+/// nothing can read backs none — one under another event runs at the wrong
+/// time, and one with another matcher runs for the wrong tools.
+pub(crate) fn claude_hook_registered(
+    global: bool,
+    name: &str,
+    event: &str,
+    matcher: Option<&str>,
+) -> bool {
     let Some(script_path) = Harness::ClaudeCode
         .hooks_dir(global)
         .map(|dir| dir.join(format!("{name}.sh")))
@@ -136,14 +144,19 @@ pub(crate) fn claude_hook_registered(global: bool, name: &str, event: &str) -> b
         .get("hooks")
         .and_then(|h| h.as_object())
         .is_some_and(|hooks| {
-            hooks_object_has_owned_entry_for_event(hooks, event, &owns_exactly(&owned))
+            hooks_object_has_owned_entry_for_event(hooks, event, matcher, &owns_exactly(&owned))
         })
 }
 
 /// Whether `<scope>/.codex/hooks.json` still carries this hook's handler
 /// under its declared event AND `config.toml` keeps the `hooks` feature on —
 /// all of which is what makes Codex run the handler, and install writes.
-pub(crate) fn codex_hook_registered(global: bool, name: &str, event: &str) -> bool {
+pub(crate) fn codex_hook_registered(
+    global: bool,
+    name: &str,
+    event: &str,
+    matcher: Option<&str>,
+) -> bool {
     let Some(codex_event) = codex_event_for(event) else {
         return false;
     };
@@ -164,6 +177,7 @@ pub(crate) fn codex_hook_registered(global: bool, name: &str, event: &str) -> bo
             hooks_object_has_owned_entry_for_event(
                 hooks,
                 codex_event,
+                matcher,
                 &codex_owns_command(global, name, &script_path),
             )
         })

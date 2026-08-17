@@ -242,6 +242,32 @@ fn merge_upstream<T: Clone>(
 /// [`prune_hook_harnesses`], and writing the upstream-additions back to disk via
 /// [`crate::project_config::merge_upstream_agent_skills`].
 #[allow(clippy::too_many_arguments)]
+/// The first locked hook whose source definition names an event outside the
+/// contract, with the same refusal message install gives. Callers refuse the
+/// whole refresh before any mutation — prune included, because self-healing
+/// from a definition install refuses is still acting on it.
+fn uncovered_hook_event(
+    lock: &config::LockFile,
+    source_hooks: &[Hook],
+    name_filter: Option<&[String]>,
+) -> Option<(String, String)> {
+    let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
+    for (name, entry) in lock.entries.iter() {
+        if entry.kind != ItemKind::Hook || !pass(name) {
+            continue;
+        }
+        if let Some(hook) = crate::resolve::source_hook_for_lock_entry(source_hooks, entry)
+            && installer::contract::events().all(|event| event != hook.event)
+        {
+            return Some((
+                name.clone(),
+                installer::contract::unknown_event_error(&hook.name, &hook.event),
+            ));
+        }
+    }
+    None
+}
+
 pub fn refresh_items_in_scope(
     global: bool,
     lock: &config::LockFile,
@@ -261,20 +287,9 @@ pub fn refresh_items_in_scope(
     // An event outside the contract is refused before anything is mutated —
     // `add` proves that atomicity and refresh must not do less: regenerating
     // first would rewrite agent frontmatter from a definition install refuses.
-    for (name, entry) in lock.entries.iter() {
-        if entry.kind != ItemKind::Hook || !pass(name) {
-            continue;
-        }
-        if let Some(hook) = crate::resolve::source_hook_for_lock_entry(&all_hooks, entry)
-            && installer::contract::events().all(|event| event != hook.event)
-        {
-            stats.fail(
-                name,
-                None,
-                installer::contract::unknown_event_error(&hook.name, &hook.event),
-            );
-            return stats;
-        }
+    if let Some((name, error)) = uncovered_hook_event(lock, &all_hooks, name_filter) {
+        stats.fail(&name, None, error);
+        return stats;
     }
 
     let project_owned_skills_root = if global {
@@ -1323,9 +1338,12 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     // Self-heal hook lock entries: drop harness ids the hook no longer
     // applies to (the `harnesses:` allowlist in source may have changed
     // since install). Done up-front so all downstream passes see the
-    // pruned state.
+    // pruned state — but never for a definition install would refuse.
     {
         let source_hooks_for_prune = all_source_hooks(&sources);
+        if let Some((name, error)) = uncovered_hook_event(&lock, &source_hooks_for_prune, None) {
+            anyhow::bail!("hook {name}: {error}");
+        }
         if prune_hook_harnesses(global, &mut lock, &source_hooks_for_prune, None) {
             lock.save(&lock_path)?;
         }

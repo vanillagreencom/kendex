@@ -55,10 +55,15 @@ pub fn resolve(
             note: Some("pi-hooks not installed"),
         });
     }
-    if cell
-        .mechanism()
-        .is_some_and(|mechanism| !artifact_present(mechanism, &hook.name, &hook.event, global))
-    {
+    if cell.mechanism().is_some_and(|mechanism| {
+        !artifact_present(
+            mechanism,
+            &hook.name,
+            &hook.event,
+            hook.matcher.as_deref(),
+            global,
+        )
+    }) {
         return Some(Resolved {
             cell: Cell::Unsupported,
             note: Some("artifact missing"),
@@ -72,20 +77,26 @@ pub fn resolve(
 /// because a script nothing invokes (or that fires at another time) enforces
 /// nothing. `PiHooksExtension` has no per-hook artifact; its carrier package
 /// is checked by the caller.
-fn artifact_present(mechanism: Mechanism, name: &str, event: &str, global: bool) -> bool {
+fn artifact_present(
+    mechanism: Mechanism,
+    name: &str,
+    event: &str,
+    matcher: Option<&str>,
+    global: bool,
+) -> bool {
     match mechanism {
         Mechanism::ClaudeSettingsHook => {
             Harness::ClaudeCode
                 .hooks_dir(global)
                 .is_some_and(|dir| dir.join(format!("{name}.sh")).is_file())
-                && super::claude_hook_registered(global, name, event)
+                && super::claude_hook_registered(global, name, event, matcher)
         }
         Mechanism::CodexHooksJson => {
             super::codex_root(global)
                 .join("hooks")
                 .join(format!("{name}.sh"))
                 .is_file()
-                && super::codex_hook_registered(global, name, event)
+                && super::codex_hook_registered(global, name, event, matcher)
         }
         Mechanism::CursorRule => super::cursor_hook_rule_path(global, name).is_file(),
         Mechanism::OpenCodeInstruction => {
