@@ -34,7 +34,7 @@ cli/src/vsix.rs	637
 cli/tests/hook_contract.rs	1548
 cli/tests/hook_lifecycle.rs	1545
 hooks/block-repo-copy.sh	511
-pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	637
+pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	650
 pi-extensions/pi-agents-tmux/extensions/subagent/dashboard.ts	431
 pi-extensions/pi-agents-tmux/extensions/subagent/dispatch.ts	580
 pi-extensions/pi-agents-tmux/extensions/subagent/format.ts	776
@@ -46,7 +46,7 @@ pi-extensions/pi-agents-tmux/extensions/subagent/runner.ts	1327
 pi-extensions/pi-agents-tmux/extensions/subagent/subagent-render.ts	473
 pi-extensions/pi-agents-tmux/extensions/subagent/tasks.ts	1010
 pi-extensions/pi-agents-tmux/extensions/subagent/types.ts	487
-pi-extensions/pi-agents-tmux/tests/dashboard-ux.test.ts	1170
+pi-extensions/pi-agents-tmux/tests/dashboard-ux.test.ts	1171
 pi-extensions/pi-agents-tmux/tests/session-lanes.test.ts	2439
 pi-extensions/pi-background-tasks/extensions/background-tasks.ts	986
 pi-extensions/pi-background-tasks/extensions/wake-events.ts	600
