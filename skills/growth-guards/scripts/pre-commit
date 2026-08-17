@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # pre-commit — the staged-scope guard chain, shaped for the git pre-commit
 # hook (the installed .git/hooks/vstack-guards shim execs it): size-ratchet
-# when the sibling skill is installed, then `growth-guards all`, then the
-# repo-local entry named by GROWTH_GUARDS_PRE_COMMIT_LOCAL.
+# and preflight when those sibling skills are installed, then
+# `growth-guards all`, then the repo-local entry named by
+# GROWTH_GUARDS_PRE_COMMIT_LOCAL.
 #
 # Every step runs before the verdict, so one commit attempt reports every
 # blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
@@ -20,8 +21,9 @@ usage() {
   cat <<'EOF'
 usage: pre-commit
 
-Runs the staged-scope guard chain: size-ratchet (when installed beside this
-skill), the growth-guards batch, then the optional repo-local entry. Takes no
+Runs the staged-scope guard chain: size-ratchet and preflight (each when
+installed beside this skill), the growth-guards batch, then the optional
+repo-local entry. Takes no
 arguments — git passes none to pre-commit. Wire it through the installed shim:
 `install-git-hooks --repo <root>`.
 
@@ -81,6 +83,24 @@ if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
   run_step size-ratchet "$SIZE_RATCHET" --staged
 else
   echo "=== pre-commit: size-ratchet not installed — skipped"
+fi
+
+# Same sibling contract for preflight: its --staged lanes judge the same
+# blobs, and a human committing outside any harness gets the deterministic
+# checks CI would otherwise report first.
+PREFLIGHT_SKILL="$SCRIPT_DIR/../../preflight"
+PREFLIGHT="$PREFLIGHT_SKILL/scripts/preflight"
+if [ -e "$PREFLIGHT_SKILL" ] || [ -L "$PREFLIGHT_SKILL" ]; then
+  [ -x "$PREFLIGHT" ] || gg_config_error "the preflight skill is installed at $PREFLIGHT_SKILL but $PREFLIGHT is missing or not executable — reinstall it"
+  if git rev-parse --verify --quiet HEAD >/dev/null; then
+    run_step preflight "$PREFLIGHT" --staged
+  else
+    # The very first commit has nothing to diff --staged against; blocking
+    # a repository's birth is not this chain's job.
+    echo "=== pre-commit: first commit — preflight --staged has no base; skipped"
+  fi
+else
+  echo "=== pre-commit: preflight not installed — skipped"
 fi
 
 BATCH="$SCRIPT_DIR/growth-guards"

@@ -63,10 +63,11 @@ status still decides.
 `pre-commit` runs `scripts/pre-commit`, which judges ONE commit snapshot —
 staged content, and tracked configuration read from the index, so an unstaged
 edit cannot switch a check off for content the commit keeps: `size-ratchet
---staged` when that skill is installed beside this one, then the
-`growth-guards` batch over the staged content, then the repo-local entry named
-by `GROWTH_GUARDS_PRE_COMMIT_LOCAL` (repo-root-relative executable; empty
-means none). `commit-msg` runs `scripts/commit-msg` on git's message file.
+--staged` and `preflight --staged` when those skills are installed beside
+this one (a repository's first commit skips preflight with a note — nothing
+to diff against), then the `growth-guards` batch over the staged content,
+then the repo-local entry named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`
+(repo-root-relative executable; empty means none). `commit-msg` runs `scripts/commit-msg` on git's message file.
 Every step runs before the verdict, so one attempt reports every blocker.
 
 The shims BLOCK, and fail closed, on the family's exit contract: `1` for a
