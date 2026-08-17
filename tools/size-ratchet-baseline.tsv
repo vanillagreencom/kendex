@@ -1,7 +1,7 @@
 .github/workflows/review-gate-writer.yml	652
 cli/src/agent.rs	676
-cli/src/catalog.rs	650
-cli/src/commands/add.rs	1778
+cli/src/catalog.rs	511
+cli/src/commands/add.rs	1678
 cli/src/commands/add/source_option_tests.rs	913
 cli/src/commands/add/source_option_tests/project_install_tests.rs	438
 cli/src/commands/apply.rs	2768

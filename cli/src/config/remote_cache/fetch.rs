@@ -257,8 +257,8 @@ fn acquire_fetch_guard(
 /// two bounded callers want very different ones: the detached background
 /// child can afford a full minute since nobody is waiting on it, while an
 /// interactive path must not hold a terminal for more than a few seconds.
-/// `add` and `refresh` are [`Unbounded`](Self::Unbounded) — a user asked for
-/// that specific fetch and expects it to finish.
+/// A source named on the command line and every `refresh` are
+/// [`Unbounded`](Self::Unbounded) — somebody asked for that specific fetch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchBound {
     Bounded(std::time::Duration),

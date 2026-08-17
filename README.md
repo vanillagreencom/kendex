@@ -54,6 +54,8 @@ nix run github:vanillagreencom/vstack -- add vanillagreencom/vstack
 
 That opens an interactive installer where you pick which agents, skills, hooks, and Pi extensions to bring in, and which tools to install them into.
 
+A source you name on the command line is fetched before anything is read from it, interactive or not — naming it is asking for that repo as it is now. Only the installer's own source browsing serves a cached copy while it is fresh, so switching repos in the picker never waits on an unreachable remote; `vstack check` reports a cache that has fallen behind.
+
 ## How It Works
 
 A source repo is a package registry. vstack discovers what's there, asks which pieces you want, then writes the right files for each tool.
@@ -83,7 +85,7 @@ extras = ["theme-packs"]
 
 Each path is relative to the source repo. A path may point at a container directory; skills, Pi extensions, and extras may name one specific item directory, while agents and hooks may also name one specific `.md` or `.sh` file. `*` is supported on the final path segment only. Omitted keys keep the default directory for that item kind, and an empty list (`skills = []`) declares that the source ships no items of that kind.
 
-`vstack check` only calls an installed item removed upstream when every configured root for its kind exists and every item under them was readable. A configured root that has gone missing is reported as a source layout problem to investigate, never as a `vstack remove` to run.
+`vstack check` only calls an installed item removed upstream when every configured root for its kind is there, is the right kind of thing, and every item under it was readable. A configured root that has gone missing is reported as a source layout problem to investigate, never as a `vstack remove` to run — and so is one that exists but is the wrong sort of entry (a regular file where a container belongs, a globbed parent that is not a directory), named with what was found there.
 
 ### Customizing With `vstack.toml`
 

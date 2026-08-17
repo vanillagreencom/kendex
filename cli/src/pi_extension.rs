@@ -369,14 +369,14 @@ pub fn is_pi_extension_installed(name: &str, global: bool) -> bool {
 }
 
 /// Whether the package is both deployed and registered — what Pi needs to
-/// actually load it. `exists()` traverses symlinks, so a dangling link is not
-/// deployed. [`is_pi_extension_installed`] answers the looser "any trace of
-/// an install" question repair flows ask.
+/// actually load it. Deployed means a DIRECTORY, and `is_dir` traverses
+/// symlinks, so neither a regular file nor a dangling link is deployed.
+/// [`is_pi_extension_installed`] answers the looser "any trace" question.
 pub fn is_pi_extension_operational(name: &str, global: bool) -> bool {
     let Ok(dest) = checked_pi_package_path(name, global) else {
         return false;
     };
-    dest.exists() && package_is_registered(name, global)
+    dest.is_dir() && package_is_registered(name, global)
 }
 
 fn remove_same_scope_legacy_packages(name: &str, global: bool) -> Result<()> {

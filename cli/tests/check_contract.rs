@@ -603,3 +603,50 @@ fn an_unreadable_source_reports_a_tagged_json_shape() {
 mod cache;
 #[path = "check_contract/hooks.rs"]
 mod hooks;
+
+/// A configured root that has become a REGULAR FILE exists, so an existence
+/// test passed it through: discovery skipped it, the empty inventory read as
+/// proof the source ships no skills, and every skill locked against it was
+/// reported removed upstream — `vstack remove alpha`, for a valid install,
+/// because the source layout is malformed. A root of the wrong entry type is
+/// unreadable: the report names the path and what was found, and nothing is
+/// classified removed.
+#[test]
+fn a_source_root_that_became_a_file_is_unreadable_not_a_removal() {
+    let sb = Sandbox::new("check-root-type");
+    sb.write_skill("alpha", "one");
+    sb.install("alpha");
+
+    // Control: the same source with a directory root is clean.
+    let clean = sb.check(&["--quiet"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
+
+    fs::remove_dir_all(sb.source.join("skills")).unwrap();
+    fs::write(sb.source.join("skills"), "not a directory\n").unwrap();
+
+    let json = sb.check(&["--json"]);
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let scope = &parsed["scopes"][0];
+    assert_eq!(
+        scope["removed"].as_array().map(Vec::len),
+        Some(0),
+        "a malformed root is not proof the item was removed: {scope}"
+    );
+    let issue = &scope["source_issues"][0];
+    assert_eq!(issue["entries"][0], "alpha");
+    let reason = issue["reasons"][0].as_str().unwrap_or_default();
+    assert!(
+        reason.contains(&sb.source.join("skills").display().to_string())
+            && reason.contains("must be a directory")
+            && reason.contains("found a regular file"),
+        "the reason names the path and what was found: {reason}"
+    );
+
+    let report = sb.check(&["--quiet"]);
+    let err = text(&report.stderr);
+    assert!(
+        !err.contains("vstack remove"),
+        "never a removal instruction for a malformed source layout: {err}"
+    );
+    assert!(err.contains("must be a directory"), "{err}");
+}

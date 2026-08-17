@@ -308,7 +308,7 @@ fn resolve_source_for_app_prefers_the_passed_source_over_the_registry_current() 
         Some(&alternate.to_string_lossy()),
         &registry,
         &project_root,
-        false,
+        SourceFetch::Now,
     )
     .expect("passed source should resolve");
 
@@ -346,7 +346,7 @@ fn resolve_source_for_app_fails_rather_than_replacing_a_refused_project_source()
         "https://user:ghp_TESTTOKEN@github.com/owner/repo.git",
     );
 
-    let Err(err) = resolve_source_for_app(None, &registry, &project_root, false) else {
+    let Err(err) = resolve_source_for_app(None, &registry, &project_root, SourceFetch::Now) else {
         panic!("a refused project source must not fall through");
     };
     let err = format!("{err:#}");
@@ -372,7 +372,7 @@ fn resolve_source_for_app_records_local_source_git_identity() {
         Some(&source.to_string_lossy()),
         &registry,
         &project_root,
-        false,
+        SourceFetch::Now,
     )
     .expect("local source should resolve");
 
@@ -422,8 +422,8 @@ fn default_source_skips_project_self_reference_in_registry() {
     let registry = self_pointing_registry(&project);
     write_project_skill_lock(&project, &canonical, InstallMethod::Copy);
 
-    let resolved =
-        resolve_source_for_app(None, &registry, &project, false).expect("default source resolves");
+    let resolved = resolve_source_for_app(None, &registry, &project, SourceFetch::Now)
+        .expect("default source resolves");
 
     assert_eq!(
         resolved.dir,
@@ -471,8 +471,8 @@ fn default_source_ignores_self_sourced_lock_entries() {
     lock.save(&project.join(".vstack-lock.json")).unwrap();
 
     let registry = config::SourceRegistry::default();
-    let resolved =
-        resolve_source_for_app(None, &registry, &project, false).expect("default source resolves");
+    let resolved = resolve_source_for_app(None, &registry, &project, SourceFetch::Now)
+        .expect("default source resolves");
 
     assert_eq!(resolved.dir, canonical.canonicalize().unwrap());
     let _ = std::fs::remove_dir_all(root);
@@ -488,8 +488,8 @@ fn default_source_keeps_project_that_is_a_real_vstack_source() {
     write_canonical_source(&project);
     let registry = self_pointing_registry(&project);
 
-    let resolved =
-        resolve_source_for_app(None, &registry, &project, false).expect("default source resolves");
+    let resolved = resolve_source_for_app(None, &registry, &project, SourceFetch::Now)
+        .expect("default source resolves");
 
     assert_eq!(resolved.dir, project.canonicalize().unwrap());
     let _ = std::fs::remove_dir_all(root);

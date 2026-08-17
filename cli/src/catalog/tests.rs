@@ -2,6 +2,7 @@
 //! problems that must never read as an item removed upstream.
 
 use super::*;
+use roots::{expand_catalog_entry, wildcard_match};
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -501,7 +502,7 @@ fn a_package_renamed_in_its_manifest_is_removed_under_its_old_name() {
 #[test]
 fn glob_is_restricted_to_last_segment() {
     let root = sandbox("bad-glob");
-    let err = expand_catalog_entry(&root, "*/skills").unwrap_err();
+    let err = expand_catalog_entry(&root, "*/skills", CatalogKind::Skills).unwrap_err();
     assert!(
         err.to_string()
             .contains("only supported on the last path segment")
@@ -515,4 +516,128 @@ fn wildcard_match_backtracks_to_later_suffix() {
     assert!(wildcard_match("a*a", "ababa"));
     assert!(wildcard_match("pi-*-hooks", "pi-hooks-hooks"));
     assert!(!wildcard_match("a*b", "a"));
+}
+
+/// A root that EXISTS but is not the entry type its kind is read from proves
+/// nothing about the kind — least of all that the source ships none of it. The
+/// existence test it replaces let a `skills` root that had become a regular
+/// file through as present: discovery skipped it, the empty inventory read as
+/// proof of absence, and every skill locked against that source was reported
+/// removed upstream with a `vstack remove` beside it.
+#[test]
+fn a_root_of_the_wrong_entry_type_is_unverifiable_never_empty() {
+    let root = sandbox("root-entry-type");
+    let default_catalog = crate::mapping::CatalogConfig::default();
+
+    // Control: a directory root is readable, and its one skill is named.
+    skill_at(&root, "skills/keeper", "keeper");
+    let directory_root = inv(&root, &default_catalog);
+    assert!(
+        matches!(&directory_root, KindInventory::Readable(inv) if inv.names == ["keeper".to_string()])
+    );
+
+    // The root is now a regular file. Nothing can be concluded, so the kind is
+    // unverifiable — naming the path and what was found — and no name is
+    // available to classify a removal from.
+    fs::remove_dir_all(root.join("skills")).unwrap();
+    fs::write(root.join("skills"), "not a directory\n").unwrap();
+    let file_root = inv(&root, &default_catalog);
+    assert!(
+        file_root.readable().is_none(),
+        "a wrong-type root offers no names to call anything removed: {file_root:?}"
+    );
+    let reason = file_root
+        .unverifiable(crate::config::ItemKind::Skill)
+        .expect("a wrong-type root is unverifiable");
+    assert!(
+        reason.contains(&root.join("skills").display().to_string()),
+        "the report names the path: {reason}"
+    );
+    assert!(
+        reason.contains("must be a directory") && reason.contains("found a regular file"),
+        "the report names what was found: {reason}"
+    );
+
+    // Control: the documented single-file form for the kinds whose items ARE
+    // files stays readable — a hook root may be one `.sh` file.
+    fs::create_dir_all(root.join("automation")).unwrap();
+    fs::write(
+        root.join("automation").join("guard.sh"),
+        "# ---\n# name: guard\n# event: PreToolUse\n# description: guard\n# ---\nexit 0\n",
+    )
+    .unwrap();
+    let single_hook_file = crate::mapping::CatalogConfig {
+        hooks: Some(vec!["automation/guard.sh".into()]),
+        ..Default::default()
+    };
+    assert!(
+        matches!(
+            inventory(&root, crate::config::ItemKind::Hook, &single_hook_file),
+            KindInventory::Readable(inv) if inv.names == ["guard".to_string()]
+        ),
+        "a single .sh file is the documented root form for hooks"
+    );
+
+    // A file root of the WRONG extension is not that form: hooks are read from
+    // `.sh` files, and a `.txt` one yields nothing to conclude from.
+    fs::write(root.join("automation").join("guard.txt"), "not a hook\n").unwrap();
+    let wrong_extension = crate::mapping::CatalogConfig {
+        hooks: Some(vec!["automation/guard.txt".into()]),
+        ..Default::default()
+    };
+    let mismatch = inventory(&root, crate::config::ItemKind::Hook, &wrong_extension);
+    assert!(mismatch.readable().is_none(), "{mismatch:?}");
+    assert!(
+        mismatch
+            .unverifiable(crate::config::ItemKind::Hook)
+            .expect("a wrong-type root is unverifiable")
+            .contains("a directory or a .sh file")
+    );
+
+    // Control: a missing root is still a MISSING root, not a type problem —
+    // the layout moved, which is a different question and a different remedy.
+    let absent = crate::mapping::CatalogConfig {
+        hooks: Some(vec!["automation/nowhere".into()]),
+        ..Default::default()
+    };
+    assert!(matches!(
+        inventory(&root, crate::config::ItemKind::Hook, &absent),
+        KindInventory::MissingRoot
+    ));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The glob parent is a root like any other: it is where a kind's items are
+/// listed from, so it must be a directory.
+#[test]
+fn a_glob_parent_of_the_wrong_entry_type_is_unverifiable() {
+    let root = sandbox("glob-parent-type");
+    let globbed = crate::mapping::CatalogConfig {
+        skills: Some(vec!["pkgs/skill-*".into()]),
+        ..Default::default()
+    };
+
+    // Control: a directory parent that matches nothing is readable-empty —
+    // positive evidence the source currently ships no such skill.
+    fs::create_dir_all(root.join("pkgs")).unwrap();
+    assert!(matches!(
+        inv(&root, &globbed),
+        KindInventory::Readable(inv) if inv.names.is_empty()
+    ));
+
+    fs::remove_dir_all(root.join("pkgs")).unwrap();
+    fs::write(root.join("pkgs"), "not a directory\n").unwrap();
+    let file_parent = inv(&root, &globbed);
+    assert!(file_parent.readable().is_none(), "{file_parent:?}");
+    let reason = file_parent
+        .unverifiable(crate::config::ItemKind::Skill)
+        .expect("a wrong-type glob parent is unverifiable");
+    assert!(
+        reason.contains(&root.join("pkgs").display().to_string())
+            && reason.contains("catalog glob parent must be a directory"),
+        "the report names the path and what it must be: {reason}"
+    );
+
+    let _ = fs::remove_dir_all(root);
 }

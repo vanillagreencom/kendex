@@ -1,11 +1,14 @@
+mod roots;
+
 use crate::agent::Agent;
 use crate::extra::Extra;
 use crate::hook::Hook;
 use crate::pi_extension::PiExtension;
 use crate::skill::Skill;
 use anyhow::{Context, Result};
+use roots::{expand_configured_paths, expand_paths_forgiving};
 use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CatalogKind {
@@ -24,6 +27,18 @@ impl CatalogKind {
             Self::Hooks => &["hooks"],
             Self::PiExtensions => &["pi-extensions"],
             Self::Extras => &["extras"],
+        }
+    }
+
+    /// The extension a configured root may carry when it names ONE item file
+    /// rather than a container — the form the catalog documents for agents and
+    /// hooks. `None` for the kinds whose items are directories, whose roots
+    /// are therefore always containers.
+    fn root_file_extension(self) -> Option<&'static str> {
+        match self {
+            Self::Agents => Some("md"),
+            Self::Hooks => Some("sh"),
+            Self::Skills | Self::PiExtensions | Self::Extras => None,
         }
     }
 }
@@ -46,167 +61,6 @@ pub(crate) fn has_catalog_table(source_root: &Path) -> bool {
         .get("catalog")
         .and_then(|value| value.as_table())
         .is_some()
-}
-
-/// The item paths a kind's configured roots expand to, and whether EVERY one
-/// of those roots exists.
-#[derive(Debug)]
-struct ExpandedRoots {
-    paths: Vec<PathBuf>,
-    /// Every configured root is present. A glob whose parent directory exists
-    /// counts: it is a readable root that currently matches nothing, which is
-    /// evidence the source ships no such item — not evidence the layout moved.
-    ///
-    /// This is an AND, never an OR: one readable root cannot vouch for a
-    /// sibling that is missing, or the items the missing root used to supply
-    /// would classify as removed upstream and `check` would tell the user to
-    /// uninstall a still-valid install. A missing root instead makes the kind
-    /// [`KindInventory::MissingRoot`] — "inspect the source layout", which is
-    /// the safe direction to be wrong in.
-    ///
-    /// An explicitly empty `[catalog]` list has no roots to check and so is
-    /// vacuously present: an empty list is positive evidence the source ships
-    /// no items of that kind. An ABSENT key is not empty — it expands to the
-    /// kind's default root and fails this test when that root is gone.
-    all_roots_present: bool,
-}
-
-fn expand_configured_paths(
-    source_root: &Path,
-    kind: CatalogKind,
-    catalog: &crate::mapping::CatalogConfig,
-) -> Result<ExpandedRoots> {
-    let mut out = ExpandedRoots {
-        paths: Vec::new(),
-        all_roots_present: true,
-    };
-    let mut seen = HashSet::new();
-    for raw in catalog.paths_for(kind) {
-        let expanded = expand_catalog_entry(source_root, &raw)?;
-        out.all_roots_present &= expanded.all_roots_present;
-        for path in expanded.paths {
-            let key = crate::config::normalize_path_lexical(&path);
-            if seen.insert(key) {
-                out.paths.push(path);
-            }
-        }
-    }
-    Ok(out)
-}
-
-/// The forgiving path for the `discover_*` family, which is used by install
-/// paths that must not fail over a mapping table.
-fn expand_paths_forgiving(source_root: &Path, kind: CatalogKind) -> Result<Vec<PathBuf>> {
-    Ok(expand_configured_paths(
-        source_root,
-        kind,
-        &crate::mapping::MappingConfig::load(source_root).catalog,
-    )?
-    .paths)
-}
-
-fn expand_catalog_entry(source_root: &Path, raw: &str) -> Result<ExpandedRoots> {
-    let trimmed = raw.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        anyhow::bail!("catalog path must not be empty");
-    }
-
-    let rel = Path::new(trimmed);
-    if rel.is_absolute() {
-        anyhow::bail!("catalog path must be relative to the source root: {trimmed}");
-    }
-
-    let mut parts: Vec<String> = Vec::new();
-    for component in rel.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
-            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
-                anyhow::bail!("catalog path must stay inside the source root: {trimmed}");
-            }
-        }
-    }
-    if parts.is_empty() {
-        anyhow::bail!("catalog path must name a file or directory: {trimmed}");
-    }
-    if parts[..parts.len().saturating_sub(1)]
-        .iter()
-        .any(|part| part.contains('*'))
-    {
-        anyhow::bail!("catalog glob is only supported on the last path segment: {trimmed}");
-    }
-
-    let last = parts.last().expect("non-empty parts");
-    if !last.contains('*') {
-        let path = source_root.join(parts.iter().collect::<PathBuf>());
-        let all_roots_present = path.exists();
-        return Ok(ExpandedRoots {
-            paths: vec![path],
-            all_roots_present,
-        });
-    }
-
-    let parent_rel: PathBuf = parts[..parts.len() - 1].iter().collect();
-    let parent = source_root.join(parent_rel);
-    if !parent.exists() {
-        return Ok(ExpandedRoots {
-            paths: Vec::new(),
-            all_roots_present: false,
-        });
-    }
-    let mut matches = Vec::new();
-    for entry in std::fs::read_dir(&parent)
-        .with_context(|| format!("reading catalog glob parent {}", parent.display()))?
-    {
-        let entry = entry?;
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if wildcard_match(last, name) {
-            matches.push(path);
-        }
-    }
-    matches.sort();
-    Ok(ExpandedRoots {
-        paths: matches,
-        all_roots_present: true,
-    })
-}
-
-fn wildcard_match(pattern: &str, candidate: &str) -> bool {
-    let pattern = pattern.as_bytes();
-    let candidate = candidate.as_bytes();
-    let mut pattern_index = 0;
-    let mut candidate_index = 0;
-    let mut star_index = None;
-    let mut star_match_index = 0;
-
-    while candidate_index < candidate.len() {
-        if pattern_index < pattern.len()
-            && pattern[pattern_index] != b'*'
-            && pattern[pattern_index] == candidate[candidate_index]
-        {
-            pattern_index += 1;
-            candidate_index += 1;
-        } else if pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
-            star_index = Some(pattern_index);
-            pattern_index += 1;
-            star_match_index = candidate_index;
-        } else if let Some(index) = star_index {
-            pattern_index = index + 1;
-            star_match_index += 1;
-            candidate_index = star_match_index;
-        } else {
-            return false;
-        }
-    }
-
-    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
-        pattern_index += 1;
-    }
-
-    pattern_index == pattern.len()
 }
 
 fn discover_files(source_root: &Path, kind: CatalogKind, extension: &str) -> Result<Vec<PathBuf>> {
@@ -454,6 +308,13 @@ pub(crate) fn inventory(
         Ok(roots) => roots,
         Err(err) => return KindInventory::Error(format!("{err:#}")),
     };
+    // A root of the wrong entry type is measured before absence is: it EXISTS,
+    // so "the layout moved" would be the wrong story, and discovery skipping it
+    // silently would leave an empty inventory that reads as proof the source
+    // ships nothing of this kind.
+    if !roots.unusable.is_empty() {
+        return KindInventory::Error(roots.unusable.join("; "));
+    }
     if !roots.all_roots_present {
         return KindInventory::MissingRoot;
     }

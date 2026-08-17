@@ -14,6 +14,7 @@ Session handoff files live ONLY in `docs/handoff/` — exactly one untracked fil
 cli/src/
 ├── main.rs              CLI entry; routes to commands/
 ├── commands/            add, remove, list, check, update, update_pi, verify, refresh, init
+├── commands/add/source.rs  Source resolution for `add` — local dir, cached remote, or the checkout; SourceFetch states whether a source is fetched now or served from a fresh cache
 ├── commands/check/      render.rs — the drift report's text and its credential/control/length scrubbing
 ├── pi_extension.rs      Pi extension discovery, install/remove
 ├── pi_extension/settings.rs  Pi settings.json `packages` array — registration write, removal, and matching
@@ -24,6 +25,7 @@ cli/src/
 ├── refresh_sources/records.rs  A lock's sources as records — resolution, refusals, and the lease each cached root is read under
 ├── scope.rs             Scope enum (project | global | all); uniform `--scope`/`-g` parsing
 ├── catalog.rs           Source catalog discovery from default dirs or vstack.toml `[catalog]`
+├── catalog/roots.rs     Configured-path expansion and the entry-type rule a root must satisfy to be readable
 ├── mapping.rs           Source vstack.toml — MappingConfig (catalog, agent-skills, role-skills, hook-events)
 ├── project_config.rs    Project vstack.toml — ProjectConfig, ensure/write/update
 ├── resolve.rs           Shared helpers — skill-pair resolution, hook source attribution/matching, read_existing_extras, is_vstack_source

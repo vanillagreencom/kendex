@@ -268,7 +268,11 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
                 );
                 let shown = shown_count(quiet, reasons.len());
                 for reason in &reasons[..shown] {
-                    let _ = writeln!(out, "    ✗ {}", display_text(reason));
+                    // A layout reason is a full path plus what was found there,
+                    // and the prose bound cut it off after the path — leaving a
+                    // line that named a root without saying what was wrong with
+                    // it. This IS the remedy, so it gets the reason bound.
+                    let _ = writeln!(out, "    ✗ {}", display_reason(reason));
                 }
                 overflow_line(out, "    ", shown, reasons.len());
                 render_entry_names(out, entries, quiet);

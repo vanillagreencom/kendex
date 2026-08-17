@@ -6,13 +6,13 @@ use crate::harness::Harness;
 use crate::hook::Hook;
 use crate::installer;
 use crate::pi_extension::PiExtension;
-use crate::resolve::{same_path, source_from_project_lock};
+use crate::resolve::same_path;
 use crate::skill;
 use crate::skill::Skill;
 use crate::tui;
 use anyhow::Context;
 use anyhow::Result;
-use source::{resolve_remembered_source, resolve_source, source_label};
+use source::{SourceFetch, resolve_source_for_app, source_label};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -466,6 +466,9 @@ mod auto_include_agent_skills_tests {
 }
 
 #[cfg(test)]
+mod fetch_policy_tests;
+
+#[cfg(test)]
 mod source_option_tests;
 
 /// vstack#71: walk each agent's [agent-skills] + [role-skills] + transitive
@@ -559,115 +562,6 @@ fn persist_confirmed_source(
     // stale self entry left by an earlier project-local install.
     registry.prune_project_self_non_source(project_root);
     registry.save(&registry_path)
-}
-
-fn resolve_source_for_app(
-    source: Option<&str>,
-    registry: &config::SourceRegistry,
-    project_root: &Path,
-    interactive: bool,
-) -> Result<ResolvedSource> {
-    match source {
-        Some(path) if Path::new(path).exists() => {
-            let dir = std::fs::canonicalize(path)?;
-            Ok(ResolvedSource {
-                source: dir.display().to_string(),
-                source_repo: config::source_repo_for_source(Some(&dir), &dir.to_string_lossy()),
-                label: source_label(path),
-                dir,
-                persist: true,
-                lease: config::CacheLease::none(),
-            })
-        }
-        Some(source) => {
-            let resolved = resolve_source(Some(source), interactive)?;
-            Ok(ResolvedSource {
-                source: source.to_string(),
-                source_repo: config::source_repo_for_source(Some(&resolved.dir), source),
-                label: source_label(source),
-                dir: resolved.dir,
-                persist: true,
-                lease: resolved.lease,
-            })
-        }
-        None => {
-            // vstack#1024: a project that is not itself a vstack source must
-            // never become its own default source. Installing a project-local
-            // item with an explicit self path records the project in the
-            // registry and lock; the no-SOURCE path would then scan the
-            // project and report "nothing found". Skip self-references and
-            // keep walking the fallback chain so resolution is identical
-            // across repo shapes.
-            let allow_project_self = crate::resolve::has_vstack_source_content(project_root);
-            let usable = |dir: &Path| allow_project_self || !same_path(dir, project_root);
-
-            // Prefer the source selected for THIS project. Source selection is
-            // intentionally project-scoped: choosing a repo while working in
-            // one project must not silently change the source used by another.
-            if let Some(current) = registry.current_for_project(project_root)
-                && let Some(resolved) = resolve_remembered_source(current, interactive)?
-                && usable(&resolved.dir)
-            {
-                return Ok(ResolvedSource {
-                    source: current.to_string(),
-                    source_repo: config::source_repo_for_source(Some(&resolved.dir), current),
-                    label: source_label(current),
-                    dir: resolved.dir,
-                    persist: true,
-                    lease: resolved.lease,
-                });
-            }
-
-            // Existing projects already record installed item sources in the
-            // lock file. Use that before any global/default source so a
-            // project's repo choice remains stable across invocations.
-            if let Some(current) = source_from_project_lock(project_root)
-                && let Some(resolved) = resolve_remembered_source(&current, interactive)?
-                && usable(&resolved.dir)
-            {
-                return Ok(ResolvedSource {
-                    label: source_label(&current),
-                    source_repo: config::source_repo_for_source(Some(&resolved.dir), &current),
-                    source: current,
-                    dir: resolved.dir,
-                    persist: true,
-                    lease: resolved.lease,
-                });
-            }
-
-            // Fallback: walk up from CWD looking for a vstack source
-            let mut dir = std::env::current_dir()?;
-            loop {
-                if crate::resolve::is_vstack_source(&dir) {
-                    return Ok(ResolvedSource {
-                        source: dir.display().to_string(),
-                        source_repo: config::source_repo_for_source(
-                            Some(&dir),
-                            &dir.to_string_lossy(),
-                        ),
-                        label: source_label(dir.to_str().unwrap_or("local")),
-                        dir,
-                        persist: false,
-                        lease: config::CacheLease::none(),
-                    });
-                }
-                if !dir.pop() {
-                    break;
-                }
-            }
-
-            let source = crate::REPO.to_string();
-            let resolved = resolve_source(Some(&source), interactive)?;
-            Ok(ResolvedSource {
-                label: source_label(&source),
-                source_repo: config::source_repo_for_source(Some(&resolved.dir), &source),
-                dir: resolved.dir,
-                source,
-                persist: true,
-                lease: resolved.lease,
-            })
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -773,6 +667,9 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     let registry =
         config::SourceRegistry::load(&config::source_registry_path()).unwrap_or_default();
     let mut current_source = source.clone();
+    // What the user typed decides how hard the source is fetched — not whether
+    // this run may prompt. A source named on the command line is fetched now.
+    let mut source_fetch = SourceFetch::for_invocation(source.as_deref(), !non_interactive);
     let project_root = config::project_root();
     let (
         resolved_source,
@@ -789,7 +686,7 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             current_source.as_deref(),
             &registry,
             &project_root,
-            !non_interactive,
+            source_fetch,
         )?;
         let source_dir = resolved.dir.clone();
         let all_agents = crate::catalog::discover_agents(&source_dir)?;
@@ -1017,6 +914,9 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 }
                 tui::InstallFlowResult::SwitchSource(source) => {
                     current_source = Some(source);
+                    // Browsing, not a source the user typed: the catalog has to
+                    // repaint, so an unroutable remote must not hang the menu.
+                    source_fetch = SourceFetch::CachedWhileFresh;
                 }
             }
         }
