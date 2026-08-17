@@ -1737,12 +1737,15 @@ install_worktree_dependencies() {
   # or an npm packageManager pin — wins over an incidental foreign lockfile;
   # otherwise another manager's lockfile or pin means that repo provisions
   # its own dependencies, so skip.
+  # Newlines flattened so a pin formatted across lines still matches.
+  local pkg_flat=""
+  pkg_flat="$(tr '\n' ' ' <"$wt/package.json" 2>/dev/null)" || pkg_flat=""
   if [[ ! -f "$wt/package-lock.json" ]] &&
-    ! grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"npm@' "$wt/package.json" 2>/dev/null; then
+    ! grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"npm@' <<<"$pkg_flat"; then
     if [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" ]]; then
       return 0
     fi
-    if grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"(pnpm|yarn|bun)' "$wt/package.json" 2>/dev/null; then
+    if grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"(pnpm|yarn|bun)' <<<"$pkg_flat"; then
       return 0
     fi
   fi

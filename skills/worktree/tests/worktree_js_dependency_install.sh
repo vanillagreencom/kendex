@@ -97,6 +97,16 @@ git -C "$ROOT/repo" push -q origin main
 (cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-pin >/dev/null)
 assert_log_stays_empty "packageManager pin skipped npm" || true
 
+echo "=== a pin formatted across lines is still a pin ==="
+ROOT="$TMP_ROOT/multiline"
+make_repo "$ROOT" repo
+printf '{\n  "name": "app",\n  "packageManager":\n    "pnpm@10.33.2"\n}\n' >"$ROOT/repo/package.json"
+git -C "$ROOT/repo" add package.json
+git -C "$ROOT/repo" commit -q -m "js: multiline pin"
+git -C "$ROOT/repo" push -q origin main
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-multiline >/dev/null)
+assert_log_stays_empty "a multiline packageManager pin skips npm" || true
+
 echo "=== explicit npm evidence beats an incidental foreign lockfile ==="
 ROOT="$TMP_ROOT/mixed"
 make_repo "$ROOT" repo
