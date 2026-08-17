@@ -142,8 +142,12 @@ pub fn summary(entry: &LockEntry, global: bool) -> Option<String> {
             entry.harnesses.join(", ")
         ));
     };
+    // Pi loads packages from both scopes, so a globally deployed carrier
+    // backs a project hook too.
     let pi_hooks_installed =
-        crate::pi_extension::is_pi_extension_operational(PI_HOOKS_PACKAGE, global);
+        crate::pi_extension::is_pi_extension_operational(PI_HOOKS_PACKAGE, global)
+            || (!global
+                && crate::pi_extension::is_pi_extension_operational(PI_HOOKS_PACKAGE, true));
     let mut parts: Vec<String> = Vec::new();
     for harness_id in &entry.harnesses {
         let Some(harness) = Harness::from_id(harness_id) else {

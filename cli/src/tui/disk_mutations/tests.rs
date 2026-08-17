@@ -1531,3 +1531,187 @@ fn remove_hook_with_unresolved_sources(root: &Path, hook_source_is_remote: bool)
     );
     err
 }
+
+#[test]
+fn inline_update_refuses_an_uncovered_event_before_pruning() {
+    let root = tmpdir("inline-update-uncovered-event");
+    let project = root.join("project");
+    let source = root.join("source");
+    std::fs::create_dir_all(&project).unwrap();
+
+    // The source simultaneously leaves the contract and narrows harnesses:
+    // nothing — prune included — may act on a definition install refuses.
+    std::fs::create_dir_all(source.join("hooks")).unwrap();
+    std::fs::write(
+        source.join("hooks/guard.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: Notification\n# matcher: Bash\n# harnesses: [claude-code]\n# description: guard hook\n# ---\nexit 0\n",
+    )
+    .unwrap();
+
+    let mut lock = LockFile::default();
+    let mut entry = hook_lock_entry("guard", &source);
+    entry.harnesses = vec!["claude-code".into(), "cursor".into()];
+    lock.add(entry);
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    let installed = hook_fixture("guard", None);
+    let rule = project.join(".cursor/rules/safety-guard.mdc");
+    crate::test_util::with_project_root(&project, || {
+        crate::installer::install_hook(&installed, Harness::ClaudeCode, false, &[]).unwrap();
+        crate::installer::install_hook(&installed, Harness::Cursor, false, &[]).unwrap();
+        assert!(rule.is_file(), "cursor rule was not installed");
+
+        let report = perform_inline_update(&["guard".to_string()]);
+        assert_eq!(report.completed, 0, "report: {report:?}");
+        assert!(!report.failed.is_empty(), "report: {report:?}");
+    });
+
+    assert!(
+        rule.is_file(),
+        "the prune pass removed artifacts before the uncovered event was refused"
+    );
+    let lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert_eq!(
+        lock.entries
+            .get("guard")
+            .map(|entry| entry.harnesses.clone()),
+        Some(vec!["claude-code".to_string(), "cursor".to_string()]),
+        "the prune pass rewrote the lock before the uncovered event was refused"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn inline_update_of_an_agent_refuses_an_unselected_uncovered_hook() {
+    let root = tmpdir("inline-update-unselected-uncovered");
+    let project = root.join("project");
+    let source = root.join("source");
+    std::fs::create_dir_all(&project).unwrap();
+
+    // Regenerating an agent consumes EVERY locked hook: an unselected hook
+    // whose source left the contract must refuse the update, filter or not.
+    std::fs::write(
+        source.join("agents").join("rust.md"),
+        {
+            std::fs::create_dir_all(source.join("agents")).unwrap();
+            "---\nname: rust\ndescription: Rust agent\nmodel: sonnet\nrole: engineer\n---\n# Rust\n\nBody.\n"
+        },
+    )
+    .unwrap();
+    std::fs::create_dir_all(source.join("hooks")).unwrap();
+    std::fs::write(
+        source.join("hooks/rogue.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: rogue\n# event: Notification\n# matcher: Bash\n# description: rogue hook\n# ---\nexit 0\n",
+    )
+    .unwrap();
+
+    let agent = agent_fixture("rust");
+    let installed_rogue = hook_fixture("rogue", None);
+
+    let mut lock = LockFile::default();
+    lock.add(LockEntry {
+        name: "rust".into(),
+        kind: ItemKind::Agent,
+        source: source.to_string_lossy().into_owned(),
+        source_repo: None,
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    lock.add(hook_lock_entry("rogue", &source));
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    let agent_path = project.join(".claude/agents/rust.md");
+    crate::test_util::with_project_root(&project, || {
+        crate::installer::install_hook(&installed_rogue, Harness::ClaudeCode, false, &[]).unwrap();
+        Harness::ClaudeCode
+            .generate_agent(
+                &agent,
+                false,
+                &[],
+                std::slice::from_ref(&installed_rogue),
+                &crate::agent::AgentExtras::default(),
+            )
+            .unwrap();
+        let before = std::fs::read_to_string(&agent_path).unwrap();
+
+        let report = perform_inline_update(&["rust".to_string()]);
+        assert!(!report.failed.is_empty(), "report: {report:?}");
+
+        let after = std::fs::read_to_string(&agent_path).unwrap();
+        assert_eq!(
+            before, after,
+            "the update consumed an unselected uncovered hook into the agent"
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn inline_update_of_a_hook_refuses_an_unselected_uncovered_hook_before_pruning() {
+    let root = tmpdir("inline-update-hook-batch-uncovered");
+    let project = root.join("project");
+    let source = root.join("source");
+    std::fs::create_dir_all(&project).unwrap();
+
+    // A hook batch regenerates every locked agent, which consumes every
+    // locked hook — and the refusal must come before the prune pass saves
+    // anything, so the selected hook's narrowed harnesses stay in the lock.
+    std::fs::create_dir_all(source.join("agents")).unwrap();
+    std::fs::write(
+        source.join("agents/rust.md"),
+        "---\nname: rust\ndescription: Rust agent\nmodel: sonnet\nrole: engineer\n---\n# Rust\n\nBody.\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(source.join("hooks")).unwrap();
+    std::fs::write(
+        source.join("hooks/guard.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# harnesses: [claude-code]\n# description: guard hook\n# ---\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        source.join("hooks/rogue.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: rogue\n# event: Notification\n# matcher: Bash\n# description: rogue hook\n# ---\nexit 0\n",
+    )
+    .unwrap();
+
+    let mut lock = LockFile::default();
+    lock.add(LockEntry {
+        name: "rust".into(),
+        kind: ItemKind::Agent,
+        source: source.to_string_lossy().into_owned(),
+        source_repo: None,
+        harnesses: vec!["claude-code".into()],
+        method: InstallMethod::Copy,
+        installed_at: "2026-07-03T00:00:00Z".into(),
+        source_hash: String::new(),
+    });
+    let mut guard_entry = hook_lock_entry("guard", &source);
+    guard_entry.harnesses = vec!["claude-code".into(), "cursor".into()];
+    lock.add(guard_entry);
+    lock.add(hook_lock_entry("rogue", &source));
+    lock.save(&project.join(".vstack-lock.json")).unwrap();
+
+    let installed_guard = hook_fixture("guard", None);
+    crate::test_util::with_project_root(&project, || {
+        crate::installer::install_hook(&installed_guard, Harness::ClaudeCode, false, &[]).unwrap();
+        crate::installer::install_hook(&installed_guard, Harness::Cursor, false, &[]).unwrap();
+
+        let report = perform_inline_update(&["guard".to_string()]);
+        assert!(!report.failed.is_empty(), "report: {report:?}");
+    });
+
+    let lock = LockFile::load(&project.join(".vstack-lock.json")).unwrap();
+    assert_eq!(
+        lock.entries
+            .get("guard")
+            .map(|entry| entry.harnesses.clone()),
+        Some(vec!["claude-code".to_string(), "cursor".to_string()]),
+        "the prune pass rewrote the lock before the unselected uncovered hook was refused"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}

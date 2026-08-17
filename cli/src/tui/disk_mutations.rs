@@ -623,6 +623,21 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
         let sources = crate::refresh_sources::load_refresh_sources(&source_records.sources);
         let source_hooks = crate::refresh_sources::all_source_hooks(&sources);
 
+        // A definition install would refuse is refused here too, before the
+        // prune pass can act on it. A hook batch later expands to every
+        // locked agent, so it validates every locked hook.
+        let preflight_filter = if updates_hooks {
+            None
+        } else {
+            crate::commands::refresh::hook_preflight_filter(&lock, Some(names))
+        };
+        if let Some((name, error)) =
+            crate::commands::refresh::uncovered_hook_event(&lock, &source_hooks, preflight_filter)
+        {
+            report.fail(&name, error);
+            continue;
+        }
+
         let pruned = crate::commands::refresh::prune_hook_harnesses(
             scope_global,
             &mut lock,
