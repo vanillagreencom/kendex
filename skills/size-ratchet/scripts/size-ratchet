@@ -739,6 +739,11 @@ if [ "$MODE" = "seed" ]; then
       *) config_error "--seed refuses: $BASELINE_FILE resolves outside the repository ($parent_phys) — nothing written" ;;
     esac
   fi
+  # The destination itself must be a plain path: mv onto a symlink or a
+  # directory would deposit the file wherever they point instead.
+  if [ -L "$BASELINE_FILE" ] || { [ -e "$BASELINE_FILE" ] && [ ! -f "$BASELINE_FILE" ]; }; then
+    config_error "--seed refuses: $BASELINE_FILE exists but is not a regular file — the baseline must be a plain file this repository owns"
+  fi
   mv -- "$TMP/baseline.new" "$BASELINE_FILE" || collection_error "could not write the baseline at $BASELINE_FILE (mv failed)"
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the seeded baseline at $BASELINE_FILE — the file WAS written; rerun size-ratchet to verify it"
   # The file this mode just wrote is about to be judged by the trailing

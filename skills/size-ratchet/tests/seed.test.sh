@@ -150,6 +150,22 @@ OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --baseline policy/new/b
   || bad "containment refusal" "rc=$RC out=$OUT"
 [ -z "$(ls -A "$TMP/outside-target")" ] && ok "nothing was written or created outside" || bad "outside side effects" "$(ls "$TMP/outside-target")"
 
+echo "=== a symlinked baseline destination refuses ==="
+R="$TMP/symlink-dest"
+mkdir -p "$R" "$TMP/outside-dest"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+ln -s "$TMP/outside-dest" "$R/base-link"
+git -C "$R" add big.txt
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --baseline base-link 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"not a regular file"*) true ;; *) false ;; esac \
+  && ok "--seed refuses a symlinked baseline destination" \
+  || bad "symlink destination refusal" "rc=$RC out=$OUT"
+[ -z "$(ls -A "$TMP/outside-dest")" ] && ok "the symlink target stays untouched" || bad "symlink target" "$(ls "$TMP/outside-dest")"
+
 echo "=== mode exclusivity ==="
 run_sr --seed --update
 [ "$RC" -eq 2 ] && ok "--seed with --update is a config error" || bad "exclusivity" "rc=$RC out=$OUT"
