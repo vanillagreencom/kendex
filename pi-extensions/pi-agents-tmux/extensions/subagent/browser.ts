@@ -203,13 +203,26 @@ function createAgentsBrowserComponent(
 	// finished one) and animate spinners. It renders only when something moved, so
 	// an idle pop-up stays still. Always armed — agents can start after the pop-up
 	// opened, when nothing was animating yet.
+	let lastElapsedRender = Date.now();
 	const liveTimer = setInterval(() => {
 		if (closed) return;
 		if (refreshMonitorView()) {
+			lastElapsedRender = Date.now();
 			requestRender();
 			return;
 		}
-		if (spinnersAnimated() && getActiveItems().some((item) => isDashboardAnimatingStatus(item.status))) requestRender();
+		const hasLiveItems = getActiveItems().some((item) => isDashboardAnimatingStatus(item.status));
+		if (spinnersAnimated() && hasLiveItems) {
+			lastElapsedRender = Date.now();
+			requestRender();
+			return;
+		}
+		// Elapsed run-times tick at minute granularity; keep them moving even
+		// with spinner animation off and no lifecycle changes.
+		if (hasLiveItems && Date.now() - lastElapsedRender >= 20_000) {
+			lastElapsedRender = Date.now();
+			requestRender();
+		}
 	}, 120);
 	liveTimer.unref?.();
 	const scheduleResizeRender = () => {

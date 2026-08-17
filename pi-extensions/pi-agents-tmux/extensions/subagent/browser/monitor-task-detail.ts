@@ -11,6 +11,7 @@ import {
 	highlightInlinePreview,
 } from "../format.js";
 import { readTextFileIfExists, recordTraceRef } from "../renderers.js";
+import { monitorStatusIsTerminal } from "../task-records.js";
 import { formatTranscriptForDisplay, inputDeliveryLabel } from "../transcripts.js";
 import {
 	MONITOR_SUBTAB_LABELS,
@@ -221,7 +222,9 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		delivery ? `Delivery  ${delivery}` : "",
 		`Created  ${formatLocalDateTime(record.createdAt)}`,
 		record.completedAt ? `Done     ${formatLocalDateTime(record.completedAt)}` : "",
-		`Duration  ${monitorTaskRunTime(record)}`,
+		// Duration only once terminal: this text is cached until the record's
+		// status changes, so a live elapsed here would freeze at load time.
+		monitorStatusIsTerminal(record.status) ? `Duration  ${monitorTaskRunTime(record)}` : "",
 		artifactLines.length ? BLANK : "",
 		artifactLines.length ? "Artifacts" : "",
 		artifactLines.length ? "---------" : "",

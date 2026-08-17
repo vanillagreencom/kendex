@@ -108,7 +108,10 @@ export function formatRunDuration(startRaw: string | undefined, endRaw?: string)
 // display jump on every poll.
 export function monitorTaskRunTime(record: PaneTaskRecord): string {
 	if (monitorStatusIsTerminal(record.status)) return formatRunDuration(record.createdAt, record.completedAt ?? "");
-	return formatRunDuration(record.createdAt);
+	// Minute granularity while running: the popup refreshes elapsed times on a
+	// slow cadence, so a seconds display would visibly lag between renders.
+	const elapsed = formatRunDuration(record.createdAt);
+	return /^\d+s$/.test(elapsed) ? "<1m" : elapsed;
 }
 
 function recordInvocationTimestamp(record: PaneTaskRecord): number {

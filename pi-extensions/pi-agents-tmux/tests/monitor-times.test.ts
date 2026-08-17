@@ -6,6 +6,7 @@ import {
 	monitorTaskRowLabel,
 	monitorTaskRunTime,
 } from "../extensions/subagent/browser/monitor-tree.js";
+import { traceViewerItems } from "../extensions/subagent/browser/monitor-task-detail.js";
 import type { PaneTaskRecord } from "../extensions/subagent/types.js";
 
 function record(overrides: Partial<PaneTaskRecord>): PaneTaskRecord {
@@ -45,6 +46,20 @@ test("terminal task shows total createdAt→completedAt duration, stable across 
 test("terminal task without completedAt shows a dash, not updatedAt", () => {
 	const rec = record({ createdAt: "2026-03-24T23:59:33Z", status: "failed", updatedAt: new Date().toISOString() });
 	assert.equal(monitorTaskRunTime(rec), "—");
+});
+
+test("running sub-minute elapsed is minute-granular", () => {
+	const rec = record({ createdAt: new Date(Date.now() - 20_000).toISOString() });
+	assert.equal(monitorTaskRunTime(rec), "<1m");
+});
+
+test("task Summary carries Duration only once terminal", async () => {
+	const done = record({ completedAt: "2026-03-25T00:16:58Z", createdAt: "2026-03-24T23:59:33Z", status: "completed" });
+	const live = record({ createdAt: new Date(Date.now() - 5 * 60_000).toISOString() });
+	const doneItems = await traceViewerItems(done);
+	const liveItems = await traceViewerItems(live);
+	assert.match(doneItems[0]!.text, /Duration {2}17m(\n|$)/);
+	assert.doesNotMatch(liveItems[0]!.text, /Duration/);
 });
 
 test("formatRunDuration shapes", () => {
