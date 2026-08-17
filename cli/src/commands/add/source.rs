@@ -175,7 +175,12 @@ fn clone_or_update(source: &str, interactive: bool) -> Result<LeasedSourceDir> {
         eprintln!("Cloning {display}...");
         let lease = crate::refresh_sources::clone_cached_repo(&remote).with_context(|| {
             let ssh_hint = crate::config::parse_github_slug(source)
-                .map(|slug| format!("SSH:   git clone git@github.com:{slug}.git\n"))
+                .map(|slug| {
+                    format!(
+                        "SSH:   git clone {}\n",
+                        crate::display::command_arg(&format!("git@github.com:{slug}.git"))
+                    )
+                })
                 .unwrap_or_default();
             format!(
                 "caching {display} failed. For private repos, make sure you have access:\n\

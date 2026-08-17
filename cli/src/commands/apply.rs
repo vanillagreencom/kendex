@@ -2055,19 +2055,9 @@ fn render_plan(plan: &ApplyPlan, env: &ApplyEnvironment, dry_run: bool) -> Strin
 fn render_command(command: &[String]) -> String {
     command
         .iter()
-        .map(|part| shell_token(part))
+        .map(|part| crate::display::shell_arg(part))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn shell_token(part: &str) -> String {
-    if part.chars().all(|ch| {
-        ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':' | '+' | '=')
-    }) {
-        part.to_string()
-    } else {
-        format!("'{}'", part.replace('\'', "'\\''"))
-    }
 }
 
 fn prompt_confirm() -> Result<bool> {

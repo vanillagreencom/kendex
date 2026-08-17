@@ -931,3 +931,94 @@ fn a_non_utf8_script_path_is_refused_instead_of_registered_lossily() {
         "a valid path must still install"
     );
 }
+
+/// Removal deletes the reference vstack WROTE, decided by the file an entry
+/// resolves to — the same predicate `opencode_hook_registration` reads it
+/// back with. It used to split the hook's name on `-` and drop any entry whose
+/// text held every fragment, so removing `block-bare-cd` also deleted the
+/// user's own instruction files, and a `vstack-hook-` substring anywhere in a
+/// path counted as vstack's own.
+#[test]
+fn remove_hook_from_opencode_matches_the_path_not_the_words_in_it() {
+    let base = tmpdir("opencode_wordmatch");
+    let config_path = base.join("opencode.json");
+    let instruction_path = base
+        .join("instructions")
+        .join("vstack-hook-block-bare-cd.md");
+    std::fs::create_dir_all(instruction_path.parent().unwrap()).unwrap();
+    std::fs::write(&instruction_path, "# Safety").unwrap();
+    let instruction_ref = "instructions/vstack-hook-block-bare-cd.md";
+
+    // The user's own instructions, each carrying every fragment of the hook's
+    // name, plus one that merely mentions vstack hooks in its file name.
+    let mine = "docs/block-a-bare-cdn.md";
+    let also_mine = "docs/cd-blocks-and-bare-metal.md";
+    let named_like_ours = "docs/why-i-dropped-vstack-hook-support.md";
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "instructions": [mine, instruction_ref, also_mine, named_like_ours],
+            "permission": { "bash": { "*": "ask" } },
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    remove_hook_from_opencode_json_at_path(
+        &config_path,
+        &instruction_path,
+        instruction_ref,
+        "block-bare-cd",
+    )
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert_eq!(
+        written["instructions"],
+        serde_json::json!([mine, also_mine, named_like_ours]),
+        "only vstack's own reference may go: {written}"
+    );
+    // No vstack hook instruction is left, so the bash restriction goes with
+    // it — the lookalike file name must not have held it in place.
+    assert!(
+        written.get("permission").is_none(),
+        "a lookalike path kept the bash restriction alive: {written}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A hand-spelled but still-correct path is vstack's registration — the reader
+/// accepts it, so the remover must delete it.
+#[test]
+fn remove_hook_from_opencode_removes_an_equivalent_spelling_of_its_own_entry() {
+    let base = tmpdir("opencode_equivalent");
+    let config_path = base.join("opencode.json");
+    let instruction_path = base.join("instructions").join("vstack-hook-guard.md");
+    std::fs::create_dir_all(instruction_path.parent().unwrap()).unwrap();
+    std::fs::write(&instruction_path, "# Safety").unwrap();
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "instructions": ["./instructions/./vstack-hook-guard.md"],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    remove_hook_from_opencode_json_at_path(
+        &config_path,
+        &instruction_path,
+        "instructions/vstack-hook-guard.md",
+        "guard",
+    )
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert!(
+        written.get("instructions").is_none(),
+        "an equivalent spelling of our own entry must go: {written}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

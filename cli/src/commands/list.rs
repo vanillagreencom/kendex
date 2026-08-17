@@ -83,7 +83,15 @@ pub fn run(scope: ScopeFilter, harness_filter: Option<&str>) -> Result<()> {
                 // guard, and the difference has to be visible here.
                 let harnesses = crate::installer::enforcement::summary(entry, global)
                     .unwrap_or_else(|| entry.harnesses.join(", "));
-                eprintln!("    {} ({}) [{}]", entry.name, entry.method, harnesses);
+                // A lock file is a file: its names are read, not vouched for.
+                // `check` classifies a hostile one; this listing only has to
+                // refuse to render it verbatim into the reader's terminal.
+                eprintln!(
+                    "    {} ({}) [{}]",
+                    crate::display::display_text(&entry.name),
+                    entry.method,
+                    crate::display::display_reason(&harnesses),
+                );
             }
         }
 

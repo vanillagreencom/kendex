@@ -711,6 +711,10 @@ fn batch_mode_ssh_command(
 
 /// One shell word. `GIT_SSH_COMMAND` is run through a shell, so a program path
 /// carrying whitespace or shell metacharacters has to arrive as a single word.
+///
+/// Deliberately not [`crate::display::shell_arg`]: this word is EXECUTED, not
+/// printed, so it must carry the path byte for byte rather than escape what a
+/// terminal would act on.
 fn shell_quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', r"'\''"))
 }

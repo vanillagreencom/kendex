@@ -4,6 +4,7 @@ mod agent;
 mod catalog;
 mod commands;
 mod config;
+mod display;
 mod extra;
 mod frontmatter;
 mod ghostty_apply;

@@ -167,9 +167,16 @@ fn print_install_summary(
         .collect();
     if !revert_names.is_empty() {
         let scope_flag = if global { " --global" } else { "" };
+        // A discovered name reaches this line as a shell WORD: it comes from a
+        // source directory or a frontmatter field, and this command is printed
+        // to be pasted.
+        let args: Vec<String> = revert_names
+            .iter()
+            .map(|name| crate::display::command_arg(name))
+            .collect();
         eprintln!(
             "\nRevert with:\n  vstack remove {}{}",
-            revert_names.join(" "),
+            args.join(" "),
             scope_flag,
         );
     }

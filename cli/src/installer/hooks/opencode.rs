@@ -86,37 +86,92 @@ pub(crate) fn opencode_hook_registration(global: bool, name: &str) -> super::Hoo
         Ok(None) => return super::HookRegistration::Absent,
         Err(err) => return super::HookRegistration::Unreadable(format!("{err:#}")),
     };
-    // Entries are relative to the config file's own directory.
-    let base = config_path.parent().unwrap_or(Path::new("."));
     let instruction_path = opencode_hook_instruction_path(global, name);
-    let target = crate::config::normalize_path_lexical(&instruction_path);
-    let target_resolved = std::fs::canonicalize(&instruction_path).ok();
+    let target = InstructionTarget::for_path(&config_path, &instruction_path);
     let registered = config
         .get("instructions")
         .and_then(|instructions| instructions.as_array())
         .into_iter()
         .flatten()
         .filter_map(|entry| entry.as_str())
-        .any(|entry| {
-            let path = Path::new(entry);
-            let absolute = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                base.join(path)
-            };
-            if crate::config::normalize_path_lexical(&absolute) == target {
-                return true;
-            }
-            match (&target_resolved, std::fs::canonicalize(&absolute).ok()) {
-                (Some(target), Some(entry)) => &entry == target,
-                _ => false,
-            }
-        });
+        .any(|entry| target.matches(entry));
     if registered {
         super::HookRegistration::Registered
     } else {
         super::HookRegistration::Absent
     }
+}
+
+/// The instruction file an entry has to NAME to count as this hook's
+/// registration, and the resolution that decides whether it does.
+///
+/// One predicate for the reader and the remover, because they answer the same
+/// question in opposite directions: an entry the reader would not accept as a
+/// registration is an entry the remover must not delete. Removal used to split
+/// the hook's name on `-` and drop any entry whose text contained every
+/// fragment, so removing `block-bare-cd` also deleted the user's own
+/// `docs/block-a-bare-cdn.md` — a raw-text match standing in for a path.
+struct InstructionTarget {
+    /// The config file's own directory: a relative entry resolves against it.
+    base: PathBuf,
+    /// The instruction file, lexically normalized.
+    lexical: PathBuf,
+    /// The same file after following links, when it exists.
+    resolved: Option<PathBuf>,
+}
+
+impl InstructionTarget {
+    fn for_path(config_path: &Path, instruction_path: &Path) -> Self {
+        Self {
+            base: config_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            lexical: crate::config::normalize_path_lexical(instruction_path),
+            resolved: std::fs::canonicalize(instruction_path).ok(),
+        }
+    }
+
+    /// Does this `instructions` entry point OpenCode at the target file? A
+    /// hand-spelled but still-correct path counts; a path naming some other
+    /// file does not, whatever words it contains.
+    fn matches(&self, entry: &str) -> bool {
+        let path = Path::new(entry);
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.base.join(path)
+        };
+        if crate::config::normalize_path_lexical(&absolute) == self.lexical {
+            return true;
+        }
+        match (&self.resolved, std::fs::canonicalize(&absolute).ok()) {
+            (Some(target), Some(entry)) => &entry == target,
+            _ => false,
+        }
+    }
+}
+
+/// Does this entry name one of vstack's own hook instruction files?
+///
+/// Decided on the entry's FILE NAME, which is what the installer writes
+/// (`vstack-hook-<name>.md`), rather than on the substring appearing anywhere
+/// in the string: `./notes/why-i-dropped-vstack-hook-support.md` is the user's
+/// file, and reading it as vstack's kept a bash restriction nothing needed.
+fn names_a_vstack_hook_instruction(entry: &str) -> bool {
+    Path::new(entry)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("vstack-hook-") && name.ends_with(".md"))
+}
+
+/// Does this entry hold the inline prose an older vstack wrote instead of a
+/// file reference?
+///
+/// Matched on the heading vstack itself emits — `# Safety: <name>` on its own
+/// line — which is a delimiter this code owns, not a word the user might have
+/// written. The heading is what [`opencode_hook_instruction_contents`] renders,
+/// so an entry carrying it came from vstack and from this hook.
+fn is_legacy_inline_prose(entry: &str, name: &str) -> bool {
+    let heading = format!("# Safety: {name}");
+    entry.lines().any(|line| line.trim_end() == heading)
 }
 
 pub(super) fn install_hook_opencode_at_path(
@@ -223,8 +278,10 @@ pub(super) fn remove_hook_from_opencode_json_at_path(
 
     // Remove the current file-path based format plus the legacy inline prose
     // format. A non-string entry is somebody else's and is retained: it can
-    // never be the reference vstack wrote.
-    let keywords: Vec<&str> = name.split('-').collect();
+    // never be the reference vstack wrote. So is any entry that resolves to
+    // another file — this removes vstack's own registration, never whatever
+    // else the user pointed OpenCode at.
+    let target = InstructionTarget::for_path(config_path, instruction_path);
     if let Some(instructions) = config
         .get_mut("instructions")
         .and_then(|i| i.as_array_mut())
@@ -232,11 +289,7 @@ pub(super) fn remove_hook_from_opencode_json_at_path(
         let before = instructions.len();
         instructions.retain(|i| {
             let Some(s) = i.as_str() else { return true };
-            if s == instruction_ref {
-                return false;
-            }
-            let s_lower = s.to_lowercase();
-            !keywords.iter().all(|kw| s_lower.contains(kw))
+            !(s == instruction_ref || target.matches(s) || is_legacy_inline_prose(s, name))
         });
         if instructions.len() != before {
             changed = true;
@@ -251,11 +304,9 @@ pub(super) fn remove_hook_from_opencode_json_at_path(
             .get("instructions")
             .and_then(|i| i.as_array())
             .is_none_or(|entries| {
-                !entries.iter().any(|entry| {
-                    entry
-                        .as_str()
-                        .is_some_and(|value| value.contains("vstack-hook-"))
-                })
+                !entries
+                    .iter()
+                    .any(|entry| entry.as_str().is_some_and(names_a_vstack_hook_instruction))
             });
 
         if let Some(instructions) = map.get("instructions").and_then(|i| i.as_array())

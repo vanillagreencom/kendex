@@ -2161,6 +2161,50 @@ fn a_malformed_credential_source_is_redacted_when_reported_missing() {
     );
 }
 
+/// The restoration command is meant to be PASTED, so the source arrives in it
+/// as a shell word. `RemoteSource` accepts a URL whose path carries shell
+/// syntax, and interpolating its display form handed the reader a command that
+/// ran the substitution instead of naming the repository.
+#[test]
+fn a_restoration_command_passes_its_source_literally() {
+    let hostile = "https://host.example/team/$(id).git";
+    let reason = absent_source_reason(hostile);
+    assert!(
+        looks_like_remote_source(hostile),
+        "the fixture must take the remote branch"
+    );
+    assert!(
+        reason.contains(&format!("`vstack add '{hostile}'`")),
+        "the argument must be single-quoted and inert: {reason}"
+    );
+    // And it really is one inert argument to a real shell.
+    let arg = crate::display::command_arg(hostile);
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("printf '%s' {arg}"))
+        .output()
+        .expect("sh runs");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), hostile);
+
+    // Control: the same source's PROSE mention is still scrubbed, and long
+    // prose still truncates while the command never does.
+    let long = format!("https://host.example/team/{}.git", "a".repeat(400));
+    assert!(
+        crate::display::display_text(&long).ends_with('…'),
+        "prose truncates"
+    );
+    assert!(
+        absent_source_reason(&long).contains(&long),
+        "a command argument is never elided"
+    );
+
+    // Control: an ordinary source renders unquoted, exactly as before.
+    assert_eq!(
+        absent_source_reason("https://github.com/owner/repo"),
+        "remote cache not present — run `vstack add https://github.com/owner/repo`"
+    );
+}
+
 /// A remembered source that opens with a scheme is an attempt at a URL, so it
 /// names something the chain must not walk past — even when it is malformed
 /// enough that the strict parser cannot read it, which is exactly when

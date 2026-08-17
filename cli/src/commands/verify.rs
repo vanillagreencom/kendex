@@ -363,6 +363,60 @@ fn record_switch(
     }
 }
 
+/// The carrier package a Pi-locked hook runs from: deployed in a scope Pi
+/// loads, and registered there.
+///
+/// Only demanded when the contract routes this hook's event to Pi's extension
+/// and the hook's own `harnesses:` allowlist admits Pi — the same two questions
+/// [`crate::installer::enforcement::resolve`] asks, so a level and a drift line
+/// cannot disagree. A hook with no readable source definition demands nothing:
+/// its event is unknown, and the unresolvable source is reported in its own
+/// right.
+///
+/// Asked through [`crate::installer::enforcement::pi_carrier_state`] — the one
+/// probe the enforcement level is derived from — so a `verify` row and a `list`
+/// level cannot disagree about the carrier, and an unreadable `settings.json`
+/// is unverifiable naming the file rather than a missing package.
+fn record_pi_carrier(
+    harness: &str,
+    source_hook: Option<&crate::hook::Hook>,
+    global: bool,
+    missing: &mut Vec<String>,
+    unverifiable: &mut Vec<String>,
+) {
+    use crate::installer::contract::{self, Cell, Mechanism, PI_HOOKS_PACKAGE};
+    use crate::installer::enforcement::PiCarrier;
+    let Some(hook) = source_hook else { return };
+    if !hook.applies_to(crate::harness::Harness::Pi.id()) {
+        return;
+    }
+    let carried = contract::cell(&hook.event, crate::harness::Harness::Pi)
+        .and_then(Cell::mechanism)
+        .is_some_and(|mechanism| mechanism == Mechanism::PiHooksExtension);
+    if !carried {
+        return;
+    }
+    match crate::installer::enforcement::pi_carrier_state(global) {
+        PiCarrier::Ready => {}
+        PiCarrier::Unregistered => missing.push(format!(
+            "{harness}: {PI_HOOKS_PACKAGE} present but not registered in Pi settings — Pi loads no hook until it is"
+        )),
+        PiCarrier::Absent => {
+            // Short enough to survive the phantom section's label width: a
+            // remedy elided mid-command cannot be pasted.
+            let scope_flag = if global { " --global" } else { "" };
+            missing.push(format!(
+                "{harness}: {PI_HOOKS_PACKAGE} not installed — run `vstack add{scope_flag} --pi-extension {}`",
+                crate::display::command_arg(PI_HOOKS_PACKAGE)
+            ));
+        }
+        PiCarrier::Unknown(reason) => unverifiable.push(format!(
+            "{harness}: {PI_HOOKS_PACKAGE} registration unverifiable — {}",
+            crate::display::display_reason(&reason)
+        )),
+    }
+}
+
 /// Every artifact a hook needs to RUN, per harness it was installed for.
 ///
 /// Three lists, because they carry three remedies: something a reinstall
@@ -543,11 +597,20 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
                 }
             }
             crate::harness::Harness::Pi => {
-                // Pi has no script-based per-hook install path — the safety
-                // hooks ship as the @vanillagreen/pi-hooks extension instead,
-                // which is verified separately as a Pi package. Nothing to
-                // check here.
-                //
+                // Pi has no per-hook artifact: the @vanillagreen/pi-hooks
+                // package IS what makes a Pi hook run, so its absence is the
+                // Pi twin of a missing Codex registration — an entry the lock
+                // says is enforced for Pi, with nothing on disk that could
+                // ever enforce it. Skipping Pi here let a filtered install
+                // (`--hook X --harness pi`, which selects no Pi extension)
+                // lock a hook that cannot run and still report clean.
+                record_pi_carrier(
+                    h,
+                    source_hook.as_ref(),
+                    global,
+                    &mut missing,
+                    &mut unverifiable,
+                );
                 // Pi's switches are deliberately not reported. The extension
                 // reads `enabled` and a per-hook key out of the
                 // `vstack.extensionManager` namespace in Pi's settings, and

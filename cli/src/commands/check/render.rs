@@ -1,83 +1,13 @@
-//! Rendering the drift report: the human and quiet text, plus the
-//! credential-, control- and length-scrubbing every displayed string passes
-//! through on its way there.
+//! Rendering the drift report: the human and quiet text, assembled out of the
+//! credential-, control- and length-scrubbing helpers in [`crate::display`],
+//! which every displayed string in the CLI passes through.
 
 use super::{AvailableItem, CATALOG_KINDS, CheckReport, Item, ScopeReport, SourceProblem};
 use std::collections::HashSet;
 
-/// How much free text (a source string, a parse failure, a name) may reach an
-/// agent's context on one report line.
-const DISPLAY_LIMIT: usize = 120;
-
-/// [`DISPLAY_LIMIT`] for a diagnostic that IS the remedy — a refusal names the
-/// cache entry and the next step, and a cache root is a full path, so the
-/// prose bound cut the instruction off. Still bounded by construction, just
-/// wide enough to carry a sentence with a path in it.
-const REASON_LIMIT: usize = DISPLAY_LIMIT * 4;
-
-/// Remove credentials from a source string. Applied at report construction,
-/// so every consumer — human report, quiet hook line, `--json` on stdout, CI
-/// logs quoting either — sees credential-free strings.
-///
-/// One redaction, shared with every source diagnostic vstack prints: a token
-/// shape that one implementation handled and another did not is a token in a
-/// CI log. Which half of a userinfo is a secret is a question about the
-/// transport's grammar, and [`crate::refresh_sources::remote_source_display`]
-/// is where that grammar lives.
-pub(super) fn scrub_source_credentials(text: &str) -> String {
-    crate::refresh_sources::remote_source_display(text)
-}
-
-/// Characters a shell passes through untouched, so an argument built only
-/// from them needs no quoting at all.
-fn is_shell_safe(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '@' | ':' | '=' | '-')
-}
-
-/// A source rendered INSIDE a copy-paste command: credential- and
-/// control-scrubbed like prose, but never truncated — an elided argument is
-/// a command that cannot work — and single-quoted whenever it holds anything
-/// a shell would interpret, so the pasted command runs on the literal string
-/// rather than on whatever `$`, backtick, or quote it happened to contain.
-pub(crate) fn command_arg(text: &str) -> String {
-    let scrubbed: String = scrub_source_credentials(text)
-        .chars()
-        .map(|c| if c.is_control() { '?' } else { c })
-        .collect();
-    if !scrubbed.is_empty() && scrubbed.chars().all(is_shell_safe) {
-        return scrubbed;
-    }
-    // POSIX single-quoting: nothing inside `'…'` is special, and the one
-    // character that cannot appear there is spliced back in as `'\''`.
-    format!("'{}'", scrubbed.replace('\'', r"'\''"))
-}
-
-/// Defensive rendering of text that did not pass through
-/// `is_safe_item_name` (source strings, parse failures, agent-declared
-/// skill references): credentials embedded in a URL are removed, control
-/// characters become `?` so nothing can start a new line or drive a
-/// terminal, and anything long is truncated — an item is never classified on
-/// its length, only shortened when shown.
-pub(crate) fn display_text(text: &str) -> String {
-    display_bounded(text, DISPLAY_LIMIT)
-}
-
-/// [`display_text`] for a cause-and-remedy sentence; see [`REASON_LIMIT`].
-pub(crate) fn display_reason(text: &str) -> String {
-    display_bounded(text, REASON_LIMIT)
-}
-
-fn display_bounded(text: &str, limit: usize) -> String {
-    let scrubbed: String = scrub_source_credentials(text)
-        .chars()
-        .map(|c| if c.is_control() { '?' } else { c })
-        .collect();
-    if scrubbed.chars().count() <= limit {
-        return scrubbed;
-    }
-    let kept: String = scrubbed.chars().take(limit).collect();
-    format!("{kept}…")
-}
+pub(crate) use crate::display::{
+    command_arg, display_reason, display_text, scrub_source_credentials,
+};
 
 /// Human report. `quiet` drops headers and per-item listings and prints
 /// nothing at all when no scope has drift; suggestions and cache warnings

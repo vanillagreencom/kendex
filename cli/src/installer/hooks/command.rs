@@ -257,6 +257,12 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
     Some(words)
 }
 
+/// One word of a command a HARNESS will execute, written into its settings.
+///
+/// Deliberately not [`crate::display::shell_arg`]: that one is for commands
+/// vstack prints, so it escapes what a terminal would act on. A hook path
+/// carrying such a byte still has to be handed to the harness verbatim, or the
+/// hook it registers never runs.
 pub(super) fn shell_quote(s: &str) -> String {
     if s.chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))

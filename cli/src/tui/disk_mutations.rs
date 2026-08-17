@@ -575,7 +575,10 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
             if extras_reported.insert(name.clone()) {
                 report.skip(
                     name,
-                    format!("extras are reapplied with `vstack apply {name}`"),
+                    format!(
+                        "extras are reapplied with `vstack apply {}`",
+                        crate::display::command_arg(name)
+                    ),
                 );
             }
         }

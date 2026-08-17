@@ -465,7 +465,7 @@ fn install_pi_extension_inner(
             "  Skip pi-package {} ({this_label} install): already installed at {other_label} scope. Run `vstack remove {}{}` first to switch.",
             ext.name,
             if !global { "--global " } else { "" },
-            ext.name,
+            crate::display::command_arg(&ext.name),
         );
         return Ok(None);
     }
@@ -478,9 +478,10 @@ fn install_pi_extension_inner(
             let this_label = if global { "global" } else { "project" };
             let other_label = if global { "project" } else { "global" };
             eprintln!(
-                "  Skip pi-package {} ({this_label} install): legacy package {legacy} is installed at {other_label} scope and registers the same resources. Run `vstack remove {}{legacy}` first.",
+                "  Skip pi-package {} ({this_label} install): legacy package {legacy} is installed at {other_label} scope and registers the same resources. Run `vstack remove {}{}` first.",
                 ext.name,
                 if !global { "--global " } else { "" },
+                crate::display::command_arg(legacy),
             );
             return Ok(None);
         }
@@ -747,15 +748,10 @@ fn package_declares_runtime_dependencies(package_dir: &Path) -> Result<bool> {
         || manifest_object_field_non_empty(&parsed, "optionalDependencies"))
 }
 
-fn shell_quote_path(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    format!("'{}'", raw.replace('\'', "'\\''"))
-}
-
 fn npm_production_install_command(package_dir: &Path) -> String {
     format!(
         "cd {} && npm {}",
-        shell_quote_path(package_dir),
+        crate::display::shell_arg_path(package_dir),
         NPM_PRODUCTION_INSTALL_ARGS.join(" ")
     )
 }
@@ -1269,7 +1265,7 @@ printf '\n' >> "$log"
 mkdir -p node_modules/left-pad
 printf 'module.exports = 1;\n' > node_modules/left-pad/index.js
 "#,
-                log = shell_quote_path(log_path)
+                log = crate::display::shell_arg_path(log_path)
             ),
         )
         .unwrap();

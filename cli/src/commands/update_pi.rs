@@ -475,7 +475,10 @@ fn execute(plan: &[PlanItem]) -> Result<()> {
         let scope_label = if *global { "global" } else { "project" };
         match install_one_npm(name) {
             Ok(()) => {
-                println!("  ✓ {name} ({scope_label}) [npm install -g {name}@latest]");
+                println!(
+                    "  ✓ {name} ({scope_label}) [npm install -g {}]",
+                    crate::display::command_arg(&format!("{name}@latest"))
+                );
                 succeeded += 1;
             }
             Err(e) => {

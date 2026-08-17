@@ -27,6 +27,60 @@ impl Resolved {
     }
 }
 
+/// Whether the Pi carrier package is there to run Pi's hook behavior.
+///
+/// Four states, not a bool, because they carry four remedies: a `settings.json`
+/// nothing could parse says nothing about whether the package is registered,
+/// and reporting that as "not installed" sends the reader to reinstall a
+/// package whose only fault is a file they must repair; a package present but
+/// unregistered is fixed by the registration, not by another copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PiCarrier {
+    /// Deployed in a scope Pi loads, and registered there.
+    Ready,
+    /// Deployed in a scope Pi loads, and registered in none of them.
+    Unregistered,
+    /// Deployed in no scope Pi loads.
+    Absent,
+    /// Pi's settings could not be read, so registration is unknown. Names the
+    /// cause.
+    Unknown(String),
+}
+
+/// The one probe for the carrier, for every caller that reports on a Pi hook.
+///
+/// Pi loads packages from BOTH scopes, so a globally deployed carrier backs a
+/// project-locked hook. Registration is asked through
+/// [`crate::pi_extension::package_registration`] — the reader Pi package
+/// entries are already verified with — so an unreadable settings file is
+/// unknown, never absent.
+pub fn pi_carrier_state(global: bool) -> PiCarrier {
+    let scopes: &[bool] = if global { &[true] } else { &[false, true] };
+    let mut deployed_anywhere = false;
+    let mut unreadable: Option<String> = None;
+    for &scope in scopes {
+        if !crate::config::pi_packages_dir(scope)
+            .join(PI_HOOKS_PACKAGE)
+            .exists()
+        {
+            continue;
+        }
+        deployed_anywhere = true;
+        match crate::pi_extension::package_registration(PI_HOOKS_PACKAGE, scope) {
+            crate::pi_extension::PackageRegistration::Registered => return PiCarrier::Ready,
+            crate::pi_extension::PackageRegistration::Absent => {}
+            crate::pi_extension::PackageRegistration::Unreadable { reason } => {
+                unreadable.get_or_insert(reason);
+            }
+        }
+    }
+    match (unreadable, deployed_anywhere) {
+        (Some(reason), _) => PiCarrier::Unknown(reason),
+        (None, true) => PiCarrier::Unregistered,
+        (None, false) => PiCarrier::Absent,
+    }
+}
+
 /// Resolve one hook against one harness: the contract cell, downgraded by the
 /// facts of this install.
 ///
@@ -38,7 +92,7 @@ pub fn resolve(
     hook: &crate::hook::Hook,
     harness: Harness,
     global: bool,
-    pi_hooks_installed: bool,
+    pi_hooks: &PiCarrier,
 ) -> Option<Resolved> {
     let cell = contract::cell(&hook.event, harness)?;
     if !hook.applies_to(harness.id()) {
@@ -47,13 +101,19 @@ pub fn resolve(
             note: Some("excluded by harnesses:"),
         });
     }
-    if let Some(Mechanism::PiHooksExtension) = cell.mechanism()
-        && !pi_hooks_installed
-    {
-        return Some(Resolved {
-            cell: Cell::Unsupported,
-            note: Some("pi-hooks not installed"),
-        });
+    if let Some(Mechanism::PiHooksExtension) = cell.mechanism() {
+        let downgrade = match pi_hooks {
+            PiCarrier::Ready => None,
+            PiCarrier::Unregistered => Some("pi-hooks not registered in Pi settings"),
+            PiCarrier::Absent => Some("pi-hooks not installed"),
+            PiCarrier::Unknown(_) => Some("pi-hooks registration unreadable"),
+        };
+        if let Some(note) = downgrade {
+            return Some(Resolved {
+                cell: Cell::Unsupported,
+                note: Some(note),
+            });
+        }
     }
     if cell
         .mechanism()
@@ -142,18 +202,13 @@ pub fn summary(entry: &LockEntry, global: bool) -> Option<String> {
             entry.harnesses.join(", ")
         ));
     };
-    // Pi loads packages from both scopes, so a globally deployed carrier
-    // backs a project hook too.
-    let pi_hooks_installed =
-        crate::pi_extension::is_pi_extension_operational(PI_HOOKS_PACKAGE, global)
-            || (!global
-                && crate::pi_extension::is_pi_extension_operational(PI_HOOKS_PACKAGE, true));
+    let pi_hooks = pi_carrier_state(global);
     let mut parts: Vec<String> = Vec::new();
     for harness_id in &entry.harnesses {
         let Some(harness) = Harness::from_id(harness_id) else {
             continue;
         };
-        let label = match resolve(&hook, harness, global, pi_hooks_installed) {
+        let label = match resolve(&hook, harness, global, &pi_hooks) {
             Some(resolved) => resolved.label(),
             None => format!("unsupported (event {} not in contract)", hook.event),
         };

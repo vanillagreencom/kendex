@@ -146,10 +146,11 @@ impl RefreshStats {
     /// recorded source hash as both old and new — "(unchanged)" for an entry
     /// that was never re-copied from its source (VST-134).
     fn fail_no_installable_harness(&mut self, item: &str, harnesses: &[String], global: bool) {
+        let arg = crate::display::command_arg(item);
         let remove_cmd = if global {
-            format!("vstack remove {item} --global")
+            format!("vstack remove {arg} --global")
         } else {
-            format!("vstack remove {item}")
+            format!("vstack remove {arg}")
         };
         self.fail(
             item,
@@ -401,7 +402,7 @@ pub fn refresh_items_in_scope(
                 }
                 Some(_) => format!(
                     "its source no longer carries it — restore it there, or `vstack remove {}` the entry",
-                    entry.name
+                    crate::display::command_arg(&entry.name)
                 ),
             },
         })

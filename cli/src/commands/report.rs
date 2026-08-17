@@ -675,20 +675,9 @@ fn render_gh_command(gh_args: &[String]) -> String {
     let mut rendered = String::from("gh");
     for arg in gh_args {
         rendered.push(' ');
-        rendered.push_str(&shell_quote(arg));
+        rendered.push_str(&crate::display::shell_arg(arg));
     }
     rendered
-}
-
-fn shell_quote(s: &str) -> String {
-    let safe = !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_./:@=,".contains(c));
-    if safe {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
-    }
 }
 
 /// Save the rendered report (title header + body) to the OS temp dir, NOT the

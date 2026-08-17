@@ -347,3 +347,117 @@ fn a_hook_the_harness_will_not_run_is_its_own_json_and_quiet_report() {
     assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
     assert!(clean.stderr.is_empty(), "{}", text(&clean.stderr));
 }
+
+/// Pi's carrier package IS the artifact that makes a Pi hook run: there is no
+/// per-hook file to miss, so its absence is the Pi twin of a missing Codex
+/// registration. A filtered install (`--hook X --harness pi`) selects no Pi
+/// extension, so the lock can claim Pi enforcement for a hook nothing could
+/// ever run — and that used to report CLEAN, as `current` metadata reading
+/// `unsupported (pi-hooks not installed)`.
+#[test]
+fn a_pi_locked_hook_needs_its_carrier_package_to_read_as_installed() {
+    let sb = Sandbox::new("check-pi-carrier");
+    sb.write_hook("guard");
+    sb.write_hook("elsewhere");
+    // The carrier, available in the source but not yet installed.
+    let package = sb.source.join("pi-extensions").join("pi-hooks");
+    fs::create_dir_all(package.join("extensions")).unwrap();
+    fs::write(
+        package.join("package.json"),
+        r#"{"name":"@vanillagreen/pi-hooks","version":"1.0.0","description":"carrier","keywords":["pi-package"],"pi":{"extensions":["./extensions/hooks.js"]}}"#,
+    )
+    .unwrap();
+    fs::write(package.join("extensions/hooks.js"), "export default {};\n").unwrap();
+
+    let add = |args: &[&str]| {
+        let output = sb
+            .vstack()
+            .args(["add", sb.source.to_str().unwrap()])
+            .args(args)
+            .args(["--no-auto-skills", "-y"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "add failed: {}",
+            text(&output.stderr)
+        );
+    };
+
+    add(&["--hook", "guard", "--harness", "pi"]);
+    // Control: a hook locked for another harness only, in the same project.
+    add(&["--hook", "elsewhere", "--harness", "claude"]);
+
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(
+        quiet.status.code(),
+        Some(1),
+        "a hook Pi cannot run must not report clean: {}",
+        text(&quiet.stderr)
+    );
+    let err = text(&quiet.stderr);
+    assert!(err.contains("guard (hook)"), "{err}");
+    assert!(
+        err.contains("@vanillagreen/pi-hooks not installed"),
+        "the note must name the missing carrier: {err}"
+    );
+    assert!(
+        err.contains("--pi-extension @vanillagreen/pi-hooks"),
+        "the note must carry the remedy that installs it: {err}"
+    );
+    assert!(
+        !err.contains("elsewhere (hook)"),
+        "a hook not locked for Pi is unaffected: {err}"
+    );
+
+    // Control: with the carrier deployed AND registered, the same lock is
+    // clean.
+    add(&["--pi-extension", "pi-hooks", "--harness", "pi"]);
+    let clean = sb.check(&["--quiet"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
+    assert!(clean.stderr.is_empty(), "{}", text(&clean.stderr));
+
+    // Control: deployed but NOT registered names the registration, not the
+    // package — Pi loads what its settings point at, and a reinstall of a
+    // package already on disk fixes nothing.
+    let settings_path = sb.project.join(".pi/settings.json");
+    let registered = fs::read_to_string(&settings_path).unwrap();
+    let mut settings: serde_json::Value = serde_json::from_str(&registered).unwrap();
+    settings["packages"] = serde_json::json!([]);
+    fs::write(
+        &settings_path,
+        format!("{}\n", serde_json::to_string_pretty(&settings).unwrap()),
+    )
+    .unwrap();
+
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    let err = text(&quiet.stderr);
+    assert!(
+        err.contains("pi: @vanillagreen/pi-hooks present but not registered"),
+        "the hook's note must name the registration: {err}"
+    );
+    assert!(
+        !err.contains("@vanillagreen/pi-hooks not installed"),
+        "a deployed package must not be reported as absent: {err}"
+    );
+
+    // Control: an unreadable settings file is UNVERIFIABLE naming the file,
+    // never a missing package.
+    fs::write(&settings_path, "{ not json").unwrap();
+    let json = sb.check(&["--json"]);
+    assert_eq!(json.status.code(), Some(1), "{}", text(&json.stderr));
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let unverifiable = parsed["scopes"][0]["unverifiable"].as_array().unwrap();
+    let hook_row = unverifiable
+        .iter()
+        .find(|item| item["name"] == "guard")
+        .unwrap_or_else(|| panic!("guard must be unverifiable, not missing: {parsed}"));
+    let detail = hook_row["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("registration unverifiable"), "{parsed}");
+
+    // And back to a registered carrier, clean again.
+    fs::write(&settings_path, &registered).unwrap();
+    let clean = sb.check(&["--quiet"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
+}
