@@ -89,6 +89,16 @@ test("toolUseId variants pair out-of-order same-named calls correctly", () => {
 	assert.match(rows[1]!, /^ .*tool bash \(second\) · ok · 1\.0s/);
 });
 
+test("a nested toolCall end pairs with its start and carries the failure", () => {
+	const out = formatTranscriptForDisplay([
+		stream(0, { args: { command: "edit it" }, toolCallId: "tcl_3", toolName: "edit", type: "tool_execution_start" }),
+		stream(2, { error: "boom", toolCall: { id: "tcl_3", isError: true, name: "Edit", status: "error" }, type: "tool_execution_end" }),
+	].join("\n"));
+	const rows = out.split("\n");
+	assert.equal(rows.length, 1);
+	assert.match(rows[0]!, /^✖.*tool edit \(edit it\) · error · 2\.0s/);
+});
+
 test("id-less same-named tool calls pair first-started-first-ended", () => {
 	const out = formatTranscriptForDisplay([
 		stream(0, { args: { command: "first" }, toolName: "bash", type: "tool_execution_start" }),

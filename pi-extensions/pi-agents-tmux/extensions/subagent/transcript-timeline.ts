@@ -222,10 +222,12 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 				break;
 			}
 			case "tool_execution_start": {
-				const name = stringValue(event.toolName ?? event.tool_name) ?? stringValue(event.name) ?? "tool";
-				const target = primaryToolArgument(event.args ?? event.arguments ?? event.input ?? event.params);
+				// Pi also emits the nested carrier shape { toolCall: { name, id, … } }.
+				const call = (event.toolCall ?? event.tool_call) as Record<string, unknown> | undefined;
+				const name = stringValue(event.toolName ?? event.tool_name) ?? stringValue(event.name) ?? stringValue(call?.name) ?? "tool";
+				const target = primaryToolArgument(event.args ?? event.arguments ?? event.input ?? event.params ?? call?.arguments ?? call?.input);
 				const label = target ? `tool ${name} (${oneLine(target, 60)})` : `tool ${name}`;
-				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id) ?? `name:${name}`;
+				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id ?? call?.id) ?? `name:${name}`;
 				const row = push(stamp, label, "running");
 				const queue = openTools.get(id) ?? [];
 				queue.push({ label, row, startedAtMs: atMs });
@@ -236,12 +238,13 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 				// Folded into the paired tool row; the full payload stays in the file.
 				break;
 			case "tool_execution_end": {
-				const name = stringValue(event.toolName ?? event.tool_name) ?? stringValue(event.name) ?? "tool";
-				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id) ?? `name:${name}`;
+				const call = (event.toolCall ?? event.tool_call) as Record<string, unknown> | undefined;
+				const name = stringValue(event.toolName ?? event.tool_name) ?? stringValue(event.name) ?? stringValue(call?.name) ?? "tool";
+				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id ?? call?.id) ?? `name:${name}`;
 				const open = openTools.get(id)?.shift();
-				const failed = event.isError === true || event.is_error === true || stringValue(event.status) === "error";
-				const status = stringValue(event.status) ?? (failed ? "error" : "ok");
-				const resultSize = payloadByteSize(event.result ?? event.output ?? event.content);
+				const failed = event.isError === true || event.is_error === true || call?.isError === true || stringValue(event.status ?? call?.status) === "error";
+				const status = stringValue(event.status ?? call?.status) ?? (failed ? "error" : "ok");
+				const resultSize = payloadByteSize(event.result ?? event.output ?? event.content ?? call?.result);
 				const duration = open?.startedAtMs !== undefined && atMs !== undefined ? formatToolDuration(atMs - open.startedAtMs) : undefined;
 				const detail = [status, duration, resultSize ? formatByteSize(resultSize) : undefined].filter(Boolean).join(" · ");
 				if (open) {
