@@ -18,6 +18,15 @@
 //! is covered in the reader, in the presence check and in every writer at
 //! once, so the next shape is covered by construction.
 //!
+//! Which makes the declaration itself the thing to get right: **every field
+//! any reader here goes on to INTERPRET is declared with its real type.** A
+//! read field left as [`Schema::Any`] is a field whose malformed value the
+//! reader silently reinterprets as something else — a `"matcher": 42` read as
+//! "no matcher", answering "registered" for a hook the harness cannot
+//! deserialize and will never run. So `Any` is not the default here; it is
+//! the claim that vstack only ever PRESERVES this value, and each one below
+//! says which field it is making that claim about.
+//!
 //! [`Syntax`] is declared beside the schema for the same reason. Which parser
 //! a file needs is a fact about the harness that loads it, and reading a file
 //! with a parser its harness does not use is wrong in both directions: too
@@ -28,6 +37,10 @@ use anyhow::{Context, Result};
 use jsonc_parser::ParseOptions;
 use jsonc_parser::cst::CstRootNode;
 use std::path::Path;
+
+mod deviation;
+
+use deviation::validate;
 
 /// What every writer here says when it will not touch a config it could not
 /// parse. Shared so the refusal reads the same whichever file hit it.
@@ -69,8 +82,14 @@ pub(crate) struct ConfigFile {
 /// wants to hear. Only a key that is PRESENT is held to its type.
 pub(crate) enum Schema {
     /// Nothing here is on vstack's path. Any value at all, preserved as it is
-    /// and never inspected — the deliberate opt-out, so that a shape this
+    /// and never interpreted — the deliberate opt-out, so that a shape this
     /// module does refuse is a shape a reader really depends on.
+    ///
+    /// Only for a value no reader draws a conclusion from. A field a reader
+    /// DOES read gets its own type below, however obvious the type looks:
+    /// left here, its malformed value is not refused but quietly reread as
+    /// whatever the reader's fallback says, and every command downstream
+    /// reports that reading as fact.
     Any,
     /// A JSON object. `keys` are the ones vstack reads by name; `values`
     /// constrains every other value, for the maps whose KEYS belong to the
@@ -97,6 +116,9 @@ pub(crate) static HOOKS_CONFIG: ConfigFile = ConfigFile {
 /// `hooks → <event> → [{matcher?, hooks: [{command}]}]` — the document
 /// claude's `settings.json` and codex's `hooks.json` share, and the whole of
 /// what registration reading and both installers depend on.
+///
+/// Every OTHER root key is `Any`: codex's `hooks.json` holds nothing else
+/// vstack reads, and a writer round-trips what it finds there untouched.
 static HOOK_DOCUMENT: Schema = Schema::Object {
     keys: &[("hooks", &HOOK_EVENTS)],
     values: &Schema::Any,
@@ -108,10 +130,29 @@ static HOOK_EVENTS: Schema = Schema::Object {
     keys: &[],
     values: &Schema::Array(&HOOK_ENTRY),
 };
+/// `matcher` is DECLARED rather than left to `values` because the reader
+/// interprets it: registration reading selects an entry by comparing this
+/// value to the hook's own matcher, and anything that is not a string reads
+/// there as "no matcher" — exactly the shape a MATCHERLESS hook's slot
+/// accepts. Left as `Any`, a `"matcher": 42` neither harness can deserialize
+/// answered `Registered` for a hook that would never fire, and `check` called
+/// it clean. Absent stays absent: a matcherless entry is what a matcherless
+/// hook registers as.
+///
+/// Every other key of an entry is `Any`: no reader consults one, and each is
+/// content the writers carry across a rewrite unchanged.
 static HOOK_ENTRY: Schema = Schema::Object {
-    keys: &[("hooks", &Schema::Array(&HOOK_HANDLER))],
+    keys: &[
+        ("matcher", &Schema::Str),
+        ("hooks", &Schema::Array(&HOOK_HANDLER)),
+    ],
     values: &Schema::Any,
 };
+/// `command` is the whole of what ownership is decided from, so it is typed.
+/// `type` and `timeout` are `Any` deliberately: vstack WRITES both onto its
+/// own handler and reads neither back out of the document, and refusing a
+/// user's handler over a value nothing here consults is the too-strict half
+/// of the same mistake.
 static HOOK_HANDLER: Schema = Schema::Object {
     keys: &[("command", &Schema::Str)],
     values: &Schema::Any,
@@ -127,6 +168,10 @@ static HOOK_HANDLER: Schema = Schema::Object {
 /// Codex's `hooks.json` keeps [`HOOKS_CONFIG`]: the switch is not a key codex
 /// defines, and holding another harness's file to it would refuse a document
 /// codex reads perfectly well.
+///
+/// Everything else in `settings.json` — permissions, env, model, status line —
+/// is `Any`: vstack neither reads nor authors any of it, and every write here
+/// carries it back out as it came in.
 ///
 /// Strict, like codex's: claude's load order is `settings.json` and
 /// `settings.local.json`, both handed to a strict parser, with no `.jsonc`
@@ -154,9 +199,26 @@ pub(crate) static OPENCODE_CONFIG: ConfigFile = ConfigFile {
 };
 
 /// `instructions` is appended to and filtered; `permission` is merged into.
-/// Their ELEMENTS are `Any` on purpose: both writers preserve every entry they
-/// do not recognize, and an entry that is not the string vstack writes cannot
-/// be vstack's — absent is the true answer there, not unreadable.
+/// Both containers are typed, because both writers create and edit them.
+///
+/// What sits INSIDE them is `Any`, and per field:
+///
+/// - `instructions[]` — read as a string, to ask whether it names this hook's
+///   instruction file. vstack only ever appends a string, so an element of
+///   another type is somebody else's and cannot be the registration being
+///   looked for. It reads as absent, which understates: the remedy is a
+///   reinstall that appends the correct entry. Typing it would refuse the
+///   whole config over an entry vstack does not own.
+/// - `permission.<tool>` — only `permission.bash` is read, and only to ask
+///   whether it is EXACTLY the `{"*": "ask"}` rule the installer writes.
+///   Anything else, of any shape, is the user's and is left alone; install
+///   likewise writes the rule only when the key is absent entirely. No
+///   presence report rests on it.
+/// - every other root key — OpenCode's own configuration, which vstack reads
+///   nothing from.
+///
+/// None of the three can turn a malformed value into a claim that something
+/// is installed, which is what separates them from `matcher` in [`HOOK_ENTRY`].
 static OPENCODE_DOCUMENT: Schema = Schema::Object {
     keys: &[
         ("instructions", &Schema::Array(&Schema::Any)),
@@ -174,10 +236,15 @@ static OPENCODE_DOCUMENT: Schema = Schema::Object {
 /// Pi's `settings.json` — strict JSON: Pi's settings manager reads it with
 /// `JSON.parse`, so a comment there is a file Pi refuses to start on.
 ///
-/// Only the `packages` array is vstack's; an entry inside it is `Any` for the
-/// same reason opencode's are — every writer rebuilds the array preserving
-/// what it did not match, and an entry vstack cannot interpret is not the one
-/// naming its own package directory.
+/// Only the `packages` array is vstack's, so only it is typed. What is inside
+/// it is `Any` for the same reason opencode's entries are, per field:
+///
+/// - `packages[]` — read as a string path, or as an object whose `source` is
+///   one. An entry of any other shape, and an object whose `source` is not a
+///   string, cannot be the `./packages/<name>` vstack writes; it reads as
+///   absent and every writer rebuilds the array preserving it.
+/// - every other root key — Pi's own settings, which vstack reads nothing
+///   from and rewrites verbatim.
 pub(crate) static PI_SETTINGS: ConfigFile = ConfigFile {
     syntax: Syntax::Strict,
     schema: &PI_DOCUMENT,
@@ -273,89 +340,6 @@ pub(crate) const JSONC: ParseOptions = ParseOptions {
     allow_hexadecimal_numbers: false,
     allow_unary_plus_numbers: false,
 };
-
-fn validate(path: &Path, schema: &Schema, doc: &serde_json::Value) -> Result<()> {
-    if let Err(deviation) = check(schema, doc, "") {
-        anyhow::bail!("{}: {deviation}", path.display());
-    }
-    Ok(())
-}
-
-/// The whole document against the whole schema. `at` is the JSON path walked
-/// so far, so the failure names the value rather than the file alone.
-fn check(schema: &Schema, value: &serde_json::Value, at: &str) -> Result<(), String> {
-    match schema {
-        Schema::Any => Ok(()),
-        Schema::Str => match value.is_string() {
-            true => Ok(()),
-            false => Err(deviation(at, "a string", value)),
-        },
-        Schema::Bool => match value.is_boolean() {
-            true => Ok(()),
-            false => Err(deviation(at, "a boolean", value)),
-        },
-        Schema::Array(element) => {
-            let Some(items) = value.as_array() else {
-                return Err(deviation(at, "an array", value));
-            };
-            for (index, item) in items.iter().enumerate() {
-                check(element, item, &format!("{at}[{index}]"))?;
-            }
-            Ok(())
-        }
-        Schema::Object { keys, values } => {
-            let Some(map) = value.as_object() else {
-                return Err(deviation(at, "an object", value));
-            };
-            for (key, item) in map {
-                let schema = keys
-                    .iter()
-                    .find(|(name, _)| *name == key.as_str())
-                    .map_or(*values, |(_, schema)| *schema);
-                check(schema, item, &child_path(at, key))?;
-            }
-            Ok(())
-        }
-    }
-}
-
-fn deviation(at: &str, expected: &str, found: &serde_json::Value) -> String {
-    let at = if at.is_empty() { "the document" } else { at };
-    format!("{at} is {}, expected {expected}", json_type(found))
-}
-
-fn json_type(value: &serde_json::Value) -> &'static str {
-    match value {
-        serde_json::Value::Null => "null",
-        serde_json::Value::Bool(_) => "a boolean",
-        serde_json::Value::Number(_) => "a number",
-        serde_json::Value::String(_) => "a string",
-        serde_json::Value::Array(_) => "an array",
-        serde_json::Value::Object(_) => "an object",
-    }
-}
-
-/// How long a key may run in a reported path. The key comes from the user's
-/// file and the message rides into a drift report, which the renderer bounds
-/// as a whole; bounding the segment keeps one absurd key from crowding out
-/// the part of the path that identifies the fault.
-const KEY_LIMIT: usize = 40;
-
-fn child_path(at: &str, key: &str) -> String {
-    let plain = !key.is_empty()
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '|' | '.'));
-    let mut shown: String = key.chars().take(KEY_LIMIT).collect();
-    if shown.chars().count() < key.chars().count() {
-        shown.push('…');
-    }
-    match (at.is_empty(), plain) {
-        (true, true) => shown,
-        (false, true) => format!("{at}.{shown}"),
-        (_, false) => format!("{at}[{shown:?}]"),
-    }
-}
 
 #[cfg(test)]
 mod tests;

@@ -59,6 +59,17 @@ fn a_deviation_anywhere_on_the_path_names_itself() {
             r#"{"hooks": {"PreToolUse:Bash": [1]}}"#,
             "hooks.PreToolUse:Bash[0] is a number, expected an object",
         ),
+        // A field the reader INTERPRETS, so a value of the wrong type is a
+        // deviation and not a fact: read as "no matcher", this answered for a
+        // matcherless hook's registration.
+        (
+            r#"{"hooks": {"SessionStart": [{"matcher": 42, "hooks": [{"command": "bash x.sh"}]}]}}"#,
+            "hooks.SessionStart[0].matcher is a number, expected a string",
+        ),
+        (
+            r#"{"hooks": {"PreToolUse": [{"matcher": ["Bash"], "hooks": []}]}}"#,
+            "hooks.PreToolUse[0].matcher is an array, expected a string",
+        ),
         (
             r#"{"hooks": {"odd key": 1}}"#,
             r#"hooks["odd key"] is a number, expected an array"#,
@@ -92,6 +103,14 @@ fn a_document_off_vstacks_path_reads() {
         // replaces either.
         r#"{"hooks": {"Stop": [{"matcher": "*"}]}}"#,
         r#"{"hooks": {"Stop": [{"hooks": [{"type": "future"}]}]}}"#,
+        // An absent matcher is what a matcherless hook registers as — a
+        // document fact, never a deviation.
+        r#"{"hooks": {"SessionStart": [{"hooks": [{"command": "bash x.sh"}]}]}}"#,
+        // The `Any` cases, proved by the shapes vstack only PRESERVES: keys
+        // no reader here consults, at types no reader here expects. Refusing
+        // one would block install and removal over a value vstack never uses.
+        r#"{"hooks": {"Stop": [{"hooks": [{"command": "bash x.sh", "type": 7, "timeout": "soon"}], "note": {"mine": true}}]}}"#,
+        r#"{"statusLine": 7, "permissions": ["not an object"]}"#,
     ] {
         let path = tmpfile("accepted", document);
         let doc = read(&path, &HOOKS_CONFIG)
