@@ -6,6 +6,10 @@
   that skill is installed beside it — a human committing outside any harness
   gets the deterministic checks CI would report, first; a repository's first
   commit skips it with a note (VST-310).
+- orch: `reconcile-work-items` reports tracker state written once and never
+  re-read — parked containers, stale started items, Done items with unchecked
+  acceptance boxes; oversee's close-out and audit-issues' preflight run it, so
+  a skipped close step or a partial-scope `Closes` cannot stay silent (VST-318).
 
 - settings templates: every key's comment condensed to one-line intent plus
   landmines (922 → 545 lines across the root and skill templates, zero value
