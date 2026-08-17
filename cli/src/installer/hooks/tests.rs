@@ -1,11 +1,11 @@
 use super::codex::{
-    codex_hooks_feature_enabled, enable_codex_hooks_feature, merge_codex_hooks_json,
+    codex_hooks_feature_state, enable_codex_hooks_feature, merge_codex_hooks_json,
     migrate_codex_hooks_feature,
 };
 use super::opencode::{install_hook_opencode_at_path, remove_hook_from_opencode_json_at_path};
 use super::*;
 
-fn hook_fixture(name: &str, event: &str, matcher: Option<&str>) -> Hook {
+pub(super) fn hook_fixture(name: &str, event: &str, matcher: Option<&str>) -> Hook {
     Hook {
         name: name.into(),
         event: event.into(),
@@ -389,151 +389,6 @@ fn merge_codex_hooks_json_preserves_user_handler_with_same_basename() {
     let body = serde_json::to_string(&doc).unwrap();
     assert!(body.contains("/usr/local/bin/guard.sh"));
     assert!(body.contains("/tmp/guard.sh"));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-fn agent_fixture(name: &str) -> Agent {
-    Agent {
-        name: name.into(),
-        description: format!("{name} agent"),
-        model: "sonnet".into(),
-        role: crate::agent::AgentRole::Engineer,
-        color: None,
-        effort: None,
-        body: "Body\n".into(),
-        source_path: PathBuf::new(),
-    }
-}
-
-/// Fallback prose is installed for EVERY Codex agent or not claimed at all.
-/// Accumulating success across agents let one agent that already carried the
-/// marker report the whole install done while a newly added agent whose TOML
-/// has no `developer_instructions` block silently got no safety prose.
-#[test]
-fn codex_prose_install_fails_on_an_agent_it_cannot_write_and_names_it() {
-    let dir = tmpdir("codex_prose_partial");
-    let agents_dir = dir.join("agents");
-    std::fs::create_dir_all(&agents_dir).unwrap();
-    let well_formed =
-        |name: &str| format!("name = \"{name}\"\ndeveloper_instructions = '''\nBody\n'''\n");
-    std::fs::write(agents_dir.join("first.toml"), well_formed("first")).unwrap();
-    // Second agent's TOML has no closing ''' — nowhere to put the block.
-    std::fs::write(
-        agents_dir.join("second.toml"),
-        "name = \"second\"\ndescription = \"no instructions block\"\n",
-    )
-    .unwrap();
-    let hook = hook_fixture("post-edit-lint", "TaskCompleted", None);
-    let agents = [agent_fixture("first"), agent_fixture("second")];
-
-    let err = crate::test_util::with_codex_home(&dir, || {
-        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
-            .expect_err("an agent that cannot receive the block must not report success")
-    });
-    let message = format!("{err:#}");
-    assert!(message.contains("second"), "names the agent: {message}");
-    assert!(
-        message.contains(&agents_dir.join("second.toml").display().to_string()),
-        "names the file: {message}"
-    );
-
-    // Control: both well-formed → success, and both files carry the block.
-    std::fs::write(agents_dir.join("second.toml"), well_formed("second")).unwrap();
-    crate::test_util::with_codex_home(&dir, || {
-        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
-            .unwrap();
-    });
-    let marker = "## Safety: post-edit-lint";
-    for name in ["first", "second"] {
-        let body = std::fs::read_to_string(agents_dir.join(format!("{name}.toml"))).unwrap();
-        assert!(body.contains(marker), "{name} must carry the block: {body}");
-    }
-
-    // Control: a rerun over agents that already carry it is still success and
-    // writes no second copy.
-    crate::test_util::with_codex_home(&dir, || {
-        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
-            .unwrap();
-    });
-    for name in ["first", "second"] {
-        let body = std::fs::read_to_string(agents_dir.join(format!("{name}.toml"))).unwrap();
-        assert_eq!(
-            body.matches(marker).count(),
-            1,
-            "no duplicate block: {body}"
-        );
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// The marker only counts where the prose has to live. Text carrying it in a
-/// comment or an unrelated field made the install skip its write, and the
-/// presence read — the same whole-file search — then called the missing
-/// fallback installed: both wrong, and agreeing with each other.
-#[test]
-fn marker_text_outside_developer_instructions_is_not_the_prose_fallback() {
-    let dir = tmpdir("codex_prose_scope");
-    let agents_dir = dir.join("agents");
-    std::fs::create_dir_all(&agents_dir).unwrap();
-    let hook = hook_fixture("post-edit-lint", "TaskCompleted", None);
-    let marker = super::codex::codex_hook_safety_marker(&hook.name);
-    // The whole block, verbatim — in a comment and in another field. Every
-    // line the old whole-file search matched on is here; none of it is prose
-    // Codex will ever hand the agent.
-    let decoy = format!(
-        "# {marker}\nname = \"rust\"\nnotes = '''\n{}\n'''\ndeveloper_instructions = '''\nBody\n'''\n",
-        crate::installer::codex_hook_safety_block(&hook)
-    );
-    let toml = agents_dir.join("rust.toml");
-    std::fs::write(&toml, &decoy).unwrap();
-    let agents = [agent_fixture("rust")];
-
-    // Presence, before anything is installed: the decoy is not the block.
-    assert!(
-        crate::installer::codex_agent_prose_section(&decoy, &hook.name).is_none(),
-        "marker text outside developer_instructions must not read as installed"
-    );
-
-    // …so the install writes the block instead of skipping it.
-    crate::test_util::with_codex_home(&dir, || {
-        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
-            .unwrap();
-    });
-    let written = std::fs::read_to_string(&toml).unwrap();
-    let section = crate::installer::codex_agent_prose_section(&written, &hook.name)
-        .expect("the install must write the block the presence read looks for");
-    assert!(
-        section.contains("the agent should verify this constraint is met"),
-        "the section carries the hook's own prose: {section}"
-    );
-    assert!(
-        written.starts_with(&format!("# {marker}\n")),
-        "the decoy comment is left exactly as it was: {written}"
-    );
-
-    // Control: a rerun sees its own block and writes no second copy.
-    crate::test_util::with_codex_home(&dir, || {
-        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
-            .unwrap();
-    });
-    let reread = std::fs::read_to_string(&toml).unwrap();
-    assert_eq!(reread, written, "a second run must change nothing");
-
-    // Control: a longer-named hook's block is not this hook's. A substring
-    // reading answered yes and skipped the install for good.
-    let sibling = hook_fixture("post-edit-lint-extra", "TaskCompleted", None);
-    let sibling_only = format!(
-        "developer_instructions = '''\n{}\n'''\n",
-        crate::installer::codex_hook_safety_block(&sibling)
-    );
-    assert!(
-        crate::installer::codex_agent_prose_section(&sibling_only, &hook.name).is_none(),
-        "`## Safety: x-extra` must not answer for `## Safety: x`: {sibling_only}"
-    );
-    assert!(
-        crate::installer::codex_agent_prose_section(&sibling_only, &sibling.name).is_some(),
-        "…while its own name still finds it: {sibling_only}"
-    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -925,12 +780,14 @@ fn remove_hook_from_opencode_preserves_unrelated_permissions() {
 
 #[test]
 fn codex_hooks_feature_reads_the_parsed_table() {
+    use super::codex::CodexHooksFeature;
     let dir = tmpdir("codex_feature_read");
     let config = dir.join("config.toml");
 
     std::fs::write(&config, "[features]\nhooks = true\n").unwrap();
-    assert!(
-        codex_hooks_feature_enabled(&config),
+    assert_eq!(
+        codex_hooks_feature_state(&config),
+        CodexHooksFeature::Enabled,
         "control: the boolean true is enabled"
     );
 
@@ -940,24 +797,40 @@ fn codex_hooks_feature_reads_the_parsed_table() {
         "notes = '''\n[features]\nhooks = true\n'''\n\n[features]\nhooks = false\n",
     )
     .unwrap();
-    assert!(
-        !codex_hooks_feature_enabled(&config),
+    assert_eq!(
+        codex_hooks_feature_state(&config),
+        CodexHooksFeature::Disabled,
         "the real table says false"
     );
 
     // Codex reads a boolean; the string is not one.
     std::fs::write(&config, "[features]\nhooks = \"true\"\n").unwrap();
-    assert!(
-        !codex_hooks_feature_enabled(&config),
+    assert_eq!(
+        codex_hooks_feature_state(&config),
+        CodexHooksFeature::Disabled,
         "a string is not true"
     );
 
+    // A config nothing can parse is not "disabled": codex reads no feature out
+    // of it either, but what the user has to fix is the file, and the writer
+    // refuses it rather than splicing into what it cannot read.
     std::fs::write(&config, "[features\nhooks = true\n").unwrap();
+    let state = codex_hooks_feature_state(&config);
+    let CodexHooksFeature::Unreadable(reason) = &state else {
+        panic!("an unparseable config is unreadable, got {state:?}");
+    };
     assert!(
-        !codex_hooks_feature_enabled(&config),
-        "an unparseable config enables nothing"
+        reason.contains(&config.display().to_string()) && reason.contains("not valid TOML"),
+        "the reason names the file and the failure: {reason}"
+    );
+    assert!(
+        !reason.contains('\n'),
+        "the reason is one report line: {reason}"
     );
 
-    assert!(!codex_hooks_feature_enabled(&dir.join("missing.toml")));
+    assert_eq!(
+        codex_hooks_feature_state(&dir.join("missing.toml")),
+        CodexHooksFeature::Disabled
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

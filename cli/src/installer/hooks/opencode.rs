@@ -70,14 +70,11 @@ pub(super) fn install_hook_opencode_at_path(
 
     std::fs::write(instruction_path, opencode_hook_instruction_contents(hook))?;
 
-    let mut config: serde_json::Value = if config_path.exists() {
-        let content = std::fs::read_to_string(config_path)?;
-        serde_json::from_str(&content)?
-    } else {
-        serde_json::json!({ "$schema": "https://opencode.ai/config.json" })
-    };
+    let mut config = super::read_json_object(config_path)
+        .context(super::REFUSE_UNPARSEABLE_CONFIG)?
+        .unwrap_or_else(|| serde_json::json!({ "$schema": "https://opencode.ai/config.json" }));
 
-    let map = config.as_object_mut().unwrap();
+    let map = config.as_object_mut().expect("read_json_object: object");
 
     // OpenCode doesn't have hooks — convert to permission rules and instructions
     if !map.contains_key("permission") {
@@ -145,12 +142,12 @@ pub(super) fn remove_hook_from_opencode_json_at_path(
             .context("OpenCode hook instruction path missing file name")?;
         checked_child_path(parent, file_name)?;
     }
-    if !config_path.exists() {
+    let Some(mut config) =
+        super::read_json_object(config_path).context(super::REFUSE_UNPARSEABLE_CONFIG)?
+    else {
         let _ = std::fs::remove_file(instruction_path);
         return Ok(());
-    }
-    let content = std::fs::read_to_string(config_path)?;
-    let mut config: serde_json::Value = serde_json::from_str(&content)?;
+    };
 
     let mut changed = false;
 

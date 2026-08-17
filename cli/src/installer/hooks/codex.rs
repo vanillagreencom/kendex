@@ -71,7 +71,7 @@ fn developer_instructions_span(content: &str) -> Option<std::ops::Range<usize>> 
 
 /// The hook's own `## Safety: <name>` section inside `instructions` — its
 /// heading line through to the next `## ` heading or the end of the block.
-fn hook_prose_section<'a>(instructions: &'a str, hook_name: &str) -> Option<&'a str> {
+fn hook_prose_section_range(instructions: &str, hook_name: &str) -> Option<std::ops::Range<usize>> {
     let marker = codex_hook_safety_marker(hook_name);
     let mut start = None;
     let mut offset = 0;
@@ -84,20 +84,32 @@ fn hook_prose_section<'a>(instructions: &'a str, hook_name: &str) -> Option<&'a 
             // prefix of `## Safety: foo-bar`, and a substring reading let one
             // hook's block stand in for another's.
             None if text == marker => start = Some(at),
-            Some(from) if text.starts_with("## ") => return Some(&instructions[from..at]),
+            Some(from) if text.starts_with("## ") => return Some(from..at),
             _ => {}
         }
     }
-    start.map(|from| &instructions[from..])
+    start.map(|from| from..instructions.len())
+}
+
+/// The byte range of `hook_name`'s section within the WHOLE agent TOML, so a
+/// writer can replace exactly what a presence read found.
+fn codex_agent_prose_range(content: &str, hook_name: &str) -> Option<std::ops::Range<usize>> {
+    let span = developer_instructions_span(content)?;
+    let inner = hook_prose_section_range(&content[span.clone()], hook_name)?;
+    Some(span.start + inner.start..span.start + inner.end)
 }
 
 /// The one predicate install and every presence read share: does this Codex
 /// agent TOML already carry `hook_name`'s safety prose, in the block the prose
 /// has to live in? `None` when it does not — including when the file has no
 /// `developer_instructions` block at all.
+///
+/// Finding the section is necessary, never sufficient: what the hook DOES is
+/// its action line, and a heading whose body was deleted carries none of it.
+/// [`codex_agent_carries_hook_prose`] is the predicate every caller that has
+/// the hook itself asks.
 pub(crate) fn codex_agent_prose_section<'a>(content: &'a str, hook_name: &str) -> Option<&'a str> {
-    let span = developer_instructions_span(content)?;
-    hook_prose_section(&content[span], hook_name)
+    codex_agent_prose_range(content, hook_name).map(|range| &content[range])
 }
 
 /// Does any Codex agent under `codex_root` carry THIS hook's prose fallback?
@@ -116,11 +128,18 @@ pub(crate) fn codex_agent_carries_hook_prose(codex_root: &Path, hook: &Hook) -> 
     entries.flatten().any(|entry| {
         let path = entry.path();
         path.extension().is_some_and(|ex| ex == "toml")
-            && std::fs::read_to_string(&path).is_ok_and(|content| {
-                codex_agent_prose_section(&content, &hook.name)
-                    .is_some_and(|section| section.lines().any(|line| line == action_line))
-            })
+            && std::fs::read_to_string(&path)
+                .is_ok_and(|content| content_carries_hook_prose(&content, &hook.name, &action_line))
     })
+}
+
+/// Does ONE agent TOML carry the hook's prose, body and all? A section is the
+/// place the prose lives; the action line is the prose itself, and a heading
+/// whose body was deleted leaves codex carrying no behavior at all. Install
+/// repairs exactly what this rejects, so neither can drift from the other.
+fn content_carries_hook_prose(content: &str, hook_name: &str, action_line: &str) -> bool {
+    codex_agent_prose_section(content, hook_name)
+        .is_some_and(|section| section.lines().any(|line| line == action_line))
 }
 
 /// Map a canonical (Claude-style) hook event to its codex equivalent.
@@ -194,21 +213,32 @@ fn install_hook_codex_native(hook: &Hook, codex_event: &str, global: bool) -> Re
     Ok(())
 }
 
-/// Why a codex-native hook that HAS its script still never runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why a codex-native hook that HAS its script still never runs — or why
+/// nothing here can say whether it does.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexNativeGap {
     /// Nothing in `<root>/hooks.json` points codex at the script.
     NotRegistered,
     /// `[features] hooks` is not on, so codex ignores `hooks.json` entirely.
     FeatureDisabled,
+    /// A file this answer depends on exists and could not be parsed. Not a
+    /// missing registration: reinstalling repairs nothing, and the note names
+    /// the file whose repair does.
+    Unreadable(String),
 }
 
 impl CodexNativeGap {
-    pub(crate) fn describe(self) -> &'static str {
+    pub(crate) fn describe(&self) -> String {
         match self {
-            Self::NotRegistered => "script present but not registered",
-            Self::FeatureDisabled => "hooks feature disabled",
+            Self::NotRegistered => "script present but not registered".to_string(),
+            Self::FeatureDisabled => "hooks feature disabled".to_string(),
+            Self::Unreadable(reason) => format!("registration unverifiable — {reason}"),
         }
+    }
+
+    /// Is this a gap no reinstall can close?
+    pub(crate) fn is_unreadable(&self) -> bool {
+        matches!(self, Self::Unreadable(_))
     }
 }
 
@@ -228,17 +258,23 @@ pub(crate) fn codex_native_hook_gaps(
     // Only the project-scope command defers the repo root to run time.
     let git_root = (!global).then(|| root.parent()).flatten();
     let mut gaps = Vec::new();
-    if !super::hooks_config_registers_script(
+    match super::hooks_config_registration(
         &root.join("hooks.json"),
         Some(codex_event),
         &script_path,
         git_root.map(|root| (CODEX_GIT_TOPLEVEL, root)),
         &owned,
     ) {
-        gaps.push(CodexNativeGap::NotRegistered);
+        super::HookRegistration::Registered => {}
+        super::HookRegistration::Absent => gaps.push(CodexNativeGap::NotRegistered),
+        super::HookRegistration::Unreadable(reason) => {
+            gaps.push(CodexNativeGap::Unreadable(reason));
+        }
     }
-    if !codex_hooks_feature_enabled(&root.join("config.toml")) {
-        gaps.push(CodexNativeGap::FeatureDisabled);
+    match codex_hooks_feature_state(&root.join("config.toml")) {
+        CodexHooksFeature::Enabled => {}
+        CodexHooksFeature::Disabled => gaps.push(CodexNativeGap::FeatureDisabled),
+        CodexHooksFeature::Unreadable(reason) => gaps.push(CodexNativeGap::Unreadable(reason)),
     }
     gaps
 }
@@ -248,24 +284,75 @@ pub(crate) fn codex_native_hook_gaps(
 /// read the command the same way the shell codex hands it to will.
 const CODEX_GIT_TOPLEVEL: &str = "$(git rev-parse --show-toplevel)";
 
+/// Whether codex will act on `hooks.json` at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CodexHooksFeature {
+    Enabled,
+    Disabled,
+    /// `config.toml` exists and does not parse as TOML. Codex reads no
+    /// features out of it either, but nothing here can say what the user
+    /// meant, and a writer that assumed would rewrite their config.
+    Unreadable(String),
+}
+
 /// Is `[features] hooks` the boolean `true`? Read with a real TOML parser,
 /// because that is what codex reads it with: a line scanner answers `true`
 /// for the literal text `[features]` / `hooks = true` inside an unrelated
 /// multiline string, and for the string `"true"` codex would reject. A
-/// missing file, an unparseable file, a missing table, a missing key, a
-/// non-boolean value, and an explicit `false` all mean codex runs no hooks.
-/// The writer stays line-based so it keeps the user's comments and ordering.
-pub(super) fn codex_hooks_feature_enabled(config_path: &Path) -> bool {
-    let Ok(content) = std::fs::read_to_string(config_path) else {
-        return false;
+/// missing file, a missing table, a missing key, a non-boolean value, and an
+/// explicit `false` all mean codex runs no hooks. The writer stays line-based
+/// so it keeps the user's comments and ordering.
+pub(super) fn codex_hooks_feature_state(config_path: &Path) -> CodexHooksFeature {
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return CodexHooksFeature::Disabled;
+        }
+        Err(err) => {
+            return CodexHooksFeature::Unreadable(format!(
+                "reading {}: {err}",
+                config_path.display()
+            ));
+        }
     };
-    let Ok(doc) = content.parse::<toml::Value>() else {
-        return false;
+    codex_hooks_feature_in(&content, config_path)
+}
+
+/// [`codex_hooks_feature_state`] for content already in hand — the writer's
+/// own refusal reads the same bytes it is about to merge into.
+fn codex_hooks_feature_in(content: &str, config_path: &Path) -> CodexHooksFeature {
+    let doc = match content.parse::<toml::Value>() {
+        Ok(doc) => doc,
+        Err(err) => {
+            return CodexHooksFeature::Unreadable(format!(
+                "{} is not valid TOML: {}",
+                config_path.display(),
+                toml_error_summary(&err)
+            ));
+        }
     };
-    doc.get("features")
+    if doc
+        .get("features")
         .and_then(|features| features.get("hooks"))
         .and_then(|hooks| hooks.as_bool())
         .unwrap_or(false)
+    {
+        CodexHooksFeature::Enabled
+    } else {
+        CodexHooksFeature::Disabled
+    }
+}
+
+/// The first line of a TOML parse failure — the one carrying the location.
+/// The rest is a multi-line source excerpt, and every consumer here puts the
+/// message on ONE report line.
+fn toml_error_summary(err: &toml::de::Error) -> String {
+    let rendered = err.to_string();
+    rendered
+        .lines()
+        .next()
+        .unwrap_or("parse failed")
+        .to_string()
 }
 
 /// Migrate deprecated Codex config keys for the selected scope without
@@ -313,18 +400,18 @@ fn merge_codex_hooks_json_owned(
     command: &str,
     owned_commands: &[String],
 ) -> Result<()> {
-    let mut doc: serde_json::Value = if hooks_json.exists() {
-        let content = std::fs::read_to_string(hooks_json)?;
-        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
-    } else {
-        serde_json::json!({})
-    };
+    let mut doc = super::read_hooks_config(hooks_json)
+        .context(super::REFUSE_UNPARSEABLE_CONFIG)?
+        .unwrap_or_else(|| serde_json::json!({}));
 
-    let root_map = doc.as_object_mut().unwrap();
+    let root_map = doc.as_object_mut().expect("read_hooks_config: object");
     if !root_map.contains_key("hooks") {
         root_map.insert("hooks".into(), serde_json::json!({}));
     }
-    let hooks_obj = root_map.get_mut("hooks").unwrap().as_object_mut().unwrap();
+    let hooks_obj = root_map
+        .get_mut("hooks")
+        .and_then(|hooks| hooks.as_object_mut())
+        .expect("read_hooks_config: `hooks` is an object");
     remove_hook_entries_from_hooks_object(hooks_obj, owned_commands);
     if !hooks_obj.get(codex_event).is_some_and(|v| v.is_array()) {
         hooks_obj.insert(codex_event.to_string(), serde_json::json!([]));
@@ -389,6 +476,13 @@ fn merge_codex_hooks_feature(config_path: &Path, enable_hooks: bool) -> Result<(
     } else {
         String::new()
     };
+    // The merge below is line-based, so it would happily splice `hooks = true`
+    // into a file codex itself cannot read — an install that reports success
+    // and never runs. What the user has to fix is the parse failure, so that
+    // is what this says, and the file is left exactly as it is.
+    if let CodexHooksFeature::Unreadable(reason) = codex_hooks_feature_in(&original, config_path) {
+        return Err(anyhow::anyhow!("{reason}").context(super::REFUSE_UNPARSEABLE_CONFIG));
+    }
 
     let mut lines: Vec<String> = original.lines().map(|s| s.to_string()).collect();
     let state = codex_features_state(&lines);
@@ -572,6 +666,12 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
     if !agents_dir.exists() {
         return Ok(false);
     }
+    let action_line = crate::config::generated_safety_action_line(hook).with_context(|| {
+        format!(
+            "the `{}` hook has no safety prose to install for Codex",
+            hook.name
+        )
+    })?;
 
     let mut wrote = false;
     for agent in agents {
@@ -583,10 +683,17 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
 
         let content = std::fs::read_to_string(&toml_path)?;
         // The same question every presence read asks, from the same bytes.
-        if codex_agent_prose_section(&content, &hook.name).is_some() {
+        if content_carries_hook_prose(&content, &hook.name, &action_line) {
             wrote = true;
             continue;
         }
+
+        // A section that is present but no longer carries the hook's action
+        // line — a heading whose body was edited away, or a block left by a
+        // different event — is REPLACED, not skipped: skipping it left the
+        // agent with a marker and no behavior, and every presence read then
+        // had nothing to report.
+        let content = strip_stale_prose_section(&content, &hook.name);
 
         // Append INSIDE `developer_instructions`, so what is written is what
         // the predicate above will find on the next run.
@@ -606,7 +713,7 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
         new_content.push_str(&content[close_pos..]);
         // Only claim the install when the block presence checking looks for
         // is actually in the bytes about to be written.
-        if codex_agent_prose_section(&new_content, &hook.name).is_none() {
+        if !content_carries_hook_prose(&new_content, &hook.name, &action_line) {
             anyhow::bail!(
                 "the `{}` hook's safety block carries no `{}` marker for Codex agent `{}`: {}",
                 hook.name,
@@ -620,6 +727,27 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
     }
 
     Ok(wrote)
+}
+
+/// Cut `hook_name`'s section out of an agent TOML, taking with it the blank
+/// line the block was appended after — so a repaired file is byte-identical to
+/// one this hook's block was installed into for the first time. A section
+/// followed by another keeps that separator, which belongs to the section
+/// still there. Content with no such section is returned unchanged.
+fn strip_stale_prose_section(content: &str, hook_name: &str) -> String {
+    let Some(span) = developer_instructions_span(content) else {
+        return content.to_string();
+    };
+    let Some(inner) = hook_prose_section_range(&content[span.clone()], hook_name) else {
+        return content.to_string();
+    };
+    let range = span.start + inner.start..span.start + inner.end;
+    let start = if range.end == span.end && content[..range.start].ends_with("\n\n") {
+        range.start - 1
+    } else {
+        range.start
+    };
+    format!("{}{}", &content[..start], &content[range.end..])
 }
 
 pub fn install_codex_fallback_hooks_for_agents(
@@ -647,13 +775,11 @@ pub(super) fn remove_hook_from_codex_json(
     validate_item_name(name)?;
     let root = codex_root(global);
     let hooks_json = root.join("hooks.json");
-    if !hooks_json.exists() {
+    let Some(mut doc) =
+        super::read_hooks_config(&hooks_json).context(super::REFUSE_UNPARSEABLE_CONFIG)?
+    else {
         return Ok(());
-    }
-    let content = std::fs::read_to_string(&hooks_json)
-        .with_context(|| format!("reading Codex hooks config {}", hooks_json.display()))?;
-    let mut doc: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| format!("parsing Codex hooks config {}", hooks_json.display()))?;
+    };
 
     let mut changed = false;
 

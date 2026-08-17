@@ -6,7 +6,7 @@ cli/src/commands/refresh/tests.rs	2089
 cli/src/commands/report.rs	1872
 cli/src/config.rs	2053
 cli/src/config/tests.rs	1255
-cli/src/installer.rs	3784
+cli/src/installer.rs	3783
 cli/src/pi_extension.rs	2632
 cli/src/project_config.rs	4892
 cli/src/refresh_sources.rs	2009

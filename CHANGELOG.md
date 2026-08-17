@@ -17,9 +17,19 @@
   again. A new `session-drift-check` hook (Claude Code and Codex) and the Pi
   `pi-hooks` `sessionDriftCheck` setting relay the quiet report at session
   start; both are thin adapters over `check --quiet`, whose output is bounded
-  by construction — every section is capped AND the quiet report as a whole
-  has a line budget, spent on drift before suggestions and closing with one
-  line naming what it left out. A command that installs from a cached source
+  by construction — every section is capped, every displayed name is rendered
+  through the bounded renderer, AND the quiet report as a whole has both a
+  line budget and a byte budget (item name length is unrestricted, so counting
+  lines alone bounded nothing), spent on drift before suggestions and closing
+  with one line naming what it left out; a copy-paste command argument stays
+  complete, since an elided argument is a command that cannot work. A
+  registration file that EXISTS and cannot be parsed — a Claude
+  `settings.json`, a Codex `hooks.json` or `config.toml`, an OpenCode
+  `opencode.json` — is reported as unverifiable naming the file and the parse
+  failure, never as a missing hook whose printed remedy is `vstack add`; and
+  `add`/`remove` refuse such a file instead of parsing it as a default and
+  rewriting it, so no vstack command can discard the settings and hook
+  registrations it holds. A command that installs from a cached source
   (`add`, `refresh`, the wizard) now waits for an in-flight refresh of that
   cache and then refuses, instead of discovering, hashing and copying out of a
   tree another process is running `reset --hard` on; only the detached
@@ -27,7 +37,10 @@
   fallback is located by one predicate scoped to the agent's
   `developer_instructions`, so marker text in a comment or another field can
   no longer make the install skip the block and the presence read call it
-  installed (VST-258).
+  installed — and the block counts only while it still carries the hook's
+  action line, so a heading whose body was deleted is reported rather than
+  reported installed, and a reinstall rewrites the section instead of skipping
+  it (VST-258).
 
 - second-opinion settings example: the `SECOND_OPINION_CURRENT_MODEL` block
   announced "three cases, and only the third makes a project file usable at

@@ -253,7 +253,7 @@ pub(crate) fn install_gap(
             missing(verify_skill_install(&entry.name, &entry.harnesses, global))
         }
         ItemKind::Agent => missing(verify_agent_install(&entry.name, &entry.harnesses, global)),
-        ItemKind::Hook => missing(verify_hook_install(entry, global)),
+        ItemKind::Hook => verify_hook_install(entry, global),
         // Extras have no single recorded install path to check.
         ItemKind::Extra => None,
     }
@@ -338,9 +338,20 @@ fn verify_agent_install(
     }
 }
 
-fn verify_hook_install(entry: &LockEntry, global: bool) -> (Option<bool>, Option<String>) {
+/// Every artifact a hook needs to RUN, per harness it was installed for.
+///
+/// Two lists, because they carry different remedies: something a reinstall
+/// re-creates, and something only repairing a named file can answer. A
+/// registration file that exists and cannot be parsed belongs to the second —
+/// reported as missing, it prescribed `vstack add` on a file the installer
+/// refuses to touch.
+fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
     let name = &entry.name;
     let mut missing = Vec::new();
+    let mut unverifiable = Vec::new();
+    // The hook's own source definition: what decided the event and the prose
+    // at install time, and the only thing that can say what to demand now.
+    let source_hook = hook_source(entry);
     for h in &entry.harnesses {
         let Some(harness) = crate::harness::Harness::from_id(h) else {
             continue;
@@ -357,12 +368,20 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> (Option<bool>, Option
                     .map(|d| d.join(format!("{name}.sh")));
                 if path.is_none_or(|p| !p.exists()) {
                     missing.push(format!("{h}: script missing"));
-                } else if !crate::installer::claude_hook_is_registered(
-                    global,
-                    name,
-                    hook_source_event(entry).as_deref(),
-                ) {
-                    missing.push(format!("{h}: script present but not registered"));
+                } else {
+                    match crate::installer::claude_hook_registration(
+                        global,
+                        name,
+                        source_hook.as_ref().map(|hook| hook.event.as_str()),
+                    ) {
+                        crate::installer::HookRegistration::Registered => {}
+                        crate::installer::HookRegistration::Absent => {
+                            missing.push(format!("{h}: script present but not registered"));
+                        }
+                        crate::installer::HookRegistration::Unreadable(reason) => {
+                            unverifiable.push(format!("{h}: registration unverifiable — {reason}"));
+                        }
+                    }
                 }
             }
             crate::harness::Harness::Cursor => {
@@ -391,32 +410,47 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> (Option<bool>, Option
                 let root = crate::installer::codex_root(global);
                 let script = root.join("hooks").join(format!("{name}.sh"));
                 let has_script = script.exists();
-                let native_event = codex_hook_native_event(entry);
-                match native_event {
+                match source_hook
+                    .as_ref()
+                    .map(|hook| (hook, crate::installer::codex_event_for(&hook.event)))
+                {
                     // A native hook is installed only when codex will
                     // RUN it: the script, its `hooks.json` registration,
                     // and the `hooks` feature. Any one of the three
                     // missing is a hook that silently never fires.
-                    Some(Some(codex_event)) => {
+                    Some((_, Some(codex_event))) => {
                         if !has_script {
                             missing.push(format!("{h}: script missing"));
                         } else {
                             for gap in
                                 crate::installer::codex_native_hook_gaps(global, name, codex_event)
                             {
-                                missing.push(format!("{h}: {}", gap.describe()));
+                                let note = format!("{h}: {}", gap.describe());
+                                if gap.is_unreadable() {
+                                    unverifiable.push(note);
+                                } else {
+                                    missing.push(note);
+                                }
                             }
                         }
                     }
-                    // Prose fallback, or a source we cannot resolve to
-                    // decide: either artifact answers, and a scope with no
-                    // codex agents has nothing to miss.
-                    _ => {
-                        let has_prose = !has_script && codex_agent_has_prose(&root, name);
+                    // Prose fallback: the block counts only when it still
+                    // carries the hook's action line, asked through the one
+                    // predicate the install writes against — a heading whose
+                    // body was deleted is a hook codex no longer carries.
+                    // A scope with no codex agents has nothing to miss.
+                    Some((hook, None)) => {
+                        let has_prose = !has_script
+                            && crate::installer::codex_agent_carries_hook_prose(&root, hook);
                         if !has_script && !has_prose && codex_scope_has_agents(&root) {
                             missing.push(format!("{h}: no script and no prose"));
                         }
                     }
+                    // No source to read: nothing here can say whether this
+                    // hook installs natively or as prose, so neither artifact
+                    // can be demanded. The unresolvable source is reported in
+                    // its own right.
+                    None => {}
                 }
             }
             crate::harness::Harness::Pi => {
@@ -427,38 +461,31 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> (Option<bool>, Option
             }
         }
     }
-    if missing.is_empty() {
-        (Some(true), None)
+    // Unverifiable wins the classification when both are present: the file it
+    // names has to be repaired before any reinstall can even run, and the
+    // note carries what is missing alongside it.
+    let notes: Vec<String> = unverifiable.iter().chain(missing.iter()).cloned().collect();
+    if notes.is_empty() {
+        None
+    } else if unverifiable.is_empty() {
+        Some(InstallGap::Missing(notes.join("; ")))
     } else {
-        (Some(false), Some(missing.join("; ")))
+        Some(InstallGap::Unverifiable(notes.join("; ")))
     }
 }
 
-/// The event this hook declares in its resolved source — the key its
-/// registration has to sit under in every harness that registers hooks by
-/// event. The INSTALLED artifacts cannot answer it: a deleted registration
-/// takes its own evidence with it, while the source definition is exactly what
-/// decided the key at install time.
+/// The hook definition in its resolved source — what decided the event, the
+/// Codex native-vs-prose split, and the prose text itself at install time. The
+/// INSTALLED artifacts cannot answer any of that: a deleted registration takes
+/// its own evidence with it.
 ///
 /// `None` when the source cannot be resolved or read; the source problem is
 /// reported in its own right, and each caller decides what an unanswerable
 /// question means for presence.
-fn hook_source_event(entry: &LockEntry) -> Option<String> {
+fn hook_source(entry: &LockEntry) -> Option<crate::hook::Hook> {
     let root = config::resolve_source_path(&entry.source)?;
     let path = crate::catalog::find_item_path(&root, ItemKind::Hook, &entry.name)?;
-    Some(crate::hook::Hook::from_file(&path).ok()?.event)
-}
-
-/// The Codex event this hook installs natively under. The event in the source
-/// definition is what decided native vs prose at install time.
-///
-/// `None` when the source cannot be resolved (presence then falls back to the
-/// prose rule so an unanswerable question cannot invent unclearable drift);
-/// `Some(None)` when the source is readable and the event has no Codex
-/// equivalent.
-fn codex_hook_native_event(entry: &LockEntry) -> Option<Option<&'static str>> {
-    let event = hook_source_event(entry)?;
-    Some(crate::installer::codex_event_for(&event))
+    crate::hook::Hook::from_file(&path).ok()
 }
 
 /// Does this scope have any Codex agent for a prose fallback to live in?
@@ -470,24 +497,6 @@ fn codex_scope_has_agents(codex_root: &Path) -> bool {
                 .extension()
                 .is_some_and(|extension| extension == "toml")
         })
-    })
-}
-
-/// Does any Codex agent carry this hook's prose fallback? Asked through the
-/// predicate the install writes against, so verification cannot call a hook
-/// installed on evidence the install would not have accepted — a marker in a
-/// comment or an unrelated field is not the fallback.
-fn codex_agent_has_prose(codex_root: &Path, hook_name: &str) -> bool {
-    let agents_dir = codex_root.join("agents");
-    let Ok(entries) = std::fs::read_dir(&agents_dir) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        let path = entry.path();
-        path.extension().is_some_and(|ex| ex == "toml")
-            && std::fs::read_to_string(&path).is_ok_and(|content| {
-                crate::installer::codex_agent_prose_section(&content, hook_name).is_some()
-            })
     })
 }
 

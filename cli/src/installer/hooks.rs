@@ -12,12 +12,13 @@ pub(crate) use opencode::{opencode_hook_instruction_contents, opencode_hook_inst
 
 mod codex;
 
+#[cfg(test)]
+pub(crate) use codex::codex_agent_prose_section;
 /// The block itself is written here and read back only by tests.
 #[cfg(test)]
 pub(crate) use codex::codex_hook_safety_block;
 pub(crate) use codex::{
-    codex_agent_carries_hook_prose, codex_agent_prose_section, codex_event_for,
-    codex_native_hook_gaps, codex_root,
+    codex_agent_carries_hook_prose, codex_event_for, codex_native_hook_gaps, codex_root,
 };
 pub use codex::{install_codex_fallback_hooks_for_agents, migrate_codex_config};
 use codex::{install_hook_codex, remove_hook_from_codex_json, strip_hook_prose_from_codex_agents};
@@ -239,6 +240,66 @@ fn command_targets_hook_script(
         .is_some_and(|token| resolved_path(Path::new(token)) == resolved_path(script_path))
 }
 
+/// What a harness config says about our script.
+///
+/// A file that EXISTS but cannot be read is deliberately its own answer rather
+/// than `Absent`: collapsing the two reports the hook missing and prescribes
+/// `vstack add`, which is a remedy for a different fault — and, before the
+/// installers refused it, one that rewrote the unreadable file from a default
+/// and took the user's other settings with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HookRegistration {
+    /// The config registers this script under the requested event.
+    Registered,
+    /// The config is readable and holds no such registration.
+    Absent,
+    /// The file exists and nothing could parse it. The note names the file and
+    /// the failure; repairing that file is the only remedy.
+    Unreadable(String),
+}
+
+/// The JSON document a hook config read or write works from. `None` when there
+/// is no file yet, or it holds nothing at all, so a writer starts from its own
+/// default.
+///
+/// A file that EXISTS with content that cannot be parsed as a JSON object is an
+/// error naming the file and the failure, never a default document: every
+/// writer here writes the document back, so reading a user's settings as `{}`
+/// would rewrite away every unrelated setting and every other hook
+/// registration in it.
+fn read_json_object(path: &Path) -> Result<Option<serde_json::Value>> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err).with_context(|| format!("reading {}", path.display()));
+        }
+    };
+    if content.trim().is_empty() {
+        return Ok(None);
+    }
+    let doc: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|err| anyhow::anyhow!("{} is not valid JSON: {err}", path.display()))?;
+    if !doc.is_object() {
+        anyhow::bail!("{} is not a JSON object", path.display());
+    }
+    Ok(Some(doc))
+}
+
+/// [`read_json_object`] for the `hooks → event → [{hooks: [{command}]}]`
+/// document claude and codex share. A `hooks` key of any other shape is
+/// refused for the same reason unparseable JSON is: nothing can say what it
+/// registers, and a writer that replaced it would discard it.
+fn read_hooks_config(path: &Path) -> Result<Option<serde_json::Value>> {
+    let Some(doc) = read_json_object(path)? else {
+        return Ok(None);
+    };
+    if doc.get("hooks").is_some_and(|hooks| !hooks.is_object()) {
+        anyhow::bail!("{}: `hooks` is not a JSON object", path.display());
+    }
+    Ok(Some(doc))
+}
+
 /// Does the harness config at `path` register `script_path` as a command
 /// handler? `event` pins the key it must sit under; `None` accepts any event.
 ///
@@ -252,24 +313,24 @@ fn command_targets_hook_script(
 ///
 /// Claude's `settings.json` and codex's `hooks.json` share this
 /// `hooks → event → [{hooks: [{command}]}]` shape, so both harnesses answer
-/// presence from one matcher.
-fn hooks_config_registers_script(
+/// presence from one matcher — and from the same reader their installers write
+/// through, so what one refuses to rewrite the other cannot call missing.
+fn hooks_config_registration(
     path: &Path,
     event: Option<&str>,
     script_path: &Path,
     deferred_root: Option<(&str, &Path)>,
     owned_commands: &[String],
-) -> bool {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
+) -> HookRegistration {
+    let doc = match read_hooks_config(path) {
+        Ok(Some(doc)) => doc,
+        Ok(None) => return HookRegistration::Absent,
+        Err(err) => return HookRegistration::Unreadable(format!("{err:#}")),
     };
     let Some(hooks) = doc.get("hooks").and_then(|hooks| hooks.as_object()) else {
-        return false;
+        return HookRegistration::Absent;
     };
-    hooks
+    let registered = hooks
         .iter()
         .filter(|(key, _)| event.is_none_or(|want| key.as_str() == want))
         .any(|(_, entries)| {
@@ -295,7 +356,12 @@ fn hooks_config_registers_script(
                         })
                 })
             })
-        })
+        });
+    if registered {
+        HookRegistration::Registered
+    } else {
+        HookRegistration::Absent
+    }
 }
 
 fn hook_entry_mentions_owned_command(entry: &serde_json::Value, owned_commands: &[String]) -> bool {
@@ -335,6 +401,10 @@ fn remove_hook_entries_from_hooks_object(
     }
     changed
 }
+
+/// What every hook writer says when it will not touch a config it could not
+/// parse. Shared so the refusal reads the same whichever harness hit it.
+pub(super) const REFUSE_UNPARSEABLE_CONFIG: &str = "refusing to rewrite a config vstack cannot parse — every other setting and hook registration in it would be discarded; fix the file by hand, then rerun";
 
 /// The project-root substitution the project-scope command defers to run
 /// time; claude expands it from the session's project dir.
@@ -395,13 +465,17 @@ fn claude_hook_script_path(global: bool, hook_name: &str) -> Option<PathBuf> {
 /// `event` is the hook's own event. `None` — its source could not be read to
 /// name one — accepts a registration under any event rather than inventing
 /// drift that naming the wrong key would make unclearable.
-pub(crate) fn claude_hook_is_registered(
+///
+/// Claude merges several settings files, so one that registers the hook answers
+/// for all of them; only when NONE does, and one of them could not be read, is
+/// the answer unknowable.
+pub(crate) fn claude_hook_registration(
     global: bool,
     hook_name: &str,
     event: Option<&str>,
-) -> bool {
+) -> HookRegistration {
     let Some(script_path) = claude_hook_script_path(global, hook_name) else {
-        return false;
+        return HookRegistration::Absent;
     };
     let owned = claude_owned_hook_commands(global, hook_name, &script_path);
     // Only the project-scope command defers the project root to run time.
@@ -409,9 +483,20 @@ pub(crate) fn claude_hook_is_registered(
     let deferred_root = project_root
         .as_deref()
         .map(|root| (CLAUDE_PROJECT_DIR, root));
-    claude_settings_candidates(global).iter().any(|settings| {
-        hooks_config_registers_script(settings, event, &script_path, deferred_root, &owned)
-    })
+    let mut unreadable = None;
+    for settings in claude_settings_candidates(global) {
+        match hooks_config_registration(&settings, event, &script_path, deferred_root, &owned) {
+            HookRegistration::Registered => return HookRegistration::Registered,
+            HookRegistration::Absent => {}
+            HookRegistration::Unreadable(reason) => {
+                unreadable.get_or_insert(reason);
+            }
+        }
+    }
+    match unreadable {
+        Some(reason) => HookRegistration::Unreadable(reason),
+        None => HookRegistration::Absent,
+    }
 }
 
 fn shell_quote(s: &str) -> String {
@@ -498,6 +583,7 @@ pub fn install_hook(
 /// produced NO artifact — the Codex prose fallback in a scope with no Codex
 /// agents to write into — so `add` can say so instead of printing plain
 /// success.
+#[derive(Debug)]
 pub struct HookInstall {
     pub detail: String,
     pub installed: bool,
@@ -523,18 +609,18 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
 
     // Merge into settings.json
     let settings_path = claude_settings_path(global);
-    let mut settings: serde_json::Value = if settings_path.exists() {
-        let content = std::fs::read_to_string(&settings_path)?;
-        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
-    } else {
-        serde_json::json!({})
-    };
+    let mut settings = read_hooks_config(&settings_path)
+        .context(REFUSE_UNPARSEABLE_CONFIG)?
+        .unwrap_or_else(|| serde_json::json!({}));
 
-    let map = settings.as_object_mut().unwrap();
+    let map = settings.as_object_mut().expect("read_hooks_config: object");
     if !map.contains_key("hooks") {
         map.insert("hooks".into(), serde_json::json!({}));
     }
-    let hooks_obj = map.get_mut("hooks").unwrap().as_object_mut().unwrap();
+    let hooks_obj = map
+        .get_mut("hooks")
+        .and_then(|hooks| hooks.as_object_mut())
+        .expect("read_hooks_config: `hooks` is an object");
     let owned_commands = claude_owned_hook_commands(global, &hook.name, &dest);
     remove_hook_entries_from_hooks_object(hooks_obj, &owned_commands);
 
@@ -659,15 +745,16 @@ pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result
     Ok(removed)
 }
 
-/// Remove a hook entry from Claude Code settings.json
+/// Remove a hook entry from Claude Code settings.json. A file that cannot be
+/// parsed is refused here too: removal rewrites the same document install does.
 fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path) -> Result<()> {
     validate_item_name(name)?;
     let settings_path = claude_settings_path(global);
-    if !settings_path.exists() {
+    let Some(mut settings) =
+        read_hooks_config(&settings_path).context(REFUSE_UNPARSEABLE_CONFIG)?
+    else {
         return Ok(());
-    }
-    let content = std::fs::read_to_string(&settings_path)?;
-    let mut settings: serde_json::Value = serde_json::from_str(&content)?;
+    };
 
     let mut changed = false;
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
@@ -682,6 +769,8 @@ fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path
     Ok(())
 }
 
+#[cfg(test)]
+mod prose_tests;
 #[cfg(test)]
 mod registration_tests;
 #[cfg(test)]

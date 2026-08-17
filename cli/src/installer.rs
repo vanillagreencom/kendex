@@ -8,16 +8,15 @@ use std::path::{Path, PathBuf};
 mod hooks;
 
 pub(crate) use crate::path_safety::{validate_item_name, validate_new_item_name};
+pub(crate) use hooks::{
+    HookRegistration, claude_hook_registration, codex_agent_carries_hook_prose, codex_event_for,
+    codex_native_hook_gaps, codex_root, cursor_hook_rule_contents, cursor_hook_rule_path,
+    install_codex_fallback_hooks_for_agents, install_hook, migrate_codex_config,
+    opencode_hook_instruction_contents, opencode_hook_instruction_path, remove_hook_install,
+};
 /// The block itself is written by the installer and read back only by tests.
 #[cfg(test)]
-pub(crate) use hooks::codex_hook_safety_block;
-pub(crate) use hooks::{
-    claude_hook_is_registered, codex_agent_carries_hook_prose, codex_agent_prose_section,
-    codex_event_for, codex_native_hook_gaps, codex_root, cursor_hook_rule_contents,
-    cursor_hook_rule_path, install_codex_fallback_hooks_for_agents, install_hook,
-    migrate_codex_config, opencode_hook_instruction_contents, opencode_hook_instruction_path,
-    remove_hook_install,
-};
+pub(crate) use hooks::{codex_agent_prose_section, codex_hook_safety_block};
 
 /// Result of a single installation
 pub struct InstallResult {

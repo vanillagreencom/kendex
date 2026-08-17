@@ -28,8 +28,15 @@ fn codex_hook_lock(source: &Path, name: &str) -> LockFile {
 }
 
 fn phantom_note(report: &ScopeReport) -> String {
-    report
-        .phantom
+    notes(&report.phantom)
+}
+
+fn unverifiable_note(report: &ScopeReport) -> String {
+    notes(&report.unverifiable)
+}
+
+fn notes(items: &[Item]) -> String {
+    items
         .iter()
         .filter_map(|item| item.detail.clone())
         .collect::<Vec<_>>()
@@ -222,6 +229,212 @@ fn a_codex_hooks_json_naming_another_script_is_not_this_hook() {
             phantom_note(&report).contains("script present but not registered"),
             "{report:?}"
         );
+    });
+}
+
+/// A registration file that EXISTS and cannot be parsed is its own state.
+/// Read as an absent registration it was reported as a missing hook, whose
+/// printed remedy is `vstack add` — and the installer parsed the same file as
+/// `{}` and rewrote it, so following the report discarded every unrelated
+/// setting and every other hook registration in it.
+#[test]
+fn an_unparseable_claude_settings_file_is_unverifiable_and_never_rewritten() {
+    with_sandbox("claude-settings-unparseable", |project, source| {
+        write_hook(source, "guard");
+        install_claude_hook(source, "guard");
+        let lock = claude_hook_lock(source, "guard");
+        let settings = project.join(".claude").join("settings.json");
+
+        // Control: a valid, complete install is clean.
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+
+        // Control: a valid file that simply lost the entry is still the
+        // missing-registration report, remedied by `vstack add`.
+        let registered = std::fs::read_to_string(&settings).unwrap();
+        std::fs::write(&settings, "{}").unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert_eq!(names(&report.phantom), vec!["guard"], "control: {report:?}");
+        assert!(report.unverifiable.is_empty(), "control: {report:?}");
+
+        // The script survives; the settings file no longer parses.
+        let malformed = format!("{{\n  \"env\": {{\"KEEP\": \"me\"}},\n{registered}");
+        std::fs::write(&settings, &malformed).unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(
+            report.phantom.is_empty(),
+            "an unreadable file is not a missing hook: {report:?}"
+        );
+        assert_eq!(names(&report.unverifiable), vec!["guard"], "{report:?}");
+        assert!(report.has_drift(), "and it is not clean either: {report:?}");
+        let note = unverifiable_note(&report);
+        assert!(
+            note.contains(&settings.display().to_string()),
+            "the note names the file to repair: {note}"
+        );
+        assert!(
+            note.contains("not valid JSON"),
+            "…and the parse failure: {note}"
+        );
+
+        // The destructive half: neither install nor removal may rewrite a
+        // file it could not parse.
+        let hook = crate::hook::Hook::from_file(&source.join("hooks").join("guard.sh")).unwrap();
+        let err =
+            crate::installer::install_hook(&hook, crate::harness::Harness::ClaudeCode, false, &[])
+                .expect_err("install must refuse a settings file it cannot parse");
+        assert!(
+            format!("{err:#}").contains(&settings.display().to_string()),
+            "the refusal names the file: {err:#}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&settings).unwrap(),
+            malformed,
+            "the user's settings must be byte-identical after a refusal"
+        );
+
+        let err = crate::installer::remove_hook_install(
+            "guard",
+            crate::harness::Harness::ClaudeCode,
+            false,
+        )
+        .expect_err("removal must refuse it too");
+        assert!(
+            format!("{err:#}").contains(&settings.display().to_string()),
+            "{err:#}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&settings).unwrap(),
+            malformed,
+            "removal must not rewrite it either"
+        );
+    });
+}
+
+/// Codex's `hooks.json` and `config.toml` answer the same question and get the
+/// same treatment: unparseable is unverifiable, and no install rewrites one.
+#[test]
+fn an_unparseable_codex_config_is_unverifiable_and_never_rewritten() {
+    with_sandbox("codex-config-unparseable", |project, source| {
+        write_hook(source, "guard");
+        install_codex_hook(source, "guard");
+        let lock = codex_hook_lock(source, "guard");
+        let hooks_json = project.join(".codex").join("hooks.json");
+        let config = project.join(".codex").join("config.toml");
+
+        // Control: the full native install is clean.
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+
+        for (path, malformed, failure) in [
+            (&hooks_json, "{\n  \"hooks\": {\n", "not valid JSON"),
+            (&config, "[features\nhooks = true\n", "not valid TOML"),
+        ] {
+            let original = std::fs::read_to_string(path).unwrap();
+            std::fs::write(path, malformed).unwrap();
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(
+                report.phantom.is_empty(),
+                "{}: not a missing hook: {report:?}",
+                path.display()
+            );
+            assert_eq!(names(&report.unverifiable), vec!["guard"], "{report:?}");
+            let note = unverifiable_note(&report);
+            assert!(
+                note.contains(&path.display().to_string()) && note.contains(failure),
+                "the note names the file and the failure: {note}"
+            );
+
+            let hook =
+                crate::hook::Hook::from_file(&source.join("hooks").join("guard.sh")).unwrap();
+            let err =
+                crate::installer::install_hook(&hook, crate::harness::Harness::Codex, false, &[])
+                    .expect_err("install must refuse a codex config it cannot parse");
+            assert!(
+                format!("{err:#}").contains(&path.display().to_string()),
+                "the refusal names the file: {err:#}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(path).unwrap(),
+                malformed,
+                "{} must be byte-identical after a refusal",
+                path.display()
+            );
+            std::fs::write(path, original).unwrap();
+        }
+
+        // Control: with both files restored the scope is clean again.
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+    });
+}
+
+/// The prose fallback counts only while it still carries its action line.
+/// A `## Safety:` heading whose body was deleted is a hook codex no longer
+/// carries, and reporting it installed left it permanently ineffective.
+#[test]
+fn a_codex_prose_section_without_its_action_line_is_drift() {
+    with_sandbox("codex-prose-body", |project, source| {
+        write_hook_for_event(source, "guard", "TaskCompleted");
+        let toml = project.join(".codex").join("agents").join("rust.toml");
+        std::fs::create_dir_all(toml.parent().unwrap()).unwrap();
+        std::fs::write(
+            &toml,
+            "name = \"rust\"\ndeveloper_instructions = '''\nBody\n'''\n",
+        )
+        .unwrap();
+        let hook = crate::hook::Hook::from_file(&source.join("hooks").join("guard.sh")).unwrap();
+        let agents = [crate::agent::Agent {
+            name: "rust".into(),
+            description: "rust".into(),
+            model: "sonnet".into(),
+            role: crate::agent::AgentRole::Engineer,
+            color: None,
+            effort: None,
+            body: "Body\n".into(),
+            source_path: PathBuf::new(),
+        }];
+        crate::installer::install_hook(&hook, crate::harness::Harness::Codex, false, &agents)
+            .unwrap();
+        let lock = codex_hook_lock(source, "guard");
+
+        // Control: the installed block is clean.
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+
+        // The heading survives; its body does not.
+        let installed = std::fs::read_to_string(&toml).unwrap();
+        let action_line = crate::config::generated_safety_action_line(&hook).unwrap();
+        let gutted = installed.replace(&format!("\n{action_line}"), "");
+        assert_ne!(gutted, installed, "the fixture must gut the body");
+        std::fs::write(&toml, &gutted).unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert_eq!(names(&report.phantom), vec!["guard"], "{report:?}");
+        assert!(
+            phantom_note(&report).contains("no script and no prose"),
+            "{report:?}"
+        );
+
+        // Control: no section at all reports the same way.
+        std::fs::write(
+            &toml,
+            "name = \"rust\"\ndeveloper_instructions = '''\nBody\n'''\n",
+        )
+        .unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert_eq!(names(&report.phantom), vec!["guard"], "{report:?}");
+
+        // …and a reinstall repairs the gutted section rather than skipping it.
+        std::fs::write(&toml, &gutted).unwrap();
+        crate::installer::install_hook(&hook, crate::harness::Harness::Codex, false, &agents)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&toml).unwrap(),
+            installed,
+            "the repair restores the whole block"
+        );
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "{report:?}");
     });
 }
 

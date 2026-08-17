@@ -29,11 +29,18 @@ pub(super) fn write_skill(source: &Path, name: &str, body: &str) {
 }
 
 pub(super) fn write_hook(source: &Path, name: &str) {
+    write_hook_for_event(source, name, "PreToolUse");
+}
+
+/// The event decides the whole install shape — native script and registration
+/// where the harness has the event, prose inside agent instructions where it
+/// does not — so a fixture that could not vary it could only ever exercise one.
+pub(super) fn write_hook_for_event(source: &Path, name: &str, event: &str) {
     std::fs::create_dir_all(source.join("hooks")).unwrap();
     std::fs::write(
         source.join("hooks").join(format!("{name}.sh")),
         format!(
-            "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: PreToolUse\n# matcher: Bash\n# description: {name}\n# ---\nexit 0\n"
+            "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: {event}\n# matcher: Bash\n# description: {name}\n# ---\nexit 0\n"
         ),
     )
     .unwrap();

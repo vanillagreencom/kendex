@@ -128,7 +128,7 @@ pub(super) fn render_report(report: &CheckReport, quiet: bool) -> String {
     if !quiet {
         return blocks.into_iter().map(|(_, text)| text).collect();
     }
-    spend_line_budget(&blocks, QUIET_REPORT_LINE_BUDGET)
+    spend_report_budget(&blocks, QUIET_REPORT_LINE_BUDGET, QUIET_REPORT_BYTE_BUDGET)
 }
 
 /// What a block of the report is for, and therefore the order in which it
@@ -143,26 +143,44 @@ enum BlockPriority {
 }
 
 /// Concatenate `blocks` in report order, keeping the whole rendering inside
-/// `budget` lines and closing with one line naming everything left out.
+/// BOTH budgets and closing with one line naming everything left out.
 ///
-/// Under budget this is a plain concatenation — byte for byte what the report
-/// was before there was a budget at all.
-fn spend_line_budget(blocks: &[(BlockPriority, String)], budget: usize) -> String {
+/// Lines alone do not bound a report: names are unrestricted in length and a
+/// copy-paste command argument is deliberately never truncated, so a report
+/// well inside the line budget can still be arbitrarily large. A line that
+/// does not fit what the byte budget has left ends its block, exactly as a
+/// spent line budget does.
+///
+/// Under both budgets this is a plain concatenation — byte for byte what the
+/// report was before there was a budget at all.
+fn spend_report_budget(
+    blocks: &[(BlockPriority, String)],
+    line_budget: usize,
+    byte_budget: usize,
+) -> String {
     let lines = |text: &str| text.split_inclusive('\n').count();
     let total: usize = blocks.iter().map(|(_, text)| lines(text)).sum();
-    if total <= budget {
+    let total_bytes: usize = blocks.iter().map(|(_, text)| text.len()).sum();
+    if total <= line_budget && total_bytes <= byte_budget {
         return blocks.iter().map(|(_, text)| text.as_str()).collect();
     }
 
     let mut kept = vec![0usize; blocks.len()];
-    let mut left = budget;
+    let mut lines_left = line_budget;
+    let mut bytes_left = byte_budget;
     for priority in [BlockPriority::Drift, BlockPriority::Suggestion] {
         for (index, (block_priority, text)) in blocks.iter().enumerate() {
             if *block_priority != priority {
                 continue;
             }
-            kept[index] = lines(text).min(left);
-            left -= kept[index];
+            for line in text.split_inclusive('\n') {
+                if lines_left == 0 || line.len() > bytes_left {
+                    break;
+                }
+                lines_left -= 1;
+                bytes_left -= line.len();
+                kept[index] += 1;
+            }
         }
     }
 
@@ -205,6 +223,15 @@ const QUIET_SECTION_LIMIT: usize = 10;
 /// sections across both scopes, and a hard ceiling past that.
 const QUIET_REPORT_LINE_BUDGET: usize = 60;
 
+/// How many BYTES the whole quiet report may spend, before its closing
+/// summary. Counting lines bounds how many entries an agent sees, not how much
+/// of its context they take: one displayed value is capped at
+/// [`REASON_LIMIT`], a copy-paste command argument at nothing at all, and a
+/// budget that counts only lines waves either through. Wide enough that no
+/// real report is trimmed on this axis — [`QUIET_REPORT_LINE_BUDGET`] lines of
+/// ordinary width sit far inside it — and a hard ceiling past that.
+const QUIET_REPORT_BYTE_BUDGET: usize = 8 * 1024;
+
 /// How many of `total` entries this mode renders.
 fn shown_count(quiet: bool, total: usize) -> usize {
     if quiet {
@@ -227,7 +254,18 @@ fn overflow_line(out: &mut String, indent: &str, shown: usize, total: usize) {
 /// One drift section: a header line and one `glyph name (kind)` line per
 /// item, with the item's own detail when the header cannot carry it. Capped
 /// in quiet mode; the header's count is always the true total.
-fn section(out: &mut String, header: &str, glyph: char, items: &[Item], quiet: bool) {
+///
+/// `render_detail` is how wide a detail may run: [`display_text`] for a label
+/// beside a remedy the header already gave, [`display_reason`] where the
+/// detail IS the remedy — a file to repair and the failure that named it.
+fn section(
+    out: &mut String,
+    header: &str,
+    glyph: char,
+    items: &[Item],
+    quiet: bool,
+    render_detail: fn(&str) -> String,
+) {
     if items.is_empty() {
         return;
     }
@@ -237,7 +275,7 @@ fn section(out: &mut String, header: &str, glyph: char, items: &[Item], quiet: b
         let detail = item
             .detail
             .as_deref()
-            .map(|detail| format!(" — {}", display_text(detail)))
+            .map(|detail| format!(" — {}", render_detail(detail)))
             .unwrap_or_default();
         out.push_str(&format!(
             "    {glyph} {} ({}){detail}\n",
@@ -321,6 +359,7 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
         '!',
         &report.outdated,
         quiet,
+        display_text,
     );
     section(
         out,
@@ -328,6 +367,7 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
         '✗',
         &report.removed,
         quiet,
+        display_text,
     );
     section(
         out,
@@ -335,6 +375,7 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
         '?',
         &report.orphaned,
         quiet,
+        display_text,
     );
     section(
         out,
@@ -344,15 +385,18 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
         '✗',
         &report.phantom,
         quiet,
+        display_text,
     );
     // Deliberately its own section: reinstalling repairs nothing here, and
-    // the detail names the file whose repair does.
+    // the detail names the file whose repair does — so the detail is given the
+    // width of a remedy rather than of a label.
     section(
         out,
         "installed, but the install could not be verified — repair the file named below",
         '?',
         &report.unverifiable,
         quiet,
+        display_reason,
     );
 
     if !report.missing_skill_refs.is_empty() {
@@ -485,6 +529,11 @@ fn render_available(out: &mut String, report: &ScopeReport, quiet: bool) {
                 } else {
                     String::new()
                 };
+                // Every displayed name is bounded, this one included: item
+                // name length is deliberately unrestricted, so one long name
+                // joined raw is an unbounded line that the line budget counts
+                // as one and waves through.
+                let listed: Vec<String> = names[..shown].iter().map(|n| display_text(n)).collect();
                 // The source is part of the command, not a footnote: with
                 // two sources offering the same name, an unqualified `vstack
                 // add --skill <name>` installs whichever one resolution
@@ -494,7 +543,7 @@ fn render_available(out: &mut String, report: &ScopeReport, quiet: bool) {
                     "    + {} (`vstack add{g} {} {flag} <name>`): {}{overflow}",
                     kind.label_plural(),
                     command_arg(source),
-                    names[..shown].join(", ")
+                    listed.join(", ")
                 );
             }
         }
