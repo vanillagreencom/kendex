@@ -774,6 +774,11 @@ struct DeprecatedCodexHooksFeature {
 /// unescaped `"""` inside a basic multiline string, and the configs this
 /// walks are ones this tool and its users write.
 fn advance_toml_string_state(line: &str, mut state: Option<&'static str>) -> Option<&'static str> {
+    // A full-line comment outside a string is inert text: a delimiter shown
+    // in one opens nothing.
+    if state.is_none() && line.trim_start().starts_with('#') {
+        return None;
+    }
     let mut rest = line;
     loop {
         match state {

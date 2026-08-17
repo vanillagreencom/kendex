@@ -885,6 +885,36 @@ fn a_reinstall_does_not_corrupt_feature_examples_inside_strings() {
 }
 
 #[test]
+fn a_comment_showing_a_delimiter_does_not_derail_the_feature_writer() {
+    let sandbox = Sandbox::new("codex-feature-comment-decoy");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "codex", "--copy", "-y"]),
+        "vstack add",
+    );
+    // A comment documenting multiline syntax is inert text: the reinstall
+    // must still see the real structure below it.
+    let config_toml = sandbox.project.join(".codex/config.toml");
+    fs::write(
+        &config_toml,
+        "# example: open a multiline value with \"\"\" on its own line\n[features]\nhooks = false\n",
+    )
+    .unwrap();
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "codex", "--copy", "-y"]),
+        "vstack add (reinstall)",
+    );
+    let after = fs::read_to_string(&config_toml).unwrap();
+    let doc: toml::Value = after.parse().expect("config.toml still parses");
+    assert_eq!(
+        doc.get("features")
+            .and_then(|f| f.get("hooks"))
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "the reinstall lost the real features table behind a comment decoy:\n{after}"
+    );
+}
+
+#[test]
 fn a_filtered_add_refuses_before_installing_anything() {
     let sandbox = Sandbox::new("add-atomic-uncovered");
     assert_success(
