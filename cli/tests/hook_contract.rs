@@ -817,6 +817,193 @@ fn a_broken_pi_package_symlink_stops_reading_as_enforced() {
 }
 
 #[test]
+fn a_globally_installed_pi_carrier_backs_a_project_hook() {
+    let sandbox = Sandbox::new("pi-global-carrier");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "pi", "--copy", "-y"]),
+        "vstack add",
+    );
+    let package = sandbox.source.join("pi-extensions/pi-hooks");
+    fs::create_dir_all(package.join("extensions")).unwrap();
+    fs::write(
+        package.join("package.json"),
+        r#"{"name":"@vanillagreen/pi-hooks","version":"1.0.0","description":"probe carrier","keywords":["pi-package"],"pi":{"extensions":["./extensions/hooks.js"]}}"#,
+    )
+    .unwrap();
+    fs::write(package.join("extensions/hooks.js"), "export default {};\n").unwrap();
+    // Pi loads packages from both scopes: a globally installed carrier
+    // enforces for a project-scope hook too.
+    assert_success(
+        sandbox.add(&["--pi-extension", "pi-hooks", "--harness", "pi", "-g", "-y"]),
+        "vstack add --pi-extension -g",
+    );
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("pi: enforced"),
+        "a globally loaded carrier does not back the project hook:\n{text}"
+    );
+}
+
+#[test]
+fn a_reinstall_does_not_corrupt_feature_examples_inside_strings() {
+    let sandbox = Sandbox::new("codex-feature-writer-decoy");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "codex", "--copy", "-y"]),
+        "vstack add",
+    );
+    // A user config whose real flag is off and whose profile carries the same
+    // lines as inert text: a reinstall may flip the real flag only.
+    let config_toml = sandbox.project.join(".codex/config.toml");
+    let embedded = "developer_instructions = \"\"\"\n[features]\nhooks = true\n\"\"\"";
+    fs::write(
+        &config_toml,
+        format!("[features]\nhooks = false\n\n[profile.example]\n{embedded}\n"),
+    )
+    .unwrap();
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "codex", "--copy", "-y"]),
+        "vstack add (reinstall)",
+    );
+    let after = fs::read_to_string(&config_toml).unwrap();
+    assert!(
+        after.contains(embedded),
+        "the reinstall rewrote text inside a multiline string:\n{after}"
+    );
+    let doc: toml::Value = after.parse().expect("config.toml still parses");
+    assert_eq!(
+        doc.get("features")
+            .and_then(|f| f.get("hooks"))
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "the reinstall did not enable the real flag:\n{after}"
+    );
+}
+
+#[test]
+fn a_filtered_add_refuses_before_installing_anything() {
+    let sandbox = Sandbox::new("add-atomic-uncovered");
+    assert_success(
+        sandbox.add(&[
+            "--agent",
+            "rust",
+            "--hook",
+            "probe",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add",
+    );
+    write_probe_hook(&sandbox.source, "probe", "Notification");
+    fs::write(
+        sandbox.source.join("agents/extra.md"),
+        "---\nname: extra\ndescription: Extra agent\nmodel: sonnet\nrole: engineer\n---\n# Extra\n\nBody.\n",
+    )
+    .unwrap();
+    let output = sandbox.add(&[
+        "--agent",
+        "extra",
+        "--harness",
+        "claude-code",
+        "--copy",
+        "-y",
+    ]);
+    assert!(
+        !output.status.success(),
+        "an add against an uncovered locked hook succeeded"
+    );
+    assert!(
+        !sandbox.project.join(".claude/agents/extra.md").exists(),
+        "the refused add installed its selected item first"
+    );
+    let lock = fs::read_to_string(sandbox.project.join(".vstack-lock.json")).unwrap();
+    assert!(
+        !lock.contains("\"extra\""),
+        "the refused add wrote a lock entry first:\n{lock}"
+    );
+}
+
+#[test]
+fn a_features_example_inside_a_string_does_not_enable_codex_hooks() {
+    let sandbox = Sandbox::new("codex-feature-string-decoy");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "codex", "--copy", "-y"]),
+        "vstack add",
+    );
+    // The real flag is off; a multiline string later carries the same lines
+    // as inert text. Only the parsed table may decide.
+    fs::write(
+        sandbox.project.join(".codex/config.toml"),
+        "[features]\nhooks = false\n\n[profile.example]\ndeveloper_instructions = \"\"\"\n[features]\nhooks = true\n\"\"\"\n",
+    )
+    .unwrap();
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("codex: unsupported (artifact missing)"),
+        "a features example inside a string enabled the hooks claim:\n{text}"
+    );
+}
+
+#[test]
+fn a_filtered_add_refuses_to_reconcile_from_an_uncovered_event() {
+    let sandbox = Sandbox::new("add-reconcile-uncovered");
+    assert_success(
+        sandbox.add(&[
+            "--agent",
+            "rust",
+            "--hook",
+            "probe",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add",
+    );
+    let agent_path = sandbox.project.join(".claude/agents/rust.md");
+    let before = fs::read_to_string(&agent_path).unwrap();
+    // An installed hook's source leaves the contract, then an unrelated item
+    // is added: reconciliation regenerates every agent from every locked
+    // hook, and must refuse a definition install would refuse.
+    write_probe_hook(&sandbox.source, "probe", "Notification");
+    fs::write(
+        sandbox.source.join("agents/extra.md"),
+        "---\nname: extra\ndescription: Extra agent\nmodel: sonnet\nrole: engineer\n---\n# Extra\n\nBody.\n",
+    )
+    .unwrap();
+    let output = sandbox.add(&[
+        "--agent",
+        "extra",
+        "--harness",
+        "claude-code",
+        "--copy",
+        "-y",
+    ]);
+    assert!(
+        !output.status.success(),
+        "a filtered add reconciled agents from an event the contract does not cover\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let after = fs::read_to_string(&agent_path).unwrap();
+    assert_eq!(
+        before, after,
+        "reconciliation rewrote an agent from an uncovered event before refusing"
+    );
+}
+
+#[test]
 fn refresh_refuses_an_uncovered_event_before_pruning_harnesses() {
     let sandbox = Sandbox::new("refresh-uncovered-before-prune");
     assert_success(

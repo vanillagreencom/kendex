@@ -623,6 +623,15 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
         let sources = crate::refresh_sources::load_refresh_sources(&source_records.sources);
         let source_hooks = crate::refresh_sources::all_source_hooks(&sources);
 
+        // A definition install would refuse is refused here too, before the
+        // prune pass can act on it.
+        if let Some((name, error)) =
+            crate::commands::refresh::uncovered_hook_event(&lock, &source_hooks, Some(names))
+        {
+            report.fail(&name, error);
+            continue;
+        }
+
         let pruned = crate::commands::refresh::prune_hook_harnesses(
             scope_global,
             &mut lock,
