@@ -1748,14 +1748,19 @@ install_worktree_dependencies() {
   elif command -v jq >/dev/null 2>&1; then
     pkg_manager="$(jq -r '.packageManager // ""' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
   fi
-  if [[ ! -f "$wt/package-lock.json" && ! -f "$wt/npm-shrinkwrap.json" && "$pkg_manager" != npm@* ]]; then
-    if [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" ]]; then
-      return 0
-    fi
-    case "$pkg_manager" in
-      pnpm@*|yarn@*|bun@*) return 0 ;;
-    esac
-  fi
+  # Precedence: an explicit pin outranks lockfiles either way (a migration
+  # leaves stale ones behind); with no pin, npm evidence beats an incidental
+  # foreign lockfile.
+  case "$pkg_manager" in
+    pnpm@*|yarn@*|bun@*) return 0 ;;
+    npm@*) ;;
+    *)
+      if [[ ! -f "$wt/package-lock.json" && ! -f "$wt/npm-shrinkwrap.json" ]] &&
+        [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" ]]; then
+        return 0
+      fi
+      ;;
+  esac
   if command -v npm >/dev/null 2>&1; then
     # Every std fd detached: a caller capturing $(create) — stdout, or
     # combined 2>&1 — gets EOF at once; any inherited pipe fd would make the
@@ -1763,11 +1768,19 @@ install_worktree_dependencies() {
     # install leaves its full log at a stable per-worktree path.
     (
       cd "$wt" || exit 0
-      # Path-keyed so same-named worktrees of different repos never share
-      # (or truncate) one log.
-      log="${TMPDIR:-/tmp}/worktree-npm-install-$(basename "$wt")-$(printf '%s' "$wt" | cksum | cut -d' ' -f1).log"
-      if npm install --no-audit --no-fund >"$log" 2>&1; then
-        rm -f "$log"
+      # A user-private 0700 dir (never a symlink another local user planted)
+      # holds the logs; path-keyed names so same-named worktrees of
+      # different repos never share one. Unusable dir → install still runs,
+      # just unlogged.
+      log_dir="${TMPDIR:-/tmp}/worktree-npm-install-$(id -u)"
+      mkdir -m 700 -p -- "$log_dir" 2>/dev/null || log_dir=""
+      if [ -n "$log_dir" ] && [ ! -L "$log_dir" ] && [ -O "$log_dir" ]; then
+        log="$log_dir/$(basename "$wt")-$(printf '%s' "$wt" | cksum | cut -d' ' -f1).log"
+        if npm install --no-audit --no-fund >"$log" 2>&1; then
+          rm -f -- "$log"
+        fi
+      else
+        npm install --no-audit --no-fund >/dev/null 2>&1
       fi
     ) </dev/null >/dev/null 2>&1 &
   fi

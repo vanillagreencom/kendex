@@ -143,6 +143,17 @@ else
 fi
 : >"$NPM_CALL_LOG"
 
+echo "=== an explicit foreign pin outranks a stale npm lockfile ==="
+ROOT="$TMP_ROOT/migration"
+make_repo "$ROOT" repo
+printf '{ "name": "app", "packageManager": "pnpm@10.33.2" }\n' >"$ROOT/repo/package.json"
+printf '{}\n' >"$ROOT/repo/package-lock.json"
+git -C "$ROOT/repo" add package.json package-lock.json
+git -C "$ROOT/repo" commit -q -m "js: mid-migration"
+git -C "$ROOT/repo" push -q origin main
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-migrate >/dev/null)
+assert_log_stays_empty "a pnpm pin beats the stale package-lock.json" || true
+
 echo "=== explicit npm evidence beats an incidental foreign lockfile ==="
 ROOT="$TMP_ROOT/mixed"
 make_repo "$ROOT" repo
