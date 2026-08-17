@@ -735,7 +735,7 @@ test("Monitor numbers repeated agent launches as sessions and resets task number
 	const tree = renderMonitorTree(monitorTreeRows(groups), records, new Set(), uiState({ tab: "monitor", pane: "list" }), 180, theme as any, 20).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
 	assert.match(tree, /reviewer-arch · 1 task · /);
 	// `#1` is suppressed everywhere; only `#2+` should appear.
-	assert.match(tree, /Task · \d{2}:\d{2} · completed/);
+	assert.match(tree, /Task · 0s · completed/);
 	assert.doesNotMatch(tree, /Task #1\b/);
 	assert.doesNotMatch(tree, /bg · reviewer-arch|session #2 · fresh|reviewer-arch #2/);
 
@@ -942,7 +942,8 @@ test("Monitor session selection shows aggregate detail", () => {
 	assert.match(plain, /Usage:/);
 	assert.match(plain, /Pane ID:\s+%1/);
 	assert.match(plain, /Transcript:\s+\/tmp\/planner-session\.jsonl/);
-	assert.match(plain, /Task #2 · \d{2}:\d{2} · running/);
+	// Running rows show elapsed run-time (createdAt → now), not clock-of-day.
+	assert.match(plain, /Task #2 · \d+h \d{2}m · running/);
 
 	const colored = renderMonitorSessionDetail(group, taskNumberById([first, second]), uiState({ tab: "monitor" }), 140, 40, ansiTheme as any).join("\n");
 	assert.match(colored, /\x1b\[35m\x1b\[1mSession/);

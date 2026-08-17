@@ -80,12 +80,38 @@ export function monitorStatusText(status: PaneTaskStatus, theme: Theme): string 
 	return theme.fg(paneCompletionTone(status), status);
 }
 
-function recordClockTime(record: PaneTaskRecord): string {
-	const raw = record.completedAt ?? record.updatedAt ?? record.createdAt;
-	if (!raw) return "--:--";
-	const date = new Date(raw);
-	if (!Number.isFinite(date.getTime())) return "--:--";
-	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function formatLocalDateTime(raw: string | undefined): string {
+	const ms = Date.parse(raw ?? "");
+	if (!Number.isFinite(ms)) return "—";
+	const date = new Date(ms);
+	const year = date.getFullYear() === new Date().getFullYear() ? "" : ` ${date.getFullYear()}`;
+	return `${MONTH_LABELS[date.getMonth()]} ${date.getDate()}${year}, ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+export function formatRunDuration(startRaw: string | undefined, endRaw?: string): string {
+	const startMs = Date.parse(startRaw ?? "");
+	if (!Number.isFinite(startMs)) return "—";
+	const endMs = endRaw === undefined ? Date.now() : Date.parse(endRaw);
+	if (!Number.isFinite(endMs) || endMs < startMs) return "—";
+	const totalSeconds = Math.floor((endMs - startMs) / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+	if (minutes > 0) return `${minutes}m`;
+	return `${totalSeconds}s`;
+}
+
+// Run-time only: elapsed while active, total once terminal. `updatedAt` is
+// never a source — registry polls refresh it, which made the old clock-of-day
+// display jump on every poll.
+export function monitorTaskRunTime(record: PaneTaskRecord): string {
+	if (monitorStatusIsTerminal(record.status)) return formatRunDuration(record.createdAt, record.completedAt ?? "");
+	// Minute granularity while running: the popup refreshes elapsed times on a
+	// slow cadence, so a seconds display would visibly lag between renders.
+	const elapsed = formatRunDuration(record.createdAt);
+	return /^\d+s$/.test(elapsed) ? "<1m" : elapsed;
 }
 
 function recordInvocationTimestamp(record: PaneTaskRecord): number {
@@ -95,10 +121,10 @@ function recordInvocationTimestamp(record: PaneTaskRecord): number {
 
 export function monitorTaskRowLabel(record: PaneTaskRecord, taskNumbers: Map<string, number>): string {
 	const number = taskNumbers.get(record.taskId);
-	const clock = recordClockTime(record);
+	const runTime = monitorTaskRunTime(record);
 	// `#1` is suppressed so the first task per session reads as plain `Task · <time>`.
 	// Numbers only appear from the second task onward.
-	return number && number > 1 ? `#${number} · ${clock}` : `· ${clock}`;
+	return number && number > 1 ? `#${number} · ${runTime}` : `· ${runTime}`;
 }
 
 export function buildMonitorSessionGroups(records: PaneTaskRecord[]): MonitorSessionGroup[] {

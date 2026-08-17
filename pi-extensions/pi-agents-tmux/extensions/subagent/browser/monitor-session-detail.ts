@@ -5,6 +5,7 @@ import { effortFromModelId, modelWithoutEffortSuffix, normalizeReasoningEffort }
 import type { AgentBrowserUiState, TraceViewerItem } from "../types.js";
 import { recordRunEffort, recordRunModel } from "./agents-tab.js";
 import {
+	formatLocalDateTime,
 	monitorStatusIcon,
 	monitorStatusText,
 	monitorTaskRowLabel,
@@ -12,13 +13,6 @@ import {
 } from "./monitor-tree.js";
 import { renderTraceContentLine } from "./monitor-task-detail.js";
 import { agentPaneTitle } from "./shared.js";
-
-function formatDateTime(raw: string | undefined): string {
-	if (!raw) return "—";
-	const date = new Date(raw);
-	if (!Number.isFinite(date.getTime())) return raw;
-	return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
-}
 
 function formatDurationBetween(start: string | undefined, end: string | undefined): string {
 	const startMs = Date.parse(start ?? "");
@@ -81,8 +75,8 @@ export function renderMonitorSessionDetail(group: MonitorSessionGroup | undefine
 		model ? `Model    ${model}` : "",
 		effort ? `Effort   ${effort}` : "",
 		sessionDetail ? `Session  ${sessionDetail}` : "",
-		`Start     ${formatDateTime(group.createdAt)}`,
-		`Latest    ${formatDateTime(group.latestAt)}`,
+		`Start     ${formatLocalDateTime(group.createdAt)}`,
+		`Latest    ${formatLocalDateTime(group.latestAt)}`,
 		`Duration  ${formatDurationBetween(group.createdAt, group.latestAt)}`,
 		`Tasks     ${taskCountText} · ${monitorStatusBreakdown(group)}`,
 		group.usage ? `Usage     ${formatUsageStats(group.usage)}` : "Usage     —",
