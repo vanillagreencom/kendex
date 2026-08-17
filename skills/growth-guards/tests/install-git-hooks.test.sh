@@ -961,5 +961,47 @@ case "$OUT" in
   *) bad "skip states preflight not installed" "out=$OUT" ;;
 esac
 
+
+echo "=== a repo-local size-ratchet replacement without --staged is a stated skip ==="
+R31="$(new_repo forkchain)"
+# new_repo links size-ratchet to the REAL skill; replace the link with a real
+# directory so the fork fixture cannot write through it.
+rm "$R31/.agents/skills/size-ratchet"
+mkdir -p "$R31/.agents/skills/size-ratchet/scripts"
+cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'FORK'
+#!/usr/bin/env bash
+# A consumer's own gate: usage text names size-ratchet, no --staged mode.
+case "${1:-}" in
+  --help) echo "size-ratchet — repo-local gate. Usage: size-ratchet [--update]"; exit 0 ;;
+  --staged) echo "size-ratchet: unknown argument '--staged' (see --help)" >&2; exit 2 ;;
+esac
+exit 0
+FORK
+chmod 0755 "$R31/.agents/skills/size-ratchet/scripts/size-ratchet"
+install_in "$R31"
+printf 'hello\n' >"$R31/ok.txt"
+git -C "$R31" add ok.txt
+commit_in "$R31" "feat: add ok"
+[ "$RC" -eq 0 ] && ok "a fork without --staged does not block the commit" || bad "fork commit proceeds" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"does not support --staged"*"repo-local replacement"*) ok "the skip states the fork and its ownership" ;;
+  *) bad "fork skip stated" "out=$OUT" ;;
+esac
+
+echo "=== a size-ratchet whose --help yields no usage is a broken install ==="
+cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'BROKEN'
+#!/usr/bin/env bash
+exit 1
+BROKEN
+chmod 0755 "$R31/.agents/skills/size-ratchet/scripts/size-ratchet"
+printf 'more\n' >"$R31/d.txt"
+git -C "$R31" add d.txt
+commit_in "$R31" "feat: add d"
+[ "$RC" -ne 0 ] && ok "a helpless script blocks the commit" || bad "broken script blocks" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"no usable --help output"*) ok "the block names the broken install, not a fork skip" ;;
+  *) bad "broken install named" "out=$OUT" ;;
+esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

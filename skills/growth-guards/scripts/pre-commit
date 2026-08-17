@@ -79,8 +79,25 @@ SIZE_RATCHET="$SIZE_RATCHET_SKILL/scripts/size-ratchet"
 # catches a dangling symlink, which -e reports as absent.
 if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
   [ -x "$SIZE_RATCHET" ] || gg_config_error "the size-ratchet skill is installed at $SIZE_RATCHET_SKILL but $SIZE_RATCHET is missing or not executable — reinstall it"
-  # --staged: judge the blobs the commit records, not the worktree copies.
-  run_step size-ratchet "$SIZE_RATCHET" --staged
+  # A consuming repo may replace the vendored script with its own gate — a
+  # fork without the --staged interface, wired through its own hooks. This
+  # chain owns only the vstack-shape script, so probe the interface: --help
+  # advertising --staged is the contract. A working CLI without it is the
+  # repo's own gate (stated skip); a script whose --help produces no usage
+  # at all is a broken install, and a lost gate must never pass silently.
+  sr_help="$("$SIZE_RATCHET" --help 2>&1)" || true
+  case "$sr_help" in
+    *--staged*)
+      # --staged: judge the blobs the commit records, not the worktree copies.
+      run_step size-ratchet "$SIZE_RATCHET" --staged
+      ;;
+    *size-ratchet*|*[Uu]sage*)
+      echo "=== pre-commit: size-ratchet at $SIZE_RATCHET does not support --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
+      ;;
+    *)
+      gg_config_error "size-ratchet at $SIZE_RATCHET produced no usable --help output — broken install; reinstall it or remove the skill"
+      ;;
+  esac
 else
   echo "=== pre-commit: size-ratchet not installed — skipped"
 fi
