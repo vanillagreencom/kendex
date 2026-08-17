@@ -127,11 +127,13 @@ if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
           ;;
       esac
       ;;
-    *size-ratchet*|*[Uu]sage*)
+    *[Uu]sage*)
+      # USAGE evidence required: a working CLI documents itself. A banner or
+      # diagnostic that merely names the tool is not a replacement to defer to.
       echo "=== pre-commit: size-ratchet at $SIZE_RATCHET does not support --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
       ;;
     *)
-      gg_config_error "size-ratchet at $SIZE_RATCHET produced no usable --help output — broken install; reinstall it or remove the skill"
+      gg_config_error "size-ratchet at $SIZE_RATCHET produced no usage text on --help — broken install; reinstall it or remove the skill"
       ;;
   esac
 else

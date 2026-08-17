@@ -1064,6 +1064,23 @@ case "$OUT" in
 esac
 git -C "$R31" rm -q --cached c.txt 2>/dev/null; rm -f "$R31/c.txt"
 
+echo "=== a name-only banner on --help is a broken install, not a replacement ==="
+cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'BANNER'
+#!/usr/bin/env bash
+echo "size-ratchet: settings unavailable"
+exit 0
+BANNER
+chmod 0755 "$R31/.agents/skills/size-ratchet/scripts/size-ratchet"
+printf 'ban\n' >"$R31/g.txt"
+git -C "$R31" add g.txt
+commit_in "$R31" "feat: add g"
+[ "$RC" -ne 0 ] && ok "a name-only banner blocks" || bad "banner blocks" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"no usage text"*) ok "the banner block demands usage evidence" ;;
+  *) bad "banner block named" "out=$OUT" ;;
+esac
+git -C "$R31" rm -q --cached g.txt 2>/dev/null; rm -f "$R31/g.txt"
+
 echo "=== a size-ratchet whose --help yields no usage is a broken install ==="
 cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'BROKEN'
 #!/usr/bin/env bash
@@ -1076,7 +1093,7 @@ git -C "$R31" add d.txt
 commit_in "$R31" "feat: add d"
 [ "$RC" -ne 0 ] && ok "a helpless script blocks the commit" || bad "broken script blocks" "rc=$RC out=$OUT"
 case "$OUT" in
-  *"no usable --help output"*) ok "the block names the broken install, not a fork skip" ;;
+  *"no usage text"*) ok "the block names the broken install, not a fork skip" ;;
   *) bad "broken install named" "out=$OUT" ;;
 esac
 
