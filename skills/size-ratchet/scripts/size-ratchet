@@ -684,6 +684,19 @@ if [ "$MODE" = "seed" ]; then
   if [ "$BASELINE_FILE" = "$EXCLUDES_FILE" ]; then
     config_error "--seed refuses: the baseline and exclusion list resolve to the same path ($BASELINE_FILE) — seeding would turn every row into an exclusion on the next run"
   fi
+  if [ -e "$BASELINE_FILE" ] && [ -e "$EXCLUDES_FILE" ] && [ "$BASELINE_FILE" -ef "$EXCLUDES_FILE" ]; then
+    config_error "--seed refuses: the baseline and exclusion list are the same file (aliased through a link) — seeding would turn every row into an exclusion on the next run"
+  fi
+  # Bootstrap-only holds against the committed record too: rows in the INDEX
+  # copy mean the ratchet is live even when the worktree copy was truncated,
+  # and a regenerated baseline must be a reviewed hand-edit, never a reseed.
+  if git ls-files --error-unmatch -- "$BASELINE_FILE" >/dev/null 2>&1; then
+    rows_index="$(git show ":$BASELINE_FILE" 2>/dev/null | grep -c . || true)"
+    case "$rows_index" in *[!0-9]*) rows_index=0 ;; esac
+    if [ "${rows_index:-0}" -gt 0 ]; then
+      config_error "--seed refuses: the INDEX copy of $BASELINE_FILE carries $rows_index row(s) — the ratchet is live; restore the file (git checkout -- $BASELINE_FILE) or hand-edit it"
+    fi
+  fi
   rows_existing="$(count_nonempty_lines "$TMP/baseline.tsv")"
   if [ "$rows_existing" -gt 0 ]; then
     config_error "--seed refuses: $BASELINE_FILE already carries $rows_existing row(s) — the ratchet is live and only moves down (--update tightens; growth is a reviewed hand-edit)"

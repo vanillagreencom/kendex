@@ -181,6 +181,38 @@ OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --baseline tools/shared
   || bad "alias refusal" "rc=$RC out=$OUT"
 [ ! -e "$R/tools/shared.tsv" ] && ok "the shared path stays unwritten" || bad "alias write" "$(cat "$R/tools/shared.tsv")"
 
+echo "=== a committed ratchet refuses reseeding even with a truncated worktree copy ==="
+R="$TMP/index-rows"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+: >"$R/tools/size-ratchet-baseline.tsv" # truncated worktree copy
+run_sr --seed
+[ "$RC" -eq 2 ] && case "$OUT" in *"INDEX copy"*) true ;; *) false ;; esac \
+  && ok "--seed refuses while the index copy carries rows" \
+  || bad "index-rows refusal" "rc=$RC out=$OUT"
+
+echo "=== an exclusion list hard-linked to the baseline refuses ==="
+R="$TMP/hardlink-alias"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+: >"$R/tools/size-ratchet-baseline.tsv"
+ln "$R/tools/size-ratchet-baseline.tsv" "$R/tools/alias-excludes"
+git -C "$R" add big.txt
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --excludes tools/alias-excludes 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"same file"*) true ;; *) false ;; esac \
+  && ok "--seed refuses an exclusion list aliased to the baseline" \
+  || bad "hardlink alias refusal" "rc=$RC out=$OUT"
+
 echo "=== mode exclusivity ==="
 run_sr --seed --update
 [ "$RC" -eq 2 ] && ok "--seed with --update is a config error" || bad "exclusivity" "rc=$RC out=$OUT"
