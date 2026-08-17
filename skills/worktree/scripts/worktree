@@ -1773,7 +1773,10 @@ install_worktree_dependencies() {
       # different repos never share one. Unusable dir → install still runs,
       # just unlogged.
       log_dir="${TMPDIR:-/tmp}/worktree-npm-install-$(id -u)"
+      # -m 700 applies only on creation; a pre-existing permissive dir is
+      # re-tightened, and a chmod that fails disables logging.
       mkdir -m 700 -p -- "$log_dir" 2>/dev/null || log_dir=""
+      [ -n "$log_dir" ] && { chmod 700 -- "$log_dir" 2>/dev/null || log_dir=""; }
       if [ -n "$log_dir" ] && [ ! -L "$log_dir" ] && [ -O "$log_dir" ]; then
         log="$log_dir/$(basename "$wt")-$(printf '%s' "$wt" | cksum | cut -d' ' -f1).log"
         if npm install --no-audit --no-fund >"$log" 2>&1; then
