@@ -988,6 +988,25 @@ case "$OUT" in
   *) bad "fork skip stated" "out=$OUT" ;;
 esac
 
+echo "=== a fork whose --help NAMES --staged but rejects it still skips ==="
+cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'NEGHELP'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --help) echo "size-ratchet — repo-local gate. Usage: size-ratchet [--update]. This build does not support --staged."; exit 0 ;;
+  --staged) echo "size-ratchet: unknown argument '--staged' (see --help)" >&2; exit 2 ;;
+esac
+exit 0
+NEGHELP
+chmod 0755 "$R31/.agents/skills/size-ratchet/scripts/size-ratchet"
+printf 'neg\n' >"$R31/b.txt"
+git -C "$R31" add b.txt
+commit_in "$R31" "feat: add b"
+[ "$RC" -eq 0 ] && ok "a help-names-it-but-rejects-it fork does not block" || bad "negative-phrase fork proceeds" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"rejects --staged"*"repo-local replacement"*) ok "the runtime rejection is stated as the skip" ;;
+  *) bad "runtime rejection stated" "out=$OUT" ;;
+esac
+
 echo "=== a failing --help that names size-ratchet is still a broken install ==="
 cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'ERRHELP'
 #!/usr/bin/env bash
