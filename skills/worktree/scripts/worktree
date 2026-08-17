@@ -1742,11 +1742,15 @@ install_worktree_dependencies() {
   # order: node (present wherever a package.json matters), then jq; a
   # machine with neither reads no pin, and the only cost of that miss is an
   # automatic install skipped — never a wrong-tree install.
-  local pkg_manager=""
+  local pkg_manager="" pkg_manager_readable=1
   if command -v node >/dev/null 2>&1; then
     pkg_manager="$(node -e 'const m=require(process.argv[1]).packageManager;process.stdout.write(typeof m==="string"?m:"")' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
   elif command -v jq >/dev/null 2>&1; then
     pkg_manager="$(jq -r '.packageManager // ""' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
+  else
+    # No structural reader: the pin is unreadable, and running npm on an
+    # unreadable pin is the wrong-tree case this gate exists to prevent.
+    pkg_manager_readable=0
   fi
   # Precedence: an explicit pin outranks lockfiles either way (a migration
   # leaves stale ones behind); with no pin, npm evidence beats an incidental
@@ -1755,9 +1759,13 @@ install_worktree_dependencies() {
     pnpm@*|yarn@*|bun@*) return 0 ;;
     npm@*) ;;
     *)
-      if [[ ! -f "$wt/package-lock.json" && ! -f "$wt/npm-shrinkwrap.json" ]] &&
-        [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" ]]; then
-        return 0
+      if [[ ! -f "$wt/package-lock.json" && ! -f "$wt/npm-shrinkwrap.json" ]]; then
+        # Foreign evidence: another manager's lockfile, a pnpm workspace
+        # manifest, or a pin we could not read at all.
+        if [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" || -f "$wt/pnpm-workspace.yaml" ]]; then
+          return 0
+        fi
+        [[ "$pkg_manager_readable" -eq 1 ]] || return 0
       fi
       ;;
   esac
@@ -1773,6 +1781,10 @@ install_worktree_dependencies() {
       # different repos never share one. Unusable dir → install still runs,
       # just unlogged.
       log_dir="${TMPDIR:-/tmp}/worktree-npm-install-$(id -u)"
+      # The subshell cd-s into the worktree: a relative TMPDIR would drop
+      # the log INSIDE the fresh checkout — the exact dirty-tree hazard this
+      # change removes. Absolute or no logging.
+      case "$log_dir" in /*) ;; *) log_dir="" ;; esac
       # Order matters on shared /tmp: prove the path is OUR real directory
       # (never a pre-planted symlink) BEFORE chmod — a chmod through a
       # symlink would re-mode the target. -m 700 covers creation; the

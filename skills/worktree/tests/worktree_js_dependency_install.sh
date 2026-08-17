@@ -143,6 +143,17 @@ else
 fi
 : >"$NPM_CALL_LOG"
 
+echo "=== a pnpm workspace manifest alone is foreign evidence ==="
+ROOT="$TMP_ROOT/wsmanifest"
+make_repo "$ROOT" repo
+printf '{ "name": "app" }\n' >"$ROOT/repo/package.json"
+printf 'packages:\n  - "apps/*"\n' >"$ROOT/repo/pnpm-workspace.yaml"
+git -C "$ROOT/repo" add package.json pnpm-workspace.yaml
+git -C "$ROOT/repo" commit -q -m "js: workspace manifest only"
+git -C "$ROOT/repo" push -q origin main
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-wsmani >/dev/null)
+assert_log_stays_empty "pnpm-workspace.yaml alone skips npm" || true
+
 echo "=== an explicit foreign pin outranks a stale npm lockfile ==="
 ROOT="$TMP_ROOT/migration"
 make_repo "$ROOT" repo
