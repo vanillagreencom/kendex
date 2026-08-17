@@ -63,6 +63,28 @@ test("a tool-call-only assistant message renders as its calls, not message JSON"
 	assert.doesNotMatch(out, /\{/);
 });
 
+test("tool durations never render 60s; sizes are UTF-8 bytes", () => {
+	const out = formatTranscriptForDisplay([
+		stream(0, { toolCallId: "c1", toolName: "bash", type: "tool_execution_start" }),
+		stream(119.5, { toolCallId: "c1", toolName: "bash", type: "tool_execution_end", result: "café" }),
+	].join("\n"));
+	assert.match(out, /2m 0s/);
+	assert.doesNotMatch(out, /60s/);
+	assert.match(out, /5B/);
+});
+
+test("id-less same-named tool calls pair first-started-first-ended", () => {
+	const out = formatTranscriptForDisplay([
+		stream(0, { args: { command: "first" }, toolName: "bash", type: "tool_execution_start" }),
+		stream(1, { args: { command: "second" }, toolName: "bash", type: "tool_execution_start" }),
+		stream(2, { toolName: "bash", type: "tool_execution_end", status: "ok" }),
+		stream(10, { toolName: "bash", type: "tool_execution_end", status: "ok" }),
+	].join("\n"));
+	const rows = out.split("\n");
+	assert.match(rows[0]!, /tool bash \(first\) · ok · 2\.0s/);
+	assert.match(rows[1]!, /tool bash \(second\) · ok · 9\.0s/);
+});
+
 test("user input, turn boundaries, and elapsed stamps", () => {
 	const out = formatTranscriptForDisplay([
 		line({ agent: "reviewer", task: "review the diff", ts: at(0), type: "start" }),

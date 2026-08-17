@@ -21,9 +21,9 @@ function formatElapsedStamp(ms: number | undefined): string {
 function formatToolDuration(ms: number | undefined): string | undefined {
 	if (ms === undefined || !Number.isFinite(ms) || ms < 0) return undefined;
 	if (ms < 1000) return `${ms}ms`;
-	const seconds = ms / 1000;
-	if (seconds < 60) return `${seconds.toFixed(1)}s`;
-	return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+	const totalSeconds = Math.round(ms / 1000);
+	return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
 }
 
 /** The argument that best identifies what a tool call targeted. */
@@ -40,9 +40,10 @@ function primaryToolArgument(args: unknown): string | undefined {
 
 function payloadByteSize(value: unknown): number {
 	if (value === undefined) return 0;
-	if (typeof value === "string") return value.length;
+	if (typeof value === "string") return Buffer.byteLength(value, "utf8");
 	try {
-		return JSON.stringify(value)?.length ?? 0;
+		const serialized = JSON.stringify(value);
+		return serialized === undefined ? 0 : Buffer.byteLength(serialized, "utf8");
 	} catch {
 		return 0;
 	}
@@ -112,8 +113,9 @@ function messageContentRows(message: any): Array<Pick<TimelineRow, "kind" | "det
 export function formatTranscriptForDisplay(raw: string, options?: { droppedEvents?: number }): string {
 	const rows: TimelineRow[] = [];
 	let firstTs: number | undefined;
-	// Open tool calls by id (fallback: name), pointing at the row to complete.
-	const openTools = new Map<string, { row: TimelineRow; startedAtMs?: number; label: string }>();
+	// Open tool calls by id (fallback: FIFO per name), pointing at the row to
+	// complete — id-less same-named calls pair first-started-first-ended.
+	const openTools = new Map<string, Array<{ row: TimelineRow; startedAtMs?: number; label: string }>>();
 	const stampFor = (record: any): { stamp: string; atMs?: number } => {
 		const atMs = Date.parse(record?.ts ?? "");
 		if (!Number.isFinite(atMs)) return { stamp: "--:--" };
@@ -132,7 +134,7 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 		try {
 			record = JSON.parse(line);
 		} catch {
-			push("--:--", "unparseable line", formatByteSize(line.length), true);
+			push("--:--", "unparseable line", formatByteSize(payloadByteSize(line)), true);
 			continue;
 		}
 		const { stamp, atMs } = stampFor(record);
@@ -175,7 +177,7 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 		const event = normalized.event;
 		const type = typeof event?.type === "string" ? (event.type as string) : undefined;
 		if (!event || typeof event !== "object" || !type) {
-			push(stamp, "unlabeled record", formatByteSize(line.length), true);
+			push(stamp, "unlabeled record", formatByteSize(payloadByteSize(line)), true);
 			continue;
 		}
 		switch (type) {
@@ -216,7 +218,9 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 				const label = target ? `tool ${name} (${oneLine(target, 60)})` : `tool ${name}`;
 				const id = stringValue(event.toolCallId ?? event.tool_call_id) ?? `name:${name}`;
 				const row = push(stamp, label, "no result recorded");
-				openTools.set(id, { label, row, startedAtMs: atMs });
+				const queue = openTools.get(id) ?? [];
+				queue.push({ label, row, startedAtMs: atMs });
+				openTools.set(id, queue);
 				break;
 			}
 			case "tool_execution_update":
@@ -225,8 +229,7 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 			case "tool_execution_end": {
 				const name = stringValue(event.toolName ?? event.tool_name) ?? stringValue(event.name) ?? "tool";
 				const id = stringValue(event.toolCallId ?? event.tool_call_id) ?? `name:${name}`;
-				const open = openTools.get(id);
-				openTools.delete(id);
+				const open = openTools.get(id)?.shift();
 				const failed = event.isError === true || event.is_error === true || stringValue(event.status) === "error";
 				const status = stringValue(event.status) ?? (failed ? "error" : "ok");
 				const resultSize = payloadByteSize(event.result ?? event.output ?? event.content);
@@ -249,10 +252,10 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 				break;
 			}
 			default: {
-				push(stamp, type, formatByteSize(line.length));
+				push(stamp, type, formatByteSize(payloadByteSize(line)));
 			}
 		}
 	}
-	for (const open of openTools.values()) open.row.error = true;
+	for (const queue of openTools.values()) for (const open of queue) open.row.error = true;
 	return rows.map(renderTimelineRow).join("\n");
 }
