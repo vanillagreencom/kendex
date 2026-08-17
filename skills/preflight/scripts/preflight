@@ -578,7 +578,7 @@ doc_token_is_dead() { # TOKEN DOC-SUBTREE — 0 when the token names a path that
   # files is where this lane would earn its false positives.
   if [ -n "$subtree" ] && [ "${tok%%/*}" != "$subtree" ]; then return 1; fi
   # The token's own parent directory must already hold tracked files. A doc
-  # describing where a consuming repo will keep something (`docs/plans/x.md`
+  # describing where a consuming repo will keep something (`docs/plans/<file>.md`
   # in a repo with no docs/plans) is prose about elsewhere; only a path
   # inside a directory this repo really has is this repo's claim to keep true.
   parent="${tok%/*}"
@@ -756,6 +756,20 @@ while IFS= read -r f; do
   esac
   is_new=0
   if [ "$MODE" = "all" ] || grep -qxF -- "$f" "$TMP/newfiles.list"; then is_new=1; fi
+  # Installed-artifact subtrees hold vendored tooling a refresh rewrites
+  # wholesale: their text is the upstream project's prose, not this repo's
+  # claims, so the code-citation lane leaves them alone. Authored files
+  # elsewhere under the harness dirs (a prompts/ or commands/ tree) keep the
+  # lane. Markdown inside a mirror needs no gate — a mirror-internal token
+  # is dot-leading and a foreign one fails the subtree guard.
+  vendored_mirror=0
+  case "$f" in
+    .agents/* | .claude/skills/* | .claude/agents/* | .claude/hooks/* | \
+      .cursor/rules/* | .opencode/skills/* | .opencode/agents/* | .opencode/instructions/* | \
+      .codex/agents/* | .codex/hooks/* | .pi/agents/* | .pi/packages/*)
+      vendored_mirror=1
+      ;;
+  esac
   is_md=0
   subtree=""
   case "$f" in
@@ -773,7 +787,8 @@ while IFS= read -r f; do
     tests.rs | *_test.* | *_tests.* | *.test.* | *.spec.* | test_*) is_testname=1 ;;
   esac
   cites_docs=0
-  if [ "$is_md" = 0 ] && [ "$own_rules" = 0 ] && [ "$is_testname" = 0 ]; then
+  if [ "$is_md" = 0 ] && [ "$own_rules" = 0 ] && [ "$is_testname" = 0 ] \
+    && [ "$vendored_mirror" = 0 ]; then
     case "$f" in
       *.json | *.toml | *.yml | *.yaml | *.lock) ;;
       *) cites_docs=1 ;;

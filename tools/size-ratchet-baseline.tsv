@@ -143,7 +143,7 @@ skills/orch/tests/lanes.sh	890
 skills/orch/tests/oversee_watch.sh	814
 skills/orch/tests/queue_wait.sh	943
 skills/orch/workflows/review-pr.md	450
-skills/preflight/scripts/preflight	951
+skills/preflight/scripts/preflight	966
 skills/review-gate/scripts/pr-watch.sh	820
 skills/review-gate/scripts/review-predicate-selftest.sh	2607
 skills/review-gate/scripts/review-predicate.sh	1149

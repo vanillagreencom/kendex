@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- preflight: the code-citation lane leaves installed-artifact subtrees alone
+  (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/
+  packages trees) — a vendored skill's example path is upstream's prose, not
+  the consuming repo's claim, so committing the installed copy no longer
+  trips `docs-cited-paths`; authored files elsewhere under the harness dirs
+  keep the lane (VST-312).
+
 - preflight gains three added-line lanes taken from the classes review bots
   keep finding first: `unwired-suite` (a new `tests/*.test.sh`,
   `tests/test-*.sh` or `*.test.ts`/`.js`/`.mjs` that no tracked runner

@@ -288,5 +288,20 @@ else
   bad "deleting two files that contained violations leaves only the edited file in scope" "rc=$RC out=$OUT"
 fi
 
+echo "=== vendored harness mirrors are not this repo's prose ==="
+seed mirror
+mkdir -p "$R/.agents/skills/foo" "$R/.claude/skills/foo/scripts"
+printf '# Foo\n\nSee `docs/gone.md` for background.\n' >"$R/.agents/skills/foo/SKILL.md"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho run\n' >"$R/.claude/skills/foo/scripts/run"
+run_pf
+clean "a vendored skill's citations are not this repo's prose claims"
+printf 'See `docs/gone.md`.\n' >>"$R/README.md"
+run_pf
+fires "the same dead citation outside the mirror still fires" "README.md:2: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+mkdir -p "$R/.pi/prompts"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n# See docs/gone.md for background.\necho prompt\n' >"$R/.pi/prompts/release.sh"
+run_pf
+fires "an authored file under a harness dir keeps the lane" ".pi/prompts/release.sh:3: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
