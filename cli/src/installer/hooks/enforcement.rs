@@ -129,7 +129,8 @@ pub fn summary(entry: &LockEntry, global: bool) -> Option<String> {
     // backs a project hook too.
     let pi_hooks_installed =
         crate::pi_extension::is_pi_extension_operational(PI_HOOKS_PACKAGE, global)
-            || crate::pi_extension::is_pi_extension_operational(PI_HOOKS_PACKAGE, true);
+            || (!global
+                && crate::pi_extension::is_pi_extension_operational(PI_HOOKS_PACKAGE, true));
     let mut parts: Vec<String> = Vec::new();
     for harness_id in &entry.harnesses {
         let Some(harness) = Harness::from_id(harness_id) else {

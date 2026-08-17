@@ -625,9 +625,11 @@ pub(super) fn perform_inline_update(names: &[String]) -> DiskMutationReport {
 
         // A definition install would refuse is refused here too, before the
         // prune pass can act on it.
-        if let Some((name, error)) =
-            crate::commands::refresh::uncovered_hook_event(&lock, &source_hooks, Some(names))
-        {
+        if let Some((name, error)) = crate::commands::refresh::uncovered_hook_event(
+            &lock,
+            &source_hooks,
+            crate::commands::refresh::hook_preflight_filter(&lock, Some(names)),
+        ) {
             report.fail(&name, error);
             continue;
         }

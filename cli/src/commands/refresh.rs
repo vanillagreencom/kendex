@@ -246,6 +246,25 @@ fn merge_upstream<T: Clone>(
 /// contract, with the same refusal message install gives. Callers refuse the
 /// whole refresh before any mutation — prune included, because self-healing
 /// from a definition install refuses is still acting on it.
+/// The filter the uncovered-event preflight must use for a filtered pass:
+/// regenerating ANY agent consumes every locked hook, so a filter that admits
+/// an agent is ignored for hooks.
+pub(crate) fn hook_preflight_filter<'a>(
+    lock: &config::LockFile,
+    name_filter: Option<&'a [String]>,
+) -> Option<&'a [String]> {
+    let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
+    if lock
+        .entries
+        .iter()
+        .any(|(name, entry)| entry.kind == ItemKind::Agent && pass(name))
+    {
+        None
+    } else {
+        name_filter
+    }
+}
+
 pub(crate) fn uncovered_hook_event(
     lock: &config::LockFile,
     source_hooks: &[Hook],
@@ -287,18 +306,9 @@ pub fn refresh_items_in_scope(
     // An event outside the contract is refused before anything is mutated —
     // `add` proves that atomicity and refresh must not do less: regenerating
     // first would rewrite agent frontmatter from a definition install refuses.
-    // Regenerating ANY agent consumes every locked hook, so when the filter
-    // admits an agent the hook preflight ignores the filter.
-    let hook_preflight_filter = if lock
-        .entries
-        .iter()
-        .any(|(name, entry)| entry.kind == ItemKind::Agent && pass(name))
+    if let Some((name, error)) =
+        uncovered_hook_event(lock, &all_hooks, hook_preflight_filter(lock, name_filter))
     {
-        None
-    } else {
-        name_filter
-    };
-    if let Some((name, error)) = uncovered_hook_event(lock, &all_hooks, hook_preflight_filter) {
         stats.fail(&name, None, error);
         return stats;
     }
