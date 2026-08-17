@@ -79,11 +79,15 @@ worktree cannot show): materialize it first with
 any path shape; a later `git sparse-checkout reapply` re-hides the file),
 then rerun.
 
-`--update` never adds rows, so the first baseline is created explicitly:
-run the check, and turn each reported `new offender` line (path and count)
-into a `path<TAB>lines` row, `LC_ALL=C` sorted. That the initial freeze is
-a hand-authored, reviewed diff is the point — every frozen offender enters
-the record deliberately.
+`--update` never adds rows, so the first baseline has its own mode:
+`size-ratchet --seed` writes every tracked, non-excluded file over its
+deciding threshold at its current count — collected by the same pass the
+gate itself trusts (index blobs, symlink skipping, tab/newline refusal),
+`LC_ALL=C` sorted, with a self-row when the baseline outgrows its own
+threshold. It refuses a baseline that already has rows: the ratchet is
+live there, and growth stays a reviewed hand-edit. The seeded file lands
+uncommitted, so the initial freeze is still a reviewed diff — every frozen
+offender enters the record deliberately.
 
 ## Path classes
 
