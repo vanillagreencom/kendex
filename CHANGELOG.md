@@ -83,7 +83,35 @@
   spelling of one repository is one row. An installed agent's declared
   skills are read as parsed YAML — a block sequence and a value carrying a
   trailing comment both count, where before either read as declaring none
-  and every skill the agent named went unchecked (VST-258).
+  and every skill the agent named went unchecked. Removing a hook from
+  `opencode.json` deletes the entry that RESOLVES to vstack's own instruction
+  file, through the same predicate the registration read accepts it with; it
+  used to split the hook's name on `-` and drop any entry whose text held
+  every fragment, so removing one hook deleted the user's own unrelated
+  instructions, and a `vstack-hook-` substring anywhere in a path kept the
+  bash restriction alive after the last vstack hook was gone (VST-258).
+- cli: every command vstack PRINTS for you to paste is built from one helper,
+  which POSIX-quotes each argument, so a source, an item name or a package
+  spelled with shell syntax is passed literally instead of executed — a
+  recorded source of the shape `https://host/team/$(id).git` produced a
+  restoration command that ran the substitution. The same helper owns the
+  credential redaction, the terminal-escape scrub and the length bound every
+  displayed string gets, and the two places that quote for EXECUTION rather
+  than display — a harness's `settings.json` hook command and
+  `GIT_SSH_COMMAND` — stay separate so they carry a path byte for byte.
+  Diagnostics are no longer scrubbed as if each were a single source URL: a
+  message's `?` is a question mark, not a query string, so a refusal is no
+  longer cut off mid-sentence and given a `<redacted>` naming nothing. A
+  subprocess's output and a lock file's names are displayed text and get a
+  displayed string's treatment. A hook locked for Pi is only installed when
+  the `@vanillagreen/pi-hooks` carrier is deployed AND registered in a scope
+  Pi loads — its absence is drift naming the carrier and the remedy, an
+  unregistered copy is drift naming the registration, and an unreadable Pi
+  `settings.json` is unverifiable naming the file; `check`, `verify` and the
+  enforcement level `list` prints all read one probe, so they cannot disagree.
+  An owning checkout's lock file that exists and cannot be parsed no longer
+  reads as absent: unknown ownership is not permission to clear another
+  checkout's recovery marker (VST-258).
 - preflight: the code-citation lane leaves installed-artifact subtrees alone
   (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/
   packages trees) — a vendored skill's example path is upstream's prose, not
