@@ -107,5 +107,24 @@ OUT=""; RC=0
 OUT="$(cd "$R" && "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && ok "a missing cache is a config error, never clean" || bad "missing cache" "rc=$RC out=$OUT"
 
+# --- settings-file threshold -------------------------------------------------
+# RECONCILE_STALE_HOURS set in the project's vstack.settings.toml (not the
+# environment) must reach the sweep: a 2h-old In Progress item is quiet at the
+# 24h default and a finding at a 1h threshold.
+R2="$TMP/settings-repo"
+mkdir -p "$R2/.cache/linear"
+git -C "$R2" init -q
+TWO_H_AGO="$(date -u -d '2 hours ago' '+%Y-%m-%dT%H:%M:%S.000Z' 2>/dev/null || date -j -u -v-2H '+%Y-%m-%dT%H:%M:%S.000Z')"
+cat >"$R2/.cache/linear/issues.json" <<JSON
+[{"identifier":"VST-900","title":"stale candidate","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":"$TWO_H_AGO"}]
+JSON
+RC=0
+OUT="$(cd "$R2" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+[ "$RC" -eq 0 ] && ok "default 24h threshold stays quiet at 2h" || bad "default threshold" "rc=$RC out=$OUT"
+printf '[env]\nRECONCILE_STALE_HOURS = "1"\n' >"$R2/vstack.settings.toml"
+RC=0
+OUT="$(cd "$R2" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+{ [ "$RC" -eq 1 ] && printf '%s' "$OUT" | grep -q "VST-900"; } && ok "settings-file RECONCILE_STALE_HOURS reaches the sweep" || bad "settings-file threshold" "rc=$RC out=$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -28,6 +28,13 @@ config_error() {
   exit 2
 }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error "not inside a git repository"
+# shellcheck source=lib/vstack-env.sh
+source "$SCRIPT_DIR/lib/vstack-env.sh"
+vstack_load_project_env "$REPO_ROOT"
+
 STALE_HOURS="${RECONCILE_STALE_HOURS:-24}"
 case "$STALE_HOURS" in
   "" | *[!0-9]* | 0*[0-9]) config_error "RECONCILE_STALE_HOURS must be a non-negative integer, got '$STALE_HOURS'" ;;
@@ -36,7 +43,6 @@ GH_CLI="${RECONCILE_GH_CLI:-gh}"
 
 command -v jq >/dev/null 2>&1 || config_error "jq is required"
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error "not inside a git repository"
 CACHE="$REPO_ROOT/.cache/linear/issues.json"
 [ -f "$CACHE" ] || config_error "no linear cache at $CACHE — run linear.sh sync first"
 jq -e 'type == "array"' "$CACHE" >/dev/null 2>&1 || config_error "linear cache at $CACHE does not parse as an issue array"
