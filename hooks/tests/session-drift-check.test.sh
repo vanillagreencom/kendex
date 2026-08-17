@@ -184,6 +184,12 @@ assert_eq "$out" "$REPORT" "without jq a fresh start still relays the report"
 run_raw '{"session_id":"s","hook_event_name":"SessionStart","source":"resume"}' "$NOJQ_BIN"
 assert_eq "$out" "" "without jq a resume is still silent"
 
+# A payload jq REFUSES is the other case the scan is there for: jq's own
+# failure exit must hand off rather than be read as "no such key".
+run_raw '{"source":"resume"' "$BIN_DIR"
+assert_eq "$rc" 0 "a payload jq cannot parse still exits 0"
+assert_eq "$out" "" "…and the scan classifies it rather than reading as a fresh start"
+
 echo "session-drift-check: unusable project directory"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" CLAUDE_PROJECT_DIR="$TMP_ROOT/does-not-exist"
 assert_eq "$rc" 0 "missing project dir exits 0"

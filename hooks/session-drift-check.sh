@@ -29,11 +29,16 @@ fi
 # The payload is JSON, so jq reads it: the key is the TOP-LEVEL `source`, and
 # a scan for the text finds the same key nested in any other object, or the
 # same characters inside an unrelated string value — a transcript path or a
-# cwd is enough. The scan stays as the fallback for a machine without jq,
-# where the worst it can do is silence one report or repeat one.
-if command -v jq >/dev/null 2>&1; then
-  SOURCE=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null || true)
-else
+# cwd is enough. The scan decides only where jq could not answer AT ALL — no
+# jq on the machine, or a payload jq refused — never where jq answered that
+# there is no such key, which is the very reading the scan gets wrong.
+SOURCE=""
+JQ_ANSWERED=0
+if command -v jq >/dev/null 2>&1 \
+  && SOURCE=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null); then
+  JQ_ANSWERED=1
+fi
+if [ "$JQ_ANSWERED" -eq 0 ]; then
   SOURCE=$(printf '%s' "$INPUT" | grep -o '"source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"source"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null || true)
 fi
 case "$SOURCE" in
