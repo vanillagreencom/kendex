@@ -524,10 +524,13 @@ MKTEMP_ASSIGN="=[\"']?\\\$\\(mktemp"
 # after a substitution, pipe, list or group operator. The word inside a
 # message string or a usage line names the tool, it does not run it.
 MKTEMP_CALL_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
-# An EXIT-time trap in either of its portable spellings. Reading a trap as
-# present can only cost a finding; missing one would report a script that
-# does clean up after itself.
-TRAP_EXIT_RE='(^|[^A-Za-z0-9_])trap[[:space:]].*[[:space:]](EXIT|0)([[:space:]]|;|$)'
+# An EXIT-time trap in either of its portable spellings, at a command
+# position on a non-comment line — the word inside a message or a comment
+# arms nothing.
+TRAP_EXIT_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)trap[[:space:]].*[[:space:]](EXIT|0)([[:space:]]|;|$)'
+has_exit_trap() { # FILE
+  grep -Ev -- '^[[:space:]]*#' "$1" 2>/dev/null | grep -Eq -- "$TRAP_EXIT_RE"
+}
 # The marker form only: the word immediately followed by a colon or by an
 # owner in parentheses. Prose that merely uses the word ("TODO hygiene is
 # preflight's job") and scaffolding placeholders ("description: TODO —
@@ -631,6 +634,17 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
 # `|| status=$?` is a different line.
 swallowed_cmd() { # LINE -> command name on stdout
   printf '%s\n' "$1" | LC_ALL=C awk '
+    # Blank quoted spans that carry no substitution: text in a message runs
+    # nothing, but "$(git … || true)" is a command inside quotes.
+    {
+      out = ""; rest = $0
+      while (match(rest, /"[^"]*"|\047[^\047]*\047/)) {
+        seg = substr(rest, RSTART, RLENGTH)
+        out = out substr(rest, 1, RSTART - 1) (index(seg, "$(") ? seg : substr(seg, 1, 1) substr(seg, 1, 1))
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      $0 = out rest
+    }
     match($0, /(^[[:space:]]*|[;|&(`{][[:space:]]*)(grep|find|git|jq|diff|cmp)([[:space:]][^|]*)?\|\|[[:space:]]*(true|:)([^A-Za-z0-9_.-]|$)/) {
       s = substr($0, RSTART, RLENGTH)
       if (match(s, /(grep|find|git|jq|diff|cmp)/)) print substr(s, RSTART, RLENGTH)
@@ -657,11 +671,13 @@ RUNNERS_READ_WHOLE=1
 build_runner_index() {
   local r c k=0 status
   [ ! -f "$TMP/runner.toks" ] || return 0
-  LC_ALL=C awk '
+  # Untracked runners are in scope exactly when untracked suites are: a
+  # workflow added beside its suite wires it before either is committed.
+  { cat "$TMP/tracked.list"; tr '\0' '\n' <"$TMP/untracked.z"; } | LC_ALL=C awk '
     /^\.github\/workflows\/[^\/]+\.(yml|yaml)$/ { print; next }
     /(^|\/)(tools|scripts)\/validate[^\/]*$/ { print; next }
     /(^|\/)(package\.json|Makefile|justfile|run-all\.sh)$/ { print }
-  ' "$TMP/tracked.list" >"$TMP/runner.names"
+  ' | LC_ALL=C sort -u >"$TMP/runner.names"
   : >"$TMP/runner.bodies"
   : >"$TMP/runner.toks.raw"
   while IFS= read -r r; do
@@ -770,7 +786,7 @@ while IFS= read -r f; do
 
   if [ "$is_sh" = 1 ]; then
     file_matches "$cpath" "$ERREXIT_RE" && has_ee=1
-    file_matches "$cpath" "$TRAP_EXIT_RE" && has_trap=1
+    has_exit_trap "$cpath" && has_trap=1
 
     if ! syntax="$(bash -n -- "$cpath" 2>&1)"; then
       while IFS= read -r raw; do

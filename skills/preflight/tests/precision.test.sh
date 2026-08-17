@@ -234,6 +234,26 @@ git -C "$R" add -A
 run_pf
 fires "a suite outside every manifest subtree is still unwired" "tests/far.test.sh:0: [unwired-suite]"
 
+echo "=== inert trap text arms nothing; quoted command text swallows nothing; an untracked runner wires ==="
+seed inert
+mkdir -p "$R/.github/workflows"
+printf 'on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+git -C "$R" commit -qm "runner that wires another suite"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n# trap '"'"'rm -rf "$D"'"'"' EXIT\nMSG="add trap cleanup EXIT later"\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/inerttrap.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nMSG="diagnostic: (git rev-parse --git-dir || true)"\necho "$MSG"\n' >"$R/scripts/quotedcmd.sh"
+printf 'echo suite\n' >"$R/tests/fresh.test.sh"
+printf 'on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/fresh.test.sh\n' >"$R/.github-fresh.yml"
+mv "$R/.github-fresh.yml" "$R/.github/workflows/fresh.yml"
+run_pf
+fires "a commented and a quoted trap do not shield an untrapped mktemp" "scripts/inerttrap.sh:5: [mktemp-trap]"
+case "$OUT" in *"quotedcmd.sh"*) bad "a command example quoted inside a message is not a swallowed status" "$OUT" ;; *) ok "a command example quoted inside a message is not a swallowed status" ;; esac
+case "$OUT" in *"tests/fresh.test.sh"*) bad "an untracked workflow beside an untracked suite wires it" "$OUT" ;; *) ok "an untracked workflow beside an untracked suite wires it" ;; esac
+git -C "$R" add -A
+run_pf
+fires "the same fixture staged reads the same way (trap)" "scripts/inerttrap.sh:5: [mktemp-trap]"
+case "$OUT" in *"tests/fresh.test.sh"*) bad "the staged workflow wires the staged suite" "$OUT" ;; *) ok "the staged workflow wires the staged suite" ;; esac
+
 echo "=== violations on lines this diff did not touch stay invisible ==="
 seed untouched
 printf '# Legacy\n\nTODO: ancient and unreferenced.\n\nA new paragraph.\n' >"$R/docs/legacy.md"
