@@ -117,6 +117,13 @@ OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && ok "a row missing state.type is a config error" || bad "missing state.type" "rc=$RC out=$OUT"
 
+# A started row without a usable timestamp must be a config error: GNU date
+# parses an empty field as midnight today, which would quietly read as fresh.
+printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":""}]' >"$R/.cache/linear/issues.json"
+OUT=""; RC=0
+OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "a started row with an empty updatedAt is a config error, never fresh" || bad "empty updatedAt" "rc=$RC out=$OUT"
+
 # Missing cache: loud config error, never a clean pass.
 rm "$R/.cache/linear/issues.json"
 OUT=""; RC=0
