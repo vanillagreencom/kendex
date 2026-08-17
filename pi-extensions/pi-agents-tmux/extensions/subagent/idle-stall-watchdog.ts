@@ -39,7 +39,7 @@ export function buildStallSyntheticOutbox(
 		agent: agentName,
 		taskId,
 		status: "needs_completion",
-		summary: `Agent has been idle with no progress for ${staleSec}s; cause undetermined. Likely a post-compaction hang that never reached agent_settled (vstack#63), but the signals cannot rule out other quiet waits.`,
+		summary: `Agent has been idle with no progress for ${staleSec}s; cause undetermined — the pane may have hung without reaching agent_settled.`,
 		filesChanged: [],
 		validation: [],
 		reason: STALL_WATCHDOG_REASON,

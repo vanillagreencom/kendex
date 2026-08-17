@@ -122,7 +122,7 @@ test("task idle past threshold with no outbox -> writes synthetic outbox", async
 	assert.equal(harness.markFiredCalls.length, 1);
 });
 
-test("a pane awaiting a rate-limit retry is never condemned (skipped: rate-limited)", async () => {
+test("a pane is not condemned while awaiting a rate-limit retry (skipped: rate-limited)", async () => {
 	const now = Date.parse("2026-05-15T12:10:00.000Z");
 	const harness = makeHarness({
 		awaitingRetry: (rec) => rec.agent === "planner",
