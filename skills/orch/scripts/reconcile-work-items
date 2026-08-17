@@ -74,6 +74,10 @@ jq -r '
   | select(($countable | length) > 0 and ($countable | all(.state.type == "completed")))
   | ($live[] | select(.identifier == $pid)) as $parent
   | select($parent.state.type != "completed" and $parent.state.type != "canceled")
+  # A "(one PR)" root is a single-PR bundle, not a container: its children go
+  # Done while the root stays open until ITS PR merges, so an open root with
+  # Done children is that contract working, not a parked container.
+  | select($parent.title | test("\\(one PR\\)") | not)
   | [$parent.identifier, $parent.title, $parent.state.name] | @tsv
 ' "$CACHE" >"$TMPD/containers" || config_error "container scan failed"
 while IFS=$'\t' read -r pid ptitle pstate; do

@@ -45,6 +45,8 @@ issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
   issue "T-13" "done with open boxes"    "Done"        "completed" "$now" "" "did:\n- [x] one\n- [ ] two"
   issue "T-14" "done all checked"        "Done"        "completed" "$now" "" "did:\n- [x] one\n- [x] two"
   issue "T-15" "trashed parked"          "Todo"        "unstarted" "$now"
+  issue "T-16" "ship the widget (one PR)" "In Review"  "started"   "$now"
+  issue "T-17" "done bundle child"       "Done"        "completed" "$now" "T-16"
 } | jq -s 'map(if .identifier == "T-15" then .trashed = true else . end)' >"$R/.cache/linear/issues.json"
 
 cat >"$TMP/gh-stub" <<'STUB'
@@ -76,6 +78,9 @@ OUT="$(cd "$R" && GH_REPO=elsewhere/other GITHUB_REPOSITORY=elsewhere/other RECO
 
 [ "$RC" -eq 1 ] && ok "findings exit 1" || bad "exit code" "rc=$RC out=$OUT"
 case "$OUT" in *"container-parked: T-1"*) ok "the parked container is reported" ;; *) bad "parked container" "$OUT" ;; esac
+# A "(one PR)" root with Done children is the single-PR bundle contract
+# working, never a parked container.
+case "$OUT" in *"container-parked: T-16"*) bad "one-PR bundle flagged as parked" "$OUT" ;; *) ok "a (one PR) bundle root is not container-parked" ;; esac
 case "$OUT" in *"container-parked: T-5"*) bad "healthy container reported" "$OUT" ;; *) ok "a container with a pending child stays quiet" ;; esac
 case "$OUT" in *"T-8"*) bad "closed container reported" "$OUT" ;; *) ok "a closed container stays quiet" ;; esac
 case "$OUT" in *"started-stale: T-10"*"PR merged"*) ok "the stale started item with a merged PR is reported" ;; *) bad "stale merged" "$OUT" ;; esac
