@@ -1773,11 +1773,14 @@ install_worktree_dependencies() {
       # different repos never share one. Unusable dir → install still runs,
       # just unlogged.
       log_dir="${TMPDIR:-/tmp}/worktree-npm-install-$(id -u)"
-      # -m 700 applies only on creation; a pre-existing permissive dir is
-      # re-tightened, and a chmod that fails disables logging.
+      # Order matters on shared /tmp: prove the path is OUR real directory
+      # (never a pre-planted symlink) BEFORE chmod — a chmod through a
+      # symlink would re-mode the target. -m 700 covers creation; the
+      # explicit chmod re-tightens a pre-existing permissive dir; any
+      # failure disables logging rather than trusting the path.
       mkdir -m 700 -p -- "$log_dir" 2>/dev/null || log_dir=""
-      [ -n "$log_dir" ] && { chmod 700 -- "$log_dir" 2>/dev/null || log_dir=""; }
-      if [ -n "$log_dir" ] && [ ! -L "$log_dir" ] && [ -O "$log_dir" ]; then
+      if [ -n "$log_dir" ] && [ ! -L "$log_dir" ] && [ -d "$log_dir" ] && [ -O "$log_dir" ] &&
+        chmod 700 -- "$log_dir" 2>/dev/null && [ ! -L "$log_dir" ]; then
         log="$log_dir/$(basename "$wt")-$(printf '%s' "$wt" | cksum | cut -d' ' -f1).log"
         if npm install --no-audit --no-fund >"$log" 2>&1; then
           rm -f -- "$log"
