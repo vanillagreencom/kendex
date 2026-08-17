@@ -117,9 +117,9 @@ skills/iced-rs/iced_wgpu/src/window/compositor.rs	427
 skills/iced-rs/references/api-module-tree.md	1111
 skills/iced-rs/references/guide-custom-overlays.md	500
 skills/iced-rs/references/guide-custom-widgets.md	439
-skills/linear/scripts/commands/cache-query.sh	1359
+skills/linear/scripts/commands/cache-query.sh	1366
 skills/linear/scripts/commands/initiatives.sh	492
-skills/linear/scripts/commands/issues.sh	3348
+skills/linear/scripts/commands/issues.sh	3351
 skills/linear/scripts/commands/projects.sh	1364
 skills/linear/scripts/commands/session-status.sh	430
 skills/linear/scripts/commands/sync.sh	793
