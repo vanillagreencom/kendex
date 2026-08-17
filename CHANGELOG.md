@@ -6,6 +6,9 @@
   landmines (922 → 545 lines across the root and skill templates, zero value
   changes); refresh's seeded-comment rewrite propagates the terse form to
   consumer files whose blocks are unedited (VST-317).
+- linear: a truncated `cache issues list` announces itself on stderr with
+  both counts instead of returning a bare 75-row array that reads as
+  complete; `--max`/`--limit` are documented in SKILL.md (VST-320).
 
 - preflight: the code-citation lane leaves installed-artifact subtrees alone
   (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/
