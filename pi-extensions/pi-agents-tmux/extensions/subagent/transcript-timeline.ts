@@ -110,7 +110,7 @@ function messageContentRows(message: any): Array<Pick<TimelineRow, "kind" | "det
  * budgeted tail read) is stated up front so a cut transcript never reads as
  * complete.
  */
-export function formatTranscriptForDisplay(raw: string, options?: { droppedEvents?: number }): string {
+export function formatTranscriptForDisplay(raw: string, options?: { droppedEvents?: number; taskTerminal?: boolean }): string {
 	const rows: TimelineRow[] = [];
 	let firstTs: number | undefined;
 	// Open tool calls by id (fallback: FIFO per name), pointing at the row to
@@ -165,8 +165,8 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 		if (recordType && !("event" in (record ?? {})) && !("stream" in (record ?? {}))) {
 			// Other writer/session records. Only trouble-shaped types get the
 			// failure tone; anything else is a neutral labeled row.
-			const troubled = /^abort_|_failed$|_escalation$|^error$/.test(recordType);
-			push(stamp, recordType, stringValue(record.diagnostic) ?? stringValue(record.signal) ?? formatByteSize(payloadByteSize(record)), troubled);
+			const troubled = /^abort_|_failed$|_escalation$|^error$|^process_error$/.test(recordType);
+			push(stamp, recordType, stringValue(record.diagnostic) ?? stringValue(record.error) ?? stringValue(record.signal) ?? formatByteSize(payloadByteSize(record)), troubled);
 			continue;
 		}
 		if (typeof record?.text === "string" && record?.stream === "stderr") {
@@ -217,7 +217,7 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 				const target = primaryToolArgument(event.args ?? event.arguments ?? event.input ?? event.params);
 				const label = target ? `tool ${name} (${oneLine(target, 60)})` : `tool ${name}`;
 				const id = stringValue(event.toolCallId ?? event.tool_call_id) ?? `name:${name}`;
-				const row = push(stamp, label, "no result recorded");
+				const row = push(stamp, label, "running");
 				const queue = openTools.get(id) ?? [];
 				queue.push({ label, row, startedAtMs: atMs });
 				openTools.set(id, queue);
@@ -256,6 +256,15 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 			}
 		}
 	}
-	for (const queue of openTools.values()) for (const open of queue) open.row.error = true;
+	// An unmatched start is a failure only once the task itself has ended; a
+	// live task legitimately has its newest tool call still open.
+	if (options?.taskTerminal !== false) {
+		for (const queue of openTools.values()) {
+			for (const open of queue) {
+				open.row.error = true;
+				open.row.detail = "no result recorded";
+			}
+		}
+	}
 	return rows.map(renderTimelineRow).join("\n");
 }

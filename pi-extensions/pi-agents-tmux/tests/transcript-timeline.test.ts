@@ -40,6 +40,10 @@ test("a failed tool end and a start with no end are error rows", () => {
 	assert.match(failed, /^✖.*tool bash/m);
 	const dangling = formatTranscriptForDisplay(stream(0, { toolCallId: "c9", toolName: "read", type: "tool_execution_start" }));
 	assert.match(dangling, /^✖.*tool read.*no result recorded/m);
+	// A live task legitimately has its newest call still open — no failure mark.
+	const live = formatTranscriptForDisplay(stream(0, { toolCallId: "c9", toolName: "read", type: "tool_execution_start" }), { taskTerminal: false });
+	assert.match(live, /^ .*tool read.*running/m);
+	assert.doesNotMatch(live, /✖/);
 });
 
 test("assistant text and thinking render as capped previews", () => {
@@ -102,6 +106,11 @@ test("message_start and turn_start are deliberately elided", () => {
 		stream(0, { message: { role: "assistant" }, type: "message_start" }),
 	].join("\n"));
 	assert.equal(out, "");
+});
+
+test("process_error carries its message and the failure tone", () => {
+	const out = formatTranscriptForDisplay(line({ error: "spawn ENOENT", ts: at(0), type: "process_error" }));
+	assert.match(out, /^✖\[0:00\] process_error · spawn ENOENT$/);
 });
 
 test("errors, diagnostics, and non-zero exits are distinct rows; exit 0 is not", () => {
