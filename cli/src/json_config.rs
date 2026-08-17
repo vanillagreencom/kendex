@@ -17,13 +17,50 @@
 //! than a probe at the one call site that noticed: a key added to [`Schema`]
 //! is covered in the reader, in the presence check and in every writer at
 //! once, so the next shape is covered by construction.
+//!
+//! [`Syntax`] is declared beside the schema for the same reason. Which parser
+//! a file needs is a fact about the harness that loads it, and reading a file
+//! with a parser its harness does not use is wrong in both directions: too
+//! strict reports a config the harness runs happily as unreadable, and too
+//! loose accepts one the harness ignores and then rewrites it.
 
 use anyhow::{Context, Result};
+use jsonc_parser::ParseOptions;
+use jsonc_parser::cst::CstRootNode;
 use std::path::Path;
 
 /// What every writer here says when it will not touch a config it could not
 /// parse. Shared so the refusal reads the same whichever file hit it.
 pub(crate) const REFUSE_UNPARSEABLE_CONFIG: &str = "refusing to rewrite a config vstack cannot parse — every other setting and hook registration in it would be discarded; fix the file by hand, then rerun";
+
+/// The grammar the HARNESS reads a config with — never the one its file name
+/// suggests.
+///
+/// The spelling is not the syntax. OpenCode hands `opencode.json` and
+/// `opencode.jsonc` to one JSONC parser, so a comment in EITHER is content
+/// OpenCode honors; claude, codex and Pi hand their `.json` to a strict
+/// parser that rejects the same comment. Keying the decision off the
+/// extension would report a working `opencode.jsonc` as unreadable, block
+/// install and removal on it, and still mis-read the `opencode.json` beside
+/// it.
+pub(crate) enum Syntax {
+    /// JSON as `serde_json` reads it. A comment here is a file the harness
+    /// itself refuses, so vstack refuses it too.
+    Strict,
+    /// JSON plus comments and trailing commas — and nothing else. The other
+    /// JSON5-ward relaxations stay OFF: accepting a single-quoted string or a
+    /// hex number that OpenCode's own parser rejects would read a config the
+    /// harness silently ignores as live, and then rewrite it.
+    Jsonc,
+}
+
+/// One config file vstack shares with a harness: the grammar it is read with
+/// and the shape vstack depends on inside it, declared together so a reader,
+/// a presence check and a writer cannot disagree about either.
+pub(crate) struct ConfigFile {
+    pub(crate) syntax: Syntax,
+    pub(crate) schema: &'static Schema,
+}
 
 /// The shape a document must have where vstack reads or writes it.
 ///
@@ -50,10 +87,17 @@ pub(crate) enum Schema {
     Bool,
 }
 
+/// Codex's `hooks.json` — strict JSON: codex deserializes it with serde and
+/// registers no `.jsonc` spelling, so a comment in it is a file codex drops.
+pub(crate) static HOOKS_CONFIG: ConfigFile = ConfigFile {
+    syntax: Syntax::Strict,
+    schema: &HOOK_DOCUMENT,
+};
+
 /// `hooks → <event> → [{matcher?, hooks: [{command}]}]` — the document
 /// claude's `settings.json` and codex's `hooks.json` share, and the whole of
 /// what registration reading and both installers depend on.
-pub(crate) static HOOKS_CONFIG: Schema = Schema::Object {
+static HOOK_DOCUMENT: Schema = Schema::Object {
     keys: &[("hooks", &HOOK_EVENTS)],
     values: &Schema::Any,
 };
@@ -83,17 +127,37 @@ static HOOK_HANDLER: Schema = Schema::Object {
 /// Codex's `hooks.json` keeps [`HOOKS_CONFIG`]: the switch is not a key codex
 /// defines, and holding another harness's file to it would refuse a document
 /// codex reads perfectly well.
-pub(crate) static CLAUDE_SETTINGS: Schema = Schema::Object {
+///
+/// Strict, like codex's: claude's load order is `settings.json` and
+/// `settings.local.json`, both handed to a strict parser, with no `.jsonc`
+/// spelling anywhere in it.
+pub(crate) static CLAUDE_SETTINGS: ConfigFile = ConfigFile {
+    syntax: Syntax::Strict,
+    schema: &CLAUDE_DOCUMENT,
+};
+
+static CLAUDE_DOCUMENT: Schema = Schema::Object {
     keys: &[("hooks", &HOOK_EVENTS), ("disableAllHooks", &Schema::Bool)],
     values: &Schema::Any,
 };
 
-/// opencode's `opencode.json`. `instructions` is appended to and filtered;
-/// `permission` is merged into. Their ELEMENTS are `Any` on purpose: both
-/// writers preserve every entry they do not recognize, and an entry that is
-/// not the string vstack writes cannot be vstack's — absent is the true
-/// answer there, not unreadable.
-pub(crate) static OPENCODE_CONFIG: Schema = Schema::Object {
+/// OpenCode's config, whichever of its spellings this scope resolved to.
+///
+/// JSONC for all of them. OpenCode reads `opencode.json`, `opencode.jsonc`,
+/// the global `config.json` and whatever `$OPENCODE_CONFIG` names through one
+/// loader that parses with comments and trailing commas allowed, and drops a
+/// file outright on any other syntax error. So a comment is content OpenCode
+/// honors and vstack must carry across a write — not a defect in the file.
+pub(crate) static OPENCODE_CONFIG: ConfigFile = ConfigFile {
+    syntax: Syntax::Jsonc,
+    schema: &OPENCODE_DOCUMENT,
+};
+
+/// `instructions` is appended to and filtered; `permission` is merged into.
+/// Their ELEMENTS are `Any` on purpose: both writers preserve every entry they
+/// do not recognize, and an entry that is not the string vstack writes cannot
+/// be vstack's — absent is the true answer there, not unreadable.
+static OPENCODE_DOCUMENT: Schema = Schema::Object {
     keys: &[
         ("instructions", &Schema::Array(&Schema::Any)),
         (
@@ -107,40 +171,114 @@ pub(crate) static OPENCODE_CONFIG: Schema = Schema::Object {
     values: &Schema::Any,
 };
 
-/// Pi's `settings.json`. Only the `packages` array is vstack's; an entry
-/// inside it is `Any` for the same reason opencode's are — every writer
-/// rebuilds the array preserving what it did not match, and an entry vstack
-/// cannot interpret is not the one naming its own package directory.
-pub(crate) static PI_SETTINGS: Schema = Schema::Object {
+/// Pi's `settings.json` — strict JSON: Pi's settings manager reads it with
+/// `JSON.parse`, so a comment there is a file Pi refuses to start on.
+///
+/// Only the `packages` array is vstack's; an entry inside it is `Any` for the
+/// same reason opencode's are — every writer rebuilds the array preserving
+/// what it did not match, and an entry vstack cannot interpret is not the one
+/// naming its own package directory.
+pub(crate) static PI_SETTINGS: ConfigFile = ConfigFile {
+    syntax: Syntax::Strict,
+    schema: &PI_DOCUMENT,
+};
+
+static PI_DOCUMENT: Schema = Schema::Object {
     keys: &[("packages", &Schema::Array(&Schema::Any))],
     values: &Schema::Any,
 };
 
-/// Read `path` as a JSON document of `schema`.
+/// Read `path` as a document of `config`.
 ///
-/// - `Ok(None)` — there is no file, or it holds nothing at all. A writer
-///   starts from its own default; a reader has nothing to find.
+/// - `Ok(None)` — there is no file, or it holds no value at all: empty, or
+///   (for a [`Syntax::Jsonc`] file) nothing but comments, which is a document
+///   its own harness loads nothing from. A reader has nothing to find.
 /// - `Ok(Some(doc))` — every value on vstack's path is the shape it must be,
 ///   so readers and writers act on it without probing shapes again.
-/// - `Err` — the file EXISTS and deviates: not valid JSON, or a value that is
-///   not what the schema requires. Never a default document, and the message
-///   names the file and the deviation so the report can hand the user the one
-///   thing that repairs it.
-pub(crate) fn read(path: &Path, schema: &Schema) -> Result<Option<serde_json::Value>> {
+/// - `Err` — the file EXISTS and deviates: not valid in its own syntax, or a
+///   value that is not what the schema requires. Never a default document,
+///   and the message names the file and the deviation so the report can hand
+///   the user the one thing that repairs it.
+///
+/// This is the READ answer. A writer wanting to edit a file without
+/// discarding what it did not author goes through [`read_editable`] instead.
+pub(crate) fn read(path: &Path, config: &ConfigFile) -> Result<Option<serde_json::Value>> {
+    let Some(content) = read_content(path)? else {
+        return Ok(None);
+    };
+    let doc = match config.syntax {
+        Syntax::Strict => Some(
+            serde_json::from_str(&content)
+                .map_err(|err| anyhow::anyhow!("{} is not valid JSON: {err}", path.display()))?,
+        ),
+        Syntax::Jsonc => parse_jsonc(&content, path)?
+            .value()
+            .and_then(|value| value.to_serde_value()),
+    };
+    let Some(doc) = doc else {
+        return Ok(None);
+    };
+    validate(path, config.schema, &doc)?;
+    Ok(Some(doc))
+}
+
+/// The same document in the form a writer edits: a syntax tree that
+/// re-renders byte-for-byte until something is changed, so every comment,
+/// blank line and key order the user wrote outlives the edit.
+///
+/// `Ok(None)` means only that there is nothing on disk to edit — a writer
+/// starts from its own default. A file holding nothing but comments still
+/// comes back as a document, because writing a default over it would discard
+/// exactly what this function exists to keep.
+pub(crate) fn read_editable(path: &Path, config: &ConfigFile) -> Result<Option<CstRootNode>> {
+    let Some(content) = read_content(path)? else {
+        return Ok(None);
+    };
+    let root = parse_jsonc(&content, path)?;
+    if let Some(doc) = root.value().and_then(|value| value.to_serde_value()) {
+        validate(path, config.schema, &doc)?;
+    }
+    Ok(Some(root))
+}
+
+/// `Ok(None)` when there is no file or it holds nothing but whitespace.
+fn read_content(path: &Path) -> Result<Option<String>> {
     let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
     };
-    if content.trim().is_empty() {
-        return Ok(None);
+    match content.trim().is_empty() {
+        true => Ok(None),
+        false => Ok(Some(content)),
     }
-    let doc: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|err| anyhow::anyhow!("{} is not valid JSON: {err}", path.display()))?;
-    if let Err(deviation) = check(schema, &doc, "") {
+}
+
+fn parse_jsonc(content: &str, path: &Path) -> Result<CstRootNode> {
+    CstRootNode::parse(content, &JSONC)
+        .map_err(|err| anyhow::anyhow!("{} is not valid JSONC: {err}", path.display()))
+}
+
+/// Exactly the deviations OpenCode's own loader allows — comments and
+/// trailing commas — with every remaining JSON5-ward relaxation the crate
+/// defaults ON turned back OFF. A single-quoted string or a hex number is a
+/// syntax error OpenCode drops the whole file on, so accepting one here would
+/// read a config the harness ignores as live and then rewrite it.
+pub(crate) const JSONC: ParseOptions = ParseOptions {
+    allow_comments: true,
+    allow_trailing_commas: true,
+    allow_loose_object_property_names: false,
+    allow_missing_commas: false,
+    allow_single_quoted_strings: false,
+    allow_hexadecimal_numbers: false,
+    allow_unary_plus_numbers: false,
+};
+
+fn validate(path: &Path, schema: &Schema, doc: &serde_json::Value) -> Result<()> {
+    if let Err(deviation) = check(schema, doc, "") {
         anyhow::bail!("{}: {deviation}", path.display());
     }
-    Ok(Some(doc))
+    Ok(())
 }
 
 /// The whole document against the whole schema. `at` is the JSON path walked
@@ -220,131 +358,4 @@ fn child_path(at: &str, key: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A file no other test can be holding. Tests run concurrently in one
-    /// process, and a path keyed on the label and the pid alone was shared by
-    /// every call — two tests writing their own document to it and reading
-    /// each other's, which fails on whichever lost the race.
-    fn tmpfile(label: &str, content: &str) -> std::path::PathBuf {
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let nth = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "vstack-json-config-{label}-{}-{nth}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("config.json");
-        std::fs::write(&path, content).unwrap();
-        path
-    }
-
-    fn refusal(content: &str) -> String {
-        let path = tmpfile("refused", content);
-        let err = read(&path, &HOOKS_CONFIG)
-            .expect_err("a document that deviates from the schema must be an error");
-        let _ = std::fs::remove_file(&path);
-        format!("{err:#}")
-    }
-
-    /// Every shape on the read path, refused at the value that deviates —
-    /// not at the outermost one that happens to be checked first.
-    #[test]
-    fn a_deviation_anywhere_on_the_path_names_itself() {
-        for (document, expected) in [
-            ("[]", "the document is an array, expected an object"),
-            (r#"{"hooks": []}"#, "hooks is an array, expected an object"),
-            (
-                r#"{"hooks": {"SessionStart": {"command": "x"}}}"#,
-                "hooks.SessionStart is an object, expected an array",
-            ),
-            (
-                r#"{"hooks": {"SessionStart": ["bash x.sh"]}}"#,
-                "hooks.SessionStart[0] is a string, expected an object",
-            ),
-            (
-                r#"{"hooks": {"SessionStart": [{"hooks": {}}]}}"#,
-                "hooks.SessionStart[0].hooks is an object, expected an array",
-            ),
-            (
-                r#"{"hooks": {"SessionStart": [{"hooks": ["bash x.sh"]}]}}"#,
-                "hooks.SessionStart[0].hooks[0] is a string, expected an object",
-            ),
-            (
-                r#"{"hooks": {"SessionStart": [{"hooks": [{"command": 7}]}]}}"#,
-                "hooks.SessionStart[0].hooks[0].command is a number, expected a string",
-            ),
-            (
-                r#"{"hooks": {"PreToolUse:Bash": [1]}}"#,
-                "hooks.PreToolUse:Bash[0] is a number, expected an object",
-            ),
-            (
-                r#"{"hooks": {"odd key": 1}}"#,
-                r#"hooks["odd key"] is a number, expected an array"#,
-            ),
-        ] {
-            let message = refusal(document);
-            assert!(
-                message.contains(expected),
-                "{document} must report {expected:?}: {message}"
-            );
-            assert!(
-                message.contains("config.json"),
-                "…and name the file: {message}"
-            );
-        }
-    }
-
-    /// The other half of the rule: everything a harness legitimately holds
-    /// reads, so refusing is never the general case. A key vstack reads that
-    /// is simply ABSENT is a document fact, not a deviation.
-    #[test]
-    fn a_document_off_vstacks_path_reads() {
-        for document in [
-            "{}",
-            r#"{"model": "opus", "env": {"K": "V"}}"#,
-            r#"{"hooks": {}}"#,
-            r#"{"hooks": {"SessionStart": []}}"#,
-            r#"{"hooks": {"SessionStart": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash x.sh", "timeout": 30}]}]}}"#,
-            // An entry with no handlers at all, and a handler with no
-            // command: neither can be vstack's registration, and no writer
-            // replaces either.
-            r#"{"hooks": {"Stop": [{"matcher": "*"}]}}"#,
-            r#"{"hooks": {"Stop": [{"hooks": [{"type": "future"}]}]}}"#,
-        ] {
-            let path = tmpfile("accepted", document);
-            let doc = read(&path, &HOOKS_CONFIG)
-                .unwrap_or_else(|err| panic!("{document} must read: {err:#}"));
-            assert!(doc.is_some(), "{document} must read as a document");
-            let _ = std::fs::remove_file(&path);
-        }
-    }
-
-    /// A missing file and an empty one are the same absence, and neither is
-    /// an error: a writer starts from its own default.
-    #[test]
-    fn a_missing_or_empty_file_is_absent_not_unreadable() {
-        let path = tmpfile("empty", "   \n");
-        assert!(read(&path, &HOOKS_CONFIG).unwrap().is_none());
-        std::fs::remove_file(&path).unwrap();
-        assert!(read(&path, &HOOKS_CONFIG).unwrap().is_none());
-    }
-
-    /// A key long enough to crowd out the path it sits in is shortened, and
-    /// the path around it survives.
-    #[test]
-    fn a_long_key_is_bounded_in_the_reported_path() {
-        let key = "k".repeat(200);
-        let message = refusal(&format!(r#"{{"hooks": {{"{key}": 1}}}}"#));
-        assert!(message.contains("…"), "the key is elided: {message}");
-        assert!(
-            message.len() < 200,
-            "the reported path stays bounded: {message}"
-        );
-        assert!(
-            message.contains("expected an array"),
-            "and still says what was wrong: {message}"
-        );
-    }
-}
+mod tests;

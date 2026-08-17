@@ -22,6 +22,12 @@ toml = "0.8"
 # their comments, spacing and key order while staying syntax-aware. Already in
 # the tree as `toml`'s own parser, so this is a promotion, not a new dependency.
 toml_edit = "0.22"
+# Format-preserving JSONC: the same promise `toml_edit` makes for codex's
+# `config.toml`, for the harness configs whose own loader accepts comments.
+# Its CST parses and re-renders a document byte-faithfully, so an install or a
+# removal edits the one value it owns and leaves every comment, blank line and
+# key order the user wrote exactly where it was.
+jsonc-parser = { version = "0.33", default-features = false, features = ["cst", "serde_json"] }
 
 # Regex (lightweight)
 regex-lite = "0.1"

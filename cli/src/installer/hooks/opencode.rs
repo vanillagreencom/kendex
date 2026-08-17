@@ -1,6 +1,7 @@
 use crate::hook::Hook;
 use crate::path_safety::validate_item_name;
 use anyhow::{Context, Result};
+use jsonc_parser::cst::{CstInputValue, CstNode, CstRootNode};
 use std::path::{Path, PathBuf};
 
 use super::checked_child_path;
@@ -55,13 +56,29 @@ pub(crate) fn opencode_hook_instruction_contents(hook: &Hook) -> String {
     )
 }
 
-/// `opencode.json` read against the shape both writers here depend on — see
+/// OpenCode's config read against the shape both writers here depend on — see
 /// [`crate::json_config`]. The refusal is attached once, so an unreadable
 /// config reads the same whether it was hit by an install or a removal.
 fn read_opencode_config(path: &Path) -> Result<Option<serde_json::Value>> {
     crate::json_config::read(path, &crate::json_config::OPENCODE_CONFIG)
         .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)
 }
+
+/// The same config as an editable syntax tree.
+///
+/// OpenCode parses its config as JSONC, so a comment in it is a line OpenCode
+/// reads past and the user meant to keep. Both writers here edit through this
+/// tree and re-render it, which leaves every comment, blank line, indent and
+/// key order exactly where it was — the promise the codex writer already
+/// makes with `toml_edit`. Serializing a `serde_json::Value` back over the
+/// file would have deleted all of it on the first `vstack add`.
+fn read_opencode_document(path: &Path) -> Result<Option<CstRootNode>> {
+    crate::json_config::read_editable(path, &crate::json_config::OPENCODE_CONFIG)
+        .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)
+}
+
+/// What vstack writes when there is no config at all yet.
+const OPENCODE_NEW_CONFIG: &str = "{\n  \"$schema\": \"https://opencode.ai/config.json\"\n}\n";
 
 /// Does `opencode.json` still point OpenCode at this hook's instruction file?
 ///
@@ -195,50 +212,56 @@ pub(super) fn install_hook_opencode_at_path(
 
     std::fs::write(instruction_path, opencode_hook_instruction_contents(hook))?;
 
-    let mut config = read_opencode_config(config_path)?
-        .unwrap_or_else(|| serde_json::json!({ "$schema": "https://opencode.ai/config.json" }));
-
-    let map = config
-        .as_object_mut()
-        .expect("validated by json_config: the document is an object");
+    let config = match read_opencode_document(config_path)? {
+        Some(config) => config,
+        None => CstRootNode::parse(OPENCODE_NEW_CONFIG, &crate::json_config::JSONC)
+            .expect("vstack's own starting config parses"),
+    };
+    let root = config
+        .object_value_or_create()
+        .context("validated by json_config: the document is an object")?;
 
     // OpenCode doesn't have hooks — convert to permission rules and instructions.
     // Both containers are CREATED only when their key is absent: a value of
     // the wrong shape made the read unreadable above, so nothing here
     // replaces a value the user put there.
-    let perms = map
-        .entry("permission")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .expect("validated by json_config: `permission` is an object");
-
-    // Add safety-relevant permission restrictions based on hook type
     if hook.event == "PreToolUse" && hook.matcher.as_deref() == Some("Bash") {
         // For bash hooks: set bash permission to "ask" (require confirmation)
-        if !perms.contains_key("bash") {
-            perms.insert("bash".into(), serde_json::json!({ "*": "ask" }));
+        let perms = root
+            .object_value_or_create("permission")
+            .context("validated by json_config: `permission` is an object")?;
+        if perms.get("bash").is_none() {
+            perms.append(
+                "bash",
+                CstInputValue::Object(vec![("*".into(), CstInputValue::String("ask".into()))]),
+            );
         }
     }
 
     // OpenCode instructions are file paths, so write a dedicated file and reference it.
-    let instructions = map
-        .entry("instructions")
-        .or_insert_with(|| serde_json::json!([]))
-        .as_array_mut()
-        .expect("validated by json_config: `instructions` is an array");
+    let instructions = root
+        .array_value_or_create("instructions")
+        .context("validated by json_config: `instructions` is an array")?;
 
     let already_has = instructions
+        .elements()
         .iter()
-        .any(|i| i.as_str() == Some(instruction_ref));
+        .any(|entry| instruction_entry(entry).as_deref() == Some(instruction_ref));
 
     if !already_has {
-        instructions.push(serde_json::Value::String(instruction_ref.to_string()));
+        instructions.append(CstInputValue::String(instruction_ref.to_string()));
     }
 
-    let output = serialize_opencode_config(&config)?;
-    std::fs::write(config_path, output)?;
+    std::fs::write(config_path, render_opencode_config(&config))?;
 
     Ok(())
+}
+
+/// The string an `instructions` element holds, or `None` for an element that
+/// is not a string at all — somebody else's entry, which no writer here
+/// matches or removes.
+fn instruction_entry(entry: &CstNode) -> Option<String> {
+    entry.as_string_lit()?.decoded_value().ok()
 }
 
 /// Remove hook instructions and permission entries from OpenCode opencode.json
@@ -270,7 +293,14 @@ pub(super) fn remove_hook_from_opencode_json_at_path(
             .context("OpenCode hook instruction path missing file name")?;
         checked_child_path(parent, file_name)?;
     }
-    let Some(mut config) = read_opencode_config(config_path)? else {
+    let document = read_opencode_document(config_path)?;
+    // No file, or a document holding no object at all — nothing but comments.
+    // Either way nothing in it registers this hook, so there is nothing here
+    // to remove from.
+    let (Some(config), Some(root)) = (
+        document.as_ref(),
+        document.as_ref().and_then(CstRootNode::object_value),
+    ) else {
         let _ = std::fs::remove_file(instruction_path);
         return Ok(());
     };
@@ -283,67 +313,61 @@ pub(super) fn remove_hook_from_opencode_json_at_path(
     // another file — this removes vstack's own registration, never whatever
     // else the user pointed OpenCode at.
     let target = InstructionTarget::for_path(config_path, instruction_path);
-    if let Some(instructions) = config
-        .get_mut("instructions")
-        .and_then(|i| i.as_array_mut())
-    {
-        let before = instructions.len();
-        instructions.retain(|i| {
-            let Some(s) = i.as_str() else { return true };
-            !(s == instruction_ref || target.matches(s) || is_legacy_inline_prose(s, name))
-        });
-        if instructions.len() != before {
-            changed = true;
+    let instructions = root.array_value("instructions");
+    if let Some(instructions) = &instructions {
+        for entry in instructions.elements() {
+            let Some(text) = instruction_entry(&entry) else {
+                continue;
+            };
+            if text == instruction_ref
+                || target.matches(&text)
+                || is_legacy_inline_prose(&text, name)
+            {
+                entry.remove();
+                changed = true;
+            }
         }
     }
 
     let remove_instruction = instruction_path.exists();
 
     // If no vstack hook instructions remain, remove the temporary bash restriction we added.
-    if let Some(map) = config.as_object_mut() {
-        let no_vstack_hook_instructions = map
-            .get("instructions")
-            .and_then(|i| i.as_array())
-            .is_none_or(|entries| {
-                !entries
-                    .iter()
-                    .any(|entry| entry.as_str().is_some_and(names_a_vstack_hook_instruction))
-            });
+    let no_vstack_hook_instructions = instructions.as_ref().is_none_or(|instructions| {
+        !instructions
+            .elements()
+            .iter()
+            .filter_map(instruction_entry)
+            .any(|entry| names_a_vstack_hook_instruction(&entry))
+    });
 
-        if let Some(instructions) = map.get("instructions").and_then(|i| i.as_array())
-            && instructions.is_empty()
+    if let Some(instructions) = &instructions
+        && instructions.elements().is_empty()
+        && let Some(prop) = root.get("instructions")
+    {
+        prop.remove();
+        changed = true;
+    }
+
+    if no_vstack_hook_instructions && let Some(permission) = root.object_value("permission") {
+        if let Some(bash) = permission.get("bash")
+            && bash
+                .value()
+                .and_then(|value| value.to_serde_value())
+                .is_some_and(|value| is_the_bash_rule_vstack_wrote(&value))
         {
-            map.remove("instructions");
+            bash.remove();
             changed = true;
         }
-
-        if no_vstack_hook_instructions
-            && let Some(permission) = map.get_mut("permission").and_then(|p| p.as_object_mut())
+        if permission.properties().is_empty()
+            && let Some(prop) = root.get("permission")
         {
-            let remove_bash = permission
-                .get("bash")
-                .and_then(|bash| bash.as_object())
-                .is_some_and(|bash| {
-                    bash.len() == 1
-                        && bash
-                            .get("*")
-                            .and_then(|value| value.as_str())
-                            .is_some_and(|value| value == "ask")
-                });
-            if remove_bash {
-                permission.remove("bash");
-                changed = true;
-            }
-            if permission.is_empty() {
-                map.remove("permission");
-                changed = true;
-            }
+            prop.remove();
+            changed = true;
         }
     }
 
     if changed {
-        let output = serialize_opencode_config(&config)?;
-        std::fs::write(config_path, output)?;
+        std::fs::write(config_path, render_opencode_config(config))?;
     }
     if remove_instruction {
         let _ = std::fs::remove_file(instruction_path);
@@ -351,8 +375,28 @@ pub(super) fn remove_hook_from_opencode_json_at_path(
     Ok(())
 }
 
-fn serialize_opencode_config(config: &serde_json::Value) -> Result<String> {
-    let mut output = serde_json::to_string_pretty(config)?;
-    output.push('\n');
-    Ok(output)
+/// Is `permission.bash` exactly the rule the installer above writes, and
+/// nothing the user added to it?
+fn is_the_bash_rule_vstack_wrote(value: &serde_json::Value) -> bool {
+    value.as_object().is_some_and(|bash| {
+        bash.len() == 1
+            && bash
+                .get("*")
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| value == "ask")
+    })
+}
+
+/// The edited tree back to text, with the file's own line ending and exactly
+/// one of it at the end. Everything else — comments, blank lines, indent
+/// width, key order — comes back byte-for-byte as the user wrote it, because
+/// the tree only ever changed the nodes above.
+fn render_opencode_config(config: &CstRootNode) -> String {
+    let text = config.to_string();
+    let newline = match text.contains("\r\n") {
+        true => "\r\n",
+        false => "\n",
+    };
+    let body = text.trim_end_matches(['\n', '\r']);
+    format!("{body}{newline}")
 }

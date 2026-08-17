@@ -3,6 +3,8 @@
 
 use super::*;
 
+mod opencode;
+
 /// Install a hook exactly as `vstack add` does, so presence is checked
 /// against the artifacts the installer really writes.
 pub(super) fn install_hook_for(source: &Path, name: &str, harness: crate::harness::Harness) {
@@ -27,11 +29,11 @@ pub(super) fn codex_hook_lock(source: &Path, name: &str) -> LockFile {
     lock
 }
 
-fn phantom_note(report: &ScopeReport) -> String {
+pub(super) fn phantom_note(report: &ScopeReport) -> String {
     notes(&report.phantom)
 }
 
-fn unverifiable_note(report: &ScopeReport) -> String {
+pub(super) fn unverifiable_note(report: &ScopeReport) -> String {
     notes(&report.unverifiable)
 }
 
@@ -724,81 +726,6 @@ fn a_codex_agent_file_that_cannot_be_read_is_unverifiable_not_missing_prose() {
         assert!(
             phantom_note(&report).contains("no script and no prose"),
             "control: {report:?}"
-        );
-    });
-}
-
-fn opencode_hook_lock(source: &Path, name: &str) -> LockFile {
-    let mut entry = locked(source, ItemKind::Hook, name);
-    entry.harnesses = vec!["opencode".into()];
-    let mut lock = LockFile::default();
-    lock.add(entry);
-    lock
-}
-
-/// OpenCode loads the instruction files its `opencode.json` names. The file
-/// alone is prose no agent ever sees, so presence has to demand the entry too
-/// — the same two-artifact question the Claude and Codex checks ask, on the
-/// one harness that was still answering it from the file alone.
-#[test]
-fn an_opencode_hook_needs_its_instruction_entry_not_just_its_file() {
-    with_sandbox("opencode-registration", |project, source| {
-        write_hook(source, "guard");
-        install_hook_for(source, "guard", crate::harness::Harness::OpenCode);
-        let lock = opencode_hook_lock(source, "guard");
-
-        // Control: the full install is clean.
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert!(report.phantom.is_empty(), "control: {report:?}");
-
-        let config_path = project.join("opencode.json");
-        let installed = std::fs::read_to_string(&config_path).unwrap();
-        assert!(
-            installed.contains("vstack-hook-guard.md"),
-            "installer must reference the instruction file: {installed}"
-        );
-
-        // Control: a differently spelled path to the same file still counts.
-        std::fs::write(
-            &config_path,
-            installed.replace(
-                ".opencode/instructions/vstack-hook-guard.md",
-                "./.opencode/./instructions/vstack-hook-guard.md",
-            ),
-        )
-        .unwrap();
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert!(
-            report.phantom.is_empty(),
-            "an equivalent path is the same registration: {report:?}"
-        );
-
-        // The file survives, the reference does not — opencode will never
-        // load this hook, so it is drift.
-        std::fs::write(
-            &config_path,
-            installed.replace(
-                ".opencode/instructions/vstack-hook-guard.md",
-                ".opencode/instructions/somebody-elses.md",
-            ),
-        )
-        .unwrap();
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert_eq!(names(&report.phantom), vec!["guard"], "{report:?}");
-        assert!(
-            phantom_note(&report).contains("instruction present but not referenced"),
-            "{report:?}"
-        );
-        assert!(report.has_drift());
-
-        // A config nothing can parse is not a missing registration: nothing
-        // can say, and reinstalling repairs no unparseable file.
-        std::fs::write(&config_path, "{\"instructions\": [\n").unwrap();
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert_eq!(names(&report.unverifiable), vec!["guard"], "{report:?}");
-        assert!(
-            unverifiable_note(&report).contains("registration unverifiable"),
-            "{report:?}"
         );
     });
 }

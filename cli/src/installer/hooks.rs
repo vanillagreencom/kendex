@@ -117,15 +117,15 @@ pub(crate) enum HookRegistration {
 /// shape both the presence check and the writers here depend on — see
 /// [`crate::json_config`] for the rule and the schema.
 ///
-/// `schema` is the harness's own: claude's adds `disableAllHooks` to the
-/// shared shape. Every reader and writer of one harness's file passes the same
-/// one, so what a writer refuses to rewrite a presence check cannot call
+/// `config` is the harness's own: claude's schema adds `disableAllHooks` to
+/// the shared shape. Every reader and writer of one harness's file passes the
+/// same one, so what a writer refuses to rewrite a presence check cannot call
 /// missing.
 fn read_hooks_config(
     path: &Path,
-    schema: &crate::json_config::Schema,
+    config: &crate::json_config::ConfigFile,
 ) -> Result<Option<serde_json::Value>> {
-    crate::json_config::read(path, schema)
+    crate::json_config::read(path, config)
 }
 
 /// An array on a VALIDATED document. Every array this module reaches for was
@@ -194,11 +194,11 @@ fn hooks_config_entries<'a>(
 /// call missing.
 fn hooks_config_registration(
     path: &Path,
-    schema: &crate::json_config::Schema,
+    config: &crate::json_config::ConfigFile,
     slot: Option<RegistrationSlot<'_>>,
     owns: OwnsCommand<'_>,
 ) -> HookRegistration {
-    let doc = match read_hooks_config(path, schema) {
+    let doc = match read_hooks_config(path, config) {
         Ok(Some(doc)) => doc,
         Ok(None) => return HookRegistration::Absent,
         Err(err) => return HookRegistration::Unreadable(format!("{err:#}")),
@@ -744,6 +744,8 @@ fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path
 
 #[cfg(test)]
 mod codex_config_tests;
+#[cfg(test)]
+mod opencode_tests;
 #[cfg(test)]
 mod prose_tests;
 #[cfg(test)]

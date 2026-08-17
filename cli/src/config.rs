@@ -466,18 +466,28 @@ pub fn opencode_global_dir() -> PathBuf {
 }
 
 pub fn opencode_global_config_path() -> PathBuf {
-    std::env::var_os("OPENCODE_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| opencode_global_dir().join("opencode.json"))
+    if let Some(configured) = std::env::var_os("OPENCODE_CONFIG").map(PathBuf::from) {
+        return configured;
+    }
+    opencode_config_in(&opencode_global_dir())
 }
 
 pub fn opencode_project_config_path() -> PathBuf {
-    let root = project_root();
-    let json = root.join("opencode.json");
+    opencode_config_in(&project_root())
+}
+
+/// OpenCode's config in `dir`, by the spelling that is actually there.
+///
+/// OpenCode loads `opencode.json` and `opencode.jsonc` alike, so a user who
+/// keeps the `.jsonc` one has a config vstack must read and write in place.
+/// Defaulting to `opencode.json` regardless left the registration vstack wrote
+/// in a second file, and every later presence check reading the wrong one.
+fn opencode_config_in(dir: &Path) -> PathBuf {
+    let json = dir.join("opencode.json");
     if json.exists() {
         return json;
     }
-    let jsonc = root.join("opencode.jsonc");
+    let jsonc = dir.join("opencode.jsonc");
     if jsonc.exists() {
         return jsonc;
     }

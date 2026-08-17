@@ -7,13 +7,12 @@ cli/src/commands/add/source_option_tests/project_install_tests.rs	438
 cli/src/commands/apply.rs	2768
 cli/src/commands/check.rs	790
 cli/src/commands/check/tests.rs	958
-cli/src/commands/check/tests/hooks.rs	804
 cli/src/commands/refresh.rs	1681
 cli/src/commands/refresh/tests.rs	2089
 cli/src/commands/report.rs	1861
 cli/src/commands/update_pi.rs	603
 cli/src/commands/verify.rs	649
-cli/src/config.rs	2053
+cli/src/config.rs	2063
 cli/src/config/remote_cache.rs	454
 cli/src/config/remote_cache/fetch.rs	732
 cli/src/config/tests.rs	1255
@@ -22,11 +21,10 @@ cli/src/harness/claude.rs	572
 cli/src/harness/mod.rs	728
 cli/src/harness/pi.rs	717
 cli/src/installer.rs	3828
-cli/src/installer/hooks.rs	752
+cli/src/installer/hooks.rs	754
 cli/src/installer/hooks/codex.rs	581
 cli/src/installer/hooks/codex/prose.rs	431
 cli/src/installer/hooks/prose_tests.rs	475
-cli/src/installer/hooks/tests.rs	1024
 cli/src/main.rs	527
 cli/src/mapping.rs	414
 cli/src/path_safety.rs	802

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- cli: A shared config is read with the parser its OWN harness uses, never the
+  one its file extension suggests. OpenCode hands `opencode.json`,
+  `opencode.jsonc`, its global config and whatever `$OPENCODE_CONFIG` names to
+  one JSONC parser, so comments and trailing commas are a working OpenCode
+  config; vstack was reading all of them strictly, which reported a perfectly
+  live hook install as unverifiable and made `add` and `remove` refuse to touch
+  the file. Claude's `settings.json`, Codex's `hooks.json` and Pi's
+  `settings.json` stay strict, because their harnesses are — a comment in one
+  of those really is a file the harness drops. The relaxation is exactly what
+  OpenCode's parser takes and no more: a single-quoted string, an unquoted key
+  or a hex number is still a config OpenCode ignores, so vstack still refuses
+  it rather than rewriting a file the harness is not loading.
+  Writes preserve what they did not author. A JSONC config is edited through a
+  syntax tree, the way Codex's `config.toml` is edited through `toml_edit`, so
+  installing or removing a hook changes only its own entries and every comment,
+  blank line, indent and key order comes back byte-for-byte. Serializing the
+  parsed value back over the file would have deleted every comment in it on the
+  first `vstack add`. OpenCode's GLOBAL config is now resolved by the spelling
+  that is actually on disk too, so a user who keeps `opencode.jsonc` gets the
+  registration written into the file they use instead of a second one beside
+  it.
+
 - cli: `vstack check` is a process contract a session can branch on — exit `0`
   clean, `1` drift, `2` the check itself failed, `--quiet` silent when clean,
   `--json` on stdout, `--offline` skipping every network call. Items a source
