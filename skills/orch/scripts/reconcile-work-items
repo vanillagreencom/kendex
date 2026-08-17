@@ -45,7 +45,15 @@ command -v jq >/dev/null 2>&1 || config_error "jq is required"
 
 CACHE="$REPO_ROOT/.cache/linear/issues.json"
 [ -f "$CACHE" ] || config_error "no linear cache at $CACHE — run linear.sh sync first"
-jq -e 'type == "array"' "$CACHE" >/dev/null 2>&1 || config_error "linear cache at $CACHE does not parse as an issue array"
+# Structural validation up front: an array of rows missing the fields the
+# scans key on would otherwise be skipped silently and report clean.
+jq -e 'type == "array" and all(.[];
+    type == "object"
+    and (.identifier | type == "string")
+    and (.state | type == "object")
+    and (.state.name | type == "string")
+    and (.state.type | type == "string"))' "$CACHE" >/dev/null 2>&1 \
+  || config_error "linear cache at $CACHE is not an array of issue rows with identifier and state.name/state.type"
 
 findings=0
 note() { findings=$((findings + 1)); printf '%s\n' "$1"; }

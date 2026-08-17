@@ -101,6 +101,17 @@ OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && ok "a malformed cache row is a loud collection error" || bad "malformed row" "rc=$RC out=$OUT"
 
+# Object-shaped but incomplete rows must not read as a clean tracker: a row
+# without identifier/state carries nothing the scans can inspect.
+printf '[{}]' >"$R/.cache/linear/issues.json"
+OUT=""; RC=0
+OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "an empty-object row is a config error, never clean" || bad "empty-object row" "rc=$RC out=$OUT"
+printf '[{"identifier":"T-1","state":{"name":"Todo"}}]' >"$R/.cache/linear/issues.json"
+OUT=""; RC=0
+OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "a row missing state.type is a config error" || bad "missing state.type" "rc=$RC out=$OUT"
+
 # Missing cache: loud config error, never a clean pass.
 rm "$R/.cache/linear/issues.json"
 OUT=""; RC=0
