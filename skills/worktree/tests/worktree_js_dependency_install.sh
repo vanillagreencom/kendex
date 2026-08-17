@@ -107,6 +107,42 @@ git -C "$ROOT/repo" push -q origin main
 (cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-multiline >/dev/null)
 assert_log_stays_empty "a multiline packageManager pin skips npm" || true
 
+echo "=== a nested config.packageManager is not a pin ==="
+ROOT="$TMP_ROOT/nested"
+make_repo "$ROOT" repo
+printf '{ "name": "app", "config": { "packageManager": "pnpm@10.33.2" } }\n' >"$ROOT/repo/package.json"
+git -C "$ROOT/repo" add package.json
+git -C "$ROOT/repo" commit -q -m "js: nested lookalike"
+git -C "$ROOT/repo" push -q origin main
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-nested >/dev/null)
+wait_for_installs
+sleep 1
+if grep -q "issue-nested" "$NPM_CALL_LOG" 2>/dev/null; then
+  ok "a nested config.packageManager still gets the npm install"
+else
+  bad "nested lookalike not a pin" "log: $(cat "$NPM_CALL_LOG" 2>/dev/null)"
+fi
+: >"$NPM_CALL_LOG"
+
+echo "=== npm-shrinkwrap.json is explicit npm evidence ==="
+ROOT="$TMP_ROOT/shrinkwrap"
+make_repo "$ROOT" repo
+printf '{ "name": "app" }\n' >"$ROOT/repo/package.json"
+printf '{}\n' >"$ROOT/repo/npm-shrinkwrap.json"
+printf '# incidental\n' >"$ROOT/repo/yarn.lock"
+git -C "$ROOT/repo" add package.json npm-shrinkwrap.json yarn.lock
+git -C "$ROOT/repo" commit -q -m "js: shrinkwrap npm"
+git -C "$ROOT/repo" push -q origin main
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-shrink >/dev/null)
+wait_for_installs
+sleep 1
+if grep -q "issue-shrink" "$NPM_CALL_LOG" 2>/dev/null; then
+  ok "npm-shrinkwrap.json keeps the install despite a foreign lockfile"
+else
+  bad "shrinkwrap evidence wins" "log: $(cat "$NPM_CALL_LOG" 2>/dev/null)"
+fi
+: >"$NPM_CALL_LOG"
+
 echo "=== explicit npm evidence beats an incidental foreign lockfile ==="
 ROOT="$TMP_ROOT/mixed"
 make_repo "$ROOT" repo

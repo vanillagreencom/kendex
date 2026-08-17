@@ -1737,17 +1737,24 @@ install_worktree_dependencies() {
   # or an npm packageManager pin — wins over an incidental foreign lockfile;
   # otherwise another manager's lockfile or pin means that repo provisions
   # its own dependencies, so skip.
-  # Newlines flattened so a pin formatted across lines still matches.
-  local pkg_flat=""
-  pkg_flat="$(tr '\n' ' ' <"$wt/package.json" 2>/dev/null)" || pkg_flat=""
-  if [[ ! -f "$wt/package-lock.json" ]] &&
-    ! grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"npm@' <<<"$pkg_flat"; then
+  # The TOP-LEVEL packageManager field only — a nested look-alike (e.g.
+  # config.packageManager) is not a pin. jq reads the structure; without jq
+  # a newline-flattened regex approximates it.
+  local pkg_manager=""
+  if command -v jq >/dev/null 2>&1; then
+    pkg_manager="$(jq -r '.packageManager // ""' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
+  else
+    pkg_manager="$(tr '\n' ' ' <"$wt/package.json" 2>/dev/null |
+      grep -Eo '"packageManager"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 |
+      sed 's/.*:[[:space:]]*"//; s/"$//')" || pkg_manager=""
+  fi
+  if [[ ! -f "$wt/package-lock.json" && ! -f "$wt/npm-shrinkwrap.json" && "$pkg_manager" != npm@* ]]; then
     if [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" ]]; then
       return 0
     fi
-    if grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"(pnpm|yarn|bun)' <<<"$pkg_flat"; then
-      return 0
-    fi
+    case "$pkg_manager" in
+      pnpm@*|yarn@*|bun@*) return 0 ;;
+    esac
   fi
   if command -v npm >/dev/null 2>&1; then
     # stdin/stdout closed so a caller capturing $(create) gets EOF at once —
