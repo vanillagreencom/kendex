@@ -31,8 +31,8 @@ cli/src/
 ├── resolve.rs           Shared helpers — skill-pair resolution, hook source attribution/matching, read_existing_extras, is_vstack_source
 ├── json_config.rs       Harness JSON configs vstack shares (claude settings.json, codex hooks.json, opencode.json, Pi settings.json) — the declared schema every reader and writer validates against
 ├── installer.rs         Symlink/copy logic, install/remove orchestration
-├── installer/hooks.rs   Hook install/remove orchestration and shared Claude/Cursor helpers
-├── installer/hooks/     contract.rs (event × harness matrix), enforcement.rs (per-install resolution of it), per-harness submodules — codex.rs (native registration, config.toml feature, prose fallback), opencode.rs — and focused hook tests
+├── installer/hooks.rs   Hook install/remove orchestration and shared Claude helpers
+├── installer/hooks/     contract.rs (event × harness matrix), enforcement.rs (per-install resolution of it), command.rs (reading a registered command the way a shell would), per-harness submodules — codex.rs (native registration, config.toml feature, prose fallback), cursor.rs (safety rule + its alwaysApply switch), opencode.rs — and focused hook tests
 ├── harness/             (canonical → per-harness translation)
 │   ├── claude.rs        → .claude/agents/*.md (disallowedTools, effort/background/isolation/memory, skills, hooks frontmatter)
 │   ├── cursor.rs        → .cursor/rules/*.mdc (description + alwaysApply + skills)
