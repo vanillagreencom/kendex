@@ -305,7 +305,13 @@ cache_list_issues() {
             jq -cn --arg v "$limit" '{error: ("--limit must be a non-negative integer, got: " + $v)}' >&2
             return 1
         fi
-        limit=$((10#$limit))
+        local canon="${limit#"${limit%%[!0]*}"}"
+        [[ -n "$canon" ]] || canon=0
+        if (( ${#canon} > 9 )); then
+            jq -cn --arg v "$limit" '{error: ("--limit must be at most 9 digits after leading zeros, got: " + $v)}' >&2
+            return 1
+        fi
+        limit=$canon
         local total
         total=$(echo "$issues" | jq 'length')
         if (( total > limit )); then

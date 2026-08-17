@@ -65,5 +65,12 @@ ERR="$(cat "$TMP_ROOT/err")"
 [ "$(printf '%s\n' "$OUT" | wc -l)" -eq 80 ] && ok "a listing within the limit carries every row" || bad "within-limit rows" "$(printf '%s' "$OUT" | wc -l)"
 [ -z "$ERR" ] && ok "a listing within the limit stays quiet" || bad "within-limit stderr" "$ERR"
 
+OUT="$("$LINEAR" cache issues list --no-project --limit 9223372036854775808 --format ids 2>"$TMP_ROOT/err")" || true
+ERR="$(cat "$TMP_ROOT/err")"
+case "$ERR" in
+  *"9 digits"*) ok "an overflowing --limit is a loud config error" ;;
+  *) bad "overflow limit" "stderr: $ERR out: $OUT" ;;
+esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
