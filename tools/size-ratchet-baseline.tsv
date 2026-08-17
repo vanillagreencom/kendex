@@ -21,7 +21,7 @@ cli/src/harness/claude.rs	572
 cli/src/harness/mod.rs	728
 cli/src/harness/pi.rs	717
 cli/src/installer.rs	3828
-cli/src/installer/hooks.rs	754
+cli/src/installer/hooks.rs	752
 cli/src/installer/hooks/codex.rs	581
 cli/src/installer/hooks/codex/prose.rs	431
 cli/src/installer/hooks/prose_tests.rs	475

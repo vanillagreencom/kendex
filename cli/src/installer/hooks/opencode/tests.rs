@@ -3,8 +3,8 @@
 //! of the file as JSONC, so the user's comments are content vstack carries
 //! across an install or a removal — never content it serializes away.
 
-use super::opencode::{install_hook_opencode_at_path, remove_hook_from_opencode_json_at_path};
-use super::tests::{hook_fixture, tmpdir};
+use super::super::tests::{hook_fixture, tmpdir};
+use super::{install_hook_opencode_at_path, remove_hook_from_opencode_json_at_path};
 
 #[test]
 fn remove_hook_from_opencode_removes_instruction() {

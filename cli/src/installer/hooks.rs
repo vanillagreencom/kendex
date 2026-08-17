@@ -745,8 +745,6 @@ fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path
 #[cfg(test)]
 mod codex_config_tests;
 #[cfg(test)]
-mod opencode_tests;
-#[cfg(test)]
 mod prose_tests;
 #[cfg(test)]
 mod registration_tests;
