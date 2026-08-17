@@ -227,7 +227,7 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 				const name = stringValue(event.toolName ?? event.tool_name) ?? stringValue(event.name) ?? stringValue(call?.name) ?? "tool";
 				const target = primaryToolArgument(event.args ?? event.arguments ?? event.input ?? event.params ?? call?.arguments ?? call?.input);
 				const label = target ? `tool ${name} (${oneLine(target, 60)})` : `tool ${name}`;
-				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id ?? call?.id) ?? `name:${name}`;
+				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id ?? call?.id) ?? `name:${name.toLowerCase()}`;
 				const row = push(stamp, label, "running");
 				const queue = openTools.get(id) ?? [];
 				queue.push({ label, row, startedAtMs: atMs });
@@ -240,9 +240,9 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 			case "tool_execution_end": {
 				const call = (event.toolCall ?? event.tool_call) as Record<string, unknown> | undefined;
 				const name = stringValue(event.toolName ?? event.tool_name) ?? stringValue(event.name) ?? stringValue(call?.name) ?? "tool";
-				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id ?? call?.id) ?? `name:${name}`;
+				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id ?? call?.id) ?? `name:${name.toLowerCase()}`;
 				const open = openTools.get(id)?.shift();
-				const failed = event.isError === true || event.is_error === true || call?.isError === true || stringValue(event.status ?? call?.status) === "error";
+				const failed = event.isError === true || event.is_error === true || call?.isError === true || call?.is_error === true || stringValue(event.status ?? call?.status) === "error";
 				const status = stringValue(event.status ?? call?.status) ?? (failed ? "error" : "ok");
 				const resultSize = payloadByteSize(event.result ?? event.output ?? event.content ?? call?.result);
 				const duration = open?.startedAtMs !== undefined && atMs !== undefined ? formatToolDuration(atMs - open.startedAtMs) : undefined;

@@ -99,6 +99,26 @@ test("a nested toolCall end pairs with its start and carries the failure", () =>
 	assert.match(rows[0]!, /^✖.*tool edit \(edit it\) · error · 2\.0s/);
 });
 
+test("a snake_case nested carrier pairs by id and carries is_error", () => {
+	const out = formatTranscriptForDisplay([
+		stream(0, { args: { command: "risky" }, toolCallId: "x", toolName: "bash", type: "tool_execution_start" }),
+		stream(2, { tool_call: { id: "x", is_error: true }, type: "tool_execution_end" }),
+	].join("\n"));
+	const rows = out.split("\n");
+	assert.equal(rows.length, 1);
+	assert.match(rows[0]!, /^✖.*tool bash \(risky\) · error · 2\.0s/);
+});
+
+test("id-less pairing is case-insensitive on the tool name", () => {
+	const out = formatTranscriptForDisplay([
+		stream(0, { args: { command: "go" }, toolName: "edit", type: "tool_execution_start" }),
+		stream(3, { toolCall: { name: "Edit", status: "ok" }, type: "tool_execution_end" }),
+	].join("\n"));
+	const rows = out.split("\n");
+	assert.equal(rows.length, 1);
+	assert.match(rows[0]!, /^ .*tool edit \(go\) · ok · 3\.0s/);
+});
+
 test("id-less same-named tool calls pair first-started-first-ended", () => {
 	const out = formatTranscriptForDisplay([
 		stream(0, { args: { command: "first" }, toolName: "bash", type: "tool_execution_start" }),

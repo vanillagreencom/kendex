@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.8.5
+
+- The Transcript timeline reads the nested `toolCall`/`tool_call` end-event carrier — name, id, status, `isError`/`is_error`, arguments, result (the pi-session-bridge event-sanitizer shape). Previously a nested end fell back to `name:tool`, leaving its start marked `✖ no result recorded` beside a separate neutral `tool tool · ok` row, and a nested snake-case error flag rendered as success. Id-less fallback pairing is case-insensitive on the tool name.
+
 ### 2.8.4
 
 - The Agents popup Transcript tab renders an event timeline instead of raw JSONL (vstack VST-327). One row per event — elapsed stamp, kind, capped one-line detail — covering input, assistant text/thinking previews, turn boundaries, and lifecycle records; a tool call collapses into a single row pairing start with result (name, primary argument, status, duration, result size), a tool-call-only assistant message renders as its calls, and errors/aborts/non-zero exits are `✖`-marked rows. No event type falls through to a raw JSONL line: unrecognized types render as their type and size. The tail read grew 24 KB → 256 KB, is byte-based and streaming (only the final window is materialized; the dropped prefix is newline-counted through a fixed buffer), cuts on a line boundary only, and states how many earlier events were dropped. Decoded text is scrubbed of C0/C1 terminal controls before rendering — JSON.parse would otherwise revive escaped OSC/CSI sequences the raw view kept inert. Native pane-session `message` records render as conversation content, and only trouble-shaped lifecycle records (`abort_*`, `*_failed`, escalations) carry the failure tone. New `e` key in the trace viewer opens the item's file in `$VISUAL`/`$EDITOR` (own tmux window), listed in the footer hint.
