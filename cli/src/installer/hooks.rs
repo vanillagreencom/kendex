@@ -80,9 +80,138 @@ fn resolved_path(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Does this command run the managed script? Path equality on each
-/// whitespace-delimited token, so neither `notfoo.sh` nor an unrelated
-/// `foo.sh` elsewhere on disk answers for `<root>/hooks/foo.sh`.
+/// Shells that RUN their first operand. `bash <script>` executes the script;
+/// the same path in some other program's argument list is data.
+const SCRIPT_INTERPRETERS: &[&str] = &["sh", "bash", "dash", "ksh", "zsh", "ash"];
+
+/// Programs that exec the command following their own arguments, with the
+/// count of their own non-flag operands first (`timeout 30 bash …`). `env` is
+/// not here: it also takes `NAME=VALUE` assignments, so it is walked
+/// separately.
+const EXEC_PREFIXES: &[(&str, usize)] = &[("nohup", 0), ("setsid", 0), ("timeout", 1)];
+
+/// The program a token names, ignoring the directory it lives in, so
+/// `/bin/bash` and `bash` read alike.
+fn program_name(token: &str) -> Option<&str> {
+    Path::new(token).file_name()?.to_str()
+}
+
+/// A `NAME=VALUE` token — what the shell and `env` both read as an
+/// environment assignment rather than as the program to run.
+fn is_env_assignment(token: &str) -> bool {
+    token.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+/// A shell flag that leaves the first operand as the script the shell runs.
+/// `-c` makes that operand a command STRING, `-s` reads the script from
+/// stdin, and `-o`/`-O` swallow the next token — after any of those we cannot
+/// say what runs, so they are not here. Unknown long flags are refused for
+/// the same reason.
+fn shell_flag_keeps_operand(flag: &str) -> bool {
+    match flag.strip_prefix("--") {
+        Some(long) => matches!(
+            long,
+            "norc" | "noprofile" | "posix" | "login" | "restricted"
+        ),
+        None => flag.strip_prefix('-').is_some_and(|short| {
+            !short.is_empty()
+                && short
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() && !matches!(c, 'c' | 'o' | 's'))
+        }),
+    }
+}
+
+/// The token the shell would EXECUTE, walking past the prefixes that exec
+/// what follows them. `None` when nothing in the command can be proven to run.
+///
+/// Only an executable position counts. `echo <script>` names our path in an
+/// argument list, and reading that as a registration is exactly the fail-open
+/// the registration check exists to close.
+fn executed_token<'a>(tokens: &[&'a str]) -> Option<&'a str> {
+    let mut index = 0;
+    // A leading `VAR=value` run is the shell's own environment prefix.
+    while tokens
+        .get(index)
+        .is_some_and(|token| is_env_assignment(token))
+    {
+        index += 1;
+    }
+    loop {
+        let word = *tokens.get(index)?;
+        let name = program_name(word)?;
+        if name == "env" {
+            index += 1;
+            // `env` execs the first operand that is neither an assignment nor
+            // one of the flags that take no argument of their own.
+            while let Some(token) = tokens.get(index) {
+                if *token == "--" {
+                    index += 1;
+                    break;
+                }
+                if is_env_assignment(token) || matches!(*token, "-i" | "--ignore-environment") {
+                    index += 1;
+                    continue;
+                }
+                if token.starts_with('-') {
+                    return None;
+                }
+                break;
+            }
+            continue;
+        }
+        if let Some((_, operands)) = EXEC_PREFIXES.iter().find(|(prefix, _)| *prefix == name) {
+            index += 1;
+            while let Some(token) = tokens.get(index) {
+                if *token == "--" {
+                    index += 1;
+                    break;
+                }
+                if matches!(*token, "--foreground" | "--preserve-status") {
+                    index += 1;
+                    continue;
+                }
+                if token.starts_with('-') {
+                    return None;
+                }
+                break;
+            }
+            // Past its own operands — a `timeout` duration — sits the command.
+            index += operands;
+            continue;
+        }
+        if SCRIPT_INTERPRETERS.contains(&name) {
+            index += 1;
+            while let Some(token) = tokens.get(index) {
+                if *token == "--" {
+                    index += 1;
+                    break;
+                }
+                if !token.starts_with('-') {
+                    break;
+                }
+                if !shell_flag_keeps_operand(token) {
+                    return None;
+                }
+                index += 1;
+            }
+            return tokens.get(index).copied();
+        }
+        // Some other program: our path can only be its data.
+        return Some(word);
+    }
+}
+
+/// Does this command RUN the managed script? The script has to sit where the
+/// shell would execute it — the command word, or the operand of an
+/// interpreter or exec prefix — and the path there has to be ours, so neither
+/// `notfoo.sh` nor an unrelated `foo.sh` elsewhere on disk answers for
+/// `<root>/hooks/foo.sh`. A command whose target cannot be proven reads as
+/// unregistered: a spurious drift line is inspectable, a false clean is not.
 ///
 /// `deferred_root` is the placeholder a project-scope command leaves for run
 /// time and what the harness expands it to — `$(git rev-parse
@@ -97,11 +226,13 @@ fn command_targets_hook_script(
         Some((placeholder, root)) => command.replace(placeholder, &root.to_string_lossy()),
         None => command.to_string(),
     };
-    let wanted = resolved_path(script_path);
     let quotes = |c: char| c == '"' || c == '\'';
-    expanded
+    let tokens: Vec<&str> = expanded
         .split_whitespace()
-        .any(|token| resolved_path(Path::new(token.trim_matches(quotes))) == wanted)
+        .map(|token| token.trim_matches(quotes))
+        .collect();
+    executed_token(&tokens)
+        .is_some_and(|token| resolved_path(Path::new(token)) == resolved_path(script_path))
 }
 
 /// Does the harness config at `path` register `script_path` as a command
@@ -110,9 +241,10 @@ fn command_targets_hook_script(
 /// The file is PARSED, never substring-searched: a config naming `pre-check.sh`
 /// must not answer for `check.sh`. A handler counts when its command is one
 /// vstack itself renders, or — for a command a user reshaped by hand around OUR
-/// script — when one of its tokens resolves to `script_path`. A same-named
-/// script elsewhere on disk is somebody else's handler, and letting it answer
-/// would mask a deleted managed entry.
+/// script — when [`command_targets_hook_script`] proves it EXECUTES
+/// `script_path`. A same-named script elsewhere on disk is somebody else's
+/// handler, and a command that merely mentions ours passes it as data; letting
+/// either answer would mask a deleted managed entry.
 ///
 /// Claude's `settings.json` and codex's `hooks.json` share this
 /// `hooks → event → [{hooks: [{command}]}]` shape, so both harnesses answer
@@ -546,5 +678,7 @@ fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path
     Ok(())
 }
 
+#[cfg(test)]
+mod registration_tests;
 #[cfg(test)]
 mod tests;

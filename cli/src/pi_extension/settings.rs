@@ -125,16 +125,26 @@ fn relative_settings_entry(name: &str) -> String {
 
 /// Does this `packages` entry point Pi at OUR copy of the package?
 ///
-/// Entries are compared as paths, never as text: the canonical
-/// `./packages/<name>`, a bare `packages/<name>`, a trailing slash, an
-/// interior `.` or `..`, and the absolute form legacy installs recorded all
-/// name the same directory, so a hand-edited but still-correct entry counts. A
-/// path naming any other directory does not — including one whose package
-/// name merely starts with this one's, since the comparison is per path
-/// component. An `npm:` specifier loads a different copy of the package and
-/// never answers for ours.
+/// Entries are compared by the directory they RESOLVE to, never as text: the
+/// canonical `./packages/<name>`, a bare `packages/<name>`, a trailing slash,
+/// an interior `.` or `..`, the absolute form legacy installs recorded, and a
+/// path reaching our copy through a symlink all name the same directory, so a
+/// hand-edited but still-correct entry counts — as does the ordinary macOS
+/// case where the scope root itself sits under a symlink (`/tmp` →
+/// `/private/tmp`, a symlinked home). Two entries that resolve to one
+/// directory are ONE registration, so install replaces the alias instead of
+/// adding a second entry that would load the extension twice.
+///
+/// A path naming any other directory does not match — including one whose
+/// package name merely starts with this one's, since the lexical comparison is
+/// per path component. When either side cannot be canonicalized (a target that
+/// does not exist yet, a platform refusal) the lexical answer stands alone. An
+/// `npm:` specifier loads a different copy of the package and never answers
+/// for ours.
 fn entry_matches_package(entry: &serde_json::Value, name: &str, scope_dir: &Path) -> bool {
-    let target = crate::config::normalize_path_lexical(&scope_dir.join("packages").join(name));
+    let installed = scope_dir.join("packages").join(name);
+    let target = crate::config::normalize_path_lexical(&installed);
+    let target_resolved = std::fs::canonicalize(&installed).ok();
     let matches_path = |raw: &str| {
         if raw.starts_with("npm:") {
             return false;
@@ -145,7 +155,13 @@ fn entry_matches_package(entry: &serde_json::Value, name: &str, scope_dir: &Path
         } else {
             scope_dir.join(path)
         };
-        crate::config::normalize_path_lexical(&absolute) == target
+        if crate::config::normalize_path_lexical(&absolute) == target {
+            return true;
+        }
+        match (&target_resolved, std::fs::canonicalize(&absolute).ok()) {
+            (Some(target), Some(entry)) => &entry == target,
+            _ => false,
+        }
     };
     match entry {
         serde_json::Value::String(s) => matches_path(s),
@@ -348,5 +364,109 @@ mod tests {
             "@vg/pi-hooks",
             scope
         ));
+    }
+
+    fn tmpdir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_pi_settings_{label}_{}_{}",
+            std::process::id(),
+            crate::config::now_iso().replace([':', '-'], "")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Pi resolves the path before loading it, so an entry that reaches our
+    /// copy through a symlink IS the registration — including the ordinary
+    /// case of a scope root under a symlinked path (`/tmp` → `/private/tmp`,
+    /// a symlinked home), where every absolute entry recorded against the
+    /// real path compares lexically unequal.
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_resolving_to_our_package_is_the_same_registration() {
+        let base = tmpdir("symlinked-scope");
+        let real = base.join("real-scope");
+        let scope = base.join("link-scope");
+        std::fs::create_dir_all(real.join("packages").join("pi-hooks")).unwrap();
+        std::fs::create_dir_all(real.join("packages").join("pi-qol")).unwrap();
+        std::os::unix::fs::symlink(&real, &scope).unwrap();
+        let entry = |s: &str| serde_json::Value::String(s.into());
+
+        let through_symlink = real.join("packages").join("pi-hooks");
+        assert!(
+            entry_matches_package(
+                &entry(&through_symlink.to_string_lossy()),
+                "pi-hooks",
+                &scope
+            ),
+            "an entry Pi resolves to our copy is registered"
+        );
+
+        // Control: a genuinely different directory is still absent, resolved
+        // or not.
+        assert!(!entry_matches_package(
+            &entry(&real.join("packages").join("pi-qol").to_string_lossy()),
+            "pi-hooks",
+            &scope
+        ));
+        // Control: a target that does not exist falls back to the lexical
+        // answer — the canonical relative form still matches, a neighbour
+        // still does not.
+        let missing_scope = base.join("absent-scope");
+        assert!(entry_matches_package(
+            &entry("./packages/pi-hooks"),
+            "pi-hooks",
+            &missing_scope
+        ));
+        assert!(!entry_matches_package(
+            &entry("./packages/pi-hooks-extra"),
+            "pi-hooks",
+            &missing_scope
+        ));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// One directory is one registration: reinstalling over an aliased entry
+    /// replaces it in place instead of adding a second entry that would load
+    /// the extension twice.
+    #[cfg(unix)]
+    #[test]
+    fn reinstalling_over_a_resolved_alias_leaves_exactly_one_entry() {
+        let base = tmpdir("symlinked-reinstall");
+        let real = base.join("real-scope");
+        let scope = base.join("link-scope");
+        std::fs::create_dir_all(real.join("packages").join("pi-hooks")).unwrap();
+        std::os::unix::fs::symlink(&real, &scope).unwrap();
+        let aliased = real.join("packages").join("pi-hooks");
+        std::fs::write(
+            real.join("settings.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "packages": [aliased.to_string_lossy(), "./packages/pi-qol"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        crate::test_util::with_pi_dir(&scope, || {
+            register_in_pi_settings("pi-hooks", true).unwrap();
+            assert!(package_is_registered("pi-hooks", true));
+        });
+
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(real.join("settings.json")).unwrap())
+                .unwrap();
+        let packages = written["packages"].as_array().unwrap();
+        assert_eq!(
+            packages,
+            &vec![
+                serde_json::Value::String("./packages/pi-hooks".into()),
+                serde_json::Value::String("./packages/pi-qol".into()),
+            ],
+            "the alias is replaced in place, not duplicated: {packages:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

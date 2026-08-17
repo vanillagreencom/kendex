@@ -272,6 +272,8 @@ Hook installation per harness:
 - **OpenCode** — permission rule + instruction file referenced from `opencode.json`.
 - **Pi** — same hook behaviors ship as a first-class Pi extension, `@vanillagreen/pi-hooks`. It listens on Pi's `session_start`/`tool_call`/`tool_result`/`turn_end` events and uses `{block: true, reason}` to short-circuit unsafe tool calls. Each hook is independently toggleable from the pi-extension-manager settings panel.
 
+A registration counts for Claude Code and Codex alike only when the recorded command would actually RUN the script: the command itself, or the operand of a shell or an `env`/`timeout`-style prefix that execs it — so you can wrap the command by hand (`env FOO=1 bash <script> --strict`) and keep it. A command that merely mentions the path somewhere in another program's arguments is reported as drift, because nothing there runs the hook.
+
 Use `harnesses:` in a hook's frontmatter to scope it explicitly (e.g. `harnesses: [claude-code]`).
 
 ### Pi Extensions

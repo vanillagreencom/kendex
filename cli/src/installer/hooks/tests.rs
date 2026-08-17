@@ -1,6 +1,6 @@
 use super::codex::{
-    CodexNativeGap, codex_hooks_feature_enabled, enable_codex_hooks_feature,
-    merge_codex_hooks_json, migrate_codex_hooks_feature,
+    codex_hooks_feature_enabled, enable_codex_hooks_feature, merge_codex_hooks_json,
+    migrate_codex_hooks_feature,
 };
 use super::opencode::{install_hook_opencode_at_path, remove_hook_from_opencode_json_at_path};
 use super::*;
@@ -19,7 +19,7 @@ fn hook_fixture(name: &str, event: &str, matcher: Option<&str>) -> Hook {
     }
 }
 
-fn tmpdir(label: &str) -> PathBuf {
+pub(super) fn tmpdir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "vstack_{label}_{}_{}",
         std::process::id(),
@@ -850,85 +850,6 @@ fn remove_hook_from_opencode_preserves_unrelated_permissions() {
     );
 
     let _ = std::fs::remove_dir_all(&base);
-}
-
-/// A global codex scope carrying `hooks/foo.sh` (plus a same-named decoy
-/// `hooks/pre-foo.sh`), the hooks feature on, and one `PreToolUse` handler
-/// running `command`. Returns the scope dir and the gaps reported for `foo`.
-fn codex_gaps_for_registered_command(
-    label: &str,
-    command: impl FnOnce(&Path) -> String,
-) -> (PathBuf, Vec<CodexNativeGap>) {
-    let dir = tmpdir(label);
-    let hooks_dir = dir.join("hooks");
-    std::fs::create_dir_all(&hooks_dir).unwrap();
-    std::fs::write(hooks_dir.join("foo.sh"), "#!/usr/bin/env bash\n").unwrap();
-    std::fs::write(hooks_dir.join("pre-foo.sh"), "#!/usr/bin/env bash\n").unwrap();
-    std::fs::write(dir.join("config.toml"), "[features]\nhooks = true\n").unwrap();
-    let doc = serde_json::json!({
-        "hooks": {
-            "PreToolUse": [{
-                "matcher": "Bash",
-                "hooks": [{"type": "command", "command": command(&dir)}]
-            }]
-        }
-    });
-    std::fs::write(
-        dir.join("hooks.json"),
-        serde_json::to_string_pretty(&doc).unwrap(),
-    )
-    .unwrap();
-
-    let gaps = crate::test_util::with_codex_home(&dir, || {
-        codex_native_hook_gaps(true, "foo", "PreToolUse")
-    });
-    (dir, gaps)
-}
-
-#[test]
-fn codex_registration_requires_the_managed_script_path() {
-    // Control: exactly what vstack renders.
-    let (dir, gaps) = codex_gaps_for_registered_command("codex_reg_owned", |dir| {
-        format!("bash {}", dir.join("hooks").join("foo.sh").display())
-    });
-    assert!(
-        gaps.is_empty(),
-        "vstack's own command must register: {gaps:?}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-
-    // A command reshaped by hand around OUR script still counts.
-    let (dir, gaps) = codex_gaps_for_registered_command("codex_reg_reshaped", |dir| {
-        format!(
-            "env VSTACK=1 bash \"{}\" --verbose",
-            dir.join("hooks").join("foo.sh").display()
-        )
-    });
-    assert!(
-        !gaps.contains(&CodexNativeGap::NotRegistered),
-        "a reshaped command on the managed script must register: {gaps:?}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-
-    // Somebody else's same-named script must not answer for ours.
-    let (dir, gaps) = codex_gaps_for_registered_command("codex_reg_foreign", |_| {
-        "bash /somewhere/else/foo.sh".to_string()
-    });
-    assert!(
-        gaps.contains(&CodexNativeGap::NotRegistered),
-        "a same-named script elsewhere must not mask a deleted entry: {gaps:?}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-
-    // Existing control: a differently named neighbour never answers.
-    let (dir, gaps) = codex_gaps_for_registered_command("codex_reg_prefixed", |dir| {
-        format!("bash {}", dir.join("hooks").join("pre-foo.sh").display())
-    });
-    assert!(
-        gaps.contains(&CodexNativeGap::NotRegistered),
-        "pre-foo.sh must not answer for foo.sh: {gaps:?}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

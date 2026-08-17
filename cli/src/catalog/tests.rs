@@ -318,6 +318,90 @@ fn an_unreadable_item_directory_is_a_discovery_failure_not_a_removal() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// A configured path may name the ITEM directory itself, and discovery stops
+/// at that root's own manifest. Its internal directories are the package's own
+/// content, never candidates — so an unreadable `references/private/` inside a
+/// perfectly valid skill is not a discovery failure, and `check` must not exit
+/// 1 over it forever.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_directory_inside_a_direct_item_root_is_not_a_discovery_failure() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: `geteuid` reads the calling process's effective uid; it
+    // takes no arguments and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        return; // root ignores the permission bits this test relies on
+    }
+    let root = sandbox("unreadable-inside-item-root");
+    let catalog = crate::mapping::CatalogConfig {
+        skills: Some(vec!["one-offs/specific-skill".into()]),
+        ..Default::default()
+    };
+    skill_at(&root, "one-offs/specific-skill", "specific");
+
+    // Control: readable and complete before anything is locked down.
+    let readable = inv(&root, &catalog);
+    let readable = readable.readable().expect("the item root is readable");
+    assert_eq!(readable.names, vec!["specific".to_string()]);
+    assert!(readable.names_are_complete(), "control: {readable:?}");
+
+    let private = root
+        .join("one-offs")
+        .join("specific-skill")
+        .join("references")
+        .join("private");
+    fs::create_dir_all(&private).unwrap();
+    fs::set_permissions(&private, fs::Permissions::from_mode(0o000)).unwrap();
+    let inventory = inv(&root, &catalog);
+    let readable = inventory.readable().expect("the item root is readable");
+    fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert_eq!(readable.names, vec!["specific".to_string()]);
+    assert!(
+        readable.names_are_complete(),
+        "the item's own content is not a candidate: {readable:?}"
+    );
+
+    // Control: the same directory under a COLLECTION root still is a
+    // discovery failure — that is where an unreadable directory hides an item.
+    let collection = crate::mapping::CatalogConfig {
+        skills: Some(vec!["one-offs".into()]),
+        ..Default::default()
+    };
+    fs::set_permissions(&private, fs::Permissions::from_mode(0o000)).unwrap();
+    let unreadable_item = root.join("one-offs").join("hidden-skill");
+    fs::create_dir_all(&unreadable_item).unwrap();
+    fs::set_permissions(&unreadable_item, fs::Permissions::from_mode(0o000)).unwrap();
+    let inventory = inv(&root, &collection);
+    let readable = inventory
+        .readable()
+        .expect("the collection root is readable");
+    fs::set_permissions(&unreadable_item, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        !readable.names_are_complete(),
+        "an unreadable candidate under a collection root is still a failure: {readable:?}"
+    );
+
+    // Control: the item root's OWN manifest failing to parse is still
+    // reported, whatever its internal directories look like.
+    fs::write(
+        root.join("one-offs")
+            .join("specific-skill")
+            .join("SKILL.md"),
+        "no frontmatter here\n",
+    )
+    .unwrap();
+    let inventory = inv(&root, &catalog);
+    let readable = inventory.readable().expect("the item root is readable");
+    assert!(
+        !readable.names_are_complete(),
+        "a broken manifest on the item root is still a failure: {readable:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 /// Hooks and agents are files read from the root itself, so no subdirectory
 /// of theirs can hide one. An unrelated protected directory beside them is
 /// somebody else's business, not an incomplete inventory.

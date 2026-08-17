@@ -28,6 +28,13 @@ impl CatalogKind {
     }
 }
 
+/// The manifests that make a directory an item. Discovery and the
+/// unreadable-directory probe read the same names, so they cannot disagree
+/// about which directories are candidates.
+const SKILL_MANIFEST: &str = "SKILL.md";
+const PI_EXTENSION_MANIFEST: &str = "package.json";
+const EXTRA_MANIFEST: &str = "extra.toml";
+
 pub(crate) fn has_catalog_table(source_root: &Path) -> bool {
     let Ok(raw) = std::fs::read_to_string(source_root.join("vstack.toml")) else {
         return false;
@@ -286,8 +293,8 @@ pub(crate) fn discover_agents(source_root: &Path) -> Result<Vec<Agent>> {
 pub(crate) fn discover_skills(source_root: &Path) -> Result<Vec<Skill>> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    for dir in discover_manifest_dirs(source_root, CatalogKind::Skills, "SKILL.md")? {
-        let skill_file = dir.join("SKILL.md");
+    for dir in discover_manifest_dirs(source_root, CatalogKind::Skills, SKILL_MANIFEST)? {
+        let skill_file = dir.join(SKILL_MANIFEST);
         match Skill::from_file(&skill_file) {
             Ok(skill) if seen.insert(skill.name.clone()) => out.push(skill),
             Ok(skill) => eprintln!(
@@ -323,7 +330,11 @@ pub(crate) fn discover_hooks(source_root: &Path) -> Result<Vec<Hook>> {
 pub(crate) fn discover_pi_extensions(source_root: &Path) -> Result<Vec<PiExtension>> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    for dir in discover_manifest_dirs(source_root, CatalogKind::PiExtensions, "package.json")? {
+    for dir in discover_manifest_dirs(
+        source_root,
+        CatalogKind::PiExtensions,
+        PI_EXTENSION_MANIFEST,
+    )? {
         match PiExtension::from_dir(&dir) {
             Ok(ext) if seen.insert(ext.name.clone()) => out.push(ext),
             Ok(ext) => eprintln!(
@@ -341,7 +352,7 @@ pub(crate) fn discover_pi_extensions(source_root: &Path) -> Result<Vec<PiExtensi
 pub(crate) fn discover_extras(source_root: &Path) -> Result<Vec<Extra>> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    for dir in discover_manifest_dirs(source_root, CatalogKind::Extras, "extra.toml")? {
+    for dir in discover_manifest_dirs(source_root, CatalogKind::Extras, EXTRA_MANIFEST)? {
         match Extra::from_dir(&dir) {
             Ok(extra) if seen.insert(extra.name().to_string()) => out.push(extra),
             Ok(extra) => eprintln!(
@@ -454,8 +465,8 @@ pub(crate) fn inventory(
     // bit. Agents and hooks are files read from the root itself, so no
     // subdirectory of theirs can hide one, and probing them would turn an
     // unrelated protected directory into drift for a source that is whole.
-    if candidates_are_directories(kind) {
-        for unreadable in unreadable_candidate_dirs(&roots.paths) {
+    if let Some(manifest) = directory_item_manifest(kind) {
+        for unreadable in unreadable_candidate_dirs(&roots.paths, manifest) {
             inv.failures
                 .push(format!("{}: permission denied", unreadable.display()));
         }
@@ -487,16 +498,16 @@ pub(crate) fn inventory(
                 })
                 .collect::<Vec<_>>()
         }),
-        ItemKind::Skill => discover_manifest_dirs_in(roots.paths, "SKILL.md").map(|dirs| {
+        ItemKind::Skill => discover_manifest_dirs_in(roots.paths, SKILL_MANIFEST).map(|dirs| {
             dirs.into_iter()
                 .map(|dir| {
-                    let parsed = Skill::from_file(&dir.join("SKILL.md")).map(|s| s.name);
+                    let parsed = Skill::from_file(&dir.join(SKILL_MANIFEST)).map(|s| s.name);
                     (dir, parsed)
                 })
                 .collect::<Vec<_>>()
         }),
         ItemKind::PiExtension => {
-            discover_manifest_dirs_in(roots.paths, "package.json").map(|dirs| {
+            discover_manifest_dirs_in(roots.paths, PI_EXTENSION_MANIFEST).map(|dirs| {
                 dirs.into_iter()
                     .map(|dir| {
                         let parsed = PiExtension::from_dir(&dir).map(|e| e.name);
@@ -505,7 +516,7 @@ pub(crate) fn inventory(
                     .collect::<Vec<_>>()
             })
         }
-        ItemKind::Extra => discover_manifest_dirs_in(roots.paths, "extra.toml").map(|dirs| {
+        ItemKind::Extra => discover_manifest_dirs_in(roots.paths, EXTRA_MANIFEST).map(|dirs| {
             dirs.into_iter()
                 .map(|dir| {
                     let parsed = Extra::from_dir(&dir).map(|e| e.name().to_string());
@@ -525,21 +536,34 @@ pub(crate) fn inventory(
     KindInventory::Readable(inv)
 }
 
-/// Is an item of this kind a directory under its root, rather than a file
-/// read from the root itself?
-fn candidates_are_directories(kind: crate::config::ItemKind) -> bool {
+/// The manifest that makes a directory an item, for the kinds whose items ARE
+/// directories rather than files read from the root itself. `None` for agents
+/// and hooks.
+fn directory_item_manifest(kind: crate::config::ItemKind) -> Option<&'static str> {
     use crate::config::ItemKind;
     match kind {
-        ItemKind::Skill | ItemKind::PiExtension | ItemKind::Extra => true,
-        ItemKind::Agent | ItemKind::Hook => false,
+        ItemKind::Skill => Some(SKILL_MANIFEST),
+        ItemKind::PiExtension => Some(PI_EXTENSION_MANIFEST),
+        ItemKind::Extra => Some(EXTRA_MANIFEST),
+        ItemKind::Agent | ItemKind::Hook => None,
     }
 }
 
 /// Candidate directories under `roots` that cannot be listed. Only a real
 /// permission failure counts: a missing directory is absence, not a fault.
-fn unreadable_candidate_dirs(roots: &[PathBuf]) -> Vec<PathBuf> {
+///
+/// Children are candidates only under a COLLECTION root. A configured path may
+/// name the item directory itself (`skills = ["one-offs/specific-skill"]`), and
+/// discovery stops at such a root's own manifest — so its internal directories
+/// are the item's own content, and an unreadable `references/private/` there is
+/// not a discovery failure. This test mirrors [`discover_manifest_dirs_in`]
+/// exactly, or the probe would report items discovery never looked for.
+fn unreadable_candidate_dirs(roots: &[PathBuf], manifest: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for root in roots {
+        if root.join(manifest).is_file() {
+            continue;
+        }
         let Ok(entries) = std::fs::read_dir(root) else {
             continue;
         };
