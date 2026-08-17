@@ -1744,9 +1744,11 @@ install_worktree_dependencies() {
   # automatic install skipped — never a wrong-tree install.
   local pkg_manager="" pkg_manager_readable=1
   if command -v node >/dev/null 2>&1; then
-    pkg_manager="$(node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).packageManager;process.stdout.write(typeof m==="string"?m:"")' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
+    # npm itself tolerates a UTF-8 BOM, so strip it before parsing — a BOM'd
+    # pin must still read as a pin.
+    pkg_manager="$(node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8").replace(/^\uFEFF/,"")).packageManager;process.stdout.write(typeof m==="string"?m:"")' "$wt/package.json" 2>/dev/null)" || pkg_manager_readable=0
   elif command -v jq >/dev/null 2>&1; then
-    pkg_manager="$(jq -r '.packageManager // ""' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
+    pkg_manager="$(jq -r '.packageManager // ""' "$wt/package.json" 2>/dev/null)" || pkg_manager_readable=0
   else
     # No structural reader: the pin is unreadable, and running npm on an
     # unreadable pin is the wrong-tree case this gate exists to prevent.
@@ -1754,18 +1756,22 @@ install_worktree_dependencies() {
   fi
   # Precedence: an explicit pin outranks lockfiles either way (a migration
   # leaves stale ones behind); with no pin, npm evidence beats an incidental
-  # foreign lockfile.
+  # foreign lockfile. A manifest the reader could not parse — or no reader at
+  # all — reads no pin, so any foreign evidence makes npm the wrong call.
   case "$pkg_manager" in
     pnpm@*|yarn@*|bun@*) return 0 ;;
     npm@*) ;;
     *)
-      if [[ ! -f "$wt/package-lock.json" && ! -f "$wt/npm-shrinkwrap.json" ]]; then
-        # Foreign evidence: another manager's lockfile, a pnpm workspace
-        # manifest, or a pin we could not read at all.
-        if [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" || -f "$wt/pnpm-workspace.yaml" ]]; then
-          return 0
-        fi
-        [[ "$pkg_manager_readable" -eq 1 ]] || return 0
+      local npm_evidence=0 foreign_evidence=0
+      [[ -f "$wt/package-lock.json" || -f "$wt/npm-shrinkwrap.json" ]] && npm_evidence=1
+      # Foreign evidence: another manager's lockfile or a pnpm workspace
+      # manifest.
+      [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" || -f "$wt/pnpm-workspace.yaml" ]] && foreign_evidence=1
+      if [[ "$pkg_manager_readable" -eq 0 ]]; then
+        # An unreadable pin installs only on unambiguous npm evidence.
+        [[ "$npm_evidence" -eq 1 && "$foreign_evidence" -eq 0 ]] || return 0
+      elif [[ "$npm_evidence" -eq 0 && "$foreign_evidence" -eq 1 ]]; then
+        return 0
       fi
       ;;
   esac

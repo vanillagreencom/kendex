@@ -184,6 +184,29 @@ else
 fi
 : >"$NPM_CALL_LOG"
 
+echo "=== a BOM'd pin is still a pin ==="
+ROOT="$TMP_ROOT/bom"
+make_repo "$ROOT" repo
+printf '\xEF\xBB\xBF{ "name": "app", "packageManager": "pnpm@10.33.2" }\n' >"$ROOT/repo/package.json"
+printf '{}\n' >"$ROOT/repo/package-lock.json"
+git -C "$ROOT/repo" add package.json package-lock.json
+git -C "$ROOT/repo" commit -q -m "js: BOM pin with stale lockfile"
+git -C "$ROOT/repo" push -q origin main
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-bom >/dev/null)
+assert_log_stays_empty "a BOM'd pnpm pin beats the stale package-lock.json" || true
+
+echo "=== an unparseable manifest with foreign evidence skips ==="
+ROOT="$TMP_ROOT/unparseable"
+make_repo "$ROOT" repo
+printf '{ "name": "app", trailing garbage\n' >"$ROOT/repo/package.json"
+printf 'lockfileVersion: "9.0"\n' >"$ROOT/repo/pnpm-lock.yaml"
+printf '{}\n' >"$ROOT/repo/package-lock.json"
+git -C "$ROOT/repo" add package.json pnpm-lock.yaml package-lock.json
+git -C "$ROOT/repo" commit -q -m "js: unparseable manifest mid-migration"
+git -C "$ROOT/repo" push -q origin main
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-unparse >/dev/null)
+assert_log_stays_empty "an unreadable manifest with foreign evidence skips npm" || true
+
 echo "=== a plain npm repo keeps the historical install ==="
 ROOT="$TMP_ROOT/npm"
 make_repo "$ROOT" repo
