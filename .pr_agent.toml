@@ -31,6 +31,13 @@ issues_user_guidelines = """
 - In cli/ (Rust), writers of vstack.toml / vstack.settings.toml must never
   reformat content inside TOML string values; report any line-oriented TOML
   pass that is not string-state-aware.
+- A fixture path a test built itself (mktemp -d, its own sandbox directory)
+  needs no "--" separator; the rule covers values sourced from
+  configuration, argv, or the environment.
+- A mktemp -d scratch directory the test removes in its own trap ... EXIT is
+  cleaned up — not a leak and not a missing-cleanup finding.
+- ${arr[@]+"${arr[@]}"} is the quoted empty-array expansion Bash 3.2 requires
+  under set -u, not an unquoted expansion or a word-splitting defect.
 """
 compliance_user_guidelines = """
 - Issue-number citations are banned in instruction-flow skill/agent markdown,

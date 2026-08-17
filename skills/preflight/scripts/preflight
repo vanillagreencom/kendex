@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# preflight — diff-scoped, fail-only checks: fail-open bash, docs citing
+# preflight — diff-scoped, fail-only checks: fail-open bash, new suites no
+# runner invokes, scratch directories no EXIT trap removes, docs citing
 # repo paths that do not exist, source files citing docs that do not exist,
 # TODO markers with no issue behind them, reviewer-bot attributions in
 # durable prose, malformed JSON/TOML, workflow run: blocks their shell
@@ -34,8 +35,8 @@ non-ignored untracked files; --staged sees only the index.
   --repo PATH   run against the repository containing PATH (default: cwd)
 
 Lanes: shell-syntax, shellcheck-errors, masked-returns, fail-open,
-docs-cited-paths, todo-links, reviewer-attribution, data-syntax,
-workflow-run-syntax.
+unwired-suite, mktemp-trap, docs-cited-paths, todo-links,
+reviewer-attribution, data-syntax, workflow-run-syntax.
 
 Exit codes: 0 clean; 1 findings; 2 usage/environment error.
 EOF
@@ -111,14 +112,14 @@ case "$MODE" in
     git rev-parse --verify --quiet HEAD >/dev/null || env_error "the repository has no commits yet — nothing to diff --staged against"
     git_diff --cached --name-only --diff-filter=d -z >"$TMP/files.z" || env_error "git diff --cached failed"
     git_diff --cached --unified=0 --no-color --no-renames --diff-filter=d >"$TMP/patch" || env_error "git diff --cached failed"
-    git_diff --cached --name-only --diff-filter=A >"$TMP/newfiles.list" || true
+    git_diff --cached --name-only --no-renames --diff-filter=A >"$TMP/newfiles.list" || env_error "git diff --cached failed"
     ;;
   base)
     git rev-parse --verify --quiet HEAD >/dev/null || env_error "the repository has no commits yet — pass --all"
     BASE="$(resolve_base)"
     git_diff --name-only --diff-filter=d -z "$BASE" -- >"$TMP/files.z" || env_error "git diff against $BASE failed"
     git_diff --unified=0 --no-color --no-renames --diff-filter=d "$BASE" -- >"$TMP/patch" || env_error "git diff against $BASE failed"
-    git_diff --name-only --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || true
+    git_diff --name-only --no-renames --diff-filter=A "$BASE" -- >"$TMP/newfiles.list" || env_error "git diff against $BASE failed"
     # A file never added is invisible to `git diff` yet is part of the change
     # the author is about to commit: every non-ignored untracked file is a new
     # file with every line added, exactly what it will be at the PR.
@@ -245,7 +246,7 @@ is_shell_path() { # PATH CONTENT-PATH — extension, else a sh/bash shebang
 ERREXIT_RE='^[[:space:]]*set[[:space:]].*(-[a-zA-Z]*e|-o[[:space:]]+errexit)'
 NOUNSET_RE='^[[:space:]]*set[[:space:]].*(-[a-zA-Z]*u|-o[[:space:]]+nounset)'
 PIPEFAIL_RE='^[[:space:]]*set[[:space:]].*pipefail'
-has_set_flag() { grep -Eq -- "$2" "$1" 2>/dev/null; }
+file_matches() { grep -Eq -- "$2" "$1" 2>/dev/null; }
 
 GCC_LINE=0
 GCC_SEV=""
@@ -519,6 +520,17 @@ check_toml() { # CONTENT-PATH — parser diagnostics on stdout, nonzero when inv
 }
 
 MKTEMP_ASSIGN="=[\"']?\\\$\\(mktemp"
+# An mktemp INVOCATION: the word at a command position — line start, or
+# after a substitution, pipe, list or group operator. The word inside a
+# message string or a usage line names the tool, it does not run it.
+MKTEMP_CALL_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)mktemp([^A-Za-z0-9_.-]|$)'
+# An EXIT-time trap in either of its portable spellings, at a command
+# position on a non-comment line — the word inside a message or a comment
+# arms nothing.
+TRAP_EXIT_RE='(^[[:space:]]*|[;|&(`{][[:space:]]*)trap[[:space:]].*[[:space:]](EXIT|0)([[:space:]]|;|$)'
+has_exit_trap() { # FILE
+  grep -Ev -- '^[[:space:]]*#' "$1" 2>/dev/null | grep -Eq -- "$TRAP_EXIT_RE"
+}
 # The marker form only: the word immediately followed by a colon or by an
 # owner in parentheses. Prose that merely uses the word ("TODO hygiene is
 # preflight's job") and scaffolding placeholders ("description: TODO —
@@ -609,6 +621,120 @@ md_tokens_of() { # LINE -> candidate tokens on stdout
   }'
 }
 
+is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing comment is still code
+  case "${1#"${1%%[![:space:]]*}"}" in '#'*) return 0 ;; esac
+  return 1
+}
+
+# The `|| true` shape on a command whose exit 2 means "could not read" or
+# "invoked wrong": true erases that status and the caller reads the empty
+# result as a clean answer. The command must stand at a command position, so
+# the same text quoted inside a message is not a finding. Prints the
+# swallowed command, nothing when the shape is absent — a status-capturing
+# `|| status=$?` is a different line.
+swallowed_cmd() { # LINE -> command name on stdout
+  printf '%s\n' "$1" | LC_ALL=C awk '
+    # Blank quoted spans that carry no substitution: text in a message runs
+    # nothing, but "$(git … || true)" is a command inside quotes.
+    {
+      out = ""; rest = $0
+      while (match(rest, /"[^"]*"|\047[^\047]*\047/)) {
+        seg = substr(rest, RSTART, RLENGTH)
+        out = out substr(rest, 1, RSTART - 1) (index(seg, "$(") ? seg : substr(seg, 1, 1) substr(seg, 1, 1))
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      $0 = out rest
+    }
+    match($0, /(^[[:space:]]*|[;|&(`{][[:space:]]*)(grep|find|git|jq|diff|cmp)([[:space:]][^|]*)?\|\|[[:space:]]*(true|:)([^A-Za-z0-9_.-]|$)/) {
+      s = substr($0, RSTART, RLENGTH)
+      if (match(s, /(grep|find|git|jq|diff|cmp)/)) print substr(s, RSTART, RLENGTH)
+      exit
+    }'
+}
+
+# A file whose only purpose is to be run by a runner. Fixtures are material
+# a suite reads, never a suite themselves.
+is_suite_path() { # PATH
+  case "/$1" in
+    */fixtures/*) return 1 ;;
+  esac
+  case "/$1" in
+    */tests/*.test.sh | */tests/test-*.sh | *.test.ts | *.test.js | *.test.mjs) return 0 ;;
+  esac
+  return 1
+}
+
+# The tracked runners and their path-shaped tokens, collected once. Read
+# through content_of, so staged scope judges the staged runner rather than a
+# worktree edit that is not part of this change.
+RUNNERS_READ_WHOLE=1
+build_runner_index() {
+  local r c k=0 status
+  [ ! -f "$TMP/runner.toks" ] || return 0
+  # Untracked runners are in scope exactly when untracked suites are: a
+  # workflow added beside its suite wires it before either is committed.
+  { cat "$TMP/tracked.list"; tr '\0' '\n' <"$TMP/untracked.z"; } | LC_ALL=C awk '
+    /^\.github\/workflows\/[^\/]+\.(yml|yaml)$/ { print; next }
+    /(^|\/)(tools|scripts)\/validate[^\/]*$/ { print; next }
+    /(^|\/)(package\.json|Makefile|justfile|run-all\.sh)$/ { print }
+  ' | LC_ALL=C sort -u >"$TMP/runner.names"
+  : >"$TMP/runner.bodies"
+  : >"$TMP/runner.toks.raw"
+  while IFS= read -r r; do
+    k=$((k + 1))
+    c="$(content_of "r$k" "$r")" || { RUNNERS_READ_WHOLE=0; continue; }
+    cat -- "$c" >>"$TMP/runner.bodies"
+    status=0
+    LC_ALL=C tr -cs 'A-Za-z0-9_*./-' '\n' <"$c" | LC_ALL=C grep -e / |
+      RN="$r" awk 'BEGIN { p = ENVIRON["RN"] } { print p "\t" $0 }' >>"$TMP/runner.toks.raw" || status=$?
+    [ "$status" -le 1 ] || env_error "unwired-suite lane could not read the runner $r"
+  done <"$TMP/runner.names"
+  LC_ALL=C sort -u "$TMP/runner.toks.raw" >"$TMP/runner.toks"
+}
+
+# Wiring evidence for one suite: a runner naming it, a path-shaped glob its
+# path satisfies, a directory it lives under, or a runner beside it globbing
+# its own directory. A runner set that is empty, or that this tool could not
+# read whole, proves nothing either way — an unproven suite is not an
+# unwired one, so the lane says nothing.
+suite_is_wired() { # SUITE-PATH
+  local p="$1" base dir="" r tok
+  base="${p##*/}"
+  case "$p" in */*) dir="${p%/*}" ;; esac
+  build_runner_index
+  if [ "$RUNNERS_READ_WHOLE" = 0 ] || [ ! -s "$TMP/runner.names" ]; then return 0; fi
+  grep -qFe "$base" -- "$TMP/runner.bodies" && return 0
+  # A package or build manifest below the repo root runs what lives beside
+  # it, whether or not any path in it names the suite. A root manifest owns
+  # the whole tree and so distinguishes nothing.
+  while IFS= read -r r; do
+    case "${r##*/}" in package.json | Makefile | justfile | run-all.sh) ;; *) continue ;; esac
+    case "$r" in */*) ;; *) continue ;; esac
+    case "$p" in "${r%/*}"/*) return 0 ;; esac
+  done <"$TMP/runner.names"
+  while IFS="$TAB" read -r r tok; do
+    [ "$r" != "$p" ] || continue
+    case "$tok" in
+      *"*"*)
+        # Only a glob naming a file shape is wiring. A path filter spelled
+        # `*/*` matches every suite in the repo and invokes none of them.
+        case "${tok##*/}" in *.*) ;; *) continue ;; esac
+        case "$p" in $tok) return 0 ;; esac
+        if [ "${r%/*}" = "$dir" ]; then
+          case "$base" in ${tok##*/}) return 0 ;; esac
+        fi
+        ;;
+      *)
+        tok="${tok#./}"
+        tok="${tok%/}"
+        [ -n "$tok" ] || continue
+        case "$p" in "$tok"/*) return 0 ;; esac
+        ;;
+    esac
+  done <"$TMP/runner.toks"
+  return 1
+}
+
 # --- lanes, one changed file at a time ---------------------------------------
 FILE_COUNT=0
 IDX=0
@@ -621,11 +747,15 @@ while IFS= read -r f; do
 
   is_sh=0
   has_ee=0
+  has_trap=0
+  mktemp_reported=0
   is_shell_path "$f" "$cpath" && is_sh=1
   own_rules=0
   case "/$f" in
     */tests/* | */fixtures/*) own_rules=1 ;;
   esac
+  is_new=0
+  if [ "$MODE" = "all" ] || grep -qxF -- "$f" "$TMP/newfiles.list"; then is_new=1; fi
   is_md=0
   subtree=""
   case "$f" in
@@ -655,7 +785,8 @@ while IFS= read -r f; do
   esac
 
   if [ "$is_sh" = 1 ]; then
-    has_set_flag "$cpath" "$ERREXIT_RE" && has_ee=1
+    file_matches "$cpath" "$ERREXIT_RE" && has_ee=1
+    has_exit_trap "$cpath" && has_trap=1
 
     if ! syntax="$(bash -n -- "$cpath" 2>&1)"; then
       while IFS= read -r raw; do
@@ -690,11 +821,15 @@ while IFS= read -r f; do
     # A brand-new script that never turns on errexit, nounset and pipefail
     # fails open at its first unchecked command. Test trees and fixtures set
     # their own rules.
-    if [ "$own_rules" = 0 ] && { [ "$MODE" = "all" ] || grep -qxF -- "$f" "$TMP/newfiles.list"; }; then
-      if [ "$has_ee" = 0 ] || ! has_set_flag "$cpath" "$NOUNSET_RE" || ! has_set_flag "$cpath" "$PIPEFAIL_RE"; then
+    if [ "$own_rules" = 0 ] && [ "$is_new" = 1 ]; then
+      if [ "$has_ee" = 0 ] || ! file_matches "$cpath" "$NOUNSET_RE" || ! file_matches "$cpath" "$PIPEFAIL_RE"; then
         emit "$f" 0 fail-open "new shell file without strict mode (set -euo pipefail)"
       fi
     fi
+  fi
+
+  if [ "$is_new" = 1 ] && is_suite_path "$f" && ! suite_is_wired "$f"; then
+    emit "$f" 0 unwired-suite "new suite is not invoked by any runner"
   fi
 
   case "$f" in
@@ -736,6 +871,32 @@ while IFS= read -r f; do
 
     if [ "$is_sh" = 1 ] && [ "$has_ee" = 0 ] && printf '%s' "$content" | grep -Eq -- "$MKTEMP_ASSIGN"; then
       emit "$f" "$n" fail-open "unchecked mktemp in a file without errexit — a failed mktemp leaves the variable empty and the script runs on"
+    fi
+
+    # The literal prefilters keep the regex passes off the lines that cannot
+    # carry either shape — most of them.
+    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$is_new" = 1 ] && [ "$has_trap" = 0 ] && [ "$mktemp_reported" = 0 ]; then
+      case "$content" in
+        *mktemp*)
+          if ! is_comment_line "$content" && printf '%s' "$content" | grep -Eq -- "$MKTEMP_CALL_RE"; then
+            mktemp_reported=1
+            emit "$f" "$n" mktemp-trap "mktemp without an EXIT trap — scratch is never removed"
+          fi
+          ;;
+      esac
+    fi
+
+    if [ "$is_sh" = 1 ] && [ "$own_rules" = 0 ] && [ "$is_testname" = 0 ]; then
+      case "$content" in
+        *"||"*)
+          if ! is_comment_line "$content"; then
+            swallowed="$(swallowed_cmd "$content")"
+            if [ -n "$swallowed" ]; then
+              emit "$f" "$n" fail-open "$swallowed || true swallows exit 2 (unreadable input, broken invocation) — capture the status and treat >1 as failure"
+            fi
+          fi
+          ;;
+      esac
     fi
 
     if [ "$is_md" = 1 ]; then

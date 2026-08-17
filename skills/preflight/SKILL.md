@@ -1,6 +1,6 @@
 ---
 name: preflight
-description: "Diff-scoped deterministic pre-review checks, fail-only and precision-first: unparseable shell, shellcheck errors, masked return values on added lines, fail-open bash (unchecked mktemp without errexit, new scripts without strict mode), docs citing repo paths that do not exist, source files citing docs that do not exist, TODO/FIXME markers with no issue reference, reviewer-bot attributions in durable prose, malformed JSON/TOML, and workflow run: blocks their shell cannot parse. Load when running, tuning, or debugging preflight or wiring it into validation/CI."
+description: "Diff-scoped deterministic pre-review checks, fail-only and precision-first: unparseable shell, shellcheck errors, masked return values on added lines, fail-open bash (unchecked mktemp without errexit, new scripts without strict mode, a swallowed exit status on `|| true`), new test suites no runner invokes, scratch directories no EXIT trap removes, docs citing repo paths that do not exist, source files citing docs that do not exist, TODO/FIXME markers with no issue reference, reviewer-bot attributions in durable prose, malformed JSON/TOML, and workflow run: blocks their shell cannot parse. Load when running, tuning, or debugging preflight or wiring it into validation/CI."
 license: MIT
 user-invocable: true
 metadata:
@@ -38,7 +38,9 @@ clean empty diff.
 | `shell-syntax` | A changed shell file bash cannot parse. | `bash -n` |
 | `shellcheck-errors` | Any error-severity finding, anywhere in a changed shell file. | shellcheck |
 | `masked-returns` | SC2155/SC2311 on an added line — a declaration whose exit status hides the command's. | shellcheck |
-| `fail-open` | An `=$(mktemp …)` assignment added to a file without errexit; a new script that never sets `-e`, `-u` and `pipefail`. | built in |
+| `fail-open` | An `=$(mktemp …)` assignment added to a file without errexit; a new script that never sets `-e`, `-u` and `pipefail`; an added `grep`/`find`/`git`/`jq`/`diff`/`cmp`, at a command position, whose status is discarded by `\|\| true` (or `\|\| :`), erasing the exit 2 that means unreadable input or a broken invocation — the same text quoted inside a message runs nothing and is not a finding. | built in |
+| `unwired-suite` | A new suite file — `tests/*.test.sh`, `tests/test-*.sh`, `*.test.ts`, `*.test.js`, `*.test.mjs`; fixtures excluded — that no tracked runner invokes. Runners are `.github/workflows/*.yml`, `tools/validate*`, `scripts/validate*`, `package.json`, `Makefile`, `justfile`, and any `run-all.sh`; wiring is the suite named outright, a path-shaped glob its path satisfies, a directory it lives under, a manifest below the repo root whose subtree holds it, or a runner beside it globbing its own directory. A runner set that is empty or unreadable proves nothing, and the lane stays quiet. | built in |
+| `mktemp-trap` | A new shell file with an added `mktemp` invocation — the word at a command position, not named in a comment or a string — and no `trap … EXIT` anywhere in it. | built in |
 | `docs-cited-paths` | An added backticked path in a `.md` file, inside a directory the repo really has and the doc's own subtree, that names nothing tracked or on disk. Also the reverse pointer: an added source line citing a `.md` path that names nothing tracked or on disk — URL spans and double-quoted strings are stripped first, data files (JSON/TOML/YAML/lock) and test-named files are out of scope, and the same directory guards apply. | built in |
 | `todo-links` | An added `TODO:`/`FIXME(` marker — the word immediately followed by `:` or `(` — with no `#123`, `ABC-123`, or URL on the line. Prose that merely uses the word is not a marker. | built in |
 | `reviewer-attribution` | An added line crediting a transient reviewer-bot pass: a fleet bot name (qodo, copilot, coderabbit, codex, devin; `PREFLIGHT_BOT_NAMES` replaces the set) coupled to a PR/review reference — a parenthetical credit, `per <bot> review`, or `<bot> review of #N`. Naming a bot is not the shape: prose describing reviewer behavior stays clean. `CHANGELOG.md` is exempt — rationale lives there. | built in |
@@ -47,7 +49,8 @@ clean empty diff.
 
 Shell files are `*.sh`, `*.bash`, or anything with a `sh`/`bash` shebang.
 Deleted files, and files under `tests/` or `fixtures/`, are out of scope
-for the lanes that judge whole files. A lane whose tool is missing skips
+for the lanes that judge whole files — `unwired-suite`, whose subject is
+the suite itself, is the exception. A lane whose tool is missing skips
 silently — an absent shellcheck never fails a run and never passes one.
 
 Exit codes: `0` clean, `1` findings, `2` usage/environment error (bad flag,

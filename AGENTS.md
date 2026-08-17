@@ -195,6 +195,7 @@ Each canonical agent declares its own `effort:` (`low` | `medium` | `high` | `xh
 - **Test after CLI changes.** `cd cli && cargo test`; integration via `cli/scripts/integration-check.sh` (throwaway temp project). `cargo run -- add` from inside the checkout installs into the checkout itself — not a validation path.
 - **Hooks must be portable.** No hardcoded paths.
 - **Skill scripts and tests are Bash 3.2 (macOS default).** No `mapfile`/`readarray`, `declare -A`/`local -A`, `${var,,}`, or `exec {fd}>`; guard empty-array expansion with `"${arr[@]+"${arr[@]}"}"`. Per-skill lint tests enforce this.
+- **`--` before variable path arguments** applies to values sourced from configuration, argv, or the environment — not to a path the script built itself (`mktemp -d`, its own fixture directory).
 - **New `tests/*.sh` and `scripts/*` files need the executable bit** (`chmod +x` before committing). CI fails non-executable files; `scripts/lib/` sourced libraries are the exception.
 - **Worktrees live OUTSIDE the repo root** at `~/dev/.worktrees/vstack/<id>`, never in-repo `trees/`. Use the path `worktree create` prints.
 - **Child workflows return JSON to parent.** Subagent workflows output JSON in `<output_format>` tags; the calling primary agent writes files.

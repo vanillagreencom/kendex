@@ -67,6 +67,38 @@ else
   bad "the default scope is base-to-worktree, so it sees both" "rc=$RC out=$OUT"
 fi
 
+echo "=== --staged reads a lane's policy inputs from the index too ==="
+seed stagedpolicy
+mkdir -p "$R/tests" "$R/.github/workflows"
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+git -C "$R" commit -qm ci
+# Staged: a new suite AND the workflow edit that wires it. The worktree copy
+# of the workflow is then reverted, so a lane reading the worktree would call
+# the staged suite unwired.
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho new\n' >"$R/tests/new.test.sh"
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/new.test.sh\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
+run_pf --staged
+if [ "$RC" -eq 0 ] && ! has "unwired-suite"; then
+  ok "the staged runner wires the staged suite, whatever the worktree copy says"
+else
+  bad "the staged runner wires the staged suite, whatever the worktree copy says" "rc=$RC out=$OUT"
+fi
+
+# The inverse: only the worktree copy names it. The staged runner does not,
+# so the staged suite is unwired.
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho new2\n' >"$R/tests/new2.test.sh"
+git -C "$R" add tests/new2.test.sh
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/new2.test.sh\n' >"$R/.github/workflows/ci.yml"
+run_pf --staged
+if [ "$RC" -eq 1 ] && has "tests/new2.test.sh:0: [unwired-suite]"; then
+  ok "a worktree-only mention does not wire a staged suite"
+else
+  bad "a worktree-only mention does not wire a staged suite" "rc=$RC out=$OUT"
+fi
+
 echo "=== untracked files are new files in the default scope, invisible to --staged ==="
 seed untracked
 printf '# Never added\n\nTODO: untracked and unreferenced.\n' >"$R/docs/never-added.md"

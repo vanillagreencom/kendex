@@ -60,6 +60,42 @@
   missing install whose printed remedy is a reinstall that changes nothing.
   OpenCode exposes no such switch; Pi's live in vstack's own extension-manager
   UI and stay out of the report (VST-258).
+- preflight gains three added-line lanes taken from the classes review bots
+  keep finding first: `unwired-suite` (a new `tests/*.test.sh`,
+  `tests/test-*.sh` or `*.test.ts`/`.js`/`.mjs` that no tracked runner
+  invokes — suites have shipped that CI never ran), `mktemp-trap` (a new
+  shell file whose scratch directory no `trap ... EXIT` ever removes), and a
+  `fail-open` extension for `grep`/`find`/`git`/`jq`/`diff`/`cmp` whose
+  status a trailing `|| true` erases, which turns "could not read the input"
+  into a clean empty answer. Wiring evidence for the first lane is read from
+  the tracked runners themselves — the workflows, `tools/validate*`,
+  `scripts/validate*`, the package/build manifests, and a `run-all.sh`
+  beside the suite — through the same index-vs-worktree resolution the rest
+  of the tool uses, so `--staged` judges the staged runner. Both new-file
+  queries now disable rename detection like the rest of the change-set
+  queries: a file that arrives by `git mv` is the new file it now is, which
+  also un-blinds the existing strict-mode check.
+
+- Reviewer agents gain five probes for the classes that were being caught
+  downstream instead of in review: surface enumeration and teardown symmetry
+  and staged-vs-worktree policy reads (`reviewer-correctness`), enumerations
+  of named repo objects re-derived in both directions (`reviewer-doc`), the
+  satisfied-but-inert control forms a text-matching guard must be shown to
+  reject (`reviewer-test`), and read-then-write-back files proven regular and
+  non-symlink at the point of write (`reviewer-safety`).
+
+- The `--` rule now says which paths it governs: values sourced from
+  configuration, argv, or the environment, never a path the script built
+  itself. The unqualified wording drove more declined review threads than
+  real fixes, so the qualifier ships in `skills/code-quality/SKILL.md` and
+  `AGENTS.md`, and the same carve-out — with the test-owned `mktemp -d`
+  scratch and the `${arr[@]+"${arr[@]}"}` empty-array idiom — is published
+  where the review bots read it, in the new
+  `.github/instructions/tests.instructions.md` and `.pr_agent.toml`.
+
+- orch PR-comment triage batches fix rounds per fully-reviewed head: a push
+  restarts every reviewer, so a round pushed into an open review pass buys
+  duplicate findings and unanswered threads.
 
 - second-opinion settings example: the `SECOND_OPINION_CURRENT_MODEL` block
   announced "three cases, and only the third makes a project file usable at

@@ -78,7 +78,7 @@ fires() { # LABEL EXPECTED-SUBSTRING
 echo "=== benign patterns across every lane stay clean ==="
 seed benign
 # mktemp is fine under errexit; a new script that declares strict mode is fine.
-printf '#!/usr/bin/env bash\nset -euo pipefail\nTMP="$(mktemp -d)"\necho "$TMP"\n' >"$R/scripts/strict.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nTMP="$(mktemp -d)"\ntrap %s EXIT\necho "$TMP"\n' "'rm -rf \"\$TMP\"'" >"$R/scripts/strict.sh"
 # A test-tree script sets its own rules — including the fixture path it cites.
 printf '#!/usr/bin/env bash\n# fixture: docs/gone.md\necho helper\n' >"$R/tests/helper.sh"
 # Every benign doc-citation shape a source file can carry.
@@ -133,20 +133,126 @@ printf '# Notes\n\nReworked (Copilot review of #212).\n' >"$R/tests/notes.md"
 # A doc outside the root speaks about another subtree, not about our files.
 printf '# Notes\n\nThe installer writes `hooks/vstack-autorepair` into the consumer.\n' >"$R/docs/notes.md"
 printf '{\n  "ok": true\n}\n' >"$R/data/ok.json"
+# A suite a runner names is wired; a scratch directory its own EXIT trap
+# removes is cleaned up; a captured status is the shape the fail-open lane
+# asks for, and a conditional without `true`/`:` never swallowed anything.
+mkdir -p "$R/.github/workflows"
+cat >"$R/.github/workflows/ci.yml" <<'YML'
+name: ci
+on:
+  push:
+    paths:
+      - '*/*'
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash tests/wired.test.sh
+      - run: node --test scripts/widget.test.ts
+YML
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho wired\n' >"$R/tests/wired.test.sh"
+cat >"$R/scripts/scratch.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+D="$(mktemp -d)"
+trap 'rm -rf "$D"' EXIT
+echo "$D"
+EOF
+cat >"$R/scripts/status.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+# Naming the shapes is not writing them: a comment showing mktemp -d, and a
+# comment showing grep -q x f || true, run nothing.
+MSG="the idiom is grep -q x f || true"
+usage() { printf 'creates a mktemp -d scratch dir\n'; }
+status=0
+grep -q x -- "$1" || status=$?
+[ "$status" -le 1 ] || exit 2
+find . -name x >/dev/null || echo none
+echo "$MSG"
+usage
+EOF
 printf '{\n  // a comment: this dialect is real and jq is right to reject it\n  "strict": true\n}\n' >"$R/tsconfig.json"
 git -C "$R" add -A
 run_pf
-clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, bot mentions, exempt changelogs, or JSON-with-comments"
+clean "no lane fires on placeholders, URLs, quoted or data-file or test-file doc cites, foreign subtrees, referenced TODOs, strict scripts, wired suites, trapped scratch dirs, captured statuses, the same shapes named in a comment or a string, bot mentions, exempt changelogs, or JSON-with-comments"
 
 echo "=== control: the same fixture still fails on a real defect ==="
 printf 'And a citation that is dead: `docs/gone.md`.\n' >>"$R/README.md"
 printf 'Hardened per qodo review.\n' >>"$R/README.md"
 printf '# and a source line whose citation is dead: docs/gone.md\n' >>"$R/scripts/cites.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/notrap.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho x\ngit rev-parse --git-dir >/dev/null || true\n' >"$R/scripts/swallow.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho orphan\n' >"$R/tests/orphan.test.sh"
 git -C "$R" add -A
 run_pf
 fires "the benign fixture is not clean because nothing ran" "README.md:24: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "the benign source file is not clean because nothing ran" "scripts/cites.sh:11: [docs-cited-paths] cites a path that does not exist: docs/gone.md"
 fires "the same benign bot mentions do not shield a real credit beside them" "README.md:25: [reviewer-attribution]"
+fires "the trapped scratch dir beside it does not shield an untrapped one" "scripts/notrap.sh:3: [mktemp-trap]"
+fires "the captured status beside it does not shield a swallowed one" "scripts/swallow.sh:4: [fail-open] git || true swallows exit 2"
+fires "the wired suites beside it, and the workflow path filter globbing everything, do not wire an unwired one" "tests/orphan.test.sh:0: [unwired-suite]"
+
+echo "=== a runner set that proves nothing decides nothing ==="
+seed norunner
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho orphan\n' >"$R/tests/orphan.test.sh"
+git -C "$R" add -A
+run_pf
+clean "a new suite in a repository with no workflow, manifest or run-all script is not called unwired"
+
+# The same suite, once a runner exists to read: the silence above was the
+# missing runner set, not a lane that never runs.
+mkdir -p "$R/.github/workflows"
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+run_pf
+fires "once one runner exists, the same suite is unwired" "tests/orphan.test.sh:0: [unwired-suite]"
+
+# A runner this tool cannot read leaves the set incomplete, and an
+# incomplete set cannot prove a suite unwired.
+ln -s ../nowhere/package.json "$R/package.json"
+git -C "$R" add -A
+run_pf
+clean "an unreadable runner leaves the suite unproven rather than unwired"
+
+# A package manifest below the repo root runs what lives beside it, so a
+# suite in its subtree is wired even when no path anywhere names the suite.
+seed manifestdir
+mkdir -p "$R/pkg/tests" "$R/.github/workflows"
+printf 'name: ci\non: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test --workspaces\n' >"$R/.github/workflows/ci.yml"
+printf '{\n  "name": "pkg",\n  "scripts": { "test": "node --test" }\n}\n' >"$R/pkg/package.json"
+git -C "$R" add -A
+git -C "$R" commit -qm pkg
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho pkg\n' >"$R/pkg/tests/pkg.test.sh"
+git -C "$R" add -A
+run_pf
+clean "a suite beside a package manifest is wired by that manifest, with no path naming it"
+
+# Outside that manifest's subtree the same suite has nothing running it.
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho far\n' >"$R/tests/far.test.sh"
+git -C "$R" add -A
+run_pf
+fires "a suite outside every manifest subtree is still unwired" "tests/far.test.sh:0: [unwired-suite]"
+
+echo "=== inert trap text arms nothing; quoted command text swallows nothing; an untracked runner wires ==="
+seed inert
+mkdir -p "$R/.github/workflows"
+printf 'on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/other.test.sh\n' >"$R/.github/workflows/ci.yml"
+git -C "$R" add -A
+git -C "$R" commit -qm "runner that wires another suite"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n# trap '"'"'rm -rf "$D"'"'"' EXIT\nMSG="add trap cleanup EXIT later"\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/inerttrap.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nMSG="diagnostic: (git rev-parse --git-dir || true)"\necho "$MSG"\n' >"$R/scripts/quotedcmd.sh"
+printf 'echo suite\n' >"$R/tests/fresh.test.sh"
+printf 'on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash tests/fresh.test.sh\n' >"$R/.github-fresh.yml"
+mv "$R/.github-fresh.yml" "$R/.github/workflows/fresh.yml"
+run_pf
+fires "a commented and a quoted trap do not shield an untrapped mktemp" "scripts/inerttrap.sh:5: [mktemp-trap]"
+case "$OUT" in *"quotedcmd.sh"*) bad "a command example quoted inside a message is not a swallowed status" "$OUT" ;; *) ok "a command example quoted inside a message is not a swallowed status" ;; esac
+case "$OUT" in *"tests/fresh.test.sh"*) bad "an untracked workflow beside an untracked suite wires it" "$OUT" ;; *) ok "an untracked workflow beside an untracked suite wires it" ;; esac
+git -C "$R" add -A
+run_pf
+fires "the same fixture staged reads the same way (trap)" "scripts/inerttrap.sh:5: [mktemp-trap]"
+case "$OUT" in *"tests/fresh.test.sh"*) bad "the staged workflow wires the staged suite" "$OUT" ;; *) ok "the staged workflow wires the staged suite" ;; esac
 
 echo "=== violations on lines this diff did not touch stay invisible ==="
 seed untouched

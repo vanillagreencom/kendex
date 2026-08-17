@@ -19,7 +19,7 @@ Memory and thread safety in compiled code, AND concurrency of processes and file
 
 - **Unsafe/UB**: blocks bypassing language guarantees; aliasing, uninitialized memory, type punning; buffer overflows, use-after-free, null dereference.
 - **Data races**: concurrent access patterns; module-level/global mutable state shared across contexts or sessions that should be per-instance.
-- **File/process races**: TOCTOU (existence check separate from the effectful operation; check-then-`mv` where a concurrent writer silently wins), non-atomic multi-file updates, signals to possibly-reused PIDs, teardown awaits without deadlines that can hang exit.
+- **File/process races**: TOCTOU (existence check separate from the effectful operation; check-then-`mv` where a concurrent writer silently wins), non-atomic multi-file updates, signals to possibly-reused PIDs, teardown awaits without deadlines that can hang exit. A file the change reads then writes back (hooks, settings, baselines) is proven a regular non-symlink file at the point of write, not at an earlier existence check.
 - **Lock-free**: atomic ordering, ABA, memory reclamation.
 
 ## Rust Rules

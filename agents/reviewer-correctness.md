@@ -31,8 +31,11 @@ For each changed predicate, parser, or guard, mentally execute:
 - **Locale/Unicode** — `[A-Za-z]` ranges and byte-wise tests under non-C locales and non-ASCII identifiers.
 - **Canonicalization** — lexical path checks where symlinks or `..` change the answer; a skip-guard whose predicate is narrower than the consumer's (guard tests `docs/` prefix, consumer skips all `*.md`).
 - **Sibling consistency** — two code paths answering the same question with different logic.
+- **Surface enumeration** — when a change adds or edits a check, enumerate the surfaces it must cover (every extension, every directory, every syntactic form) and name each one it skips.
 - **Declarative formats** — a new manifest/grammar/config the code parses gets every field × every malformation (absent, empty, duplicated, extra, non-canonical, wrong type), never a sample; report what the parser silently accepts as one class.
 - **Pre-steady-state** — behavior while detection is still pending, state is unseeded, or readiness was declared on selection rather than on answerability.
+- **Teardown symmetry** — for every install/enable/claim path, walk uninstall/disable/release under: another worktree still installed, the helper already missing, a partially applied prior run, and a foreign tool owning the same file.
+- **Staged vs worktree** — a `--staged` or index-reading mode reads its policy inputs (baseline, excludes, settings) from the index too, never from the worktree.
 
 ## Output
 
