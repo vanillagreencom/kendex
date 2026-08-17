@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
-# commit-msg — conventional-commit format gate over a commit message,
-# built to sit directly in .git/hooks/commit-msg (it takes the message
-# file git passes, or stdin).
-#
-# The header (first non-blank, non-comment line) must be
-# `type(scope)!: subject` — scope and `!` optional. The scope class
-# accepts uppercase issue keys (fix(ABC-123): ...) and `#`-prefixed issue
-# numbers (fix(#123): ...). Git-generated messages pass unchanged: Merge,
-# Revert, Reapply, fixup!, squash!, amend!.
+# commit-msg — conventional-commit gate over one message, built to sit
+# directly in .git/hooks/commit-msg (it takes the message file git passes, or
+# stdin). The header (first non-blank, non-comment line) must be
+# `type(scope)!: subject`; git-generated messages pass unchanged.
 #
 # Exit codes: 0 pass; 1 violation; 2 usage/config/collection error (an
 # unreadable message file is a collection error, never a pass).
@@ -65,8 +60,7 @@ else
 fi
 
 gg_repo_root_cd
-# Its own hook process, so it turns the mode on for itself: the accepted type
-# list is the one the commit carries, not an unstaged edit to it.
+# The accepted type list is the one the commit carries, not an unstaged edit.
 gg_settings_index_mode
 
 TYPES="$(gg_setting GROWTH_GUARDS_COMMIT_TYPES "build chore ci docs feat fix perf refactor revert style test")" || exit 2

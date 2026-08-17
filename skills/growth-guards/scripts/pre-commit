@@ -1,18 +1,12 @@
 #!/usr/bin/env bash
 # pre-commit — the staged-scope guard chain, shaped for the git pre-commit
-# hook (the installed .git/hooks/vstack-guards shim execs it).
-#
-# Chain, in order:
-#   1. size-ratchet, when the sibling skill is installed beside this one;
-#   2. `growth-guards all` — the batch, staged-scope by default
-#      (todo-ban, byte-ceiling --staged, suppression-ban);
-#   3. the repo-local entry named by GROWTH_GUARDS_PRE_COMMIT_LOCAL
-#      (repo-root-relative executable; empty = none).
+# hook (the installed .git/hooks/vstack-guards shim execs it): size-ratchet
+# when the sibling skill is installed, then `growth-guards all`, then the
+# repo-local entry named by GROWTH_GUARDS_PRE_COMMIT_LOCAL.
 #
 # Every step runs before the verdict, so one commit attempt reports every
-# blocker. Aggregation matches the batch dispatcher and fails CLOSED: exit 2
-# if any step could not complete, else 1 if any step found violations, else 0.
-# Both nonzero verdicts block the commit.
+# blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
+# else 1 if any found violations, else 0. Both nonzero verdicts block.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,19 +66,18 @@ run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
   esac
 }
 
-# Sibling-skill resolution, one relative path for both install shapes: a
-# consumer's .agents/skills/<skill>/scripts and vstack's own skills/<skill>/
-# scripts are the same two levels up.
+# One relative path for both install shapes: a consumer's
+# .agents/skills/<skill>/scripts and vstack's own skills/<skill>/scripts are
+# the same two levels up.
 SIZE_RATCHET_SKILL="$SCRIPT_DIR/../../size-ratchet"
 SIZE_RATCHET="$SIZE_RATCHET_SKILL/scripts/size-ratchet"
 # Whether the SKILL is installed decides, not whether its script happens to be
-# runnable: an installed skill whose script is missing, dangling or
-# unexecutable is a broken install, and the chain must never pass by losing a
-# gate. -L catches a dangling symlink, which -e reports as absent.
+# runnable: an installed skill with a missing, dangling or unexecutable script
+# is a broken install, and the chain must never pass by losing a gate. -L
+# catches a dangling symlink, which -e reports as absent.
 if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
   [ -x "$SIZE_RATCHET" ] || gg_config_error "the size-ratchet skill is installed at $SIZE_RATCHET_SKILL but $SIZE_RATCHET is missing or not executable — reinstall it"
-  # --staged: the hook must judge the blobs the commit records, not the
-  # worktree copies, which a revert after `git add` would leave clean.
+  # --staged: judge the blobs the commit records, not the worktree copies.
   run_step size-ratchet "$SIZE_RATCHET" --staged
 else
   echo "=== pre-commit: size-ratchet not installed — skipped"
@@ -98,8 +91,8 @@ LOCAL_RAW="$(gg_setting GROWTH_GUARDS_PRE_COMMIT_LOCAL "")" || exit 2
 if [ -n "$LOCAL_RAW" ]; then
   LOCAL_ENTRY="$(gg_config_path "$LOCAL_RAW" GROWTH_GUARDS_PRE_COMMIT_LOCAL)" || exit 2
   [ -x "$LOCAL_ENTRY" ] || gg_config_error "GROWTH_GUARDS_PRE_COMMIT_LOCAL names '$LOCAL_ENTRY', which is missing or not executable"
-  # A repo-local entry follows the family contract: 0 clean, 1 violations,
-  # anything else "could not complete". Every nonzero blocks either way.
+  # The family contract applies: 0 clean, 1 violations, anything else "could
+  # not complete". Every nonzero blocks either way.
   run_step "repo-local: $LOCAL_ENTRY" "./$LOCAL_ENTRY"
 fi
 

@@ -1,6 +1,6 @@
 ---
 name: review-gate
-description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?' (review objects, trusted clean-analysis checks, comment-form passes, operator override) — or, under REVIEW_GATE_MODE 'off', evaluates nothing and attests only that the repo disabled the gate — and one writer posts the answer as a merge-blocking commit status, with an offline decision-table selftest and a live replay harness. Load when wiring, adopting, tuning, or debugging a repo's review gate or its REVIEW_GATE_* settings."
+description: "Org-wide PR review gate: one predicate answers 'is this exact head reviewed?', one writer posts the answer as a merge-blocking commit status. Load to wire, adopt, tune, or debug a repo's gate or its REVIEW_GATE_* settings."
 license: MIT
 user-invocable: true
 metadata:

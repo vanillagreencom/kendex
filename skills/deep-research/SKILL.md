@@ -1,6 +1,6 @@
 ---
 name: deep-research
-description: "Exa-powered deep research for evidence-backed findings reports. Use for research tasks, architectural investigations, vendor/library comparisons, technology choices, and any workflow that needs a findings.md report. In Pi, prefer pi-web-tools web_research when available; in other harnesses, use the bundled script."
+description: "Exa-powered deep research producing an evidence-backed findings.md report. Load for research tasks, architectural investigations, and vendor, library, or technology comparisons."
 license: MIT
 user-invocable: true
 argument-hint: "report [query] --output findings.md"

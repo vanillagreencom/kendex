@@ -46,7 +46,8 @@ Local commits are covered by the git hooks below, not by these calls.
 
 Writes three files into the repository's `.git/hooks` (never
 `core.hooksPath`, which redirects the whole directory and would disable the
-repository's existing hooks):
+repository's existing hooks; where a repo already sets it, the install is a
+reported skip and only removal still runs):
 
 | File | Content |
 |---|---|
@@ -60,13 +61,13 @@ and then falls through to whatever the hook already did — whose own exit
 status still decides.
 
 `pre-commit` runs `scripts/pre-commit`, which judges ONE commit snapshot —
-staged content, and tracked configuration read from the index, so an
-unstaged edit cannot switch a check off for content the commit keeps:
-`size-ratchet --staged` when that skill is installed beside this one, then the `growth-guards` batch over the staged
-content, then the repo-local entry named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`
-(repo-root-relative executable; empty means none). `commit-msg` runs
-`scripts/commit-msg` on git's message file. Every step runs before the
-verdict, so one attempt reports every blocker.
+staged content, and tracked configuration read from the index, so an unstaged
+edit cannot switch a check off for content the commit keeps: `size-ratchet
+--staged` when that skill is installed beside this one, then the
+`growth-guards` batch over the staged content, then the repo-local entry named
+by `GROWTH_GUARDS_PRE_COMMIT_LOCAL` (repo-root-relative executable; empty
+means none). `commit-msg` runs `scripts/commit-msg` on git's message file.
+Every step runs before the verdict, so one attempt reports every blocker.
 
 The shims BLOCK, and fail closed, on the family's exit contract: `1` for a
 violation, carrying the check's own remediation text, and `2` for a guard
@@ -78,13 +79,13 @@ Repeat runs are no-ops, and repairs. A hook counts as current only when it
 carries the EXACT delegating line on a line of its own — a line that was
 commented out, truncated, or left behind by an older version is rewritten,
 not trusted — and a hook whose executable bit was cleared gets it back,
-because git silently ignores a hook it cannot execute. An
-existing `pre-commit`/`commit-msg` keeps its content and its own exit status;
-a hook that is symlinked, deliberately disabled (not executable), or whose
-shebang names an interpreter that is not a POSIX-compatible shell is left
-alone entirely (reported, and the install exits 1). A file at the helper path that this installer did not write is
-never overwritten. A bare repository is refused — there is no work tree to
-guard.
+because git silently ignores a hook it cannot execute. An existing
+`pre-commit`/`commit-msg` keeps its content and its own exit status; a hook
+that is symlinked, deliberately disabled (not executable), or whose shebang
+names an interpreter that is not a POSIX-compatible shell is left alone
+entirely (reported, and the install exits 1). A file at the helper path that
+this installer did not write is never overwritten. A bare repository is
+refused — there is no work tree to guard.
 
 Linked worktrees share the install, since git resolves their hooks to the
 main checkout's hooks directory. The same sharing governs removal: while any
@@ -211,26 +212,17 @@ type(scope)!: subject        # scope and '!' optional
 
 ## Configuration
 
-| Key | Default | Meaning |
-|---|---|---|
-| `GROWTH_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban` | Batch check list. |
-| `GROWTH_GUARDS_TODO_EXCLUDES` | `tools/todo-ban-excludes` | todo-ban exclusion list. |
-| `GROWTH_GUARDS_BYTE_CEILING_KB` | `200` | Ceiling in KB. |
-| `GROWTH_GUARDS_BYTE_EXCLUDES` | `tools/byte-ceiling-excludes` | byte-ceiling exclusion list. |
-| `GROWTH_GUARDS_SUPPRESSION_EXCLUDES` | `tools/suppression-ban-excludes` | suppression-ban exclusion list. |
-| `GROWTH_GUARDS_SUPPRESSION_BASELINE` | `tools/suppression-baseline.tsv` | Bare-allow baseline. |
-| `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted types. |
-| `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. Empty means none; a configured path that is missing or not executable blocks the commit. |
-
-Each key resolves environment > `.env.local` > `.vstack/settings.toml` >
-committed `vstack.settings.toml` (flat `KEY = "value"` under `[env]`) >
-`.env` > default (env files use `KEY=value` or `export KEY=value`; parsed,
-never sourced). Only an ABSENT source is skipped: a source that exists but
-is unusable — unreadable, a directory, FIFO, socket or device, or a symlink
+Every key, its default and its meaning: [SKILL.md](SKILL.md). Each resolves
+environment > `.env.local` > `.vstack/settings.toml` > committed
+`vstack.settings.toml` (flat `KEY = "value"` under `[env]`) > `.env` >
+default (env files use `KEY=value` or `export KEY=value`; parsed, never
+sourced). Only an ABSENT source is skipped: a source that exists but is
+unusable — unreadable, a directory, FIFO, socket or device, or a symlink
 that does not resolve — is a config error (exit 2), never a fall-through to
 the next layer; `/dev/null` forces the built-in defaults. Per-check flags
-(`--excludes`, `--baseline`) override every source for the paths. All relative paths are repo-root-relative; the
-scripts `cd` to `git rev-parse --show-toplevel` before resolving anything.
+(`--excludes`, `--baseline`) override every source for the paths. All
+relative paths are repo-root-relative; the scripts `cd` to
+`git rev-parse --show-toplevel` before resolving anything.
 
 ```toml
 [env]

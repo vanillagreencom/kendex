@@ -1,6 +1,6 @@
 ---
 name: iced-rs
-description: "Iced 0.14 GUI framework expert — custom widgets via iced::advanced, overlays, Canvas, Shader, pane_grid, theming, subscriptions, Elm architecture. Load whenever building, modifying, or debugging any Iced UI. Bundled reference library covers the full 0.14 API; bundled examples include all upstream iced examples plus the iced_wgpu renderer source."
+description: "Iced 0.14 GUI expert: custom widgets via iced::advanced, overlays, Canvas, Shader, pane_grid, theming, subscriptions, Elm architecture, with a bundled full-API reference. Load whenever building or debugging an Iced UI."
 license: MIT
 user-invocable: true
 metadata:

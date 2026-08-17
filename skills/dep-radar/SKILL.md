@@ -1,6 +1,6 @@
 ---
 name: dep-radar
-description: "Sweep every pinned version in the repo (SDKs, pinned runtime binaries, npm/cargo deps, vendored forks, model weights), check upstream, read changelogs, and bias to upgrade — apply bumps (majors included) with their fallout fixed in the same per-surface PR, deferring only on a strong concrete blocker. Reports the narrow owner-decision tier (model-weight swaps, data-scope changes) and new-capability opportunities. Self-maintains a per-repo inventory; run on a schedule/loop or on demand."
+description: "Sweeps every pinned version in the repo — deps, SDKs, vendored forks, model weights — checks upstream, and lands upgrades with their fallout in one PR per surface. Load to run or tune a dependency sweep."
 license: MIT
 user-invocable: true
 dependencies:

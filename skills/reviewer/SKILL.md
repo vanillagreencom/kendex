@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: "Strict review and QA workflows: shared reviewer ethos, code-review classification, finding JSON schema, and QA-label review lifecycle. Load this skill when reviewing a diff, classifying findings, returning a verdict, or handling a QA-label-triggered review."
+description: "Strict review and QA workflows: reviewer ethos, code-review classification, the finding JSON schema, and the QA-label lifecycle. Load when reviewing a diff, classifying findings, or returning a verdict."
 license: MIT
 user-invocable: true
 dependencies:
