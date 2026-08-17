@@ -279,25 +279,30 @@ export async function readTranscriptTail(filePath: string | undefined, maxBytes 
 		// The first record's stamp survives the cut so elapsed times keep the
 		// session's real origin instead of restarting at the tail.
 		let originTs: unknown;
-		let firstLine: Buffer | undefined;
 		const chunk = Buffer.alloc(64 * 1024);
+		// The first record is read to ITS OWN newline — which can sit past the
+		// cut offset when the record (it embeds the full task prompt) is longer
+		// than the whole dropped prefix — bounded at 1MB.
+		{
+			let firstLine = Buffer.alloc(0);
+			for (let position = 0; position < size && firstLine.length <= 1024 * 1024; ) {
+				const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+				if (bytesRead <= 0) break;
+				const boundary = chunk.subarray(0, bytesRead).indexOf(10);
+				firstLine = Buffer.concat([firstLine, chunk.subarray(0, boundary === -1 ? bytesRead : boundary)]);
+				position += bytesRead;
+				if (boundary !== -1) break;
+			}
+			try {
+				const parsed = JSON.parse(firstLine.toString("utf-8"));
+				originTs = parsed?.ts ?? parsed?.timestamp;
+			} catch {
+				originTs = undefined;
+			}
+		}
 		for (let position = 0; position < start; ) {
 			const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, start - position), position);
 			if (bytesRead <= 0) break;
-			if (originTs === undefined && firstLine !== null) {
-				const boundary = chunk.subarray(0, bytesRead).indexOf(10);
-				const piece = chunk.subarray(0, boundary === -1 ? bytesRead : boundary);
-				firstLine = firstLine ? Buffer.concat([firstLine, piece]) : Buffer.from(piece);
-				if (boundary !== -1 || firstLine.length > 1024 * 1024) {
-					try {
-						const parsed = JSON.parse(firstLine.toString("utf-8"));
-						originTs = parsed?.ts ?? parsed?.timestamp;
-					} catch {
-						originTs = undefined;
-					}
-					firstLine = null as never;
-				}
-			}
 			for (let index = 0; index < bytesRead; index += 1) if (chunk[index] === 10) droppedLines += 1;
 			position += bytesRead;
 		}

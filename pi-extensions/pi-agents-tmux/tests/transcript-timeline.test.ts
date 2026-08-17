@@ -77,6 +77,18 @@ test("tool durations never render 60s; sizes are UTF-8 bytes", () => {
 	assert.match(out, /5B/);
 });
 
+test("toolUseId variants pair out-of-order same-named calls correctly", () => {
+	const out = formatTranscriptForDisplay([
+		stream(0, { args: { command: "first" }, toolName: "bash", toolUseId: "u1", type: "tool_execution_start" }),
+		stream(1, { args: { command: "second" }, toolName: "bash", tool_use_id: "u2", type: "tool_execution_start" }),
+		stream(2, { toolName: "bash", tool_use_id: "u2", type: "tool_execution_end", status: "ok" }),
+		stream(9, { isError: true, toolName: "bash", toolUseId: "u1", type: "tool_execution_end" }),
+	].join("\n"));
+	const rows = out.split("\n");
+	assert.match(rows[0]!, /^✖.*tool bash \(first\) · error · 9\.0s/);
+	assert.match(rows[1]!, /^ .*tool bash \(second\) · ok · 1\.0s/);
+});
+
 test("id-less same-named tool calls pair first-started-first-ended", () => {
 	const out = formatTranscriptForDisplay([
 		stream(0, { args: { command: "first" }, toolName: "bash", type: "tool_execution_start" }),
@@ -202,6 +214,14 @@ test("readTranscriptTail cuts on a line boundary and counts dropped events", asy
 	const tail = await readTranscriptTail(path, 500);
 	assert.ok(tail && tail.droppedLines > 0, "expected a cut");
 	assert.equal(tail!.originTs, at(0));
+	// First record longer than the dropped prefix: its newline sits past the
+	// cut, and the origin must still be recovered.
+	const bigFirst = join(TMP, "bigfirst.jsonl");
+	const huge = line({ task: "x".repeat(600), ts: at(0), type: "start" });
+	writeFileSync(bigFirst, `${huge}\n${line({ ts: at(7200), type: "turn_end" })}\n`);
+	const cut = await readTranscriptTail(bigFirst, 500);
+	assert.ok(cut && cut.droppedLines > 0, "expected a cut");
+	assert.equal(cut!.originTs, at(0));
 	assert.equal(tail!.droppedLines + tail!.text.split("\n").filter(Boolean).length, 50);
 	for (const kept of tail!.text.split("\n").filter(Boolean)) assert.doesNotThrow(() => JSON.parse(kept));
 	assert.equal(await readTranscriptTail(join(TMP, "missing.jsonl")), undefined);

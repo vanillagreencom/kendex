@@ -225,7 +225,7 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 				const name = stringValue(event.toolName ?? event.tool_name) ?? stringValue(event.name) ?? "tool";
 				const target = primaryToolArgument(event.args ?? event.arguments ?? event.input ?? event.params);
 				const label = target ? `tool ${name} (${oneLine(target, 60)})` : `tool ${name}`;
-				const id = stringValue(event.toolCallId ?? event.tool_call_id) ?? `name:${name}`;
+				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id) ?? `name:${name}`;
 				const row = push(stamp, label, "running");
 				const queue = openTools.get(id) ?? [];
 				queue.push({ label, row, startedAtMs: atMs });
@@ -237,7 +237,7 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 				break;
 			case "tool_execution_end": {
 				const name = stringValue(event.toolName ?? event.tool_name) ?? stringValue(event.name) ?? "tool";
-				const id = stringValue(event.toolCallId ?? event.tool_call_id) ?? `name:${name}`;
+				const id = stringValue(event.toolCallId ?? event.tool_call_id ?? event.toolUseId ?? event.tool_use_id) ?? `name:${name}`;
 				const open = openTools.get(id)?.shift();
 				const failed = event.isError === true || event.is_error === true || stringValue(event.status) === "error";
 				const status = stringValue(event.status) ?? (failed ? "error" : "ok");
