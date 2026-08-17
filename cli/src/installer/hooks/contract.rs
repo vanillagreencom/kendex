@@ -37,6 +37,7 @@ pub enum Mechanism {
 impl Mechanism {
     /// The harness whose install path writes this artifact. A cell may only
     /// name a mechanism belonging to its own column.
+    #[cfg(test)]
     pub fn harness(self) -> Harness {
         match self {
             Mechanism::ClaudeSettingsHook => Harness::ClaudeCode,
@@ -48,6 +49,7 @@ impl Mechanism {
     }
 
     /// Short label for rendered tables and CLI output.
+    #[cfg(test)]
     pub fn label(self) -> &'static str {
         match self {
             Mechanism::ClaudeSettingsHook => "settings.json hook",
@@ -246,6 +248,7 @@ pub fn unknown_event_error(hook_name: &str, event: &str) -> String {
 
 /// Text between the generated-block markers for `name`, trimmed. `None` when
 /// the block is absent or unterminated.
+#[cfg(test)]
 pub fn generated_block<'a>(content: &'a str, name: &str) -> Option<&'a str> {
     let start = format!("<!-- generated: {name} -->");
     let end = format!("<!-- /generated: {name} -->");
@@ -254,6 +257,7 @@ pub fn generated_block<'a>(content: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// The contract rendered as the markdown table published in `README.md`.
+#[cfg(test)]
 pub fn render_markdown_table() -> String {
     let mut out = String::from("| Event |");
     for harness in Harness::ALL {

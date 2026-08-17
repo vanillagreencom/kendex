@@ -216,29 +216,6 @@ fn join_markdown_blocks(first: &str, middle: &str, last: &str) -> String {
     joined
 }
 
-/// Discover all skills in a directory (looks for SKILL.md in subdirs)
-pub fn discover_skills(dir: &Path) -> Result<Vec<Skill>> {
-    let mut skills = Vec::new();
-    if !dir.exists() {
-        return Ok(skills);
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            let skill_file = path.join("SKILL.md");
-            if skill_file.exists() {
-                match Skill::from_file(&skill_file) {
-                    Ok(skill) => skills.push(skill),
-                    Err(e) => eprintln!("Warning: skipping {}: {e}", skill_file.display()),
-                }
-            }
-        }
-    }
-    skills.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(skills)
-}
-
 /// Build a dependency graph: skill name → list of required skill names.
 pub fn build_dependency_graph(skills: &[Skill]) -> HashMap<String, Vec<String>> {
     let skill_names: HashSet<&str> = skills.iter().map(|s| s.name.as_str()).collect();

@@ -1,4 +1,7 @@
-use anyhow::{Context, Result, bail};
+#[cfg(test)]
+use anyhow::Context;
+use anyhow::{Result, bail};
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -61,6 +64,7 @@ pub fn user_dir_for_current_os(
     user_dir_for_os(editor, home_dir, config_dir, current_host_os())
 }
 
+#[cfg(test)]
 pub fn settings_path_for_os(
     editor: VscodeEditor,
     home_dir: &Path,
@@ -70,6 +74,7 @@ pub fn settings_path_for_os(
     user_dir_for_os(editor, home_dir, config_dir, host_os).join("settings.json")
 }
 
+#[cfg(test)]
 pub fn patch_settings_file(path: &Path, theme_name: &str) -> Result<bool> {
     let original = if path.exists() {
         fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?

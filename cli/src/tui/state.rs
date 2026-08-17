@@ -8,8 +8,6 @@ pub(super) struct InstalledInfo {
     pub harnesses: Vec<String>,
     pub kind: Option<crate::config::ItemKind>,
     pub installed_at: String,
-    /// Lock entry from whichever scope was loaded first (for legacy callers).
-    pub lock_entry: crate::config::LockEntry,
     /// Lock entry from the project scope (if installed there).
     pub project_entry: Option<crate::config::LockEntry>,
     /// Lock entry from the global scope (if installed there).
@@ -34,7 +32,6 @@ pub(super) fn load_installed_state() -> InstalledState {
                     harnesses: entry.harnesses.clone(),
                     kind: Some(entry.kind),
                     installed_at: entry.installed_at.clone(),
-                    lock_entry: entry.clone(),
                     project_entry: Some(entry.clone()),
                     global_entry: None,
                     outdated,
@@ -67,7 +64,6 @@ pub(super) fn load_installed_state() -> InstalledState {
                     harnesses: entry.harnesses.clone(),
                     kind: Some(entry.kind),
                     installed_at: entry.installed_at.clone(),
-                    lock_entry: entry.clone(),
                     project_entry: None,
                     global_entry: Some(entry.clone()),
                     outdated,
@@ -703,7 +699,6 @@ mod tests {
             harnesses: entry.harnesses.clone(),
             kind: Some(kind),
             installed_at: entry.installed_at.clone(),
-            lock_entry: entry.clone(),
             project_entry: Some(entry),
             global_entry: None,
             outdated,

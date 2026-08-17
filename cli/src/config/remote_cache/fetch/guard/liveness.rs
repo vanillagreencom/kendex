@@ -10,7 +10,6 @@
 //! Unused on unix, where [`super::FlockGuard`] is the guard — compiled and
 //! exercised by this crate's tests all the same, since no CI lane builds for a
 //! target where it is the live implementation.
-#![allow(dead_code)]
 
 use super::{Path, PathBuf, REMOTE_CACHE_FETCH_DEADLINE, epoch_now};
 
@@ -37,6 +36,10 @@ pub(super) struct LockHeartbeat {
     thread: Option<std::thread::JoinHandle<()>>,
     /// The interval it beats at. Read by the tests that prove the production
     /// path beats at [`LOCK_HEARTBEAT`] rather than a test's own interval.
+    #[allow(
+        dead_code,
+        reason = "fallback implementation for targets no CI lane builds; only the tests read this field"
+    )]
     pub(super) beat: std::time::Duration,
 }
 

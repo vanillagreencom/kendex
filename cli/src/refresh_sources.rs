@@ -136,6 +136,7 @@ fn resolve_single_source_with(
 ///
 /// Nothing reads the caches afterwards, so every lease it takes is released
 /// as each entry is done.
+#[cfg(test)]
 pub(crate) fn refresh_remote_caches(lock: &config::LockFile) {
     let mut seen = std::collections::HashSet::new();
     for entry in lock.entries.values() {

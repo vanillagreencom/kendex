@@ -268,10 +268,6 @@ struct AppliedTargetRecord {
 
 const REVERT_STATE_VERSION: u32 = 1;
 
-pub fn run_silent(extra_name: String, theme_id: String) -> Result<ApplyOutcome> {
-    run_silent_with_options(extra_name, theme_id, true)
-}
-
 pub fn run_silent_with_options(
     extra_name: String,
     theme_id: String,
@@ -1918,27 +1914,6 @@ fn ghostty_asset_config_dirs(config_dir: &Path, config_file: &Path) -> Vec<PathB
         dirs.push(config_dir.to_path_buf());
     }
     dirs
-}
-
-fn vscode_user_dir(kind: TargetKind, env: &ApplyEnvironment) -> PathBuf {
-    let app_dir = match kind {
-        TargetKind::Vscode => "Code",
-        TargetKind::Vscodium => "VSCodium",
-        TargetKind::Cursor => "Cursor",
-        TargetKind::Ghostty | TargetKind::Tmux | TargetKind::Pi => {
-            unreachable!("non-vscode-family TargetKind passed to vscode_user_dir")
-        }
-    };
-
-    if cfg!(target_os = "macos") {
-        env.home_dir
-            .join("Library")
-            .join("Application Support")
-            .join(app_dir)
-            .join("User")
-    } else {
-        env.config_dir.join(app_dir).join("User")
-    }
 }
 
 fn shader_destination(config_dir: &Path, shader: &str) -> Result<PathBuf> {

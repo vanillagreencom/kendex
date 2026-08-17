@@ -863,15 +863,6 @@ fn parse_toml_array_strings(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn toml_scalar_string_value(value: &str) -> String {
-    value
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim()
-        .to_string()
-}
-
 fn is_legacy_pi_extra_deny_tools(tools: &[String]) -> bool {
     tools == ["get_subagent_result", "steer_subagent", "stop_subagent"]
 }
@@ -929,87 +920,6 @@ fn render_inline_table_fields(fields: &[(String, String)]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
-}
-
-fn upsert_agent_frontmatter_field(
-    content: &str,
-    agent_name: &str,
-    field: &str,
-    value: &str,
-) -> String {
-    let field_value = toml_inline_string(value);
-    let lines: Vec<&str> = content.lines().collect();
-    let string_content = toml_multiline_string_content_lines(content);
-    let mut result: Vec<String> = Vec::with_capacity(lines.len() + 4);
-    let mut i = 0;
-    let mut found_section = false;
-    let mut inserted_or_updated = false;
-    let key_prefix = format!("{} =", agent_name);
-    let key_prefix_tight = format!("{}=", agent_name);
-
-    while i < lines.len() {
-        let line = lines[i];
-        let trimmed = line.trim();
-        result.push(line.to_string());
-
-        if !string_content[i] && trimmed == "[agent-frontmatter]" {
-            found_section = true;
-            i += 1;
-            while i < lines.len() {
-                let next = lines[i];
-                let next_trimmed = next.trim();
-                if string_content[i] {
-                    result.push(next.to_string());
-                    i += 1;
-                    continue;
-                }
-                if next_trimmed.starts_with('[') && !next_trimmed.starts_with("# [") {
-                    break;
-                }
-                if next_trimmed.starts_with(&key_prefix)
-                    || next_trimmed.starts_with(&key_prefix_tight)
-                {
-                    let existing_value = next.split_once('=').map(|(_, v)| v).unwrap_or("{}");
-                    let mut fields = parse_inline_table_fields(existing_value);
-                    if let Some((_, existing)) = fields.iter_mut().find(|(k, _)| k == field) {
-                        *existing = field_value.clone();
-                    } else {
-                        fields.push((field.to_string(), field_value.clone()));
-                    }
-                    result.push(format!(
-                        "{} = {}",
-                        agent_name,
-                        render_inline_table_fields(&fields)
-                    ));
-                    inserted_or_updated = true;
-                    i += 1;
-                    continue;
-                }
-                result.push(next.to_string());
-                i += 1;
-            }
-            if !inserted_or_updated {
-                result.push(format!(
-                    "{} = {{ {} = {} }}",
-                    agent_name, field, field_value
-                ));
-                inserted_or_updated = true;
-            }
-            continue;
-        }
-        i += 1;
-    }
-
-    if !found_section {
-        result.push(String::new());
-        result.push("[agent-frontmatter]".to_string());
-        result.push(format!(
-            "{} = {{ {} = {} }}",
-            agent_name, field, field_value
-        ));
-    }
-
-    join_like(content, &result)
 }
 
 /// Write computed agent→skill mappings into the project vstack.toml.
@@ -1159,15 +1069,6 @@ pub fn write_agent_skills(project_root: &Path, agent_skill_map: &HashMap<String,
         &new_entries,
     ));
     write_if_changed(&path, out, &existing);
-}
-
-/// Deprecated compatibility shim. Default colors now live in each
-/// harness-specific frontmatter section, so this must not create a shared
-/// `[agent-frontmatter]` block.
-pub fn write_agent_colors(
-    _project_root: &Path,
-    _agent_color_map: &HashMap<String, Option<String>>,
-) {
 }
 
 /// Write the generated frontmatter defaults into `vstack.toml` as real,
@@ -1442,14 +1343,6 @@ fn pi_default_allowed_subagents_with_override(
             .collect();
     }
     crate::harness::pi::pi_default_allowed_subagents_for(agent)
-}
-
-fn pi_extra_default_deny_tools() -> Vec<String> {
-    vec![
-        "get_subagent_result".into(),
-        "steer_subagent".into(),
-        "stop_subagent".into(),
-    ]
 }
 
 fn push_color_field(
@@ -2253,69 +2146,6 @@ fn looks_like_toml_key_line(trimmed: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '"')
 }
 
-fn migrate_agent_colors_to_frontmatter(content: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let string_content = toml_multiline_string_content_lines(content);
-    let mut out = Vec::with_capacity(lines.len());
-    let mut colors: Vec<(String, String)> = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-        if !string_content[i] && trimmed == "[agent-colors]" {
-            i += 1;
-            while i < lines.len() {
-                let next = lines[i].trim();
-                if is_section_header_line(next, string_content[i]) {
-                    break;
-                }
-                if let Some((name, raw_value)) = next.split_once('=') {
-                    let value = raw_value.trim().trim_matches('"').trim().to_string();
-                    if !name.trim().is_empty() && !value.is_empty() {
-                        colors.push((name.trim().to_string(), value));
-                    }
-                }
-                i += 1;
-            }
-            continue;
-        }
-        out.push(lines[i].to_string());
-        i += 1;
-    }
-
-    let mut rendered = join_like(content, &out);
-
-    for (agent, color) in colors {
-        if !agent_frontmatter_has_field(&rendered, &agent, "color") {
-            rendered = upsert_agent_frontmatter_field(&rendered, &agent, "color", &color);
-        }
-    }
-    rendered
-}
-
-fn agent_frontmatter_has_field(content: &str, agent: &str, field: &str) -> bool {
-    let string_content = toml_multiline_string_content_lines(content);
-    let mut in_section = false;
-    let key_prefix = format!("{} =", agent);
-    let key_prefix_tight = format!("{}=", agent);
-    for (line, inside_string) in content.lines().zip(string_content) {
-        let trimmed = line.trim();
-        if is_section_header_line(trimmed, inside_string) {
-            in_section = trimmed == "[agent-frontmatter]";
-            continue;
-        }
-        if in_section
-            && !inside_string
-            && (trimmed.starts_with(&key_prefix) || trimmed.starts_with(&key_prefix_tight))
-        {
-            let existing_value = trimmed.split_once('=').map(|(_, v)| v).unwrap_or("{}");
-            return parse_inline_table_fields(existing_value)
-                .iter()
-                .any(|(key, value)| key == field && !value.trim_matches('"').trim().is_empty());
-        }
-    }
-    false
-}
-
 fn agent_frontmatter_scaffold() -> String {
     agent_frontmatter_heading()
 }
@@ -2450,27 +2280,6 @@ fn section_start(content: &str, section_header: &str) -> Option<usize> {
         offset += line.len();
     }
     None
-}
-
-fn section_end(content: &str, section_header: &str) -> Option<usize> {
-    let string_content = toml_multiline_string_content_lines(content);
-    let mut offset = 0usize;
-    let mut in_section = false;
-    for (line, inside_string) in content.split_inclusive('\n').zip(string_content) {
-        let trimmed = line.trim();
-        if is_section_header_line(trimmed, inside_string) {
-            if in_section {
-                return Some(offset);
-            }
-            in_section = trimmed == section_header;
-        }
-        offset += line.len();
-    }
-    if in_section {
-        Some(content.len())
-    } else {
-        None
-    }
 }
 
 fn ensure_agent_frontmatter_scaffold(content: &str) -> String {
@@ -4119,36 +3928,6 @@ scout = { pane = false }
         assert!(updated.contains("rust = { color = \"blue\""));
         assert!(updated.contains("[agent-frontmatter.opencode]"));
         assert!(updated.contains("color = \"#3b82f6\""));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn write_agent_colors_does_not_create_or_change_frontmatter() {
-        let dir =
-            std::env::temp_dir().join(format!("vstack_test_agent_colors_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("vstack.toml");
-        std::fs::write(
-            &path,
-            "[agent-colors]\nrust = \"blue\"\n\n[agent-skills]\nrust = []\n",
-        )
-        .unwrap();
-
-        let mut colors = HashMap::new();
-        colors.insert("rust".to_string(), Some("green".to_string()));
-        colors.insert("iced".to_string(), Some("magenta".to_string()));
-        write_agent_colors(&dir, &colors);
-
-        let updated = std::fs::read_to_string(&path).unwrap();
-        assert!(updated.contains("rust = \"blue\""));
-        assert!(!updated.contains("[agent-frontmatter]"));
-        assert!(!updated.contains("iced = { color = \"magenta\" }"));
-
-        let config = ProjectConfig::load(&dir);
-        assert_eq!(config.color_for("rust"), Some("blue"));
-        assert_eq!(config.frontmatter_for("iced", "pi").color.as_deref(), None);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

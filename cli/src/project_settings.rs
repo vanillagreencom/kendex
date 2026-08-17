@@ -407,32 +407,6 @@ fn assigned_keys(content: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn env_keys(content: &str) -> BTreeSet<String> {
-    let mut keys = BTreeSet::new();
-    let mut in_env = false;
-
-    for line in content.lines() {
-        if is_table_header(line) {
-            if is_env_header(line) {
-                in_env = true;
-                continue;
-            }
-            if in_env {
-                break;
-            }
-        }
-
-        if !in_env {
-            continue;
-        }
-        if let Some(key) = assignment_key(line) {
-            keys.insert(key);
-        }
-    }
-
-    keys
-}
-
 fn is_env_header(line: &str) -> bool {
     line.trim() == "[env]"
 }

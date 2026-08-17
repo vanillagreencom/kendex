@@ -91,6 +91,7 @@ fn scope_flag(scope: &str) -> &'static str {
 
 /// One scope's rendering, whole — drift followed by the suggestions that
 /// close it, exactly as the report prints them.
+#[cfg(test)]
 pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
     let mut suggestions = String::new();
     render_scope_parts(out, &mut suggestions, report, quiet);

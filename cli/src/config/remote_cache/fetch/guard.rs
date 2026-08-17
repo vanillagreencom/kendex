@@ -50,7 +50,10 @@ pub(in crate::config::remote_cache) enum GuardAcquire<G> {
 /// waiter lock a file nobody else can see.
 #[cfg(unix)]
 pub(in crate::config::remote_cache) struct FlockGuard {
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "held for its Drop: the kernel releases the flock when this open file closes"
+    )]
     file: std::fs::File,
 }
 
@@ -119,8 +122,8 @@ impl FlockGuard {
 
 /// Whether a try means to KEEP the guard or only to ask whether it is free.
 /// The difference is the lock file: a holder creates it, a probe never does.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum Intent {
     Hold,
     Probe,
@@ -136,7 +139,10 @@ enum Intent {
 /// reading the tree long after any fetch is over — discovering, hashing,
 /// copying, waiting on a person — so the [`LockHeartbeat`] runs for the whole
 /// lifetime of the value, not for one phase of it, and stops when it drops.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "fallback implementation for targets no CI lane builds; on unix it is compiled only so the tests exercise it"
+)]
 pub(in crate::config::remote_cache) struct PortableFetchLock {
     path: PathBuf,
     /// The record written into the lock file; Drop's proof it is still ours.
@@ -145,7 +151,10 @@ pub(in crate::config::remote_cache) struct PortableFetchLock {
     heartbeat: Option<LockHeartbeat>,
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "fallback implementation for targets no CI lane builds; on unix it is compiled only so the tests exercise it"
+)]
 impl PortableFetchLock {
     pub(in crate::config::remote_cache) fn acquire(cache_dir: &Path) -> GuardAcquire<Self> {
         Self::acquire_beating(cache_dir, LOCK_HEARTBEAT)

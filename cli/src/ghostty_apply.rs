@@ -119,6 +119,7 @@ pub fn insert_or_replace_managed_block(input: &str, extra_name: &str, block: &st
     out
 }
 
+#[cfg(test)]
 pub fn remove_managed_block(input: &str, extra_name: &str) -> String {
     let Some(range) = find_managed_block_range(input, extra_name) else {
         return input.to_string();

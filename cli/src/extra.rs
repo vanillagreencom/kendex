@@ -136,6 +136,7 @@ impl Extra {
 }
 
 /// Discover all extras in a source repo by scanning `<source>/extras/*/extra.toml`.
+#[cfg(test)]
 pub fn discover_extras(source_root: &Path) -> Result<Vec<Extra>> {
     let extras_dir = source_root.join("extras");
     let mut extras = Vec::new();

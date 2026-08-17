@@ -1389,6 +1389,7 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
     items
 }
 
+#[cfg(test)]
 fn scan_installed_hooks_on_disk_at(
     project_root: &Path,
     global: bool,

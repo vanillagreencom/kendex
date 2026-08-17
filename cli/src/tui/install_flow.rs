@@ -37,7 +37,6 @@ struct FlowState<'a> {
     installed: InstalledState,
     prev_harnesses: HashSet<String>,
     select: TabbedSelect,
-    source_selector: &'a SourceSelectorData,
     /// CLI binary update label, e.g. "1.2.3 → 1.2.4". `None` if up to date.
     cli_update: Option<String>,
     /// Active worker thread + how to apply its result once it joins. The main
@@ -157,7 +156,6 @@ pub fn run_install_flow(
         installed,
         prev_harnesses,
         select,
-        source_selector,
         cli_update,
         pending_work: None,
     };
@@ -1338,7 +1336,6 @@ fn open_apply_picker(state: &mut FlowState, extra_name: &str) {
         .unwrap_or(0);
     state.select.apply_picker = Some(crate::tui::multiselect::ApplyPickerDialog {
         extra_name: extra_name.to_string(),
-        default_theme_id: extra.theme_pack.default_theme.clone(),
         targets: extra.theme_pack.targets.clone(),
         themes,
         cursor,
@@ -2021,7 +2018,6 @@ fn execute_action(
     action: ConfirmAction,
 ) -> Result<Option<InstallFlowResult>> {
     match action {
-        ConfirmAction::Acknowledge => Ok(None),
         ConfirmAction::ApplyExtraTheme {
             extra_name,
             theme_id,
@@ -2562,10 +2558,6 @@ mod tests {
             pi_extensions: Vec::new(),
             extras: Vec::new(),
         };
-        let source_selector = SourceSelectorData {
-            current_label: "local".into(),
-            options: Vec::new(),
-        };
         let select = TabbedSelect::new(
             "x",
             vec![Tab {
@@ -2589,7 +2581,6 @@ mod tests {
             installed: InstalledState::new(),
             prev_harnesses: HashSet::new(),
             select,
-            source_selector: &source_selector,
             cli_update: None,
             pending_work: None,
         };
@@ -2619,10 +2610,6 @@ mod tests {
             hooks: Vec::new(),
             pi_extensions: Vec::new(),
             extras: Vec::new(),
-        };
-        let source_selector = SourceSelectorData {
-            current_label: "local".into(),
-            options: Vec::new(),
         };
         let mut select = TabbedSelect::new(
             "x",
@@ -2660,7 +2647,6 @@ mod tests {
             installed: InstalledState::new(),
             prev_harnesses: HashSet::new(),
             select,
-            source_selector: &source_selector,
             cli_update: None,
             pending_work: None,
         };

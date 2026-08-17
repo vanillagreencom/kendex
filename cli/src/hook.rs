@@ -201,6 +201,7 @@ fn parse_hook_frontmatter(content: &str) -> Result<HookMeta> {
 }
 
 /// Discover all hook scripts in a directory.
+#[cfg(test)]
 pub fn discover_hooks(dir: &Path) -> Result<Vec<Hook>> {
     let mut hooks = Vec::new();
     if !dir.exists() {

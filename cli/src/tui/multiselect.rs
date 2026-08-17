@@ -100,8 +100,6 @@ pub enum ConfirmAction {
         source: String,
         packages: Vec<String>,
     },
-    /// Generic acknowledgement (used for warnings).
-    Acknowledge,
     /// Apply one theme from a theme-pack extra. Sized for the spawn_work
     /// runner; opens the global/user `vstack apply` pipeline.
     ApplyExtraTheme {
@@ -194,7 +192,6 @@ pub struct RepoOption {
 /// install/remove/update use, with a spinner overlay and a flash result.
 pub struct ApplyPickerDialog {
     pub extra_name: String,
-    pub default_theme_id: String,
     pub targets: Vec<String>,
     pub themes: Vec<ApplyPickerTheme>,
     pub cursor: usize,
@@ -631,15 +628,6 @@ impl TabbedSelect {
         self.tabs[self.active_tab].groups.get(gi)?.items.get(ii)
     }
 
-    pub fn cursor_item_mut(&mut self) -> Option<&mut SelectItem> {
-        let target = self.cursor_target()?;
-        self.tabs[self.active_tab]
-            .groups
-            .get_mut(target.0)?
-            .items
-            .get_mut(target.1)
-    }
-
     pub fn move_up(&mut self) {
         let count = self.item_count();
         if count == 0 {
@@ -815,15 +803,6 @@ impl TabbedSelect {
             .count()
     }
 
-    pub fn marked_in_tab_count(&self) -> usize {
-        self.tabs[self.active_tab]
-            .groups
-            .iter()
-            .flat_map(|g| g.items.iter())
-            .filter(|i| i.selected)
-            .count()
-    }
-
     pub fn set_visible_height(&mut self, height: usize) {
         self.list_visible_rows = height;
         self.clamp_scroll();
@@ -934,10 +913,6 @@ impl TabbedSelect {
 
     pub fn active_tab_kind(&self) -> TabKind {
         self.tabs[self.active_tab].kind
-    }
-
-    pub fn has_tab(&self, kind: TabKind) -> bool {
-        self.tabs.iter().any(|t| t.kind == kind)
     }
 
     pub fn ensure_cursor_in_bounds(&mut self) {

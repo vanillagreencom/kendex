@@ -210,6 +210,7 @@ impl PiExtension {
 }
 
 /// Discover Pi packages in `<source>/pi-extensions/<name>/package.json`.
+#[cfg(test)]
 pub fn discover_pi_extensions(dir: &Path) -> Result<Vec<PiExtension>> {
     let mut out = Vec::new();
     if !dir.exists() {
@@ -366,17 +367,6 @@ pub fn is_pi_extension_installed(name: &str, global: bool) -> bool {
         return false;
     };
     dest.exists() || dest.is_symlink() || package_is_registered(name, global)
-}
-
-/// Whether the package is both deployed and registered — what Pi needs to
-/// actually load it. Deployed means a DIRECTORY, and `is_dir` traverses
-/// symlinks, so neither a regular file nor a dangling link is deployed.
-/// [`is_pi_extension_installed`] answers the looser "any trace" question.
-pub fn is_pi_extension_operational(name: &str, global: bool) -> bool {
-    let Ok(dest) = checked_pi_package_path(name, global) else {
-        return false;
-    };
-    dest.is_dir() && package_is_registered(name, global)
 }
 
 fn remove_same_scope_legacy_packages(name: &str, global: bool) -> Result<()> {
@@ -976,6 +966,7 @@ enum AppendSystemInstallAction {
 /// file is missing/empty), any previously-installed block for this extension
 /// is stripped from `APPEND_SYSTEM.md`. This makes refresh self-healing when
 /// an extension drops its instructions payload.
+#[cfg(test)]
 pub fn install_append_system_for(
     ext: &PiExtension,
     package_dir: &Path,

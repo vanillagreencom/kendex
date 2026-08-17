@@ -2,7 +2,7 @@
 # preflight — diff-scoped, fail-only checks: fail-open bash, new suites no
 # runner invokes, scratch directories no EXIT trap removes, docs citing
 # repo paths that do not exist, source files citing docs that do not exist,
-# TODO markers with no issue behind them, reviewer-bot attributions in
+# work markers with no issue behind them, reviewer-bot attributions in
 # durable prose, malformed JSON/TOML, workflow run: blocks their shell
 # cannot parse.
 #

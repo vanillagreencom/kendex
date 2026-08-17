@@ -52,7 +52,6 @@ impl ResolvedSource {
 pub struct RefreshSource {
     pub root: PathBuf,
     pub aliases: Vec<String>,
-    pub source_repo: Option<String>,
     pub mapping: MappingConfig,
     pub agents: Vec<Agent>,
     pub skills: Vec<Skill>,
@@ -61,7 +60,10 @@ pub struct RefreshSource {
     /// Carried from the [`ResolvedSource`] this was loaded from: a refresh
     /// reads this tree for as long as it holds these, so the lease outlives
     /// resolution by exactly that much.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "held for its Drop: the lease keeps another process from rewriting the cache while this source's tree is read"
+    )]
     lease: CacheLease,
 }
 
@@ -70,7 +72,6 @@ impl RefreshSource {
         Self {
             root: record.root.clone(),
             aliases: record.aliases.clone(),
-            source_repo: record.source_repo.clone(),
             mapping: MappingConfig::load(&record.root),
             agents: crate::catalog::discover_agents(&record.root).unwrap_or_default(),
             skills: crate::catalog::discover_skills(&record.root).unwrap_or_default(),
@@ -194,30 +195,15 @@ pub(crate) struct SourceRecords {
 }
 
 /// The recorded sources resolution refused, keyed by the recorded string so a
-/// caller holding a lock entry can look its own reason up — and whether source
-/// resolution ran at all. Every refresh path now resolves each entry's own
-/// source from its lock, so a refusal is always available to the report.
+/// caller holding a lock entry can look its own reason up.
 #[derive(Clone, Debug, Default)]
 pub struct SourceRefusals {
     reasons: std::collections::BTreeMap<String, String>,
-    attempted: bool,
 }
 
 impl SourceRefusals {
-    fn attempted(reasons: std::collections::BTreeMap<String, String>) -> Self {
-        Self {
-            reasons,
-            attempted: true,
-        }
-    }
-
     pub(crate) fn reason(&self, source: &str) -> Option<&str> {
         self.reasons.get(source).map(String::as_str)
-    }
-
-    /// Whether these refusals came from a pass that actually resolved sources.
-    pub(crate) fn attempted_resolution(&self) -> bool {
-        self.attempted
     }
 }
 
@@ -275,7 +261,7 @@ fn resolve_source_records_with(
     if !sources.is_empty() || !refused.is_empty() {
         return SourceRecords {
             sources,
-            refused: SourceRefusals::attempted(refused),
+            refused: SourceRefusals { reasons: refused },
         };
     }
 
@@ -309,7 +295,7 @@ fn resolve_source_records_with(
 
     SourceRecords {
         sources,
-        refused: SourceRefusals::attempted(refused),
+        refused: SourceRefusals { reasons: refused },
     }
 }
 

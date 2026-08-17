@@ -195,7 +195,10 @@ struct ResolvedSource {
     /// lease a second `vstack add` could fetch and `reset --hard` the same
     /// cache underneath, leaving a mixed install and lock hashes for a tree
     /// that never existed as a whole.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "held for its Drop: the lease keeps another process from rewriting the cache for the whole install"
+    )]
     lease: config::CacheLease,
 }
 

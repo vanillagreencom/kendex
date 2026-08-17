@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -44,11 +42,6 @@ pub enum AgentRole {
 }
 
 impl AgentRole {
-    /// Whether this role writes code
-    pub fn writes_code(&self) -> bool {
-        matches!(self, AgentRole::Engineer)
-    }
-
     pub fn as_str(&self) -> &'static str {
         match self {
             AgentRole::Reviewer => "reviewer",
@@ -121,26 +114,6 @@ pub fn model_id_for(provider: &str, model: &str) -> String {
     }
 }
 
-/// Discover all agent files in a directory
-pub fn discover_agents(dir: &Path) -> Result<Vec<Agent>> {
-    let mut agents = Vec::new();
-    if !dir.exists() {
-        return Ok(agents);
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "md") {
-            match Agent::from_file(&path) {
-                Ok(agent) => agents.push(agent),
-                Err(e) => eprintln!("Warning: skipping {}: {e}", path.display()),
-            }
-        }
-    }
-    agents.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(agents)
-}
-
 pub fn skill_match_prefix(agent_name: &str) -> &str {
     agent_name.strip_prefix("reviewer-").unwrap_or(agent_name)
 }
@@ -159,6 +132,7 @@ pub fn prefixed_skill_matches(agent_name: &str, available: &[String]) -> Vec<Str
     matched
 }
 
+#[cfg(test)]
 fn default_role_skills(agent_role: &AgentRole) -> &'static [&'static str] {
     match agent_role {
         AgentRole::Reviewer => &["dev"],
@@ -169,6 +143,7 @@ fn default_role_skills(agent_role: &AgentRole) -> &'static [&'static str] {
 }
 
 /// Match skills to an agent by name prefix and role
+#[cfg(test)]
 pub fn match_skills(agent_name: &str, agent_role: &AgentRole, available: &[String]) -> Vec<String> {
     let mut matched = prefixed_skill_matches(agent_name, available);
 
@@ -338,10 +313,6 @@ impl AgentFrontmatterOverrides {
                 .clone()
                 .or_else(|| self.nickname_candidates.clone()),
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self == &Self::default()
     }
 }
 
