@@ -123,6 +123,14 @@ printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"s
 OUT=""; RC=0
 OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && ok "a started row with an empty updatedAt is a config error, never fresh" || bad "empty updatedAt" "rc=$RC out=$OUT"
+printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":"   "}]' >"$R/.cache/linear/issues.json"
+OUT=""; RC=0
+OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "a whitespace-only updatedAt is a config error (GNU date parses it as midnight)" || bad "blank updatedAt" "rc=$RC out=$OUT"
+printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":""}]' >"$R/.cache/linear/issues.json"
+OUT=""; RC=0
+OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && ok "a started row with no updatedAt key at all is a config error" || bad "missing updatedAt key" "rc=$RC out=$OUT"
 
 # Missing cache: loud config error, never a clean pass.
 rm "$R/.cache/linear/issues.json"

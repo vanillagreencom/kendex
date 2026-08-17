@@ -53,8 +53,8 @@ jq -e 'type == "array" and all(.[];
     and (.state | type == "object")
     and (.state.name | type == "string")
     and (.state.type | type == "string")
-    and (.state.type != "started" or ((.updatedAt | type == "string") and .updatedAt != "")))' "$CACHE" >/dev/null 2>&1 \
-  || config_error "linear cache at $CACHE is not an array of issue rows with identifier, state.name/state.type, and a nonempty updatedAt on started rows"
+    and (.state.type != "started" or ((.updatedAt | type == "string") and (.updatedAt | test("\\S")))))' "$CACHE" >/dev/null 2>&1 \
+  || config_error "linear cache at $CACHE is not an array of issue rows with identifier, state.name/state.type, and a nonblank updatedAt on started rows"
 
 findings=0
 note() { findings=$((findings + 1)); printf '%s\n' "$1"; }
