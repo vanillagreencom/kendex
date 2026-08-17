@@ -61,6 +61,18 @@ wait_for_installs() {
   return 0
 }
 
+assert_log_stays_empty() { # NAME — watch 2s and fail the moment npm logs
+  local name="$1" deadline=$((SECONDS + 2))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ -s "$NPM_CALL_LOG" ]; then
+      bad "$name" "$(cat "$NPM_CALL_LOG")"
+      return 1
+    fi
+    sleep 0.2
+  done
+  ok "$name"
+}
+
 echo "=== a pnpm workspace never gets an npm install ==="
 ROOT="$TMP_ROOT/pnpm"
 make_repo "$ROOT" repo
@@ -70,12 +82,7 @@ git -C "$ROOT/repo" add package.json pnpm-lock.yaml
 git -C "$ROOT/repo" commit -q -m "js: pnpm workspace"
 git -C "$ROOT/repo" push -q origin main
 (cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-pnpm >/dev/null)
-sleep 1
-if grep -q "pnpm/.worktrees" "$NPM_CALL_LOG" 2>/dev/null || grep -q "issue-pnpm" "$NPM_CALL_LOG" 2>/dev/null; then
-  bad "pnpm worktree skipped npm" "$(cat "$NPM_CALL_LOG")"
-else
-  ok "pnpm worktree skipped npm"
-fi
+assert_log_stays_empty "pnpm worktree skipped npm" || true
 WT_PNPM="$ROOT/.worktrees/repo/issue-pnpm"
 [ ! -e "$WT_PNPM/package-lock.json" ] && ok "no stray package-lock.json in the pnpm worktree" \
   || bad "no stray package-lock.json" "package-lock.json exists"
@@ -88,12 +95,26 @@ git -C "$ROOT/repo" add package.json
 git -C "$ROOT/repo" commit -q -m "js: pinned manager"
 git -C "$ROOT/repo" push -q origin main
 (cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-pin >/dev/null)
+assert_log_stays_empty "packageManager pin skipped npm" || true
+
+echo "=== explicit npm evidence beats an incidental foreign lockfile ==="
+ROOT="$TMP_ROOT/mixed"
+make_repo "$ROOT" repo
+printf '{ "name": "app", "devDependencies": {} }\n' >"$ROOT/repo/package.json"
+printf '{}\n' >"$ROOT/repo/package-lock.json"
+printf '# incidental\n' >"$ROOT/repo/yarn.lock"
+git -C "$ROOT/repo" add package.json package-lock.json yarn.lock
+git -C "$ROOT/repo" commit -q -m "js: npm with incidental yarn.lock"
+git -C "$ROOT/repo" push -q origin main
+(cd "$ROOT/repo" && "$WORKTREE_SCRIPT" create issue-mixed >/dev/null)
+wait_for_installs
 sleep 1
-if grep -q "issue-pin" "$NPM_CALL_LOG" 2>/dev/null; then
-  bad "packageManager pin skipped npm" "$(cat "$NPM_CALL_LOG")"
+if grep -q "issue-mixed" "$NPM_CALL_LOG" 2>/dev/null; then
+  ok "package-lock.json keeps the npm install despite a foreign lockfile"
 else
-  ok "packageManager pin skipped npm"
+  bad "npm evidence wins" "log: $(cat "$NPM_CALL_LOG" 2>/dev/null)"
 fi
+: >"$NPM_CALL_LOG"
 
 echo "=== a plain npm repo keeps the historical install ==="
 ROOT="$TMP_ROOT/npm"

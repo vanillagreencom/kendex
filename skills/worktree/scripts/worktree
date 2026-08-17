@@ -1733,14 +1733,18 @@ install_worktree_dependencies() {
   # npm is wrong for a workspace that pins another package manager: it
   # resolves a different tree and writes a stray package-lock.json into the
   # fresh checkout (dirty from birth, and `git add -A` would commit an npm
-  # lockfile into a pnpm monorepo). Another manager's lockfile or a
-  # packageManager pin means that repo provisions its own dependencies —
-  # skip; the historical npm path stays only where npm is the manager.
-  if [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" ]]; then
-    return 0
-  fi
-  if grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"(pnpm|yarn|bun)' "$wt/package.json" 2>/dev/null; then
-    return 0
+  # lockfile into a pnpm monorepo). Explicit npm evidence — its own lockfile
+  # or an npm packageManager pin — wins over an incidental foreign lockfile;
+  # otherwise another manager's lockfile or pin means that repo provisions
+  # its own dependencies, so skip.
+  if [[ ! -f "$wt/package-lock.json" ]] &&
+    ! grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"npm@' "$wt/package.json" 2>/dev/null; then
+    if [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" ]]; then
+      return 0
+    fi
+    if grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"(pnpm|yarn|bun)' "$wt/package.json" 2>/dev/null; then
+      return 0
+    fi
   fi
   if command -v npm >/dev/null 2>&1; then
     (
