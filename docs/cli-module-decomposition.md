@@ -89,8 +89,8 @@ helpers used by four clusters (`ensure_value_section_entry_spacing`,
 | Read accessors | ~102 | `agent_skills_for`, `color_for`, `frontmatter_for`, `guidance_for`, `instructions_for`, `shared_*`, `skill_instructions_for`, `custom_hooks_for` | save_extracted, frontmatter defaults | resolve, every `harness/*`, agent, add, refresh, tui |
 | Shared-instructions merge/mark/strip | 96 | `merge_shared_and_specific`, `mark_shared`, `merge_marked_shared_and_specific`, `strip_shared_block`, `strip_shared_prefix` | accessors, save_extracted | resolve, harness tests, agent tests |
 | `save_extracted` write-back | 150 | `save_extracted`, `upsert_agent_value_in_section` | none | add, refresh |
-| TOML text primitives | 313 | 18 string/array/inline-table scanners | every writer cluster | none (private) |
-| agent-skills / colors writers | 255 | `upsert_agent_frontmatter_field`, `merge_upstream_agent_skills`, `replace_toml_array_value`, `write_agent_skills`, `write_agent_colors` | repair, create | refresh, add — `write_agent_colors` has no callers but its own test |
+| TOML text primitives | 313 | 17 string/array/inline-table scanners | every writer cluster | none (private) |
+| agent-skills / colors writers | 255 | `merge_upstream_agent_skills`, `replace_toml_array_value`, `write_agent_skills` | repair, create | refresh, add |
 | Harness frontmatter defaults | 637 | `write_agent_frontmatter_defaults` + 28 per-harness default fns | none | add, refresh |
 | Bootstrap / repair / headings / migrations | 792 | `ensure_project_config`, `repair_project_config_*`, header sync, `normalize_attached_section_headers`, `ensure_value_section_entry_spacing`, `dedupe_agent_frontmatter_sections`, `migrate_*`, scaffold + section locators | save_extracted, writers, frontmatter defaults, create | add, refresh (`ensure_project_config` only) |
 | Create / update file | 339 | `create_project_config`, `update_project_config`, `insert_keys_into_section`, `insert_entries_into_section`, `strip_skills_reference` | save_extracted, writers, repair | none directly |
@@ -104,9 +104,9 @@ helpers used by four clusters (`ensure_value_section_entry_spacing`,
 | `project_config/toml_text.rs` | Pure string leaf everyone imports; extracting it first unblocks every other move. |
 | `project_config/frontmatter_defaults.rs` | The 637-line per-harness defaults engine has one entry point and zero inbound edges — the largest single win. |
 | `project_config/instructions.rs` | Accessors + shared-instructions merge/strip + `save_extracted` + the `SHARED_INSTRUCTIONS_*` consts: the extracted-instructions round trip, in a second `impl ProjectConfig` block. |
-| `project_config/repair/headings.rs` | Banner/heading sync and section locators (`section_start`/`section_end`, `*_heading` family). |
+| `project_config/repair/headings.rs` | Banner/heading sync and section locators (`section_start`, `*_heading` family). |
 | `project_config/repair/normalize.rs` | Whitespace/structure normalizers (`ensure_value_section_entry_spacing`, `dedupe_agent_frontmatter_sections`, `repair_instruction_multiline_values`, …) — the shared dependency the writers reach for. |
-| `project_config/repair/migrate.rs` | `migrate_section_names`, `migrate_agent_colors_to_frontmatter`, `agent_frontmatter_has_field`. |
+| `project_config/repair/migrate.rs` | `migrate_section_names`. |
 | `project_config/writers.rs` | agent-skills/colors writers plus create/update/insert (`create_project_config`, `update_project_config`, `insert_*_into_section`). |
 
 ### Sequence
@@ -120,8 +120,7 @@ helpers used by four clusters (`ensure_value_section_entry_spacing`,
    keeps `ensure_project_config` as the entry point, so each split-out
    entry point is `pub(super)` and the four cross-submodule users of
    `normalize.rs` make it `pub(crate)`.
-6. Extract `writers.rs` (`pub(super)` on what the parent calls); delete or
-   wire `write_agent_colors` (currently dead) in the same step.
+6. Extract `writers.rs` (`pub(super)` on what the parent calls).
 
 Steps 1–4 are moves with `use` rewiring only. Step 5 is the one that
 needs judgment: `normalize.rs` is imported by four other submodules, so it
