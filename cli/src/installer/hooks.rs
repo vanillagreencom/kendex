@@ -774,36 +774,57 @@ struct DeprecatedCodexHooksFeature {
 /// unescaped `"""` inside a basic multiline string, and the configs this
 /// walks are ones this tool and its users write.
 fn advance_toml_string_state(line: &str, mut state: Option<&'static str>) -> Option<&'static str> {
-    // A full-line comment outside a string is inert text: a delimiter shown
-    // in one opens nothing.
-    if state.is_none() && line.trim_start().starts_with('#') {
-        return None;
+    fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack
+            .windows(needle.len())
+            .position(|window| window == needle)
     }
-    let mut rest = line;
-    loop {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    // A single-line string or a comment is content: a delimiter inside one
+    // opens nothing. Escapes count only in basic (double-quoted) strings.
+    let mut single_line: Option<u8> = None;
+    while i < bytes.len() {
         match state {
-            Some(delimiter) => match rest.find(delimiter) {
+            Some(delimiter) => match find_bytes(&bytes[i..], delimiter.as_bytes()) {
                 Some(idx) => {
-                    rest = &rest[idx + delimiter.len()..];
+                    i += idx + delimiter.len();
                     state = None;
                 }
                 None => return state,
             },
-            None => {
-                let double = rest.find("\"\"\"");
-                let single = rest.find("'''");
-                let (idx, delimiter) = match (double, single) {
-                    (None, None) => return None,
-                    (Some(d), None) => (d, "\"\"\""),
-                    (None, Some(s)) => (s, "'''"),
-                    (Some(d), Some(s)) if d < s => (d, "\"\"\""),
-                    (_, Some(s)) => (s, "'''"),
-                };
-                rest = &rest[idx + delimiter.len()..];
-                state = Some(delimiter);
-            }
+            None => match single_line {
+                Some(quote) => {
+                    if quote == b'"' && bytes[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == quote {
+                        single_line = None;
+                    }
+                    i += 1;
+                }
+                None => {
+                    if bytes[i..].starts_with(b"\"\"\"") {
+                        state = Some("\"\"\"");
+                        i += 3;
+                    } else if bytes[i..].starts_with(b"'''") {
+                        state = Some("'''");
+                        i += 3;
+                    } else {
+                        match bytes[i] {
+                            b'#' => return None,
+                            b'"' => single_line = Some(b'"'),
+                            b'\'' => single_line = Some(b'\''),
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                }
+            },
         }
     }
+    state
 }
 
 fn codex_features_state(lines: &[String]) -> CodexFeaturesState {
