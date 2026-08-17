@@ -99,6 +99,27 @@ test("an unparseable line renders labeled with its size, not verbatim", () => {
 	assert.doesNotMatch(out, /partial json fragment/);
 });
 
+test("decoded control sequences never reach the terminal", () => {
+	const out = formatTranscriptForDisplay(stream(0, {
+		message: { content: [{ text: "safe\u001b]52;c;evil\u0007text\u009bmore", type: "text" }], role: "assistant" },
+		type: "message_end",
+	}));
+	assert.doesNotMatch(out, /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/);
+	assert.match(out, /safe.*text.*more/);
+});
+
+test("native pane-session message records render as content, not failures", () => {
+	const out = formatTranscriptForDisplay(line({ message: { content: [{ text: "pane says hi", type: "text" }], role: "assistant" }, ts: at(0), type: "message" }));
+	assert.match(out, /^ \[0:00\] assistant · pane says hi$/);
+});
+
+test("benign lifecycle records are neutral rows; trouble-shaped ones are not", () => {
+	const benign = formatTranscriptForDisplay(line({ ts: at(0), type: "settled_shutdown" }));
+	assert.match(benign, /^ \[0:00\] settled_shutdown/);
+	const trouble = formatTranscriptForDisplay(line({ diagnostic: "close hung", ts: at(0), type: "abort_close_timeout" }));
+	assert.match(trouble, /^✖\[0:00\] abort_close_timeout · close hung$/);
+});
+
 test("droppedEvents is stated up front", () => {
 	const out = formatTranscriptForDisplay(stream(0, { type: "turn_end" }), { droppedEvents: 3 });
 	assert.match(out.split("\n")[0]!, /↑ 3 earlier events not shown/);

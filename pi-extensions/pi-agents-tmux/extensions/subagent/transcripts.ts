@@ -243,9 +243,17 @@ interface TimelineRow {
 	error?: boolean;
 }
 
+// JSON.parse revives escaped C0/C1 controls (OSC/CSI included) that the old
+// raw-JSONL view kept escaped; a hostile tool output must not reach the
+// terminal as live sequences.
+function stripTerminalControls(text: string): string {
+	// eslint-disable-next-line no-control-regex
+	return text.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "");
+}
+
 function renderTimelineRow(row: TimelineRow): string {
 	const detail = row.detail ? ` · ${oneLine(row.detail, TIMELINE_PREVIEW_MAX)}` : "";
-	return `${row.error ? "✖" : " "}[${row.stamp}] ${row.kind}${detail}`;
+	return stripTerminalControls(`${row.error ? "✖" : " "}[${row.stamp}] ${row.kind}${detail}`);
 }
 
 function describeInputEvent(event: any): TimelineRow {
@@ -335,10 +343,16 @@ export function formatTranscriptForDisplay(raw: string, options?: { droppedEvent
 			push(stamp, "exit", `code ${code}`, code !== 0);
 			continue;
 		}
+		if (recordType === "message" && record.message && typeof record.message === "object") {
+			// Native pane-session entries carry the message at the record level.
+			for (const part of messageContentRows(record.message)) push(stamp, part.kind, part.detail, part.error);
+			continue;
+		}
 		if (recordType && !("event" in (record ?? {})) && !("stream" in (record ?? {}))) {
-			// Other writer records (abort_close_timeout, settled_shutdown_*, …):
-			// lifecycle trouble, labeled and toned as such.
-			push(stamp, recordType, stringValue(record.diagnostic) ?? stringValue(record.signal) ?? formatByteSize(payloadByteSize(record)), true);
+			// Other writer/session records. Only trouble-shaped types get the
+			// failure tone; anything else is a neutral labeled row.
+			const troubled = /^abort_|_failed$|_escalation$|^error$/.test(recordType);
+			push(stamp, recordType, stringValue(record.diagnostic) ?? stringValue(record.signal) ?? formatByteSize(payloadByteSize(record)), troubled);
 			continue;
 		}
 		if (typeof record?.text === "string" && record?.stream === "stderr") {
