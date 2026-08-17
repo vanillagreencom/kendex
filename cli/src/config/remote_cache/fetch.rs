@@ -266,18 +266,22 @@ fn take_over_stale_lock(path: &Path, stale_after: std::time::Duration) -> bool {
 /// What the caller does with the cache once this call returns, and therefore
 /// what another process holding the guard means for it.
 ///
-/// Every call site states it, because the two answers are opposites and the
-/// permissive one is not safe to inherit: a caller that goes on to install
-/// from a tree being `reset --hard` copies whatever bytes it happened to
-/// catch and records them as the source's content.
+/// Not a parameter any caller passes: it is decided by WHICH entry point was
+/// called — [`lease_remote_cache`] hands back the lease a reader must keep,
+/// [`refresh_remote_cache`] hands back nothing to read with. The two answers
+/// are opposites and the permissive one is not safe to inherit: a caller that
+/// goes on to install from a tree being `reset --hard` copies whatever bytes
+/// it happened to catch and records them as the source's content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CacheAccess {
+enum CacheAccess {
     /// The caller READS the cache after this returns — discovers it, hashes
     /// it, copies out of it. A tree another process is rewriting is not a
     /// source to install from, so contention is waited out for
     /// [`INSTALL_GUARD_WAIT`] and then refused. Freshness does not short-
     /// circuit this caller either: a holder writes its `pending` stamp before
-    /// it starts, which reads as fresh to everyone else.
+    /// it starts, which reads as fresh to everyone else. The guard it takes
+    /// leaves with the caller as a [`CacheLease`], because the read it
+    /// protects begins after this call returns.
     Install,
     /// Nothing reads the tree after this call — it exists only to bring the
     /// cache up to date. Another process already doing that is exactly the
@@ -285,11 +289,151 @@ pub enum CacheAccess {
     RefreshOnly,
 }
 
+/// A read lease on one cached source tree: proof, for as long as the value is
+/// alive, that no other vstack process is fetching or resetting it.
+///
+/// The install path is why it exists. Discovering a source, hashing it and
+/// copying out of it all happen AFTER the fetch returns, and a guard released
+/// when the fetch ended left exactly that window open: a second `add` could
+/// take the guard and `reset --hard` underneath the first one's read, which
+/// then records lock hashes for a tree that never existed as a whole. So the
+/// fetch hands its guard to the caller that reads, and the read ends when the
+/// lease drops.
+///
+/// [`CacheLease::none`] is the honest answer where there is nothing to hold: a
+/// local source directory, or a cache whose lock file could not be created at
+/// all (the caller was told so, and warned it is reading a cache it cannot
+/// hold still).
+#[derive(Clone, Default)]
+#[must_use = "the cache is only held still while its lease is alive"]
+pub struct CacheLease(Option<std::sync::Arc<HeldLease>>);
+
+impl CacheLease {
+    /// No lease is held, and none is owed.
+    pub fn none() -> Self {
+        Self(None)
+    }
+
+    /// Whether this value actually holds a cache still.
+    pub fn is_held(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl std::fmt::Debug for CacheLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(held) => write!(f, "CacheLease({})", held.key.display()),
+            None => f.write_str("CacheLease(none)"),
+        }
+    }
+}
+
+/// One process-wide hold on one cache directory, released when the last
+/// [`CacheLease`] naming it drops.
+struct HeldLease {
+    key: PathBuf,
+    /// `Option` only so [`Drop`] can release it while the registry is locked.
+    guard: Option<RemoteCacheFetchGuard>,
+}
+
+impl Drop for HeldLease {
+    fn drop(&mut self) {
+        let mut registry = lease_registry();
+        // Only our own, now-dead entry: a contender that took the path after
+        // us has a live one there, and removing that would let a third caller
+        // take a lease this process still holds.
+        if registry
+            .get(&self.key)
+            .is_some_and(|held| held.strong_count() == 0)
+        {
+            registry.remove(&self.key);
+        }
+        // Under the registry lock, so nobody can see the path free in the
+        // registry while the descriptor holding it is still open.
+        drop(self.guard.take());
+    }
+}
+
+/// Which caches THIS process holds, so it never contends with itself.
+///
+/// `flock` is per open file description: a second acquire from the same
+/// process blocks exactly as another process's would. Two lock entries can
+/// spell one remote two ways (`owner/repo` and its URL), and both resolve to
+/// this directory — without this, the second would wait out
+/// [`INSTALL_GUARD_WAIT`] and then refuse the install over the first one's own
+/// lease.
+fn lease_registry() -> std::sync::MutexGuard<'static, LeaseRegistry> {
+    static REGISTRY: std::sync::OnceLock<std::sync::Mutex<LeaseRegistry>> =
+        std::sync::OnceLock::new();
+    REGISTRY
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+type LeaseRegistry = std::collections::HashMap<PathBuf, std::sync::Weak<HeldLease>>;
+
+/// A lease, and whether it was already this process's when it was asked for.
+struct TakenLease {
+    lease: CacheLease,
+    /// A reader in this process holds this cache RIGHT NOW. Nothing may fetch
+    /// or reset it until that read ends.
+    already_held: bool,
+}
+
+/// Take a lease on `cache_dir`, on `access`'s terms.
+///
+/// A lease this process already holds is SHARED with another install and
+/// stands a refresher down: the reader that holds it is not finished, and its
+/// tree must not be rewritten under it — which is the same answer a refresher
+/// gets when the holder is somebody else.
+fn acquire_cache_lease(cache_dir: &Path, access: CacheAccess) -> GuardAcquire<TakenLease> {
+    let key = cache_dir.to_path_buf();
+    if let Some(held) = lease_registry()
+        .get(&key)
+        .and_then(std::sync::Weak::upgrade)
+    {
+        return match access {
+            CacheAccess::Install => GuardAcquire::Held(TakenLease {
+                lease: CacheLease(Some(held)),
+                already_held: true,
+            }),
+            CacheAccess::RefreshOnly => GuardAcquire::Busy,
+        };
+    }
+    // The OS acquire runs WITHOUT the registry locked: an installing caller
+    // waits here, and holding the registry across that wait would stop the
+    // very lease it is waiting on from being released.
+    match acquire_fetch_guard(cache_dir, access) {
+        GuardAcquire::Held(guard) => {
+            let held = std::sync::Arc::new(HeldLease {
+                key: key.clone(),
+                guard: Some(guard),
+            });
+            lease_registry().insert(key, std::sync::Arc::downgrade(&held));
+            GuardAcquire::Held(TakenLease {
+                lease: CacheLease(Some(held)),
+                already_held: false,
+            })
+        }
+        GuardAcquire::Busy => GuardAcquire::Busy,
+        GuardAcquire::Unusable(reason) => GuardAcquire::Unusable(reason),
+    }
+}
+
 /// How long an installing caller waits for an in-flight refresh before it
 /// refuses. A refresh of a catalog repo is seconds; the bound is what stops a
 /// wedged holder from owning a terminal for the whole fetch deadline. Past it
 /// the install fails and says to retry, which is recoverable — installing from
 /// a half-reset tree is not.
+///
+/// It is also what makes holding a [`CacheLease`] across a read safe: a
+/// `refresh` resolving several remotes holds each lease while it takes the
+/// next, so two of them can want each other's caches. Every wait here is
+/// bounded and ends in a refusal that names the contention, so the worst case
+/// is two runs that both say to retry — never two that wait on each other
+/// forever.
 const INSTALL_GUARD_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Take the guard on `access`'s terms.
@@ -382,6 +526,53 @@ impl FetchAttempt {
     }
 }
 
+/// Bring a cache up to date for a caller that READS it next, and hand back the
+/// lease that keeps it still until that read is done.
+///
+/// The lease is the API: a caller cannot reach the tree through this function
+/// without also receiving the thing that stops another process from rewriting
+/// it, and the read ends where the lease drops. Holding it costs other
+/// processes nothing they were not already owed — a refresher stands down, and
+/// a second install waits [`INSTALL_GUARD_WAIT`] and then refuses, exactly as
+/// it did while only the fetch itself was guarded.
+pub fn lease_remote_cache(
+    remote: &RemoteSource,
+    max_age: Option<std::time::Duration>,
+    bound: FetchBound,
+) -> anyhow::Result<(FetchAttempt, CacheLease)> {
+    fetch_remote_cache(remote, max_age, bound, CacheAccess::Install)
+}
+
+/// Lease a cache the caller has just CREATED, with no fetch of any kind: a
+/// clone is already the newest revision there is, and there is no stamp to
+/// write that the clone's own does not cover.
+///
+/// The read that follows is the same read every install does, so it takes the
+/// same lease on the same terms — a second install waits and then refuses, a
+/// refresher stands down.
+pub fn lease_cached_source(remote: &RemoteSource) -> anyhow::Result<(FetchAttempt, CacheLease)> {
+    match acquire_cache_lease(&remote.cache_dir, CacheAccess::Install) {
+        GuardAcquire::Held(taken) => Ok((FetchAttempt::Fresh, taken.lease)),
+        GuardAcquire::Busy => anyhow::bail!(
+            "another vstack process is using cached source {} — refusing to install from a cache that may be rewritten mid-read; retry once it finishes",
+            remote.display
+        ),
+        GuardAcquire::Unusable(reason) => {
+            Ok((FetchAttempt::Unwritable(reason), CacheLease::none()))
+        }
+    }
+}
+
+/// Bring a cache up to date for a caller that reads nothing out of it
+/// afterwards. No lease comes back, because there is no read to protect.
+pub fn refresh_remote_cache(
+    remote: &RemoteSource,
+    max_age: Option<std::time::Duration>,
+    bound: FetchBound,
+) -> anyhow::Result<FetchAttempt> {
+    fetch_remote_cache(remote, max_age, bound, CacheAccess::RefreshOnly).map(|(attempt, _)| attempt)
+}
+
 /// Fetch + reset one cache under the guard, recording the outcome in the
 /// stamp. This is the only place an EXISTING cache is mutated: `add`,
 /// `refresh`, the TUI and the background `cache-refresh` all route through
@@ -402,41 +593,54 @@ impl FetchAttempt {
 /// whether somebody is rewriting it right now.
 ///
 /// What an installing caller gets is a tree no other process was rewriting
-/// when this returned, plus a stamp written under the guard — and a fresh
-/// stamp stands every TTL-gated refresher down for the rest of the install.
-/// The one writer that ignores the TTL is another install, which now waits
-/// here too.
-pub fn fetch_remote_cache(
+/// when this returned, plus a stamp written under the guard — and it keeps the
+/// guard as a [`CacheLease`], so the tree is still no other process's to
+/// rewrite while it is being discovered, hashed and copied. A fresh stamp
+/// stands every TTL-gated refresher down; the writers that ignore the TTL are
+/// the other installs, and the lease is what they wait on.
+fn fetch_remote_cache(
     remote: &RemoteSource,
     max_age: Option<std::time::Duration>,
     bound: FetchBound,
     access: CacheAccess,
-) -> anyhow::Result<FetchAttempt> {
+) -> anyhow::Result<(FetchAttempt, CacheLease)> {
     let cache_dir = remote.cache_dir.as_path();
     if access == CacheAccess::RefreshOnly && !remote_cache_fetch_due(cache_dir, max_age) {
-        return Ok(FetchAttempt::Fresh);
+        return Ok((FetchAttempt::Fresh, CacheLease::none()));
     }
     // Before anything is written: this entry must be vstack's own clone of
     // THIS repository. Reads only, and it refuses rather than repairs.
     ensure_cache_entry_is_owned(remote)?;
 
-    let guard = match acquire_fetch_guard(cache_dir, access) {
-        GuardAcquire::Held(guard) => guard,
+    let taken = match acquire_cache_lease(cache_dir, access) {
+        GuardAcquire::Held(taken) => taken,
         GuardAcquire::Busy => match access {
-            CacheAccess::RefreshOnly => return Ok(FetchAttempt::Busy),
+            CacheAccess::RefreshOnly => return Ok((FetchAttempt::Busy, CacheLease::none())),
             // The caller installs from this tree next. Another process is
-            // still fetching and resetting it, so there is no revision to
-            // install: refuse, name the contention, and leave the project
-            // exactly as it was.
+            // still fetching, resetting or installing from it, so there is no
+            // settled revision to install: refuse, name the contention, and
+            // leave the project exactly as it was.
             CacheAccess::Install => anyhow::bail!(
-                "another vstack process is refreshing cached source {} — refusing to install from a cache being rewritten; retry once it finishes",
+                "another vstack process is using cached source {} — refusing to install from a cache that may be rewritten mid-read; retry once it finishes",
                 remote.display
             ),
         },
-        GuardAcquire::Unusable(reason) => return Ok(FetchAttempt::Unwritable(reason)),
+        // Nothing can be excluded here, and the caller is told: it reads a
+        // cache no lease can hold still.
+        GuardAcquire::Unusable(reason) => {
+            return Ok((FetchAttempt::Unwritable(reason), CacheLease::none()));
+        }
     };
-    if !remote_cache_fetch_due(cache_dir, max_age) {
-        return Ok(FetchAttempt::Fresh);
+    let TakenLease {
+        lease,
+        already_held,
+    } = taken;
+    // Somebody in this process is READING this tree right now — its lease is
+    // still alive — and this caller is about to as well. Fetching would reset
+    // it under that read, and there is nothing to gain: the holder fetched it
+    // moments ago, in this same command.
+    if already_held || !remote_cache_fetch_due(cache_dir, max_age) {
+        return Ok((FetchAttempt::Fresh, lease));
     }
     // Mark the attempt in flight before running it: the mtime rate-limits a
     // holder that crashes mid-fetch, and readers know not to call it failed.
@@ -446,7 +650,7 @@ pub fn fetch_remote_cache(
         _ => None,
     };
     if let Err(err) = write_fetch_stamp(cache_dir, FetchStamp::Pending { first_failure }) {
-        return Ok(FetchAttempt::Unwritable(err.to_string()));
+        return Ok((FetchAttempt::Unwritable(err.to_string()), lease));
     }
     let record = |cause: Option<FetchFailure>| {
         let now = epoch_now();
@@ -536,12 +740,14 @@ pub fn fetch_remote_cache(
     let _ = std::fs::remove_file(&stderr_path);
     if let Some(cause) = failure {
         if let Err(err) = record(Some(cause)) {
-            return Ok(FetchAttempt::Unwritable(err.to_string()));
+            return Ok((FetchAttempt::Unwritable(err.to_string()), lease));
         }
-        drop(guard);
         // A failed fetch is tolerated: the clone is still the requested source
-        // at an older revision.
-        return Ok(FetchAttempt::FetchFailed(git_error_summary(&stderr, &[])));
+        // at an older revision — and the lease still protects reading it.
+        return Ok((
+            FetchAttempt::FetchFailed(git_error_summary(&stderr, &[])),
+            lease,
+        ));
     }
 
     // Local, fast, and pointless to bound: the network is already done. A
@@ -557,17 +763,16 @@ pub fn fetch_remote_cache(
     };
     if let Some(summary) = reset_failure {
         let _ = record(Some(FetchFailure::Reset));
-        drop(guard);
+        drop(lease);
         anyhow::bail!(
             "git reset failed for cached source {}: {summary}",
             remote.display
         );
     }
     if let Err(err) = record(None) {
-        return Ok(FetchAttempt::Unwritable(err.to_string()));
+        return Ok((FetchAttempt::Unwritable(err.to_string()), lease));
     }
-    drop(guard);
-    Ok(FetchAttempt::Updated)
+    Ok((FetchAttempt::Updated, lease))
 }
 
 enum FetchWait {
@@ -650,20 +855,15 @@ fn kill_process_group(child: &mut std::process::Child) {
 /// entries. Called at TUI startup so staleness checks see the latest content;
 /// bounded, because the user is waiting on a UI, not on this.
 ///
-/// [`CacheAccess::RefreshOnly`]: this brings caches up to date and reads none
-/// of them. Everything the TUI later installs from re-resolves through the
-/// install path, which takes the guard on its own terms.
+/// Refresh-only: this brings caches up to date and reads none of them.
+/// Everything the TUI later installs from re-resolves through the install
+/// path, which takes its own lease.
 pub fn refresh_remote_caches(lock: &LockFile) -> Vec<RemoteCacheProblem> {
     // TTL-bounded like every other caller: without it the TUI re-fetched every
     // remote source on every launch — twice, once per scope — and a user
     // offline or behind a dead VPN watched a blank terminal until each fetch
     // hit its deadline.
-    refresh_remote_caches_older_than(
-        lock,
-        Some(REMOTE_CACHE_TTL),
-        FetchBound::INTERACTIVE,
-        CacheAccess::RefreshOnly,
-    )
+    refresh_remote_caches_older_than(lock, Some(REMOTE_CACHE_TTL), FetchBound::INTERACTIVE)
 }
 
 /// [`refresh_remote_caches`] with a freshness bound: a cache fetched (or
@@ -675,11 +875,10 @@ pub fn refresh_remote_caches_older_than(
     lock: &LockFile,
     max_age: Option<std::time::Duration>,
     bound: FetchBound,
-    access: CacheAccess,
 ) -> Vec<RemoteCacheProblem> {
     let mut problems = Vec::new();
     for (source, remote) in cached_remote_sources(lock) {
-        let kind = match fetch_remote_cache(&remote, max_age, bound, access) {
+        let kind = match refresh_remote_cache(&remote, max_age, bound) {
             // A cache entry that is not vstack's own, an origin that cannot be
             // written, a reset that did not land: the entry is not known to
             // hold this source, and no later run repairs itself.

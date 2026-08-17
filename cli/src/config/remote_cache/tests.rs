@@ -383,7 +383,6 @@ fn a_cache_whose_origin_does_not_match_is_neither_fetched_nor_read() {
             &cache.lock(),
             Some(Duration::ZERO),
             FetchBound::BACKGROUND,
-            CacheAccess::RefreshOnly,
         );
         assert!(
             matches!(

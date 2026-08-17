@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 mod opencode;
 
 use opencode::{install_hook_opencode, remove_hook_from_opencode_json};
-pub(crate) use opencode::{opencode_hook_instruction_contents, opencode_hook_instruction_path};
+pub(crate) use opencode::{
+    opencode_hook_instruction_contents, opencode_hook_instruction_path, opencode_hook_registration,
+};
 
 mod codex;
 
@@ -485,10 +487,6 @@ fn shell_quote(s: &str) -> String {
     }
 }
 
-fn is_toml_table_header(trimmed_line: &str) -> bool {
-    trimmed_line.starts_with('[') && trimmed_line.ends_with(']')
-}
-
 /// Install a hook to a specific harness.
 ///
 /// - Claude Code: copy script + add to settings.json hooks
@@ -749,6 +747,8 @@ fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path
     Ok(())
 }
 
+#[cfg(test)]
+mod codex_config_tests;
 #[cfg(test)]
 mod prose_tests;
 #[cfg(test)]

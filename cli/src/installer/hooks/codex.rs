@@ -3,9 +3,7 @@
 //! `developer_instructions` prose fallback for events Codex has no
 //! equivalent for.
 
-use super::{
-    checked_child_path, is_toml_table_header, remove_hook_entries_from_hooks_object, shell_quote,
-};
+use super::{checked_child_path, remove_hook_entries_from_hooks_object, shell_quote};
 use crate::agent::Agent;
 use crate::harness::Harness;
 use crate::hook::Hook;
@@ -361,8 +359,9 @@ pub(super) enum CodexHooksFeature {
 /// for the literal text `[features]` / `hooks = true` inside an unrelated
 /// multiline string, and for the string `"true"` codex would reject. A
 /// missing file, a missing table, a missing key, a non-boolean value, and an
-/// explicit `false` all mean codex runs no hooks. The writer stays line-based
-/// so it keeps the user's comments and ordering.
+/// explicit `false` all mean codex runs no hooks. The writer parses the same
+/// document with the same parser and edits it in place, so it keeps the user's
+/// comments and ordering without ever reading string content as structure.
 pub(super) fn codex_hooks_feature_state(config_path: &Path) -> CodexHooksFeature {
     let content = match std::fs::read_to_string(config_path) {
         Ok(content) => content,
@@ -382,20 +381,15 @@ pub(super) fn codex_hooks_feature_state(config_path: &Path) -> CodexHooksFeature
 /// [`codex_hooks_feature_state`] for content already in hand — the writer's
 /// own refusal reads the same bytes it is about to merge into.
 fn codex_hooks_feature_in(content: &str, config_path: &Path) -> CodexHooksFeature {
-    let doc = match content.parse::<toml::Value>() {
+    let doc = match parse_codex_config(content, config_path) {
         Ok(doc) => doc,
-        Err(err) => {
-            return CodexHooksFeature::Unreadable(format!(
-                "{} is not valid TOML: {}",
-                config_path.display(),
-                toml_error_summary(&err)
-            ));
-        }
+        Err(reason) => return CodexHooksFeature::Unreadable(reason),
     };
     if doc
         .get("features")
+        .and_then(toml_edit::Item::as_table_like)
         .and_then(|features| features.get("hooks"))
-        .and_then(|hooks| hooks.as_bool())
+        .and_then(toml_edit::Item::as_bool)
         .unwrap_or(false)
     {
         CodexHooksFeature::Enabled
@@ -404,10 +398,24 @@ fn codex_hooks_feature_in(content: &str, config_path: &Path) -> CodexHooksFeatur
     }
 }
 
+/// The one parse of a Codex `config.toml`, for the reader and the writer
+/// alike: whether the file is readable and what it says are one answer, and a
+/// writer that parsed differently from the presence check would rewrite a file
+/// the check had already called unreadable.
+fn parse_codex_config(content: &str, config_path: &Path) -> Result<toml_edit::DocumentMut, String> {
+    content.parse::<toml_edit::DocumentMut>().map_err(|err| {
+        format!(
+            "{} is not valid TOML: {}",
+            config_path.display(),
+            toml_error_summary(&err)
+        )
+    })
+}
+
 /// The first line of a TOML parse failure — the one carrying the location.
 /// The rest is a multi-line source excerpt, and every consumer here puts the
 /// message on ONE report line.
-fn toml_error_summary(err: &toml::de::Error) -> String {
+fn toml_error_summary(err: &toml_edit::TomlError) -> String {
     let rendered = err.to_string();
     rendered
         .lines()
@@ -508,9 +516,10 @@ fn merge_codex_hooks_json_owned(
 }
 
 /// Ensure `[features] hooks = true` is set in `<root>/config.toml`,
-/// preserving any user content. Uses a text-level merge so we don't clobber
-/// comments or key ordering. Removes the deprecated `codex_hooks` feature flag
-/// from the `[features]` table so Codex doesn't warn about custom config.
+/// preserving any user content: the edit is made through `toml_edit`, so
+/// comments, spacing and key order survive it. Removes the deprecated
+/// `codex_hooks` feature flag from the `[features]` table so Codex doesn't
+/// warn about custom config.
 pub(super) fn enable_codex_hooks_feature(config_path: &Path) -> Result<()> {
     merge_codex_hooks_feature(config_path, true)
 }
@@ -523,6 +532,22 @@ pub(super) fn migrate_codex_hooks_feature(config_path: &Path) -> Result<()> {
     merge_codex_hooks_feature(config_path, false)
 }
 
+/// Both feature-flag writers, over one parsed document.
+///
+/// Every mutation goes through `toml_edit`: it is syntax-aware, so a
+/// `[features]` header or a `codex_hooks = …` line that appears inside a
+/// multiline STRING is content and is never touched, and it is
+/// format-preserving, so the comments, spacing and key order the user wrote
+/// come back out unchanged. The line scanner this replaced answered both
+/// questions from trimmed text: a string containing `[features]` made it write
+/// `hooks = true` at the document root — codex reads no feature there, and the
+/// install reported success — and a string containing `codex_hooks = …` had
+/// that line deleted out from under the user during migration.
+///
+/// An edit that cannot be expressed against the parsed document — a `features`
+/// or `features.hooks` that is not the shape this owns — is refused by name
+/// rather than forced through text, because forcing it destroys content vstack
+/// does not own.
 fn merge_codex_hooks_feature(config_path: &Path, enable_hooks: bool) -> Result<()> {
     if !enable_hooks && !config_path.exists() {
         return Ok(());
@@ -536,102 +561,52 @@ fn merge_codex_hooks_feature(config_path: &Path, enable_hooks: bool) -> Result<(
     } else {
         String::new()
     };
-    // The merge below is line-based, so it would happily splice `hooks = true`
-    // into a file codex itself cannot read — an install that reports success
-    // and never runs. What the user has to fix is the parse failure, so that
-    // is what this says, and the file is left exactly as it is.
-    if let CodexHooksFeature::Unreadable(reason) = codex_hooks_feature_in(&original, config_path) {
-        return Err(
-            anyhow::anyhow!("{reason}").context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)
-        );
-    }
+    // A file codex itself cannot read is not one to splice a flag into — the
+    // install would report success and never run. What the user has to fix is
+    // the parse failure, so that is what this says, and the file is left
+    // exactly as it is.
+    let mut doc = parse_codex_config(&original, config_path).map_err(|reason| {
+        anyhow::anyhow!("{reason}").context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)
+    })?;
 
-    let mut lines: Vec<String> = original.lines().map(|s| s.to_string()).collect();
-    let state = codex_features_state(&lines);
-    let target_hooks_value = if enable_hooks {
-        Some("true".to_string())
-    } else {
-        state
-            .deprecated
-            .as_ref()
-            .map(|deprecated| deprecated.value.clone())
+    let features = match doc.get("features") {
+        None => None,
+        Some(item) => Some(item.as_table_like().ok_or_else(|| {
+            anyhow::anyhow!(
+                "refusing to rewrite `features` in {}: it is not a table, so vstack cannot record the Codex hooks flag in it; fix the file by hand, then rerun",
+                config_path.display()
+            )
+        })?),
     };
+    let deprecated = features
+        .and_then(|features| features.get("codex_hooks"))
+        .and_then(toml_edit::Item::as_value)
+        .cloned();
+    let hooks_present = features.is_some_and(|features| features.contains_key("hooks"));
 
-    if target_hooks_value.is_none() && state.deprecated.is_none() {
+    // What `hooks` becomes. Enabling always says `true`; the migration only
+    // carries the deprecated key's own value over, and never past an explicit
+    // `hooks` the user already set.
+    let target = if enable_hooks {
+        Some(toml_edit::Value::from(true))
+    } else if hooks_present {
+        None
+    } else {
+        deprecated.clone()
+    };
+    if target.is_none() && deprecated.is_none() {
         return Ok(());
     }
 
-    let mut in_features = false;
-    let mut hooks_written = false;
-    let mut merged = Vec::with_capacity(lines.len() + 2);
-
-    for line in lines.drain(..) {
-        let trimmed = line.trim();
-
-        if trimmed == "[features]" {
-            in_features = true;
-            merged.push(line);
-            continue;
-        }
-
-        if in_features && is_toml_table_header(trimmed) {
-            if !state.hooks_seen
-                && let Some(value) = &target_hooks_value
-            {
-                let indent = state
-                    .deprecated
-                    .as_ref()
-                    .map(|deprecated| deprecated.indent.as_str())
-                    .unwrap_or("");
-                merged.push(format!("{indent}hooks = {value}"));
-            }
-            in_features = false;
-            merged.push(line);
-            continue;
-        }
-
-        if in_features {
-            match toml_assignment_key(&line) {
-                Some("codex_hooks") => continue,
-                Some("hooks") => {
-                    if hooks_written {
-                        continue;
-                    }
-                    if enable_hooks {
-                        let indent: String =
-                            line.chars().take_while(|c| c.is_whitespace()).collect();
-                        merged.push(format!("{indent}hooks = true"));
-                    } else {
-                        merged.push(line);
-                    }
-                    hooks_written = true;
-                    continue;
-                }
-                _ => {}
-            }
-        }
-
-        merged.push(line);
+    let features = codex_features_table(&mut doc, config_path)?;
+    if deprecated.is_some() {
+        features.remove("codex_hooks");
+    }
+    if let Some(target) = target {
+        set_codex_hooks_flag(features, target, config_path)?;
     }
 
-    if state.features_seen && in_features && !state.hooks_seen {
-        if let Some(value) = &target_hooks_value {
-            let indent = state
-                .deprecated
-                .as_ref()
-                .map(|deprecated| deprecated.indent.as_str())
-                .unwrap_or("");
-            merged.push(format!("{indent}hooks = {value}"));
-        }
-    } else if !state.features_seen && enable_hooks {
-        if !merged.is_empty() && !merged.last().is_some_and(|s| s.is_empty()) {
-            merged.push(String::new());
-        }
-        merged.push("[features]".into());
-        merged.push("hooks = true".into());
-    }
-
-    let mut output = merged.join("\n");
+    let mut output = doc.to_string();
     if !output.ends_with('\n') {
         output.push('\n');
     }
@@ -641,70 +616,60 @@ fn merge_codex_hooks_feature(config_path: &Path, enable_hooks: bool) -> Result<(
     Ok(())
 }
 
-#[derive(Default)]
-struct CodexFeaturesState {
-    features_seen: bool,
-    hooks_seen: bool,
-    deprecated: Option<DeprecatedCodexHooksFeature>,
-}
-
-struct DeprecatedCodexHooksFeature {
-    indent: String,
-    value: String,
-}
-
-fn codex_features_state(lines: &[String]) -> CodexFeaturesState {
-    let mut state = CodexFeaturesState::default();
-    let mut in_features = false;
-
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed == "[features]" {
-            state.features_seen = true;
-            in_features = true;
-            continue;
+/// The `[features]` table to edit, created empty when the document has none.
+/// Callers decide there is an edit to make BEFORE calling, so a migration with
+/// nothing to migrate never creates the table.
+fn codex_features_table<'a>(
+    doc: &'a mut toml_edit::DocumentMut,
+    config_path: &Path,
+) -> Result<&'a mut dyn toml_edit::TableLike> {
+    if doc.get("features").is_none() {
+        let mut table = toml_edit::Table::new();
+        // A blank line before an appended table, so a config that had content
+        // reads as it did when the line writer appended one.
+        if !doc.as_table().is_empty() {
+            table.decor_mut().set_prefix("\n");
         }
-
-        if in_features && is_toml_table_header(trimmed) {
-            in_features = false;
-        }
-
-        if !in_features {
-            continue;
-        }
-
-        match toml_assignment_key(line) {
-            Some("hooks") => state.hooks_seen = true,
-            Some("codex_hooks") if state.deprecated.is_none() => {
-                let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-                let value = toml_assignment_value(line).unwrap_or("true").to_string();
-                state.deprecated = Some(DeprecatedCodexHooksFeature { indent, value });
-            }
-            _ => {}
-        }
+        doc.insert("features", toml_edit::Item::Table(table));
     }
-
-    state
+    doc.get_mut("features")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "refusing to rewrite `features` in {}: it is not a table, so vstack cannot record the Codex hooks flag in it; fix the file by hand, then rerun",
+                config_path.display()
+            )
+        })
 }
 
-fn toml_assignment_key(line: &str) -> Option<&str> {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with('#') || trimmed.starts_with(';') {
-        return None;
+/// Write `features.hooks`, keeping whatever formatting the user gave the value
+/// it replaces — the spacing around it and any trailing comment.
+///
+/// A `hooks` that is a table or an array is not the flag this owns: replacing
+/// it would delete a structure the user wrote, so it is refused by name.
+fn set_codex_hooks_flag(
+    features: &mut dyn toml_edit::TableLike,
+    target: toml_edit::Value,
+    config_path: &Path,
+) -> Result<()> {
+    let Some(existing) = features.get_mut("hooks") else {
+        features.insert("hooks", toml_edit::Item::Value(target));
+        return Ok(());
+    };
+    let refuse = || {
+        anyhow::anyhow!(
+            "refusing to rewrite `features.hooks` in {}: it is not a plain value, and replacing it would discard what is there; fix the file by hand, then rerun",
+            config_path.display()
+        )
+    };
+    let existing = existing.as_value_mut().ok_or_else(refuse)?;
+    if existing.is_inline_table() || existing.is_array() {
+        return Err(refuse());
     }
-
-    trimmed
-        .split_once('=')
-        .map(|(key, _)| key.trim().trim_matches('"'))
-}
-
-fn toml_assignment_value(line: &str) -> Option<&str> {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with('#') || trimmed.starts_with(';') {
-        return None;
-    }
-
-    trimmed.split_once('=').map(|(_, value)| value.trim())
+    let decor = existing.decor().clone();
+    *existing = target;
+    *existing.decor_mut() = decor;
+    Ok(())
 }
 
 /// Fallback path for codex hooks whose event has no codex equivalent — append a
@@ -882,15 +847,21 @@ pub(super) fn remove_hook_from_codex_json(
     Ok(())
 }
 
-/// Strip any `## Safety: <name>` prose block we previously injected into codex
-/// agent TOMLs (legacy fallback path). Idempotent.
+/// Strip the `## Safety: <name>` prose block this installer injected into
+/// codex agent TOMLs. Idempotent.
+///
+/// Cut by [`strip_stale_prose_section`] — the same anchored span the install
+/// writes into and every presence read looks in. The whole-file search it
+/// replaces cut from the FIRST `\n## Safety: <name>\n` anywhere in the file to
+/// the next heading or string delimiter, so a marker a user wrote in a comment
+/// or in an unrelated field took the rest of that field with it, while the
+/// real block stayed and the removal reported success.
 pub(super) fn strip_hook_prose_from_codex_agents(global: bool, name: &str) -> Result<()> {
     validate_item_name(name)?;
     let agents_dir = Harness::Codex.agents_dir(global);
     if !agents_dir.exists() {
         return Ok(());
     }
-    let marker = format!("\n## Safety: {name}\n");
     let entries = std::fs::read_dir(&agents_dir)
         .with_context(|| format!("reading Codex agents dir {}", agents_dir.display()))?;
     for entry in entries {
@@ -901,21 +872,9 @@ pub(super) fn strip_hook_prose_from_codex_agents(global: bool, name: &str) -> Re
         if path.extension().is_some_and(|ext| ext == "toml") {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading Codex agent {}", path.display()))?;
-            if let Some(start) = content.find(&marker) {
-                // Find the end: next '## ' header or the closing ''' of
-                // developer_instructions, whichever comes first.
-                let tail = &content[start + 1..];
-                let next_section = tail.find("\n## ").map(|p| start + 1 + p + 1);
-                let close_pos = content[start..].find("\n'''").map(|p| start + p + 1);
-                let end = [next_section, close_pos]
-                    .into_iter()
-                    .flatten()
-                    .min()
-                    .unwrap_or(content.len());
-                let mut new_content = String::with_capacity(content.len());
-                new_content.push_str(&content[..start]);
-                new_content.push_str(&content[end..]);
-                std::fs::write(&path, new_content)
+            let stripped = strip_stale_prose_section(&content, name);
+            if stripped != content {
+                std::fs::write(&path, stripped)
                     .with_context(|| format!("writing Codex agent {}", path.display()))?;
             }
         }

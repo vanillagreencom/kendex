@@ -64,12 +64,7 @@ fn a_failing_run_keeps_its_first_failure_across_retries_and_success_clears_it() 
         // start survives and the cause is recorded.
         cache.break_origin();
         assert!(matches!(
-            fetch_remote_cache(
-                &cache.remote,
-                None,
-                FetchBound::BACKGROUND,
-                CacheAccess::RefreshOnly
-            ),
+            refresh_remote_cache(&cache.remote, None, FetchBound::BACKGROUND),
             Ok(FetchAttempt::FetchFailed(_))
         ));
         assert_eq!(
@@ -277,13 +272,7 @@ fn fetch_guard_is_exclusive_and_released_when_its_holder_goes_away() {
         );
         // A caller that finds the guard held does nothing and says nothing.
         assert_eq!(
-            fetch_remote_cache(
-                &cache.remote,
-                None,
-                FetchBound::BACKGROUND,
-                CacheAccess::RefreshOnly
-            )
-            .unwrap(),
+            refresh_remote_cache(&cache.remote, None, FetchBound::BACKGROUND).unwrap(),
             FetchAttempt::Busy
         );
         drop(first);
@@ -310,16 +299,11 @@ fn an_install_refuses_a_cache_another_process_is_rewriting_while_a_refresher_sta
         };
 
         // The mutating path: `add`, `refresh`, the TUI's install resolution.
-        let err = fetch_remote_cache(
-            &cache.remote,
-            None,
-            FetchBound::Unbounded,
-            CacheAccess::Install,
-        )
-        .expect_err("an install must not proceed into a tree being rewritten")
-        .to_string();
+        let err = lease_remote_cache(&cache.remote, None, FetchBound::Unbounded)
+            .expect_err("an install must not proceed into a tree being rewritten")
+            .to_string();
         assert!(
-            err.contains("another vstack process is refreshing"),
+            err.contains("another vstack process is using"),
             "the refusal must name the in-flight refresh: {err}"
         );
 
@@ -335,7 +319,7 @@ fn an_install_refuses_a_cache_another_process_is_rewriting_while_a_refresher_sta
             records
                 .refused
                 .reason(&cache.source)
-                .is_some_and(|reason| reason.contains("another vstack process is refreshing")),
+                .is_some_and(|reason| reason.contains("another vstack process is using")),
             "the refusal must be carried, not dropped: {:?}",
             records.refused
         );
@@ -343,13 +327,7 @@ fn an_install_refuses_a_cache_another_process_is_rewriting_while_a_refresher_sta
         // Control: the detached refresher wants exactly this outcome, and
         // says so without touching the tree.
         assert_eq!(
-            fetch_remote_cache(
-                &cache.remote,
-                None,
-                FetchBound::BACKGROUND,
-                CacheAccess::RefreshOnly
-            )
-            .unwrap(),
+            refresh_remote_cache(&cache.remote, None, FetchBound::BACKGROUND).unwrap(),
             FetchAttempt::Busy
         );
         assert!(
@@ -360,22 +338,19 @@ fn an_install_refuses_a_cache_another_process_is_rewriting_while_a_refresher_sta
         // Control: with the guard free, both behave exactly as before — the
         // install fetches and the refresher finds the stamp it just wrote.
         drop(holder);
-        assert_eq!(
-            fetch_remote_cache(
-                &cache.remote,
-                None,
-                FetchBound::Unbounded,
-                CacheAccess::Install
-            )
-            .unwrap(),
-            FetchAttempt::Updated
+        let (attempt, lease) = lease_remote_cache(&cache.remote, None, FetchBound::Unbounded)
+            .expect("the guard is free again");
+        assert_eq!(attempt, FetchAttempt::Updated);
+        assert!(
+            lease.is_held(),
+            "the install keeps the guard: it reads this tree next"
         );
+        drop(lease);
         assert_eq!(
-            fetch_remote_cache(
+            refresh_remote_cache(
                 &cache.remote,
                 Some(REMOTE_CACHE_TTL),
-                FetchBound::BACKGROUND,
-                CacheAccess::RefreshOnly
+                FetchBound::BACKGROUND
             )
             .unwrap(),
             FetchAttempt::Fresh
@@ -389,34 +364,27 @@ fn a_second_caller_behind_a_fetch_sees_the_fresh_stamp_and_skips() {
         cache.break_origin();
         // First caller: due (no stamp), attempts, and the fetch fails.
         assert!(matches!(
-            fetch_remote_cache(
+            refresh_remote_cache(
                 &cache.remote,
                 Some(Duration::from_secs(3600)),
-                FetchBound::BACKGROUND,
-                CacheAccess::RefreshOnly
+                FetchBound::BACKGROUND
             ),
             Ok(FetchAttempt::FetchFailed(_))
         ));
         // Second caller with the same bound: the due check re-runs inside the
         // guard, so the stamp the first caller just wrote suppresses it.
         assert_eq!(
-            fetch_remote_cache(
+            refresh_remote_cache(
                 &cache.remote,
                 Some(Duration::from_secs(3600)),
-                FetchBound::BACKGROUND,
-                CacheAccess::RefreshOnly
+                FetchBound::BACKGROUND
             )
             .unwrap(),
             FetchAttempt::Fresh
         );
         // Control: no bound is always due.
         assert!(matches!(
-            fetch_remote_cache(
-                &cache.remote,
-                None,
-                FetchBound::BACKGROUND,
-                CacheAccess::RefreshOnly
-            ),
+            refresh_remote_cache(&cache.remote, None, FetchBound::BACKGROUND),
             Ok(FetchAttempt::FetchFailed(_))
         ));
     });
@@ -434,12 +402,7 @@ fn an_unwritable_cache_is_reported_rather_than_discarded() {
         let dir = cache.dir();
         let git = dir.join(".git");
         std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o500)).unwrap();
-        let attempt = fetch_remote_cache(
-            &cache.remote,
-            None,
-            FetchBound::BACKGROUND,
-            CacheAccess::RefreshOnly,
-        );
+        let attempt = refresh_remote_cache(&cache.remote, None, FetchBound::BACKGROUND);
         // The READ path must see it too: no stamp can exist, so a cache that
         // can never refresh would otherwise be invisible forever.
         let read_path = cache_unwritable_reason(dir);
@@ -475,7 +438,6 @@ fn refresh_skips_fresh_stamp_and_reports_a_failed_attempt_when_due() {
                 &lock,
                 Some(Duration::from_secs(3600)),
                 FetchBound::BACKGROUND,
-                CacheAccess::RefreshOnly
             )
             .is_empty(),
             "a fresh stamp must suppress the fetch and report nothing"
@@ -489,12 +451,8 @@ fn refresh_skips_fresh_stamp_and_reports_a_failed_attempt_when_due() {
         // Zero TTL: due, attempted, and the attempt fails — reported for
         // check to surface.
         assert!(any_remote_cache_due(&lock, Some(Duration::ZERO)));
-        let problems = refresh_remote_caches_older_than(
-            &lock,
-            Some(Duration::ZERO),
-            FetchBound::BACKGROUND,
-            CacheAccess::RefreshOnly,
-        );
+        let problems =
+            refresh_remote_caches_older_than(&lock, Some(Duration::ZERO), FetchBound::BACKGROUND);
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert_eq!(problems[0].source, cache.source);
         assert!(
@@ -554,14 +512,9 @@ fn a_broken_cache_inside_a_repository_never_touches_the_enclosing_repository() {
         let source = RemoteSource::parse("owner/repo").unwrap().unwrap();
         write_fake_clone(&source.cache_dir, "https://github.com/owner/repo.git");
 
-        let err = fetch_remote_cache(
-            &source,
-            None,
-            FetchBound::BACKGROUND,
-            CacheAccess::RefreshOnly,
-        )
-        .expect_err("a broken cache must be refused, not fetched")
-        .to_string();
+        let err = refresh_remote_cache(&source, None, FetchBound::BACKGROUND)
+            .expect_err("a broken cache must be refused, not fetched")
+            .to_string();
         assert!(
             err.contains("refusing cached source"),
             "the refusal must name itself: {err}"
@@ -668,14 +621,9 @@ fn a_symlinked_cache_directory_or_git_dir_is_refused_before_any_mutation() {
         let cache = remote.cache_dir.clone();
         std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&external, &cache).unwrap();
-        let err = fetch_remote_cache(
-            &remote,
-            None,
-            FetchBound::BACKGROUND,
-            CacheAccess::RefreshOnly,
-        )
-        .expect_err("a symlinked cache dir must be refused")
-        .to_string();
+        let err = refresh_remote_cache(&remote, None, FetchBound::BACKGROUND)
+            .expect_err("a symlinked cache dir must be refused")
+            .to_string();
         assert!(err.contains("symlink"), "{err}");
         assert!(
             !external.join(".git").join("vstack-fetch.lock").exists(),
@@ -691,16 +639,130 @@ fn a_symlinked_cache_directory_or_git_dir_is_refused_before_any_mutation() {
         std::fs::create_dir_all(&cache).unwrap();
         std::os::unix::fs::symlink(external.join(".git"), cache.join(".git")).unwrap();
         assert!(
-            fetch_remote_cache(
-                &remote,
-                None,
-                FetchBound::BACKGROUND,
-                CacheAccess::RefreshOnly
-            )
-            .is_err(),
+            refresh_remote_cache(&remote, None, FetchBound::BACKGROUND).is_err(),
             "a symlinked .git must be refused"
         );
         assert!(!external.join(".git").join("vstack-fetch.lock").exists());
     });
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The lease is the whole fix: the guard the fetch takes LEAVES with the
+/// caller, so the tree stays exclusive for the read that follows — discovery,
+/// hashing, copying — and not merely for the fetch. Against a fetch that
+/// released its guard on the way out, the cache is free the moment the fetch
+/// returns and a second install may `reset --hard` it mid-read, which records
+/// lock hashes for a tree that never existed as a whole.
+#[test]
+fn an_install_holds_the_cache_for_the_whole_read_not_just_the_fetch() {
+    with_sandboxed_cache("install-lease", |cache| {
+        let dir = cache.dir();
+        let (attempt, lease) = lease_remote_cache(&cache.remote, None, FetchBound::Unbounded)
+            .expect("a free cache installs");
+        assert_eq!(attempt, FetchAttempt::Updated);
+
+        // What another vstack process sees for as long as the install reads.
+        assert!(
+            matches!(RemoteCacheFetchGuard::acquire(dir), GuardAcquire::Busy),
+            "the cache must still be held after the fetch returns — the read has not even started"
+        );
+        assert!(lease.is_held());
+
+        // A new upstream revision cannot land underneath that read.
+        let being_read = std::fs::read(dir.join("README.md")).unwrap();
+        std::fs::write(cache.origin.join("README.md"), "rewritten\n").unwrap();
+        git(&cache.origin, &["commit", "-qam", "second"]);
+        assert_eq!(
+            refresh_remote_cache(&cache.remote, None, FetchBound::BACKGROUND).unwrap(),
+            FetchAttempt::Busy,
+            "a refresher stands down rather than resetting a tree being read"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("README.md")).unwrap(),
+            being_read,
+            "the bytes the install hashed are the bytes it copies"
+        );
+
+        // The read ends where the lease drops, and the cache moves on again.
+        drop(lease);
+        assert!(matches!(
+            RemoteCacheFetchGuard::acquire(dir),
+            GuardAcquire::Held(_)
+        ));
+        assert_eq!(
+            refresh_remote_cache(&cache.remote, None, FetchBound::BACKGROUND).unwrap(),
+            FetchAttempt::Updated
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("README.md")).unwrap(),
+            "rewritten\n"
+        );
+    });
+}
+
+/// The lease has to reach the phase that reads. `resolve_source_records` is
+/// where `refresh` gets its source directories from, so the record it hands
+/// back carries the lease, and the cache stays held for exactly as long as the
+/// caller keeps that record.
+#[test]
+fn resolved_source_records_carry_the_lease_their_reader_depends_on() {
+    with_sandboxed_cache("records-lease", |cache| {
+        let records = crate::refresh_sources::resolve_source_records(&cache.lock());
+        assert_eq!(records.sources.len(), 1, "the fixture resolves one source");
+        assert_eq!(records.sources[0].root, cache.dir());
+        assert!(
+            matches!(
+                RemoteCacheFetchGuard::acquire(cache.dir()),
+                GuardAcquire::Busy
+            ),
+            "the records hold the cache while the refresh reads them"
+        );
+
+        drop(records);
+        assert!(
+            matches!(
+                RemoteCacheFetchGuard::acquire(cache.dir()),
+                GuardAcquire::Held(_)
+            ),
+            "and release it when the refresh is done with them"
+        );
+    });
+}
+
+/// One process may resolve one remote twice — two lock entries can spell it
+/// two ways — and `flock` is per open file description, so a naive second
+/// acquire would contend with this process's own read, wait out
+/// [`INSTALL_GUARD_WAIT`] and then refuse the install. The lease is shared
+/// instead, and nothing fetches while a reader holds it.
+#[test]
+fn a_second_resolution_in_one_process_shares_the_lease_rather_than_refusing() {
+    with_sandboxed_cache("self-contention", |cache| {
+        let dir = cache.dir();
+        let (_, first) = lease_remote_cache(&cache.remote, None, FetchBound::Unbounded)
+            .expect("a free cache installs");
+        let being_read = std::fs::read(dir.join("README.md")).unwrap();
+        std::fs::write(cache.origin.join("README.md"), "rewritten\n").unwrap();
+        git(&cache.origin, &["commit", "-qam", "second"]);
+
+        let (attempt, second) = lease_remote_cache(&cache.remote, None, FetchBound::Unbounded)
+            .expect("a process must not refuse its own lease");
+        assert_eq!(
+            attempt,
+            FetchAttempt::Fresh,
+            "a cache this process is already reading is not one to fetch and reset"
+        );
+        assert_eq!(std::fs::read(dir.join("README.md")).unwrap(), being_read);
+
+        // Refcounted: the shared lease outlives whichever holder drops first.
+        drop(first);
+        assert!(
+            matches!(RemoteCacheFetchGuard::acquire(dir), GuardAcquire::Busy),
+            "the second reader still holds it"
+        );
+        drop(second);
+        assert!(matches!(
+            RemoteCacheFetchGuard::acquire(dir),
+            GuardAcquire::Held(_)
+        ));
+    });
 }

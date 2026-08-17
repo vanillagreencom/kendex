@@ -391,9 +391,22 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
                 }
             }
             crate::harness::Harness::OpenCode => {
+                // A hook is installed only when opencode will LOAD it: the
+                // instruction file AND the `opencode.json` entry naming it.
+                // A file nothing references is prose no agent ever sees.
                 let path = crate::installer::opencode_hook_instruction_path(global, name);
                 if !path.exists() {
                     missing.push(format!("{h}: instruction missing"));
+                } else {
+                    match crate::installer::opencode_hook_registration(global, name) {
+                        crate::installer::HookRegistration::Registered => {}
+                        crate::installer::HookRegistration::Absent => {
+                            missing.push(format!("{h}: instruction present but not referenced"));
+                        }
+                        crate::installer::HookRegistration::Unreadable(reason) => {
+                            unverifiable.push(format!("{h}: registration unverifiable — {reason}"));
+                        }
+                    }
                 }
             }
             crate::harness::Harness::Codex => {

@@ -58,6 +58,62 @@ fn read_opencode_config(path: &Path) -> Result<Option<serde_json::Value>> {
         .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)
 }
 
+/// Does `opencode.json` still point OpenCode at this hook's instruction file?
+///
+/// The file on disk is half the install. OpenCode loads what the
+/// `instructions` array names, so an entry a user (or an older vstack) removed
+/// leaves the file sitting there and the hook inert — the same "artifact
+/// present, harness never runs it" state the Claude and Codex registration
+/// checks exist to catch, and the one this harness answered `Registered` for.
+///
+/// Read from the array the installer writes, through the reader both writers
+/// go through, and compared by the file each entry RESOLVES to — so a
+/// hand-spelled but still-correct path counts, and a path naming some other
+/// file does not.
+pub(crate) fn opencode_hook_registration(global: bool, name: &str) -> super::HookRegistration {
+    let config_path = if global {
+        crate::config::opencode_global_config_path()
+    } else {
+        crate::config::opencode_project_config_path()
+    };
+    let config = match read_opencode_config(&config_path) {
+        Ok(Some(config)) => config,
+        Ok(None) => return super::HookRegistration::Absent,
+        Err(err) => return super::HookRegistration::Unreadable(format!("{err:#}")),
+    };
+    // Entries are relative to the config file's own directory.
+    let base = config_path.parent().unwrap_or(Path::new("."));
+    let instruction_path = opencode_hook_instruction_path(global, name);
+    let target = crate::config::normalize_path_lexical(&instruction_path);
+    let target_resolved = std::fs::canonicalize(&instruction_path).ok();
+    let registered = config
+        .get("instructions")
+        .and_then(|instructions| instructions.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.as_str())
+        .any(|entry| {
+            let path = Path::new(entry);
+            let absolute = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                base.join(path)
+            };
+            if crate::config::normalize_path_lexical(&absolute) == target {
+                return true;
+            }
+            match (&target_resolved, std::fs::canonicalize(&absolute).ok()) {
+                (Some(target), Some(entry)) => &entry == target,
+                _ => false,
+            }
+        });
+    if registered {
+        super::HookRegistration::Registered
+    } else {
+        super::HookRegistration::Absent
+    }
+}
+
 pub(super) fn install_hook_opencode_at_path(
     hook: &Hook,
     config_path: &Path,

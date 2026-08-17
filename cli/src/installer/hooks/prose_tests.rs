@@ -258,3 +258,61 @@ fn repairing_one_prose_section_leaves_a_following_section_intact() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Removal reads the block the same way installation and presence do. The
+/// whole-file search it replaced cut from the first `## Safety: <name>` line
+/// ANYWHERE in the file through to the next heading or string delimiter: a
+/// marker a user wrote in an unrelated field took the rest of that field with
+/// it, and the real block — further down, inside `developer_instructions` —
+/// survived, so the hook stayed installed and the user lost content instead.
+#[test]
+fn removing_prose_cuts_the_installed_block_and_nothing_that_merely_looks_like_it() {
+    let dir = tmpdir("codex_prose_remove_scope");
+    let agents_dir = dir.join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    let hook = hook_fixture("post-edit-lint", "TaskCompleted", None);
+    let marker = super::codex::codex_hook_safety_marker(&hook.name);
+    let decoy = format!(
+        "# {marker}\nname = \"rust\"\nnotes = '''\n{}\n\nthe user's own words, after the decoy\n'''\n",
+        crate::installer::codex_hook_safety_block(&hook)
+    );
+    let toml = agents_dir.join("rust.toml");
+    std::fs::write(
+        &toml,
+        format!("{decoy}developer_instructions = '''\nBody\n'''\n"),
+    )
+    .unwrap();
+    let agents = [agent_fixture("rust")];
+
+    crate::test_util::with_codex_home(&dir, || {
+        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
+            .unwrap();
+    });
+    let installed = std::fs::read_to_string(&toml).unwrap();
+    assert!(crate::installer::codex_agent_prose_section(&installed, &hook.name).is_some());
+
+    crate::test_util::with_codex_home(&dir, || {
+        super::codex::strip_hook_prose_from_codex_agents(true, &hook.name).unwrap();
+    });
+    let after = std::fs::read_to_string(&toml).unwrap();
+    assert!(
+        crate::installer::codex_agent_prose_section(&after, &hook.name).is_none(),
+        "the installed block must be gone: {after}"
+    );
+    assert!(
+        after.starts_with(&decoy),
+        "the comment and the unrelated field are the user's, byte for byte: {after}"
+    );
+    assert_eq!(
+        after,
+        format!("{decoy}developer_instructions = '''\nBody\n'''\n"),
+        "removal restores the file the install started from"
+    );
+
+    // Control: a second removal changes nothing.
+    crate::test_util::with_codex_home(&dir, || {
+        super::codex::strip_hook_prose_from_codex_agents(true, &hook.name).unwrap();
+    });
+    assert_eq!(std::fs::read_to_string(&toml).unwrap(), after);
+    let _ = std::fs::remove_dir_all(&dir);
+}

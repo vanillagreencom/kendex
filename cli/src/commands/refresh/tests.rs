@@ -143,11 +143,11 @@ fn source_repo_for_lock_entry_uses_resolved_source_record_identity() {
         Path::new("/moved/source"),
         vec!["codex"],
     );
-    let records = vec![crate::refresh_sources::ResolvedSource {
-        root: source,
-        aliases: vec!["/moved/source".to_string()],
-        source_repo: Some("vanillagreencom/vstack".to_string()),
-    }];
+    let records = vec![crate::refresh_sources::ResolvedSource::for_test(
+        source,
+        "/moved/source",
+        Some("vanillagreencom/vstack"),
+    )];
 
     assert_eq!(
         observed_source_repo_for_lock_entry(&records, &entry)
@@ -182,11 +182,11 @@ fn sync_lock_entry_source_repo_clears_stale_identity_for_resolved_record_without
         vec!["codex"],
     );
     entry.source_repo = Some("vanillagreencom/vstack".to_string());
-    let records = vec![crate::refresh_sources::ResolvedSource {
-        root: source,
-        aliases: vec!["/moved/source".to_string()],
-        source_repo: None,
-    }];
+    let records = vec![crate::refresh_sources::ResolvedSource::for_test(
+        source,
+        "/moved/source",
+        None,
+    )];
 
     sync_lock_entry_source_repo(&records, &mut entry);
 

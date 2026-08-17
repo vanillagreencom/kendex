@@ -420,7 +420,6 @@ fn main() -> Result<()> {
                     &lock,
                     Some(config::REMOTE_CACHE_TTL),
                     config::FetchBound::BACKGROUND,
-                    config::CacheAccess::RefreshOnly,
                 );
             }
             Ok(())

@@ -12,7 +12,7 @@ use crate::skill::Skill;
 use crate::tui;
 use anyhow::Context;
 use anyhow::Result;
-use source::{resolve_remembered_source, resolve_source};
+use source::{resolve_remembered_source, resolve_source, source_label};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -182,35 +182,14 @@ struct ResolvedSource {
     label: String,
     dir: PathBuf,
     persist: bool,
-}
-
-/// How a source is shown to a human — the scope summary and the TUI source
-/// selector both print this. Display only: selection and installation carry
-/// the raw source, and this string is credential-scrubbed because a
-/// `https://user:token@host/…` remote would otherwise print its token into
-/// terminal scrollback and captured logs.
-fn source_label(source: &str) -> String {
-    if Path::new(source).exists() {
-        // A lock-recorded local path is untrusted text like any other: a
-        // matching directory whose name carries an escape would put it on the
-        // picker row. Through the same redacting display as every other source
-        // diagnostic — a credential-looking string can name a real path.
-        return format!(
-            "local: {}",
-            crate::refresh_sources::remote_source_display(source)
-        );
-    }
-
-    // A registry or lock written by an earlier vstack can still hold a
-    // credential URL; a picker row is one of the places that would print it.
-    let source = crate::refresh_sources::remote_source_display(source);
-    source
-        .trim_end_matches('/')
-        .trim_end_matches(".git")
-        .trim_start_matches("https://github.com/")
-        .trim_start_matches("http://github.com/")
-        .trim_start_matches("git@github.com:")
-        .to_string()
+    /// Held for as long as this value is — which is the whole install, since
+    /// `run` keeps it from resolution through the last copy. `dir` is read
+    /// that entire time (discovered, hashed, copied out of), and without the
+    /// lease a second `vstack add` could fetch and `reset --hard` the same
+    /// cache underneath, leaving a mixed install and lock hashes for a tree
+    /// that never existed as a whole.
+    #[allow(dead_code)]
+    lease: config::CacheLease,
 }
 
 fn build_source_options(
@@ -686,6 +665,7 @@ role: engineer
             label: "local: /repo/local-vstack".into(),
             dir: PathBuf::from("/repo/local-vstack"),
             persist: false,
+            lease: config::CacheLease::none(),
         };
 
         let options = build_source_options(&registry, &resolved, &project_root);
@@ -710,6 +690,7 @@ role: engineer
             label: "local: /repo/local-vstack".into(),
             dir: PathBuf::from("/repo/local-vstack"),
             persist: false,
+            lease: config::CacheLease::none(),
         };
 
         let options = build_source_options(&registry, &resolved, &project_root);
@@ -729,6 +710,7 @@ role: engineer
             label: "owner/custom".into(),
             dir: PathBuf::from("/cache/owner_custom"),
             persist: true,
+            lease: config::CacheLease::none(),
         };
 
         let options = build_source_options(&registry, &resolved, &project_root);
@@ -1646,6 +1628,7 @@ role: engineer
             label: "local".into(),
             dir: genuine.clone(),
             persist: false,
+            lease: config::CacheLease::none(),
         };
 
         let options = build_source_options(&registry, &resolved, &project);
@@ -1696,6 +1679,7 @@ role: engineer
                 label: "owner/confirmed".into(),
                 dir: PathBuf::from("/cache/owner_confirmed"),
                 persist: true,
+                lease: config::CacheLease::none(),
             };
             let err = persist_confirmed_source(&resolved, false, &project)
                 .expect_err("an unreadable registry must fail, not default to empty");
@@ -1745,6 +1729,7 @@ role: engineer
                 label: "owner/confirmed".into(),
                 dir: PathBuf::from("/cache/owner_confirmed"),
                 persist: true,
+                lease: config::CacheLease::none(),
             };
             persist_confirmed_source(&resolved, false, &project).unwrap();
 
@@ -1784,6 +1769,7 @@ role: engineer
             label: "local".into(),
             dir: consumer.clone(),
             persist: false,
+            lease: config::CacheLease::none(),
         };
 
         let options = build_source_options(&registry, &resolved, &consumer);
@@ -1905,16 +1891,18 @@ fn resolve_source_for_app(
                 label: source_label(path),
                 dir,
                 persist: true,
+                lease: config::CacheLease::none(),
             })
         }
         Some(source) => {
-            let dir = resolve_source(Some(source), interactive)?;
+            let resolved = resolve_source(Some(source), interactive)?;
             Ok(ResolvedSource {
                 source: source.to_string(),
-                source_repo: config::source_repo_for_source(Some(&dir), source),
+                source_repo: config::source_repo_for_source(Some(&resolved.dir), source),
                 label: source_label(source),
-                dir,
+                dir: resolved.dir,
                 persist: true,
+                lease: resolved.lease,
             })
         }
         None => {
@@ -1932,15 +1920,16 @@ fn resolve_source_for_app(
             // intentionally project-scoped: choosing a repo while working in
             // one project must not silently change the source used by another.
             if let Some(current) = registry.current_for_project(project_root)
-                && let Some(dir) = resolve_remembered_source(current, interactive)?
-                && usable(&dir)
+                && let Some(resolved) = resolve_remembered_source(current, interactive)?
+                && usable(&resolved.dir)
             {
                 return Ok(ResolvedSource {
                     source: current.to_string(),
-                    source_repo: config::source_repo_for_source(Some(&dir), current),
+                    source_repo: config::source_repo_for_source(Some(&resolved.dir), current),
                     label: source_label(current),
-                    dir,
+                    dir: resolved.dir,
                     persist: true,
+                    lease: resolved.lease,
                 });
             }
 
@@ -1948,15 +1937,16 @@ fn resolve_source_for_app(
             // lock file. Use that before any global/default source so a
             // project's repo choice remains stable across invocations.
             if let Some(current) = source_from_project_lock(project_root)
-                && let Some(dir) = resolve_remembered_source(&current, interactive)?
-                && usable(&dir)
+                && let Some(resolved) = resolve_remembered_source(&current, interactive)?
+                && usable(&resolved.dir)
             {
                 return Ok(ResolvedSource {
                     label: source_label(&current),
-                    source_repo: config::source_repo_for_source(Some(&dir), &current),
+                    source_repo: config::source_repo_for_source(Some(&resolved.dir), &current),
                     source: current,
-                    dir,
+                    dir: resolved.dir,
                     persist: true,
+                    lease: resolved.lease,
                 });
             }
 
@@ -1973,6 +1963,7 @@ fn resolve_source_for_app(
                         label: source_label(dir.to_str().unwrap_or("local")),
                         dir,
                         persist: false,
+                        lease: config::CacheLease::none(),
                     });
                 }
                 if !dir.pop() {
@@ -1981,13 +1972,14 @@ fn resolve_source_for_app(
             }
 
             let source = crate::REPO.to_string();
-            let dir = resolve_source(Some(&source), interactive)?;
+            let resolved = resolve_source(Some(&source), interactive)?;
             Ok(ResolvedSource {
                 label: source_label(&source),
-                source_repo: config::source_repo_for_source(Some(&dir), &source),
-                dir,
+                source_repo: config::source_repo_for_source(Some(&resolved.dir), &source),
+                dir: resolved.dir,
                 source,
                 persist: true,
+                lease: resolved.lease,
             })
         }
     }

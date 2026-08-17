@@ -1901,6 +1901,7 @@ dependencies = [
  "serde_yaml",
  "thiserror 2.0.18",
  "toml",
+ "toml_edit",
  "walkdir",
  "zip",
 ]

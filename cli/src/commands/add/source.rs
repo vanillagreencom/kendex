@@ -2,8 +2,55 @@
 //! remote vstack repo cloned into the shared cache, or the vstack checkout
 //! `add` is being run from.
 
+use crate::config::CacheLease;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+
+/// A source directory `add` is about to read, and the lease that keeps a
+/// cached one from being fetched and reset while it does. Local directories
+/// lease nothing — no vstack process rewrites them.
+pub(super) struct LeasedSourceDir {
+    pub dir: PathBuf,
+    pub lease: CacheLease,
+}
+
+impl LeasedSourceDir {
+    fn local(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            lease: CacheLease::none(),
+        }
+    }
+}
+
+/// How a source is shown to a human — the scope summary and the TUI source
+/// selector both print this. Display only: selection and installation carry
+/// the raw source, and this string is credential-scrubbed because a
+/// `https://user:token@host/…` remote would otherwise print its token into
+/// terminal scrollback and captured logs.
+pub(super) fn source_label(source: &str) -> String {
+    if Path::new(source).exists() {
+        // A lock-recorded local path is untrusted text like any other: a
+        // matching directory whose name carries an escape would put it on the
+        // picker row. Through the same redacting display as every other source
+        // diagnostic — a credential-looking string can name a real path.
+        return format!(
+            "local: {}",
+            crate::refresh_sources::remote_source_display(source)
+        );
+    }
+
+    // A registry or lock written by an earlier vstack can still hold a
+    // credential URL; a picker row is one of the places that would print it.
+    let source = crate::refresh_sources::remote_source_display(source);
+    source
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .trim_start_matches("https://github.com/")
+        .trim_start_matches("http://github.com/")
+        .trim_start_matches("git@github.com:")
+        .to_string()
+}
 
 /// Resolve a source the project remembered — the registry's selection, or the
 /// one its lock records — for the fallback chain.
@@ -16,7 +63,7 @@ use std::path::{Path, PathBuf};
 pub(super) fn resolve_remembered_source(
     source: &str,
     interactive: bool,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<LeasedSourceDir>> {
     // Ordered as `refresh` orders it: an absolute path that exists is that
     // path, then the remote reading, then a relative one. A remote-shaped
     // spelling that ALSO names a directory under the current working
@@ -24,7 +71,7 @@ pub(super) fn resolve_remembered_source(
     // subdirectory would silently install from it.
     let path = Path::new(source);
     if path.is_absolute() && path.exists() {
-        return Ok(Some(std::fs::canonicalize(source)?));
+        return Ok(Some(LeasedSourceDir::local(std::fs::canonicalize(source)?)));
     }
     if crate::refresh_sources::looks_like_remote_source(source) {
         return clone_or_update(source, interactive)
@@ -37,7 +84,7 @@ pub(super) fn resolve_remembered_source(
             });
     }
     if path.exists() {
-        return Ok(Some(std::fs::canonicalize(source)?));
+        return Ok(Some(LeasedSourceDir::local(std::fs::canonicalize(source)?)));
     }
     // A spelling that opens with a scheme is an attempt at a URL, so it names
     // something even when the strict parser cannot read it. Walking on would
@@ -51,9 +98,11 @@ pub(super) fn resolve_remembered_source(
     Ok(None)
 }
 
-pub(super) fn resolve_source(source: Option<&str>, interactive: bool) -> Result<PathBuf> {
+pub(super) fn resolve_source(source: Option<&str>, interactive: bool) -> Result<LeasedSourceDir> {
     match source {
-        Some(path) if Path::new(path).exists() => Ok(std::fs::canonicalize(path)?),
+        Some(path) if Path::new(path).exists() => {
+            Ok(LeasedSourceDir::local(std::fs::canonicalize(path)?))
+        }
         Some(source) if crate::refresh_sources::looks_like_remote_source(source) => {
             clone_or_update(source, interactive)
         }
@@ -69,7 +118,7 @@ pub(super) fn resolve_source(source: Option<&str>, interactive: bool) -> Result<
             let mut dir = std::env::current_dir()?;
             loop {
                 if crate::resolve::is_vstack_source(&dir) {
-                    return Ok(dir);
+                    return Ok(LeasedSourceDir::local(dir));
                 }
                 if !dir.pop() {
                     break;
@@ -87,12 +136,16 @@ pub(super) fn resolve_source(source: Option<&str>, interactive: bool) -> Result<
 /// source for: it is TTL-gated and short-bounded so the UI paints in seconds
 /// even when the remote is unroutable. An explicit `vstack add <source>` asked
 /// for this exact fetch and gets it unbounded.
-fn clone_or_update(source: &str, interactive: bool) -> Result<PathBuf> {
+///
+/// The lease comes back with the directory: `add` discovers, hashes and copies
+/// out of this tree next, and it must be the tree the fetch left behind rather
+/// than one a second `add` is resetting halfway through.
+fn clone_or_update(source: &str, interactive: bool) -> Result<LeasedSourceDir> {
     let remote = crate::refresh_sources::RemoteSource::parse(source)?
         .ok_or_else(|| anyhow::anyhow!("Source not found: {source}"))?;
     let display = &remote.display;
 
-    if crate::refresh_sources::cache_entry_present(&remote) {
+    let lease = if crate::refresh_sources::cache_entry_present(&remote) {
         // Update existing clone (handles force-pushed histories). A refusal —
         // the entry is not vstack's own clone — is an error; a failed fetch
         // keeps the stale clone.
@@ -109,11 +162,11 @@ fn clone_or_update(source: &str, interactive: bool) -> Result<PathBuf> {
         if crate::config::remote_cache_fetch_due(&remote.cache_dir, max_age) {
             eprintln!("Updating cached repo {display}...");
         }
-        crate::refresh_sources::update_cached_repo_bounded(&remote, max_age, bound)?;
+        crate::refresh_sources::update_cached_repo_bounded(&remote, max_age, bound)?
     } else {
         // Fresh shallow clone
         eprintln!("Cloning {display}...");
-        crate::refresh_sources::clone_cached_repo(&remote).with_context(|| {
+        let lease = crate::refresh_sources::clone_cached_repo(&remote).with_context(|| {
             let ssh_hint = crate::config::parse_github_slug(source)
                 .map(|slug| format!("SSH:   git clone git@github.com:{slug}.git\n"))
                 .unwrap_or_default();
@@ -129,7 +182,8 @@ fn clone_or_update(source: &str, interactive: bool) -> Result<PathBuf> {
         // `check` would find no stamp, call the entry due, and spawn a
         // background refresh of a clone made seconds ago.
         crate::config::record_cache_clone(&remote.cache_dir);
-    }
+        lease
+    };
 
     if !crate::resolve::is_vstack_source(&remote.cache_dir) {
         anyhow::bail!(
@@ -137,5 +191,8 @@ fn clone_or_update(source: &str, interactive: bool) -> Result<PathBuf> {
         );
     }
 
-    Ok(remote.cache_dir)
+    Ok(LeasedSourceDir {
+        dir: remote.cache_dir,
+        lease,
+    })
 }

@@ -18,6 +18,10 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1"
 toml = "0.8"
+# Format-preserving TOML editing: every write to a user's `config.toml` keeps
+# their comments, spacing and key order while staying syntax-aware. Already in
+# the tree as `toml`'s own parser, so this is a promotion, not a new dependency.
+toml_edit = "0.22"
 
 # Regex (lightweight)
 regex-lite = "0.1"

@@ -65,7 +65,11 @@ pub(super) fn with_sandboxed_cache<R>(label: &str, body: impl FnOnce(&SandboxedC
         let remote = RemoteSource::parse(&source)
             .expect("a file:// URL is a supported transport")
             .expect("a file:// URL is remote-shaped");
-        crate::refresh_sources::clone_cached_repo(&remote).expect("cloning the fixture origin");
+        // Released at once: the fixture hands the body a cache nobody
+        // holds, which is what every case here starts from.
+        drop(
+            crate::refresh_sources::clone_cached_repo(&remote).expect("cloning the fixture origin"),
+        );
         body(&SandboxedCache {
             remote,
             origin: origin.clone(),
