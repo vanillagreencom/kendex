@@ -34,12 +34,12 @@ case "$STALE_HOURS" in
 esac
 GH_CLI="${RECONCILE_GH_CLI:-gh}"
 
+command -v jq >/dev/null 2>&1 || config_error "jq is required"
+
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error "not inside a git repository"
 CACHE="$REPO_ROOT/.cache/linear/issues.json"
 [ -f "$CACHE" ] || config_error "no linear cache at $CACHE — run linear.sh sync first"
 jq -e 'type == "array"' "$CACHE" >/dev/null 2>&1 || config_error "linear cache at $CACHE does not parse as an issue array"
-
-command -v jq >/dev/null 2>&1 || config_error "jq is required"
 
 findings=0
 note() { findings=$((findings + 1)); printf '%s\n' "$1"; }
