@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- pi-agents-tmux: Monitor tree task rows show elapsed/total run-time instead
+  of a jumpy local `HH:MM` clock (`updatedAt` is no longer a time source);
+  detail-pane timestamps render local human time instead of UTC ISO, and the
+  Task Summary gains a Duration line (VST-316).
+
 - growth-guards: the pre-commit shim chain runs `preflight --staged` when
   that skill is installed beside it — a human committing outside any harness
   gets the deterministic checks CI would report, first; a repository's first

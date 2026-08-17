@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.8.3
+
+- Agents popup times are readable run-times, not machine stamps (vstack VST-316). Monitor tree task rows show elapsed run-time — `createdAt` → now while active, `createdAt` → `completedAt` once terminal — instead of a bare local `HH:MM` clock that was ambiguous (duration vs wall time) and jumped whenever a registry poll refreshed `updatedAt`; `updatedAt` is no longer a time-of-day source anywhere in the tree. Detail panes (Session Start/Latest, Task Summary Created/Done) render local human time (`Mar 24, 16:59`) instead of UTC ISO, and the Task Summary gains a Duration line.
+
 ### 2.8.2
 
 - Oneshot transcript records are written strictly in event order. Each record was a separate concurrent `appendFile` call; such calls land in any order under load, so a transcript could carry an earlier `message_end` after the final buffered partial and `getFinalOutput`/last-assistant-text extraction reported the wrong message (vstack#1311). Appends now run through one ordered chain (`createTranscriptAppender`); a failed write never blocks the next record and surfaces on the result as a `transcript write failed` diagnostic instead of being dropped.

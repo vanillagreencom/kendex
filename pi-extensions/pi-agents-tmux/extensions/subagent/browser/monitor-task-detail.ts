@@ -19,6 +19,7 @@ import {
 	type PaneTaskRecord,
 	type TraceViewerItem,
 } from "../types.js";
+import { formatLocalDateTime, monitorTaskRunTime } from "./monitor-tree.js";
 import { agentActivePill, agentDivider, agentInactivePill, agentPaneTitle } from "./shared.js";
 
 function wrapPlainNoEllipsis(text: string, width: number): string[] {
@@ -218,8 +219,9 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		`Task ID  ${record.taskId}`,
 		usage ? `Usage    ${usage}` : "",
 		delivery ? `Delivery  ${delivery}` : "",
-		`Created  ${record.createdAt}`,
-		record.completedAt ? `Done     ${record.completedAt}` : "",
+		`Created  ${formatLocalDateTime(record.createdAt)}`,
+		record.completedAt ? `Done     ${formatLocalDateTime(record.completedAt)}` : "",
+		`Duration  ${monitorTaskRunTime(record)}`,
 		artifactLines.length ? BLANK : "",
 		artifactLines.length ? "Artifacts" : "",
 		artifactLines.length ? "---------" : "",
