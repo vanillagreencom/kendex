@@ -1,7 +1,8 @@
 # preflight
 
 A diff-scoped, fail-only checker for the escape classes worth catching
-mechanically: fail-open bash, docs citing repo paths that do not exist,
+mechanically: fail-open bash, new suites no runner invokes, scratch
+directories no EXIT trap removes, docs citing repo paths that do not exist,
 source files citing docs that do not exist, TODO markers with no issue
 behind them, reviewer-bot attributions in durable prose, and data files
 no parser accepts.

@@ -18,7 +18,7 @@ The method is verification, not proofreading — **open the implementation behin
 ## Probes
 
 - **Claims**: for each concrete claim (X calls Y, Z is gated by W, invariant holds, event fires when…), confirm it in the code. Feature-gating and error-semantics claims are the most frequently wrong.
-- **Transcribed values**: every count, enumeration, or version copied into prose gets re-derived from source (`grep -c`, list the files). Hand-transcribed numbers are wrong often enough to check every one.
+- **Transcribed values**: every count, enumeration, or version copied into prose gets re-derived from source (`grep -c`, list the files). Hand-transcribed numbers are wrong often enough to check every one. Enumerations of named repo objects — gates, settings keys, scripts, statuses — are re-derived the same way: complete in both directions, every name resolving to tracked source.
 - **Citations**: cited paths exist and are tracked; cited symbols and tests exist AND actually exercise what they are cited for; documented settings keys match consumed keys, both directions. (Preflight or a project doc checker may cover path existence deterministically — cite their output, spend your pass on what only reading code can verify.)
 - **Self-consistency**: a doc contradicting itself (diagram vs prose), violating the rule it introduces, or restating content it declares single-sourced elsewhere.
 - **Comments and prose**: changed comments or docs that contradict the code, narrate revision history or provenance, or claim more than the adjacent assertion enforces.

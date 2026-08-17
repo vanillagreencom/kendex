@@ -101,6 +101,67 @@ git -C "$R" add -A
 run_pf
 fires "a new script that never sets -e/-u/pipefail fails as fail-open" "scripts/fresh.sh:0: [fail-open] new shell file without strict mode"
 
+echo "=== lane fail-open: a status-swallowing || true ==="
+seed swallow
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho existing\ngrep -q x -- "$1" || true\nn="$(git rev-list --count HEAD || true)"\necho "$n"\n' >"$R/scripts/existing.sh"
+git -C "$R" add -A
+run_pf
+fires "grep || true fails as fail-open, naming the command whose status is lost" "scripts/existing.sh:4: [fail-open] grep || true swallows exit 2"
+fires "the shape is caught inside a command substitution too" "scripts/existing.sh:5: [fail-open] git || true swallows exit 2"
+
+echo "=== lane mktemp-trap: a new script whose scratch nothing removes ==="
+seed scratch
+printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/scratch.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\nF="$(mktemp)"\necho "$F"\n' >"$R/scripts/scratchfile.sh"
+git -C "$R" add -A
+run_pf
+fires "a new script with mktemp and no EXIT trap fails as mktemp-trap" "scripts/scratch.sh:3: [mktemp-trap] mktemp without an EXIT trap"
+fires "an mktemp with no arguments is the same finding" "scripts/scratchfile.sh:3: [mktemp-trap] mktemp without an EXIT trap"
+
+echo "=== lane unwired-suite: a new suite no runner invokes ==="
+seed unwired
+mkdir -p "$R/tests" "$R/.github/workflows"
+cat >"$R/.github/workflows/ci.yml" <<'YML'
+name: ci
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash tests/known.test.sh
+YML
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho known\n' >"$R/tests/known.test.sh"
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho orphan\n' >"$R/tests/orphan.test.sh"
+git -C "$R" add -A
+run_pf
+fires "a new suite named by no runner fails as unwired-suite" "tests/orphan.test.sh:0: [unwired-suite] new suite is not invoked by any runner"
+case "$OUT" in
+  *"tests/known.test.sh"*) bad "the suite the workflow names is not a finding" "out=$OUT" ;;
+  *) ok "the suite the workflow names is not a finding" ;;
+esac
+
+# A suite that arrived by `git mv` is a new file at its new path: rename
+# detection must not hide it from the new-file lanes.
+seed renamed
+mkdir -p "$R/tests" "$R/.github/workflows"
+cat >"$R/.github/workflows/ci.yml" <<'YML'
+name: ci
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash tests/known.test.sh
+YML
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho moved\n' >"$R/scripts/moved.sh"
+git -C "$R" add -A
+git -C "$R" commit -qm base
+git -C "$R" mv scripts/moved.sh tests/moved.test.sh
+run_pf
+fires "a suite renamed into place is judged as the new file it is" "tests/moved.test.sh:0: [unwired-suite]"
+run_pf --staged
+fires "the same holds in staged scope" "tests/moved.test.sh:0: [unwired-suite]"
+
 echo "=== lane docs-cited-paths: a backticked path that does not exist ==="
 seed docs
 printf '# Fixture\n\nSee `scripts/existing.sh`.\nAnd `docs/gone.md` for the rest.\n' >"$R/README.md"
