@@ -81,15 +81,18 @@ function describeInputEvent(event: any): TimelineRow {
 
 function messageContentRows(message: any): Array<Pick<TimelineRow, "kind" | "detail" | "error">> {
 	const role = stringValue(message?.role) ?? "assistant";
+	// Pane sessions store failed tools as toolResult messages with isError —
+	// there is no separate tool_execution_end to carry the failure tone.
+	const failed = message?.isError === true;
 	const content = message?.content;
-	if (typeof content === "string") return [{ kind: role, detail: content }];
-	if (!Array.isArray(content)) return [{ kind: role, detail: `(no text, ${formatByteSize(payloadByteSize(message))})` }];
+	if (typeof content === "string") return [{ detail: content, error: failed, kind: role }];
+	if (!Array.isArray(content)) return [{ detail: `(no text, ${formatByteSize(payloadByteSize(message))})`, error: failed, kind: role }];
 	const rows: Array<Pick<TimelineRow, "kind" | "detail" | "error">> = [];
 	const toolNames: string[] = [];
 	for (const part of content) {
 		if (!part || typeof part !== "object") continue;
-		if (part.type === "thinking" && typeof part.thinking === "string" && part.thinking) rows.push({ kind: "thinking", detail: part.thinking });
-		else if (part.type === "text" && typeof part.text === "string" && part.text) rows.push({ kind: role, detail: part.text });
+		if (part.type === "thinking" && typeof part.thinking === "string" && part.thinking) rows.push({ detail: part.thinking, error: failed, kind: "thinking" });
+		else if (part.type === "text" && typeof part.text === "string" && part.text) rows.push({ detail: part.text, error: failed, kind: role });
 		else if (typeof part.type === "string" && part.type.toLowerCase().includes("tool")) {
 			toolNames.push(stringValue(part.name) ?? stringValue(part.toolName) ?? stringValue(part.tool_name) ?? "tool");
 		}
@@ -97,8 +100,8 @@ function messageContentRows(message: any): Array<Pick<TimelineRow, "kind" | "det
 	// Tool calls always surface as a compact row — pane sessions have no
 	// separate tool_execution_* records, so this is their only trace — and a
 	// tool-call-only message reads as its calls, never as raw JSON.
-	if (toolNames.length > 0) rows.push({ kind: role, detail: `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"}: ${toolNames.join(", ")}` });
-	if (rows.length === 0) return [{ kind: role, detail: `(no text, ${formatByteSize(payloadByteSize(message))})` }];
+	if (toolNames.length > 0) rows.push({ detail: `${toolNames.length} tool call${toolNames.length === 1 ? "" : "s"}: ${toolNames.join(", ")}`, error: failed, kind: role });
+	if (rows.length === 0) return [{ detail: `(no text, ${formatByteSize(payloadByteSize(message))})`, error: failed, kind: role }];
 	return rows;
 }
 

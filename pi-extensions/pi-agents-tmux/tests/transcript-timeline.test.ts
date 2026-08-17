@@ -154,6 +154,15 @@ test("pane-session timestamp field yields elapsed stamps, string or numeric", ()
 	assert.doesNotMatch(out, /--:--/);
 });
 
+test("a failed pane toolResult message carries the failure tone", () => {
+	const out = formatTranscriptForDisplay(line({
+		message: { content: [{ text: "command not found", type: "text" }], isError: true, role: "toolResult" },
+		timestamp: at(0),
+		type: "message",
+	}));
+	assert.match(out, /^✖\[0:00\] toolResult · command not found$/);
+});
+
 test("a mixed text+toolCall message keeps its compact tool-call row", () => {
 	const out = formatTranscriptForDisplay(line({
 		message: { content: [{ text: "let me check", type: "text" }, { name: "bash", type: "toolCall" }], role: "assistant" },
