@@ -305,9 +305,10 @@ cache_list_issues() {
             jq -cn --arg v "$limit" '{error: ("--limit must be a non-negative integer, got: " + $v)}' >&2
             return 1
         fi
+        limit=$((10#$limit))
         local total
         total=$(echo "$issues" | jq 'length')
-        if (( total > 10#$limit )); then
+        if (( total > limit )); then
             echo "⚠️  Truncated to $limit of $total issues. Pass --max for all results, or --limit N." >&2
         fi
         issues=$(echo "$issues" | jq --argjson n "$limit" '.[0:$n]')
