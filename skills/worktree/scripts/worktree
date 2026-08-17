@@ -1738,15 +1738,15 @@ install_worktree_dependencies() {
   # otherwise another manager's lockfile or pin means that repo provisions
   # its own dependencies, so skip.
   # The TOP-LEVEL packageManager field only — a nested look-alike (e.g.
-  # config.packageManager) is not a pin. jq reads the structure; without jq
-  # a newline-flattened regex approximates it.
+  # config.packageManager) is not a pin. Structural readers in preference
+  # order: node (present wherever a package.json matters), then jq; a
+  # machine with neither reads no pin, and the only cost of that miss is an
+  # automatic install skipped — never a wrong-tree install.
   local pkg_manager=""
-  if command -v jq >/dev/null 2>&1; then
+  if command -v node >/dev/null 2>&1; then
+    pkg_manager="$(node -e 'const m=require(process.argv[1]).packageManager;process.stdout.write(typeof m==="string"?m:"")' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
+  elif command -v jq >/dev/null 2>&1; then
     pkg_manager="$(jq -r '.packageManager // ""' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
-  else
-    pkg_manager="$(tr '\n' ' ' <"$wt/package.json" 2>/dev/null |
-      grep -Eo '"packageManager"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 |
-      sed 's/.*:[[:space:]]*"//; s/"$//')" || pkg_manager=""
   fi
   if [[ ! -f "$wt/package-lock.json" && ! -f "$wt/npm-shrinkwrap.json" && "$pkg_manager" != npm@* ]]; then
     if [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" ]]; then
@@ -1763,7 +1763,9 @@ install_worktree_dependencies() {
     # install leaves its full log at a stable per-worktree path.
     (
       cd "$wt" || exit 0
-      log="${TMPDIR:-/tmp}/worktree-npm-install-$(basename "$wt").log"
+      # Path-keyed so same-named worktrees of different repos never share
+      # (or truncate) one log.
+      log="${TMPDIR:-/tmp}/worktree-npm-install-$(basename "$wt")-$(printf '%s' "$wt" | cksum | cut -d' ' -f1).log"
       if npm install --no-audit --no-fund >"$log" 2>&1; then
         rm -f "$log"
       fi
