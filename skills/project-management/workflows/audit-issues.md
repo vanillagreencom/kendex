@@ -52,13 +52,15 @@ Store as `TRACKER`, plus `[OWNER/REPO]` when `TRACKER=github`.
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh session-status
 .agents/skills/linear/scripts/linear.sh cache labels list --format=safe
-[ ! -x .agents/skills/orch/scripts/reconcile-work-items ] || .agents/skills/orch/scripts/reconcile-work-items || [ $? -eq 1 ]
+.agents/skills/orch/scripts/reconcile-work-items
 ```
 
-`reconcile-work-items` (read-only; runs only where the orch skill is
-installed — this workflow does not require it; exit 1 is findings and is
-tolerated by the guard above, exit 2 is a broken sweep and fails the
-preflight)
+Run `reconcile-work-items` only where the orch skill is installed (skip the
+line otherwise — this workflow does not require orch). It is read-only:
+exit 0 is a clean tracker, exit 1 is findings — carry them into the audit
+as facts — and exit 2 is a broken sweep to fix before auditing. An audit
+decision taken against a parked container's stale state is the failure
+this line exists to prevent.
 names tracker rows whose state no longer matches the work: parked containers,
 stale started items, Done items with unchecked acceptance boxes. Carry its
 findings into the audit as facts — an audit decision taken against a parked
