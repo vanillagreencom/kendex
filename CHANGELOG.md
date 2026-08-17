@@ -60,6 +60,27 @@
   missing install whose printed remedy is a reinstall that changes nothing.
   OpenCode exposes no such switch; Pi's live in vstack's own extension-manager
   UI and stay out of the report (VST-258).
+- cli: every structured file vstack reads is now read by a parser rather than
+  matched as text, so the answers no longer depend on how a value was spelled.
+  A Cursor rule's `alwaysApply` is a YAML boolean, so `alwaysApply: true # keep
+  enabled` is the same "on" to vstack that it is to Cursor, and a rule whose
+  frontmatter does not parse — or whose `alwaysApply` is a value Cursor itself
+  would not honor — is unverifiable naming the file rather than silently off. A
+  Codex agent's `developer_instructions` is located by parsing the TOML, so the
+  assignment text quoted inside another field, or a `developer_instructions`
+  belonging to a different table, is no longer spliced into or cut out of; an
+  agent file that is not TOML vstack can read is refused by name and never
+  rewritten, by install, removal or the presence read. A registered hook
+  command is split into the words a shell would run, so a `bash '/path with
+  spaces/hook.sh'` — the command vstack itself writes for any install path
+  containing a space — reads back as registered instead of as permanent drift
+  no reinstall could clear; a command whose words cannot be settled still reads
+  as unregistered. The `session-drift-check` hook reads the session's start
+  reason from the payload's top-level `source` via `jq` where it is available,
+  so a nested key or a matching string elsewhere in the payload no longer
+  decides whether the report is printed. Source picker rows and the scope
+  summary now label a GitHub remote by the repository it names, so every
+  spelling of one repository is one row (VST-258).
 - preflight gains three added-line lanes taken from the classes review bots
   keep finding first: `unwired-suite` (a new `tests/*.test.sh`,
   `tests/test-*.sh` or `*.test.ts`/`.js`/`.mjs` that no tracked runner

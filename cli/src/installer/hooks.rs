@@ -6,6 +6,10 @@ use crate::path_safety::validate_item_name;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
+mod command;
+
+use command::{command_matches_owned_hook_command, command_targets_hook_script, shell_quote};
+
 mod opencode;
 
 use opencode::{install_hook_opencode, remove_hook_from_opencode_json};
@@ -20,10 +24,11 @@ pub(crate) use codex::codex_agent_prose_section;
 /// The block itself is written here and read back only by tests.
 #[cfg(test)]
 pub(crate) use codex::codex_hook_safety_block;
+pub(crate) use codex::install_codex_fallback_hooks_for_agents;
+pub use codex::migrate_codex_config;
 pub(crate) use codex::{
     CodexProse, codex_event_for, codex_hook_prose, codex_native_hook_gaps, codex_root,
 };
-pub use codex::{install_codex_fallback_hooks_for_agents, migrate_codex_config};
 use codex::{install_hook_codex, remove_hook_from_codex_json, strip_hook_prose_from_codex_agents};
 
 fn validate_file_name(file_name: &str) -> Result<()> {
@@ -75,172 +80,6 @@ fn checked_child_path(parent: &Path, file_name: &str) -> Result<PathBuf> {
         }
     }
     Ok(path)
-}
-
-fn command_matches_owned_hook_command(command: &str, owned_commands: &[String]) -> bool {
-    owned_commands.iter().any(|owned| command == owned)
-}
-
-/// Path identity for comparison: the canonical path when it exists, so a
-/// symlinked or `..`-spelled command still names the same script, and the
-/// path exactly as written when it does not.
-fn resolved_path(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
-/// Shells that RUN their first operand. `bash <script>` executes the script;
-/// the same path in some other program's argument list is data.
-const SCRIPT_INTERPRETERS: &[&str] = &["sh", "bash", "dash", "ksh", "zsh", "ash"];
-
-/// Programs that exec the command following their own arguments, with the
-/// count of their own non-flag operands first (`timeout 30 bash …`). `env` is
-/// not here: it also takes `NAME=VALUE` assignments, so it is walked
-/// separately.
-const EXEC_PREFIXES: &[(&str, usize)] = &[("nohup", 0), ("setsid", 0), ("timeout", 1)];
-
-/// The program a token names, ignoring the directory it lives in, so
-/// `/bin/bash` and `bash` read alike.
-fn program_name(token: &str) -> Option<&str> {
-    Path::new(token).file_name()?.to_str()
-}
-
-/// A `NAME=VALUE` token — what the shell and `env` both read as an
-/// environment assignment rather than as the program to run.
-fn is_env_assignment(token: &str) -> bool {
-    token.split_once('=').is_some_and(|(name, _)| {
-        !name.is_empty()
-            && !name.starts_with(|c: char| c.is_ascii_digit())
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    })
-}
-
-/// A shell flag that leaves the first operand as the script the shell runs.
-/// `-c` makes that operand a command STRING, `-s` reads the script from
-/// stdin, and `-o`/`-O` swallow the next token — after any of those we cannot
-/// say what runs, so they are not here. Unknown long flags are refused for
-/// the same reason.
-fn shell_flag_keeps_operand(flag: &str) -> bool {
-    match flag.strip_prefix("--") {
-        Some(long) => matches!(
-            long,
-            "norc" | "noprofile" | "posix" | "login" | "restricted"
-        ),
-        None => flag.strip_prefix('-').is_some_and(|short| {
-            !short.is_empty()
-                && short
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() && !matches!(c, 'c' | 'o' | 's'))
-        }),
-    }
-}
-
-/// The token the shell would EXECUTE, walking past the prefixes that exec
-/// what follows them. `None` when nothing in the command can be proven to run.
-///
-/// Only an executable position counts. `echo <script>` names our path in an
-/// argument list, and reading that as a registration is exactly the fail-open
-/// the registration check exists to close.
-fn executed_token<'a>(tokens: &[&'a str]) -> Option<&'a str> {
-    let mut index = 0;
-    // A leading `VAR=value` run is the shell's own environment prefix.
-    while tokens
-        .get(index)
-        .is_some_and(|token| is_env_assignment(token))
-    {
-        index += 1;
-    }
-    loop {
-        let word = *tokens.get(index)?;
-        let name = program_name(word)?;
-        if name == "env" {
-            index += 1;
-            // `env` execs the first operand that is neither an assignment nor
-            // one of the flags that take no argument of their own.
-            while let Some(token) = tokens.get(index) {
-                if *token == "--" {
-                    index += 1;
-                    break;
-                }
-                if is_env_assignment(token) || matches!(*token, "-i" | "--ignore-environment") {
-                    index += 1;
-                    continue;
-                }
-                if token.starts_with('-') {
-                    return None;
-                }
-                break;
-            }
-            continue;
-        }
-        if let Some((_, operands)) = EXEC_PREFIXES.iter().find(|(prefix, _)| *prefix == name) {
-            index += 1;
-            while let Some(token) = tokens.get(index) {
-                if *token == "--" {
-                    index += 1;
-                    break;
-                }
-                if matches!(*token, "--foreground" | "--preserve-status") {
-                    index += 1;
-                    continue;
-                }
-                if token.starts_with('-') {
-                    return None;
-                }
-                break;
-            }
-            // Past its own operands — a `timeout` duration — sits the command.
-            index += operands;
-            continue;
-        }
-        if SCRIPT_INTERPRETERS.contains(&name) {
-            index += 1;
-            while let Some(token) = tokens.get(index) {
-                if *token == "--" {
-                    index += 1;
-                    break;
-                }
-                if !token.starts_with('-') {
-                    break;
-                }
-                if !shell_flag_keeps_operand(token) {
-                    return None;
-                }
-                index += 1;
-            }
-            return tokens.get(index).copied();
-        }
-        // Some other program: our path can only be its data.
-        return Some(word);
-    }
-}
-
-/// Does this command RUN the managed script? The script has to sit where the
-/// shell would execute it — the command word, or the operand of an
-/// interpreter or exec prefix — and the path there has to be ours, so neither
-/// `notfoo.sh` nor an unrelated `foo.sh` elsewhere on disk answers for
-/// `<root>/hooks/foo.sh`. A command whose target cannot be proven reads as
-/// unregistered: a spurious drift line is inspectable, a false clean is not.
-///
-/// `deferred_root` is the placeholder a project-scope command leaves for run
-/// time and what the harness expands it to — `$(git rev-parse
-/// --show-toplevel)` for codex, `$CLAUDE_PROJECT_DIR` for claude — so a
-/// command a user reshaped by hand is read the way the shell running it will.
-fn command_targets_hook_script(
-    command: &str,
-    script_path: &Path,
-    deferred_root: Option<(&str, &Path)>,
-) -> bool {
-    let expanded = match deferred_root {
-        Some((placeholder, root)) => command.replace(placeholder, &root.to_string_lossy()),
-        None => command.to_string(),
-    };
-    let quotes = |c: char| c == '"' || c == '\'';
-    let tokens: Vec<&str> = expanded
-        .split_whitespace()
-        .map(|token| token.trim_matches(quotes))
-        .collect();
-    executed_token(&tokens)
-        .is_some_and(|token| resolved_path(Path::new(token)) == resolved_path(script_path))
 }
 
 /// What a harness config says about our script.
@@ -586,17 +425,6 @@ pub(crate) fn claude_hook_registration(
     }
 }
 
-fn shell_quote(s: &str) -> String {
-    if s.chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))
-    {
-        s.to_string()
-    } else {
-        let escaped = s.replace('\'', "'\\''");
-        format!("'{escaped}'")
-    }
-}
-
 /// Install a hook to a specific harness.
 ///
 /// - Claude Code: copy script + add to settings.json hooks
@@ -789,20 +617,70 @@ fn cursor_hook_switch(global: bool, name: &str) -> HookSwitch {
         Ok(content) => content,
         Err(err) => return HookSwitch::Unreadable(format!("reading {}: {err}", path.display())),
     };
-    // No frontmatter at all is not unreadable — it is a rule that declares
-    // nothing, which is exactly a rule cursor does not always apply.
-    let always =
-        crate::frontmatter::split_yaml_frontmatter(&content).is_ok_and(|(frontmatter, _)| {
-            frontmatter.lines().any(|line| {
-                line.trim()
-                    .strip_prefix("alwaysApply:")
-                    .is_some_and(|v| v.trim().trim_matches(|c| c == '"' || c == '\'') == "true")
-            })
-        });
-    if always {
-        HookSwitch::On
-    } else {
-        HookSwitch::Off(format!("alwaysApply is not true in {}", path.display()))
+    match cursor_always_apply(&content) {
+        Ok(Some(true)) => HookSwitch::On,
+        Ok(Some(false) | None) => {
+            HookSwitch::Off(format!("alwaysApply is not true in {}", path.display()))
+        }
+        Err(deviation) => HookSwitch::Unreadable(format!("{}: {deviation}", path.display())),
+    }
+}
+
+/// `alwaysApply` as the rule's frontmatter DECLARES it, parsed as the YAML it
+/// is rather than matched as text. `alwaysApply: true # keep enabled` is the
+/// same declaration to cursor as a bare `true`, and a line comparison called
+/// it off — reporting a rule cursor always applies as switched off.
+///
+/// - `Ok(Some(value))` — the key is there and is a boolean.
+/// - `Ok(None)` — the rule declares nothing: no frontmatter, empty
+///   frontmatter, or no `alwaysApply` key. Cursor's default for a rule that
+///   does not ask to be always applied is to attach it by description, so the
+///   caller reads this as "not always applied", never as unreadable.
+/// - `Err(deviation)` — the frontmatter is there and vstack could not read it:
+///   unterminated delimiters, invalid YAML, a frontmatter that is not a
+///   mapping, or an `alwaysApply` of a type cursor itself would not honor. The
+///   same rule the JSON configs follow — a value vstack cannot understand is
+///   unverifiable naming the file, never silently taken either way.
+fn cursor_always_apply(content: &str) -> Result<Option<bool>, String> {
+    // A file that opens straight into prose has no frontmatter to parse, which
+    // is a rule declaring nothing rather than a rule vstack failed to read.
+    if !content.trim_start().starts_with("---") {
+        return Ok(None);
+    }
+    let (frontmatter, _) =
+        crate::frontmatter::split_yaml_frontmatter(content).map_err(|err| format!("{err:#}"))?;
+    let doc: serde_yaml::Value = serde_yaml::from_str(&frontmatter)
+        .map_err(|err| format!("frontmatter is not valid YAML: {err}"))?;
+    let map = match &doc {
+        // `---\n---` parses to null: frontmatter that holds no keys at all.
+        serde_yaml::Value::Null => return Ok(None),
+        serde_yaml::Value::Mapping(map) => map,
+        other => {
+            return Err(format!(
+                "frontmatter is {}, expected a mapping",
+                yaml_type(other)
+            ));
+        }
+    };
+    match map.get("alwaysApply") {
+        None | Some(serde_yaml::Value::Null) => Ok(None),
+        Some(serde_yaml::Value::Bool(value)) => Ok(Some(*value)),
+        Some(other) => Err(format!(
+            "alwaysApply is {}, expected a boolean",
+            yaml_type(other)
+        )),
+    }
+}
+
+fn yaml_type(value: &serde_yaml::Value) -> &'static str {
+    match value {
+        serde_yaml::Value::Null => "null",
+        serde_yaml::Value::Bool(_) => "a boolean",
+        serde_yaml::Value::Number(_) => "a number",
+        serde_yaml::Value::String(_) => "a string",
+        serde_yaml::Value::Sequence(_) => "a sequence",
+        serde_yaml::Value::Mapping(_) => "a mapping",
+        serde_yaml::Value::Tagged(_) => "a tagged value",
     }
 }
 

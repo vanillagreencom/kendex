@@ -238,3 +238,118 @@ fn a_cursor_rule_that_is_not_always_applied_is_disabled_not_installed() {
         assert!(report.disabled.is_empty(), "{report:?}");
     });
 }
+
+/// The declaration is YAML and is read as YAML, not matched as text. Cursor
+/// honors `alwaysApply: true # keep enabled` exactly as it honors a bare
+/// `true`; a raw-line comparison saw a value of `true # keep enabled`, missed,
+/// and reported a rule cursor always applies as switched off.
+///
+/// The other half of the same rule: a frontmatter vstack cannot parse, or an
+/// `alwaysApply` of a type cursor itself would not honor, is UNVERIFIABLE
+/// naming the file — never silently taken as either answer.
+#[test]
+fn a_cursor_rules_always_apply_is_read_as_parsed_yaml() {
+    with_sandbox("cursor-always-apply-yaml", |_project, source| {
+        write_hook(source, "guard");
+        install_hook_for(source, "guard", crate::harness::Harness::Cursor);
+        let lock = cursor_hook_lock(source, "guard");
+        let rule = crate::installer::cursor_hook_rule_path(false, "guard");
+
+        let report_for = |content: String| {
+            std::fs::write(&rule, content).unwrap();
+            check_scope(false, &lock, CheckOptions::default()).unwrap()
+        };
+        let with_frontmatter = |frontmatter: &str| {
+            report_for(format!(
+                "---\ndescription: \"Safety: guard\"\n{frontmatter}---\n\n# Safety: guard\n\nprose\n"
+            ))
+        };
+
+        // ON — the key is a YAML boolean, whatever else the line carries.
+        for frontmatter in [
+            "alwaysApply: true\n",
+            "alwaysApply: true # keep enabled\n",
+            "alwaysApply:    true   \n",
+            "alwaysApply: true\nglobs:\n  - \"**/*\"\n",
+        ] {
+            let report = with_frontmatter(frontmatter);
+            assert!(
+                !report.has_drift(),
+                "cursor always applies {frontmatter:?}: {report:?}"
+            );
+        }
+
+        // OFF — declared false, or not declared at all. Cursor's default for a
+        // rule that does not ask to be always applied is to attach it by
+        // description, which for a safety rule is "might", not "will".
+        for frontmatter in [
+            "alwaysApply: false\n",
+            "alwaysApply: false # deliberately\n",
+            "",
+            "globs:\n  - \"**/*\"\n",
+        ] {
+            let report = with_frontmatter(frontmatter);
+            assert_eq!(
+                names(&report.disabled),
+                vec!["guard"],
+                "cursor does not always apply {frontmatter:?}: {report:?}"
+            );
+            assert!(
+                report.unverifiable.is_empty(),
+                "{frontmatter:?} parsed fine: {report:?}"
+            );
+            assert!(
+                disabled_note(&report).contains("alwaysApply is not true"),
+                "{report:?}"
+            );
+        }
+
+        // UNVERIFIABLE — frontmatter vstack could not read, or a value whose
+        // type cursor would not honor as the switch.
+        for (content, deviation) in [
+            (
+                "---\nalwaysApply: \"true\"\n---\n\nprose\n".to_string(),
+                "alwaysApply is a string, expected a boolean",
+            ),
+            (
+                "---\nalwaysApply: 1\n---\n\nprose\n".to_string(),
+                "alwaysApply is a number, expected a boolean",
+            ),
+            (
+                "---\nalwaysApply: [true]\n---\n\nprose\n".to_string(),
+                "alwaysApply is a sequence, expected a boolean",
+            ),
+            (
+                // Opened and never closed: not a rule declaring nothing.
+                "---\nalwaysApply: true\n\n# Safety: guard\n".to_string(),
+                "missing closing --- delimiter",
+            ),
+            (
+                "---\nalwaysApply: [true\n---\n\nprose\n".to_string(),
+                "frontmatter is not valid YAML",
+            ),
+            (
+                "---\njust a scalar\n---\n\nprose\n".to_string(),
+                "frontmatter is a string, expected a mapping",
+            ),
+        ] {
+            let report = report_for(content.clone());
+            assert_eq!(
+                names(&report.unverifiable),
+                vec!["guard"],
+                "{content:?}: {report:?}"
+            );
+            assert!(
+                report.disabled.is_empty(),
+                "never also taken as off: {report:?}"
+            );
+            assert!(report.phantom.is_empty(), "the file is there: {report:?}");
+            let note = unverifiable_note(&report);
+            assert!(note.contains(deviation), "{content:?}: {note}");
+            assert!(
+                note.contains(&rule.display().to_string()),
+                "the note names the rule: {note}"
+            );
+        }
+    });
+}

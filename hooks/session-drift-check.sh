@@ -25,7 +25,17 @@ fi
 # Fresh starts only. Claude Code sends source startup|resume|clear|compact;
 # a resumed or compacted session already carries the report, and a per-compact
 # rerun is the wallpaper this hook must not become.
-SOURCE=$(printf '%s' "$INPUT" | grep -o '"source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"source"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null || true)
+#
+# The payload is JSON, so jq reads it: the key is the TOP-LEVEL `source`, and
+# a scan for the text finds the same key nested in any other object, or the
+# same characters inside an unrelated string value — a transcript path or a
+# cwd is enough. The scan stays as the fallback for a machine without jq,
+# where the worst it can do is silence one report or repeat one.
+if command -v jq >/dev/null 2>&1; then
+  SOURCE=$(printf '%s' "$INPUT" | jq -r '.source // ""' 2>/dev/null || true)
+else
+  SOURCE=$(printf '%s' "$INPUT" | grep -o '"source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"source"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null || true)
+fi
 case "$SOURCE" in
   resume|compact)
     exit 0

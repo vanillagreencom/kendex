@@ -139,6 +139,51 @@ for src in startup clear; do
   assert_eq "$out" "$REPORT"$'\n' "source=$src relays the report"
 done
 
+echo "session-drift-check: the start reason is the payload's own top-level key"
+# The payload is JSON, and only the TOP-LEVEL `source` is the start reason. A
+# scan for the text takes whichever match comes first, so a nested object
+# carrying the same key decided the hook's behaviour — silencing a fresh
+# session's report, or replaying one on a resume.
+run_raw() {
+  local payload="$1"
+  shift
+  : >"$ARGS_LOG"
+  : >"$CWD_LOG"
+  set +e
+  out="$(env -u CLAUDE_PROJECT_DIR -u VSTACK_DRIFT_HOOK -u VSTACK_DRIFT_HOOK_AVAILABLE \
+    PATH="$1:$PATH" FAKE_ARGS_LOG="$ARGS_LOG" FAKE_CWD_LOG="$CWD_LOG" \
+    FAKE_RC=1 FAKE_OUT="$REPORT" bash "$HOOK" <<<"$payload" 2>/dev/null)"
+  rc=$?
+  set -e
+}
+
+run_raw '{"tool_input":{"source":"resume"},"source":"startup"}' "$BIN_DIR"
+assert_eq "$out" "$REPORT" "a nested source does not silence a fresh start"
+assert_eq "$(cat "$ARGS_LOG")" "check --quiet" "…and the check still runs"
+
+run_raw '{"tool_input":{"source":"startup"},"source":"resume"}' "$BIN_DIR"
+assert_eq "$out" "" "a nested source does not make a resume report"
+assert_eq "$(cat "$ARGS_LOG")" "" "…and the check never runs on a resume"
+
+# A string value carrying the same characters is text, not the key.
+run_raw '{"cwd":"/tmp/\"source\": \"resume\"","source":"startup"}' "$BIN_DIR"
+assert_eq "$out" "$REPORT" "a quoted source inside another value is not the start reason"
+
+echo "session-drift-check: without jq"
+# The fallback scan still classifies an ordinary payload, so a machine with no
+# jq keeps the report rather than losing it.
+NOJQ_BIN="$TMP_ROOT/nojq"
+mkdir -p "$NOJQ_BIN"
+for tool in bash cat command printf grep sed head env pwd; do
+  real="$(command -v "$tool" 2>/dev/null || true)"
+  [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOJQ_BIN/$tool"
+done
+ln -sf "$BIN_DIR/vstack" "$NOJQ_BIN/vstack"
+run_raw '{"session_id":"s","hook_event_name":"SessionStart","source":"startup"}' "$NOJQ_BIN"
+assert_eq "$out" "$REPORT" "without jq a fresh start still relays the report"
+run_raw '{"session_id":"s","hook_event_name":"SessionStart","source":"resume"}' "$NOJQ_BIN"
+assert_eq "$out" "" "without jq a resume is still silent"
+
 echo "session-drift-check: unusable project directory"
 capture FAKE_RC=1 FAKE_OUT="$REPORT" CLAUDE_PROJECT_DIR="$TMP_ROOT/does-not-exist"
 assert_eq "$rc" 0 "missing project dir exits 0"

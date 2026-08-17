@@ -6,6 +6,13 @@
 use super::tests::{hook_fixture, tmpdir};
 use super::*;
 
+/// The presence read, for content every one of these fixtures builds as valid
+/// TOML — a parse failure here is the fixture's bug, not the case under test.
+fn prose_section<'a>(content: &'a str, hook_name: &str) -> Option<&'a str> {
+    crate::installer::codex_agent_prose_section(content, hook_name)
+        .unwrap_or_else(|reason| panic!("the fixture must be valid TOML: {reason}\n{content}"))
+}
+
 fn agent_fixture(name: &str) -> Agent {
     Agent {
         name: name.into(),
@@ -104,7 +111,7 @@ fn marker_text_outside_developer_instructions_is_not_the_prose_fallback() {
 
     // Presence, before anything is installed: the decoy is not the block.
     assert!(
-        crate::installer::codex_agent_prose_section(&decoy, &hook.name).is_none(),
+        prose_section(&decoy, &hook.name).is_none(),
         "marker text outside developer_instructions must not read as installed"
     );
 
@@ -114,7 +121,7 @@ fn marker_text_outside_developer_instructions_is_not_the_prose_fallback() {
             .unwrap();
     });
     let written = std::fs::read_to_string(&toml).unwrap();
-    let section = crate::installer::codex_agent_prose_section(&written, &hook.name)
+    let section = prose_section(&written, &hook.name)
         .expect("the install must write the block the presence read looks for");
     assert!(
         section.contains("the agent should verify this constraint is met"),
@@ -141,11 +148,11 @@ fn marker_text_outside_developer_instructions_is_not_the_prose_fallback() {
         crate::installer::codex_hook_safety_block(&sibling)
     );
     assert!(
-        crate::installer::codex_agent_prose_section(&sibling_only, &hook.name).is_none(),
+        prose_section(&sibling_only, &hook.name).is_none(),
         "`## Safety: x-extra` must not answer for `## Safety: x`: {sibling_only}"
     );
     assert!(
-        crate::installer::codex_agent_prose_section(&sibling_only, &sibling.name).is_some(),
+        prose_section(&sibling_only, &sibling.name).is_some(),
         "…while its own name still finds it: {sibling_only}"
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -196,7 +203,7 @@ fn a_prose_section_that_lost_its_action_line_is_rewritten_not_skipped() {
     let gutted = installed.replace(&format!("\n{action_line}"), "");
     assert_ne!(gutted, installed, "the fixture must actually gut the body");
     assert!(
-        crate::installer::codex_agent_prose_section(&gutted, &hook.name).is_some(),
+        prose_section(&gutted, &hook.name).is_some(),
         "the heading survives, which is exactly what made install skip it"
     );
     std::fs::write(&toml, &gutted).unwrap();
@@ -289,14 +296,14 @@ fn removing_prose_cuts_the_installed_block_and_nothing_that_merely_looks_like_it
             .unwrap();
     });
     let installed = std::fs::read_to_string(&toml).unwrap();
-    assert!(crate::installer::codex_agent_prose_section(&installed, &hook.name).is_some());
+    assert!(prose_section(&installed, &hook.name).is_some());
 
     crate::test_util::with_codex_home(&dir, || {
         super::codex::strip_hook_prose_from_codex_agents(true, &hook.name).unwrap();
     });
     let after = std::fs::read_to_string(&toml).unwrap();
     assert!(
-        crate::installer::codex_agent_prose_section(&after, &hook.name).is_none(),
+        prose_section(&after, &hook.name).is_none(),
         "the installed block must be gone: {after}"
     );
     assert!(
@@ -314,5 +321,155 @@ fn removing_prose_cuts_the_installed_block_and_nothing_that_merely_looks_like_it
         super::codex::strip_hook_prose_from_codex_agents(true, &hook.name).unwrap();
     });
     assert_eq!(std::fs::read_to_string(&toml).unwrap(), after);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Where the block lives is a TOML question, and only a TOML parser answers
+/// it. The line scan this replaces took the FIRST line in the file that read
+/// like the assignment — a `developer_instructions = '''` quoted inside
+/// another field's multi-line string counted — and then ran to the next `'''`
+/// it could find, which was the real key's opening delimiter. Installing spliced
+/// the safety block into the middle of the user's own text and left behind a
+/// file Codex could no longer parse.
+#[test]
+fn the_block_is_the_parsed_root_value_not_the_first_line_that_looks_like_it() {
+    let dir = tmpdir("codex_prose_parsed_location");
+    let agents_dir = dir.join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    let hook = hook_fixture("post-edit-lint", "TaskCompleted", None);
+    let agents = [agent_fixture("rust")];
+    let toml = agents_dir.join("rust.toml");
+    // The decoy is a whole assignment, verbatim, inside a field that is the
+    // user's. Everything the line scan matched on is here.
+    let decoy = "name = \"rust\"\nnotes = \"\"\"\ndeveloper_instructions = '''\nthe user's own words\n\"\"\"\n";
+    let real = "developer_instructions = '''\nBody\n'''\n";
+    std::fs::write(&toml, format!("{decoy}{real}")).unwrap();
+
+    // Presence, before anything is installed: the decoy is not the block.
+    let before = std::fs::read_to_string(&toml).unwrap();
+    assert!(
+        prose_section(&before, &hook.name).is_none(),
+        "a quoted assignment is not the agent's block"
+    );
+
+    crate::test_util::with_codex_home(&dir, || {
+        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
+            .unwrap();
+    });
+    let written = std::fs::read_to_string(&toml).unwrap();
+    written
+        .parse::<toml_edit::DocumentMut>()
+        .unwrap_or_else(|err| panic!("the install must leave valid TOML: {err}\n{written}"));
+    assert!(
+        written.starts_with(decoy),
+        "the user's own field is untouched, byte for byte: {written}"
+    );
+    let section = prose_section(&written, &hook.name)
+        .expect("the block lands in the real developer_instructions");
+    assert!(
+        section.contains("the agent should verify this constraint is met"),
+        "…carrying the hook's own prose: {section}"
+    );
+
+    // Removal puts the file back exactly as it was, decoy included.
+    crate::test_util::with_codex_home(&dir, || {
+        super::codex::strip_hook_prose_from_codex_agents(true, &hook.name).unwrap();
+    });
+    assert_eq!(
+        std::fs::read_to_string(&toml).unwrap(),
+        format!("{decoy}{real}"),
+        "removal restores the file the install started from"
+    );
+}
+
+/// A `developer_instructions` belonging to some other TABLE is not the
+/// agent's: Codex hands the agent the ROOT key, and only that one. Nothing is
+/// written into a table vstack does not own, and the presence read calls the
+/// fallback absent rather than adopting a stranger's value as its own.
+#[test]
+fn a_developer_instructions_in_another_table_is_not_the_agents_block() {
+    let dir = tmpdir("codex_prose_other_table");
+    let agents_dir = dir.join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    let hook = hook_fixture("post-edit-lint", "TaskCompleted", None);
+    let agents = [agent_fixture("rust")];
+    let toml = agents_dir.join("rust.toml");
+    let content = format!(
+        "name = \"rust\"\n\n[experimental]\ndeveloper_instructions = '''\n{}\n'''\n",
+        crate::installer::codex_hook_safety_block(&hook)
+    );
+    std::fs::write(&toml, &content).unwrap();
+
+    assert!(
+        prose_section(&content, &hook.name).is_none(),
+        "another table's value must not answer for the agent's: {content}"
+    );
+
+    // …so the install refuses instead of splicing into it, and the file is
+    // left exactly as the user wrote it.
+    let err = crate::test_util::with_codex_home(&dir, || {
+        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
+            .expect_err("there is no root developer_instructions to write into")
+    });
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("no developer_instructions block"),
+        "{message}"
+    );
+    assert_eq!(std::fs::read_to_string(&toml).unwrap(), content);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An agent TOML that does not parse is UNREADABLE, never "the block is
+/// absent". Every path answers alike: the presence read names the file, the
+/// install refuses it rather than counting it covered, and removal rewrites
+/// nothing — cutting a byte range out of a document whose structure was never
+/// established is how the whole-file search destroyed user content.
+#[test]
+fn an_unparseable_codex_agent_is_unreadable_and_never_rewritten() {
+    let dir = tmpdir("codex_prose_unparseable");
+    let agents_dir = dir.join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    let hook = hook_fixture("post-edit-lint", "TaskCompleted", None);
+    let agents = [agent_fixture("rust")];
+    let toml = agents_dir.join("rust.toml");
+    let broken = "name = \"rust\ndeveloper_instructions = '''\n## Safety: post-edit-lint\n'''\n";
+    std::fs::write(&toml, broken).unwrap();
+
+    match crate::installer::codex_hook_prose(&dir, &hook) {
+        crate::installer::CodexProse::Unreadable(reason) => {
+            assert!(
+                reason.contains(&toml.display().to_string()),
+                "the note names the file: {reason}"
+            );
+            assert!(reason.contains("not valid TOML"), "{reason}");
+        }
+        other => panic!("a file that does not parse is not an answer about the block: {other:?}"),
+    }
+
+    let err = crate::test_util::with_codex_home(&dir, || {
+        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
+            .expect_err("a file vstack cannot parse is never rewritten")
+    });
+    let message = format!("{err:#}");
+    assert!(message.contains("not TOML vstack can rewrite"), "{message}");
+    assert!(
+        message.contains(&toml.display().to_string()),
+        "names the file: {message}"
+    );
+
+    let err = crate::test_util::with_codex_home(&dir, || {
+        super::codex::strip_hook_prose_from_codex_agents(true, &hook.name)
+            .expect_err("removal must refuse it too")
+    });
+    assert!(
+        format!("{err:#}").contains("refusing to rewrite"),
+        "{err:#}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&toml).unwrap(),
+        broken,
+        "and the file is untouched by every one of them"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
