@@ -80,7 +80,10 @@
   so a nested key or a matching string elsewhere in the payload no longer
   decides whether the report is printed. Source picker rows and the scope
   summary now label a GitHub remote by the repository it names, so every
-  spelling of one repository is one row (VST-258).
+  spelling of one repository is one row. An installed agent's declared
+  skills are read as parsed YAML — a block sequence and a value carrying a
+  trailing comment both count, where before either read as declaring none
+  and every skill the agent named went unchecked (VST-258).
 - preflight gains three added-line lanes taken from the classes review bots
   keep finding first: `unwired-suite` (a new `tests/*.test.sh`,
   `tests/test-*.sh` or `*.test.ts`/`.js`/`.mjs` that no tracked runner

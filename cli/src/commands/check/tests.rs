@@ -32,9 +32,29 @@ fn yaml_inline_list_brackets() {
 
 #[test]
 fn quoted_values_are_unwrapped() {
-    let fm = "skills: \"github\", 'linear'";
+    let fm = "skills: [\"github\", 'linear']";
     let skills = parse_skills_field(fm);
     assert_eq!(skills, vec!["github".to_string(), "linear".to_string()]);
+}
+
+/// A block sequence is the spelling anyone editing the file by hand reaches
+/// for, and the inline one may carry a comment like any other YAML value. The
+/// line scan this replaces read neither, so the agent declared no skills at
+/// all and every skill it named went unchecked.
+#[test]
+fn block_sequences_and_commented_values_are_read_as_the_yaml_they_are() {
+    for fm in [
+        "name: rust\nskills:\n  - dev\n  - linear\n",
+        "name: rust\nskills:\n- dev\n- linear\n",
+        "name: rust\nskills: [dev, linear] # the ones this agent needs\n",
+        "name: rust\nskills:\n  - dev # delegation\n  - linear\n",
+    ] {
+        assert_eq!(
+            parse_skills_field(fm),
+            vec!["dev".to_string(), "linear".to_string()],
+            "{fm}"
+        );
+    }
 }
 
 #[test]
@@ -42,6 +62,26 @@ fn empty_or_missing_field_yields_empty_vec() {
     assert!(parse_skills_field("name: x").is_empty());
     assert!(parse_skills_field("skills:").is_empty());
     assert!(parse_skills_field("skills: []").is_empty());
+    // Frontmatter that is not YAML at all declares nothing to check against.
+    assert!(parse_skills_field("skills: [dev").is_empty());
+}
+
+/// The legacy Codex `skills = [...]` field is the ROOT key, read from the
+/// parsed document: a `skills` belonging to another table, or the same text
+/// inside another field's own string, is not the agent's inventory.
+#[test]
+fn the_legacy_codex_skills_field_is_the_parsed_root_array() {
+    assert_eq!(
+        parse_codex_skills_field("name = \"rust\"\nskills = [\"dev\", \"linear\"]\n"),
+        vec!["dev".to_string(), "linear".to_string()]
+    );
+    for content in [
+        "name = \"rust\"\n\n[experimental]\nskills = [\"decoy\"]\n",
+        "name = \"rust\"\nnotes = \"\"\"\nskills = [\"decoy\"]\n\"\"\"\n",
+        "name = \"rust\nskills = [\"decoy\"]\n",
+    ] {
+        assert!(parse_codex_skills_field(content).is_empty(), "{content}");
+    }
 }
 
 #[test]

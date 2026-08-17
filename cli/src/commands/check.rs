@@ -38,33 +38,33 @@ fn find_installed_agent_file(global: bool, agent: &LockEntry) -> Option<PathBuf>
     None
 }
 
+/// The skills an agent's YAML frontmatter DECLARES.
+///
+/// Parsed as the YAML it is, so the value is read the way the harness reads
+/// it: a sequence in either spelling, or the comma-separated scalar the
+/// markdown generator writes. The line scan this replaces knew only an inline
+/// bracket list and a bare comma run, so a block sequence — the spelling a
+/// user editing the file by hand reaches for first — declared nothing, and
+/// every skill it named went unchecked.
 fn parse_skills_field(frontmatter: &str) -> Vec<String> {
-    for line in frontmatter.lines() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("skills:") {
-            let rest = rest.trim();
-            // YAML inline list `skills: a, b, c` (Cursor / Claude / OpenCode
-            // generated agents) — split on commas.
-            if !rest.is_empty() && !rest.starts_with('[') {
-                return rest
-                    .split(',')
-                    .map(|s| s.trim().trim_matches('"').trim_matches('\''))
-                    .filter(|s| !s.is_empty())
-                    .map(String::from)
-                    .collect();
-            }
-            // YAML inline list `skills: [a, b]`
-            if let Some(stripped) = rest.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
-                return stripped
-                    .split(',')
-                    .map(|s| s.trim().trim_matches('"').trim_matches('\''))
-                    .filter(|s| !s.is_empty())
-                    .map(String::from)
-                    .collect();
-            }
-        }
-    }
-    Vec::new()
+    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(frontmatter) else {
+        return Vec::new();
+    };
+    let names: Vec<String> = match doc.get("skills") {
+        Some(serde_yaml::Value::Sequence(items)) => items
+            .iter()
+            .filter_map(serde_yaml::Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        // One scalar naming several skills: `skills: dev, linear`. A skill
+        // name cannot contain a comma, so the split is unambiguous.
+        Some(serde_yaml::Value::String(list)) => list
+            .split(',')
+            .map(|name| name.trim().to_string())
+            .collect(),
+        _ => Vec::new(),
+    };
+    names.into_iter().filter(|name| !name.is_empty()).collect()
 }
 
 fn parse_required_skills_section(content: &str) -> Vec<String> {
@@ -109,22 +109,27 @@ fn read_agent_skills(path: &Path) -> Vec<String> {
     }
 
     // Backward compatibility for older Codex agent files generated with an
-    // unsupported top-level `skills = [...]` field.
-    for line in content.lines() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("skills =") {
-            let rest = rest.trim();
-            if let Some(stripped) = rest.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
-                return stripped
-                    .split(',')
-                    .map(|s| s.trim().trim_matches('"').trim_matches('\''))
-                    .filter(|s| !s.is_empty())
-                    .map(String::from)
-                    .collect();
-            }
-        }
-    }
-    Vec::new()
+    // unsupported top-level `skills = [...]` field. Read from the parsed
+    // document, so it is the ROOT key and no other — a `skills` in some table,
+    // or the same text inside another field's own string, is not it.
+    parse_codex_skills_field(&content)
+}
+
+fn parse_codex_skills_field(content: &str) -> Vec<String> {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return Vec::new();
+    };
+    doc.get("skills")
+        .and_then(toml_edit::Item::as_array)
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(toml_edit::Value::as_str)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Output and network controls for `vstack check`.
