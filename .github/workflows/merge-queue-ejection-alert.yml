@@ -179,18 +179,20 @@ jobs:
 
           # Intake issue (deduped per PR + ejection run), failure-shaped
           # reasons only: a deliberate dequeue or a routine queue
-          # re-evaluation is not triage work.
+          # re-evaluation is not triage work. Guarded by a flag, not an
+          # early exit, so steps appended later still run for every reason.
+          create_intake_issue=1
           case "${DEQUEUE_REASON}" in
             MANUAL|MERGE_CONFLICT)
               echo "reason ${DEQUEUE_REASON}: deliberate dequeue / queue re-evaluation — comment posted, no intake issue"
-              exit 0
+              create_intake_issue=0
               ;;
           esac
           # An unidentified ejecting run must not collapse successive
           # ejections into one marker: fall back to this alert run's own id.
           marker="ejection-alert:pr-${PR_NUMBER}:run-${run_id:-alert-${GITHUB_RUN_ID}}"
           existing="$(gh issue list --search "\"$marker\" in:body" --state open --json number --jq 'length')"
-          if [ "$existing" = "0" ]; then
+          if [ "$create_intake_issue" = "1" ] && [ "$existing" = "0" ]; then
             issue_file="$(mktemp)"
             cat > "$issue_file" <<BODY
           PR #${PR_NUMBER} was ejected from the merge queue (reason: \`${DEQUEUE_REASON}\`); its auto-merge arm is dropped and it will sit unmerged until re-armed.
