@@ -745,6 +745,45 @@ fn a_deregistered_hook_stops_reading_as_enforced() {
 }
 
 #[test]
+fn refresh_refuses_an_uncovered_event_before_touching_agents() {
+    let sandbox = Sandbox::new("refresh-uncovered-event");
+    assert_success(
+        sandbox.add(&[
+            "--agent",
+            "rust",
+            "--hook",
+            "probe",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add",
+    );
+    let agent_path = sandbox.project.join(".claude/agents/rust.md");
+    let before = fs::read_to_string(&agent_path).unwrap();
+    // The source hook's event leaves the contract before the next refresh:
+    // nothing may be regenerated from a definition install would refuse.
+    write_probe_hook(&sandbox.source, "probe", "Notification");
+    let output = sandbox
+        .vstack()
+        .args(["refresh", "--scope", "project"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "refresh accepted an event the contract does not cover\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let after = fs::read_to_string(&agent_path).unwrap();
+    assert_eq!(
+        before, after,
+        "refresh mutated agents before refusing the uncovered event"
+    );
+}
+
+#[test]
 fn a_registration_moved_to_another_event_stops_reading_as_enforced() {
     let sandbox = Sandbox::new("moved-event-registration");
     assert_success(

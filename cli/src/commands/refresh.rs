@@ -258,6 +258,25 @@ pub fn refresh_items_in_scope(
     let pass = |name: &str| name_filter.is_none_or(|f| f.iter().any(|n| n == name));
     let all_hooks = all_source_hooks(sources);
 
+    // An event outside the contract is refused before anything is mutated —
+    // `add` proves that atomicity and refresh must not do less: regenerating
+    // first would rewrite agent frontmatter from a definition install refuses.
+    for (name, entry) in lock.entries.iter() {
+        if entry.kind != ItemKind::Hook || !pass(name) {
+            continue;
+        }
+        if let Some(hook) = crate::resolve::source_hook_for_lock_entry(&all_hooks, entry)
+            && installer::contract::events().all(|event| event != hook.event)
+        {
+            stats.fail(
+                name,
+                None,
+                installer::contract::unknown_event_error(&hook.name, &hook.event),
+            );
+            return stats;
+        }
+    }
+
     let project_owned_skills_root = if global {
         None
     } else {
