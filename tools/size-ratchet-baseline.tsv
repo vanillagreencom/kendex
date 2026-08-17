@@ -107,7 +107,7 @@ skills/github/scripts/lib/github-api.sh	872
 skills/github/scripts/lib/verify-lib.sh	415
 skills/github/tests/git-diff-summary-cfg-test-declaration.test.sh	2128
 skills/growth-guards/scripts/install-git-hooks	574
-skills/growth-guards/tests/install-git-hooks.test.sh	1007
+skills/growth-guards/tests/install-git-hooks.test.sh	1025
 skills/iced-rs/examples/changelog/src/changelog.rs	418
 skills/iced-rs/examples/color_palette/src/main.rs	479
 skills/iced-rs/examples/custom_shader/src/scene/pipeline.rs	584

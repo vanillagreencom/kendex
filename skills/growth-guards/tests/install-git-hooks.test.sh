@@ -988,10 +988,28 @@ case "$OUT" in
   *) bad "fork skip stated" "out=$OUT" ;;
 esac
 
+echo "=== a failing --help that names size-ratchet is still a broken install ==="
+cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'ERRHELP'
+#!/usr/bin/env bash
+echo "size-ratchet: cannot source lib/settings.sh" >&2
+exit 2
+ERRHELP
+chmod 0755 "$R31/.agents/skills/size-ratchet/scripts/size-ratchet"
+printf 'mid\n' >"$R31/c.txt"
+git -C "$R31" add c.txt
+commit_in "$R31" "feat: add c"
+[ "$RC" -ne 0 ] && ok "an erroring --help blocks even when its text names size-ratchet" || bad "erroring help blocks" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"failed on --help"*) ok "the block names the failed probe, not a fork skip" ;;
+  *) bad "failed probe named" "out=$OUT" ;;
+esac
+git -C "$R31" rm -q --cached c.txt 2>/dev/null; rm -f "$R31/c.txt"
+
 echo "=== a size-ratchet whose --help yields no usage is a broken install ==="
 cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'BROKEN'
 #!/usr/bin/env bash
-exit 1
+# --help "succeeds" but prints nothing usage-shaped.
+exit 0
 BROKEN
 chmod 0755 "$R31/.agents/skills/size-ratchet/scripts/size-ratchet"
 printf 'more\n' >"$R31/d.txt"

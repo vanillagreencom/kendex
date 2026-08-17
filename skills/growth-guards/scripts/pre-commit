@@ -85,7 +85,13 @@ if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
   # advertising --staged is the contract. A working CLI without it is the
   # repo's own gate (stated skip); a script whose --help produces no usage
   # at all is a broken install, and a lost gate must never pass silently.
-  sr_help="$("$SIZE_RATCHET" --help 2>&1)" || true
+  sr_help_status=0
+  sr_help="$("$SIZE_RATCHET" --help 2>&1)" || sr_help_status=$?
+  if [ "$sr_help_status" -ne 0 ]; then
+    # A --help that cannot even print usage is a broken script, whatever its
+    # error text mentions — never a replacement to defer to.
+    gg_config_error "size-ratchet at $SIZE_RATCHET failed on --help (exit $sr_help_status) — broken install; reinstall it or remove the skill"
+  fi
   case "$sr_help" in
     *--staged*)
       # --staged: judge the blobs the commit records, not the worktree copies.
