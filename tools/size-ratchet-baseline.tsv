@@ -1,12 +1,13 @@
 cli/src/agent.rs	1074
 cli/src/commands/add.rs	3147
 cli/src/commands/apply.rs	2778
-cli/src/commands/refresh.rs	1622
+cli/src/commands/refresh.rs	1659
 cli/src/commands/refresh/tests.rs	2089
 cli/src/commands/report.rs	1872
 cli/src/config.rs	3895
 cli/src/installer.rs	3821
-cli/src/pi_extension.rs	2857
+cli/src/installer/hooks.rs	1053
+cli/src/pi_extension.rs	2868
 cli/src/project_config.rs	4892
 cli/src/refresh_sources.rs	2021
 cli/src/refresh_sources/tests.rs	3160
@@ -14,6 +15,7 @@ cli/src/tui/disk_mutations/tests.rs	1533
 cli/src/tui/install_flow.rs	2659
 cli/src/tui/multiselect.rs	1095
 cli/src/tui/render.rs	3496
+cli/tests/hook_contract.rs	1263
 cli/tests/hook_lifecycle.rs	1545
 pi-extensions/pi-agents-tmux/extensions/subagent/index.ts	2101
 pi-extensions/pi-agents-tmux/extensions/subagent/pane.ts	1251
