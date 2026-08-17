@@ -323,6 +323,18 @@ nothing there runs the hook. A configuration file that exists and cannot be
 parsed is never read as "not registered": vstack reports it unverifiable, names
 the file, and refuses to rewrite what it could not understand.
 
+Two faults can be true at once, and the report names the one to clear FIRST. A
+missing artifact prescribes `vstack add` — and that command refuses the very
+config it would have to write when it cannot parse it, so a missing script
+beside an unparseable `settings.json` is reported under "repair the file named
+below", naming the file AND the missing artifact rather than prescribing a
+reinstall that could not run. The same holds wherever a repair gates a
+reinstall: a `.agents` path that is not this checkout's own directory, Pi
+settings that block a carrier install, and a source cache whose stamp cannot be
+written (reported ahead of whatever fetch failure that frozen stamp still
+records). Both faults appear in the one note, so a repair is never followed by a
+second surprise.
+
 The commit path is guarded separately and for every tool: an installed
 [`growth-guards`](skills/growth-guards/) skill arms real `.git/hooks`
 pre-commit and commit-msg shims, which fire regardless of which harness — or

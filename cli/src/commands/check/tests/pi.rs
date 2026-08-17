@@ -270,3 +270,57 @@ fn a_pi_package_whose_directory_is_gone_stays_a_missing_install() {
         );
     });
 }
+
+/// Both faults at once, and the report has to name the one whose repair comes
+/// FIRST. A missing copy prescribes `vstack add`, which registers everything
+/// it copies and refuses a settings file it cannot parse — so reading the
+/// registration only when the directory was there printed the one remedy that
+/// cannot run and said nothing about the file blocking it.
+#[test]
+fn a_missing_pi_package_beside_unreadable_settings_names_the_settings_first() {
+    with_sandbox("pi-directory-and-settings", |_project, source| {
+        let (lock, package, settings) = installed(source);
+        let registered = std::fs::read_to_string(&settings).unwrap();
+        let extension = crate::pi_extension::PiExtension::from_dir(
+            &source.join("pi-extensions").join("pi-hooks"),
+        )
+        .unwrap();
+
+        std::fs::remove_dir_all(&package).unwrap();
+        std::fs::write(&settings, "{ not json").unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(
+            report.phantom.is_empty(),
+            "the blocked remedy must not be the headline: {report:?}"
+        );
+        assert_eq!(
+            names(&report.unverifiable),
+            vec!["@vg/pi-hooks"],
+            "{report:?}"
+        );
+        let note = unverifiable_note(&report);
+        assert!(
+            note.contains(&settings.display().to_string()),
+            "the note names the file to repair: {note}"
+        );
+        assert!(
+            note.contains("install path missing"),
+            "…and the second fault, so the user is not sent back twice: {note}"
+        );
+
+        // Why the order matters: the reinstall the missing-copy report would
+        // have prescribed refuses this file.
+        let err = crate::pi_extension::install_pi_extension(&extension, false)
+            .expect_err("install must refuse a settings file it cannot parse");
+        assert!(
+            format!("{err:#}").contains(&settings.display().to_string()),
+            "the refusal names the file: {err:#}"
+        );
+
+        // Control: repair the named file and the same install completes.
+        std::fs::write(&settings, registered).unwrap();
+        crate::pi_extension::install_pi_extension(&extension, false).unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+    });
+}

@@ -359,6 +359,91 @@ fn a_read_only_stamp_or_lock_surfaces_as_unwritable_when_due() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Two cache faults at once, in the order that decides the verdict.
+///
+/// A stale failure stamp on a cache that can no longer be written is FROZEN:
+/// its `failing_for` stays wherever the last writable attempt left it, so it
+/// can never age past the drift threshold — while the unwritable state is
+/// drift the moment it is seen. Reading the recorded failure first let the
+/// blip answer for the cache, and the state that can never repair itself went
+/// unreported for good.
+#[cfg(unix)]
+#[test]
+fn an_unwritable_cache_outranks_the_stale_failure_it_can_no_longer_update() {
+    use std::os::unix::fs::PermissionsExt;
+    if is_root() {
+        return; // root ignores the permission bits this test relies on
+    }
+    let root = cache_root("failing-and-unwritable");
+    let config = root.join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    crate::test_util::with_home_and_config(&root, &config, || {
+        let cache = RemoteSource::parse("owner/repo")
+            .unwrap()
+            .unwrap()
+            .cache_dir;
+        write_fake_clone(&cache, "https://github.com/owner/repo.git");
+        let lock = demo_lock("owner/repo");
+
+        // One recent failure, and a cache due for the retry that would clear
+        // it. On its own this is deliberately not drift.
+        let now = epoch_now();
+        write_fetch_stamp(
+            &cache,
+            FetchStamp::Failed {
+                first: now - 60,
+                last: now - 60,
+                cause: Some(FetchFailure::Fetch),
+            },
+        )
+        .unwrap();
+        let stamp = remote_cache_fetch_stamp(&cache);
+        std::fs::File::options()
+            .write(true)
+            .open(&stamp)
+            .unwrap()
+            .set_modified(
+                std::time::SystemTime::now() - (REMOTE_CACHE_TTL + Duration::from_secs(60)),
+            )
+            .unwrap();
+        let problems = recorded_remote_cache_problems(&lock);
+        assert!(
+            matches!(
+                problems.as_slice(),
+                [RemoteCacheProblem {
+                    kind: RemoteCacheProblemKind::Failing { .. },
+                    ..
+                }]
+            ) && !problems[0].kind.is_persistent(),
+            "control: one blip on a writable cache stays quiet: {problems:?}"
+        );
+
+        // The same blip on a cache that can no longer record anything.
+        std::fs::set_permissions(&stamp, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let problems = recorded_remote_cache_problems(&lock);
+        assert!(
+            matches!(
+                problems.as_slice(),
+                [RemoteCacheProblem {
+                    kind: RemoteCacheProblemKind::Unwritable { reason },
+                    ..
+                }] if reason.contains("vstack-fetch-stamp") && reason.contains("git fetch failed")
+            ),
+            "the repair that unblocks every future refresh comes first, and the frozen failure rides along: {problems:?}"
+        );
+        assert!(
+            problems[0].kind.is_persistent(),
+            "a cache that can never refresh is drift: {problems:?}"
+        );
+        std::fs::set_permissions(&stamp, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        // Control: writable again, and the blip is back to being just a blip.
+        let problems = recorded_remote_cache_problems(&lock);
+        assert!(!problems[0].kind.is_persistent(), "control: {problems:?}");
+    });
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A cache entry holding another repository's clone must never be fetched or
 /// reset — its contents would be installed as this source. The refresh driver
 /// reports the refusal rather than swallowing it, and nothing in the entry is

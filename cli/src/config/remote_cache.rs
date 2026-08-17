@@ -8,13 +8,14 @@
 //! and a cache key in exactly one place.
 //!
 //! Fetching, the exclusion guard around it, and the refresh drivers live in
-//! [`fetch`].
+//! [`fetch`]; what a recorded state MEANS for a report lives in [`problems`].
 
 use super::LockFile;
 use crate::refresh_sources::{RemoteSource, cache_entry_present};
 use std::path::{Path, PathBuf};
 
 mod fetch;
+mod problems;
 #[cfg(test)]
 mod test_support;
 
@@ -23,6 +24,8 @@ pub use fetch::{
     refresh_remote_caches_older_than, remote_cache_fetch_in_flight, spawn_detached_cache_refresh,
 };
 use fetch::{GuardAcquire, RemoteCacheFetchGuard};
+pub(crate) use problems::recorded_remote_cache_problems;
+pub use problems::{RemoteCacheProblem, RemoteCacheProblemKind, remote_cache_problem};
 
 /// How long a remote source cache is trusted before a refresh becomes due.
 /// `check` never fetches on its own thread — it hands a due cache to a
@@ -207,141 +210,6 @@ pub fn remote_cache_fetch_due(cache_dir: &Path, max_age: Option<std::time::Durat
     modified.elapsed().is_ok_and(|age| age >= max_age)
 }
 
-/// Why a remote source cache could not be brought up to date.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RemoteCacheProblemKind {
-    /// Fetch attempts have been failing since `failing_for` ago; the most
-    /// recent attempt was `last_attempt` ago and failed for `cause`.
-    Failing {
-        failing_for: std::time::Duration,
-        last_attempt: std::time::Duration,
-        cause: Option<FetchFailure>,
-    },
-    /// The cache cannot be locked or stamped at all (permissions on `.git`).
-    /// It can never refresh itself, so this is reported the first time.
-    Unwritable { reason: String },
-    /// The entry is not vstack's own clone of this source, so it was neither
-    /// fetched nor reset. Only a human removing the entry clears it.
-    Refused { reason: String },
-}
-
-impl RemoteCacheProblemKind {
-    /// True when the problem has outlived [`REMOTE_CACHE_FAILURE_IS_DRIFT`] or
-    /// cannot resolve itself at all. A single offline session stays quiet.
-    pub fn is_persistent(&self) -> bool {
-        match self {
-            Self::Failing { failing_for, .. } => *failing_for >= REMOTE_CACHE_FAILURE_IS_DRIFT,
-            Self::Unwritable { .. } | Self::Refused { .. } => true,
-        }
-    }
-}
-
-/// One cache's problem, tagged with the lock `source` string it came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemoteCacheProblem {
-    pub source: String,
-    pub kind: RemoteCacheProblemKind,
-}
-
-/// The problem recorded for a cache, or None when the last attempt succeeded,
-/// none was ever made, or one is in flight right now.
-///
-/// Reading is all this does in the ordinary case. The ONE exception is an
-/// abandoned attempt: a `Pending` stamp older than the fetch deadline whose
-/// guard is free belongs to a process that was killed before it could record
-/// anything, and converting it to a failure (a single small write, under the
-/// guard) is what stops an externally killed fetch from buying silence for a
-/// whole TTL.
-pub fn remote_cache_problem(cache_dir: &Path) -> Option<RemoteCacheProblemKind> {
-    match read_fetch_stamp(cache_dir)? {
-        FetchStamp::Ok => None,
-        FetchStamp::Pending { .. } => {
-            if !remote_cache_fetch_due(cache_dir, Some(REMOTE_CACHE_FETCH_DEADLINE)) {
-                return None; // plausibly still running
-            }
-            let guard = match RemoteCacheFetchGuard::acquire(cache_dir) {
-                GuardAcquire::Held(guard) => guard,
-                // Still held: a fetch really is in flight, whatever the age.
-                GuardAcquire::Busy => return None,
-                GuardAcquire::Unusable(reason) => {
-                    return Some(RemoteCacheProblemKind::Unwritable { reason });
-                }
-            };
-            // Re-read under the guard. Waiting for it takes time, and the
-            // fetch we were about to condemn may have finished and written
-            // its own verdict in the meantime; overwriting THAT would record
-            // an up-to-date cache as failing since the attempt began.
-            let (first_failure, started) = match read_fetch_stamp(cache_dir) {
-                Some(FetchStamp::Pending { first_failure })
-                    if remote_cache_fetch_due(cache_dir, Some(REMOTE_CACHE_FETCH_DEADLINE)) =>
-                {
-                    (first_failure, stamp_epoch(cache_dir))
-                }
-                // Somebody finished while we waited: report what they wrote.
-                Some(fresh) => {
-                    drop(guard);
-                    return problem_from_stamp(fresh);
-                }
-                None => {
-                    drop(guard);
-                    return None;
-                }
-            };
-            // The abandoned attempt's own mtime is when it last happened, so
-            // the TTL measures from the attempt rather than from this read.
-            let last = started.unwrap_or_else(epoch_now);
-            let first = first_failure.unwrap_or(last);
-            let _ = write_fetch_stamp(
-                cache_dir,
-                FetchStamp::Failed {
-                    first,
-                    last,
-                    cause: Some(FetchFailure::Interrupted),
-                },
-            );
-            // The write above reset the FILE mtime to now — and dueness
-            // ([`remote_cache_fetch_due`]) reads the mtime, not the recorded
-            // `last`, so leaving it would defer the next refresh a full TTL
-            // from this OBSERVATION rather than from the attempt. Put the
-            // mtime back where the attempt left it.
-            let _ = std::fs::File::options()
-                .write(true)
-                .open(remote_cache_fetch_stamp(cache_dir))
-                .and_then(|file| {
-                    file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(last))
-                });
-            drop(guard);
-            Some(RemoteCacheProblemKind::Failing {
-                failing_for: age_since(first),
-                last_attempt: age_since(last),
-                cause: Some(FetchFailure::Interrupted),
-            })
-        }
-        stamp => problem_from_stamp(stamp),
-    }
-}
-
-fn problem_from_stamp(stamp: FetchStamp) -> Option<RemoteCacheProblemKind> {
-    match stamp {
-        FetchStamp::Ok | FetchStamp::Pending { .. } => None,
-        FetchStamp::Failed { first, last, cause } => Some(RemoteCacheProblemKind::Failing {
-            failing_for: age_since(first),
-            last_attempt: age_since(last),
-            cause,
-        }),
-    }
-}
-
-/// When the stamp was last written, as an epoch.
-fn stamp_epoch(cache_dir: &Path) -> Option<u64> {
-    std::fs::metadata(remote_cache_fetch_stamp(cache_dir))
-        .and_then(|meta| meta.modified())
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|since| since.as_secs())
-}
-
 /// Can this cache record anything at all? A cache whose `.git` cannot be
 /// written never produces a stamp, so nothing else on the read path would
 /// ever notice it — the refresh would simply be re-attempted, and fail
@@ -412,35 +280,6 @@ pub(crate) fn cached_remote_sources(lock: &LockFile) -> Vec<(String, RemoteSourc
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
-}
-
-/// Problems recorded on disk for this lock's caches, without fetching
-/// anything. This is what the session-start check reports: the news is at
-/// most one refresh late, and a permanently broken remote still surfaces.
-pub(crate) fn recorded_remote_cache_problems(lock: &LockFile) -> Vec<RemoteCacheProblem> {
-    let mut problems: Vec<RemoteCacheProblem> = cached_remote_sources(lock)
-        .into_iter()
-        .filter_map(|(source, remote)| {
-            let dir = remote.cache_dir;
-            let kind = remote_cache_problem(&dir).or_else(|| {
-                // Nothing recorded as failing. When a refresh is DUE, the
-                // stamp and lock are about to be needed — and a cache whose
-                // stamp or lock cannot be written can never record anything,
-                // so its refreshes would fail silently at every session
-                // start forever, with a stale `ok` (or no stamp at all)
-                // trusted the whole time. Not due means nothing will write,
-                // so there is nothing to probe.
-                if !remote_cache_fetch_due(&dir, Some(REMOTE_CACHE_TTL)) {
-                    return None;
-                }
-                cache_refresh_unwritable_reason(&dir)
-                    .map(|reason| RemoteCacheProblemKind::Unwritable { reason })
-            })?;
-            Some(RemoteCacheProblem { source, kind })
-        })
-        .collect();
-    problems.sort_by(|a, b| a.source.cmp(&b.source));
-    problems
 }
 
 /// True when any of this lock's caches is due for a refresh.

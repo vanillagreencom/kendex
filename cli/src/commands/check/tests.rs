@@ -4,6 +4,7 @@ use super::*;
 
 mod hooks;
 mod pi;
+mod skills;
 mod switches;
 use hooks::install_claude_hook;
 use pi::install_pi_package;
@@ -730,54 +731,6 @@ fn an_explicitly_empty_catalog_list_reports_its_entries_removed() {
         let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
         assert!(report.removed.is_empty(), "{report:?}");
         assert!(!report.source_issues.is_empty(), "{report:?}");
-    });
-}
-
-#[test]
-fn a_skill_the_disk_scan_finds_outside_the_canonical_root_is_not_a_phantom() {
-    // VST-195's class: `scan_installed_skills_on_disk` knows about roots
-    // the canonical path check does not — checkout-anchored roots in a
-    // worktree, and the Codex home root in global scope. Routing phantom
-    // through the canonical path alone reported those installs missing at
-    // every session start. This drives the Codex-home root, which needs no
-    // git fixture, and proves the same wiring: the scan's evidence wins.
-    with_sandbox("second-root", |_project, source| {
-        write_skill(source, "alpha", "one");
-        let anchored = config::codex_home_dir().join("skills").join("alpha");
-        std::fs::create_dir_all(&anchored).unwrap();
-        std::fs::write(anchored.join("SKILL.md"), "installed\n").unwrap();
-        std::fs::write(anchored.join(".vstack-refreshed"), "").unwrap();
-        // Deliberately NOT installed at the canonical global path.
-        assert!(
-            !config::global_state_dir()
-                .join("skills")
-                .join("alpha")
-                .exists()
-        );
-
-        let scanned: Vec<String> = config::scan_installed_skills_on_disk(true)
-            .into_iter()
-            .map(|item| item.name)
-            .collect();
-        assert!(
-            scanned.contains(&"alpha".to_string()),
-            "fixture must be visible to the disk scan: {scanned:?}"
-        );
-
-        let mut lock = LockFile::default();
-        lock.add(locked(source, ItemKind::Skill, "alpha"));
-        let report = check_scope(true, &lock, CheckOptions::default()).unwrap();
-        assert!(
-            report.phantom.is_empty(),
-            "a skill the scan can see is installed: {report:?}"
-        );
-        assert!(report.orphaned.is_empty(), "{report:?}");
-
-        // Inverse control: remove that copy and the same entry IS a phantom.
-        std::fs::remove_dir_all(&anchored).unwrap();
-        let report = check_scope(true, &lock, CheckOptions::default()).unwrap();
-        assert_eq!(names(&report.phantom), vec!["alpha"], "{report:?}");
-        assert!(report.has_drift());
     });
 }
 

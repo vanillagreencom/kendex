@@ -80,8 +80,11 @@ pub enum PiCarrier {
     Ready,
     /// Deployed in a scope Pi loads, and registered in none of them.
     Unregistered,
-    /// Deployed in no scope Pi loads.
-    Absent,
+    /// Deployed in no scope Pi loads. `blocked` carries the parse failure in
+    /// the settings file the install would have to WRITE, when there is one:
+    /// the deployment is the fault, and repairing that file is what has to
+    /// happen before the remedy for it can run at all.
+    Absent { blocked: Option<String> },
     /// Pi's settings could not be read, so registration is unknown. Names the
     /// cause.
     Unknown(String),
@@ -117,7 +120,17 @@ pub fn pi_carrier_state(global: bool) -> PiCarrier {
     match (unreadable, deployed_anywhere) {
         (Some(reason), _) => PiCarrier::Unknown(reason),
         (None, true) => PiCarrier::Unregistered,
-        (None, false) => PiCarrier::Absent,
+        // Nothing deployed, so no scope's settings were read above — and the
+        // install that would deploy it registers the package in THIS scope's
+        // settings and refuses a file it cannot parse. Asked here so the
+        // report can name that repair rather than a command it would block.
+        (None, false) => PiCarrier::Absent {
+            blocked: match crate::pi_extension::package_registration(PI_HOOKS_PACKAGE, global) {
+                crate::pi_extension::PackageRegistration::Unreadable { reason } => Some(reason),
+                crate::pi_extension::PackageRegistration::Registered
+                | crate::pi_extension::PackageRegistration::Absent => None,
+            },
+        },
     }
 }
 
@@ -142,7 +155,7 @@ pub fn resolve(
         let downgrade = match pi_hooks {
             PiCarrier::Ready => None,
             PiCarrier::Unregistered => Some("pi-hooks not registered in Pi settings"),
-            PiCarrier::Absent => Some("pi-hooks not installed"),
+            PiCarrier::Absent { .. } => Some("pi-hooks not installed"),
             PiCarrier::Unknown(_) => Some("pi-hooks registration unreadable"),
         };
         if let Some(note) = downgrade {

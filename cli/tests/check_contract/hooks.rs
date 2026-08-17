@@ -461,3 +461,90 @@ fn a_pi_locked_hook_needs_its_carrier_package_to_read_as_installed() {
     let clean = sb.check(&["--quiet"]);
     assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
 }
+
+/// The carrier's own two-fault ordering. With nothing deployed the report
+/// prescribes `vstack add --pi-extension`, and that command has to WRITE Pi's
+/// settings — the file it refuses when it cannot parse it. The absent carrier
+/// used to skip the settings read entirely, so the report named a command that
+/// could not run and never the repair it waits on.
+#[test]
+fn an_absent_pi_carrier_beside_unreadable_settings_names_the_settings_first() {
+    let sb = Sandbox::new("check-pi-carrier-blocked");
+    sb.write_hook("guard");
+    let output = sb
+        .vstack()
+        .args([
+            "add",
+            sb.source.to_str().unwrap(),
+            "--hook",
+            "guard",
+            "--harness",
+            "pi",
+            "--no-auto-skills",
+            "-y",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "add failed: {}",
+        text(&output.stderr)
+    );
+
+    // Control: with no settings file in the way, the report is the install
+    // remedy for the carrier.
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    let err = text(&quiet.stderr);
+    assert!(
+        err.contains("@vanillagreen/pi-hooks not installed")
+            && err.contains("--pi-extension @vanillagreen/pi-hooks"),
+        "control: {err}"
+    );
+
+    // The same absent carrier, with a settings file that command would refuse.
+    let settings_path = sb.project.join(".pi/settings.json");
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    fs::write(&settings_path, "{ not json").unwrap();
+
+    let json = sb.check(&["--json"]);
+    assert_eq!(json.status.code(), Some(1), "{}", text(&json.stderr));
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let scope = &parsed["scopes"][0];
+    assert!(
+        scope["phantom"].as_array().unwrap().is_empty(),
+        "the blocked remedy must not be the headline: {parsed}"
+    );
+    let unverifiable = scope["unverifiable"].as_array().unwrap();
+    let hook_row = unverifiable
+        .iter()
+        .find(|item| item["name"] == "guard")
+        .unwrap_or_else(|| panic!("guard must be unverifiable: {parsed}"));
+    let detail = hook_row["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("Pi settings cannot be read") && detail.contains("settings.json"),
+        "the note names the file to repair: {parsed}"
+    );
+    assert!(
+        detail.contains("not installed"),
+        "…and the second fault: {parsed}"
+    );
+    assert!(
+        detail.contains("--pi-extension @vanillagreen/pi-hooks"),
+        "…and the command that runs once it parses: {parsed}"
+    );
+
+    // Control: a settings file Pi can read puts the install remedy back.
+    fs::write(&settings_path, "{\n  \"packages\": []\n}\n").unwrap();
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    let err = text(&quiet.stderr);
+    assert!(
+        err.contains("@vanillagreen/pi-hooks not installed"),
+        "control: {err}"
+    );
+    assert!(
+        !err.contains("Pi settings cannot be read"),
+        "control: a readable file is not a fault: {err}"
+    );
+}

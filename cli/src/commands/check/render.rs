@@ -201,10 +201,13 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
     );
     // Deliberately its own section: reinstalling repairs nothing here, and
     // the detail names the file whose repair does — so the detail is given the
-    // width of a remedy rather than of a label.
+    // width of a remedy rather than of a label. The header is the remedy and
+    // claims nothing about the artifacts, because a row here can carry both
+    // faults at once: a missing artifact AND the file whose repair the
+    // reinstall for it waits on.
     section(
         out,
-        "installed, but the install could not be verified — repair the file named below",
+        "repair the file named below — no reinstall can clear these",
         '?',
         &report.unverifiable,
         quiet,
