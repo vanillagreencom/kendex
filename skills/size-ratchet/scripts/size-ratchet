@@ -691,9 +691,10 @@ if [ "$MODE" = "seed" ]; then
   # copy mean the ratchet is live even when the worktree copy was truncated,
   # and a regenerated baseline must be a reviewed hand-edit, never a reseed.
   if git ls-files --error-unmatch -- "$BASELINE_FILE" >/dev/null 2>&1; then
-    rows_index="$(git show ":$BASELINE_FILE" 2>/dev/null | grep -c . || true)"
-    case "$rows_index" in *[!0-9]*) rows_index=0 ;; esac
-    if [ "${rows_index:-0}" -gt 0 ]; then
+    git show ":$BASELINE_FILE" >"$TMP/baseline.index" 2>/dev/null \
+      || collection_error "could not read the index copy of $BASELINE_FILE — seeding cannot prove the ratchet is not live"
+    rows_index="$(count_nonempty_lines "$TMP/baseline.index")"
+    if [ "$rows_index" -gt 0 ]; then
       config_error "--seed refuses: the INDEX copy of $BASELINE_FILE carries $rows_index row(s) — the ratchet is live; restore the file (git checkout -- $BASELINE_FILE) or hand-edit it"
     fi
   fi
