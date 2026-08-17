@@ -100,6 +100,40 @@ run_sr --seed
   && ok "--seed on a sparse-hidden baseline is a config error naming the repair" \
   || bad "sparse seed refusal" "rc=$RC out=$OUT"
 
+echo "=== --staged --seed never replaces unstaged worktree rows ==="
+R="$TMP/staged-clobber"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+: >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+printf 'big.txt\t15\n' >"$R/tools/size-ratchet-baseline.tsv" # unstaged rows
+run_sr --staged --seed
+[ "$RC" -eq 2 ] && case "$OUT" in *"unstaged"*) true ;; *) false ;; esac \
+  && ok "--staged --seed refuses while the worktree copy carries unstaged rows" \
+  || bad "staged clobber refusal" "rc=$RC out=$OUT"
+row="$(cat "$R/tools/size-ratchet-baseline.tsv")"
+[ "$row" = "$(printf 'big.txt\t15')" ] && ok "the unstaged rows survive" || bad "unstaged rows" "$row"
+
+echo "=== an excluded baseline gets no self-row ==="
+R="$TMP/excluded-baseline"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+for i in $(seq 1 12); do mkfile "off-$i.txt" 15; done
+printf 'tools/*\tpolicy files live outside the gate here\n' >"$R/tools/size-ratchet-excludes"
+git -C "$R" add -A
+run_sr --seed
+[ "$RC" -eq 0 ] && ok "--seed exits 0 with the baseline excluded" || bad "excluded seed exit" "rc=$RC out=$OUT"
+if grep -qF 'tools/size-ratchet-baseline.tsv' "$R/tools/size-ratchet-baseline.tsv"; then
+  bad "excluded self-row" "a self-row was written for an excluded baseline"
+else
+  ok "no self-row for an excluded baseline"
+fi
+
 echo "=== mode exclusivity ==="
 run_sr --seed --update
 [ "$RC" -eq 2 ] && ok "--seed with --update is a config error" || bad "exclusivity" "rc=$RC out=$OUT"

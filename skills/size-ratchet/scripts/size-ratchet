@@ -689,6 +689,15 @@ if [ "$MODE" = "seed" ]; then
     BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
     config_error "--seed cannot write an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun"
   fi
+  # Under --staged the populated-baseline refusal above read the INDEX copy;
+  # unstaged rows in the worktree copy are still content this mode must not
+  # replace.
+  if [ -f "$BASELINE_FILE" ]; then
+    rows_worktree="$(count_nonempty_lines "$BASELINE_FILE")"
+    if [ "$rows_worktree" -gt 0 ]; then
+      config_error "--seed refuses: the worktree copy of $BASELINE_FILE carries $rows_worktree row(s) (unstaged) — stage or remove them first"
+    fi
+  fi
   awk -F'\t' -v OFS='\t' '{ if (($2 + 0) > ($3 + 0)) print $1, $2 }' "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new" || collection_error "could not derive the seed rows — nothing written"
   rows="$(count_nonempty_lines "$TMP/baseline.new")"
   # The baseline is about to become a tracked file itself; when its own
@@ -696,7 +705,7 @@ if [ "$MODE" = "seed" ]; then
   # counted at the final length, self-row included — so the very next run
   # over the committed file does not open with a new offender.
   path_threshold "$BASELINE_FILE"
-  if [ "$rows" -gt "$PT" ]; then
+  if ! is_excluded "$BASELINE_FILE" && [ "$rows" -gt "$PT" ]; then
     printf '%s\t%s\n' "$BASELINE_FILE" $((rows + 1)) >>"$TMP/baseline.new"
     LC_ALL=C sort -o "$TMP/baseline.new" "$TMP/baseline.new" || collection_error "could not sort the seeded baseline — nothing written"
     rows=$((rows + 1))
@@ -709,14 +718,17 @@ if [ "$MODE" = "seed" ]; then
   # The file this mode just wrote is about to be judged by the trailing
   # verdict; give the counts its row at the written length so the verdict
   # sees what `git add` is about to make true, replacing any pre-existing
-  # row (a tracked-but-empty baseline is in the counts at length 0).
-  BASELINE_PATH="$BASELINE_FILE" NEW_N="$rows" NEW_T="$PT" awk -F'\t' -v OFS='\t' '
-    BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"]; t = ENVIRON["NEW_T"] }
-    $1 == p { next }
-    { print }
-    END { print p, n, t }
-  ' "$TMP/counts.tsv" >"$TMP/counts.rewrite" || collection_error "could not refresh the counts row for $BASELINE_FILE — the baseline WAS written; rerun size-ratchet to verify it"
-  mv "$TMP/counts.rewrite" "$TMP/counts.tsv" || collection_error "could not stage the refreshed counts — the baseline WAS written; rerun size-ratchet to verify it"
+  # row (a tracked-but-empty baseline is in the counts at length 0). An
+  # excluded baseline is outside the collector and gets no row.
+  if ! is_excluded "$BASELINE_FILE"; then
+    BASELINE_PATH="$BASELINE_FILE" NEW_N="$rows" NEW_T="$PT" awk -F'\t' -v OFS='\t' '
+      BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"]; t = ENVIRON["NEW_T"] }
+      $1 == p { next }
+      { print }
+      END { print p, n, t }
+    ' "$TMP/counts.tsv" >"$TMP/counts.rewrite" || collection_error "could not refresh the counts row for $BASELINE_FILE — the baseline WAS written; rerun size-ratchet to verify it"
+    mv "$TMP/counts.rewrite" "$TMP/counts.tsv" || collection_error "could not stage the refreshed counts — the baseline WAS written; rerun size-ratchet to verify it"
+  fi
   echo "size-ratchet --seed: first baseline written at $BASELINE_FILE ($rows row(s)) — commit it; rows only move down from here"
 fi
 
