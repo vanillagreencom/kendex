@@ -1757,20 +1757,17 @@ install_worktree_dependencies() {
     esac
   fi
   if command -v npm >/dev/null 2>&1; then
-    # stdin/stdout closed so a caller capturing $(create) gets EOF at once —
-    # an inherited pipe fd would make the capture wait out the whole install.
-    # stderr stays attached: a failed install names its log there.
+    # Every std fd detached: a caller capturing $(create) — stdout, or
+    # combined 2>&1 — gets EOF at once; any inherited pipe fd would make the
+    # capture wait out the whole install. Never invisible even so: a failed
+    # install leaves its full log at a stable per-worktree path.
     (
       cd "$wt" || exit 0
-      # Non-blocking, but never invisible: a failed install names its log
-      # instead of racing the session silently.
-      log="$(mktemp "${TMPDIR:-/tmp}/worktree-npm-install.XXXXXX")" || exit 0
+      log="${TMPDIR:-/tmp}/worktree-npm-install-$(basename "$wt").log"
       if npm install --no-audit --no-fund >"$log" 2>&1; then
         rm -f "$log"
-      else
-        echo "worktree: npm install failed in $wt — log: $log" >&2
       fi
-    ) </dev/null >/dev/null &
+    ) </dev/null >/dev/null 2>&1 &
   fi
 }
 
