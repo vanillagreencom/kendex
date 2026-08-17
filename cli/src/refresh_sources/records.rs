@@ -9,11 +9,13 @@
 
 use super::*;
 use crate::agent::Agent;
-use crate::config::{self, CacheLease, ItemKind};
+mod lookup;
+use crate::config::{self, CacheLease};
 use crate::hook::Hook;
 use crate::mapping::MappingConfig;
 use crate::pi_extension::PiExtension;
 use crate::skill::Skill;
+pub(crate) use lookup::*;
 use std::path::{Path, PathBuf};
 
 /// A source directory a caller is about to read, and the lease that keeps it
@@ -99,6 +101,15 @@ pub(crate) enum SourceResolution {
     Resolved(PathBuf),
     Absent,
     Refused(String),
+    /// The cache is there and is vstack's own, but another process is fetching
+    /// and `reset --hard`-ing it right now, so its tree is missing files that
+    /// exist. Nothing is wrong with this source and nothing needs repairing —
+    /// it simply cannot be read yet, and the next run reads it.
+    ///
+    /// Only the READ-ONLY resolver produces it. A caller that updates the
+    /// cache takes the lease instead: it waits for the contention to clear and
+    /// refuses if it does not, because it is about to write what it reads.
+    Busy,
 }
 
 /// A resolution and the lease its update took.
@@ -137,15 +148,31 @@ impl SourceResolution {
             Self::Resolved(_) => None,
             Self::Refused(reason) => Some(reason.clone()),
             Self::Absent => Some(absent_source_reason(source)),
+            Self::Busy => Some(BUSY_SOURCE_REASON.to_string()),
         }
     }
 
     /// The resolved directory for the callers that only ever had an `Option`
     /// to act on, reporting a refusal to the user on the way past.
+    ///
+    /// A busy cache answers `None` for the same reason a refused one does:
+    /// every caller here goes on to READ the directory, and a tree being
+    /// rewritten answers questions wrongly rather than not at all. Each of
+    /// them already has a defined behaviour for a source it cannot read this
+    /// run — keep the last durable identity, fall back to the installed copy,
+    /// leave the agent as installed — and that behaviour is the correct one
+    /// here too. It answers SILENTLY, unlike a refusal: a refusal is a state
+    /// the user has to repair and the warning may be its only channel, while a
+    /// background refresh finishing normally is not news — and this is the
+    /// resolution `check` makes for every locked hook, so a warning here would
+    /// put a transient on the stderr of every session start that overlapped
+    /// one. The paths that OWE the user an account of it have their own:
+    /// `check`'s busy-source section, `verify`'s per-row note, and the warning
+    /// `resolve_source_records_with` prints for a source a refresh skipped.
     pub(super) fn or_warn(self, key: &str) -> Option<PathBuf> {
         match self {
             Self::Resolved(dir) => Some(dir),
-            Self::Absent => None,
+            Self::Absent | Self::Busy => None,
             Self::Refused(reason) => {
                 warn_once(key, &reason);
                 None
@@ -153,6 +180,12 @@ impl SourceResolution {
         }
     }
 }
+
+/// What a caller is told about a source whose cache is being rewritten. One
+/// wording, because `check`, `verify` and every `Option`-shaped caller are
+/// describing the same transient state and none of them is reporting a fault.
+pub(crate) const BUSY_SOURCE_REASON: &str = "another vstack process is refreshing this source's cache — nothing was \
+     verified against it this run, and the next run reports it";
 
 /// The sources a lock resolved to, and what resolution refused on the way.
 pub(crate) struct SourceRecords {
@@ -222,9 +255,17 @@ fn resolve_source_records_with(
                 push_resolved_source(&mut sources, dir, entry.source.clone(), lease);
             }
             SourceResolution::Absent => {}
+            // Both of these are sources that EXIST, so neither may be
+            // substituted by the fallbacks below, and both owe the caller a
+            // reason for the entries they leave unanswered. They differ only
+            // in whether re-running fixes it.
             SourceResolution::Refused(reason) => {
                 warn_once(&entry.source, &reason);
                 refused.insert(entry.source.clone(), reason);
+            }
+            SourceResolution::Busy => {
+                warn_once(&entry.source, BUSY_SOURCE_REASON);
+                refused.insert(entry.source.clone(), BUSY_SOURCE_REASON.to_string());
             }
         }
     }
@@ -302,119 +343,6 @@ fn push_resolved_source(
             lease,
         });
     }
-}
-
-pub(crate) fn load_refresh_sources(records: &[ResolvedSource]) -> Vec<RefreshSource> {
-    records.iter().map(RefreshSource::load).collect()
-}
-
-pub(crate) fn refresh_source_for_entry<'a>(
-    sources: &'a [RefreshSource],
-    entry: &config::LockEntry,
-) -> Option<&'a RefreshSource> {
-    if let Some(source) = sources
-        .iter()
-        .find(|source| source.aliases.iter().any(|alias| alias == &entry.source))
-    {
-        return Some(source);
-    }
-
-    let entry_path = Path::new(&entry.source);
-    if entry_path.is_absolute()
-        && let Some(source) = sources
-            .iter()
-            .find(|source| same_path(&source.root, entry_path))
-    {
-        return Some(source);
-    }
-
-    // Legacy fallback: an entry that recorded no usable source at all may bind
-    // to the sole loaded source. A recorded path or remote that merely no
-    // longer resolves must not — see `may_rebind_to_fallback_source`.
-    if sources.len() == 1 && may_rebind_to_fallback_source(&entry.source) {
-        sources.first()
-    } else {
-        None
-    }
-}
-
-/// Whether an entry may be bound to a source it did not record.
-///
-/// Only a legacy placeholder qualifies: an empty source, or a bare token that
-/// is neither path-like (`/…`, `~…`, `.`, `./…`, `../…`) nor remote-like
-/// (`owner/repo`, a URL) — the shapes pre-1.0 locks and disk recovery wrote
-/// when no source was known — and only while that token does not name a live
-/// project-relative directory. A recorded path or remote that no longer
-/// resolves stays bound to what it recorded and is reported missing:
-/// rebinding it would refresh the entry from a source it was never installed
-/// from, and a same-named asset there would silently replace the real one.
-pub(crate) fn may_rebind_to_fallback_source(source: &str) -> bool {
-    is_legacy_placeholder_source(source) && !recorded_source_exists(source)
-}
-
-fn is_legacy_placeholder_source(source: &str) -> bool {
-    let source = source.trim();
-    if source.is_empty() {
-        return true;
-    }
-    let path_like = Path::new(source).is_absolute()
-        || source.starts_with('~')
-        || is_explicit_relative_local_source(source)
-        || source == "..";
-    let remote_like = source.contains('/') || source.contains("://") || source.contains('@');
-    !path_like && !remote_like
-}
-
-pub(crate) fn all_source_hooks(sources: &[RefreshSource]) -> Vec<Hook> {
-    sources
-        .iter()
-        .flat_map(|source| source.hooks.iter().cloned())
-        .collect()
-}
-
-pub(crate) fn all_source_pi_extensions(sources: &[RefreshSource]) -> Vec<PiExtension> {
-    sources
-        .iter()
-        .flat_map(|source| source.pi_extensions.iter().cloned())
-        .collect()
-}
-
-pub(crate) fn resolve_skill_pairs_from_sources(
-    names: &[String],
-    lock: &config::LockFile,
-    sources: &[RefreshSource],
-) -> Vec<(String, String)> {
-    names
-        .iter()
-        .map(|name| {
-            let description = lock
-                .entries
-                .get(name)
-                .filter(|entry| entry.kind == ItemKind::Skill)
-                .and_then(|entry| refresh_source_for_entry(sources, entry))
-                .and_then(|source| source.skills.iter().find(|skill| &skill.name == name))
-                .or_else(|| {
-                    sources
-                        .iter()
-                        .flat_map(|source| source.skills.iter())
-                        .find(|skill| &skill.name == name)
-                })
-                .map(|skill| skill.description.clone())
-                .unwrap_or_else(|| name.clone());
-            (name.clone(), description)
-        })
-        .collect()
-}
-
-pub(crate) fn source_pi_extension_for_lock_name<'a>(
-    pi_extensions: &'a [PiExtension],
-    name: &str,
-) -> Option<&'a PiExtension> {
-    pi_extensions.iter().find(|e| e.name == name).or_else(|| {
-        pi_extensions
-            .iter()
-            .find(|e| crate::pi_extension::legacy_names_for(&e.name).contains(&name))
-    })
 }
 
 /// Resolve a source string that a lock entry recorded at install time.

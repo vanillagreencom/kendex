@@ -43,7 +43,17 @@
   (`add`, `refresh`, the wizard) now waits for an in-flight refresh of that
   cache and then refuses, instead of discovering, hashing and copying out of a
   tree another process is running `reset --hard` on; only the detached
-  background refresh treats a busy cache as a no-op. Codex's safety-prose
+  background refresh treats a busy cache as a no-op. A READ-ONLY reader —
+  `check`, `verify`, hook attribution, source-identity recovery — neither
+  waits nor takes that lock: it probes it, and a source whose cache is being
+  rewritten is reported as not checked this run instead of measured against a
+  half-written tree. That is neither drift nor clean, it costs a session
+  start nothing, and the next run reports the source normally; before it,
+  `check` could call a live entry REMOVED and print `vstack remove` beside it.
+  The initial clone — the one cache write no lock can cover, since the lock
+  lives inside a `.git` that does not exist yet — is published into its entry
+  by rename, so a clone that did not finish is never visible under the entry's
+  own name. Codex's safety-prose
   fallback is located by one predicate scoped to the agent's
   `developer_instructions`, so marker text in a comment or another field can
   no longer make the install skip the block and the presence read call it

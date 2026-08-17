@@ -5,7 +5,7 @@
 
 use super::super::tests::tmpdir;
 use super::*;
-use crate::config::{InstallMethod, LockEntry};
+use crate::config::{InstallMethod, ItemKind, LockEntry};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

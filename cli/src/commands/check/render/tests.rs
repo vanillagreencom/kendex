@@ -304,6 +304,11 @@ fn populated_scope(scope: &'static str) -> ScopeReport {
                 },
             },
         ],
+        busy_sources: vec![BusySource {
+            source: "/sources/five".into(),
+            entries: vec!["nu".into()],
+            reason: "another vstack process is refreshing this source's cache".into(),
+        }],
         invalid_names: vec![Item::new("bad\nname", ItemKind::Hook)],
         available: vec![
             AvailableItem {

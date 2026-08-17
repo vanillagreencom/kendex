@@ -20,7 +20,7 @@ mod test_support;
 
 pub use fetch::{
     CacheLease, FetchBound, lease_cached_source, lease_remote_cache, refresh_remote_caches,
-    refresh_remote_caches_older_than, spawn_detached_cache_refresh,
+    refresh_remote_caches_older_than, remote_cache_fetch_in_flight, spawn_detached_cache_refresh,
 };
 use fetch::{GuardAcquire, RemoteCacheFetchGuard};
 

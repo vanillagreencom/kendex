@@ -168,6 +168,35 @@ impl Sandbox {
         fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// Put a `git` on PATH whose CLONE leaves a half-built repository behind
+    /// and fails, and whose every other subcommand is the real thing. A real
+    /// `git clone` tidies up after itself; this is the case where something
+    /// did not — a killed clone, a full disk — and it is the only way to
+    /// observe, deterministically, what a reader would find in the cache root
+    /// while a clone is under way.
+    #[cfg(unix)]
+    fn install_half_cloning_git(&self) {
+        use std::os::unix::fs::PermissionsExt;
+        let real = Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .filter(|path| !path.is_empty())
+            .expect("git is required to run this regression test");
+        fs::create_dir_all(&self.slow_git).unwrap();
+        let shim = self.slow_git.join("git");
+        fs::write(
+            &shim,
+            format!(
+                "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = clone ]; then\n    for dest; do :; done\n    mkdir -p \"$dest/.git\"\n    echo 'fatal: interrupted' >&2\n    exit 128\n  fi\ndone\nexec {real} \"$@\"\n"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
     fn check(&self, args: &[&str]) -> Output {
         self.vstack()
             .arg("check")
@@ -211,6 +240,15 @@ impl Sandbox {
         fs::write(
             origin.join("agents").join("scout.md"),
             "---\nname: scout\ndescription: scout\nmodel: sonnet\nrole: analyst\n---\nbody\n",
+        )
+        .unwrap();
+        // A hook too: presence for a hook is decided against its SOURCE
+        // definition, so a hook entry is the one that makes `check` resolve a
+        // source outside its own cataloging pass.
+        fs::create_dir_all(origin.join("hooks")).unwrap();
+        fs::write(
+            origin.join("hooks").join("guard.sh"),
+            "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: guard\n# ---\nexit 0\n",
         )
         .unwrap();
         let git = |args: &[&str]| {
@@ -452,85 +490,6 @@ fn a_traversal_lock_name_is_rejected_rather_than_resolved() {
     );
 }
 
-/// VST-258 round 3: the session-start check never touches the network. A
-/// remote source that is due for a refresh and unreachable must not cost the
-/// session anything — the fetch is handed to a detached process and the check
-/// answers from what is on disk.
-#[test]
-fn a_due_but_unreachable_remote_never_delays_the_check() {
-    let sb = Sandbox::new("check-no-network");
-    // A cache holding a real source tree, so the scope itself stays clean.
-    let source = sb.remote_source_repo();
-    let output = sb
-        .vstack()
-        .args([
-            "add",
-            &source,
-            "--skill",
-            "alpha",
-            "--harness",
-            "claude",
-            "-y",
-        ])
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "add: {}", text(&output.stderr));
-    let cache = sb.cache_entry();
-    // No stamp, so the cache is due on the very next check.
-    let stamp = cache.join(".git").join("vstack-fetch-stamp");
-    let _ = fs::remove_file(&stamp);
-
-    // From here on, git takes 30 s to answer. The check must not notice.
-    #[cfg(unix)]
-    sb.install_slow_git();
-
-    let started = std::time::Instant::now();
-    let quiet = sb.check_online(&["--quiet"]);
-    let elapsed = started.elapsed();
-    assert!(
-        elapsed < std::time::Duration::from_secs(5),
-        "session-start check must not wait on the network: took {elapsed:?}"
-    );
-    assert_eq!(
-        quiet.status.code(),
-        Some(0),
-        "nothing local drifted: {}",
-        text(&quiet.stderr)
-    );
-
-    // The refresh was handed off: the detached child marks the attempt in
-    // flight immediately, then records its verdict when the slow git finally
-    // answers. Either state proves the handoff happened without the check
-    // waiting for it.
-    let mut recorded = String::new();
-    for _ in 0..100 {
-        if let Ok(content) = fs::read_to_string(&stamp) {
-            recorded = content;
-            if !recorded.is_empty() {
-                break;
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    assert!(
-        recorded.starts_with("pending") || recorded.starts_with("failed"),
-        "the detached refresh must record its progress, got {recorded:?}"
-    );
-
-    // A fetch in flight is not a failure: the next check stays clean and
-    // says nothing about it.
-    let json = sb.check(&["--json"]);
-    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(parsed["drift"], false, "{parsed}");
-    assert_eq!(json.status.code(), Some(0));
-    if recorded.starts_with("failed") {
-        let failures = parsed["cache_refresh_failures"].as_array().unwrap();
-        assert_eq!(failures.len(), 1, "{parsed}");
-        assert_eq!(failures[0]["source"], source);
-        assert_eq!(failures[0]["persistent"], false);
-    }
-}
-
 /// A hook or agent installed into several harnesses is present only when
 /// every recorded harness still has its artifact.
 #[test]
@@ -640,5 +599,7 @@ fn an_unreadable_source_reports_a_tagged_json_shape() {
 
 // The submodule lives beside this file rather than in `tests/`, where cargo
 // would pick it up as a second integration-test target of its own.
+#[path = "check_contract/cache.rs"]
+mod cache;
 #[path = "check_contract/hooks.rs"]
 mod hooks;

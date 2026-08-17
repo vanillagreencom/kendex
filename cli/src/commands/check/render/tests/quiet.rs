@@ -3,6 +3,7 @@
 //! bytes — is a property of the renderer, never of how large an inventory
 //! happens to be.
 
+use super::super::budget::QUIET_SECTION_LIMIT;
 use super::*;
 
 #[test]

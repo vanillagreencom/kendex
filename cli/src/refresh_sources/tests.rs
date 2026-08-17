@@ -913,7 +913,7 @@ fn git_env_assertions(root: &Path) {
     // constructor — for the cache root, which is where it runs.
     let remote = remote_at(&dir, &root.join("origin"));
     assert_eq!(
-        command_env(&cache_clone_command(&remote).unwrap()),
+        command_env(&cache_clone_command(&remote, &remote.cache_dir).unwrap()),
         command_env(&hardened_git_network_command(&remote_cache_root()).unwrap())
     );
 }
@@ -1980,7 +1980,7 @@ fn clone_never_lets_a_url_be_read_as_an_option() {
             &remote_cache_root().join("owner_repo"),
             &root.join("origin"),
         );
-        let args: Vec<String> = cache_clone_command(&remote)
+        let args: Vec<String> = cache_clone_command(&remote, &remote.cache_dir)
             .unwrap()
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())

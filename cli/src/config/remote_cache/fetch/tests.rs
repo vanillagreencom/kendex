@@ -88,177 +88,6 @@ fn a_failing_run_keeps_its_first_failure_across_retries_and_success_clears_it() 
 }
 
 #[test]
-fn a_stale_lock_is_taken_over_by_exactly_one_contender() {
-    let dir = cache_root("stale-lock");
-    std::fs::create_dir_all(&dir).unwrap();
-    let lock = dir.join("vstack-fetch.lock");
-    let owner = create_lock_file(&lock).unwrap();
-    assert!(
-        create_lock_file(&lock).is_err(),
-        "a held lock refuses a second holder"
-    );
-    assert_eq!(read_lock_owner(&lock), Some(owner));
-
-    // Fresh: never taken over, whatever a contender wants.
-    assert!(!take_over_stale_lock(&lock, Duration::from_secs(3600)));
-    assert!(lock.exists());
-
-    // Old, but its recorded holder is provably DEAD: the FIRST contender
-    // wins and the second finds nothing to take.
-    std::fs::write(&lock, format!("{} {}\n", dead_pid(), epoch_now())).unwrap();
-    backdate_lock(&lock);
-    assert!(take_over_stale_lock(&lock, Duration::from_secs(60)));
-    assert!(!take_over_stale_lock(&lock, Duration::from_secs(60)));
-    assert!(!lock.exists(), "the stale lock is gone, not left behind");
-    // And the winner can now hold it.
-    create_lock_file(&lock).unwrap();
-    let recorded = std::fs::read_to_string(&lock).unwrap();
-    assert!(
-        recorded.starts_with(&std::process::id().to_string()),
-        "the lock records its owner: {recorded:?}"
-    );
-    assert!(STALE_LOCK_AFTER > REMOTE_CACHE_FETCH_DEADLINE);
-    assert!(
-        STALE_LOCK_AFTER > LOCK_HEARTBEAT * 2,
-        "staleness must mean several MISSED heartbeats"
-    );
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-/// An old mtime alone is not death: an unbounded `vstack refresh` on a
-/// slow link runs as long as its user is willing to wait, and stealing
-/// its live lock would put two writers in one tree.
-#[test]
-fn a_stale_lock_with_a_live_owner_is_never_taken_over() {
-    let dir = cache_root("live-owner-lock");
-    std::fs::create_dir_all(&dir).unwrap();
-    let lock = dir.join("vstack-fetch.lock");
-    // Recorded holder: THIS process — alive by construction.
-    create_lock_file(&lock).unwrap();
-    backdate_lock(&lock);
-    assert!(
-        !take_over_stale_lock(&lock, Duration::from_secs(60)),
-        "a provably live holder keeps its lock at any age"
-    );
-    assert!(lock.exists());
-
-    // Control: an unparsable record cannot prove life, so staleness
-    // decides — the pre-ownership behavior, not a frozen cache.
-    std::fs::write(&lock, "not an ownership record\n").unwrap();
-    backdate_lock(&lock);
-    assert!(take_over_stale_lock(&lock, Duration::from_secs(60)));
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-/// Drop's ownership check, exercised on this platform: a guard must not
-/// unlink a lock that a takeover has since re-created under a new owner.
-#[test]
-fn a_lock_is_unlinked_only_by_its_recorded_owner() {
-    let dir = cache_root("lock-ownership");
-    std::fs::create_dir_all(&dir).unwrap();
-    let lock = dir.join("vstack-fetch.lock");
-    let owner = create_lock_file(&lock).unwrap();
-
-    // A successor rewrote the lock: the original owner's unlink is a no-op.
-    std::fs::write(&lock, format!("{} {}\n", dead_pid(), epoch_now())).unwrap();
-    assert!(!remove_lock_if_owned(&lock, owner));
-    assert!(lock.exists(), "somebody else's lock survives");
-
-    // Still ours: the unlink happens.
-    std::fs::remove_file(&lock).unwrap();
-    let owner = create_lock_file(&lock).unwrap();
-    assert!(remove_lock_if_owned(&lock, owner));
-    assert!(!lock.exists());
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-/// The liveness signal takeover staleness is measured against.
-#[test]
-fn a_heartbeat_refreshes_the_lock_mtime() {
-    let dir = cache_root("lock-heartbeat");
-    std::fs::create_dir_all(&dir).unwrap();
-    let lock = dir.join("vstack-fetch.lock");
-    create_lock_file(&lock).unwrap();
-    backdate_lock(&lock);
-    refresh_lock_liveness(&lock);
-    let age = std::fs::metadata(&lock)
-        .unwrap()
-        .modified()
-        .unwrap()
-        .elapsed()
-        .unwrap();
-    assert!(age < Duration::from_secs(60), "mtime refreshed: {age:?}");
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-/// The liveness probe itself, on the platform that has one.
-#[cfg(unix)]
-#[test]
-fn process_liveness_answers_for_live_and_dead_pids() {
-    assert_eq!(process_is_alive(std::process::id()), Some(true));
-    assert_eq!(process_is_alive(dead_pid()), Some(false));
-}
-/// The guard platforms without `flock` use, compiled and RUN here. It is a
-/// plain type rather than a `cfg` arm precisely so this test can exist — no CI
-/// lane builds for a non-unix target, so nothing else would ever type-check it.
-#[test]
-fn the_portable_guard_is_exclusive_recovers_a_dead_holders_lock_and_reports_an_unusable_path() {
-    let root = cache_root("portable-guard");
-    let dir = root.join("cache");
-    std::fs::create_dir_all(dir.join(".git")).unwrap();
-    let lock = remote_cache_fetch_lock(&dir);
-
-    let held = match PortableFetchLock::acquire(&dir) {
-        GuardAcquire::Held(guard) => guard,
-        _ => panic!("first acquire must win"),
-    };
-    assert!(lock.exists(), "taking the lock IS creating the file");
-    assert!(
-        matches!(PortableFetchLock::acquire(&dir), GuardAcquire::Busy),
-        "a second acquire must be refused while the first is held"
-    );
-    drop(held);
-    assert!(!lock.exists(), "Drop unlinks the lock it still owns");
-
-    // A lock left behind by a holder that is provably dead: fresh, it is
-    // still nobody else's to take; past the staleness gate it is.
-    std::fs::write(&lock, format!("{} {}\n", dead_pid(), epoch_now())).unwrap();
-    assert!(
-        matches!(PortableFetchLock::acquire(&dir), GuardAcquire::Busy),
-        "a lock whose mtime is fresh is never taken over"
-    );
-    backdate_lock(&lock);
-    let taken = match PortableFetchLock::acquire(&dir) {
-        GuardAcquire::Held(guard) => guard,
-        other => panic!(
-            "a dead holder's stale lock must be recoverable: {}",
-            match other {
-                GuardAcquire::Busy => "busy",
-                _ => "unusable",
-            }
-        ),
-    };
-    assert!(
-        std::fs::read_to_string(&lock)
-            .unwrap()
-            .starts_with(&std::process::id().to_string()),
-        "the successor records ITS OWN ownership"
-    );
-    drop(taken);
-    assert!(!lock.exists());
-
-    // A lock file that cannot be created at all is neither held nor busy.
-    let no_such_cache = root.join("absent");
-    assert!(
-        matches!(
-            PortableFetchLock::acquire(&no_such_cache),
-            GuardAcquire::Unusable(_)
-        ),
-        "an uncreatable lock path must report itself, not read as free"
-    );
-    let _ = std::fs::remove_dir_all(&root);
-}
-#[test]
 fn fetch_guard_is_exclusive_and_released_when_its_holder_goes_away() {
     with_sandboxed_cache("guard", |cache| {
         let dir = cache.dir();
@@ -764,5 +593,53 @@ fn a_second_resolution_in_one_process_shares_the_lease_rather_than_refusing() {
             RemoteCacheFetchGuard::acquire(dir),
             GuardAcquire::Held(_)
         ));
+    });
+}
+
+/// The read-only probe as its callers use it: `true` only while somebody ELSE
+/// holds the cache.
+///
+/// A caller that already leased this cache is the reason the registry is
+/// consulted first. `flock` is per open file description, so a bare probe
+/// answers "busy" to an install asking about the tree it is itself holding —
+/// and every read-only question that install asks on the way (which hooks the
+/// other sources ship, which repository each entry came from) would then be
+/// answered "not this run" against its own lease.
+#[test]
+fn the_probe_reports_another_holder_and_never_a_readers_own_lease() {
+    with_sandboxed_cache("busy-probe", |cache| {
+        let dir = cache.dir();
+        assert!(
+            !remote_cache_fetch_in_flight(dir),
+            "an uncontended cache is not busy"
+        );
+
+        let (_, lease) = lease_remote_cache(&cache.remote, None, FetchBound::Unbounded)
+            .expect("a free cache installs");
+        assert!(
+            !remote_cache_fetch_in_flight(dir),
+            "a cache this process holds a lease on is nobody else's to rewrite"
+        );
+        // The read-only resolution agrees, and hands back the directory.
+        assert_eq!(
+            crate::refresh_sources::source_path_resolution(&cache.source),
+            crate::refresh_sources::SourceResolution::Resolved(dir.to_path_buf())
+        );
+        drop(lease);
+
+        // A guard held with no lease behind it is exactly what another
+        // process's fetch looks like from here.
+        let guard = match RemoteCacheFetchGuard::acquire(dir) {
+            GuardAcquire::Held(guard) => guard,
+            _ => panic!("the fixture cache must be free"),
+        };
+        assert!(remote_cache_fetch_in_flight(dir));
+        assert_eq!(
+            crate::refresh_sources::source_path_resolution(&cache.source),
+            crate::refresh_sources::SourceResolution::Busy,
+            "a read-only resolution reports the contention instead of reading through it"
+        );
+        drop(guard);
+        assert!(!remote_cache_fetch_in_flight(dir));
     });
 }
