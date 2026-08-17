@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# reconcile-work-items — report tracker state the workflows wrote once and
+# never re-read. READ-ONLY: prints findings, mutates nothing; the caller
+# decides what to fix.
+#
+# Three checks over the linear skill's cache (offline; sync first for
+# freshness):
+#   container-parked  a parent in a non-terminal state whose non-canceled
+#                     children are all Done — the close that only merge-pr § 5
+#                     performs never ran
+#   started-stale     an In Progress / In Review item untouched for longer
+#                     than the threshold whose branch-named PR is merged (or
+#                     unverifiable) — the item outlived its work
+#   done-unchecked    a Done item whose description still carries unchecked
+#                     `- [ ]` acceptance criteria — a partial-scope PR's
+#                     `Closes` magic word closed it
+#
+# Exit codes: 0 nothing to reconcile; 1 findings; 2 config/collection error.
+#
+# RECONCILE_STALE_HOURS   started-stale threshold (default 24)
+# RECONCILE_GH_CLI        PR-probe command (default gh); absent/failing gh
+#                         degrades that item to "PR state unverified", never
+#                         to silence
+set -euo pipefail
+
+config_error() {
+  echo "::error::reconcile-work-items: $*" >&2
+  exit 2
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || config_error "not inside a git repository"
+# shellcheck source=lib/vstack-env.sh
+source "$SCRIPT_DIR/lib/vstack-env.sh"
+vstack_load_project_env "$REPO_ROOT"
+
+STALE_HOURS="${RECONCILE_STALE_HOURS:-24}"
+case "$STALE_HOURS" in
+  "" | *[!0-9]* | 0*[0-9]) config_error "RECONCILE_STALE_HOURS must be a non-negative integer, got '$STALE_HOURS'" ;;
+esac
+GH_CLI="${RECONCILE_GH_CLI:-gh}"
+
+command -v jq >/dev/null 2>&1 || config_error "jq is required"
+
+CACHE="$REPO_ROOT/.cache/linear/issues.json"
+[ -f "$CACHE" ] || config_error "no linear cache at $CACHE — run linear.sh sync first"
+# Structural validation up front: an array of rows missing the fields the
+# scans key on would otherwise be skipped silently and report clean.
+jq -e 'type == "array" and all(.[];
+    type == "object"
+    and (.identifier | type == "string")
+    and (.state | type == "object")
+    and (.state.name | type == "string")
+    and (.state.type | type == "string"))' "$CACHE" >/dev/null 2>&1 \
+  || config_error "linear cache at $CACHE is not an array of issue rows with identifier and state.name/state.type"
+
+findings=0
+note() { findings=$((findings + 1)); printf '%s\n' "$1"; }
+
+# --- container-parked --------------------------------------------------------
+# Non-terminal parents whose non-canceled children (by parent identifier) are
+# all completed. Trashed/archived rows never count as children or parents.
+TMPD="$(mktemp -d)" || config_error "could not create a scratch directory"
+trap 'rm -rf -- "$TMPD"' EXIT
+
+jq -r '
+  map(select((.trashed // false) == false and .archivedAt == null)) as $live
+  | ($live | map(select(.parent.identifier != null))) as $children
+  | ($children | group_by(.parent.identifier)) as $broods
+  | $broods[]
+  | .[0].parent.identifier as $pid
+  | (map(select(.state.type != "canceled"))) as $countable
+  | select(($countable | length) > 0 and ($countable | all(.state.type == "completed")))
+  | ($live[] | select(.identifier == $pid)) as $parent
+  | select($parent.state.type != "completed" and $parent.state.type != "canceled")
+  # A "(one PR)" root is a single-PR bundle, not a container: its children go
+  # Done while the root stays open until ITS PR merges, so an open root with
+  # Done children is that contract working, not a parked container.
+  | select($parent.title | test("\\(one PR\\)"; "i") | not)
+  | [$parent.identifier, $parent.title, $parent.state.name] | @tsv
+' "$CACHE" >"$TMPD/containers" || config_error "container scan failed"
+while IFS=$'\t' read -r pid ptitle pstate; do
+  [ -n "$pid" ] || continue
+  note "container-parked: $pid [$pstate] — every non-canceled child is Done; close it or say why it stays open ($ptitle)"
+done <"$TMPD/containers"
+
+# --- started-stale -----------------------------------------------------------
+now_epoch="$(date -u +%s)" || config_error "could not read the clock"
+jq -r '
+  .[] | select((.trashed // false) == false and .archivedAt == null)
+  | select(.state.type == "started")
+  | [.identifier, .title, .state.name, .updatedAt] | @tsv
+' "$CACHE" >"$TMPD/started" || config_error "started scan failed"
+while IFS=$'\t' read -r iid ititle istate iupdated; do
+  [ -n "$iid" ] || continue
+  updated_epoch="$(date -u -d "$iupdated" +%s 2>/dev/null)" || updated_epoch=""
+  if [ -z "$updated_epoch" ]; then
+    # BSD date has no -d; parse the ISO stamp with -j -f (fractional part
+    # and zone dropped — whole-second precision is plenty for an hours
+    # threshold).
+    trimmed="${iupdated%%.*}"
+    trimmed="${trimmed%Z}"
+    updated_epoch="$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$trimmed" +%s 2>/dev/null)" || updated_epoch=""
+  fi
+  # A timestamp neither form can read must never silently shrink the check.
+  [ -n "$updated_epoch" ] || config_error "could not parse updatedAt '$iupdated' for $iid — the started-stale check cannot run"
+  age_hours=$(((now_epoch - updated_epoch) / 3600))
+  [ "$age_hours" -ge "$STALE_HOURS" ] || continue
+  branch="$(printf '%s' "$iid" | tr '[:upper:]' '[:lower:]')"
+  pr_state="unverified"
+  if command -v "${GH_CLI%% *}" >/dev/null 2>&1; then
+    # This repo's branch only — a fork's same-named branch is someone
+    # else's PR and must not vouch for this item.
+    # The probes answer for THIS checkout: an inherited GH_REPO /
+    # GITHUB_REPOSITORY redirect would let another repository's same-named
+    # branch vouch for this item.
+    merged="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state merged --head "$branch" --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length' 2>/dev/null)" || merged=""
+    open="$(env -u GH_REPO -u GITHUB_REPOSITORY $GH_CLI pr list --state open --head "$branch" --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length' 2>/dev/null)" || open=""
+    if [ -n "$merged" ] && [ -n "$open" ]; then
+      if [ "$open" -gt 0 ]; then
+        continue # a live PR is a live item, whatever the clock says
+      elif [ "$merged" -gt 0 ]; then
+        pr_state="PR merged"
+      else
+        pr_state="no PR"
+      fi
+    fi
+  fi
+  note "started-stale: $iid [$istate] — untouched ${age_hours}h, $pr_state; finish the lifecycle or restate the scope ($ititle)"
+done <"$TMPD/started"
+
+# --- done-unchecked ----------------------------------------------------------
+jq -r '
+  .[] | select((.trashed // false) == false and .archivedAt == null)
+  | select(.state.type == "completed")
+  | select((.description // "") | test("- \\[ \\]"))
+  | [.identifier, .title] | @tsv
+' "$CACHE" >"$TMPD/done" || config_error "done scan failed"
+while IFS=$'\t' read -r iid ititle; do
+  [ -n "$iid" ] || continue
+  note "done-unchecked: $iid [Done] — the description still carries unchecked \`- [ ]\` acceptance criteria; reopen or check them off with evidence ($ititle)"
+done <"$TMPD/done"
+
+if [ "$findings" -gt 0 ]; then
+  echo "reconcile-work-items: $findings finding(s) — the tracker disagrees with the work"
+  exit 1
+fi
+echo "reconcile-work-items: clean — every item's state matches its work"

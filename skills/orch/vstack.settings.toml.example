@@ -80,3 +80,7 @@ ORCH_TMUX_VERIFY_SECS = "15"
 
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
+
+# Hours before an In Progress / In Review item counts as started-stale in
+# reconcile-work-items sweeps.
+# RECONCILE_STALE_HOURS = "24"
