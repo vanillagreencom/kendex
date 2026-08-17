@@ -18,7 +18,8 @@ WORKTREE_DEFAULT_BRANCH = "main"
 # worktrees should share local secrets.
 WORKTREE_SYMLINKS = ".env.local opencode.json .agents .cursor .codex .opencode .pi .claude/settings.json .claude/agents .claude/hooks .claude/skills"
 
-# link=target pairs resolved relative to each worktree.
+# link=target pairs; each target resolves from the LINK's own directory
+# (`.claude/CLAUDE.md=../AGENTS.md` reaches the worktree root's AGENTS.md).
 WORKTREE_RELATIVE_SYMLINKS = ".claude/CLAUDE.md=../AGENTS.md .claude/AGENTS.md=../AGENTS.md"
 
 # Files copied (not linked) into new worktrees.
@@ -93,7 +94,9 @@ PR_REVIEW_QUORUM = ""
 # unresolved threads — a real comment is never bypassed.
 PR_REVIEW_ON_TIMEOUT = "block"
 
-# BOT / COMMIT IDENTITY — all used by worktree; empty = the logged-in user.
+# BOT / COMMIT IDENTITY — used by worktree. Leave ALL of them empty to act
+# as the logged-in user; the fallback is not per-key (a partly-empty set
+# writes the empty values verbatim).
 
 BOT_NAME = "automation-bot"
 
