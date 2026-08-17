@@ -75,7 +75,13 @@
   The initial clone — the one cache write no lock can cover, since the lock
   lives inside a `.git` that does not exist yet — is published into its entry
   by rename, so a clone that did not finish is never visible under the entry's
-  own name. Codex's safety-prose
+  own name. Where the platform has no `flock` to release the lock for it, a
+  holder records its liveness for as long as the lock is HELD rather than only
+  while its fetch runs, so a lease kept across discovery, hashing, copying or
+  an interactive selection is no longer read as a crashed process's leftover
+  and taken over mid-read; a holder that really is gone stops recording, and
+  its lock is still taken over once it goes stale, so no cache wedges.
+  Codex's safety-prose
   fallback is located by one predicate scoped to the agent's
   `developer_instructions`, so marker text in a comment or another field can
   no longer make the install skip the block and the presence read call it

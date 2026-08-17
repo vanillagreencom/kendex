@@ -149,10 +149,6 @@ pub(super) fn demo_lock(source: &str) -> LockFile {
     lock
 }
 
-/// The lock-takeover helper the non-unix guard is built from. It is
-/// exercised here, on the platform CI actually runs, because a branch
-/// nobody compiles is a branch nobody can trust — the previous non-unix
-/// guard shipped dead for exactly that reason.
 /// Backdate the lock's mtime so the staleness gate is open.
 pub(super) fn backdate_lock(lock: &Path) {
     std::fs::File::options()

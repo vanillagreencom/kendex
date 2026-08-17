@@ -12,7 +12,7 @@ cli/src/commands/refresh/tests.rs	2089
 cli/src/commands/report.rs	1861
 cli/src/commands/update_pi.rs	603
 cli/src/config.rs	2063
-cli/src/config/remote_cache/fetch.rs	732
+cli/src/config/remote_cache/fetch.rs	724
 cli/src/config/tests.rs	1255
 cli/src/git_hooks.rs	626
 cli/src/harness/claude.rs	572

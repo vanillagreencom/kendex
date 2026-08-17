@@ -20,7 +20,9 @@ cli/src/
 ├── pi_extension/settings.rs  Pi settings.json `packages` array — registration write, removal, and matching
 ├── config.rs            Lock file (JSON), project root detection, staleness/mtime helpers
 ├── config/remote_cache.rs  Remote source cache fetch stamps and recorded refresh outcomes
-├── config/remote_cache/fetch.rs  Fetch guard, the CacheLease a reader holds, bounded git fetch/reset, refresh drivers
+├── config/remote_cache/fetch.rs  The CacheLease a reader holds, bounded git fetch/reset, refresh drivers
+├── config/remote_cache/fetch/guard.rs  The two fetch-guard implementations (flock, and the portable lock file)
+├── config/remote_cache/fetch/guard/liveness.rs  A portable lock's owner record, its held-for-life heartbeat, and stale-holder takeover
 ├── refresh_sources.rs   Source resolution; RemoteSource (display/URL/cache key), hardened git commands, cache-entry ownership
 ├── refresh_sources/records.rs  A lock's sources as records — resolution, refusals, and the lease each cached root is read under
 ├── scope.rs             Scope enum (project | global | all); uniform `--scope`/`-g` parsing

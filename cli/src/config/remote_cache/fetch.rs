@@ -10,15 +10,13 @@
 use super::{
     FetchFailure, FetchStamp, REMOTE_CACHE_FETCH_DEADLINE, REMOTE_CACHE_LOW_SPEED_SECS,
     REMOTE_CACHE_TTL, RemoteCacheProblem, RemoteCacheProblemKind, cached_remote_sources, epoch_now,
-    read_fetch_stamp, remote_cache_fetch_due, remote_cache_fetch_lock, remote_cache_problem,
-    write_fetch_stamp,
+    read_fetch_stamp, remote_cache_fetch_due, remote_cache_problem, write_fetch_stamp,
 };
 use crate::config::LockFile;
 use crate::refresh_sources::{
     RemoteSource, ensure_cache_entry_is_owned, git_error_summary, hardened_cache_git_command,
     hardened_git_network_command, point_cache_origin_at,
 };
-use guard::{LOCK_HEARTBEAT, refresh_lock_liveness};
 use std::path::{Path, PathBuf};
 
 mod guard;
@@ -112,7 +110,9 @@ impl Drop for HeldLease {
             registry.remove(&self.key);
         }
         // Under the registry lock, so nobody can see the path free in the
-        // registry while the descriptor holding it is still open.
+        // registry while the descriptor holding it is still open. This also
+        // joins the guard's liveness heartbeat, which touches nothing but the
+        // lock file and so can never want this mutex back.
         drop(self.guard.take());
     }
 }
@@ -526,7 +526,7 @@ fn fetch_remote_cache(
     }
     let failure = match command.spawn() {
         Err(_) => Some(FetchFailure::GitMissing),
-        Ok(child) => match wait_for_fetch(child, bound, &remote_cache_fetch_lock(cache_dir)) {
+        Ok(child) => match wait_for_fetch(child, bound) {
             FetchWait::Ok => None,
             FetchWait::Failed => Some(FetchFailure::Fetch),
             FetchWait::TimedOut => Some(FetchFailure::TimedOut),
@@ -584,17 +584,13 @@ enum FetchWait {
 /// transfer to `ssh` or `git-remote-https` children, and killing only the
 /// parent leaves the transport running with nothing left to bound it.
 ///
-/// While waiting — bounded or not — the cache's lock file gets a
-/// [`LOCK_HEARTBEAT`] mtime refresh, so a long-running fetch can never look
-/// like a dead holder's leftover to the staleness takeover.
-fn wait_for_fetch(
-    mut child: std::process::Child,
-    bound: FetchBound,
-    lock_path: &Path,
-) -> FetchWait {
+/// Nothing here keeps the lock's liveness fresh. The guard does that for its
+/// own whole lifetime — the fetch is one phase of a lease that outlives it —
+/// so a heartbeat wired to this wait would cover the short part and leave the
+/// long one looking dead.
+fn wait_for_fetch(mut child: std::process::Child, bound: FetchBound) -> FetchWait {
     let deadline = bound.deadline();
     let started = std::time::Instant::now();
-    let mut last_beat = std::time::Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return FetchWait::Ok,
@@ -607,10 +603,6 @@ fn wait_for_fetch(
         {
             kill_process_group(&mut child);
             return FetchWait::TimedOut;
-        }
-        if last_beat.elapsed() >= LOCK_HEARTBEAT {
-            refresh_lock_liveness(lock_path);
-            last_beat = std::time::Instant::now();
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
