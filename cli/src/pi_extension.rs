@@ -411,6 +411,17 @@ pub fn is_pi_extension_installed(name: &str, global: bool) -> bool {
         || settings_references_package(name, &dest, global).unwrap_or(false)
 }
 
+/// Whether the package is both deployed and registered — what Pi needs to
+/// actually load it. [`is_pi_extension_installed`] answers the looser "any
+/// trace of an install" question repair flows ask.
+pub fn is_pi_extension_operational(name: &str, global: bool) -> bool {
+    let Ok(dest) = checked_pi_package_path(name, global) else {
+        return false;
+    };
+    (dest.exists() || dest.is_symlink())
+        && settings_references_package(name, &dest, global).unwrap_or(false)
+}
+
 fn settings_references_package(name: &str, dest: &Path, global: bool) -> Result<bool> {
     let settings_path = crate::config::pi_settings_path(global);
     if !settings_path.exists() {

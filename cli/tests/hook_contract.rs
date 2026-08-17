@@ -793,6 +793,155 @@ fn a_moved_project_with_a_quoted_path_does_not_accumulate_stale_codex_registrati
 }
 
 #[test]
+fn a_live_foreign_codex_handler_with_the_install_shape_is_left_alone() {
+    let sandbox = Sandbox::new("codex-live-foreign");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "codex", "--copy", "-y"]),
+        "vstack add",
+    );
+    // Another still-existing checkout's install of a same-named hook: the
+    // script is alive on disk, so it is that project's handler, not a stale
+    // relic of this one.
+    let foreign = sandbox.root.join("other/.codex/hooks");
+    fs::create_dir_all(&foreign).unwrap();
+    let foreign_script = foreign.join("probe.sh");
+    fs::write(&foreign_script, "#!/usr/bin/env bash\nexit 0\n").unwrap();
+    let foreign_command = format!("bash {}", foreign_script.display());
+    let hooks_json = sandbox.project.join(".codex/hooks.json");
+    let mut config = read_json(&hooks_json);
+    config
+        .pointer_mut("/hooks/PreToolUse")
+        .and_then(|value| value.as_array_mut())
+        .expect("PreToolUse array")
+        .push(serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": foreign_command}]
+        }));
+    fs::write(&hooks_json, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+    assert_success(
+        sandbox
+            .vstack()
+            .args(["refresh", "--scope", "project"])
+            .output()
+            .unwrap(),
+        "vstack refresh",
+    );
+    let after = fs::read_to_string(&hooks_json).unwrap();
+    assert!(
+        after.contains(&foreign_command),
+        "a live handler owned by another checkout was pruned:\n{after}"
+    );
+}
+
+#[test]
+fn a_requoted_registration_for_the_same_script_is_replaced_not_duplicated() {
+    let sandbox = Sandbox::new("codex-requoted");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "codex", "--copy", "-y"]),
+        "vstack add",
+    );
+    let hooks_json = sandbox.project.join(".codex/hooks.json");
+    // The same live script, spelled with quotes a different writer chose:
+    // still this install's registration, so a refresh must replace it rather
+    // than add a second handler beside it.
+    let script = sandbox.project.join(".codex/hooks/probe.sh");
+    fs::write(
+        &hooks_json,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "type": "command",
+                        "command": format!("bash \"{}\"", script.display())
+                    }]
+                }]
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_success(
+        sandbox
+            .vstack()
+            .args(["refresh", "--scope", "project"])
+            .output()
+            .unwrap(),
+        "vstack refresh",
+    );
+    let config = read_json(&hooks_json);
+    let handlers = config
+        .pointer("/hooks/PreToolUse")
+        .and_then(|value| value.as_array())
+        .expect("PreToolUse array");
+    assert_eq!(
+        handlers.len(),
+        1,
+        "a requoted registration for the live script was duplicated instead of replaced: {config:#}"
+    );
+}
+
+#[test]
+fn a_disabled_codex_hooks_feature_stops_reading_as_enforced() {
+    let sandbox = Sandbox::new("codex-feature-off");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "codex", "--copy", "-y"]),
+        "vstack add",
+    );
+    let config_toml = sandbox.project.join(".codex/config.toml");
+    let content = fs::read_to_string(&config_toml).unwrap();
+    fs::write(
+        &config_toml,
+        content.replace("hooks = true", "hooks = false"),
+    )
+    .unwrap();
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("codex: unsupported (artifact missing)"),
+        "a hook Codex will not execute (features.hooks off) still reads as enforced:\n{text}"
+    );
+}
+
+#[test]
+fn a_stale_pi_registration_without_the_package_stops_reading_as_enforced() {
+    let sandbox = Sandbox::new("pi-stale-registration");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "pi", "--copy", "-y"]),
+        "vstack add",
+    );
+    let package = sandbox.source.join("pi-extensions/pi-hooks");
+    fs::create_dir_all(package.join("extensions")).unwrap();
+    fs::write(
+        package.join("package.json"),
+        r#"{"name":"@vanillagreen/pi-hooks","version":"1.0.0","description":"probe carrier","keywords":["pi-package"],"pi":{"extensions":["./extensions/hooks.js"]}}"#,
+    )
+    .unwrap();
+    fs::write(package.join("extensions/hooks.js"), "export default {};\n").unwrap();
+    assert_success(
+        sandbox.add(&["--pi-extension", "pi-hooks", "--harness", "pi", "-y"]),
+        "vstack add --pi-extension",
+    );
+    // The deployed package is gone; only the settings registration remains.
+    // Pi cannot load what is not there, so enforcement must not be claimed.
+    fs::remove_dir_all(sandbox.project.join(".pi/packages/@vanillagreen/pi-hooks")).unwrap();
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("pi: unsupported (pi-hooks not installed)"),
+        "a stale Pi registration without its package still reads as enforced:\n{text}"
+    );
+}
+
+#[test]
 fn a_narrowed_allowlist_removes_the_excluded_artifact_on_refresh() {
     let sandbox = Sandbox::new("narrowed-allowlist-removal");
     assert_success(

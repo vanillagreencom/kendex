@@ -130,9 +130,14 @@ pub(crate) fn claude_hook_registered(global: bool, name: &str) -> bool {
         .is_some_and(|hooks| hooks_object_has_owned_entry(hooks, &owns_exactly(&owned)))
 }
 
-/// Whether `<scope>/.codex/hooks.json` still carries this hook's handler.
+/// Whether `<scope>/.codex/hooks.json` still carries this hook's handler AND
+/// `config.toml` keeps the `hooks` feature on — both are what make Codex run
+/// the handler, and install writes both.
 pub(crate) fn codex_hook_registered(global: bool, name: &str) -> bool {
     let root = codex_root(global);
+    if !codex_hooks_feature_enabled(&root) {
+        return false;
+    }
     let Ok(content) = std::fs::read_to_string(root.join("hooks.json")) else {
         return false;
     };
@@ -145,6 +150,31 @@ pub(crate) fn codex_hook_registered(global: bool, name: &str) -> bool {
         .is_some_and(|hooks| {
             hooks_object_has_owned_entry(hooks, &codex_owns_command(global, name, &script_path))
         })
+}
+
+/// Whether `<root>/config.toml` has `[features] hooks = true`.
+fn codex_hooks_feature_enabled(root: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(root.join("config.toml")) else {
+        return false;
+    };
+    let mut in_features = false;
+    let mut enabled = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "[features]" {
+            in_features = true;
+            continue;
+        }
+        if in_features && is_toml_table_header(trimmed) {
+            in_features = false;
+        }
+        if in_features && toml_assignment_key(line) == Some("hooks") {
+            enabled = toml_assignment_value(line)
+                .map(|value| value.split('#').next().unwrap_or(value).trim())
+                == Some("true");
+        }
+    }
+    enabled
 }
 
 /// Whether any generated Codex agent file carries this hook's
@@ -438,11 +468,13 @@ fn codex_hook_command(script_path: &Path) -> String {
 /// A project registration is matched by the script it runs, not by the literal
 /// string: the command carries an absolute path, and a project that moved — or
 /// a `hooks.json` written from an older anchor — otherwise leaves a handler
-/// pointing at a script that is gone. Every such command runs
-/// `<root>/.codex/hooks/<name>.sh`, and nothing outside that directory
-/// matches, so a handler the user wrote for their own script elsewhere stays.
+/// pointing at a script that is gone. Beyond this install's own script (in
+/// any quoting), only the install shape `<root>/.codex/hooks/<name>.sh` whose
+/// script no longer exists matches: a live handler is some checkout's working
+/// registration, never this project's relic, and stays.
 fn codex_owns_command(global: bool, hook_name: &str, script_path: &Path) -> impl Fn(&str) -> bool {
     let exact = codex_hook_command(script_path);
+    let script = script_path.to_string_lossy().into_owned();
     let project_tail = format!("/.codex/hooks/{hook_name}.sh");
     move |command: &str| {
         if command == exact {
@@ -464,7 +496,10 @@ fn codex_owns_command(global: bool, hook_name: &str, script_path: &Path) -> impl
                     .and_then(|rest| rest.strip_suffix('\''))
             })
             .unwrap_or(argument);
-        unquoted.ends_with(&project_tail)
+        if unquoted == script {
+            return true;
+        }
+        unquoted.ends_with(&project_tail) && !Path::new(unquoted).exists()
     }
 }
 
