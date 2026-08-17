@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import { readTranscriptTail } from "../extensions/subagent/renderers.js";
-import { formatTranscriptForDisplay } from "../extensions/subagent/transcripts.js";
+import { formatTranscriptForDisplay } from "../extensions/subagent/transcript-timeline.js";
 
 const T0 = "2026-03-24T23:59:33.000Z";
 const at = (seconds: number) => new Date(Date.parse(T0) + seconds * 1000).toISOString();

@@ -12,7 +12,8 @@ import {
 } from "../format.js";
 import { readTextFileIfExists, readTranscriptTail, recordTraceRef } from "../renderers.js";
 import { monitorStatusIsTerminal } from "../task-records.js";
-import { formatTranscriptForDisplay, inputDeliveryLabel } from "../transcripts.js";
+import { formatTranscriptForDisplay } from "../transcript-timeline.js";
+import { inputDeliveryLabel } from "../transcripts.js";
 import {
 	MONITOR_SUBTAB_LABELS,
 	type AgentBrowserUiState,
