@@ -5,7 +5,7 @@ use super::*;
 
 /// Install a hook exactly as `vstack add` does, so presence is checked
 /// against the artifacts the installer really writes.
-fn install_hook_for(source: &Path, name: &str, harness: crate::harness::Harness) {
+pub(super) fn install_hook_for(source: &Path, name: &str, harness: crate::harness::Harness) {
     let hook =
         crate::hook::Hook::from_file(&source.join("hooks").join(format!("{name}.sh"))).unwrap();
     crate::installer::install_hook(&hook, harness, false, &[]).unwrap();
@@ -19,7 +19,7 @@ pub(super) fn install_claude_hook(source: &Path, name: &str) {
     install_hook_for(source, name, crate::harness::Harness::ClaudeCode);
 }
 
-fn codex_hook_lock(source: &Path, name: &str) -> LockFile {
+pub(super) fn codex_hook_lock(source: &Path, name: &str) -> LockFile {
     let mut entry = locked(source, ItemKind::Hook, name);
     entry.harnesses = vec!["codex".into()];
     let mut lock = LockFile::default();
@@ -35,7 +35,7 @@ fn unverifiable_note(report: &ScopeReport) -> String {
     notes(&report.unverifiable)
 }
 
-fn notes(items: &[Item]) -> String {
+pub(super) fn notes(items: &[Item]) -> String {
     items
         .iter()
         .filter_map(|item| item.detail.clone())
@@ -69,7 +69,7 @@ fn a_codex_native_hook_needs_its_registration_not_just_its_script() {
     });
 }
 
-fn claude_hook_lock(source: &Path, name: &str) -> LockFile {
+pub(super) fn claude_hook_lock(source: &Path, name: &str) -> LockFile {
     let mut entry = locked(source, ItemKind::Hook, name);
     entry.harnesses = vec!["claude-code".into()];
     let mut lock = LockFile::default();
@@ -79,7 +79,7 @@ fn claude_hook_lock(source: &Path, name: &str) -> LockFile {
 
 /// Rewrite the installed registration, refusing a pattern that matched
 /// nothing — a mutation that silently no-ops turns its assertion vacuous.
-fn rewrite(path: &Path, source: &str, from: &str, to: &str) {
+pub(super) fn rewrite(path: &Path, source: &str, from: &str, to: &str) {
     let mutated = source.replace(from, to);
     assert_ne!(mutated, source, "pattern {from:?} matched nothing");
     std::fs::write(path, mutated).unwrap();
@@ -159,6 +159,42 @@ fn a_registration_claude_still_runs_from_settings_local_counts() {
 
         std::fs::write(claude.join("settings.local.json"), &registered).unwrap();
         let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(report.phantom.is_empty(), "{report:?}");
+    });
+}
+
+/// Claude's local settings tier is PROJECT-only: it reads
+/// `~/.claude/settings.json` and never `~/.claude/settings.local.json`. A
+/// stale or hand-made global one let a deleted global registration read as
+/// installed — the same fail-open the registration check exists to close,
+/// applied to the one scope where the file is not in claude's load order.
+#[test]
+fn a_global_settings_local_json_answers_for_nothing() {
+    with_sandbox("claude-global-settings-local", |_project, source| {
+        write_hook(source, "guard");
+        let hook = crate::hook::Hook::from_file(&source.join("hooks").join("guard.sh")).unwrap();
+        crate::installer::install_hook(&hook, crate::harness::Harness::ClaudeCode, true, &[])
+            .unwrap();
+        let lock = claude_hook_lock(source, "guard");
+
+        // Control: the real global registration is clean.
+        let report = check_scope(true, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+
+        let claude = config::claude_global_dir();
+        let registered = std::fs::read_to_string(claude.join("settings.json")).unwrap();
+        std::fs::write(claude.join("settings.json"), "{}").unwrap();
+        std::fs::write(claude.join("settings.local.json"), &registered).unwrap();
+        let report = check_scope(true, &lock, CheckOptions::default()).unwrap();
+        assert_eq!(names(&report.phantom), vec!["guard"], "{report:?}");
+        assert!(
+            phantom_note(&report).contains("script present but not registered"),
+            "{report:?}"
+        );
+
+        // Control: put it back where claude actually reads it and it is clean.
+        std::fs::write(claude.join("settings.json"), &registered).unwrap();
+        let report = check_scope(true, &lock, CheckOptions::default()).unwrap();
         assert!(report.phantom.is_empty(), "{report:?}");
     });
 }
@@ -688,34 +724,6 @@ fn a_codex_agent_file_that_cannot_be_read_is_unverifiable_not_missing_prose() {
         assert!(
             phantom_note(&report).contains("no script and no prose"),
             "control: {report:?}"
-        );
-    });
-}
-
-#[test]
-fn a_disabled_codex_hooks_feature_is_drift() {
-    with_sandbox("codex-feature-off", |project, source| {
-        write_hook(source, "guard");
-        install_codex_hook(source, "guard");
-        let lock = codex_hook_lock(source, "guard");
-
-        let config = project.join(".codex").join("config.toml");
-        let content = std::fs::read_to_string(&config).unwrap();
-        assert!(content.contains("hooks = true"), "control: {content}");
-        std::fs::write(&config, content.replace("hooks = true", "hooks = false")).unwrap();
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert_eq!(names(&report.phantom), vec!["guard"], "{report:?}");
-        assert!(
-            phantom_note(&report).contains("hooks feature disabled"),
-            "{report:?}"
-        );
-
-        // And a config file that never mentions the feature at all.
-        std::fs::remove_file(&config).unwrap();
-        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
-        assert!(
-            phantom_note(&report).contains("hooks feature disabled"),
-            "{report:?}"
         );
     });
 }

@@ -279,7 +279,8 @@ pub(crate) enum CodexNativeGap {
     /// Nothing in `<root>/hooks.json` points codex at the script.
     NotRegistered,
     /// `[features] hooks` is not on, so codex ignores `hooks.json` entirely.
-    FeatureDisabled,
+    /// The path is the `config.toml` that has to say otherwise.
+    FeatureDisabled(PathBuf),
     /// A file this answer depends on exists and could not be parsed. Not a
     /// missing registration: reinstalling repairs nothing, and the note names
     /// the file whose repair does.
@@ -287,10 +288,15 @@ pub(crate) enum CodexNativeGap {
 }
 
 impl CodexNativeGap {
+    /// The note, in the shape every harness's switch report shares: what is
+    /// off, and the file that turns it back on.
     pub(crate) fn describe(&self) -> String {
         match self {
             Self::NotRegistered => "script present but not registered".to_string(),
-            Self::FeatureDisabled => "hooks feature disabled".to_string(),
+            Self::FeatureDisabled(config) => format!(
+                "switched off — [features] hooks is not true in {}",
+                config.display()
+            ),
             Self::Unreadable(reason) => format!("registration unverifiable — {reason}"),
         }
     }
@@ -298,6 +304,12 @@ impl CodexNativeGap {
     /// Is this a gap no reinstall can close?
     pub(crate) fn is_unreadable(&self) -> bool {
         matches!(self, Self::Unreadable(_))
+    }
+
+    /// Is every artifact present and the harness simply switched off? Its own
+    /// answer because its own remedy: the setting, named in [`Self::describe`].
+    pub(crate) fn is_disabled(&self) -> bool {
+        matches!(self, Self::FeatureDisabled(_))
     }
 }
 
@@ -319,6 +331,7 @@ pub(crate) fn codex_native_hook_gaps(
     let mut gaps = Vec::new();
     match super::hooks_config_registration(
         &root.join("hooks.json"),
+        &crate::json_config::HOOKS_CONFIG,
         Some(codex_event),
         &script_path,
         git_root.map(|root| (CODEX_GIT_TOPLEVEL, root)),
@@ -330,9 +343,10 @@ pub(crate) fn codex_native_hook_gaps(
             gaps.push(CodexNativeGap::Unreadable(reason));
         }
     }
-    match codex_hooks_feature_state(&root.join("config.toml")) {
+    let config_path = root.join("config.toml");
+    match codex_hooks_feature_state(&config_path) {
         CodexHooksFeature::Enabled => {}
-        CodexHooksFeature::Disabled => gaps.push(CodexNativeGap::FeatureDisabled),
+        CodexHooksFeature::Disabled => gaps.push(CodexNativeGap::FeatureDisabled(config_path)),
         CodexHooksFeature::Unreadable(reason) => gaps.push(CodexNativeGap::Unreadable(reason)),
     }
     gaps
@@ -469,7 +483,7 @@ fn merge_codex_hooks_json_owned(
     command: &str,
     owned_commands: &[String],
 ) -> Result<()> {
-    let mut doc = super::read_hooks_config(hooks_json)
+    let mut doc = super::read_hooks_config(hooks_json, &crate::json_config::HOOKS_CONFIG)
         .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)?
         .unwrap_or_else(|| serde_json::json!({}));
 
@@ -802,7 +816,7 @@ pub(super) fn remove_hook_from_codex_json(
     validate_item_name(name)?;
     let root = codex_root(global);
     let hooks_json = root.join("hooks.json");
-    let Some(mut doc) = super::read_hooks_config(&hooks_json)
+    let Some(mut doc) = super::read_hooks_config(&hooks_json, &crate::json_config::HOOKS_CONFIG)
         .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)?
     else {
         return Ok(());

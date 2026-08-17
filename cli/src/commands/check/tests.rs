@@ -4,6 +4,7 @@ use super::*;
 
 mod hooks;
 mod pi;
+mod switches;
 use hooks::install_claude_hook;
 use pi::install_pi_package;
 

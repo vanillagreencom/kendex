@@ -264,6 +264,12 @@ fn populated_scope(scope: &'static str) -> ScopeReport {
             detail: Some("registration unknown — Pi settings unreadable: broken".into()),
             ..Item::new("theta", ItemKind::PiExtension)
         }],
+        disabled: vec![Item {
+            detail: Some(
+                "claude-code: hooks disabled for this scope — disableAllHooks is true in /home/settings.json".into(),
+            ),
+            ..Item::new("iota", ItemKind::Hook)
+        }],
         missing_skill_refs: vec![MissingSkillRef {
             agent: "rust".into(),
             skill: "epsilon".into(),

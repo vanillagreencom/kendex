@@ -923,3 +923,61 @@ fn a_cache_that_cannot_be_written_is_named_in_the_report() {
         text(&quiet.stderr)
     );
 }
+
+/// A harness switched off is its own report at the process boundary: neither
+/// the phantom list, whose printed remedy is a reinstall of files that are
+/// already correct, nor the unverifiable list, whose remedy is repairing a
+/// file that parsed fine. Both session adapters relay this text verbatim, so
+/// the wording that names the setting is part of the contract.
+#[test]
+fn a_hook_the_harness_will_not_run_is_its_own_json_and_quiet_report() {
+    let sb = Sandbox::new("check-disabled-json");
+    sb.write_hook("guard");
+    sb.install_kind("--hook", "guard");
+
+    let clean = sb.check(&["--quiet"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
+
+    // Claude's own documented switch, beside the registration `add` wrote.
+    let settings = sb.project.join(".claude/settings.json");
+    let registered = fs::read_to_string(&settings).unwrap();
+    let body = registered.trim_end().trim_end_matches('}').trim_end();
+    fs::write(
+        &settings,
+        format!("{body},\n  \"disableAllHooks\": true\n}}\n"),
+    )
+    .unwrap();
+
+    let json = sb.check(&["--json"]);
+    assert_eq!(json.status.code(), Some(1), "{}", text(&json.stderr));
+    let parsed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let scope = &parsed["scopes"][0];
+    let disabled = scope["disabled"].as_array().unwrap();
+    assert_eq!(disabled.len(), 1, "{parsed}");
+    assert_eq!(disabled[0]["name"], "guard", "{parsed}");
+    let detail = disabled[0]["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("disableAllHooks"), "{parsed}");
+    assert!(detail.contains(".claude/settings.json"), "{parsed}");
+    assert!(scope["phantom"].as_array().unwrap().is_empty(), "{parsed}");
+    assert!(
+        scope["unverifiable"].as_array().unwrap().is_empty(),
+        "{parsed}"
+    );
+
+    let quiet = sb.check(&["--quiet"]);
+    assert_eq!(quiet.status.code(), Some(1), "{}", text(&quiet.stderr));
+    let err = text(&quiet.stderr);
+    assert!(err.contains("the harness will not run it"), "{err}");
+    assert!(err.contains("guard (hook)"), "{err}");
+    assert!(err.contains("disableAllHooks"), "{err}");
+    assert!(
+        !err.contains("missing from disk"),
+        "the reinstall remedy must not appear: {err}"
+    );
+
+    // Control: the same file with the switch off is clean again.
+    fs::write(&settings, &registered).unwrap();
+    let clean = sb.check(&["--quiet"]);
+    assert_eq!(clean.status.code(), Some(0), "{}", text(&clean.stderr));
+    assert!(clean.stderr.is_empty(), "{}", text(&clean.stderr));
+}

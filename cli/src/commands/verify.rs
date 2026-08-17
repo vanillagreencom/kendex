@@ -167,9 +167,9 @@ fn verify_entry(entry: &LockEntry, global: bool, disk_skills: &HashSet<String>) 
     }
 }
 
-/// What stands between a lock entry and a complete install. The two variants
-/// carry different remedies, and conflating them is how a user gets told to
-/// reinstall something that is fine.
+/// What stands between a lock entry and a complete install. The variants carry
+/// different remedies, and conflating them is how a user gets told to reinstall
+/// something that is fine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InstallGap {
     /// A recorded artifact is not on disk. `vstack add` re-creates it.
@@ -178,13 +178,18 @@ pub(crate) enum InstallGap {
     /// reads is itself unreadable. The note names the file to fix; reinstalling
     /// would not touch the real fault.
     Unverifiable(String),
+    /// Every artifact is on disk and readable, and the harness is configured
+    /// NOT to run it. `vstack add` would rewrite files that are already
+    /// correct and change nothing observable, so the note names the switch and
+    /// the file holding it instead.
+    Disabled(String),
 }
 
 impl InstallGap {
     /// The human note, whichever gap it is.
     pub(crate) fn note(&self) -> &str {
         match self {
-            Self::Missing(note) | Self::Unverifiable(note) => note,
+            Self::Missing(note) | Self::Unverifiable(note) | Self::Disabled(note) => note,
         }
     }
 }
@@ -338,17 +343,40 @@ fn verify_agent_install(
     }
 }
 
+/// Where a harness's switch lands, in the one wording every harness shares —
+/// what is off, and the file that turns it back on. Codex's answer comes
+/// classified with its other native gaps; claude's and cursor's arrive here.
+fn record_switch(
+    harness: &str,
+    switch: crate::installer::HookSwitch,
+    disabled: &mut Vec<String>,
+    unverifiable: &mut Vec<String>,
+) {
+    match switch {
+        crate::installer::HookSwitch::On => {}
+        crate::installer::HookSwitch::Off(note) => {
+            disabled.push(format!("{harness}: switched off — {note}"));
+        }
+        crate::installer::HookSwitch::Unreadable(reason) => {
+            unverifiable.push(format!("{harness}: switch unverifiable — {reason}"));
+        }
+    }
+}
+
 /// Every artifact a hook needs to RUN, per harness it was installed for.
 ///
-/// Two lists, because they carry different remedies: something a reinstall
-/// re-creates, and something only repairing a named file can answer. A
-/// registration file that exists and cannot be parsed belongs to the second —
-/// reported as missing, it prescribed `vstack add` on a file the installer
-/// refuses to touch.
+/// Three lists, because they carry three remedies: something a reinstall
+/// re-creates, something only repairing a named file can answer, and something
+/// only a settings change can. A registration file that exists and cannot be
+/// parsed belongs to the second — reported as missing, it prescribed `vstack
+/// add` on a file the installer refuses to touch. A harness switched off
+/// belongs to the third: every artifact is there and correct, and a reinstall
+/// changes nothing the harness will act on.
 fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
     let name = &entry.name;
     let mut missing = Vec::new();
     let mut unverifiable = Vec::new();
+    let mut disabled = Vec::new();
     // The hook's own source definition: what decided the event and the prose
     // at install time, and the only thing that can say what to demand now.
     let source_hook = hook_source(entry);
@@ -382,18 +410,48 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
                             unverifiable.push(format!("{h}: registration unverifiable — {reason}"));
                         }
                     }
+                    // A registration claude will not act on. This is the twin
+                    // of Codex's `[features] hooks`: the registration is
+                    // perfect and the harness runs none of it — including
+                    // `session-drift-check`, which is then the one hook that
+                    // cannot report the state it exists to report.
+                    record_switch(
+                        h,
+                        crate::installer::hook_switch(harness, global, name),
+                        &mut disabled,
+                        &mut unverifiable,
+                    );
                 }
             }
             crate::harness::Harness::Cursor => {
+                // A rule is installed only when cursor will APPLY it, which
+                // its own `alwaysApply` decides. The file existing was the
+                // whole test, so a rule edited down to description-matching —
+                // attached when the model judges it relevant, and for a safety
+                // rule that is not the same as attached — read as installed.
                 let path = crate::installer::cursor_hook_rule_path(global, name);
                 if !path.exists() {
                     missing.push(format!("{h}: rule missing"));
+                } else {
+                    record_switch(
+                        h,
+                        crate::installer::hook_switch(harness, global, name),
+                        &mut disabled,
+                        &mut unverifiable,
+                    );
                 }
             }
             crate::harness::Harness::OpenCode => {
                 // A hook is installed only when opencode will LOAD it: the
                 // instruction file AND the `opencode.json` entry naming it.
                 // A file nothing references is prose no agent ever sees.
+                //
+                // There is no third condition to check: opencode exposes no
+                // switch that suppresses instructions it is configured to
+                // load, so the entry's absence is the only off state, and it
+                // is already the missing case below. The config vstack reads
+                // is the one opencode resolves — `$OPENCODE_CONFIG` and the
+                // `.jsonc` spelling included.
                 let path = crate::installer::opencode_hook_instruction_path(global, name);
                 if !path.exists() {
                     missing.push(format!("{h}: instruction missing"));
@@ -441,6 +499,8 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
                                 let note = format!("{h}: {}", gap.describe());
                                 if gap.is_unreadable() {
                                     unverifiable.push(note);
+                                } else if gap.is_disabled() {
+                                    disabled.push(note);
                                 } else {
                                     missing.push(note);
                                 }
@@ -479,19 +539,41 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
                 // hooks ship as the @vanillagreen/pi-hooks extension instead,
                 // which is verified separately as a Pi package. Nothing to
                 // check here.
+                //
+                // Pi's switches are deliberately not reported. The extension
+                // reads `enabled` and a per-hook key out of the
+                // `vstack.extensionManager` namespace in Pi's settings, and
+                // that namespace is VSTACK'S OWN toggle UI: its state is the
+                // user's answer, given in a surface that already shows it, and
+                // the only remedy a report could print is the toggle they just
+                // used. That is the line the other harnesses fall the other
+                // side of — `disableAllHooks`, `[features] hooks` and
+                // `alwaysApply` are the HARNESS's configuration silently
+                // deciding the fate of an artifact vstack installed, with
+                // nothing in view to say so. The package's own presence is
+                // still checked, as its own lock entry.
             }
         }
     }
-    // Unverifiable wins the classification when both are present: the file it
-    // names has to be repaired before any reinstall can even run, and the
-    // note carries what is missing alongside it.
-    let notes: Vec<String> = unverifiable.iter().chain(missing.iter()).cloned().collect();
+    // One classification, and every note rides along whichever it is, so
+    // nothing found is dropped. The order is the order the remedies have to
+    // happen in: a file that cannot be parsed blocks every command that would
+    // touch it, then an artifact that is not there at all, then the switch —
+    // which is the only thing left to say once the install itself is whole.
+    let notes: Vec<String> = unverifiable
+        .iter()
+        .chain(missing.iter())
+        .chain(disabled.iter())
+        .cloned()
+        .collect();
     if notes.is_empty() {
         None
-    } else if unverifiable.is_empty() {
+    } else if !unverifiable.is_empty() {
+        Some(InstallGap::Unverifiable(notes.join("; ")))
+    } else if !missing.is_empty() {
         Some(InstallGap::Missing(notes.join("; ")))
     } else {
-        Some(InstallGap::Unverifiable(notes.join("; ")))
+        Some(InstallGap::Disabled(notes.join("; ")))
     }
 }
 

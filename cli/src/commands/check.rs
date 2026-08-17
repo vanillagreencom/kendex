@@ -269,6 +269,12 @@ pub struct ScopeReport {
     /// could not be read points them at the wrong fault, so each detail names
     /// the file to fix instead.
     pub unverifiable: Vec<Item>,
+    /// Lock entries whose install is complete and whose harness is configured
+    /// not to run it — Claude's `disableAllHooks`, Codex's `[features] hooks`.
+    /// Its own list because its own remedy: nothing is missing to reinstall
+    /// and nothing is broken to repair, so each detail names the switch and
+    /// the file holding it.
+    pub disabled: Vec<Item>,
     /// Installed agents referencing skills that are not installed.
     pub missing_skill_refs: Vec<MissingSkillRef>,
     /// Sources that could not be resolved or fully discovered.
@@ -295,6 +301,7 @@ impl ScopeReport {
             && self.orphaned.is_empty()
             && self.phantom.is_empty()
             && self.unverifiable.is_empty()
+            && self.disabled.is_empty()
             && self.missing_skill_refs.is_empty()
             && self.source_issues.is_empty()
             && self.invalid_names.is_empty())
@@ -871,6 +878,7 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
     let disk_skill_set: HashSet<String> = disk_skills.iter().map(|d| d.name.clone()).collect();
     let mut phantom: Vec<Item> = Vec::new();
     let mut unverifiable: Vec<Item> = Vec::new();
+    let mut disabled: Vec<Item> = Vec::new();
     for entry in &entries {
         let Some(gap) = crate::commands::verify::install_gap(entry, global, &disk_skill_set) else {
             continue;
@@ -882,6 +890,7 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
         match gap {
             crate::commands::verify::InstallGap::Missing(_) => phantom.push(reported),
             crate::commands::verify::InstallGap::Unverifiable(_) => unverifiable.push(reported),
+            crate::commands::verify::InstallGap::Disabled(_) => disabled.push(reported),
         }
     }
 
@@ -894,6 +903,7 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
     let reported_names: HashSet<&str> = phantom
         .iter()
         .chain(unverifiable.iter())
+        .chain(disabled.iter())
         .map(|i| i.name.as_str())
         .collect();
     current.retain(|i| !reported_names.contains(i.name.as_str()));
@@ -922,6 +932,7 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
         orphaned,
         phantom,
         unverifiable,
+        disabled,
         missing_skill_refs,
         source_issues,
         invalid_names,

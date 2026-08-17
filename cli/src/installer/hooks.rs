@@ -265,8 +265,16 @@ pub(crate) enum HookRegistration {
 /// `settings.json` and codex's `hooks.json` share, read against the WHOLE
 /// shape both the presence check and the writers here depend on — see
 /// [`crate::json_config`] for the rule and the schema.
-fn read_hooks_config(path: &Path) -> Result<Option<serde_json::Value>> {
-    crate::json_config::read(path, &crate::json_config::HOOKS_CONFIG)
+///
+/// `schema` is the harness's own: claude's adds `disableAllHooks` to the
+/// shared shape. Every reader and writer of one harness's file passes the same
+/// one, so what a writer refuses to rewrite a presence check cannot call
+/// missing.
+fn read_hooks_config(
+    path: &Path,
+    schema: &crate::json_config::Schema,
+) -> Result<Option<serde_json::Value>> {
+    crate::json_config::read(path, schema)
 }
 
 /// An array on a VALIDATED document. Every array this module reaches for was
@@ -322,12 +330,13 @@ fn hooks_config_commands<'a>(
 /// through, so what one refuses to rewrite the other cannot call missing.
 fn hooks_config_registration(
     path: &Path,
+    schema: &crate::json_config::Schema,
     event: Option<&str>,
     script_path: &Path,
     deferred_root: Option<(&str, &Path)>,
     owned_commands: &[String],
 ) -> HookRegistration {
-    let doc = match read_hooks_config(path) {
+    let doc = match read_hooks_config(path, schema) {
         Ok(Some(doc)) => doc,
         Ok(None) => return HookRegistration::Absent,
         Err(err) => return HookRegistration::Unreadable(format!("{err:#}")),
@@ -418,13 +427,107 @@ fn claude_settings_dir(global: bool) -> PathBuf {
     }
 }
 
-/// Every settings file claude merges hooks from for this scope. vstack writes
-/// only `settings.json`, but claude runs what `settings.local.json` registers
-/// just the same — reporting a hook a user keeps there as missing would
-/// prescribe a second registration that fires the hook twice.
+/// Every settings file claude merges hooks from for this scope, LOWEST
+/// precedence first.
+///
+/// vstack writes only `settings.json`, but claude runs what the project's
+/// `settings.local.json` registers just the same — reporting a hook a user
+/// keeps there as missing would prescribe a second registration that fires the
+/// hook twice.
+///
+/// The local tier is PROJECT-ONLY, and the asymmetry is the point: claude's
+/// user tier is `~/.claude/settings.json` and nothing else — there is no
+/// `~/.claude/settings.local.json` in its load order. Offering one in the
+/// global scope let a stale or hand-made file answer for a global registration
+/// claude never loads, so a deleted one read as installed.
 fn claude_settings_candidates(global: bool) -> Vec<PathBuf> {
     let dir = claude_settings_dir(global);
+    if global {
+        return vec![dir.join("settings.json")];
+    }
     vec![dir.join("settings.json"), dir.join("settings.local.json")]
+}
+
+/// Every settings file whose `disableAllHooks` claude weighs for a session
+/// here, LOWEST precedence first.
+///
+/// One chain, not one per scope, because `disableAllHooks` is ONE effective
+/// value: claude resolves it after settings precedence, so a project's `false`
+/// overrides a user-level `true` — and a project-level `true` stops the
+/// globally installed hooks exactly as dead as the project's own. A per-scope
+/// reading would call the global hooks clean in a project that runs none of
+/// them, which is the fail-open this check exists to close.
+fn claude_disable_switch_chain() -> Vec<PathBuf> {
+    let mut chain = vec![claude_settings_dir(true).join("settings.json")];
+    chain.extend(claude_settings_candidates(false));
+    chain
+}
+
+/// Whether a harness will act on an artifact that is fully installed —
+/// the third question beside "is it there" and "could that be read", and the
+/// one every harness with a switch answers in the same words, so the report
+/// reads alike whichever one is off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HookSwitch {
+    /// Nothing the harness reads turns it off.
+    On,
+    /// It is off. The note names the setting AND the file holding it, because
+    /// that setting is the whole remedy: no reinstall changes it, and vstack
+    /// must not write it either way.
+    Off(String),
+    /// A file that could have decided it exists and could not be read.
+    Unreadable(String),
+}
+
+/// Will `harness` act on this hook's artifacts, once they are all there?
+///
+/// One entry point, so a harness that grows a switch is answered by adding an
+/// arm here rather than by a caller learning a new function. Codex's
+/// `[features] hooks` is deliberately not here: it is inseparable from the
+/// registration read that shares its `hooks.json` scope, so it arrives
+/// classified with the other native gaps in [`codex_native_hook_gaps`].
+pub(crate) fn hook_switch(harness: Harness, global: bool, name: &str) -> HookSwitch {
+    match harness {
+        Harness::ClaudeCode => claude_hooks_switch(),
+        Harness::Cursor => cursor_hook_switch(global, name),
+        // OpenCode loads every instruction its config names and offers no way
+        // to suppress one; Pi's toggles are vstack's own UI, not the harness's
+        // configuration. Neither has a switch to read.
+        Harness::OpenCode | Harness::Codex | Harness::Pi => HookSwitch::On,
+    }
+}
+
+/// The effective `disableAllHooks`, walked from HIGHEST precedence down: the
+/// first file that states the key settles it, and a file that could not be
+/// read settles nothing but stops the walk — it may hold the very value that
+/// would have overridden everything below it.
+///
+/// Managed policy sits above every file here and can disable hooks on its own
+/// (`disableAllHooks`, or `allowManagedHooksOnly` leaving only admin-installed
+/// hooks running). It reaches a machine as a system file, an MDM profile, a
+/// registry key, or settings delivered at sign-in — channels no local read can
+/// answer for — so this reads the tiers the user owns and claims nothing about
+/// the rest.
+fn claude_hooks_switch() -> HookSwitch {
+    for path in claude_disable_switch_chain().iter().rev() {
+        let doc = match read_hooks_config(path, &crate::json_config::CLAUDE_SETTINGS) {
+            Ok(Some(doc)) => doc,
+            Ok(None) => continue,
+            Err(err) => return HookSwitch::Unreadable(format!("{err:#}")),
+        };
+        let Some(value) = doc.get("disableAllHooks") else {
+            continue;
+        };
+        let disabled = value
+            .as_bool()
+            .expect("validated by json_config: `disableAllHooks` is a boolean");
+        return if disabled {
+            HookSwitch::Off(format!("disableAllHooks is true in {}", path.display()))
+        } else {
+            HookSwitch::On
+        };
+    }
+    HookSwitch::On
 }
 
 /// The script path claude's hooks dir holds for this hook.
@@ -462,7 +565,14 @@ pub(crate) fn claude_hook_registration(
         .map(|root| (CLAUDE_PROJECT_DIR, root));
     let mut unreadable = None;
     for settings in claude_settings_candidates(global) {
-        match hooks_config_registration(&settings, event, &script_path, deferred_root, &owned) {
+        match hooks_config_registration(
+            &settings,
+            &crate::json_config::CLAUDE_SETTINGS,
+            event,
+            &script_path,
+            deferred_root,
+            &owned,
+        ) {
             HookRegistration::Registered => return HookRegistration::Registered,
             HookRegistration::Absent => {}
             HookRegistration::Unreadable(reason) => {
@@ -582,7 +692,7 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
 
     // Merge into settings.json
     let settings_path = claude_settings_path(global);
-    let mut settings = read_hooks_config(&settings_path)
+    let mut settings = read_hooks_config(&settings_path, &crate::json_config::CLAUDE_SETTINGS)
         .context(REFUSE_UNPARSEABLE_CONFIG)?
         .unwrap_or_else(|| serde_json::json!({}));
 
@@ -664,6 +774,38 @@ pub(crate) fn cursor_hook_rule_path(global: bool, name: &str) -> PathBuf {
         .join(format!("safety-{name}.mdc"))
 }
 
+/// Cursor decides a rule's reach from the rule's OWN frontmatter, which is why
+/// [`cursor_hook_rule_contents`] writes `alwaysApply: true`. Without it the
+/// same file becomes a rule cursor may attach when it judges the description
+/// relevant — for a safety rule that is "the harness might run it", not "the
+/// harness will", and the file existing says nothing about which. So the
+/// switch here lives INSIDE the artifact rather than in a harness config, and
+/// answers in the same words as the others.
+///
+/// The rule's presence is the caller's question; this one is what it declares.
+fn cursor_hook_switch(global: bool, name: &str) -> HookSwitch {
+    let path = cursor_hook_rule_path(global, name);
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(err) => return HookSwitch::Unreadable(format!("reading {}: {err}", path.display())),
+    };
+    // No frontmatter at all is not unreadable — it is a rule that declares
+    // nothing, which is exactly a rule cursor does not always apply.
+    let always =
+        crate::frontmatter::split_yaml_frontmatter(&content).is_ok_and(|(frontmatter, _)| {
+            frontmatter.lines().any(|line| {
+                line.trim()
+                    .strip_prefix("alwaysApply:")
+                    .is_some_and(|v| v.trim().trim_matches(|c| c == '"' || c == '\'') == "true")
+            })
+        });
+    if always {
+        HookSwitch::On
+    } else {
+        HookSwitch::Off(format!("alwaysApply is not true in {}", path.display()))
+    }
+}
+
 /// Cursor: add safety advisory to a dedicated .mdc file
 fn install_hook_cursor(hook: &Hook, global: bool) -> Result<()> {
     validate_item_name(&hook.name)?;
@@ -726,7 +868,8 @@ fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path
     validate_item_name(name)?;
     let settings_path = claude_settings_path(global);
     let Some(mut settings) =
-        read_hooks_config(&settings_path).context(REFUSE_UNPARSEABLE_CONFIG)?
+        read_hooks_config(&settings_path, &crate::json_config::CLAUDE_SETTINGS)
+            .context(REFUSE_UNPARSEABLE_CONFIG)?
     else {
         return Ok(());
     };

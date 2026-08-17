@@ -46,6 +46,8 @@ pub(crate) enum Schema {
     Array(&'static Schema),
     /// A JSON string.
     Str,
+    /// A JSON boolean.
+    Bool,
 }
 
 /// `hooks → <event> → [{matcher?, hooks: [{command}]}]` — the document
@@ -68,6 +70,21 @@ static HOOK_ENTRY: Schema = Schema::Object {
 };
 static HOOK_HANDLER: Schema = Schema::Object {
     keys: &[("command", &Schema::Str)],
+    values: &Schema::Any,
+};
+
+/// Claude's `settings.json`: the shared hooks document, plus the one other key
+/// on vstack's read path — `disableAllHooks`, the documented switch that
+/// decides whether claude runs any of what `hooks` registers. It is held to
+/// its declared type like every other value here, so a `"true"` or a `1`
+/// claude itself would not honor is UNREADABLE rather than silently taken as
+/// "hooks are on".
+///
+/// Codex's `hooks.json` keeps [`HOOKS_CONFIG`]: the switch is not a key codex
+/// defines, and holding another harness's file to it would refuse a document
+/// codex reads perfectly well.
+pub(crate) static CLAUDE_SETTINGS: Schema = Schema::Object {
+    keys: &[("hooks", &HOOK_EVENTS), ("disableAllHooks", &Schema::Bool)],
     values: &Schema::Any,
 };
 
@@ -134,6 +151,10 @@ fn check(schema: &Schema, value: &serde_json::Value, at: &str) -> Result<(), Str
         Schema::Str => match value.is_string() {
             true => Ok(()),
             false => Err(deviation(at, "a string", value)),
+        },
+        Schema::Bool => match value.is_boolean() {
+            true => Ok(()),
+            false => Err(deviation(at, "a boolean", value)),
         },
         Schema::Array(element) => {
             let Some(items) = value.as_array() else {
@@ -202,9 +223,17 @@ fn child_path(at: &str, key: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A file no other test can be holding. Tests run concurrently in one
+    /// process, and a path keyed on the label and the pid alone was shared by
+    /// every call — two tests writing their own document to it and reading
+    /// each other's, which fails on whichever lost the race.
     fn tmpfile(label: &str, content: &str) -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("vstack-json-config-{label}-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let nth = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "vstack-json-config-{label}-{}-{nth}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.json");
         std::fs::write(&path, content).unwrap();

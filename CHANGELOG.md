@@ -50,7 +50,16 @@
   installed — and the block counts only while it still carries the hook's
   action line, so a heading whose body was deleted is reported rather than
   reported installed, and a reinstall rewrites the section instead of skipping
-  it (VST-258).
+  it. An install that is COMPLETE and switched off is a third report with a
+  third remedy: Claude's `disableAllHooks` (read through the declared schema,
+  over claude's own settings precedence, and never from a
+  `~/.claude/settings.local.json` claude does not load), Codex's
+  `[features] hooks`, and a Cursor safety rule whose `alwaysApply` is no longer
+  `true` each leave every artifact in place while the harness runs none of it —
+  now named with the setting and the file holding it, instead of reported as a
+  missing install whose printed remedy is a reinstall that changes nothing.
+  OpenCode exposes no such switch; Pi's live in vstack's own extension-manager
+  UI and stay out of the report (VST-258).
 
 - second-opinion settings example: the `SECOND_OPINION_CURRENT_MODEL` block
   announced "three cases, and only the third makes a project file usable at

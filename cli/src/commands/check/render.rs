@@ -398,6 +398,18 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
         quiet,
         display_reason,
     );
+    // Its own section for the same reason and a different remedy: every
+    // artifact is present and readable, and the harness is switched off. A
+    // reinstall rewrites files that are already correct; the detail names the
+    // setting that has to change, so it too is given a remedy's width.
+    section(
+        out,
+        "installed, but the harness will not run it — change the setting named below",
+        '○',
+        &report.disabled,
+        quiet,
+        display_reason,
+    );
 
     if !report.missing_skill_refs.is_empty() {
         let agents: HashSet<&str> = report
