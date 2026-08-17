@@ -50,6 +50,14 @@ pub(crate) fn opencode_hook_instruction_contents(hook: &Hook) -> String {
     format!("# Safety: {}\n\n{}", hook.name, hook.safety_prose())
 }
 
+/// `opencode.json` read against the shape both writers here depend on — see
+/// [`crate::json_config`]. The refusal is attached once, so an unreadable
+/// config reads the same whether it was hit by an install or a removal.
+fn read_opencode_config(path: &Path) -> Result<Option<serde_json::Value>> {
+    crate::json_config::read(path, &crate::json_config::OPENCODE_CONFIG)
+        .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)
+}
+
 pub(super) fn install_hook_opencode_at_path(
     hook: &Hook,
     config_path: &Path,
@@ -70,34 +78,37 @@ pub(super) fn install_hook_opencode_at_path(
 
     std::fs::write(instruction_path, opencode_hook_instruction_contents(hook))?;
 
-    let mut config = super::read_json_object(config_path)
-        .context(super::REFUSE_UNPARSEABLE_CONFIG)?
+    let mut config = read_opencode_config(config_path)?
         .unwrap_or_else(|| serde_json::json!({ "$schema": "https://opencode.ai/config.json" }));
 
-    let map = config.as_object_mut().expect("read_json_object: object");
+    let map = config
+        .as_object_mut()
+        .expect("validated by json_config: the document is an object");
 
-    // OpenCode doesn't have hooks — convert to permission rules and instructions
-    if !map.contains_key("permission") {
-        map.insert("permission".into(), serde_json::json!({}));
-    }
+    // OpenCode doesn't have hooks — convert to permission rules and instructions.
+    // Both containers are CREATED only when their key is absent: a value of
+    // the wrong shape made the read unreadable above, so nothing here
+    // replaces a value the user put there.
+    let perms = map
+        .entry("permission")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("validated by json_config: `permission` is an object");
 
     // Add safety-relevant permission restrictions based on hook type
-    if hook.event == "PreToolUse" {
-        let perms = map.get_mut("permission").unwrap().as_object_mut().unwrap();
-
-        if hook.matcher.as_deref() == Some("Bash") {
-            // For bash hooks: set bash permission to "ask" (require confirmation)
-            if !perms.contains_key("bash") {
-                perms.insert("bash".into(), serde_json::json!({ "*": "ask" }));
-            }
+    if hook.event == "PreToolUse" && hook.matcher.as_deref() == Some("Bash") {
+        // For bash hooks: set bash permission to "ask" (require confirmation)
+        if !perms.contains_key("bash") {
+            perms.insert("bash".into(), serde_json::json!({ "*": "ask" }));
         }
     }
 
     // OpenCode instructions are file paths, so write a dedicated file and reference it.
-    if !map.contains_key("instructions") {
-        map.insert("instructions".into(), serde_json::json!([]));
-    }
-    let instructions = map.get_mut("instructions").unwrap().as_array_mut().unwrap();
+    let instructions = map
+        .entry("instructions")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .expect("validated by json_config: `instructions` is an array");
 
     let already_has = instructions
         .iter()
@@ -142,16 +153,16 @@ pub(super) fn remove_hook_from_opencode_json_at_path(
             .context("OpenCode hook instruction path missing file name")?;
         checked_child_path(parent, file_name)?;
     }
-    let Some(mut config) =
-        super::read_json_object(config_path).context(super::REFUSE_UNPARSEABLE_CONFIG)?
-    else {
+    let Some(mut config) = read_opencode_config(config_path)? else {
         let _ = std::fs::remove_file(instruction_path);
         return Ok(());
     };
 
     let mut changed = false;
 
-    // Remove the current file-path based format plus the legacy inline prose format.
+    // Remove the current file-path based format plus the legacy inline prose
+    // format. A non-string entry is somebody else's and is retained: it can
+    // never be the reference vstack wrote.
     let keywords: Vec<&str> = name.split('-').collect();
     if let Some(instructions) = config
         .get_mut("instructions")

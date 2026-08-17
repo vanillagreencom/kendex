@@ -249,11 +249,11 @@ fn repairing_one_prose_section_leaves_a_following_section_intact() {
     install(std::slice::from_ref(&first));
     let repaired = std::fs::read_to_string(&toml).unwrap();
     assert!(
-        crate::installer::codex_agent_carries_hook_prose(&dir, &first),
+        crate::installer::codex_hook_prose(&dir, &first).carried(),
         "the gutted section is repaired: {repaired}"
     );
     assert!(
-        crate::installer::codex_agent_carries_hook_prose(&dir, &second),
+        crate::installer::codex_hook_prose(&dir, &second).carried(),
         "and the section that followed it survives: {repaired}"
     );
     let _ = std::fs::remove_dir_all(&dir);

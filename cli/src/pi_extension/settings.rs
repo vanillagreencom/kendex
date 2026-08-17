@@ -11,20 +11,11 @@ use std::path::{Path, PathBuf};
 /// Returns the bare package name (without version tag).
 pub fn list_npm_packages(global: bool) -> Result<Vec<String>> {
     let settings_path = crate::config::pi_settings_path(global);
-    if !settings_path.exists() {
+    let Some(parsed) = load_settings(&settings_path)? else {
         return Ok(Vec::new());
-    }
-    let raw = std::fs::read_to_string(&settings_path)
-        .with_context(|| format!("reading {}", settings_path.display()))?;
-    let parsed: serde_json::Value = serde_json::from_str(&raw)
-        .with_context(|| format!("parsing {}", settings_path.display()))?;
-    let packages = parsed
-        .get("packages")
-        .and_then(|p| p.as_array())
-        .cloned()
-        .unwrap_or_default();
+    };
     let mut out = Vec::new();
-    for entry in packages {
+    for entry in registered_packages(&parsed) {
         if let Some(s) = entry.as_str()
             && let Some(rest) = s.strip_prefix("npm:")
         {
@@ -94,19 +85,27 @@ pub(crate) fn package_is_registered(name: &str, global: bool) -> bool {
 
 fn registered_entry_exists(name: &str, global: bool) -> Result<bool> {
     let settings_path = crate::config::pi_settings_path(global);
-    if !settings_path.exists() {
+    let Some(settings) = load_settings(&settings_path)? else {
         return Ok(false);
-    }
-    let settings = load_or_init_settings(&settings_path)?;
+    };
     let scope = scope_dir(global);
-    Ok(settings
-        .get("packages")
-        .and_then(|p| p.as_array())
-        .is_some_and(|packages| {
-            packages
-                .iter()
-                .any(|entry| entry_matches_package(entry, name, &scope))
-        }))
+    Ok(registered_packages(&settings)
+        .iter()
+        .any(|entry| entry_matches_package(entry, name, &scope)))
+}
+
+/// The `packages` array of a VALIDATED settings document — empty when the key
+/// is absent, which is a settings file registering nothing. A `packages` of
+/// any other shape never reaches here: it makes the whole read unreadable, so
+/// that "the file says no" and "the file could not be read" stay the separate
+/// answers their separate remedies need.
+fn registered_packages(settings: &serde_json::Value) -> &[serde_json::Value] {
+    match settings.get("packages") {
+        None => &[],
+        Some(packages) => packages
+            .as_array()
+            .expect("validated by json_config: `packages` is an array"),
+    }
 }
 
 /// The directory a relative `packages` entry resolves against: the one
@@ -184,20 +183,24 @@ pub(super) fn register_in_pi_settings(name: &str, global: bool) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let mut settings = load_or_init_settings(&settings_path)?;
+    let mut settings = load_settings(&settings_path)
+        .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)?
+        .unwrap_or_else(|| serde_json::json!({}));
     let entry = relative_settings_entry(name);
     let scope = scope_dir(global);
 
     let map = settings
         .as_object_mut()
-        .context("Pi settings.json is not a JSON object")?;
-    if !map.contains_key("packages") {
-        map.insert("packages".into(), serde_json::json!([]));
-    }
+        .expect("validated by json_config: the document is an object");
+    // Created only when the key is absent. The shapes this used to report as
+    // an error — and that presence reading collapsed into "not registered" —
+    // are refused by the read above, so the install and the report can no
+    // longer disagree about a settings file neither of them can act on.
     let packages = map
-        .get_mut("packages")
-        .and_then(|p| p.as_array_mut())
-        .context("Pi settings.json `packages` is not an array")?;
+        .entry("packages")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .expect("validated by json_config: `packages` is an array");
 
     // Replace any existing entry for this package in place so reinstalling a
     // package does not change Pi extension load order. This matters when two
@@ -229,17 +232,21 @@ pub(super) fn register_in_pi_settings(name: &str, global: bool) -> Result<()> {
 /// `settings.json` changed.
 pub(super) fn unregister_from_pi_settings(name: &str, global: bool) -> Result<bool> {
     let settings_path = crate::config::pi_settings_path(global);
-    if !settings_path.exists() {
-        return Ok(false);
-    }
-    let mut settings = load_or_init_settings(&settings_path)?;
-    let scope = scope_dir(global);
-    let Some(map) = settings.as_object_mut() else {
+    let Some(mut settings) =
+        load_settings(&settings_path).context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)?
+    else {
         return Ok(false);
     };
+    let scope = scope_dir(global);
+    let map = settings
+        .as_object_mut()
+        .expect("validated by json_config: the document is an object");
 
     let mut changed = false;
-    if let Some(packages) = map.get_mut("packages").and_then(|p| p.as_array_mut()) {
+    if let Some(packages) = map.get_mut("packages") {
+        let packages = packages
+            .as_array_mut()
+            .expect("validated by json_config: `packages` is an array");
         let before = packages.len();
         packages.retain(|entry| !entry_matches_package(entry, name, &scope));
         changed = packages.len() != before;
@@ -255,17 +262,13 @@ pub(super) fn unregister_from_pi_settings(name: &str, global: bool) -> Result<bo
     Ok(changed)
 }
 
-fn load_or_init_settings(path: &Path) -> Result<serde_json::Value> {
-    if !path.exists() {
-        return Ok(serde_json::json!({}));
-    }
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    if content.trim().is_empty() {
-        return Ok(serde_json::json!({}));
-    }
-    serde_json::from_str(&content)
-        .with_context(|| format!("parsing Pi settings {}", path.display()))
+/// Pi's `settings.json` read against the shape presence reading and both
+/// writers here depend on — see [`crate::json_config`]. `None` is no file at
+/// all; an `Err` names the file and the deviation, and is what
+/// [`PackageRegistration::Unreadable`] carries. The writers add the refusal
+/// on top of it; a READ rewrites nothing and says only what it found.
+fn load_settings(path: &Path) -> Result<Option<serde_json::Value>> {
+    crate::json_config::read(path, &crate::json_config::PI_SETTINGS)
 }
 
 fn write_settings(path: &Path, value: &serde_json::Value) -> Result<()> {

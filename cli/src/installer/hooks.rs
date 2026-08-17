@@ -1,6 +1,7 @@
 use crate::agent::Agent;
 use crate::harness::Harness;
 use crate::hook::Hook;
+use crate::json_config::REFUSE_UNPARSEABLE_CONFIG;
 use crate::path_safety::validate_item_name;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ pub(crate) use codex::codex_agent_prose_section;
 #[cfg(test)]
 pub(crate) use codex::codex_hook_safety_block;
 pub(crate) use codex::{
-    codex_agent_carries_hook_prose, codex_event_for, codex_native_hook_gaps, codex_root,
+    CodexProse, codex_event_for, codex_hook_prose, codex_native_hook_gaps, codex_root,
 };
 pub use codex::{install_codex_fallback_hooks_for_agents, migrate_codex_config};
 use codex::{install_hook_codex, remove_hook_from_codex_json, strip_hook_prose_from_codex_agents};
@@ -258,46 +259,48 @@ pub(crate) enum HookRegistration {
     Unreadable(String),
 }
 
-/// The JSON document a hook config read or write works from. `None` when there
-/// is no file yet, or it holds nothing at all, so a writer starts from its own
-/// default.
-///
-/// A file that EXISTS with content that cannot be parsed as a JSON object is an
-/// error naming the file and the failure, never a default document: every
-/// writer here writes the document back, so reading a user's settings as `{}`
-/// would rewrite away every unrelated setting and every other hook
-/// registration in it.
-fn read_json_object(path: &Path) -> Result<Option<serde_json::Value>> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(content) => content,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => {
-            return Err(err).with_context(|| format!("reading {}", path.display()));
-        }
-    };
-    if content.trim().is_empty() {
-        return Ok(None);
-    }
-    let doc: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|err| anyhow::anyhow!("{} is not valid JSON: {err}", path.display()))?;
-    if !doc.is_object() {
-        anyhow::bail!("{} is not a JSON object", path.display());
-    }
-    Ok(Some(doc))
+/// The `hooks → event → [{hooks: [{command}]}]` document claude's
+/// `settings.json` and codex's `hooks.json` share, read against the WHOLE
+/// shape both the presence check and the writers here depend on — see
+/// [`crate::json_config`] for the rule and the schema.
+fn read_hooks_config(path: &Path) -> Result<Option<serde_json::Value>> {
+    crate::json_config::read(path, &crate::json_config::HOOKS_CONFIG)
 }
 
-/// [`read_json_object`] for the `hooks → event → [{hooks: [{command}]}]`
-/// document claude and codex share. A `hooks` key of any other shape is
-/// refused for the same reason unparseable JSON is: nothing can say what it
-/// registers, and a writer that replaced it would discard it.
-fn read_hooks_config(path: &Path) -> Result<Option<serde_json::Value>> {
-    let Some(doc) = read_json_object(path)? else {
-        return Ok(None);
-    };
-    if doc.get("hooks").is_some_and(|hooks| !hooks.is_object()) {
-        anyhow::bail!("{}: `hooks` is not a JSON object", path.display());
+/// An array on a VALIDATED document. Every array this module reaches for was
+/// checked when the document was read, so an absent key is the only other
+/// case and it means an empty list — no shape probe here can quietly answer
+/// "no registration" for a value nothing understood.
+fn validated_array(value: Option<&serde_json::Value>) -> &[serde_json::Value] {
+    match value {
+        None => &[],
+        Some(value) => value
+            .as_array()
+            .expect("validated by json_config: this value is an array"),
     }
-    Ok(Some(doc))
+}
+
+/// Every command handler registered under the events `event` selects — the
+/// one traversal presence reading and removal both ask, over a document
+/// [`read_hooks_config`] already validated.
+fn hooks_config_commands<'a>(
+    doc: &'a serde_json::Value,
+    event: Option<&'a str>,
+) -> impl Iterator<Item = &'a str> {
+    doc.get("hooks")
+        .and_then(|hooks| hooks.as_object())
+        .into_iter()
+        .flatten()
+        .filter(move |(key, _)| event.is_none_or(|want| key.as_str() == want))
+        .flat_map(|(_, entries)| validated_array(Some(entries)))
+        .flat_map(|entry| validated_array(entry.get("hooks")))
+        .filter_map(|handler| {
+            handler.get("command").map(|command| {
+                command
+                    .as_str()
+                    .expect("validated by json_config: a command is a string")
+            })
+        })
 }
 
 /// Does the harness config at `path` register `script_path` as a command
@@ -327,36 +330,10 @@ fn hooks_config_registration(
         Ok(None) => return HookRegistration::Absent,
         Err(err) => return HookRegistration::Unreadable(format!("{err:#}")),
     };
-    let Some(hooks) = doc.get("hooks").and_then(|hooks| hooks.as_object()) else {
-        return HookRegistration::Absent;
-    };
-    let registered = hooks
-        .iter()
-        .filter(|(key, _)| event.is_none_or(|want| key.as_str() == want))
-        .any(|(_, entries)| {
-            entries.as_array().is_some_and(|entries| {
-                entries.iter().any(|entry| {
-                    entry
-                        .get("hooks")
-                        .and_then(|handlers| handlers.as_array())
-                        .is_some_and(|handlers| {
-                            handlers.iter().any(|handler| {
-                                handler
-                                    .get("command")
-                                    .and_then(|command| command.as_str())
-                                    .is_some_and(|command| {
-                                        command_matches_owned_hook_command(command, owned_commands)
-                                            || command_targets_hook_script(
-                                                command,
-                                                script_path,
-                                                deferred_root,
-                                            )
-                                    })
-                            })
-                        })
-                })
-            })
-        });
+    let registered = hooks_config_commands(&doc, event).any(|command| {
+        command_matches_owned_hook_command(command, owned_commands)
+            || command_targets_hook_script(command, script_path, deferred_root)
+    });
     if registered {
         HookRegistration::Registered
     } else {
@@ -365,21 +342,21 @@ fn hooks_config_registration(
 }
 
 fn hook_entry_mentions_owned_command(entry: &serde_json::Value, owned_commands: &[String]) -> bool {
-    entry
-        .get("hooks")
-        .and_then(|h| h.as_array())
-        .is_some_and(|handlers| {
-            handlers.iter().any(|handler| {
-                handler
-                    .get("command")
-                    .and_then(|c| c.as_str())
-                    .is_some_and(|command| {
-                        command_matches_owned_hook_command(command, owned_commands)
-                    })
-            })
+    validated_array(entry.get("hooks"))
+        .iter()
+        .filter_map(|handler| handler.get("command"))
+        .any(|command| {
+            command_matches_owned_hook_command(
+                command
+                    .as_str()
+                    .expect("validated by json_config: a command is a string"),
+                owned_commands,
+            )
         })
 }
 
+/// Drop vstack's own entries from a VALIDATED `hooks` object, leaving every
+/// other entry exactly as it was.
 fn remove_hook_entries_from_hooks_object(
     hooks_obj: &mut serde_json::Map<String, serde_json::Value>,
     owned_commands: &[String],
@@ -387,24 +364,22 @@ fn remove_hook_entries_from_hooks_object(
     let mut changed = false;
     let event_keys: Vec<String> = hooks_obj.keys().cloned().collect();
     for event in event_keys {
-        if let Some(arr) = hooks_obj.get_mut(&event).and_then(|v| v.as_array_mut()) {
-            let before = arr.len();
-            arr.retain(|entry| !hook_entry_mentions_owned_command(entry, owned_commands));
-            if arr.len() != before {
-                changed = true;
-            }
-            if arr.is_empty() {
-                hooks_obj.remove(&event);
-                changed = true;
-            }
+        let arr = hooks_obj
+            .get_mut(&event)
+            .and_then(|v| v.as_array_mut())
+            .expect("validated by json_config: an event value is an array");
+        let before = arr.len();
+        arr.retain(|entry| !hook_entry_mentions_owned_command(entry, owned_commands));
+        if arr.len() != before {
+            changed = true;
+        }
+        if arr.is_empty() {
+            hooks_obj.remove(&event);
+            changed = true;
         }
     }
     changed
 }
-
-/// What every hook writer says when it will not touch a config it could not
-/// parse. Shared so the refusal reads the same whichever harness hit it.
-pub(super) const REFUSE_UNPARSEABLE_CONFIG: &str = "refusing to rewrite a config vstack cannot parse — every other setting and hook registration in it would be discarded; fix the file by hand, then rerun";
 
 /// The project-root substitution the project-scope command defers to run
 /// time; claude expands it from the session's project dir.
@@ -613,14 +588,14 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
         .context(REFUSE_UNPARSEABLE_CONFIG)?
         .unwrap_or_else(|| serde_json::json!({}));
 
-    let map = settings.as_object_mut().expect("read_hooks_config: object");
-    if !map.contains_key("hooks") {
-        map.insert("hooks".into(), serde_json::json!({}));
-    }
+    let map = settings
+        .as_object_mut()
+        .expect("validated by json_config: the document is an object");
     let hooks_obj = map
-        .get_mut("hooks")
-        .and_then(|hooks| hooks.as_object_mut())
-        .expect("read_hooks_config: `hooks` is an object");
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("validated by json_config: `hooks` is an object");
     let owned_commands = claude_owned_hook_commands(global, &hook.name, &dest);
     remove_hook_entries_from_hooks_object(hooks_obj, &owned_commands);
 
@@ -651,15 +626,17 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
         entry
     };
 
-    // Add to the appropriate event array
-    if !hooks_obj.get(&hook.event).is_some_and(|v| v.is_array()) {
-        hooks_obj.insert(hook.event.clone(), serde_json::json!([]));
-    }
+    // Append to the event's own array, CREATING it only when the document
+    // does not have that key at all. The probe that used to stand here
+    // replaced any non-array value with an empty array — everything the user
+    // had registered under that event, discarded by the very command the
+    // drift report told them to run. A value that is not an array now makes
+    // the whole read unreadable, so nothing reaches this point to replace.
     let event_arr = hooks_obj
-        .get_mut(&hook.event)
-        .unwrap()
+        .entry(hook.event.clone())
+        .or_insert_with(|| serde_json::json!([]))
         .as_array_mut()
-        .unwrap();
+        .expect("validated by json_config: an event value is an array");
 
     event_arr.push(hook_entry);
 
@@ -757,7 +734,10 @@ fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path
     };
 
     let mut changed = false;
-    if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
+    if let Some(hooks) = settings.get_mut("hooks") {
+        let hooks = hooks
+            .as_object_mut()
+            .expect("validated by json_config: `hooks` is an object");
         let owned_commands = claude_owned_hook_commands(global, name, script_path);
         changed |= remove_hook_entries_from_hooks_object(hooks, &owned_commands);
     }

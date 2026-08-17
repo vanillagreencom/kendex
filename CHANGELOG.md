@@ -23,13 +23,23 @@
   lines alone bounded nothing), spent on drift before suggestions and closing
   with one line naming what it left out; a copy-paste command argument stays
   complete, since an elided argument is a command that cannot work. A
-  registration file that EXISTS and cannot be parsed — a Claude
-  `settings.json`, a Codex `hooks.json` or `config.toml`, an OpenCode
-  `opencode.json` — is reported as unverifiable naming the file and the parse
-  failure, never as a missing hook whose printed remedy is `vstack add`; and
-  `add`/`remove` refuse such a file instead of parsing it as a default and
-  rewriting it, so no vstack command can discard the settings and hook
-  registrations it holds. A command that installs from a cached source
+  config file vstack shares with a harness — a Claude `settings.json`, a Codex
+  `hooks.json` or `config.toml`, an OpenCode `opencode.json`, Pi's
+  `settings.json` — that EXISTS and cannot be read is reported as unverifiable
+  naming the file and what was wrong with it, never as a missing hook or an
+  unregistered package whose printed remedy is `vstack add`; and every writer
+  refuses such a file instead of parsing it as a default and rewriting it, so
+  no vstack command can discard the settings and registrations it holds.
+  "Cannot be read" is now the WHOLE shape vstack depends on, declared once and
+  validated at the reader: invalid JSON, but also an event value that is not
+  an array, an entry, handler list, handler or command of another shape, a Pi
+  `packages` that is not an array, an `opencode.json` `instructions` or
+  `permission` of another type. Each of those used to read as "nothing
+  registered here" while the matching writer replaced the offending value with
+  an empty default, crashed on it, or refused it — leaving the user with a
+  destroyed setting or a drift the printed remedy could never clear. A Codex
+  agent file the prose fallback could not read is reported the same way rather
+  than as a missing safety block. A command that installs from a cached source
   (`add`, `refresh`, the wizard) now waits for an in-flight refresh of that
   cache and then refuses, instead of discovering, hashing and copying out of a
   tree another process is running `reset --hard` on; only the detached

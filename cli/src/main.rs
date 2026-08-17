@@ -10,6 +10,7 @@ mod ghostty_apply;
 mod harness;
 mod hook;
 mod installer;
+mod json_config;
 mod mapping;
 mod path_safety;
 mod pi_extension;

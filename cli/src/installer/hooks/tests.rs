@@ -729,6 +729,84 @@ fn remove_hook_from_opencode_keeps_instruction_when_config_parse_fails() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// `opencode.json` gets the same rule as the hook registrations: a container
+/// vstack merges into, holding a value of the wrong shape, is UNREADABLE.
+/// Both writers used to reach straight through it — `permission` and
+/// `instructions` were unwrapped as an object and an array whatever they held
+/// — so a config a user had reshaped crashed the install outright instead of
+/// refusing it.
+#[test]
+fn install_and_remove_refuse_an_opencode_config_shape_they_cannot_merge_into() {
+    let hook = hook_fixture("guard", "PreToolUse", Some("Bash"));
+    for (case, malformed) in [
+        (
+            "instructions is a string",
+            r#"{"instructions": "AGENTS.md"}"#,
+        ),
+        ("permission is a string", r#"{"permission": "ask"}"#),
+        ("root is an array", r#"["AGENTS.md"]"#),
+    ] {
+        let base = tmpdir("opencode_shape");
+        let config_path = base.join("opencode.json");
+        let instruction_path = base.join("instructions").join("vstack-hook-guard.md");
+        let instruction_ref = "instructions/vstack-hook-guard.md";
+        std::fs::write(&config_path, malformed).unwrap();
+
+        let err =
+            install_hook_opencode_at_path(&hook, &config_path, &instruction_path, instruction_ref)
+                .expect_err("install must refuse a config shape it cannot merge into");
+        assert!(
+            format!("{err:#}").contains(&config_path.display().to_string()),
+            "{case}: the refusal names the file: {err:#}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&config_path).unwrap(),
+            malformed,
+            "{case}: the config must be byte-identical after a refusal"
+        );
+
+        remove_hook_from_opencode_json_at_path(
+            &config_path,
+            &instruction_path,
+            instruction_ref,
+            "guard",
+        )
+        .expect_err("removal must refuse it too");
+        assert_eq!(
+            std::fs::read_to_string(&config_path).unwrap(),
+            malformed,
+            "{case}: removal must not rewrite it either"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // Control: the same containers in their real shapes are merged into, and
+    // what the user already had in them survives.
+    let base = tmpdir("opencode_shape_control");
+    let config_path = base.join("opencode.json");
+    let instruction_path = base.join("instructions").join("vstack-hook-guard.md");
+    let instruction_ref = "instructions/vstack-hook-guard.md";
+    std::fs::write(
+        &config_path,
+        r#"{"instructions": ["AGENTS.md"], "permission": {"edit": "deny"}}"#,
+    )
+    .unwrap();
+    install_hook_opencode_at_path(&hook, &config_path, &instruction_path, instruction_ref).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert_eq!(
+        written["instructions"],
+        serde_json::json!(["AGENTS.md", instruction_ref]),
+        "the user's instruction survives: {written}"
+    );
+    assert_eq!(
+        written["permission"]["edit"],
+        serde_json::json!("deny"),
+        "and so does their permission: {written}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn remove_hook_from_opencode_preserves_unrelated_permissions() {
     let base = std::env::temp_dir().join("vstack_test_opencode_permissions");

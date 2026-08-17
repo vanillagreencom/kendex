@@ -311,6 +311,189 @@ fn an_unparseable_claude_settings_file_is_unverifiable_and_never_rewritten() {
     });
 }
 
+/// Every registration shape vstack READS, deviating one at a time — a
+/// syntactically valid file whose nested shape is not the one the code
+/// depends on. Validating only the outer `hooks` object passed all of these:
+/// the registration then read as ABSENT, `check` prescribed `vstack add`, and
+/// the install replaced the offending value with an empty array — discarding
+/// whatever the user had registered under that event.
+///
+/// The same table runs against claude's `settings.json` and codex's
+/// `hooks.json` because they are one document shape read through one
+/// validation; a deviation either harness could hold must not depend on which
+/// harness happened to hold it.
+fn assert_shape_is_unverifiable_and_never_replaced(
+    label: &str,
+    harness: crate::harness::Harness,
+    config: &Path,
+    lock: &LockFile,
+    source: &Path,
+) {
+    let hook = crate::hook::Hook::from_file(&source.join("hooks").join("guard.sh")).unwrap();
+    for (case, malformed) in [
+        // The event value is an object where an array is required.
+        (
+            "event value is an object",
+            r#"{"hooks": {"PreToolUse": {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash keep.sh"}]}}}"#,
+        ),
+        // An entry of the wrong shape…
+        (
+            "entry is a string",
+            r#"{"hooks": {"PreToolUse": ["bash keep.sh"]}}"#,
+        ),
+        // …its handler list…
+        (
+            "handler list is an object",
+            r#"{"hooks": {"PreToolUse": [{"hooks": {"type": "command", "command": "bash keep.sh"}}]}}"#,
+        ),
+        // …a handler itself…
+        (
+            "handler is a string",
+            r#"{"hooks": {"PreToolUse": [{"hooks": ["bash keep.sh"]}]}}"#,
+        ),
+        // …and the command the whole answer is read out of.
+        (
+            "command is an array",
+            r#"{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": ["bash", "keep.sh"]}]}]}}"#,
+        ),
+    ] {
+        let case = format!("{label}/{case}");
+        std::fs::write(config, malformed).unwrap();
+        let report = check_scope(false, lock, CheckOptions::default()).unwrap();
+        assert!(
+            report.phantom.is_empty(),
+            "{case}: a shape nothing understood is not a missing hook: {report:?}"
+        );
+        assert_eq!(
+            names(&report.unverifiable),
+            vec!["guard"],
+            "{case}: {report:?}"
+        );
+        let note = unverifiable_note(&report);
+        assert!(
+            note.contains(&config.display().to_string()),
+            "{case}: the note names the file to repair: {note}"
+        );
+        assert!(
+            report.has_drift(),
+            "{case}: and it is not clean either: {report:?}"
+        );
+
+        let err = crate::installer::install_hook(&hook, harness, false, &[])
+            .expect_err("install must refuse a registration shape it cannot read");
+        assert!(
+            format!("{err:#}").contains(&config.display().to_string()),
+            "{case}: the refusal names the file: {err:#}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(config).unwrap(),
+            malformed,
+            "{case}: the user's file must be byte-identical after a refusal"
+        );
+
+        let err = crate::installer::remove_hook_install("guard", harness, false)
+            .expect_err("removal must refuse it too");
+        assert!(
+            format!("{err:#}").contains(&config.display().to_string()),
+            "{case}: {err:#}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(config).unwrap(),
+            malformed,
+            "{case}: removal must not rewrite it either"
+        );
+    }
+}
+
+/// The control the must-fail cases are measured against: a file of the RIGHT
+/// shape that simply lacks vstack's handler is still the missing-registration
+/// report, and installing appends to it without touching the user's own
+/// handler.
+fn assert_a_valid_file_without_the_handler_installs(
+    label: &str,
+    harness: crate::harness::Harness,
+    config: &Path,
+    lock: &LockFile,
+    source: &Path,
+) {
+    let hook = crate::hook::Hook::from_file(&source.join("hooks").join("guard.sh")).unwrap();
+    std::fs::write(
+        config,
+        r#"{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash keep.sh"}]}]}}"#,
+    )
+    .unwrap();
+    let report = check_scope(false, lock, CheckOptions::default()).unwrap();
+    assert!(
+        report.unverifiable.is_empty(),
+        "{label}: a readable file is not unverifiable: {report:?}"
+    );
+    assert_eq!(names(&report.phantom), vec!["guard"], "{label}: {report:?}");
+
+    crate::installer::install_hook(&hook, harness, false, &[]).unwrap();
+    let written = std::fs::read_to_string(config).unwrap();
+    assert!(
+        written.contains("bash keep.sh"),
+        "{label}: the user's handler survives the append: {written}"
+    );
+    let report = check_scope(false, lock, CheckOptions::default()).unwrap();
+    assert!(!report.has_drift(), "{label}: {report:?}");
+}
+
+#[test]
+fn a_registration_of_an_unreadable_shape_is_unverifiable_and_never_replaced() {
+    with_sandbox("claude-settings-shape", |project, source| {
+        write_hook(source, "guard");
+        install_claude_hook(source, "guard");
+        let lock = claude_hook_lock(source, "guard");
+        let settings = project.join(".claude").join("settings.json");
+
+        // Control: the valid install is clean.
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+
+        assert_shape_is_unverifiable_and_never_replaced(
+            "claude",
+            crate::harness::Harness::ClaudeCode,
+            &settings,
+            &lock,
+            source,
+        );
+        assert_a_valid_file_without_the_handler_installs(
+            "claude",
+            crate::harness::Harness::ClaudeCode,
+            &settings,
+            &lock,
+            source,
+        );
+    });
+
+    with_sandbox("codex-hooks-shape", |project, source| {
+        write_hook(source, "guard");
+        install_codex_hook(source, "guard");
+        let lock = codex_hook_lock(source, "guard");
+        let hooks_json = project.join(".codex").join("hooks.json");
+
+        // Control: the valid install is clean.
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+
+        assert_shape_is_unverifiable_and_never_replaced(
+            "codex",
+            crate::harness::Harness::Codex,
+            &hooks_json,
+            &lock,
+            source,
+        );
+        assert_a_valid_file_without_the_handler_installs(
+            "codex",
+            crate::harness::Harness::Codex,
+            &hooks_json,
+            &lock,
+            source,
+        );
+    });
+}
+
 /// Codex's `hooks.json` and `config.toml` answer the same question and get the
 /// same treatment: unparseable is unverifiable, and no install rewrites one.
 #[test]
@@ -435,6 +618,77 @@ fn a_codex_prose_section_without_its_action_line_is_drift() {
         );
         let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
         assert!(!report.has_drift(), "{report:?}");
+    });
+}
+
+/// The prose fallback's third answer. An agent file the read could not open
+/// says nothing about whether the block is there — reported as a missing
+/// block it prescribed a reinstall, which opens the same file and fails, so
+/// the drift could not be cleared by the command that was printed for it.
+#[test]
+fn a_codex_agent_file_that_cannot_be_read_is_unverifiable_not_missing_prose() {
+    with_sandbox("codex-prose-unreadable", |project, source| {
+        write_hook_for_event(source, "guard", "TaskCompleted");
+        let agents_dir = project.join(".codex").join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        let toml = agents_dir.join("rust.toml");
+        let other = agents_dir.join("scout.toml");
+        let blank = "name = \"a\"\ndeveloper_instructions = '''\nBody\n'''\n";
+        std::fs::write(&toml, blank).unwrap();
+        std::fs::write(&other, blank).unwrap();
+        let hook = crate::hook::Hook::from_file(&source.join("hooks").join("guard.sh")).unwrap();
+        let agent = |name: &str| crate::agent::Agent {
+            name: name.into(),
+            description: name.into(),
+            model: "sonnet".into(),
+            role: crate::agent::AgentRole::Engineer,
+            color: None,
+            effort: None,
+            body: "Body\n".into(),
+            source_path: PathBuf::new(),
+        };
+        let agents = [agent("rust"), agent("scout")];
+        crate::installer::install_hook(&hook, crate::harness::Harness::Codex, false, &agents)
+            .unwrap();
+        let lock = codex_hook_lock(source, "guard");
+
+        // Control: both agents carry the block, so the scope is clean.
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+
+        // Control: one unreadable agent beside one that carries the block is
+        // still clean — a block that IS there answers for the scope.
+        std::fs::write(&toml, [b'n', b'a', 0xff, b'm', b'e']).unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(
+            !report.has_drift(),
+            "an agent that carries it answers for the scope: {report:?}"
+        );
+
+        // With no readable agent carrying it, the answer is unknowable — not
+        // a missing block.
+        std::fs::write(&other, blank).unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(
+            report.phantom.is_empty(),
+            "a file nothing could read is not missing prose: {report:?}"
+        );
+        assert_eq!(names(&report.unverifiable), vec!["guard"], "{report:?}");
+        let note = unverifiable_note(&report);
+        assert!(
+            note.contains(&toml.display().to_string()),
+            "the note names the file to repair: {note}"
+        );
+
+        // Control: readable agents that simply lack the block are the
+        // missing-prose report the remedy really fits.
+        std::fs::write(&toml, blank).unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(report.unverifiable.is_empty(), "control: {report:?}");
+        assert!(
+            phantom_note(&report).contains("no script and no prose"),
+            "control: {report:?}"
+        );
     });
 }
 

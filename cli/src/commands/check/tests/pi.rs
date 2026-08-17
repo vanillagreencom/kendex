@@ -169,6 +169,94 @@ fn an_unreadable_pi_settings_file_is_reported_as_itself_not_as_a_missing_package
     });
 }
 
+/// A settings file that PARSES but whose shape vstack cannot act on is the
+/// same fault as one that does not parse at all. Answering `false` there
+/// called every copied package unregistered and prescribed a reinstall — while
+/// the installer rejected the very same shape, so the prescribed remedy could
+/// not run and the drift could never clear.
+#[test]
+fn a_pi_settings_shape_vstack_cannot_act_on_is_unverifiable_not_unregistered() {
+    with_sandbox("pi-settings-shape", |_project, source| {
+        let (lock, package, settings) = installed(source);
+        let registered = std::fs::read_to_string(&settings).unwrap();
+        let extension = crate::pi_extension::PiExtension::from_dir(
+            &source.join("pi-extensions").join("pi-hooks"),
+        )
+        .unwrap();
+
+        for (case, malformed) in [
+            ("root is an array", r#"["./packages/@vg/pi-hooks"]"#),
+            ("root is a string", r#""packages""#),
+            (
+                "packages is an object",
+                r#"{"packages": {"0": "./packages/@vg/pi-hooks"}}"#,
+            ),
+            (
+                "packages is a string",
+                r#"{"packages": "./packages/@vg/pi-hooks"}"#,
+            ),
+        ] {
+            std::fs::write(&settings, malformed).unwrap();
+            assert!(
+                package.is_dir(),
+                "{case}: the copy must survive, or this proves nothing"
+            );
+            let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+            assert!(
+                report.phantom.is_empty(),
+                "{case}: a settings file nothing can read is not a missing package: {report:?}"
+            );
+            assert_eq!(
+                names(&report.unverifiable),
+                vec!["@vg/pi-hooks"],
+                "{case}: {report:?}"
+            );
+            let note = unverifiable_note(&report);
+            assert!(
+                note.contains(&settings.display().to_string()),
+                "{case}: the note names the settings file: {note}"
+            );
+            assert!(
+                !note.contains("not registered"),
+                "{case}: the missing-registration remedy points at the wrong fault: {note}"
+            );
+            assert!(report.has_drift(), "{case}: {report:?}");
+
+            // The other half: the installer must refuse the same shape it
+            // just reported, and leave the file exactly as it found it.
+            let err = crate::pi_extension::install_pi_extension(&extension, false)
+                .expect_err("install must refuse a settings shape it cannot read");
+            assert!(
+                format!("{err:#}").contains(&settings.display().to_string()),
+                "{case}: the refusal names the file: {err:#}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&settings).unwrap(),
+                malformed,
+                "{case}: the user's settings must be byte-identical after a refusal"
+            );
+        }
+
+        // Control: a readable settings file without the entry is still the
+        // missing-registration report, and installing repairs it.
+        write_packages(&settings, &[]);
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(report.unverifiable.is_empty(), "control: {report:?}");
+        assert!(
+            phantom_note(&report).contains("package present but not registered"),
+            "control: {report:?}"
+        );
+        crate::pi_extension::install_pi_extension(&extension, false).unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+
+        // Control: the original registration is clean.
+        std::fs::write(&settings, registered).unwrap();
+        let report = check_scope(false, &lock, CheckOptions::default()).unwrap();
+        assert!(!report.has_drift(), "control: {report:?}");
+    });
+}
+
 #[test]
 fn a_pi_package_whose_directory_is_gone_stays_a_missing_install() {
     with_sandbox("pi-directory-gone", |_project, source| {

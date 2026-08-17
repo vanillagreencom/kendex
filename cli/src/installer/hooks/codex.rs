@@ -106,10 +106,39 @@ fn codex_agent_prose_range(content: &str, hook_name: &str) -> Option<std::ops::R
 ///
 /// Finding the section is necessary, never sufficient: what the hook DOES is
 /// its action line, and a heading whose body was deleted carries none of it.
-/// [`codex_agent_carries_hook_prose`] is the predicate every caller that has
-/// the hook itself asks.
+/// [`codex_hook_prose`] is the question every caller that has the hook itself
+/// asks.
 pub(crate) fn codex_agent_prose_section<'a>(content: &'a str, hook_name: &str) -> Option<&'a str> {
     codex_agent_prose_range(content, hook_name).map(|range| &content[range])
+}
+
+/// What this scope's Codex agents say about a hook's prose fallback.
+///
+/// Four answers, because their remedies differ. `NoAgents` demands nothing —
+/// the block lives inside agent instructions, so until an agent exists there
+/// is no artifact to write and none to miss. `Unreadable` is not `Absent`:
+/// reinstalling repairs no unreadable file, and the note names the one that
+/// has to be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CodexProse {
+    /// Some agent carries the block, action line and all.
+    Carried,
+    /// Every agent in the scope was read; none carries it.
+    Absent,
+    /// There is no Codex agent for the block to live in.
+    NoAgents,
+    /// The agents directory, or one of its TOMLs, could not be read.
+    Unreadable(String),
+}
+
+impl CodexProse {
+    /// The bool collapse, for a caller deciding only whether to WRITE the
+    /// block — where the conservative answer to "nothing could be read" is to
+    /// go ahead and install, which reads the file again and refuses by name.
+    /// Anything REPORTING on an install must match on the variants instead.
+    pub(crate) fn carried(&self) -> bool {
+        matches!(self, Self::Carried)
+    }
 }
 
 /// Does any Codex agent under `codex_root` carry THIS hook's prose fallback?
@@ -118,19 +147,51 @@ pub(crate) fn codex_agent_prose_section<'a>(content: &'a str, hook_name: &str) -
 /// install writes against — and must carry the CURRENT hook's action line, so
 /// a same-named block installed for a different event is not adopted as this
 /// one. It lives here, beside the install, for exactly that reason.
-pub(crate) fn codex_agent_carries_hook_prose(codex_root: &Path, hook: &Hook) -> bool {
+///
+/// One agent that carries the block answers for the whole scope; only when
+/// NONE does, and one of them could not be read, is the answer unknowable.
+pub(crate) fn codex_hook_prose(codex_root: &Path, hook: &Hook) -> CodexProse {
     let Some(action_line) = crate::config::generated_safety_action_line(hook) else {
-        return false;
+        // The hook has no prose to install, so no agent can be missing it.
+        return CodexProse::NoAgents;
     };
-    let Ok(entries) = std::fs::read_dir(codex_root.join("agents")) else {
-        return false;
+    let agents_dir = codex_root.join("agents");
+    let entries = match std::fs::read_dir(&agents_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CodexProse::NoAgents,
+        Err(err) => {
+            return CodexProse::Unreadable(format!("reading {}: {err}", agents_dir.display()));
+        }
     };
-    entries.flatten().any(|entry| {
-        let path = entry.path();
-        path.extension().is_some_and(|ex| ex == "toml")
-            && std::fs::read_to_string(&path)
-                .is_ok_and(|content| content_carries_hook_prose(&content, &hook.name, &action_line))
-    })
+    let mut unreadable = None;
+    let mut agents = 0;
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(err) => {
+                unreadable.get_or_insert(format!("reading {}: {err}", agents_dir.display()));
+                continue;
+            }
+        };
+        if path.extension().is_none_or(|ex| ex != "toml") {
+            continue;
+        }
+        agents += 1;
+        match std::fs::read_to_string(&path) {
+            Ok(content) if content_carries_hook_prose(&content, &hook.name, &action_line) => {
+                return CodexProse::Carried;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                unreadable.get_or_insert(format!("reading {}: {err}", path.display()));
+            }
+        }
+    }
+    match (unreadable, agents) {
+        (Some(reason), _) => CodexProse::Unreadable(reason),
+        (None, 0) => CodexProse::NoAgents,
+        (None, _) => CodexProse::Absent,
+    }
 }
 
 /// Does ONE agent TOML carry the hook's prose, body and all? A section is the
@@ -401,26 +462,25 @@ fn merge_codex_hooks_json_owned(
     owned_commands: &[String],
 ) -> Result<()> {
     let mut doc = super::read_hooks_config(hooks_json)
-        .context(super::REFUSE_UNPARSEABLE_CONFIG)?
+        .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)?
         .unwrap_or_else(|| serde_json::json!({}));
 
-    let root_map = doc.as_object_mut().expect("read_hooks_config: object");
-    if !root_map.contains_key("hooks") {
-        root_map.insert("hooks".into(), serde_json::json!({}));
-    }
+    let root_map = doc
+        .as_object_mut()
+        .expect("validated by json_config: the document is an object");
     let hooks_obj = root_map
-        .get_mut("hooks")
-        .and_then(|hooks| hooks.as_object_mut())
-        .expect("read_hooks_config: `hooks` is an object");
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("validated by json_config: `hooks` is an object");
     remove_hook_entries_from_hooks_object(hooks_obj, owned_commands);
-    if !hooks_obj.get(codex_event).is_some_and(|v| v.is_array()) {
-        hooks_obj.insert(codex_event.to_string(), serde_json::json!([]));
-    }
+    // Created only when the key is absent; a value that is not an array made
+    // the read unreadable, so none reaches this point to be replaced.
     let event_arr = hooks_obj
-        .get_mut(codex_event)
-        .unwrap()
+        .entry(codex_event)
+        .or_insert_with(|| serde_json::json!([]))
         .as_array_mut()
-        .unwrap();
+        .expect("validated by json_config: an event value is an array");
 
     let mut handler = serde_json::json!({
         "type": "command",
@@ -481,7 +541,9 @@ fn merge_codex_hooks_feature(config_path: &Path, enable_hooks: bool) -> Result<(
     // and never runs. What the user has to fix is the parse failure, so that
     // is what this says, and the file is left exactly as it is.
     if let CodexHooksFeature::Unreadable(reason) = codex_hooks_feature_in(&original, config_path) {
-        return Err(anyhow::anyhow!("{reason}").context(super::REFUSE_UNPARSEABLE_CONFIG));
+        return Err(
+            anyhow::anyhow!("{reason}").context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)
+        );
     }
 
     let mut lines: Vec<String> = original.lines().map(|s| s.to_string()).collect();
@@ -775,26 +837,33 @@ pub(super) fn remove_hook_from_codex_json(
     validate_item_name(name)?;
     let root = codex_root(global);
     let hooks_json = root.join("hooks.json");
-    let Some(mut doc) =
-        super::read_hooks_config(&hooks_json).context(super::REFUSE_UNPARSEABLE_CONFIG)?
+    let Some(mut doc) = super::read_hooks_config(&hooks_json)
+        .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)?
     else {
         return Ok(());
     };
 
     let mut changed = false;
 
-    if let Some(hooks) = doc.get_mut("hooks").and_then(|h| h.as_object_mut()) {
+    if let Some(hooks) = doc.get_mut("hooks") {
+        let hooks = hooks
+            .as_object_mut()
+            .expect("validated by json_config: `hooks` is an object");
         let owned_commands = codex_owned_hook_commands(global, name, script_path);
         changed |= remove_hook_entries_from_hooks_object(hooks, &owned_commands);
-        if hooks.is_empty()
-            && let Some(map) = doc.as_object_mut()
-        {
-            map.remove("hooks");
+        if hooks.is_empty() {
+            doc.as_object_mut()
+                .expect("validated by json_config: the document is an object")
+                .remove("hooks");
         }
     }
 
     if changed {
-        if doc.as_object().is_some_and(|m| m.is_empty()) {
+        if doc
+            .as_object()
+            .expect("validated by json_config: the document is an object")
+            .is_empty()
+        {
             match std::fs::remove_file(&hooks_json) {
                 Ok(()) => {}
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}

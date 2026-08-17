@@ -1559,7 +1559,7 @@ fn codex_hook_artifact_exists(project_root: &Path, global: bool, hook: &crate::h
 
     // The prose fallback's presence is answered beside the install that
     // writes it, so the two can never read different bytes.
-    crate::installer::codex_agent_carries_hook_prose(&root, hook)
+    crate::installer::codex_hook_prose(&root, hook).carried()
 }
 
 fn opencode_hook_artifact_exists(

@@ -438,14 +438,22 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
                     // carries the hook's action line, asked through the one
                     // predicate the install writes against — a heading whose
                     // body was deleted is a hook codex no longer carries.
-                    // A scope with no codex agents has nothing to miss.
-                    Some((hook, None)) => {
-                        let has_prose = !has_script
-                            && crate::installer::codex_agent_carries_hook_prose(&root, hook);
-                        if !has_script && !has_prose && codex_scope_has_agents(&root) {
-                            missing.push(format!("{h}: no script and no prose"));
+                    // A scope with no codex agents has nothing to miss, and an
+                    // agent file nothing could read answers for nothing.
+                    Some((hook, None)) if !has_script => {
+                        match crate::installer::codex_hook_prose(&root, hook) {
+                            crate::installer::CodexProse::Carried
+                            | crate::installer::CodexProse::NoAgents => {}
+                            crate::installer::CodexProse::Absent => {
+                                missing.push(format!("{h}: no script and no prose"));
+                            }
+                            crate::installer::CodexProse::Unreadable(reason) => {
+                                unverifiable.push(format!("{h}: prose unverifiable — {reason}"));
+                            }
                         }
                     }
+                    // A script left by an earlier native mapping still runs.
+                    Some((_, None)) => {}
                     // No source to read: nothing here can say whether this
                     // hook installs natively or as prose, so neither artifact
                     // can be demanded. The unresolvable source is reported in
@@ -486,18 +494,6 @@ fn hook_source(entry: &LockEntry) -> Option<crate::hook::Hook> {
     let root = config::resolve_source_path(&entry.source)?;
     let path = crate::catalog::find_item_path(&root, ItemKind::Hook, &entry.name)?;
     crate::hook::Hook::from_file(&path).ok()
-}
-
-/// Does this scope have any Codex agent for a prose fallback to live in?
-fn codex_scope_has_agents(codex_root: &Path) -> bool {
-    std::fs::read_dir(codex_root.join("agents")).is_ok_and(|entries| {
-        entries.flatten().any(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "toml")
-        })
-    })
 }
 
 /// Walk a directory and compute an order-stable hash of (relative path, content).
