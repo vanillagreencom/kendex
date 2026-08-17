@@ -85,6 +85,21 @@ git -C "$R" add -A
 run_sr
 [ "$RC" -eq 0 ] && ok "the committed baseline passes its own gate" || bad "self-row post-check" "rc=$RC out=$OUT"
 
+echo "=== --seed refuses an index-only baseline ==="
+R="$TMP/sparse-seed"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+: >"$R/tools/size-ratchet-baseline.tsv"
+git -C "$R" add -A
+rm "$R/tools/size-ratchet-baseline.tsv" # tracked, absent from the worktree
+run_sr --seed
+[ "$RC" -eq 2 ] && case "$OUT" in *"index-only baseline"*) true ;; *) false ;; esac \
+  && ok "--seed on a sparse-hidden baseline is a config error naming the repair" \
+  || bad "sparse seed refusal" "rc=$RC out=$OUT"
+
 echo "=== mode exclusivity ==="
 run_sr --seed --update
 [ "$RC" -eq 2 ] && ok "--seed with --update is a config error" || bad "exclusivity" "rc=$RC out=$OUT"

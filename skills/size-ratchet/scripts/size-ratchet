@@ -696,7 +696,7 @@ if [ "$MODE" = "seed" ]; then
   # counted at the final length, self-row included — so the very next run
   # over the committed file does not open with a new offender.
   path_threshold "$BASELINE_FILE"
-  if [ $((rows + 1)) -gt "$PT" ]; then
+  if [ "$rows" -gt "$PT" ]; then
     printf '%s\t%s\n' "$BASELINE_FILE" $((rows + 1)) >>"$TMP/baseline.new"
     LC_ALL=C sort -o "$TMP/baseline.new" "$TMP/baseline.new" || collection_error "could not sort the seeded baseline — nothing written"
     rows=$((rows + 1))
