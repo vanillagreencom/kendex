@@ -11,6 +11,11 @@
   tool-prefixed) marks a consuming repo's own replacement and skips with a
   note instead of blocking every commit repo-wide; every other failure
   blocks as before. No help-prose inference (VST-362).
+- worktree: `create` installs npm dependencies only where npm is the
+  package manager — a pnpm/yarn/bun lockfile or `packageManager` pin skips
+  the step, so a fresh worktree in a pnpm workspace no longer starts dirty
+  with a stray `package-lock.json`; a failed npm install names its log
+  instead of vanishing (VST-340).
 
 - cli: A shared config is read with the parser its OWN harness uses, never the
   one its file extension suggests. OpenCode hands `opencode.json`,

@@ -1729,11 +1729,30 @@ configure_worktree_git() {
 install_worktree_dependencies() {
   local wt="$1"
 
-  # Preserve the historical behavior for JS worktrees without blocking setup.
-  if [[ -f "$wt/package.json" ]] && command -v npm >/dev/null 2>&1; then
+  [[ -f "$wt/package.json" ]] || return 0
+  # npm is wrong for a workspace that pins another package manager: it
+  # resolves a different tree and writes a stray package-lock.json into the
+  # fresh checkout (dirty from birth, and `git add -A` would commit an npm
+  # lockfile into a pnpm monorepo). Another manager's lockfile or a
+  # packageManager pin means that repo provisions its own dependencies —
+  # skip; the historical npm path stays only where npm is the manager.
+  if [[ -f "$wt/pnpm-lock.yaml" || -f "$wt/yarn.lock" || -f "$wt/bun.lockb" || -f "$wt/bun.lock" ]]; then
+    return 0
+  fi
+  if grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"(pnpm|yarn|bun)' "$wt/package.json" 2>/dev/null; then
+    return 0
+  fi
+  if command -v npm >/dev/null 2>&1; then
     (
       cd "$wt" || exit 0
-      npm install --no-audit --no-fund >/dev/null 2>&1
+      # Non-blocking, but never invisible: a failed install names its log
+      # instead of racing the session silently.
+      log="$(mktemp "${TMPDIR:-/tmp}/worktree-npm-install.XXXXXX")" || exit 0
+      if npm install --no-audit --no-fund >"$log" 2>&1; then
+        rm -f "$log"
+      else
+        echo "worktree: npm install failed in $wt — log: $log" >&2
+      fi
     ) &
   fi
 }
