@@ -144,11 +144,11 @@ mkfile big.txt 15
 ln -s "$TMP/outside-target" "$R/policy"
 git -C "$R" add -A
 OUT=""; RC=0
-OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --baseline policy/base.tsv 2>&1)" || RC=$?
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --baseline policy/new/base.tsv 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && case "$OUT" in *"outside the repository"*) true ;; *) false ;; esac \
   && ok "--seed refuses a baseline path resolving outside the repo" \
   || bad "containment refusal" "rc=$RC out=$OUT"
-[ ! -e "$TMP/outside-target/base.tsv" ] && ok "nothing was written outside" || bad "outside write" "$(ls "$TMP/outside-target")"
+[ -z "$(ls -A "$TMP/outside-target")" ] && ok "nothing was written or created outside" || bad "outside side effects" "$(ls "$TMP/outside-target")"
 
 echo "=== mode exclusivity ==="
 run_sr --seed --update

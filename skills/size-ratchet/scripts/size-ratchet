@@ -712,19 +712,33 @@ if [ "$MODE" = "seed" ]; then
   fi
   base_parent="."
   case "$BASELINE_FILE" in
-    */*)
-      base_parent="${BASELINE_FILE%/*}"
-      mkdir -p "$base_parent" || collection_error "could not create the baseline directory for $BASELINE_FILE"
-      ;;
+    */*) base_parent="${BASELINE_FILE%/*}" ;;
   esac
-  # The write stays inside the repository: a symlinked parent physically
-  # resolving elsewhere must not receive the seeded file.
-  parent_phys="$(cd "$base_parent" 2>/dev/null && pwd -P)" || config_error "--seed cannot resolve the baseline directory for $BASELINE_FILE"
+  # Containment BEFORE side effects: the deepest existing ancestor must
+  # physically sit inside the repository before any directory is created —
+  # a symlinked parent resolving elsewhere must receive neither the seeded
+  # file nor the mkdir.
   repo_phys="$(pwd -P)" || collection_error "could not resolve the repository root"
+  probe="$base_parent"
+  while [ ! -d "$probe" ]; do
+    case "$probe" in
+      */*) probe="${probe%/*}" ;;
+      *) probe="." ;;
+    esac
+  done
+  parent_phys="$(cd "$probe" 2>/dev/null && pwd -P)" || config_error "--seed cannot resolve the baseline directory for $BASELINE_FILE"
   case "$parent_phys/" in
     "$repo_phys"/*) ;;
     *) config_error "--seed refuses: $BASELINE_FILE resolves outside the repository ($parent_phys) — nothing written" ;;
   esac
+  if [ "$base_parent" != "." ]; then
+    mkdir -p "$base_parent" || collection_error "could not create the baseline directory for $BASELINE_FILE"
+    parent_phys="$(cd "$base_parent" 2>/dev/null && pwd -P)" || config_error "--seed cannot resolve the baseline directory for $BASELINE_FILE"
+    case "$parent_phys/" in
+      "$repo_phys"/*) ;;
+      *) config_error "--seed refuses: $BASELINE_FILE resolves outside the repository ($parent_phys) — nothing written" ;;
+    esac
+  fi
   mv -- "$TMP/baseline.new" "$BASELINE_FILE" || collection_error "could not write the baseline at $BASELINE_FILE (mv failed)"
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the seeded baseline at $BASELINE_FILE — the file WAS written; rerun size-ratchet to verify it"
   # The file this mode just wrote is about to be judged by the trailing
