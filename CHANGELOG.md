@@ -164,6 +164,11 @@
   An owning checkout's lock file that exists and cannot be parsed no longer
   reads as absent: unknown ownership is not permission to clear another
   checkout's recovery marker (VST-258).
+- pi-agents-tmux: the Agents popup Transcript tab is an event timeline
+  (paired tool rows, capped previews, `✖`-marked failures, line-boundary tail
+  with a dropped-events note) instead of raw JSONL, and `e` opens the raw
+  file in `$VISUAL`/`$EDITOR` (VST-327).
+
 - pi-agents-tmux: Monitor tree task rows show elapsed/total run-time instead
   of a jumpy local `HH:MM` clock (`updatedAt` is no longer a time source);
   detail-pane timestamps render local human time instead of UTC ISO, and the

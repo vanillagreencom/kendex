@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.8.4
+
+- The Agents popup Transcript tab renders an event timeline instead of raw JSONL (vstack VST-327). One row per event — elapsed stamp, kind, capped one-line detail — covering input, assistant text/thinking previews, turn boundaries, and lifecycle records; a tool call collapses into a single row pairing start with result (name, primary argument, status, duration, result size), a tool-call-only assistant message renders as its calls, and errors/aborts/non-zero exits are `✖`-marked rows. No event type falls through to a raw JSONL line: unrecognized types render as their type and size. The tail read grew 24 KB → 256 KB, cuts on a line boundary only, and states how many earlier events were dropped. New `e` key in the trace viewer opens the item's file in `$VISUAL`/`$EDITOR` (own tmux window), listed in the footer hint.
+
 ### 2.8.3
 
 - Agents popup times are readable run-times, not machine stamps (vstack VST-316). Monitor tree task rows show elapsed run-time — `createdAt` → now while active, `createdAt` → `completedAt` once terminal — instead of a bare local `HH:MM` clock that was ambiguous (duration vs wall time) and jumped whenever a registry poll refreshed `updatedAt`; `updatedAt` is no longer a time-of-day source anywhere in the tree. Detail panes (Session Start/Latest, Task Summary Created/Done) render local human time (`Mar 24, 16:59`) instead of UTC ISO, and the Task Summary gains a Duration line once the task is terminal (the Summary text is cached until status changes, so a live elapsed there would freeze). Running elapsed is minute-granular (`<1m` under a minute) and keeps ticking even with spinner animation disabled — the popup timer now re-renders on a slow cadence while any task is live.
