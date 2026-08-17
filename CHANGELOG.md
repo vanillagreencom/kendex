@@ -6,11 +6,11 @@
   rate-limit retry instead of condemning a merely-throttled agent as a
   post-compaction stall; its synthetic summary no longer asserts a cause it
   never verified (VST-361).
-- growth-guards: the pre-commit shim probes size-ratchet's `--help` before
-  running `--staged` — a consuming repo's own replacement without that
-  interface is a stated skip (its wiring owns the gate) instead of blocking
-  every commit repo-wide; a script with no usage output still blocks as a
-  broken install (VST-362).
+- growth-guards: the pre-commit shim runs `size-ratchet --staged` and reads
+  the outcome — a first-line parser rejection of `--staged` (exit 2,
+  tool-prefixed) marks a consuming repo's own replacement and skips with a
+  note instead of blocking every commit repo-wide; every other failure
+  blocks as before. No help-prose inference (VST-362).
 
 - cli: A shared config is read with the parser its OWN harness uses, never the
   one its file extension suggests. OpenCode hands `opencode.json`,
