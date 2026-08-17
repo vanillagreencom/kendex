@@ -2,128 +2,79 @@
 
 # ORCH — PR review gate, CI waits, reviewer fan-out, and handoff lanes.
 # Project-scope `vstack add` / `vstack refresh` merge these defaults into
-# <project>/vstack.settings.toml (never overwriting existing keys). Full key
-# reference: orch README.md / DEVELOPMENT.md.
+# <project>/vstack.settings.toml (never overwriting existing keys). Comments
+# here are one-line intent + landmines; full key reference: orch README.md /
+# DEVELOPMENT.md.
 
-# Reviewer merge gate mode: "approval" requires a GitHub-native review
-# approval before merge (orch submit-pr/merge-pr); "review" requires a formal
-# review of the current head from a non-author reviewer plus zero unresolved
-# threads — the right mode for review bots that comment but never approve.
-# Set "off" ONLY for repos with no review bots and no reviewer policy — the
-# review wait is skipped entirely. Legacy PR_APPROVAL_GATE ("on"/"off") is
-# still honored when this key is unset.
+# Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
+# non-author review of the current head plus zero unresolved threads (for
+# bots that comment but never approve); "off" only where no reviewer exists.
 PR_REVIEW_GATE = "approval"
 
-# The review-gate ENGINE's one-switch per-repo gate disable — resolved by
-# approval-wait --resolve-mode ahead of every reviewer-gate key: "off"
-# prints mode off (the wait loop is skipped; the engine keeps the required
-# gate status green with a disabled-by-settings attestation). Only the
-# exact value "off" narrows; anything else leaves PR_REVIEW_GATE
-# authoritative (the engine predicate fails loud on bad values). Listed
-# here because orch consumes it even where the review-gate skill is not
-# installed.
+# The review-gate ENGINE's one-switch disable, consumed by orch even where
+# the review-gate skill is not installed. Only the exact value "off"
+# narrows; anything else leaves PR_REVIEW_GATE authoritative.
 REVIEW_GATE_MODE = "enforce"
 
-# Used by: orch (`approval-wait`). Total review-wait budget in seconds — the
-# per-repo quiet period before the on-timeout policy applies — used when the
-# caller passes no max_wait positional arg (an explicit arg always wins).
+# Total review-wait budget in seconds before the on-timeout policy applies;
+# an explicit max_wait argument always wins.
 PR_REVIEW_WAIT_SECS = "900"
 
-# Used by: orch (`approval-wait`). Seconds without the gate's signal (for the
-# current head) before nudging the reviewer, once per head; a push resets the
-# clock. "0" disables nudging.
+# Seconds of reviewer silence on a head before the one nudge; a push resets
+# the clock. "0" disables.
 PR_REVIEW_NUDGE_SECS = "600"
 
-# Used by: orch (`approval-wait`). Comment body posted as the nudge — set it
-# to whatever summons this repo's review bot (e.g. "@devin review"). Empty =
-# fall back to a GitHub-native re-review request to the PR's reviewers.
+# Comment posted as the nudge — whatever summons this repo's review bot.
+# Empty = GitHub's native re-review request.
 PR_REVIEW_NUDGE = ""
 
-# Used by: orch (`approval-wait`, review mode). Name/context of the trusted
-# reviewer's check-run OR commit status: a success for that exact name on the
-# current head counts as review-received when a clean re-analysis submits no
-# review object (e.g. "Devin Review"). Empty = review objects only. SECURITY:
-# match by name means any app could publish it — name only the trusted bot's
-# check on repos where all publishers are trusted.
+# Check-run/status name a trusted review bot publishes on analyzed heads; a
+# success counts as review-received. SECURITY: matched by NAME and anyone
+# can publish under any name — name only the trusted bot's check.
 PR_REVIEW_CHECK = ""
 
-# Used by: orch (`approval-wait`). Reviewer logins separated by commas or
-# whitespace, on ONE line (the settings loader reads a value per line) — that
-# must EACH have a review pinned to the current head, with zero unresolved
-# threads, before the review gate opens, in either mode. The multi-bot
-# enqueue gate: one bot's pass cannot open the gate while a listed sibling
-# has not yet reacted to this head; findings hold the gate as threads.
-# Empty = off. The wait deadline still bounds it, but PR_REVIEW_ON_TIMEOUT
-# = "proceed" needs EVERY listed reviewer silent: a partial quorum is
-# engagement, so it ends in a timeout rather than proceeding.
+# Reviewer logins (comma/space separated, ONE line — the loader reads a
+# value per line) that must EACH review the current head with zero open
+# threads before the gate opens. Empty = off. On timeout, "proceed" needs
+# EVERY listed reviewer silent — a partial quorum is engagement.
 PR_REVIEW_QUORUM = ""
 
-# Used by: orch (`approval-wait`, `submit-pr` / `merge-pr` / `ci-fix`).
-# Deadline behavior when the review gate signal never arrives — the reviewer
-# posted nothing (e.g. its credits are exhausted). "block" (default) reports a
-# "timeout" and the caller prompts or keeps waiting. "proceed" instead reports
-# a distinct "proceeded" verdict and records a reviewer-down override, moving
-# to CI/merge — but ONLY when zero threads are unresolved, so an open thread
-# always blocks (it returns "comments" first) and a real comment is never
-# bypassed. CI and the comment-hygiene gate still apply. On multi-reviewer
-# repos this only fires when EVERY reviewer is silent. Without a configured
-# PR_REVIEW_QUORUM one live review satisfies the gate; with one, a partial
-# response is engagement and ends in a timeout, never a proceed.
+# When the review signal never arrives: "block" reports a timeout;
+# "proceed" records a reviewer-down override and moves on, but only with
+# zero unresolved threads — a real comment is never bypassed.
 PR_REVIEW_ON_TIMEOUT = "block"
 
-# Used by: orch (`ci-wait`). Seconds to keep polling before failing when no CI
-# checks have registered yet. Raise for repos whose CI dispatches only after a
-# review approval (approval-gated jobs / merge queue) with slow dispatch.
+# Seconds ci-wait keeps polling before failing when no CI checks registered
+# yet; raise for approval-gated CI with slow dispatch.
 CI_WAIT_NO_CHECKS_GRACE = "180"
 
-# Used by: orch (`submit-pr` / `merge-pr`). Max automated ci-fix cycles per PR
-# submission or merge recovery before reporting the persistent CI failure back
-# to the user.
+# Max automated ci-fix rounds per PR before a human takes over.
 CI_FIX_MAX_CYCLES = "6"
 
-# Used by: orch (`review-pr` / `review` / `review-codebase`). Total concurrent
-# agent-session budget of the harness runtime, counting the primary session.
-# "0" = unlimited: every reviewer launches up front and persists through
-# fix/re-review cycles. When the reviewer set exceeds the available slots,
-# review workflows run reviewers in bounded sequential waves, retiring each
-# completed session to release its slot. On the Codex collaboration runtime,
-# set the cap that `spawn-adapter slots` reports.
+# Total concurrent agent-session budget, counting the primary; "0" =
+# unlimited. Reviews run in waves when the reviewer set exceeds free slots.
+# On the Codex runtime, set the cap `spawn-adapter slots` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
-# Used by: orch (`dev-fix`). How workflow decision points behave. "ask"
-# (default) presents decision points to the user. Review findings disposition
-# (`review-pr` § 4/§ 7, `review` § 4) is by rule in EVERY mode — no mode
-# presents a selection menu over findings. "auto-recommended" executes the
-# workflow's recommended option and logs "auto-selected: [option] — [reason]"
-# in the round record (workflow-state auto_decisions) — for fleet launchers
-# whose workers would otherwise serialize on one supervisor. Decision-record
-# revisits and scope expansion beyond the issue ALWAYS ask, in every mode;
-# merge is governed by ORCH_MERGE_AUTONOMY.
+# "ask" presents workflow decision points; "auto-recommended" executes the
+# recommended option and logs it. Findings disposition is by rule in every
+# mode; some decisions always ask; merge is governed by ORCH_MERGE_AUTONOMY.
 ORCH_DECISION_MODE = "ask"
 
-# Used by: orch (`start-worktree` § 5.5, `submit-pr` § 6.2). "ask" (default)
-# presents the merge decision; "auto" merges without asking once every merge
-# gate is green. MERGE_READY = false never auto-merges.
+# "ask" presents the merge decision; "auto" merges once every gate is green.
+# MERGE_READY = false never auto-merges.
 ORCH_MERGE_AUTONOMY = "ask"
 
-# Used by: orch (`open-terminal`). Bounded seconds per brief-delivery
-# verification pass on tmux claude handoff lanes (one initial pass plus one
-# after the single re-send). Positive integer; values over 120 are clamped.
+# Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
 
-# Used by: orch (`lanes`, `open-terminal --lane`). Optional alias overlay for
-# multi-account machines: comma-separated `<config-dir-name>=<alias>` pairs
-# giving discovered lanes meaningful names, usable as `--lane <alias>`. The
-# lane INVENTORY is always discovered (~/.claude plus any ~/.*claude* dir, and
-# ~/.codex), so adding an account needs no edit here — this only renames what
-# discovery already found. ORCH_LANE_DIRS (colon-separated) covers a layout
-# discovery cannot reach.
-# Used by: orch (`review-pr` § 5). Space-separated path globs; a changed file
-# matching one adds the needs-perf-test QA signal to the review's QA routing.
-# QA_PERF_PATHS = "src/hot/* engine/src/*"
-
+# Rename auto-discovered launch lanes (`<config-dir>=<alias>` pairs); the
+# inventory is always discovered — this only renames it. ORCH_LANE_DIRS
+# covers layouts discovery cannot reach.
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 
-# Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
-# flight.
+# Path globs that add the needs-perf-test QA signal to review routing.
+# QA_PERF_PATHS = "src/hot/* engine/src/*"
+
+# Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
