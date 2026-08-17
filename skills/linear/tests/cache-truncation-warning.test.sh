@@ -62,6 +62,7 @@ esac
 
 OUT="$("$LINEAR" cache issues list --no-project --limit 100 --format ids 2>"$TMP_ROOT/err")" || true
 ERR="$(cat "$TMP_ROOT/err")"
+[ "$(printf '%s\n' "$OUT" | wc -l)" -eq 80 ] && ok "a listing within the limit carries every row" || bad "within-limit rows" "$(printf '%s' "$OUT" | wc -l)"
 [ -z "$ERR" ] && ok "a listing within the limit stays quiet" || bad "within-limit stderr" "$ERR"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

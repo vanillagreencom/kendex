@@ -307,7 +307,7 @@ cache_list_issues() {
         fi
         local total
         total=$(echo "$issues" | jq 'length')
-        if (( total > limit )); then
+        if (( total > 10#$limit )); then
             echo "⚠️  Truncated to $limit of $total issues. Pass --max for all results, or --limit N." >&2
         fi
         issues=$(echo "$issues" | jq --argjson n "$limit" '.[0:$n]')
