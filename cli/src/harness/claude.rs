@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 /// color, skills, hooks followed by markdown body.
 pub fn generate_agent(
     agent: &Agent,
+    global: bool,
     dir: &Path,
     skills: &[(String, String)],
     hooks: &[Hook],
@@ -76,7 +77,11 @@ pub fn generate_agent(
 
     // Hooks frontmatter (Claude Code native format)
     if !hooks.is_empty() || !extras.custom_hooks.is_empty() {
-        output.push_str(&format_hooks_yaml_with_custom(hooks, &extras.custom_hooks));
+        output.push_str(&format_hooks_yaml_with_custom(
+            global,
+            hooks,
+            &extras.custom_hooks,
+        ));
     }
 
     output.push_str("---\n\n");
@@ -213,7 +218,13 @@ fn dedupe_tools(tools: Vec<String>) -> Vec<String> {
 }
 
 /// Format installed hooks and custom hooks into Claude Code YAML frontmatter.
-fn format_hooks_yaml_with_custom(hooks: &[Hook], custom: &[agent::CustomHookEntry]) -> String {
+/// The hook command comes from the installer so the frontmatter and
+/// `settings.json` registrations cannot drift apart.
+fn format_hooks_yaml_with_custom(
+    global: bool,
+    hooks: &[Hook],
+    custom: &[agent::CustomHookEntry],
+) -> String {
     // Group by event → matcher → list of commands
     let mut by_event: BTreeMap<String, BTreeMap<String, Vec<String>>> = BTreeMap::new();
 
@@ -224,9 +235,8 @@ fn format_hooks_yaml_with_custom(hooks: &[Hook], custom: &[agent::CustomHookEntr
             .or_default()
             .entry(matcher)
             .or_default()
-            .push(format!(
-                "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/{}.sh\"",
-                hook.name
+            .push(crate::installer::claude_installed_hook_command(
+                global, &hook.name,
             ));
     }
 
@@ -324,8 +334,8 @@ mod tests {
 
         let mut agent = agent_fixture("reviewer-arch", AgentRole::Reviewer);
         agent.effort = Some("high".into());
-        let path =
-            generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &AgentExtras::default())
+            .expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
         assert!(content.contains("effort: high"));
@@ -361,7 +371,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
         assert!(content.contains("disallowedTools: Agent, AskUserQuestion"));
@@ -391,7 +401,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
         assert!(content.contains("disallowedTools: Agent, AskUserQuestion, Bash, Write"));
@@ -411,6 +421,7 @@ mod tests {
         let agent = agent_fixture("rust", AgentRole::Engineer);
         let path = generate_agent(
             &agent,
+            false,
             &dir,
             &[],
             &[hook_fixture("guard")],
@@ -451,7 +462,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("model: inherit"));
         assert!(content.contains("effort: max"));
@@ -481,7 +492,7 @@ mod tests {
             },
         );
 
-        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("background: true"));
 
@@ -492,7 +503,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("background: false"));
 
@@ -519,7 +530,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("effort:"));
         assert!(content.contains("background: false"));
@@ -548,7 +559,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, false, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("background: true"));
         assert!(content.contains("isolation: worktree"));

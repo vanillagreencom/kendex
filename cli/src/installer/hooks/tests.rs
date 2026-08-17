@@ -265,11 +265,11 @@ fn hook_prune_preserves_user_handlers_with_same_basename() {
         .as_object()
         .unwrap()
         .clone();
-    let owned = vec!["bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"".to_string()];
+    let owned = "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"";
 
     assert!(remove_hook_entries_from_hooks_object(
         &mut hooks_obj,
-        &owned
+        &|c| c == owned
     ));
     let arr = hooks_obj
         .get("PreToolUse")
@@ -911,4 +911,23 @@ fn codex_hooks_feature_reads_the_parsed_table() {
         CodexHooksFeature::Disabled
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_script_path_is_refused_instead_of_registered_lossily() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let bad = PathBuf::from(OsStr::from_bytes(b"/tmp/proj\xff/.codex/hooks/guard.sh"));
+    let err = super::require_utf8_script_path(&bad)
+        .expect_err("a path the JSON config cannot carry must be refused")
+        .to_string();
+    assert!(err.contains("not valid UTF-8"), "unhelpful refusal: {err}");
+
+    let good = PathBuf::from("/tmp/proj/.codex/hooks/guard.sh");
+    assert!(
+        super::require_utf8_script_path(&good).is_ok(),
+        "a valid path must still install"
+    );
 }

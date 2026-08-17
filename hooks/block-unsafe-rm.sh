@@ -5,6 +5,7 @@
 # matcher: Bash
 # description: Block a recursive rm whose path starts with a variable that may expand empty. Names the rewrite the harness accepts without a prompt.
 # safety: The harness stops the whole session on that shape with a "Dangerous rm operation on possibly-empty variable path" prompt; refusing it here lets the agent rewrite and continue.
+# harnesses: [claude-code, cursor, opencode, codex]
 # ---
 
 set -euo pipefail

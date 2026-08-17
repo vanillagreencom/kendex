@@ -6,9 +6,13 @@ use crate::path_safety::validate_item_name;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
+pub(crate) mod contract;
+pub(crate) mod enforcement;
+
 mod command;
 
-use command::{command_matches_owned_hook_command, command_targets_hook_script, shell_quote};
+use command::{command_targets_hook_script, shell_quote};
+use contract::{ADVISORY_BANNER, Mechanism};
 
 mod opencode;
 
@@ -29,7 +33,10 @@ pub use codex::migrate_codex_config;
 pub(crate) use codex::{
     CodexProse, codex_event_for, codex_hook_prose, codex_native_hook_gaps, codex_root,
 };
-use codex::{install_hook_codex, remove_hook_from_codex_json, strip_hook_prose_from_codex_agents};
+use codex::{
+    install_hook_codex_native, install_hook_codex_prose, remove_hook_from_codex_json,
+    strip_hook_prose_from_codex_agents,
+};
 
 fn validate_file_name(file_name: &str) -> Result<()> {
     if file_name.is_empty()
@@ -129,61 +136,70 @@ fn validated_array(value: Option<&serde_json::Value>) -> &[serde_json::Value] {
     }
 }
 
-/// Every command handler registered under the events `event` selects — the
-/// one traversal presence reading and removal both ask, over a document
-/// [`read_hooks_config`] already validated.
-fn hooks_config_commands<'a>(
+/// Which registration answers for a hook: the event key it has to sit under
+/// and the matcher it has to carry.
+///
+/// Both, because both decide WHEN the harness runs the script: a handler under
+/// another event fires at the wrong time, and one with another matcher fires
+/// for the wrong tools. Neither is this hook's registration.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RegistrationSlot<'a> {
+    pub event: &'a str,
+    pub matcher: Option<&'a str>,
+}
+
+/// Decides whether a registered command is one of this hook's — the single
+/// question a reinstall (replace my own entry), a removal (take it away) and a
+/// presence check (does the harness still run it) all ask, so no two of them
+/// can disagree about which entry is ours.
+type OwnsCommand<'a> = &'a dyn Fn(&str) -> bool;
+
+/// The entries `slot` selects, over a document [`read_hooks_config`] already
+/// validated. `None` accepts every entry: the hook's own definition could not
+/// be read, so demanding a key would invent drift no reinstall can clear.
+fn hooks_config_entries<'a>(
     doc: &'a serde_json::Value,
-    event: Option<&'a str>,
-) -> impl Iterator<Item = &'a str> {
+    slot: Option<RegistrationSlot<'a>>,
+) -> impl Iterator<Item = &'a serde_json::Value> {
     doc.get("hooks")
         .and_then(|hooks| hooks.as_object())
         .into_iter()
         .flatten()
-        .filter(move |(key, _)| event.is_none_or(|want| key.as_str() == want))
+        .filter(move |(key, _)| slot.is_none_or(|slot| key.as_str() == slot.event))
         .flat_map(|(_, entries)| validated_array(Some(entries)))
-        .flat_map(|entry| validated_array(entry.get("hooks")))
-        .filter_map(|handler| {
-            handler.get("command").map(|command| {
-                command
-                    .as_str()
-                    .expect("validated by json_config: a command is a string")
+        .filter(move |entry| {
+            slot.is_none_or(|slot| {
+                entry.get("matcher").and_then(|value| value.as_str()) == slot.matcher
             })
         })
 }
 
-/// Does the harness config at `path` register `script_path` as a command
-/// handler? `event` pins the key it must sit under; `None` accepts any event.
+/// Does the harness config at `path` register one of this hook's commands in
+/// `slot`?
 ///
 /// The file is PARSED, never substring-searched: a config naming `pre-check.sh`
-/// must not answer for `check.sh`. A handler counts when its command is one
-/// vstack itself renders, or — for a command a user reshaped by hand around OUR
-/// script — when [`command_targets_hook_script`] proves it EXECUTES
-/// `script_path`. A same-named script elsewhere on disk is somebody else's
-/// handler, and a command that merely mentions ours passes it as data; letting
-/// either answer would mask a deleted managed entry.
+/// must not answer for `check.sh`. Which command counts is `owns`, the same
+/// predicate the installer replaces entries with and the remover deletes them
+/// by.
 ///
 /// Claude's `settings.json` and codex's `hooks.json` share this
-/// `hooks → event → [{hooks: [{command}]}]` shape, so both harnesses answer
-/// presence from one matcher — and from the same reader their installers write
-/// through, so what one refuses to rewrite the other cannot call missing.
+/// `hooks → event → [{matcher, hooks: [{command}]}]` shape, so both harnesses
+/// answer presence from one traversal — and from the same reader their
+/// installers write through, so what one refuses to rewrite the other cannot
+/// call missing.
 fn hooks_config_registration(
     path: &Path,
     schema: &crate::json_config::Schema,
-    event: Option<&str>,
-    script_path: &Path,
-    deferred_root: Option<(&str, &Path)>,
-    owned_commands: &[String],
+    slot: Option<RegistrationSlot<'_>>,
+    owns: OwnsCommand<'_>,
 ) -> HookRegistration {
     let doc = match read_hooks_config(path, schema) {
         Ok(Some(doc)) => doc,
         Ok(None) => return HookRegistration::Absent,
         Err(err) => return HookRegistration::Unreadable(format!("{err:#}")),
     };
-    let registered = hooks_config_commands(&doc, event).any(|command| {
-        command_matches_owned_hook_command(command, owned_commands)
-            || command_targets_hook_script(command, script_path, deferred_root)
-    });
+    let registered =
+        hooks_config_entries(&doc, slot).any(|entry| entry_has_owned_command(entry, owns));
     if registered {
         HookRegistration::Registered
     } else {
@@ -191,16 +207,15 @@ fn hooks_config_registration(
     }
 }
 
-fn hook_entry_mentions_owned_command(entry: &serde_json::Value, owned_commands: &[String]) -> bool {
+fn entry_has_owned_command(entry: &serde_json::Value, owns: OwnsCommand<'_>) -> bool {
     validated_array(entry.get("hooks"))
         .iter()
         .filter_map(|handler| handler.get("command"))
         .any(|command| {
-            command_matches_owned_hook_command(
+            owns(
                 command
                     .as_str()
                     .expect("validated by json_config: a command is a string"),
-                owned_commands,
             )
         })
 }
@@ -209,7 +224,7 @@ fn hook_entry_mentions_owned_command(entry: &serde_json::Value, owned_commands: 
 /// other entry exactly as it was.
 fn remove_hook_entries_from_hooks_object(
     hooks_obj: &mut serde_json::Map<String, serde_json::Value>,
-    owned_commands: &[String],
+    owns: OwnsCommand<'_>,
 ) -> bool {
     let mut changed = false;
     let event_keys: Vec<String> = hooks_obj.keys().cloned().collect();
@@ -219,7 +234,7 @@ fn remove_hook_entries_from_hooks_object(
             .and_then(|v| v.as_array_mut())
             .expect("validated by json_config: an event value is an array");
         let before = arr.len();
-        arr.retain(|entry| !hook_entry_mentions_owned_command(entry, owned_commands));
+        arr.retain(|entry| !entry_has_owned_command(entry, owns));
         if arr.len() != before {
             changed = true;
         }
@@ -235,12 +250,24 @@ fn remove_hook_entries_from_hooks_object(
 /// time; claude expands it from the session's project dir.
 const CLAUDE_PROJECT_DIR: &str = "$CLAUDE_PROJECT_DIR";
 
+/// Build the command Claude Code runs. Project scope anchors on
+/// `$CLAUDE_PROJECT_DIR`, which the harness sets in every project including
+/// one that is not a git repository; global scope has no project layer to
+/// resolve against and takes the install-time absolute path.
 fn claude_hook_command(global: bool, hook_name: &str, script_path: &Path) -> String {
     if global {
         format!("bash {}", shell_quote(&script_path.to_string_lossy()))
     } else {
         format!("bash \"{CLAUDE_PROJECT_DIR}/.claude/hooks/{hook_name}.sh\"")
     }
+}
+
+/// The command an installed Claude hook script is invoked through, for callers
+/// that render the registration rather than write it — agent frontmatter and
+/// `settings.json` cannot then drift apart.
+pub(crate) fn claude_installed_hook_command(global: bool, hook_name: &str) -> String {
+    let script_path = claude_hook_script_path(global, hook_name).unwrap_or_default();
+    claude_hook_command(global, hook_name, &script_path)
 }
 
 fn claude_owned_hook_commands(global: bool, hook_name: &str, script_path: &Path) -> Vec<String> {
@@ -251,6 +278,46 @@ fn claude_owned_hook_commands(global: bool, hook_name: &str, script_path: &Path)
         commands.push(format!("{CLAUDE_PROJECT_DIR}/.claude/hooks/{hook_name}.sh"));
     }
     commands
+}
+
+/// Is this registered command one of THIS Claude hook's?
+///
+/// One predicate for the installer, the remover and the presence check, so a
+/// command one of them owns another cannot leave behind. A command vstack
+/// itself renders matches outright; beyond that the command has to RUN our
+/// script — [`command_targets_hook_script`] proves it, so a hand-wrapped
+/// `env FOO=1 bash <script> --strict` still counts while a command that merely
+/// names the path in some other program's arguments does not.
+fn claude_owns_command(global: bool, hook_name: &str, script_path: &Path) -> impl Fn(&str) -> bool {
+    let owned = claude_owned_hook_commands(global, hook_name, script_path);
+    let script_path = script_path.to_path_buf();
+    // Only the project-scope command defers the project root to run time.
+    let deferred_root = (!global).then(crate::config::project_root);
+    move |command: &str| {
+        owned.iter().any(|own| own == command)
+            || command_targets_hook_script(
+                command,
+                &script_path,
+                deferred_root
+                    .as_deref()
+                    .map(|root| (CLAUDE_PROJECT_DIR, root)),
+            )
+    }
+}
+
+/// Refuse a hook script path that is not valid UTF-8.
+///
+/// The registration is written into a JSON config, which cannot carry the
+/// bytes at all; a lossy conversion would register a command naming a file
+/// that does not exist and fail on every tool call instead of installing.
+fn require_utf8_script_path(script_path: &Path) -> Result<()> {
+    if script_path.to_str().is_some() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "hook script path is not valid UTF-8, so no harness config can carry it: {}",
+        script_path.display()
+    )
 }
 
 /// The `settings.json` [`install_hook_claude`] registers into.
@@ -381,9 +448,9 @@ fn claude_hook_script_path(global: bool, hook_name: &str) -> Option<PathBuf> {
 /// beside a live script is a hook that silently never fires — including
 /// `session-drift-check`, which then cannot report its own absence.
 ///
-/// `event` is the hook's own event. `None` — its source could not be read to
-/// name one — accepts a registration under any event rather than inventing
-/// drift that naming the wrong key would make unclearable.
+/// `slot` is the hook's own event and matcher. `None` — its source could not
+/// be read to name either — accepts a registration under any of them rather
+/// than inventing drift that naming the wrong key would make unclearable.
 ///
 /// Claude merges several settings files, so one that registers the hook answers
 /// for all of them; only when NONE does, and one of them could not be read, is
@@ -391,26 +458,19 @@ fn claude_hook_script_path(global: bool, hook_name: &str) -> Option<PathBuf> {
 pub(crate) fn claude_hook_registration(
     global: bool,
     hook_name: &str,
-    event: Option<&str>,
+    slot: Option<RegistrationSlot<'_>>,
 ) -> HookRegistration {
     let Some(script_path) = claude_hook_script_path(global, hook_name) else {
         return HookRegistration::Absent;
     };
-    let owned = claude_owned_hook_commands(global, hook_name, &script_path);
-    // Only the project-scope command defers the project root to run time.
-    let project_root = (!global).then(crate::config::project_root);
-    let deferred_root = project_root
-        .as_deref()
-        .map(|root| (CLAUDE_PROJECT_DIR, root));
+    let owns = claude_owns_command(global, hook_name, &script_path);
     let mut unreadable = None;
     for settings in claude_settings_candidates(global) {
         match hooks_config_registration(
             &settings,
             &crate::json_config::CLAUDE_SETTINGS,
-            event,
-            &script_path,
-            deferred_root,
-            &owned,
+            slot,
+            &owns,
         ) {
             HookRegistration::Registered => return HookRegistration::Registered,
             HookRegistration::Absent => {}
@@ -442,6 +502,9 @@ pub fn install_hook(
     agents: &[Agent],
 ) -> Result<HookInstall> {
     crate::path_safety::validate_new_item_name(&hook.name)?;
+    let Some(cell) = contract::cell(&hook.event, harness) else {
+        anyhow::bail!(contract::unknown_event_error(&hook.name, &hook.event));
+    };
     if !hook.applies_to(harness.id()) {
         return Ok(HookInstall {
             detail: format!(
@@ -452,24 +515,28 @@ pub fn install_hook(
             installed: false,
         });
     }
-    let installed = match harness {
-        Harness::ClaudeCode => {
+    let installed = match cell.mechanism() {
+        Some(Mechanism::ClaudeSettingsHook) => {
             install_hook_claude(hook, global)?;
             true
         }
-        Harness::OpenCode => {
+        Some(Mechanism::OpenCodeInstruction) => {
             install_hook_opencode(hook, global)?;
             true
         }
-        Harness::Codex => install_hook_codex(hook, global, agents)?,
-        Harness::Cursor => {
+        Some(Mechanism::CodexHooksJson) => {
+            install_hook_codex_native(hook, global)?;
+            true
+        }
+        Some(Mechanism::CodexInstructions) => install_hook_codex_prose(hook, global, agents)?,
+        Some(Mechanism::CursorRule) => {
             install_hook_cursor(hook, global)?;
             true
         }
-        // Pi has no per-hook artifact by design: the native `pi-hooks`
-        // extension owns the behavior, so there is nothing to write and
-        // nothing for `check` to demand.
-        Harness::Pi => true,
+        // Pi carries hook behavior in the `pi-hooks` package rather than a
+        // per-hook artifact, and an unsupported cell writes nothing. Neither
+        // leaves anything for `check` to demand; the level below says which.
+        Some(Mechanism::PiHooksExtension) | None => true,
     };
 
     if !installed {
@@ -485,7 +552,13 @@ pub fn install_hook(
         });
     }
     Ok(HookInstall {
-        detail: format!("[hook] {} → {} ({})", hook.name, harness.name(), hook.event),
+        detail: format!(
+            "[hook] {} → {} ({}, {})",
+            hook.name,
+            harness.name(),
+            hook.event,
+            cell.level()
+        ),
         installed,
     })
 }
@@ -509,6 +582,11 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
         .expect("Claude hooks dir");
     std::fs::create_dir_all(&hooks_dir)?;
     let dest = checked_child_path(&hooks_dir, &format!("{}.sh", hook.name))?;
+    // Only the global command carries the path itself; project scope registers
+    // `$CLAUDE_PROJECT_DIR` and the hook name, which are UTF-8 by construction.
+    if global {
+        require_utf8_script_path(&dest)?;
+    }
     std::fs::write(&dest, &hook.script)?;
 
     // Make executable
@@ -532,8 +610,10 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
         .or_insert_with(|| serde_json::json!({}))
         .as_object_mut()
         .expect("validated by json_config: `hooks` is an object");
-    let owned_commands = claude_owned_hook_commands(global, &hook.name, &dest);
-    remove_hook_entries_from_hooks_object(hooks_obj, &owned_commands);
+    remove_hook_entries_from_hooks_object(
+        hooks_obj,
+        &claude_owns_command(global, &hook.name, &dest),
+    );
 
     // Build the hook entry.
     // Project installs: use $CLAUDE_PROJECT_DIR so hooks resolve regardless of CWD.
@@ -591,6 +671,8 @@ pub(crate) fn cursor_hook_rule_contents(hook: &Hook) -> String {
     ));
     output.push_str("alwaysApply: true\n");
     output.push_str("---\n\n");
+    output.push_str(ADVISORY_BANNER);
+    output.push_str("\n\n");
     output.push_str(&format!("# Safety: {}\n\n", hook.name));
     output.push_str(&hook.safety_prose());
     output
@@ -757,8 +839,10 @@ fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path
         let hooks = hooks
             .as_object_mut()
             .expect("validated by json_config: `hooks` is an object");
-        let owned_commands = claude_owned_hook_commands(global, name, script_path);
-        changed |= remove_hook_entries_from_hooks_object(hooks, &owned_commands);
+        changed |= remove_hook_entries_from_hooks_object(
+            hooks,
+            &claude_owns_command(global, name, script_path),
+        );
     }
 
     if changed {

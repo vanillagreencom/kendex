@@ -8,10 +8,6 @@
 
 use std::path::{Path, PathBuf};
 
-pub(super) fn command_matches_owned_hook_command(command: &str, owned_commands: &[String]) -> bool {
-    owned_commands.iter().any(|owned| command == owned)
-}
-
 /// Path identity for comparison: the canonical path when it exists, so a
 /// symlinked or `..`-spelled command still names the same script, and the
 /// path exactly as written when it does not.

@@ -349,7 +349,17 @@ fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
             report.scope, report.installed
         );
         for item in &report.current {
-            let _ = writeln!(out, "  ✓ {} ({})", display_text(&item.name), item.kind);
+            let enforcement = item
+                .enforcement
+                .as_deref()
+                .map(|summary| format!(" [{}]", display_text(summary)))
+                .unwrap_or_default();
+            let _ = writeln!(
+                out,
+                "  ✓ {} ({}){enforcement}",
+                display_text(&item.name),
+                item.kind
+            );
         }
     }
 

@@ -9,14 +9,16 @@ mod hooks;
 
 pub(crate) use crate::path_safety::{validate_item_name, validate_new_item_name};
 pub(crate) use hooks::{
-    CodexProse, HookRegistration, HookSwitch, claude_hook_registration, codex_event_for,
-    codex_hook_prose, codex_native_hook_gaps, codex_root, cursor_hook_rule_contents,
-    cursor_hook_rule_path, hook_switch, install_codex_fallback_hooks_for_agents, install_hook,
-    migrate_codex_config, opencode_hook_instruction_contents, opencode_hook_instruction_path,
-    opencode_hook_registration, remove_hook_install,
+    CodexProse, HookRegistration, HookSwitch, RegistrationSlot, claude_hook_registration,
+    claude_installed_hook_command, codex_event_for, codex_hook_prose, codex_native_hook_gaps,
+    codex_root, cursor_hook_rule_contents, cursor_hook_rule_path, hook_switch,
+    install_codex_fallback_hooks_for_agents, install_hook, migrate_codex_config,
+    opencode_hook_instruction_contents, opencode_hook_instruction_path, opencode_hook_registration,
+    remove_hook_install,
 };
 #[cfg(test)]
 pub(crate) use hooks::{codex_agent_prose_section, codex_hook_safety_block};
+pub(crate) use hooks::{contract, enforcement};
 
 /// Result of a single installation
 pub struct InstallResult {

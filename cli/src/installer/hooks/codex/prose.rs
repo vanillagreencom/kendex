@@ -7,7 +7,7 @@
 //! does a heading mean a section. Install, presence and removal all ask it
 //! here, so none of them can answer differently.
 
-use super::{codex_event_for, toml_error_summary};
+use super::toml_error_summary;
 use crate::agent::Agent;
 use crate::harness::Harness;
 use crate::hook::Hook;
@@ -18,8 +18,9 @@ use std::path::Path;
 
 pub(crate) fn codex_hook_safety_block(hook: &Hook) -> String {
     format!(
-        "{}\n\n{}",
+        "{}\n\n{}\n\n{}",
         codex_hook_safety_marker(&hook.name),
+        crate::installer::hooks::contract::ADVISORY_BANNER,
         hook.safety_prose()
     )
 }
@@ -266,7 +267,7 @@ fn content_carries_hook_prose(
 /// A scope with no Codex agent TOMLs produces nothing at all, and `Ok(false)`
 /// says so — there is no artifact to make, and none for `check` to demand
 /// until an agent exists.
-pub(super) fn install_hook_codex_prose(
+pub(crate) fn install_hook_codex_prose(
     hook: &Hook,
     global: bool,
     agents: &[Agent],
@@ -377,7 +378,9 @@ pub(crate) fn install_codex_fallback_hooks_for_agents(
     agents: &[Agent],
 ) -> Result<()> {
     for hook in hooks {
-        if hook.applies_to(Harness::Codex.id()) && codex_event_for(&hook.event).is_none() {
+        if hook.applies_to(Harness::Codex.id())
+            && crate::installer::hooks::contract::is_codex_prose(&hook.event)
+        {
             let _ = install_hook_codex_prose(hook, global, agents)?;
         }
     }

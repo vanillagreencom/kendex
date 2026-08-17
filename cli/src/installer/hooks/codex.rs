@@ -3,8 +3,12 @@
 //! `developer_instructions` prose fallback for events Codex has no
 //! equivalent for.
 
-use super::{checked_child_path, remove_hook_entries_from_hooks_object, shell_quote};
-use crate::agent::Agent;
+use super::contract::{self, Cell, Mechanism};
+use super::{
+    OwnsCommand, RegistrationSlot, checked_child_path, command_targets_hook_script,
+    remove_hook_entries_from_hooks_object, require_utf8_script_path, shell_quote,
+};
+use crate::harness::Harness;
 use crate::hook::Hook;
 use crate::path_safety::validate_item_name;
 use anyhow::{Context, Result};
@@ -12,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 mod prose;
 
+pub(super) use prose::install_hook_codex_prose;
 pub(crate) use prose::{
     CodexProse, codex_hook_prose, install_codex_fallback_hooks_for_agents,
     strip_hook_prose_from_codex_agents,
@@ -23,28 +28,16 @@ pub(crate) use prose::{
     codex_agent_prose_section, codex_hook_safety_block, codex_hook_safety_marker,
 };
 
-/// Map a canonical (Claude-style) hook event to its codex equivalent.
+/// The Codex event a canonical (Claude-style) hook event registers as, or
+/// `None` when the contract routes it to Codex's prose fallback instead.
 ///
-/// Codex supports these events natively (per
-/// <https://developers.openai.com/codex/hooks>):
-///   SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,
-///   PreCompact, PostCompact, PermissionRequest, Stop.
-///
-/// Claude's `TaskCompleted` has no clean equivalent — Stop fires when a turn
-/// ends and treats `exit 2 + stderr` as "continue with this reason as the next
-/// prompt" rather than "block the done state". Returning None routes such
-/// hooks to the prose-only fallback; authors who want codex coverage should
-/// scope the hook with `harnesses: [claude-code]` or rewrite for Stop.
+/// Codex names its events exactly as the canonical set does, so the mapping is
+/// the identity wherever the contract says Codex runs the hook.
 pub(crate) fn codex_event_for(event: &str) -> Option<&'static str> {
-    match event {
-        "SessionStart" => Some("SessionStart"),
-        "UserPromptSubmit" => Some("UserPromptSubmit"),
-        "PreToolUse" => Some("PreToolUse"),
-        "PostToolUse" => Some("PostToolUse"),
-        "PreCompact" => Some("PreCompact"),
-        "PostCompact" => Some("PostCompact"),
-        "PermissionRequest" => Some("PermissionRequest"),
-        "Stop" => Some("Stop"),
+    match contract::cell(event, Harness::Codex) {
+        Some(Cell::Enforced(Mechanism::CodexHooksJson)) => {
+            contract::events().find(|known| *known == event)
+        }
         _ => None,
     }
 }
@@ -58,27 +51,19 @@ pub(crate) fn codex_root(global: bool) -> PathBuf {
     }
 }
 
-/// Codex hook install. Native install (script + hooks.json + features flag)
-/// when codex understands the event; safety-prose appendix to agent TOML
-/// otherwise.
-/// Returns whether an artifact (native script or prose block) was produced.
-pub(super) fn install_hook_codex(hook: &Hook, global: bool, agents: &[Agent]) -> Result<bool> {
-    match codex_event_for(&hook.event) {
-        Some(codex_event) => install_hook_codex_native(hook, codex_event, global).map(|()| true),
-        None => prose::install_hook_codex_prose(hook, global, agents),
-    }
-}
-
 /// Install a codex-native hook: copy the script under `<root>/hooks/<name>.sh`,
 /// merge the entry into `<root>/hooks.json`, and ensure
 /// `[features] hooks = true` is set in `<root>/config.toml`.
-fn install_hook_codex_native(hook: &Hook, codex_event: &str, global: bool) -> Result<()> {
+pub(super) fn install_hook_codex_native(hook: &Hook, global: bool) -> Result<()> {
     validate_item_name(&hook.name)?;
+    let codex_event = codex_event_for(&hook.event)
+        .with_context(|| format!("hook {} has no native Codex event", hook.name))?;
     let root = codex_root(global);
 
     let hooks_dir = root.join("hooks");
     std::fs::create_dir_all(&hooks_dir)?;
     let script_path = checked_child_path(&hooks_dir, &format!("{}.sh", hook.name))?;
+    require_utf8_script_path(&script_path)?;
     std::fs::write(&script_path, &hook.script)?;
     #[cfg(unix)]
     {
@@ -86,10 +71,10 @@ fn install_hook_codex_native(hook: &Hook, codex_event: &str, global: bool) -> Re
         std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))?;
     }
 
-    let command = codex_hook_command(global, &hook.name, &script_path);
-    let owned_commands = codex_owned_hook_commands(global, &hook.name, &script_path);
+    let command = codex_hook_command(&script_path);
+    let owns = codex_owns_command(global, &hook.name, &script_path);
     let hooks_json = root.join("hooks.json");
-    merge_codex_hooks_json_owned(&hooks_json, codex_event, hook, &command, &owned_commands)?;
+    merge_codex_hooks_json_owned(&hooks_json, codex_event, hook, &command, &owns)?;
     enable_codex_hooks_feature(&root.join("config.toml"))?;
     Ok(())
 }
@@ -143,21 +128,17 @@ impl CodexNativeGap {
 pub(crate) fn codex_native_hook_gaps(
     global: bool,
     hook_name: &str,
-    codex_event: &str,
+    slot: RegistrationSlot<'_>,
 ) -> Vec<CodexNativeGap> {
     let root = codex_root(global);
     let script_path = root.join("hooks").join(format!("{hook_name}.sh"));
-    let owned = codex_owned_hook_commands(global, hook_name, &script_path);
-    // Only the project-scope command defers the repo root to run time.
-    let git_root = (!global).then(|| root.parent()).flatten();
+    let owns = codex_owns_command(global, hook_name, &script_path);
     let mut gaps = Vec::new();
     match super::hooks_config_registration(
         &root.join("hooks.json"),
         &crate::json_config::HOOKS_CONFIG,
-        Some(codex_event),
-        &script_path,
-        git_root.map(|root| (CODEX_GIT_TOPLEVEL, root)),
-        &owned,
+        Some(slot),
+        &owns,
     ) {
         super::HookRegistration::Registered => {}
         super::HookRegistration::Absent => gaps.push(CodexNativeGap::NotRegistered),
@@ -173,11 +154,6 @@ pub(crate) fn codex_native_hook_gaps(
     }
     gaps
 }
-
-/// The repo-root substitution the project-scope command defers to run time.
-/// A user who reshapes that command keeps it, so registration checking has to
-/// read the command the same way the shell codex hands it to will.
-const CODEX_GIT_TOPLEVEL: &str = "$(git rev-parse --show-toplevel)";
 
 /// Whether codex will act on `hooks.json` at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -266,22 +242,57 @@ pub fn migrate_codex_config(global: bool) -> Result<()> {
     migrate_codex_hooks_feature(&codex_root(global).join("config.toml"))
 }
 
-/// Build the command codex runs. For global scope we resolve to the absolute
-/// path under `~/.codex/hooks/`. For project scope we resolve from the git root
-/// (the codex docs recommend this so the hook works regardless of session cwd).
-fn codex_hook_command(global: bool, hook_name: &str, script_path: &Path) -> String {
-    if global {
-        format!("bash {}", shell_quote(&script_path.to_string_lossy()))
-    } else {
-        format!(
-            "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/{}.sh\"",
-            hook_name
-        )
-    }
+/// Build the command codex runs. Codex sets no project-root variable and runs
+/// the command from the session cwd, so the anchor is the install-time
+/// absolute path — the one resolution that holds from any directory and in a
+/// project that is not a git repository.
+fn codex_hook_command(script_path: &Path) -> String {
+    format!("bash {}", shell_quote(&script_path.to_string_lossy()))
 }
 
-fn codex_owned_hook_commands(global: bool, hook_name: &str, script_path: &Path) -> Vec<String> {
-    vec![codex_hook_command(global, hook_name, script_path)]
+/// Is this registered codex command one of THIS hook's? One predicate for the
+/// installer, the remover and the presence check, so a reinstall replaces its
+/// own entry instead of adding a second handler beside it.
+///
+/// Three ways a command answers yes:
+///
+/// - it is exactly the one vstack renders now;
+/// - it RUNS our script, as [`command_targets_hook_script`] reads it, so a
+///   command a user reshaped by hand around our path still counts while one
+///   that merely passes the path to some other program as data does not;
+/// - project scope only: it has the install shape
+///   `<root>/.codex/hooks/<name>.sh` and that script is gone. The command
+///   carries an absolute path, so a project that moved — or a `hooks.json`
+///   written from the older `$(git rev-parse --show-toplevel)` anchor, which
+///   no shell reading can settle — otherwise leaves a handler pointing at a
+///   script that no longer exists. A LIVE handler is some checkout's working
+///   registration, never this project's relic, and stays.
+fn codex_owns_command(global: bool, hook_name: &str, script_path: &Path) -> impl Fn(&str) -> bool {
+    let exact = codex_hook_command(script_path);
+    let script_path = script_path.to_path_buf();
+    let project_tail = format!("/.codex/hooks/{hook_name}.sh");
+    move |command: &str| {
+        if command == exact || command_targets_hook_script(command, &script_path, None) {
+            return true;
+        }
+        if global {
+            return false;
+        }
+        let Some(argument) = command.strip_prefix("bash ") else {
+            return false;
+        };
+        let argument = argument.trim();
+        let unquoted = argument
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .or_else(|| {
+                argument
+                    .strip_prefix('\'')
+                    .and_then(|rest| rest.strip_suffix('\''))
+            })
+            .unwrap_or(argument);
+        unquoted.ends_with(&project_tail) && !Path::new(unquoted).exists()
+    }
 }
 
 /// Merge one hook handler into `<root>/hooks.json`. Existing entries for other
@@ -294,8 +305,10 @@ pub(super) fn merge_codex_hooks_json(
     hook: &Hook,
     command: &str,
 ) -> Result<()> {
-    let owned_commands = [command.to_string()];
-    merge_codex_hooks_json_owned(hooks_json, codex_event, hook, command, &owned_commands)
+    let owned = command.to_string();
+    merge_codex_hooks_json_owned(hooks_json, codex_event, hook, command, &|candidate| {
+        candidate == owned
+    })
 }
 
 fn merge_codex_hooks_json_owned(
@@ -303,7 +316,7 @@ fn merge_codex_hooks_json_owned(
     codex_event: &str,
     hook: &Hook,
     command: &str,
-    owned_commands: &[String],
+    owns: OwnsCommand<'_>,
 ) -> Result<()> {
     let mut doc = super::read_hooks_config(hooks_json, &crate::json_config::HOOKS_CONFIG)
         .context(crate::json_config::REFUSE_UNPARSEABLE_CONFIG)?
@@ -317,7 +330,7 @@ fn merge_codex_hooks_json_owned(
         .or_insert_with(|| serde_json::json!({}))
         .as_object_mut()
         .expect("validated by json_config: `hooks` is an object");
-    remove_hook_entries_from_hooks_object(hooks_obj, owned_commands);
+    remove_hook_entries_from_hooks_object(hooks_obj, owns);
     // Created only when the key is absent; a value that is not an array made
     // the read unreadable, so none reaches this point to be replaced.
     let event_arr = hooks_obj
@@ -532,8 +545,10 @@ pub(super) fn remove_hook_from_codex_json(
         let hooks = hooks
             .as_object_mut()
             .expect("validated by json_config: `hooks` is an object");
-        let owned_commands = codex_owned_hook_commands(global, name, script_path);
-        changed |= remove_hook_entries_from_hooks_object(hooks, &owned_commands);
+        changed |= remove_hook_entries_from_hooks_object(
+            hooks,
+            &codex_owns_command(global, name, script_path),
+        );
         if hooks.is_empty() {
             doc.as_object_mut()
                 .expect("validated by json_config: the document is an object")

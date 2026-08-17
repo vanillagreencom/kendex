@@ -164,6 +164,13 @@ pub struct Item {
     /// where "run `vstack add`" is the remedy for those harnesses alone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// For a hook, what each harness it is locked at actually does with it —
+    /// [`crate::installer::enforcement::summary`]. Human listing only: it
+    /// describes an install that is fine, so it is neither drift nor part of
+    /// the bounded quiet report, and every drift section already carries the
+    /// per-harness gap in `detail`.
+    #[serde(skip)]
+    pub enforcement: Option<String>,
 }
 
 impl Item {
@@ -172,6 +179,7 @@ impl Item {
             name: name.into(),
             kind,
             detail: None,
+            enforcement: None,
         }
     }
 }
@@ -912,6 +920,18 @@ fn check_scope(global: bool, lock: &LockFile, opts: CheckOptions) -> Option<Scop
         .map(|i| i.name.as_str())
         .collect();
     current.retain(|i| !reported_names.contains(i.name.as_str()));
+    // A hook that is installed still has to say what it ENFORCES: an advisory
+    // artifact is not a guard, and a ✓ that hides the difference manufactures
+    // false safety. Derived from the one contract `list` reads.
+    for item in &mut current {
+        let Some(entry) = entries
+            .iter()
+            .find(|e| e.name == item.name && e.kind == item.kind)
+        else {
+            continue;
+        };
+        item.enforcement = crate::installer::enforcement::summary(entry, global);
+    }
 
     let disk_skill_names: HashSet<&str> = disk_skills.iter().map(|d| d.name.as_str()).collect();
     let (missing_skill_refs, invalid_refs) =

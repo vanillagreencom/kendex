@@ -40,6 +40,21 @@ impl Harness {
         Harness::Pi,
     ];
 
+    /// Number of harnesses, so a per-harness array cannot fall out of step
+    /// with [`Harness::ALL`].
+    pub const COUNT: usize = 5;
+
+    /// Position in [`Harness::ALL`], for arrays keyed by harness.
+    pub const fn index(self) -> usize {
+        match self {
+            Harness::ClaudeCode => 0,
+            Harness::Cursor => 1,
+            Harness::OpenCode => 2,
+            Harness::Codex => 3,
+            Harness::Pi => 4,
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Harness::ClaudeCode => "Claude Code",
@@ -280,7 +295,9 @@ impl Harness {
         let agent = &agent;
         let dir = self.agents_dir(global);
         match self {
-            Harness::ClaudeCode => claude::generate_agent(agent, &dir, skills, hooks, extras),
+            Harness::ClaudeCode => {
+                claude::generate_agent(agent, global, &dir, skills, hooks, extras)
+            }
             Harness::Cursor => cursor::generate_agent(agent, &dir, skills, hooks, extras),
             Harness::OpenCode => opencode::generate_agent(agent, &dir, skills, hooks, extras),
             Harness::Codex => codex::generate_agent(agent, global, &dir, skills, hooks, extras),
@@ -347,6 +364,14 @@ impl std::fmt::Display for Harness {
 mod tests {
     use super::Harness;
     use crate::agent::{Agent, AgentRole};
+
+    #[test]
+    fn every_harness_indexes_its_own_slot() {
+        assert_eq!(Harness::ALL.len(), Harness::COUNT);
+        for harness in Harness::ALL {
+            assert_eq!(Harness::ALL[harness.index()], *harness);
+        }
+    }
 
     fn agent_fixture(name: &str) -> Agent {
         Agent {

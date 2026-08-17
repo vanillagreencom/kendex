@@ -188,11 +188,13 @@ Secret values may also be injected by the parent process at launch time. GitHub 
 
 | Tool | Notes |
 |---|---|
-| Claude Code | Richest native hook support. Works per project or globally. |
+| Claude Code | Works per project or globally. |
 | Cursor | Project scope only; safety rules surface as `.cursor/rules`. |
 | OpenCode | Config-dir aware. |
-| Codex | Project agents live in `.codex/agents/*.toml`; their Required Skills section points project installs at `.agents/skills/<name>/SKILL.md`. Native hooks are used for supported events; events without a Codex equivalent fall back to safety guidance inside agent instructions. |
+| Codex | Project agents live in `.codex/agents/*.toml`; their Required Skills section points project installs at `.agents/skills/<name>/SKILL.md`. |
 | Pi | Adds Pi extension installation alongside agents and skills. |
+
+Per-harness hook behavior is the [hook execution contract](#hook-execution-contract).
 
 Windows: CLI runs natively; symlink mode falls back to copy.
 
@@ -257,24 +259,70 @@ Windows: CLI runs natively; symlink mode falls back to copy.
 | Hook | Event | Brief |
 |---|---|---|
 | `block-bare-cd` | `PreToolUse` | Blocks unsafe bare `cd` usage and nudges toward subshell-safe patterns. |
-| `block-unsafe-rm` | `PreToolUse` | Refuses a recursive `rm` whose path starts with a variable that may expand empty (`rm -rf $DIR/$NAME`, `"$P/x"`, `${X:-}`) — the shape the harness halts the whole session on with a "Dangerous rm operation on possibly-empty variable path" prompt, even with permissions bypassed. Names the accepted rewrite: `rm -rf -- "${NAME:?}/sub"` or a literal absolute path. |
+| `block-unsafe-rm` | `PreToolUse` | Refuses a recursive `rm` whose path starts with a variable that may expand empty (`rm -rf $DIR/$NAME`, `"$P/x"`, `${X:-}`) — the shape the harness halts the whole session on with a "Dangerous rm operation on possibly-empty variable path" prompt, even with permissions bypassed. Names the accepted rewrite: `rm -rf -- "${NAME:?}/sub"` or a literal absolute path. Not on Pi — `pi-hooks` has no port. |
 | `block-repo-copy` | `PreToolUse` | Refuses a recursive copy (`cp -r`/`-R`/`-a`, recursive or archive `rsync`, local `git clone`, `tar` create-to-extract pipe) when the source carries repository history or a build tree AND the destination resolves under a temp/scratch root. Temp roots are commonly RAM-backed tmpfs, where such a copy fills the filesystem and every process writing there fails with ENOSPC. |
 | `pre-commit-check` | `PreToolUse` | Validates formatting and lint before commits. Rust Clippy lane is scoped to staged packages and configurable via `VSTACK_PRE_COMMIT_RUST_CLIPPY` (custom command or `off`). |
 | `post-edit-lint` | `PostToolUse` | Runs lint checks after source edits. |
-| `task-completed-check` | `TaskCompleted` | Runs final lint checks before marking work complete. Claude-Code-only — codex has no clean equivalent event. |
+| `task-completed-check` | `TaskCompleted` | Runs final lint checks before marking work complete. Scoped to Claude Code with `harnesses:` — it is the one harness that runs the event natively. |
 | `session-drift-check` | `SessionStart` | On a fresh session start (not resume or compact) runs `vstack check --quiet` and hands the agent the drift report — outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`, `-g` in a global section), unreachable sources — plus, alongside drift, items available but not installed (`vstack add --<kind> <name>`, pending your approval). Prints nothing when the install is current; one line when `vstack` is not on `PATH`, the project directory is unreadable, or the check fails unexpectedly. Never waits on the network: a stale source cache is refreshed in the background and reported at the next session. Never installs or removes anything and never touches the project's git; vstack's own source caches under `~/.vstack/cache` may be fetched at most once per TTL. `VSTACK_DRIFT_HOOK=off` disables it, `VSTACK_DRIFT_HOOK_AVAILABLE=off` hides the available-item suggestions. Claude Code and Codex only (native `SessionStart`); Pi gets the same report from `pi-hooks`. |
 
-Hook installation per harness:
+#### Hook execution contract
 
-- **Claude Code** — script copied under `<scope>/.claude/hooks/`, registered in `settings.json` plus the owning agent's frontmatter. Both artifacts are what `check`/`verify` require — a script whose `settings.json` entry was deleted, or one whose entry points at a different script, is drift, because Claude Code would never run it. A registration you keep in `settings.local.json` instead counts: Claude Code merges it, so it runs.
-- **Codex** — native install when codex supports the event (`PreToolUse`, `PostToolUse`, `PreCompact`, `PostCompact`, `PermissionRequest`, `SessionStart`, `UserPromptSubmit`, `Stop`): script copied to `<scope>/.codex/hooks/`, entry merged into `<scope>/.codex/hooks.json`, and `[features] hooks = true` ensured in `config.toml`. Events without a codex equivalent fall back to a safety advisory appended to each agent's `developer_instructions`. All three artifacts are what `check`/`verify` require of a native codex hook — a script whose registration was deleted, or a scope with the `hooks` feature switched off, is drift, because codex would never run it.
-- **Cursor** — safety advisory `.mdc` written under `<scope>/.cursor/rules/`.
-- **OpenCode** — permission rule + instruction file referenced from `opencode.json`. Both artifacts are what `check`/`verify` require — an instruction file no `instructions` entry names is prose OpenCode never loads, so it is drift. Any spelling of the path that still resolves to the same file counts, so a hand-edited entry keeps working.
-- **Pi** — same hook behaviors ship as a first-class Pi extension, `@vanillagreen/pi-hooks`. It listens on Pi's `session_start`/`tool_call`/`tool_result`/`turn_end` events and uses `{block: true, reason}` to short-circuit unsafe tool calls. Each hook is independently toggleable from the pi-extension-manager settings panel.
+What installing a hook means, per event, per harness. **enforced** — the
+harness runs the script itself, so a refusal is deterministic. **advisory** —
+the harness only reads text, and compliance is the model's. **unsupported** —
+nothing is installed for that pair.
 
-A registration counts for Claude Code and Codex alike only when the recorded command would actually RUN the script: the command itself, or the operand of a shell or an `env`/`timeout`-style prefix that execs it — so you can wrap the command by hand (`env FOO=1 bash <script> --strict`) and keep it. A command that merely mentions the path somewhere in another program's arguments is reported as drift, because nothing there runs the hook.
+<!-- generated: hook-contract -->
+| Event | Claude Code | Cursor | OpenCode | Codex | Pi |
+|---|---|---|---|---|---|
+| `PreToolUse` | enforced — settings.json hook | advisory — rule file | advisory — instruction file | enforced — hooks.json entry | enforced — pi-hooks extension |
+| `PostToolUse` | enforced — settings.json hook | advisory — rule file | advisory — instruction file | enforced — hooks.json entry | enforced — pi-hooks extension |
+| `PermissionRequest` | enforced — settings.json hook | advisory — rule file | advisory — instruction file | enforced — hooks.json entry | unsupported |
+| `SessionStart` | enforced — settings.json hook | advisory — rule file | advisory — instruction file | enforced — hooks.json entry | unsupported |
+| `UserPromptSubmit` | enforced — settings.json hook | advisory — rule file | advisory — instruction file | enforced — hooks.json entry | unsupported |
+| `PreCompact` | enforced — settings.json hook | advisory — rule file | advisory — instruction file | enforced — hooks.json entry | unsupported |
+| `PostCompact` | enforced — settings.json hook | advisory — rule file | advisory — instruction file | enforced — hooks.json entry | unsupported |
+| `Stop` | enforced — settings.json hook | advisory — rule file | advisory — instruction file | enforced — hooks.json entry | unsupported |
+| `TaskCompleted` | enforced — settings.json hook | advisory — rule file | advisory — instruction file | advisory — agent instructions | enforced — pi-hooks extension |
+<!-- /generated: hook-contract -->
 
-Use `harnesses:` in a hook's frontmatter to scope it explicitly (e.g. `harnesses: [claude-code]`).
+`vstack list` and `vstack check` print this level for every installed hook on
+every harness it is locked at, and each advisory artifact carries
+`advisory — this harness cannot execute hooks`. An event outside this table is
+refused at install: no harness column could be filled in for it.
+
+A level is a claim about what vstack installed and what the harness does with
+it, downgraded to `unsupported` when any artifact behind it is gone, the
+`harnesses:` allowlist excludes the harness, or Pi's carrier package is not
+installed. It is not a probe of harness runtime state — whether Codex has been
+told to trust the project's `.codex/` layer, or which hooks are toggled on in
+pi-extension-manager, is the harness's to answer. `vstack verify` re-checks
+every installed artifact against its source and names the exact gap.
+
+Where the artifacts land, and what `check`/`verify` require of each:
+
+- **Claude Code** — script under `<scope>/.claude/hooks/`, registered in `settings.json` plus the owning agent's frontmatter. Project scope anchors on `$CLAUDE_PROJECT_DIR`; global scope on the installed absolute path. Both artifacts are required — a script whose registration was deleted, or one registered under a different event or matcher, is drift, because Claude Code would never run it at the time the hook declares. A registration you keep in `settings.local.json` instead counts: Claude Code merges it, so it runs. `disableAllHooks` is reported on its own: every artifact is there and Claude Code runs none of them, so the remedy is that setting, not a reinstall.
+- **Codex** — script under `<scope>/.codex/hooks/`, entry merged into `<scope>/.codex/hooks.json`, and `[features] hooks = true` ensured in `config.toml`. Codex sets no project-root variable and runs the command from the session cwd, so the registered command carries the install-time absolute path and resolves in projects that are not git repositories. All three are required — a script whose registration was deleted, and a scope with the `hooks` feature switched off, are each reported with their own remedy.
+- **Cursor** — advisory `.mdc` under `<scope>/.cursor/rules/`. The rule's own `alwaysApply: true` is what makes Cursor attach it to every request; a rule edited down to description-matching is reported as switched off, because "the model may judge it relevant" is not the same as attached.
+- **OpenCode** — permission rule + advisory instruction file referenced from `opencode.json`. Both are required — an instruction file no `instructions` entry names is prose OpenCode never loads. Any spelling of the path that still resolves to the same file counts, so a hand-edited entry keeps working.
+- **Pi** — no per-hook artifact. The behaviors ship as `@vanillagreen/pi-hooks`, which listens on Pi's `session_start`/`tool_call`/`tool_result`/`turn_end` events and uses `{block: true, reason}` to short-circuit unsafe tool calls; each is independently toggleable from the pi-extension-manager settings panel. Without that package deployed AND registered, Pi enforces nothing, and `vstack list` says so.
+
+A Claude Code or Codex registration counts only when the recorded command would
+actually RUN the script: the command itself, or the operand of a shell or an
+`env`/`timeout`-style prefix that execs it — so you can wrap the command by hand
+(`env FOO=1 bash <script> --strict`) and keep it. A command that merely mentions
+the path somewhere in another program's arguments is reported as drift, because
+nothing there runs the hook. A configuration file that exists and cannot be
+parsed is never read as "not registered": vstack reports it unverifiable, names
+the file, and refuses to rewrite what it could not understand.
+
+The commit path is guarded separately and for every tool: an installed
+[`growth-guards`](skills/growth-guards/) skill arms real `.git/hooks`
+pre-commit and commit-msg shims, which fire regardless of which harness — or
+whether any harness — issued the commit.
+
+Use `harnesses:` in a hook's frontmatter to scope it explicitly (e.g. `harnesses: [claude-code]`); an excluded harness reports `unsupported (excluded by harnesses:)`.
 
 ### Pi Extensions
 

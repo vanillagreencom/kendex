@@ -2,7 +2,7 @@
 
 ![pi-hooks settings panel](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-hooks/assets/hooks-settings.png)
 
-First-class Pi port of the vstack safety hooks. Each hook is independently toggleable.
+First-class Pi port of the vstack safety hooks listed below. Each hook is independently toggleable.
 
 ## Hooks
 
@@ -15,7 +15,9 @@ First-class Pi port of the vstack safety hooks. Each hook is independently toggl
 | End-of-turn clippy | `turn_end` | If `.rs` files were touched during the turn, runs workspace clippy and surfaces errors via UI notification. Advisory only. |
 | Session-start drift report | `session_start` | On a fresh start (startup, new, fork — not resume or reload) runs `vstack check --quiet` in the background and hands the agent the drift report: outdated items (`vstack refresh`), items removed upstream (`vstack remove <name>`, `-g` in a global section), unreachable sources, and — alongside drift — items available in the source but not installed (`vstack add --<kind> <name>`, pending your approval). Silent when the install is current; one line when no `vstack` binary is on `PATH`, the session directory is unreadable, or the check fails unexpectedly. Never blocks startup. Informational only — never installs or removes anything and never touches the project's git; the check never waits on the network (its only writes are vstack's own cache bookkeeping under `~/.vstack/cache`), and a source cache there older than its TTL is refreshed by a detached background process nobody waits on. |
 
-These implement the same safety goals as the bash hooks in `vstack/hooks/`, with Pi-specific mechanics where the in-process event loop needs different handling: the pre-commit hook runs cargo checks via async child processes and first proves the commit targets the active project repo, so unrelated fixture commits do not freeze the session.
+`block-unsafe-rm` has no Pi port; it declares `harnesses:` without `pi`, so vstack reports Pi as `unsupported` for it rather than claiming enforcement that does not exist.
+
+These implement the same safety goals as their matching bash hooks in `vstack/hooks/`, with Pi-specific mechanics where the in-process event loop needs different handling: the pre-commit hook runs cargo checks via async child processes and first proves the commit targets the active project repo, so unrelated fixture commits do not freeze the session.
 
 ## Install
 

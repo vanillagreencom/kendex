@@ -1055,6 +1055,9 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
         crate::path_safety::validate_new_item_name(name)
             .with_context(|| format!("cannot install {name:?}"))?;
     }
+    for hook in &selected_hooks {
+        crate::installer::contract::validate_event(&hook.name, &hook.event)?;
+    }
     if add_writes_project_skill_root(
         global,
         &selected_skills,

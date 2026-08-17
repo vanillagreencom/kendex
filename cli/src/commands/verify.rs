@@ -400,7 +400,12 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
                     match crate::installer::claude_hook_registration(
                         global,
                         name,
-                        source_hook.as_ref().map(|hook| hook.event.as_str()),
+                        source_hook
+                            .as_ref()
+                            .map(|hook| crate::installer::RegistrationSlot {
+                                event: hook.event.as_str(),
+                                matcher: hook.matcher.as_deref(),
+                            }),
                     ) {
                         crate::installer::HookRegistration::Registered => {}
                         crate::installer::HookRegistration::Absent => {
@@ -489,12 +494,15 @@ fn verify_hook_install(entry: &LockEntry, global: bool) -> Option<InstallGap> {
                     // RUN it: the script, its `hooks.json` registration,
                     // and the `hooks` feature. Any one of the three
                     // missing is a hook that silently never fires.
-                    Some((_, Some(codex_event))) => {
+                    Some((hook, Some(codex_event))) => {
                         if !has_script {
                             missing.push(format!("{h}: script missing"));
                         } else {
-                            for gap in
-                                crate::installer::codex_native_hook_gaps(global, name, codex_event)
+                            let slot = crate::installer::RegistrationSlot {
+                                event: codex_event,
+                                matcher: hook.matcher.as_deref(),
+                            };
+                            for gap in crate::installer::codex_native_hook_gaps(global, name, slot)
                             {
                                 let note = format!("{h}: {}", gap.describe());
                                 if gap.is_unreadable() {

@@ -131,6 +131,52 @@
   the adoption depth. Every verdict, remediation and exit code is unchanged;
   the only text that moves is two collection-error diagnostics, which now name
   the lane whose scan failed.
+- hooks: one execution contract decides what installing a hook means. An
+  event × harness matrix (`cli/src/installer/hooks/contract.rs`) names the
+  mechanism, and every install path, `vstack list`/`check` label, and the
+  table published in the README derive from it — a test fails when the
+  published copy drifts. `list` and `check` now print `enforced` /
+  `advisory` / `unsupported` per harness per installed hook, advisory
+  artifacts (Cursor rules, OpenCode instructions, the Codex prose fallback)
+  carry `advisory — this harness cannot execute hooks`, and Pi reports
+  `unsupported` until `@vanillagreen/pi-hooks` — which carries all Pi hook
+  behavior — is actually installed. Breaking: a hook whose `event:` is not a
+  row of the contract is refused at install instead of registering something
+  no harness runs; supported events are listed in the refusal (VST-283).
+- hooks: registered commands resolve from any working directory in a project
+  that is not a git repository. Project-scope Codex hooks resolved through
+  `$(git rev-parse --show-toplevel)`, so in a non-git project every hook
+  command expanded to `/.codex/hooks/<name>.sh` and failed silently; they now
+  carry the install-time absolute path, which is the only anchor Codex can
+  resolve — it sets no project-root variable and runs the command from the
+  session cwd. Claude Code agent frontmatter took the project anchor even for
+  global installs, pointing at a project path that does not exist; it now
+  takes the same command the installer registers. A reinstall replaces a
+  git-anchored registration instead of adding a second handler beside it
+  (VST-283).
+- hooks: `block-unsafe-rm` declares `harnesses:` without `pi`. The
+  `pi-hooks` package has no port of it, and without the exclusion the
+  contract would report Pi enforcement that does not exist (VST-283).
+- hooks: a Codex registration is recognised by the script it runs, not by the
+  literal command string, so a project that moved no longer accumulates a
+  second handler pointing at a script that is gone — and removal takes the
+  old one with it. Handlers naming a script outside `<root>/.codex/hooks/`
+  are still left alone. A script path that is not valid UTF-8 is refused
+  instead of registered lossily as a command that resolves to nothing
+  (VST-283).
+- hooks: `vstack add` checks every selected hook's event against the contract
+  before its first write, so a refused event leaves no lock, agent, settings
+  or config behind (VST-283).
+- hooks: one predicate per harness decides which registered command is
+  vstack's, and install, removal and every presence report ask it. A Claude
+  Code or Codex command you reshaped by hand around vstack's script — an
+  `env`/`timeout` prefix, extra flags, a different quoting of the same path —
+  was already counted as installed, but `vstack remove` matched the literal
+  string only and left it registered, so the harness kept running a hook the
+  lock no longer knew about. The enforcement level `list` and `check` print
+  now comes from the same reader `verify` reports the gap from, so a hook
+  cannot read `enforced` on one command and drifted on another (VST-258,
+  VST-283).
 
 - second-opinion settings example: the `SECOND_OPINION_CURRENT_MODEL` block
   announced "three cases, and only the third makes a project file usable at

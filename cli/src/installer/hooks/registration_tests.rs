@@ -35,7 +35,14 @@ fn codex_gaps_for_registered_command(
     .unwrap();
 
     let gaps = crate::test_util::with_codex_home(&dir, || {
-        codex_native_hook_gaps(true, "foo", "PreToolUse")
+        codex_native_hook_gaps(
+            true,
+            "foo",
+            RegistrationSlot {
+                event: "PreToolUse",
+                matcher: Some("Bash"),
+            },
+        )
     });
     (dir, gaps)
 }

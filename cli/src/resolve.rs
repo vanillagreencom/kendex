@@ -54,7 +54,7 @@ pub(crate) fn installed_codex_fallback_hooks(
         .filter(|entry| entry.harnesses.iter().any(|h| h == Harness::Codex.id()))
         .filter_map(|entry| source_hook_for_lock_entry(source_hooks, entry))
         .filter(|hook| hook.applies_to(Harness::Codex.id()))
-        .filter(|hook| crate::installer::codex_event_for(&hook.event).is_none())
+        .filter(|hook| crate::installer::contract::is_codex_prose(&hook.event))
         .cloned()
         .collect()
 }

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 /// and developer_instructions (the agent body).
 ///
 /// Hooks are NOT rendered here — codex hooks install as native shell hooks via
-/// `installer::install_hook_codex` (which writes `<scope>/.codex/hooks/*.sh`,
+/// `installer::install_hook` (which writes `<scope>/.codex/hooks/*.sh`,
 /// merges `<scope>/.codex/hooks.json`, and toggles `[features] hooks = true`).
 /// The `_hooks` parameter exists only to keep the harness trait shape
 /// uniform.
