@@ -30,7 +30,8 @@ PR_REVIEW_NUDGE = ""
 
 # Check-run/status name a trusted review bot publishes on analyzed heads; a
 # success counts as review-received. SECURITY: matched by NAME and anyone
-# can publish under any name — name only the trusted bot's check.
+# can publish under any name — name only the trusted bot's check. Empty =
+# review objects only.
 PR_REVIEW_CHECK = ""
 
 # Reviewer logins (comma/space separated, ONE line — the loader reads a

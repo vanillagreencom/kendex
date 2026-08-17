@@ -7,7 +7,7 @@
 
 # WORKTREE / SHARED WORKFLOW PATHS
 
-# Branch new worktrees fork from.
+# Base branch new worktrees fork from.
 WORKTREE_DEFAULT_BRANCH = "main"
 
 # Where worktrees live; default is <parent-of-checkout>/.worktrees/<name>.
@@ -51,7 +51,8 @@ ORCH_OVERSEER_LANES = "3"
 # and some decisions always ask. Full rules: orch skill.
 ORCH_DECISION_MODE = "ask"
 
-# Rename auto-discovered launch lanes for open-terminal/lanes.
+# Rename auto-discovered launch lanes: comma-separated
+# `<config-dir>=<alias>` pairs, usable as `open-terminal --lane <alias>`.
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
