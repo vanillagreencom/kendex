@@ -557,6 +557,10 @@ export default function (pi: ExtensionAPI) {
 		thresholdMs: stallWatchdogThresholdMsFromEnv(),
 		isEnabled: () => stallWatchdogEnabledFromEnv(),
 		now: () => Date.now(),
+		// Keyed however the rate-limit watchdog was fed: pane records register
+		// under their pane id, child-side handlers under the agent name.
+		isAwaitingRateLimitRetry: (record) =>
+			(record.paneId !== undefined && rateLimitWatchdog.isAwaitingRetry(record.paneId)) || rateLimitWatchdog.isAwaitingRetry(record.agent),
 		listActiveTasks: async () => {
 			if (!currentRuntimeRoot) return [];
 			const records = await readTaskRegistry(currentRuntimeRoot);

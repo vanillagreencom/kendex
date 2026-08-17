@@ -19,6 +19,7 @@ import {
 import type { PaneTaskRecord } from "../extensions/subagent/types.js";
 
 interface HarnessOptions {
+	awaitingRetry?: (rec: PaneTaskRecord) => boolean;
 	enabled?: boolean;
 	thresholdMs?: number;
 	intervalMs?: number;
@@ -68,6 +69,7 @@ function makeHarness(opts: HarnessOptions = {}): Harness {
 		isEnabled: () => opts.enabled ?? true,
 		now: () => opts.nowEpochMs ?? Date.now(),
 		listActiveTasks: async () => records,
+		isAwaitingRateLimitRetry: (rec) => (opts.awaitingRetry ? opts.awaitingRetry(rec) : false),
 		outboxExists: async (file) => outboxExisting.has(file),
 		outboxPathFor,
 		isPaneIdle: async (rec) => (opts.paneIdle ? opts.paneIdle(rec) : true),
@@ -116,8 +118,28 @@ test("task idle past threshold with no outbox -> writes synthetic outbox", async
 	assert.equal(payload.status, "needs_completion");
 	assert.equal(payload.reason, STALL_WATCHDOG_REASON);
 	assert.equal(payload.synthetic, true);
-	assert.match(payload.summary, /post-compaction stall/);
+	assert.match(payload.summary, /idle with no progress .*cause undetermined/);
 	assert.equal(harness.markFiredCalls.length, 1);
+});
+
+test("a pane awaiting a rate-limit retry is never condemned (skipped: rate-limited)", async () => {
+	const now = Date.parse("2026-05-15T12:10:00.000Z");
+	const harness = makeHarness({
+		awaitingRetry: (rec) => rec.agent === "planner",
+		nowEpochMs: now,
+		records: [record({ updatedAt: "2026-05-15T12:00:00.000Z" })],
+	});
+	const watchdog = createIdleStallWatchdog(harness.deps);
+	const outcomes = await watchdog.checkAll();
+	assert.equal(outcomes[0]?.fired, false);
+	assert.equal(outcomes[0]?.skipped, "rate-limited");
+	assert.equal(harness.writes.length, 0);
+	// The gate clears once the retry state does — the same pane is judged
+	// normally on the next tick.
+	const after = makeHarness({ nowEpochMs: now, records: [record({ updatedAt: "2026-05-15T12:00:00.000Z" })] });
+	const second = createIdleStallWatchdog(after.deps);
+	const later = await second.checkAll();
+	assert.equal(later[0]?.fired, true);
 });
 
 test("task with existing outbox -> no synthetic write (skipped: outbox-present)", async () => {

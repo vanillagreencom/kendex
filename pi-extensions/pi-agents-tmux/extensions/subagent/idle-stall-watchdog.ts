@@ -39,7 +39,7 @@ export function buildStallSyntheticOutbox(
 		agent: agentName,
 		taskId,
 		status: "needs_completion",
-		summary: `Agent has been idle with no progress for ${staleSec}s (post-compaction stall). Task may have hung after auto-compaction without reaching agent_settled.`,
+		summary: `Agent has been idle with no progress for ${staleSec}s; cause undetermined. Likely a post-compaction hang that never reached agent_settled (vstack#63), but the signals cannot rule out other quiet waits.`,
 		filesChanged: [],
 		validation: [],
 		reason: STALL_WATCHDOG_REASON,
@@ -55,6 +55,14 @@ export interface IdleStallWatchdogDeps {
 	isEnabled: () => boolean;
 	now: () => number;
 	listActiveTasks: () => Promise<PaneTaskRecord[]>;
+	/**
+	 * vstack#63 meets vstack#108: a pane waiting on a scheduled rate-limit
+	 * retry is genuinely idle, stale, and outbox-less — all three stall
+	 * signals hold — yet it recovers on its own. The rate-limit watchdog owns
+	 * that state; while it has a retry pending this watchdog must not
+	 * condemn the pane, or the synthetic outbox races the steer.
+	 */
+	isAwaitingRateLimitRetry: (record: PaneTaskRecord) => boolean;
 	outboxExists: (outboxFile: string) => Promise<boolean>;
 	outboxPathFor: (record: PaneTaskRecord) => string;
 	isPaneIdle: (record: PaneTaskRecord) => Promise<boolean>;
@@ -70,6 +78,7 @@ export type StallCheckSkip =
 	| "disabled"
 	| "task-terminal"
 	| "task-needs-completion"
+	| "rate-limited"
 	| "outbox-present"
 	| "pane-busy"
 	| "not-stale"
@@ -116,6 +125,7 @@ export function createIdleStallWatchdog(deps: IdleStallWatchdogDeps): IdleStallW
 		if (fired.has(taskId)) return { taskId, fired: false, skipped: "already-fired" };
 		if (isTerminalTaskStatus(record.status)) return { taskId, fired: false, skipped: "task-terminal" };
 		if (record.status === "needs_completion") return { taskId, fired: false, skipped: "task-needs-completion" };
+		if (deps.isAwaitingRateLimitRetry(record)) return { taskId, fired: false, skipped: "rate-limited" };
 		try {
 			const outboxFile = deps.outboxPathFor(record);
 			if (await deps.outboxExists(outboxFile)) return { taskId, fired: false, skipped: "outbox-present" };

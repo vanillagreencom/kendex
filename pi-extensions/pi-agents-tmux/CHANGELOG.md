@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 2.8.6
+
+- The idle-stall watchdog (vstack#63 workaround) gates on the rate-limit watchdog's retry state (vstack VST-361). A pane blocked on a Claude session/usage limit is idle, stale, and outbox-less — all three stall signals hold — so it was condemned as a "post-compaction stall" ~300s in while its retry was scheduled hours out; the orchestrator retired a healthy agent and redid its work. The check now skips (`rate-limited`, observable in diagnostics) while a retry is pending, the exhausted-retries path stays the single owner of that verdict, and the synthetic summary states its cause as undetermined instead of asserting a compaction hang it never verified.
+
 ### 2.8.5
 
 - The Transcript timeline reads the nested `toolCall`/`tool_call` end-event carrier — name, id, status, `isError`/`is_error`, arguments, result (the pi-session-bridge event-sanitizer shape). Previously a nested end fell back to `name:tool`, leaving its start marked `✖ no result recorded` beside a separate neutral `tool tool · ok` row, and a nested snake-case error flag rendered as success. Id-less fallback pairing is case-insensitive on the tool name.

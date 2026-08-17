@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- pi-agents-tmux: the idle-stall watchdog skips panes with a pending
+  rate-limit retry instead of condemning a merely-throttled agent as a
+  post-compaction stall; its synthetic summary no longer asserts a cause it
+  never verified (VST-361).
+
 - cli: A shared config is read with the parser its OWN harness uses, never the
   one its file extension suggests. OpenCode hands `opencode.json`,
   `opencode.jsonc`, its global config and whatever `$OPENCODE_CONFIG` names to
