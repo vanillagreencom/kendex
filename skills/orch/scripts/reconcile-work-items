@@ -92,8 +92,10 @@ while IFS=$'\t' read -r iid ititle istate iupdated; do
   branch="$(printf '%s' "$iid" | tr '[:upper:]' '[:lower:]')"
   pr_state="unverified"
   if command -v "${GH_CLI%% *}" >/dev/null 2>&1; then
-    merged="$($GH_CLI pr list --state merged --head "$branch" --json number --jq 'length' 2>/dev/null)" || merged=""
-    open="$($GH_CLI pr list --state open --head "$branch" --json number --jq 'length' 2>/dev/null)" || open=""
+    # This repo's branch only — a fork's same-named branch is someone
+    # else's PR and must not vouch for this item.
+    merged="$($GH_CLI pr list --state merged --head "$branch" --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length' 2>/dev/null)" || merged=""
+    open="$($GH_CLI pr list --state open --head "$branch" --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length' 2>/dev/null)" || open=""
     if [ -n "$merged" ] && [ -n "$open" ]; then
       if [ "$open" -gt 0 ]; then
         continue # a live PR is a live item, whatever the clock says
