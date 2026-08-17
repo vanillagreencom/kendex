@@ -1,8 +1,8 @@
 [env]
 
 # SECOND OPINION — cross-model review (second-opinion skill).
-# One reviewer by default: the highest-priority roster entry that is NOT the
-# model this session runs. Full semantics: second-opinion SKILL.md.
+# One reviewer by default: the highest-priority roster entry that is
+# AVAILABLE and is NOT the model this session runs. Full semantics: second-opinion SKILL.md.
 
 # Priority-ordered roster, space/comma separated. Per entry:
 # SECOND_OPINION_<NAME>_CMD (claude and codex have defaults) and

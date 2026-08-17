@@ -229,8 +229,8 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 REVIEW_GATE_MODE = "enforce"
 
 # SECOND OPINION
-# One reviewer by default: the highest-priority roster entry that is NOT the
-# model this session runs. Full semantics: second-opinion SKILL.md.
+# One reviewer by default: the highest-priority roster entry that is
+# AVAILABLE and is NOT the model this session runs. Full semantics: second-opinion SKILL.md.
 
 # Priority-ordered roster. Per entry: SECOND_OPINION_<NAME>_CMD and
 # SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).
