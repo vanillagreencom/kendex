@@ -16,6 +16,11 @@
   the step, so a fresh worktree in a pnpm workspace no longer starts dirty
   with a stray `package-lock.json`; a failed npm install names its log
   instead of vanishing (VST-340).
+- merge-queue ejection alert: the intake issue is reason-aware — MANUAL
+  (deliberate dequeue) and MERGE_CONFLICT (routine queue re-evaluation) get
+  the PR comment only; failure-shaped reasons (CI_FAILURE, plus anything
+  unrecognized, fail-closed) still file into triage. Cuts ~85% of the
+  ejection-issue noise the GH→Linear sync was mirroring.
 
 - cli: A shared config is read with the parser its OWN harness uses, never the
   one its file extension suggests. OpenCode hands `opencode.json`,

@@ -10,6 +10,12 @@
 #      GH→Linear creation sync mirrors it) instead of vanishing.
 # One issue per PR per ejection run id; re-runs and duplicate deliveries
 # de-duplicate against the existing open issue.
+#
+# The intake issue is REASON-AWARE: MANUAL is a deliberate dequeue (the
+# dequeue-push-rearm flow) and MERGE_CONFLICT is routine queue re-evaluation
+# after a sibling merged — both get the PR comment (the dropped arm is still
+# real) but no tracker issue. Only failure-shaped reasons (CI_FAILURE and
+# anything unrecognized, fail-closed) enter the triage queue.
 name: Merge queue ejection alert
 
 # pull_request_target, not pull_request: a fork PR's dequeue would hand a
@@ -171,7 +177,15 @@ jobs:
           BODY
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
-          # Intake issue (deduped per PR + ejection run).
+          # Intake issue (deduped per PR + ejection run), failure-shaped
+          # reasons only: a deliberate dequeue or a routine queue
+          # re-evaluation is not triage work.
+          case "${DEQUEUE_REASON}" in
+            MANUAL|MERGE_CONFLICT)
+              echo "reason ${DEQUEUE_REASON}: deliberate dequeue / queue re-evaluation — comment posted, no intake issue"
+              exit 0
+              ;;
+          esac
           # An unidentified ejecting run must not collapse successive
           # ejections into one marker: fall back to this alert run's own id.
           marker="ejection-alert:pr-${PR_NUMBER}:run-${run_id:-alert-${GITHUB_RUN_ID}}"
