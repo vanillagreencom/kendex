@@ -1744,7 +1744,7 @@ install_worktree_dependencies() {
   # automatic install skipped — never a wrong-tree install.
   local pkg_manager="" pkg_manager_readable=1
   if command -v node >/dev/null 2>&1; then
-    pkg_manager="$(node -e 'const m=require(process.argv[1]).packageManager;process.stdout.write(typeof m==="string"?m:"")' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
+    pkg_manager="$(node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).packageManager;process.stdout.write(typeof m==="string"?m:"")' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
   elif command -v jq >/dev/null 2>&1; then
     pkg_manager="$(jq -r '.packageManager // ""' "$wt/package.json" 2>/dev/null)" || pkg_manager=""
   else
