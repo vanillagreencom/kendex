@@ -681,6 +681,9 @@ fi
 # or absent baseline. A populated baseline is a live ratchet; growth stays a
 # reviewed hand-edit.
 if [ "$MODE" = "seed" ]; then
+  if [ "$BASELINE_FILE" = "$EXCLUDES_FILE" ]; then
+    config_error "--seed refuses: the baseline and exclusion list resolve to the same path ($BASELINE_FILE) — seeding would turn every row into an exclusion on the next run"
+  fi
   rows_existing="$(count_nonempty_lines "$TMP/baseline.tsv")"
   if [ "$rows_existing" -gt 0 ]; then
     config_error "--seed refuses: $BASELINE_FILE already carries $rows_existing row(s) — the ratchet is live and only moves down (--update tightens; growth is a reviewed hand-edit)"

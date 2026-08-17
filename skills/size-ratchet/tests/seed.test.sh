@@ -166,6 +166,21 @@ OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --baseline base-link 2>
   || bad "symlink destination refusal" "rc=$RC out=$OUT"
 [ -z "$(ls -A "$TMP/outside-dest")" ] && ok "the symlink target stays untouched" || bad "symlink target" "$(ls "$TMP/outside-dest")"
 
+echo "=== a baseline aliasing the exclusion list refuses ==="
+R="$TMP/alias"
+mkdir -p "$R/tools"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+git -C "$R" add -A
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --baseline tools/shared.tsv --excludes tools/shared.tsv 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"same path"*) true ;; *) false ;; esac \
+  && ok "--seed refuses a baseline aliasing the exclusion list" \
+  || bad "alias refusal" "rc=$RC out=$OUT"
+[ ! -e "$R/tools/shared.tsv" ] && ok "the shared path stays unwritten" || bad "alias write" "$(cat "$R/tools/shared.tsv")"
+
 echo "=== mode exclusivity ==="
 run_sr --seed --update
 [ "$RC" -eq 2 ] && ok "--seed with --update is a config error" || bad "exclusivity" "rc=$RC out=$OUT"
