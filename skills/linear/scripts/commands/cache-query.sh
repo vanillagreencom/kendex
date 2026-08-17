@@ -298,11 +298,24 @@ cache_list_issues() {
             '[.[] | select((.title + " " + (.description // "")) | test($pattern; "i"))]')
     fi
 
-    # Limit results unless --max
+    # Limit results unless --max. A truncated read must say so: a bare array
+    # of exactly `limit` rows is indistinguishable from a complete one.
     if [[ "$paginate_all" != "true" ]]; then
         if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
             jq -cn --arg v "$limit" '{error: ("--limit must be a non-negative integer, got: " + $v)}' >&2
             return 1
+        fi
+        local canon="${limit#"${limit%%[!0]*}"}"
+        [[ -n "$canon" ]] || canon=0
+        if (( ${#canon} > 9 )); then
+            jq -cn --arg v "$limit" '{error: ("--limit must be at most 9 digits after leading zeros, got: " + $v)}' >&2
+            return 1
+        fi
+        limit=$canon
+        local total
+        total=$(echo "$issues" | jq 'length')
+        if (( total > limit )); then
+            echo "⚠️  Truncated to $limit of $total issues. Pass --max for all results, or --limit N." >&2
         fi
         issues=$(echo "$issues" | jq --argjson n "$limit" '.[0:$n]')
     fi

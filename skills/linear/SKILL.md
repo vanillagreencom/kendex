@@ -54,6 +54,8 @@ linear.sh sync --reconcile
 
 `cache issues list --all-projects` enumerates every project in one command (each row carries its `project` name); `--no-project` returns only unassigned issues. Both are mutually exclusive with `--project`. Use `--all-projects` rather than looping per project — restricted harness policies reject loop-shaped commands. An unrecognized filter flag is rejected rather than ignored. Repeated `--label` flags (and `--labels a,b`) require ALL named labels.
 
+Both `issues list` and `cache issues list` return the first 75 rows by default and warn on stderr when that truncated the result; `--max` fetches everything. `--limit N` caps a CACHE listing's total; on the live path it is the per-page size (so `--max --limit N` pages at N, and the 200-page safety cap scales with it — the cap warns the same way when it truncates). An audit that must see the whole backlog passes `--max`.
+
 The cache lives at `.cache/linear` under the physical worktree root from `git rev-parse --show-toplevel`, so symlinked checkout spellings resolve to one cache. A missing-cache error names the `cache_dir` and `meta_path` it checked. A cache file that exists but does not parse is reported as corrupt — never as an empty result.
 
 In a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed symlink but is a real directory, `sync` refuses before touching the API and names the repair (`worktree fix-links <PATH>` from the main checkout). Repos whose `WORKTREE_SYMLINKS` deliberately excludes `.cache` are exempt.

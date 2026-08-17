@@ -439,6 +439,9 @@ list_issues() {
 
             page_count=$((page_count + 1))
 
+            if [ "$has_next" = "true" ] && [ $page_count -ge $max_pages ]; then
+                echo "⚠️  --max stopped at the $max_pages-page safety cap with more pages remaining — results are truncated." >&2
+            fi
             if [ "$has_next" != "true" ] || [ $page_count -ge $max_pages ]; then
                 break
             fi
