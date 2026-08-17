@@ -49,9 +49,11 @@ file from a gate.
 ## Git hooks
 
 `scripts/install-git-hooks [--repo PATH]` writes real `.git/hooks` shims —
-`pre-commit` runs the chain (`size-ratchet --staged` when that skill is
-installed beside this one, the batch over staged content, then the
-repo-root-relative executable named by `GROWTH_GUARDS_PRE_COMMIT_LOCAL`),
+`pre-commit` runs the chain (`size-ratchet --staged` and `preflight --staged`
+when those skills are installed beside this one — a first commit skips
+preflight with a note, having no base to diff — the batch over staged
+content, then the repo-root-relative executable named by
+`GROWTH_GUARDS_PRE_COMMIT_LOCAL`),
 `commit-msg` runs this family's message gate. They BLOCK on the family's exit
 contract, fail closed on a guard that could not run, and `git commit
 --no-verify` is the deliberate bypass. `vstack add` and `vstack refresh` run

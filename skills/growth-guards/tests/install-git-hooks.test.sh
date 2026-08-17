@@ -919,5 +919,47 @@ OUT=""; RC=0; OUT="$("$INSTALL" --bogus 2>&1)" || RC=$?
 OUT=""; RC=0; OUT="$("$INSTALL" --help 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && ok "--help is exit 0" || bad "--help is exit 0" "rc=$RC out=$OUT"
 
+echo "=== preflight is in the chain ==="
+R30="$(new_repo preflightchain)"
+ln -s "$SKILL_DIR/../preflight" "$R30/.agents/skills/preflight"
+install_in "$R30"
+printf 'hello\n' >"$R30/ok.txt"
+git -C "$R30" add ok.txt
+commit_in "$R30" "feat: add ok"
+[ "$RC" -eq 0 ] && ok "control: clean staged content commits with preflight installed" || bad "control: preflight clean commit" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"first commit — preflight --staged has no base"*) ok "the first commit states the preflight skip instead of blocking" ;;
+  *) bad "first-commit skip stated" "out=$OUT" ;;
+esac
+printf '#!/usr/bin/env bash\necho hi\n' >"$R30/loose.sh"
+git -C "$R30" add loose.sh
+commit_in "$R30" "feat: add loose"
+[ "$RC" -ne 0 ] && ok "a staged fail-open script blocks through preflight" || bad "preflight blocks" "rc=$RC out=$OUT"
+case "$OUT" in
+  *preflight*) ok "preflight names itself in the blocked output" ;;
+  *) bad "preflight names itself" "out=$OUT" ;;
+esac
+git -C "$R30" rm -q --cached loose.sh
+rm -f "$R30/loose.sh"
+
+echo "=== a broken preflight install blocks, never skips ==="
+printf 'more\n' >"$R30/d.txt"
+git -C "$R30" add d.txt
+rm "$R30/.agents/skills/preflight"
+ln -s "$TMP/no-such-skill" "$R30/.agents/skills/preflight"
+commit_in "$R30" "feat: add d"
+[ "$RC" -ne 0 ] && ok "a dangling preflight install blocks" || bad "dangling preflight blocks" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"preflight skill is installed"*) ok "the broken preflight install is named" ;;
+  *) bad "broken preflight named" "out=$OUT" ;;
+esac
+rm "$R30/.agents/skills/preflight"
+commit_in "$R30" "feat: add d"
+[ "$RC" -eq 0 ] && ok "control: an absent preflight is a stated skip" || bad "absent preflight skips" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"preflight not installed — skipped"*) ok "the skip says preflight is not installed" ;;
+  *) bad "skip states preflight not installed" "out=$OUT" ;;
+esac
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
