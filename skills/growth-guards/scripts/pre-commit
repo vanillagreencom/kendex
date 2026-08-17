@@ -106,7 +106,7 @@ if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
       case "$sr_run_status:$sr_run_out" in
         0:*) ;;
         1:*) had_violations=1 ;;
-        *"unknown argument"*--staged*|*"unrecognized option"*--staged*|*"invalid option"*--staged*)
+        *"unknown argument '--staged'"*|*"unrecognized option '--staged'"*|*"unrecognized option: --staged"*|*"invalid option: --staged"*|*"invalid option -- staged"*)
           echo "=== pre-commit: size-ratchet at $SIZE_RATCHET rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
           ;;
         *)

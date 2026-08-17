@@ -1007,6 +1007,26 @@ case "$OUT" in
   *) bad "runtime rejection stated" "out=$OUT" ;;
 esac
 
+echo "=== a config-error diagnostic that mentions --staged is not a rejection ==="
+cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'CFGERR'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --help) echo "size-ratchet — gate. Usage: size-ratchet [--staged] [--update]"; exit 0 ;;
+esac
+echo "::error::size-ratchet: SIZE_RATCHET_THRESHOLD must be a positive integer (see --help; applies to --staged runs too)" >&2
+exit 2
+CFGERR
+chmod 0755 "$R31/.agents/skills/size-ratchet/scripts/size-ratchet"
+printf 'cfg\n' >"$R31/e.txt"
+git -C "$R31" add e.txt
+commit_in "$R31" "feat: add e"
+[ "$RC" -ne 0 ] && ok "a config error mentioning --staged still blocks" || bad "config error blocks" "rc=$RC out=$OUT"
+case "$OUT" in
+  *"did not complete"*) ok "the block is the did-not-complete error, never the replacement skip" ;;
+  *) bad "config error named" "out=$OUT" ;;
+esac
+git -C "$R31" rm -q --cached e.txt 2>/dev/null; rm -f "$R31/e.txt"
+
 echo "=== a failing --help that names size-ratchet is still a broken install ==="
 cat >"$R31/.agents/skills/size-ratchet/scripts/size-ratchet" <<'ERRHELP'
 #!/usr/bin/env bash
