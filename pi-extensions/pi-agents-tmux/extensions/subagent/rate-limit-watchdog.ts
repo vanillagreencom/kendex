@@ -54,6 +54,13 @@ export type RateLimitOutcome =
 	| { kind: "skipped-disabled" };
 
 export interface SubagentRateLimitWatchdogDeps {
+	/**
+	 * Cross-process mirror of the pending-retry state (marker file under the
+	 * shared runtime root): the parent's idle-stall watchdog reads it, since
+	 * this watchdog's in-process state lives in the child. Called with the
+	 * retry epoch on schedule and null on fire/resolve/cancel/exhaustion.
+	 */
+	persistRetryState?: (paneId: string, retryAtEpochMs: number | null) => void;
 	now: () => number;
 	scheduleAfter: (delayMs: number, fn: () => void) => { cancel: () => void };
 	isEnabled: () => boolean;
@@ -136,6 +143,14 @@ export function createSubagentRateLimitWatchdog(
 		state.pendingRetry = null;
 	}
 
+	function persist(paneId: string, retryAtEpochMs: number | null): void {
+		try {
+			deps.persistRetryState?.(paneId, retryAtEpochMs);
+		} catch (error) {
+			deps.logWarn(`rate-limit-watchdog: retry-state persist failed (${(error as Error)?.message ?? error})`);
+		}
+	}
+
 	function emit(eventName: string, payload: Record<string, unknown>): void {
 		try {
 			deps.emitActivity(eventName, payload);
@@ -169,6 +184,7 @@ export function createSubagentRateLimitWatchdog(
 			if (!current || current.pendingRetry?.at !== decision.at) return;
 			current.pendingTimer = null;
 			current.pendingRetry = null;
+			persist(paneId, null);
 			try {
 				const dispatch = deps.sendUserMessage(RATE_LIMIT_STEER_MESSAGE);
 				if (dispatch && typeof (dispatch as PromiseLike<void>).then === "function") {
@@ -182,6 +198,7 @@ export function createSubagentRateLimitWatchdog(
 		};
 		state.pendingTimer = deps.scheduleAfter(delayMs, fire);
 		state.pendingRetry = { at: decision.at, attempt: decision.attempt, fire };
+		persist(paneId, decision.at);
 		return { at: decision.at, attempt: decision.attempt, degradedResetSource: decision.degradedResetSource, kind: "scheduled-retry", resetSource: decision.resetSource };
 	}
 
@@ -253,6 +270,7 @@ export function createSubagentRateLimitWatchdog(
 				if (decision.reason === "stopreason-mismatch" && state.attempt > 0) {
 					const previousAttempt = state.attempt;
 					clearPending(state);
+					persist(paneId, null);
 					state.attempt = 0;
 					emit("subagents:rate_limit_resolved", {
 						agent: state.agentName,
@@ -267,6 +285,7 @@ export function createSubagentRateLimitWatchdog(
 
 			if (decision.kind === "exhausted") {
 				clearPending(state);
+				persist(paneId, null);
 				const exhaustedAttempt = decision.attempt;
 				state.attempt = exhaustedAttempt;
 				emit("subagents:rate_limit_exhausted", {
@@ -323,6 +342,7 @@ export function createSubagentRateLimitWatchdog(
 			if (!state) return false;
 			const had = state.pendingRetry !== null;
 			clearPending(state);
+			persist(paneId, null);
 			state.attempt = 0;
 			return had;
 		},

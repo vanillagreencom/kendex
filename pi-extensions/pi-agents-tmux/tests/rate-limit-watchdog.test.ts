@@ -161,6 +161,31 @@ describe("subagent rate-limit watchdog (vstack#108)", () => {
 		});
 	}
 
+	test("retry-state persistence mirrors every transition: schedule, fire, cancel", () => {
+		const persisted: Array<{ paneId: string; at: number | null }> = [];
+		const ctx = makeDeps({ persistRetryState: (paneId, at) => persisted.push({ at, paneId }) });
+		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+		ctx.clockMs.value = 1_000;
+		watchdog.onMessageEnd(CANONICAL_RATE_LIMIT_MESSAGE_END, "rust", "rust", "task-1");
+		expect(persisted).toEqual([{ at: 2_000, paneId: "rust" }]);
+		// Firing the retry clears the mirror.
+		ctx.scheduled[0]!.fn();
+		expect(persisted[1]).toEqual({ at: null, paneId: "rust" });
+		// A fresh schedule then an explicit cancel clears it again.
+		watchdog.onMessageEnd(CANONICAL_RATE_LIMIT_MESSAGE_END, "rust", "rust", "task-1");
+		watchdog.cancel("rust");
+		expect(persisted[persisted.length - 1]).toEqual({ at: null, paneId: "rust" });
+	});
+
+	test("a throwing persist hook is contained and warned, never fatal", () => {
+		const ctx = makeDeps({ persistRetryState: () => { throw new Error("disk gone"); } });
+		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);
+		ctx.clockMs.value = 1_000;
+		const outcome = watchdog.onMessageEnd(CANONICAL_RATE_LIMIT_MESSAGE_END, "rust", "rust", "task-1");
+		expect(outcome.kind).toBe("scheduled-retry");
+		expect(ctx.warnings.some((w) => w.includes("retry-state persist failed"))).toBe(true);
+	});
+
 	test("first rate-limit detection schedules a retry and emits agent.rate_limited", () => {
 		const ctx = makeDeps();
 		const watchdog = createSubagentRateLimitWatchdog(ctx.deps);

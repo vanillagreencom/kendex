@@ -4,7 +4,7 @@
 
 ### 2.8.6
 
-- The idle-stall watchdog (vstack#63 workaround) gates on the rate-limit watchdog's retry state (vstack VST-361). A pane blocked on a Claude session/usage limit is idle, stale, and outbox-less — all three stall signals hold — so it was condemned as a "post-compaction stall" ~300s in while its retry was scheduled hours out; the orchestrator retired a healthy agent and redid its work. The check now skips (`rate-limited`, observable in diagnostics) while a retry is pending, the exhausted-retries path stays the single owner of that verdict, and the synthetic summary states its cause as undetermined instead of asserting a compaction hang it never verified.
+- The idle-stall watchdog (vstack#63 workaround) gates on the rate-limit watchdog's retry state (vstack VST-361). A pane blocked on a Claude session/usage limit is idle, stale, and outbox-less — all three stall signals hold — so it was condemned as a "post-compaction stall" ~300s in while its retry was scheduled hours out; the orchestrator retired a healthy agent and redid its work. The check now skips (`rate-limited`, observable in diagnostics) while a retry is pending, the exhausted-retries path stays the single owner of that verdict, and the synthetic summary states its cause as undetermined instead of asserting a compaction hang it never verified. Because the rate-limit watchdog observes the limit inside the CHILD Pi process while the idle-stall watchdog polls from the parent, the pending-retry state is mirrored as a marker file under the shared runtime root (written child-side on schedule, cleared on fire/resolve/cancel/exhaustion, honored parent-side for one stall threshold past the retry time so a dead child cannot park its pane forever).
 
 ### 2.8.5
 

@@ -116,6 +116,7 @@ import {
 	maxAttemptsFromEnv as rateLimitMaxAttemptsFromEnv,
 	watchdogEnabledFromEnv as rateLimitWatchdogEnabledFromEnv,
 } from "./rate-limit-watchdog.js";
+import { persistRetryMarker, retryMarkerActive } from "./rate-limit-retry-marker.js";
 import {
 	createIdleStallWatchdog,
 	STALL_WATCHDOG_REASON,
@@ -461,6 +462,10 @@ export default function (pi: ExtensionAPI) {
 	const resolveIdleProbeBridgeBin = createCachedPiBridgeResolver(resolvePiBridgeBin, logIdleStallDiagnostic);
 
 	const childAgentName = process.env.PI_SUBAGENT_CHILD_AGENT;
+	// The runtime root both roles share, captured at session_start: the
+	// rate-limit retry markers live under it (written child-side, read
+	// parent-side).
+	let retryMarkerRuntimeRoot: string | undefined;
 	const childOwnsVisiblePane = envFlag(process.env[PI_SUBAGENT_CHILD_PANE_ENV]);
 	const statuslineBridge: SubagentStatuslineBridge = {
 		getCurrentSubagent(cwd?: string) {
@@ -530,6 +535,12 @@ export default function (pi: ExtensionAPI) {
 	// gates the settled-run watchdog so its synthetic needs_completion
 	// outbox does not race the recovery.
 	const rateLimitWatchdog = createSubagentRateLimitWatchdog({
+		persistRetryState: (paneId, retryAtEpochMs) => {
+			// Mirror the pending retry into the shared runtime root so the
+			// PARENT's idle-stall watchdog can defer to a retry this (child)
+			// process scheduled.
+			if (retryMarkerRuntimeRoot) persistRetryMarker(retryMarkerRuntimeRoot, paneId, retryAtEpochMs);
+		},
 		now: () => Date.now(),
 		scheduleAfter: rateLimitDefaultScheduleAfter,
 		isEnabled: () => rateLimitWatchdogEnabledFromEnv(),
@@ -559,8 +570,19 @@ export default function (pi: ExtensionAPI) {
 		now: () => Date.now(),
 		// Keyed however the rate-limit watchdog was fed: pane records register
 		// under their pane id, child-side handlers under the agent name.
-		isAwaitingRateLimitRetry: (record) =>
-			(record.paneId !== undefined && rateLimitWatchdog.isAwaitingRetry(record.paneId)) || rateLimitWatchdog.isAwaitingRetry(record.agent),
+		isAwaitingRateLimitRetry: (record) => {
+			// In-process state first (bg children in this process), then the
+			// cross-process marker a persistent-pane child wrote under the
+			// shared runtime root — its watchdog lives in the child, not here.
+			// Markers are honored for one stall threshold past their retry
+			// time, so a child that died mid-wait cannot park its pane forever.
+			if (record.paneId !== undefined && rateLimitWatchdog.isAwaitingRetry(record.paneId)) return true;
+			if (rateLimitWatchdog.isAwaitingRetry(record.agent)) return true;
+			if (!currentRuntimeRoot) return false;
+			const grace = stallWatchdogThresholdMsFromEnv();
+			return retryMarkerActive(currentRuntimeRoot, record.agent, Date.now(), grace) ||
+				(record.paneId !== undefined && retryMarkerActive(currentRuntimeRoot, record.paneId, Date.now(), grace));
+		},
 		listActiveTasks: async () => {
 			if (!currentRuntimeRoot) return [];
 			const records = await readTaskRegistry(currentRuntimeRoot);
@@ -1308,6 +1330,7 @@ export default function (pi: ExtensionAPI) {
 		usageTranscriptFingerprintsByTask.clear();
 
 		const runtimeRoot = runtimeDirForContext(ctx);
+		retryMarkerRuntimeRoot = runtimeRoot;
 
 		if (childAgentName) {
 			if (!childOwnsVisiblePane) {

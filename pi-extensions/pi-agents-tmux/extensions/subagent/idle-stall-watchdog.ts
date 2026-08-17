@@ -125,8 +125,8 @@ export function createIdleStallWatchdog(deps: IdleStallWatchdogDeps): IdleStallW
 		if (fired.has(taskId)) return { taskId, fired: false, skipped: "already-fired" };
 		if (isTerminalTaskStatus(record.status)) return { taskId, fired: false, skipped: "task-terminal" };
 		if (record.status === "needs_completion") return { taskId, fired: false, skipped: "task-needs-completion" };
-		if (deps.isAwaitingRateLimitRetry(record)) return { taskId, fired: false, skipped: "rate-limited" };
 		try {
+			if (deps.isAwaitingRateLimitRetry(record)) return { taskId, fired: false, skipped: "rate-limited" };
 			const outboxFile = deps.outboxPathFor(record);
 			if (await deps.outboxExists(outboxFile)) return { taskId, fired: false, skipped: "outbox-present" };
 			const lastActivity = deps.lastActivityAt(record);
