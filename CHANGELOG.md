@@ -56,7 +56,7 @@
   published copy drifts. `list` and `check` now print `enforced` /
   `advisory` / `unsupported` per harness per installed hook, advisory
   artifacts (Cursor rules, OpenCode instructions, the Codex prose fallback)
-  open with `advisory — this harness cannot execute hooks`, and Pi reports
+  carry `advisory — this harness cannot execute hooks`, and Pi reports
   `unsupported` until `@vanillagreen/pi-hooks` — which carries all Pi hook
   behavior — is actually installed. Breaking: a hook whose `event:` is not a
   row of the contract is refused at install instead of registering something

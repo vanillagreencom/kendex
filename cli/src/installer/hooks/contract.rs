@@ -7,8 +7,9 @@
 
 use crate::harness::Harness;
 
-/// Banner every advisory artifact opens with, so a rule file cannot be read
-/// as a guard.
+/// Banner every advisory artifact carries — a rule file opens with it, the
+/// Codex prose block leads with it under its `## Safety:` header — so none
+/// can be read as a guard.
 pub const ADVISORY_BANNER: &str = "advisory — this harness cannot execute hooks";
 
 /// Pi package that carries hook behavior for Pi. Pi has no per-hook install
@@ -103,7 +104,8 @@ use Mechanism::{
 ///
 /// Codex runs every event it maps natively; `TaskCompleted` has no Codex
 /// equivalent, so it degrades to instruction prose. Pi's listeners cover
-/// `tool_call`, `tool_result` and `turn_end` only.
+/// `tool_call`, `tool_result` and `turn_end` only — `turn_end` is what
+/// carries `TaskCompleted`.
 pub const CONTRACT: &[Row] = &[
     Row {
         event: "PreToolUse",

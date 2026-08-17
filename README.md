@@ -271,7 +271,7 @@ nothing is installed for that pair.
 <!-- /generated: hook-contract -->
 
 `vstack list` and `vstack check` print this level for every installed hook on
-every harness it is locked at, and each advisory artifact opens with
+every harness it is locked at, and each advisory artifact carries
 `advisory — this harness cannot execute hooks`. An event outside this table is
 refused at install: no harness column could be filled in for it.
 

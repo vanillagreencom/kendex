@@ -67,26 +67,31 @@ pub fn resolve(
     Some(Resolved { cell, note: None })
 }
 
-/// Whether the artifact a mechanism installs is on disk.
-///
-/// `CodexInstructions` lives inside generated agent files and
-/// `PiHooksExtension` inside a package, neither of which this answers for —
-/// the package is checked by its caller, and prose presence is what
-/// `vstack verify` reads.
+/// Whether everything a mechanism installs is in place — the script AND the
+/// registration that makes a harness invoke it, because a script nothing
+/// invokes enforces nothing. `PiHooksExtension` has no per-hook artifact; its
+/// carrier package is checked by the caller.
 fn artifact_present(mechanism: Mechanism, name: &str, global: bool) -> bool {
     match mechanism {
-        Mechanism::ClaudeSettingsHook => Harness::ClaudeCode
-            .hooks_dir(global)
-            .is_some_and(|dir| dir.join(format!("{name}.sh")).is_file()),
-        Mechanism::CodexHooksJson => super::codex_root(global)
-            .join("hooks")
-            .join(format!("{name}.sh"))
-            .is_file(),
-        Mechanism::CursorRule => super::cursor_hook_rule_path(global, name).exists(),
-        Mechanism::OpenCodeInstruction => {
-            super::opencode_hook_instruction_path(global, name).exists()
+        Mechanism::ClaudeSettingsHook => {
+            Harness::ClaudeCode
+                .hooks_dir(global)
+                .is_some_and(|dir| dir.join(format!("{name}.sh")).is_file())
+                && super::claude_hook_registered(global, name)
         }
-        Mechanism::CodexInstructions | Mechanism::PiHooksExtension => true,
+        Mechanism::CodexHooksJson => {
+            super::codex_root(global)
+                .join("hooks")
+                .join(format!("{name}.sh"))
+                .is_file()
+                && super::codex_hook_registered(global, name)
+        }
+        Mechanism::CursorRule => super::cursor_hook_rule_path(global, name).is_file(),
+        Mechanism::OpenCodeInstruction => {
+            super::opencode_hook_instruction_path(global, name).is_file()
+        }
+        Mechanism::CodexInstructions => super::codex_hook_prose_present(global, name),
+        Mechanism::PiHooksExtension => true,
     }
 }
 

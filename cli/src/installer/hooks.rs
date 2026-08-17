@@ -86,6 +86,81 @@ fn owns_exactly(owned_commands: &[String]) -> impl Fn(&str) -> bool + '_ {
     move |command| owned_commands.iter().any(|owned| owned == command)
 }
 
+fn hooks_object_has_owned_entry(
+    hooks_obj: &serde_json::Map<String, serde_json::Value>,
+    owns: OwnsCommand<'_>,
+) -> bool {
+    hooks_obj
+        .values()
+        .filter_map(|value| value.as_array())
+        .flatten()
+        .any(|entry| hook_entry_mentions_owned_command(entry, owns))
+}
+
+fn claude_settings_path(global: bool) -> PathBuf {
+    if global {
+        crate::config::claude_global_dir().join("settings.json")
+    } else {
+        crate::config::project_root()
+            .join(".claude")
+            .join("settings.json")
+    }
+}
+
+/// Whether Claude Code's settings still carry this hook's registration. A
+/// settings file that cannot be read or parsed reports unregistered: a level
+/// is a claim, and a registration nothing can read backs none.
+pub(crate) fn claude_hook_registered(global: bool, name: &str) -> bool {
+    let Some(script_path) = Harness::ClaudeCode
+        .hooks_dir(global)
+        .map(|dir| dir.join(format!("{name}.sh")))
+    else {
+        return false;
+    };
+    let Ok(content) = std::fs::read_to_string(claude_settings_path(global)) else {
+        return false;
+    };
+    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let owned = claude_owned_hook_commands(global, name, &script_path);
+    settings
+        .get("hooks")
+        .and_then(|h| h.as_object())
+        .is_some_and(|hooks| hooks_object_has_owned_entry(hooks, &owns_exactly(&owned)))
+}
+
+/// Whether `<scope>/.codex/hooks.json` still carries this hook's handler.
+pub(crate) fn codex_hook_registered(global: bool, name: &str) -> bool {
+    let root = codex_root(global);
+    let Ok(content) = std::fs::read_to_string(root.join("hooks.json")) else {
+        return false;
+    };
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let script_path = root.join("hooks").join(format!("{name}.sh"));
+    doc.get("hooks")
+        .and_then(|h| h.as_object())
+        .is_some_and(|hooks| {
+            hooks_object_has_owned_entry(hooks, &codex_owns_command(global, name, &script_path))
+        })
+}
+
+/// Whether any generated Codex agent file carries this hook's
+/// `## Safety: <name>` prose block.
+pub(crate) fn codex_hook_prose_present(global: bool, name: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(Harness::Codex.agents_dir(global)) else {
+        return false;
+    };
+    let marker = format!("## Safety: {name}\n");
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        path.extension().is_some_and(|ext| ext == "toml")
+            && std::fs::read_to_string(&path).is_ok_and(|content| content.contains(&marker))
+    })
+}
+
 fn remove_hook_entries_from_hooks_object(
     hooks_obj: &mut serde_json::Map<String, serde_json::Value>,
     owns: OwnsCommand<'_>,
@@ -207,13 +282,7 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
     }
 
     // Merge into settings.json
-    let settings_path = if global {
-        crate::config::claude_global_dir().join("settings.json")
-    } else {
-        crate::config::project_root()
-            .join(".claude")
-            .join("settings.json")
-    };
+    let settings_path = claude_settings_path(global);
     let mut settings: serde_json::Value = if settings_path.exists() {
         let content = std::fs::read_to_string(&settings_path)?;
         serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
@@ -389,6 +458,11 @@ fn codex_owns_command(global: bool, hook_name: &str, script_path: &Path) -> impl
         let unquoted = argument
             .strip_prefix('"')
             .and_then(|rest| rest.strip_suffix('"'))
+            .or_else(|| {
+                argument
+                    .strip_prefix('\'')
+                    .and_then(|rest| rest.strip_suffix('\''))
+            })
             .unwrap_or(argument);
         unquoted.ends_with(&project_tail)
     }
@@ -800,13 +874,7 @@ pub fn remove_hook_install(name: &str, harness: Harness, global: bool) -> Result
 /// Remove a hook entry from Claude Code settings.json
 fn remove_hook_from_claude_settings(global: bool, name: &str, script_path: &Path) -> Result<()> {
     validate_item_name(name)?;
-    let settings_path = if global {
-        crate::config::claude_global_dir().join("settings.json")
-    } else {
-        crate::config::project_root()
-            .join(".claude")
-            .join("settings.json")
-    };
+    let settings_path = claude_settings_path(global);
     if !settings_path.exists() {
         return Ok(());
     }

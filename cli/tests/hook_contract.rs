@@ -716,6 +716,149 @@ fn an_uncovered_event_is_refused_before_anything_is_written() {
 }
 
 #[test]
+fn a_deregistered_hook_stops_reading_as_enforced() {
+    let sandbox = Sandbox::new("deregistered-hook");
+    assert_success(
+        sandbox.add(&[
+            "--hook",
+            "probe",
+            "--harness",
+            "claude-code",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add",
+    );
+    // The script survives but the settings.json handler is gone: nothing
+    // invokes it, so it must not read as enforced.
+    fs::write(sandbox.project.join(".claude/settings.json"), "{}\n").unwrap();
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("claude-code: unsupported (artifact missing)"),
+        "a hook with no settings.json registration still reads as enforced:\n{text}"
+    );
+}
+
+#[test]
+fn a_moved_project_with_a_quoted_path_does_not_accumulate_stale_codex_registrations() {
+    let sandbox = Sandbox::new("codex-moved-quoted");
+    assert_success(
+        sandbox.add(&["--hook", "probe", "--harness", "codex", "--copy", "-y"]),
+        "vstack add",
+    );
+    let hooks_json = sandbox.project.join(".codex/hooks.json");
+    // A previous location whose path needed quoting: shell_quote emits single
+    // quotes, and the stale handler must still be recognized as vstack's.
+    fs::write(
+        &hooks_json,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "bash '/somewhere else/.codex/hooks/probe.sh'"
+                    }]
+                }]
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_success(
+        sandbox
+            .vstack()
+            .args(["refresh", "--scope", "project"])
+            .output()
+            .unwrap(),
+        "vstack refresh",
+    );
+    let config = read_json(&hooks_json);
+    let handlers = config
+        .pointer("/hooks/PreToolUse")
+        .and_then(|value| value.as_array())
+        .expect("PreToolUse array");
+    assert_eq!(
+        handlers.len(),
+        1,
+        "a single-quoted registration from the project's old location survived: {config:#}"
+    );
+    let (fired, detail) = sandbox.fire(&registered_command(&config, "PreToolUse"), &[]);
+    assert!(fired, "the surviving Codex command did not fire\n{detail}");
+}
+
+#[test]
+fn a_narrowed_allowlist_removes_the_excluded_artifact_on_refresh() {
+    let sandbox = Sandbox::new("narrowed-allowlist-removal");
+    assert_success(
+        sandbox.add(&[
+            "--hook",
+            "probe",
+            "--harness",
+            "claude-code",
+            "--harness",
+            "cursor",
+            "--copy",
+            "-y",
+        ]),
+        "vstack add",
+    );
+    let rule = sandbox.project.join(".cursor/rules/safety-probe.mdc");
+    assert!(rule.is_file(), "cursor rule was not installed");
+    write_probe_hook(&sandbox.source, "probe", "PreToolUse");
+    let path = sandbox.source.join("hooks/probe.sh");
+    let script = fs::read_to_string(&path).unwrap();
+    fs::write(
+        &path,
+        script.replace("# safety:", "# harnesses: [claude-code]\n# safety:"),
+    )
+    .unwrap();
+    assert_success(
+        sandbox
+            .vstack()
+            .args(["refresh", "--scope", "project"])
+            .output()
+            .unwrap(),
+        "vstack refresh",
+    );
+    assert!(
+        !rule.exists(),
+        "the artifact of a harness the allowlist excluded survived the refresh"
+    );
+    assert!(
+        sandbox.project.join(".claude/hooks/probe.sh").is_file(),
+        "the still-allowed harness lost its artifact"
+    );
+}
+
+#[test]
+fn a_codex_prose_fallback_without_prose_stops_reading_as_advisory() {
+    let sandbox = Sandbox::new("codex-prose-absent");
+    write_hook_with(&sandbox.source, "trailer", "TaskCompleted", "");
+    assert_success(
+        sandbox.add(&["--hook", "trailer", "--harness", "codex", "--copy", "-y"]),
+        "vstack add",
+    );
+    // No agent file carries the safety block, so there is no artifact to be
+    // advisory about.
+    let list = sandbox
+        .vstack()
+        .args(["list", "--scope", "project"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&list.stderr).to_string();
+    assert!(
+        text.contains("codex: unsupported (artifact missing)"),
+        "a prose fallback with no prose still reads as advisory:\n{text}"
+    );
+}
+
+#[test]
 fn a_deleted_hook_script_stops_reading_as_enforced() {
     let sandbox = Sandbox::new("deleted-artifact");
     assert_success(
