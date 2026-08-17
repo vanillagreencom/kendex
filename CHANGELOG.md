@@ -84,6 +84,13 @@
   skills are read as parsed YAML — a block sequence and a value carrying a
   trailing comment both count, where before either read as declaring none
   and every skill the agent named went unchecked (VST-258).
+- preflight: the code-citation lane leaves installed-artifact subtrees alone
+  (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/
+  packages trees) — a vendored skill's example path is upstream's prose, not
+  the consuming repo's claim, so committing the installed copy no longer
+  trips `docs-cited-paths`; authored files elsewhere under the harness dirs
+  keep the lane (VST-312).
+
 - preflight gains three added-line lanes taken from the classes review bots
   keep finding first: `unwired-suite` (a new `tests/*.test.sh`,
   `tests/test-*.sh` or `*.test.ts`/`.js`/`.mjs` that no tracked runner
@@ -205,6 +212,25 @@
   instead of preferring the worktree copy, so growth that is staged and then
   reverted on disk cannot pass a pre-commit gate. CI, which checks out a
   clean tree, needs no flag.
+- size-ratchet: thresholds are per path class. `SIZE_RATCHET_CLASSES` maps
+  globs to thresholds (`"tests/*=800;*/tests/*=800"`, first match wins,
+  the exclusion list's glob semantics); a path matching none takes
+  `SIZE_RATCHET_THRESHOLD`, and everything else — new-offender, growth and
+  stale-row detection, tighten-only `--update` — runs per file against that
+  file's own number. Diagnostics now name the threshold that judged the
+  path and whether it came from a class or the default. A malformed entry
+  is a config error naming it; unset or empty is exact single-threshold
+  behavior.
+- **BREAKING** size-ratchet: the default `SIZE_RATCHET_THRESHOLD` drops
+  from 1000 to 400 (the fleet's two-tier ruling: implementation 400, tests
+  800). Migration for a repo on the default, in this order: declare
+  `SIZE_RATCHET_CLASSES` for the repo's test layouts FIRST, then run the
+  check and turn each reported `new offender` line into a `path<TAB>lines`
+  baseline row — freezing before declaring would baseline 401–800-line test
+  files that the test class then makes stale. `--update` never adds rows, so
+  that freeze is the one hand-edit. Declaring `SIZE_RATCHET_THRESHOLD =
+  "1000"` keeps the old number instead. Repos that already pin the threshold
+  are unaffected.
 - orch: `oversee-watch` gains `usage-limit` (the harness is still running but
   its account's limit banner is up — one pass, ahead of `question`, naming the
   config dir when a live lane claim covers the pane it read) and

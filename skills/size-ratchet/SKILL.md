@@ -1,6 +1,6 @@
 ---
 name: size-ratchet
-description: "Tighten-only file-size gate: tracked files over the line threshold are frozen in a baseline TSV that only ever moves down. Load to add, tune, or debug the ratchet, its baseline, or SIZE_RATCHET_* settings."
+description: "Tighten-only file-size gate: tracked files over their threshold (default 400, per-class via SIZE_RATCHET_CLASSES) are frozen in a baseline TSV that only moves down. Load to add, tune, or debug the ratchet, its baseline, or SIZE_RATCHET_* settings."
 license: MIT
 user-invocable: true
 metadata:
@@ -15,10 +15,10 @@ metadata:
 
 > **Problem with this skill?** Run `vstack report` — it files to the owning repo automatically. Do not hand-file.
 
-One check, one direction: **no tracked file gets bigger than the threshold,
+One check, one direction: **no tracked file gets bigger than its threshold,
 and the files already over it only shrink.** Existing offenders are frozen
-in a baseline at their current line counts; everything else — including
-tests — must stay at or under the threshold. The baseline is a ratchet, not
+in a baseline at their current line counts; everything else must stay at or
+under the threshold its path class carries. The baseline is a ratchet, not
 a ledger: rows only go down or away, and the only way a number goes up is a
 human editing the row in a reviewed diff.
 
@@ -38,13 +38,14 @@ and fails (exit 1) on any of:
 
 | Failure | Meaning |
 |---|---|
-| **new offender** | Over the threshold with no baseline row. |
+| **new offender** | Over its threshold with no baseline row. |
 | **baselined file grew** | Actual lines exceed the file's baseline row. |
-| **baseline looser than reality** | A row higher than the file's actual count, a row for a file now at/under the threshold, or a row for a file no longer tracked (or now excluded). Slack in the baseline is itself a failure — the ratchet must move down. |
+| **baseline looser than reality** | A row higher than the file's actual count, a row for a file now at/under its threshold, or a row for a file no longer tracked (or now excluded). Slack in the baseline is itself a failure — the ratchet must move down. |
 
-Every diagnostic names the file, its count, and the threshold or baseline
-row it violated, plus the remedies: *split at a concept seam, or raise the
-baseline row in this diff with justification*.
+Every diagnostic names the file, its count and the baseline row it violated,
+and — wherever a threshold decided the verdict — that threshold and whether
+it came from a class pattern or the default, plus the remedies: *split at a
+concept seam, or raise the baseline row in this diff with justification*.
 
 Exit codes: `0` clean, `1` violations, `2` usage/config/collection error
 (malformed baseline or excludes, bad threshold, a tracked path containing
@@ -60,7 +61,7 @@ path is not a countable file.
 
 `--update` rewrites the baseline to current reality in the downward
 direction only: rows are lowered to the actual count or removed (file
-shrank to/under the threshold, was deleted, or is now excluded). It **never
+shrank to/under its own threshold, was deleted, or is now excluded). It **never
 adds a row and never raises a number** — a grown file keeps its old row and
 keeps failing, and a new offender stays a failure. Deliberate growth or a
 new freeze is a hand-edit of the baseline TSV, visible in the diff. After
@@ -79,12 +80,29 @@ fall-through to the next layer. `/dev/null` forces the built-in defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `SIZE_RATCHET_THRESHOLD` | `1000` | Line threshold for new files. |
+| `SIZE_RATCHET_THRESHOLD` | `400` | Line threshold for paths matching no class. |
+| `SIZE_RATCHET_CLASSES` | *(none)* | `pattern=threshold` entries separated by `;`, first match wins. |
 | `SIZE_RATCHET_BASELINE` | `tools/size-ratchet-baseline.tsv` | Baseline path (also `--baseline FILE`). |
 | `SIZE_RATCHET_EXCLUDES` | `tools/size-ratchet-excludes` | Exclusion-list path (also `--excludes FILE`). |
 
+**Path classes** — a file's threshold is the first `SIZE_RATCHET_CLASSES`
+pattern it matches, else `SIZE_RATCHET_THRESHOLD`. Patterns are the excludes
+file's globs and every other semantic is per file, so a class only moves the
+number a path is judged against:
+
+```toml
+SIZE_RATCHET_CLASSES = "tests/*=800;*/tests/*=800;*.test.*=800"
+```
+
+A directory name needs both forms: `*/tests/*` requires a slash-delimited
+prefix, so a root-level `tests/` matches only `tests/*`.
+
+A malformed entry (no `=`, an empty pattern, a non-positive-integer
+threshold) is a config error naming the entry; an unset or empty value is
+single-threshold behavior.
+
 **Baseline format** — `path<TAB>lines`, `LC_ALL=C` sorted, unique paths,
-counts above the threshold. **Excludes format** — `pattern<TAB>reason` per
+counts above the path's threshold. **Excludes format** — `pattern<TAB>reason` per
 line (shell glob against the full repo-relative path; `*` crosses `/`);
 blank lines and `#` comments are ignored, and a pattern without a reason is
 a config error — every exclusion carries its justification (generated,

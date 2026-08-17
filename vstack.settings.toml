@@ -49,6 +49,12 @@ SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --e
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.6-sol -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 SECOND_OPINION_TIMEOUT = "3000"
 SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
+# Two-tier file-size ruling: implementation 400 (the shipped default),
+# test paths 800. The patterns cover every test layout tracked here — dir
+# conventions (tests/, test/, __tests__/), Rust module tests (tests.rs) and
+# cfg(test) helper modules (test_util.rs), and suffix-named suites
+# (*.test.mjs and friends).
+SIZE_RATCHET_CLASSES = "*/tests/*=800;*/test/*=800;*/__tests__/*=800;*/tests.rs=800;*test_util.rs=800;*.test.*=800"
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 WORKTREE_BASE_DIR = "~/dev/.worktrees/vstack"
 WORKTREE_COPIES = ".vstack-lock.json"
