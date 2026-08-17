@@ -300,7 +300,7 @@ else
   chmod 000 "$R/vstack.settings.toml"
   run_raw || true
   [ "$RC" -eq 2 ] && case "$OUT" in *"vstack.settings.toml: unreadable while resolving a setting"*) true ;; *) false ;; esac \
-    && ok "an unreadable settings file is exit 2 (falling through would have read the built-in 1000)" \
+    && ok "an unreadable settings file is exit 2 (falling through would have read the built-in 400)" \
     || bad "an unreadable settings file is exit 2" "rc=$RC out=$OUT"
   chmod 600 "$R/vstack.settings.toml"
   run_raw || true
@@ -313,7 +313,7 @@ else
   chmod 000 "$R/.env"
   run_raw || true
   [ "$RC" -eq 2 ] && case "$OUT" in *".env: unreadable while resolving a setting"*) true ;; *) false ;; esac \
-    && ok "an unreadable .env is exit 2 (falling through would have read the built-in 1000)" \
+    && ok "an unreadable .env is exit 2 (falling through would have read the built-in 400)" \
     || bad "an unreadable .env is exit 2" "rc=$RC out=$OUT"
   chmod 600 "$R/.env"
   run_raw || true

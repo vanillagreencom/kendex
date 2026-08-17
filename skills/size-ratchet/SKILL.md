@@ -26,6 +26,7 @@ human editing the row in a reviewed diff.
 .agents/skills/size-ratchet/scripts/size-ratchet            # check (pre-PR / CI)
 .agents/skills/size-ratchet/scripts/size-ratchet --staged   # check what a commit records (git hook)
 .agents/skills/size-ratchet/scripts/size-ratchet --update   # tighten the baseline
+.agents/skills/size-ratchet/scripts/size-ratchet --seed     # write the FIRST baseline
 ```
 
 `--staged` judges the commit's snapshot: index blobs, and index policy.
@@ -67,6 +68,14 @@ keeps failing, and a new offender stays a failure. Deliberate growth or a
 new freeze is a hand-edit of the baseline TSV, visible in the diff. After
 the rewrite the check re-runs, so `--update` exits 1 while growth or new
 offenders remain.
+
+## `--seed` — bootstrap only
+
+`--seed` writes the FIRST baseline from the gate's own collector: every
+tracked, non-excluded file over its deciding threshold enters at its
+current count, sorted, with a self-row when the baseline outgrows its own
+threshold. A baseline that already has rows refuses — the ratchet is live
+there, and growth stays a reviewed hand-edit. Commit the seeded file.
 
 ## Configuration
 

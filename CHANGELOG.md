@@ -129,6 +129,11 @@
 - linear: a truncated `cache issues list` announces itself on stderr with
   both counts instead of returning a bare 75-row array that reads as
   complete; `--max`/`--limit` are documented in SKILL.md (VST-320).
+- size-ratchet: `--seed` writes the FIRST baseline from the gate's own
+  collector (exact counts, class thresholds, excludes, sorted, self-row) and
+  refuses a live one — installing the skill no longer leaves a gate that can
+  never be turned on; the two stale built-in-1000 test messages read 400
+  (VST-328).
 
 - preflight: the code-citation lane leaves installed-artifact subtrees alone
   (`.agents/` and the harness dirs' skills/agents/hooks/rules/instructions/

@@ -50,7 +50,7 @@ STAGED=0
 
 usage() {
   cat <<'EOF'
-usage: size-ratchet [--staged] [--update] [--baseline FILE] [--excludes FILE]
+usage: size-ratchet [--staged] [--update | --seed] [--baseline FILE] [--excludes FILE]
 
 Tighten-only file-size gate: tracked files over the line threshold must be
 frozen in the baseline at their current size, and the baseline may only
@@ -101,7 +101,14 @@ BASELINE_OPT=""
 EXCLUDES_OPT=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --update) MODE="update" ;;
+    --update)
+      [ "$MODE" = "check" ] || config_error "--update and --seed are mutually exclusive"
+      MODE="update"
+      ;;
+    --seed)
+      [ "$MODE" = "check" ] || config_error "--update and --seed are mutually exclusive"
+      MODE="seed"
+      ;;
     --baseline)
       [ $# -ge 2 ] || config_error "--baseline requires a path"
       shift
@@ -664,6 +671,113 @@ if [ "$MODE" = "update" ]; then
     # to write; fall through to the plain check.
     echo "size-ratchet --update: no baseline at $BASELINE_FILE and --update never adds rows; nothing written"
   fi
+fi
+
+# --- --seed: write the FIRST baseline -----------------------------------------
+# The steady-state contract (rows never added, never raised) is also the only
+# path to a first baseline, so bootstrap gets its own mode: every tracked,
+# non-excluded file over ITS deciding threshold enters at its current count —
+# collected by the same pass the gate itself trusts — and only onto an empty
+# or absent baseline. A populated baseline is a live ratchet; growth stays a
+# reviewed hand-edit.
+if [ "$MODE" = "seed" ]; then
+  if [ "$BASELINE_FILE" = "$EXCLUDES_FILE" ]; then
+    config_error "--seed refuses: the baseline and exclusion list resolve to the same path ($BASELINE_FILE) — seeding would turn every row into an exclusion on the next run"
+  fi
+  if [ -e "$BASELINE_FILE" ] && [ -e "$EXCLUDES_FILE" ] && [ "$BASELINE_FILE" -ef "$EXCLUDES_FILE" ]; then
+    config_error "--seed refuses: the baseline and exclusion list are the same file (aliased through a link) — seeding would turn every row into an exclusion on the next run"
+  fi
+  # Bootstrap-only holds against the committed record too: rows in the INDEX
+  # copy mean the ratchet is live even when the worktree copy was truncated,
+  # and a regenerated baseline must be a reviewed hand-edit, never a reseed.
+  if git ls-files --error-unmatch -- "$BASELINE_FILE" >/dev/null 2>&1; then
+    git show ":$BASELINE_FILE" >"$TMP/baseline.index" 2>/dev/null \
+      || collection_error "could not read the index copy of $BASELINE_FILE — seeding cannot prove the ratchet is not live"
+    rows_index="$(count_nonempty_lines "$TMP/baseline.index")"
+    if [ "$rows_index" -gt 0 ]; then
+      config_error "--seed refuses: the INDEX copy of $BASELINE_FILE carries $rows_index row(s) — the ratchet is live; restore the file (git checkout -- $BASELINE_FILE) or hand-edit it"
+    fi
+  fi
+  rows_existing="$(count_nonempty_lines "$TMP/baseline.tsv")"
+  if [ "$rows_existing" -gt 0 ]; then
+    config_error "--seed refuses: $BASELINE_FILE already carries $rows_existing row(s) — the ratchet is live and only moves down (--update tightens; growth is a reviewed hand-edit)"
+  fi
+  if [ "$BASELINE_FROM_INDEX" = "1" ]; then
+    BASELINE_QUOTED="$(printf '%q' "$BASELINE_FILE")"
+    config_error "--seed cannot write an index-only baseline (sparse checkout omits $BASELINE_FILE); materialize it with: git update-index --no-skip-worktree -- $BASELINE_QUOTED && git checkout-index -- $BASELINE_QUOTED, then rerun"
+  fi
+  # Under --staged the populated-baseline refusal above read the INDEX copy;
+  # unstaged rows in the worktree copy are still content this mode must not
+  # replace.
+  if [ -f "$BASELINE_FILE" ]; then
+    rows_worktree="$(count_nonempty_lines "$BASELINE_FILE")"
+    if [ "$rows_worktree" -gt 0 ]; then
+      config_error "--seed refuses: the worktree copy of $BASELINE_FILE carries $rows_worktree row(s) (unstaged) — stage or remove them first"
+    fi
+  fi
+  awk -F'\t' -v OFS='\t' '{ if (($2 + 0) > ($3 + 0)) print $1, $2 }' "$TMP/counts.tsv" | LC_ALL=C sort >"$TMP/baseline.new" || collection_error "could not derive the seed rows — nothing written"
+  rows="$(count_nonempty_lines "$TMP/baseline.new")"
+  # The baseline is about to become a tracked file itself; when its own
+  # length will exceed its deciding threshold, it enters with a self-row —
+  # counted at the final length, self-row included — so the very next run
+  # over the committed file does not open with a new offender.
+  path_threshold "$BASELINE_FILE"
+  if ! is_excluded "$BASELINE_FILE" && [ "$rows" -gt "$PT" ]; then
+    printf '%s\t%s\n' "$BASELINE_FILE" $((rows + 1)) >>"$TMP/baseline.new"
+    LC_ALL=C sort -o "$TMP/baseline.new" "$TMP/baseline.new" || collection_error "could not sort the seeded baseline — nothing written"
+    rows=$((rows + 1))
+  fi
+  base_parent="."
+  case "$BASELINE_FILE" in
+    */*) base_parent="${BASELINE_FILE%/*}" ;;
+  esac
+  # Containment BEFORE side effects: the deepest existing ancestor must
+  # physically sit inside the repository before any directory is created —
+  # a symlinked parent resolving elsewhere must receive neither the seeded
+  # file nor the mkdir.
+  repo_phys="$(pwd -P)" || collection_error "could not resolve the repository root"
+  probe="$base_parent"
+  while [ ! -d "$probe" ]; do
+    case "$probe" in
+      */*) probe="${probe%/*}" ;;
+      *) probe="." ;;
+    esac
+  done
+  parent_phys="$(cd "$probe" 2>/dev/null && pwd -P)" || config_error "--seed cannot resolve the baseline directory for $BASELINE_FILE"
+  case "$parent_phys/" in
+    "$repo_phys"/*) ;;
+    *) config_error "--seed refuses: $BASELINE_FILE resolves outside the repository ($parent_phys) — nothing written" ;;
+  esac
+  if [ "$base_parent" != "." ]; then
+    mkdir -p "$base_parent" || collection_error "could not create the baseline directory for $BASELINE_FILE"
+    parent_phys="$(cd "$base_parent" 2>/dev/null && pwd -P)" || config_error "--seed cannot resolve the baseline directory for $BASELINE_FILE"
+    case "$parent_phys/" in
+      "$repo_phys"/*) ;;
+      *) config_error "--seed refuses: $BASELINE_FILE resolves outside the repository ($parent_phys) — nothing written" ;;
+    esac
+  fi
+  # The destination itself must be a plain path: mv onto a symlink or a
+  # directory would deposit the file wherever they point instead.
+  if [ -L "$BASELINE_FILE" ] || { [ -e "$BASELINE_FILE" ] && [ ! -f "$BASELINE_FILE" ]; }; then
+    config_error "--seed refuses: $BASELINE_FILE exists but is not a regular file — the baseline must be a plain file this repository owns"
+  fi
+  mv -- "$TMP/baseline.new" "$BASELINE_FILE" || collection_error "could not write the baseline at $BASELINE_FILE (mv failed)"
+  cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the seeded baseline at $BASELINE_FILE — the file WAS written; rerun size-ratchet to verify it"
+  # The file this mode just wrote is about to be judged by the trailing
+  # verdict; give the counts its row at the written length so the verdict
+  # sees what `git add` is about to make true, replacing any pre-existing
+  # row (a tracked-but-empty baseline is in the counts at length 0). An
+  # excluded baseline is outside the collector and gets no row.
+  if ! is_excluded "$BASELINE_FILE"; then
+    BASELINE_PATH="$BASELINE_FILE" NEW_N="$rows" NEW_T="$PT" awk -F'\t' -v OFS='\t' '
+      BEGIN { p = ENVIRON["BASELINE_PATH"]; n = ENVIRON["NEW_N"]; t = ENVIRON["NEW_T"] }
+      $1 == p { next }
+      { print }
+      END { print p, n, t }
+    ' "$TMP/counts.tsv" >"$TMP/counts.rewrite" || collection_error "could not refresh the counts row for $BASELINE_FILE — the baseline WAS written; rerun size-ratchet to verify it"
+    mv "$TMP/counts.rewrite" "$TMP/counts.tsv" || collection_error "could not stage the refreshed counts — the baseline WAS written; rerun size-ratchet to verify it"
+  fi
+  echo "size-ratchet --seed: first baseline written at $BASELINE_FILE ($rows row(s)) — commit it; rows only move down from here"
 fi
 
 # --- verdict -------------------------------------------------------------------
