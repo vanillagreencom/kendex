@@ -10,7 +10,7 @@ import {
 	formatUsageStats,
 	highlightInlinePreview,
 } from "../format.js";
-import { readTextFileIfExists, recordTraceRef } from "../renderers.js";
+import { readTextFileIfExists, readTranscriptTail, recordTraceRef } from "../renderers.js";
 import { monitorStatusIsTerminal } from "../task-records.js";
 import { formatTranscriptForDisplay, inputDeliveryLabel } from "../transcripts.js";
 import {
@@ -77,6 +77,17 @@ export function renderTraceContentLine(raw: string, type: TraceViewerItem["type"
 	const line = raw.replace(/\t/g, "  ");
 	const trimmed = line.trim();
 	if (!trimmed) return [""];
+	// Transcript timeline rows: `[elapsed] kind · detail`, `✖`-marked when the
+	// event is an error/abort so a failed run stands out without scrolling.
+	const timeline = line.match(/^([ ✖])\[([^\]]+)\] (.*)$/);
+	if (timeline) {
+		const [, mark, stamp, rest] = timeline;
+		if (mark === "✖") return wrapTextWithAnsi(theme.fg("error", `✖ [${stamp}] ${rest}`), width);
+		const sep = rest!.indexOf(" · ");
+		const kind = sep === -1 ? rest! : rest!.slice(0, sep);
+		const detail = sep === -1 ? "" : rest!.slice(sep);
+		return wrapTextWithAnsi(`${theme.fg("dim", `[${stamp}]`)} ${theme.fg("accent", theme.bold(kind))}${theme.fg("toolOutput", detail)}`, width);
+	}
 	if (/^── .+ ──$/.test(trimmed)) return wrapTextWithAnsi(theme.fg("muted", trimmed.replace(/(input|assistant|user|tool call|tool start|tool end|turn start|turn end|agent end|exit)/i, (match) => theme.fg("accent", theme.bold(match)))), width);
 	if (/^-{3,}$/.test(trimmed)) return [];
 	if (/^(Overview|Metadata|Summary|Files changed|Validation|Notes|Task|Artifacts|Session|Task list|System Prompt)$/i.test(trimmed)) {
@@ -258,9 +269,9 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		...completionJsonSection,
 	].filter(Boolean).join("\n");
 	const common = { agent: record.agent, createdAt: record.completedAt ?? record.createdAt, ref, status: record.status, summary: summaryText };
-	const transcript = await readTextFileIfExists(record.transcriptPath, 24_000);
+	const transcript = await readTranscriptTail(record.transcriptPath);
 	const transcriptItem = record.transcriptPath
-		? [{ ...common, label: "Transcript", path: record.transcriptPath, text: transcript ? formatTranscriptForDisplay(transcript) : "Transcript file could not be read.", type: "transcript" as const }]
+		? [{ ...common, label: "Transcript", path: record.transcriptPath, text: transcript ? formatTranscriptForDisplay(transcript.text, { droppedEvents: transcript.droppedLines }) : "Transcript file could not be read.", type: "transcript" as const }]
 		: [];
 	return [
 		{ ...common, label: "Summary", text: summary, type: "summary" as const },

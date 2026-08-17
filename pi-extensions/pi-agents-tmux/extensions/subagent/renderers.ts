@@ -260,6 +260,29 @@ export async function readTextFileIfExists(filePath: string | undefined, maxByte
 	}
 }
 
+/**
+ * Tail-read a JSONL transcript on a byte budget without ever cutting
+ * mid-record: the cut lands on the first line boundary inside the kept
+ * window, and the dropped prefix is counted so the caller can say how many
+ * events are not shown instead of rendering a leading fragment.
+ */
+export async function readTranscriptTail(filePath: string | undefined, maxBytes = 256_000): Promise<{ text: string; droppedLines: number } | undefined> {
+	if (!filePath) return undefined;
+	try {
+		const content = await fs.promises.readFile(filePath, "utf-8");
+		if (content.length <= maxBytes) return { droppedLines: 0, text: content };
+		const cutStart = content.length - maxBytes;
+		const boundary = content.indexOf("\n", cutStart);
+		if (boundary === -1) return { droppedLines: Math.max(0, content.split("\n").length - 1), text: "" };
+		const dropped = content.slice(0, boundary + 1);
+		let droppedLines = 0;
+		for (let index = dropped.indexOf("\n"); index !== -1; index = dropped.indexOf("\n", index + 1)) droppedLines += 1;
+		return { droppedLines, text: content.slice(boundary + 1) };
+	} catch {
+		return undefined;
+	}
+}
+
 export async function formatTraceView(record: PaneTaskRecord, verbose = false): Promise<string> {
 	const base = formatTaskRecordResult(record, true);
 	const transcript = await readTextFileIfExists(record.transcriptPath, verbose ? 80_000 : 24_000);

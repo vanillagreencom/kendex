@@ -1122,10 +1122,8 @@ test("Monitor trace labels delivery mode and humanizes input transcript events",
 	assert.match(items[0]!.text, /Delivery  follow-up/);
 	assert.equal(items[2]!.label, "Transcript");
 	assert.equal(items[2]!.type, "transcript");
-	assert.match(items[2]!.text, /── input \(follow-up · extension · 0 images\) ──/);
-	assert.match(items[2]!.text, /Please follow up after current turn/);
-	assert.match(items[2]!.text, /── assistant message ──/);
-	assert.match(items[2]!.text, /done with follow-up/);
+	assert.match(items[2]!.text, /input \(follow-up, extension\) · Please follow up after current turn/);
+	assert.match(items[2]!.text, /assistant · done with follow-up/);
 });
 
 test("Monitor completion tab shows persisted bg result without JSON warning", async () => {
