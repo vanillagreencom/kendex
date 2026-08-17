@@ -50,6 +50,11 @@ issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
 cat >"$TMP/gh-stub" <<'STUB'
 #!/usr/bin/env bash
 # args: pr list --state STATE --head BRANCH --json number --jq length
+# A leaked repo redirect must never reach the probe.
+if [ -n "${GH_REPO:-}" ] || [ -n "${GITHUB_REPOSITORY:-}" ]; then
+  echo "gh-stub: GH_REPO/GITHUB_REPOSITORY leaked into the probe" >&2
+  exit 9
+fi
 state=""; head=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -67,7 +72,7 @@ STUB
 chmod +x "$TMP/gh-stub"
 
 OUT=""; RC=0
-OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R" && GH_REPO=elsewhere/other GITHUB_REPOSITORY=elsewhere/other RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 
 [ "$RC" -eq 1 ] && ok "findings exit 1" || bad "exit code" "rc=$RC out=$OUT"
 case "$OUT" in *"container-parked: T-1"*) ok "the parked container is reported" ;; *) bad "parked container" "$OUT" ;; esac
