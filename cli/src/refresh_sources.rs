@@ -1,5 +1,5 @@
 use crate::agent::Agent;
-use crate::config::{self, ItemKind};
+use crate::config::{self, CacheAccess, ItemKind};
 use crate::hook::Hook;
 use crate::mapping::MappingConfig;
 use crate::pi_extension::PiExtension;
@@ -1553,15 +1553,15 @@ pub(crate) fn update_cached_repo(remote: &RemoteSource) -> Result<()> {
 /// fetched within `max_age` is left alone, and the fetch is killed at `bound`.
 ///
 /// The mutation itself lives in [`config::fetch_remote_cache`], the one place
-/// an existing entry is fetched and reset, so the ownership proof above, the
-/// cross-process guard, the deadline and the fetch stamp are a single
-/// mechanism no caller can take half of.
+/// an existing entry is fetched and reset, so the ownership proof, the guard,
+/// the deadline and the stamp are one mechanism no caller halves — taken as
+/// [`CacheAccess::Install`], because discovery and hashing read this tree next.
 pub(crate) fn update_cached_repo_bounded(
     remote: &RemoteSource,
     max_age: Option<std::time::Duration>,
     bound: config::FetchBound,
 ) -> Result<()> {
-    config::fetch_remote_cache(remote, max_age, bound)?.report(remote);
+    config::fetch_remote_cache(remote, max_age, bound, CacheAccess::Install)?.report(remote);
     Ok(())
 }
 

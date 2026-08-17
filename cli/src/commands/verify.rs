@@ -473,18 +473,21 @@ fn codex_scope_has_agents(codex_root: &Path) -> bool {
     })
 }
 
+/// Does any Codex agent carry this hook's prose fallback? Asked through the
+/// predicate the install writes against, so verification cannot call a hook
+/// installed on evidence the install would not have accepted — a marker in a
+/// comment or an unrelated field is not the fallback.
 fn codex_agent_has_prose(codex_root: &Path, hook_name: &str) -> bool {
     let agents_dir = codex_root.join("agents");
     let Ok(entries) = std::fs::read_dir(&agents_dir) else {
         return false;
     };
-    let marker = format!("## Safety: {hook_name}");
     entries.flatten().any(|entry| {
         let path = entry.path();
         path.extension().is_some_and(|ex| ex == "toml")
-            && std::fs::read_to_string(&path)
-                .map(|c| c.contains(&marker))
-                .unwrap_or(false)
+            && std::fs::read_to_string(&path).is_ok_and(|content| {
+                crate::installer::codex_agent_prose_section(&content, hook_name).is_some()
+            })
     })
 }
 

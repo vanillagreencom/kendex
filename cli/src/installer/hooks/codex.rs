@@ -30,6 +30,99 @@ pub(crate) fn codex_hook_safety_marker(hook_name: &str) -> String {
     format!("## Safety: {hook_name}")
 }
 
+/// The byte range of a Codex agent TOML's `developer_instructions` value.
+///
+/// This is the only place the prose fallback can live — it is what Codex
+/// hands the agent — so it is the only place install writes and the only
+/// place a presence read looks. Anchored at a line start, because that is
+/// where a TOML assignment begins; the whole-file reading it replaces treated
+/// marker text in a comment or an unrelated field as the block itself.
+fn developer_instructions_span(content: &str) -> Option<std::ops::Range<usize>> {
+    const KEY: &str = "developer_instructions";
+    const DELIMITER: &str = "'''";
+    let mut line_start = 0;
+    for line in content.split_inclusive('\n') {
+        let offset = line_start;
+        line_start += line.len();
+        let Some(rest) = line.trim_start().strip_prefix(KEY) else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        if !rest.starts_with(DELIMITER) {
+            // A single-line or basic string: nothing this writer produced,
+            // and nowhere a multi-line prose block can be spliced.
+            return None;
+        }
+        // TOML drops the newline that immediately follows the opening
+        // delimiter, so the value starts after it.
+        let opened = offset + (line.len() - rest.len()) + DELIMITER.len();
+        let start = match content[opened..].strip_prefix('\n') {
+            Some(_) => opened + 1,
+            None => opened,
+        };
+        let end = start + content[start..].find(DELIMITER)?;
+        return Some(start..end);
+    }
+    None
+}
+
+/// The hook's own `## Safety: <name>` section inside `instructions` — its
+/// heading line through to the next `## ` heading or the end of the block.
+fn hook_prose_section<'a>(instructions: &'a str, hook_name: &str) -> Option<&'a str> {
+    let marker = codex_hook_safety_marker(hook_name);
+    let mut start = None;
+    let mut offset = 0;
+    for line in instructions.split_inclusive('\n') {
+        let at = offset;
+        offset += line.len();
+        let text = line.strip_suffix('\n').unwrap_or(line);
+        match start {
+            // Whole-line equality, never `contains`: `## Safety: foo` is a
+            // prefix of `## Safety: foo-bar`, and a substring reading let one
+            // hook's block stand in for another's.
+            None if text == marker => start = Some(at),
+            Some(from) if text.starts_with("## ") => return Some(&instructions[from..at]),
+            _ => {}
+        }
+    }
+    start.map(|from| &instructions[from..])
+}
+
+/// The one predicate install and every presence read share: does this Codex
+/// agent TOML already carry `hook_name`'s safety prose, in the block the prose
+/// has to live in? `None` when it does not — including when the file has no
+/// `developer_instructions` block at all.
+pub(crate) fn codex_agent_prose_section<'a>(content: &'a str, hook_name: &str) -> Option<&'a str> {
+    let span = developer_instructions_span(content)?;
+    hook_prose_section(&content[span], hook_name)
+}
+
+/// Does any Codex agent under `codex_root` carry THIS hook's prose fallback?
+///
+/// The block is found by [`codex_agent_prose_section`] — the predicate the
+/// install writes against — and must carry the CURRENT hook's action line, so
+/// a same-named block installed for a different event is not adopted as this
+/// one. It lives here, beside the install, for exactly that reason.
+pub(crate) fn codex_agent_carries_hook_prose(codex_root: &Path, hook: &Hook) -> bool {
+    let Some(action_line) = crate::config::generated_safety_action_line(hook) else {
+        return false;
+    };
+    let Ok(entries) = std::fs::read_dir(codex_root.join("agents")) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        path.extension().is_some_and(|ex| ex == "toml")
+            && std::fs::read_to_string(&path).is_ok_and(|content| {
+                codex_agent_prose_section(&content, &hook.name)
+                    .is_some_and(|section| section.lines().any(|line| line == action_line))
+            })
+    })
+}
+
 /// Map a canonical (Claude-style) hook event to its codex equivalent.
 ///
 /// Codex supports these events natively (per
@@ -480,7 +573,6 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
         return Ok(false);
     }
 
-    let marker = codex_hook_safety_marker(&hook.name);
     let mut wrote = false;
     for agent in agents {
         validate_item_name(&agent.name)?;
@@ -490,12 +582,15 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
         }
 
         let content = std::fs::read_to_string(&toml_path)?;
-        if content.contains(&marker) {
+        // The same question every presence read asks, from the same bytes.
+        if codex_agent_prose_section(&content, &hook.name).is_some() {
             wrote = true;
             continue;
         }
 
-        let Some(close_pos) = content.rfind("'''") else {
+        // Append INSIDE `developer_instructions`, so what is written is what
+        // the predicate above will find on the next run.
+        let Some(instructions) = developer_instructions_span(&content) else {
             anyhow::bail!(
                 "Codex agent `{}` has no developer_instructions block to carry the `{}` hook's safety prose: {}",
                 agent.name,
@@ -503,17 +598,19 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
                 toml_path.display()
             );
         };
+        let close_pos = instructions.end;
         let mut new_content = content[..close_pos].to_string();
         new_content.push('\n');
         new_content.push_str(&codex_hook_safety_block(hook));
         new_content.push('\n');
         new_content.push_str(&content[close_pos..]);
-        // Only claim the install when the marker presence checking looks for
+        // Only claim the install when the block presence checking looks for
         // is actually in the bytes about to be written.
-        if !new_content.contains(&marker) {
+        if codex_agent_prose_section(&new_content, &hook.name).is_none() {
             anyhow::bail!(
-                "the `{}` hook's safety block carries no `{marker}` marker for Codex agent `{}`: {}",
+                "the `{}` hook's safety block carries no `{}` marker for Codex agent `{}`: {}",
                 hook.name,
+                codex_hook_safety_marker(&hook.name),
                 agent.name,
                 toml_path.display()
             );

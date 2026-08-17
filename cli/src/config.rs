@@ -1462,7 +1462,7 @@ fn installed_hook_harnesses_on_disk(
     harnesses
 }
 
-fn generated_safety_action_line(hook: &crate::hook::Hook) -> Option<String> {
+pub(crate) fn generated_safety_action_line(hook: &crate::hook::Hook) -> Option<String> {
     hook.safety_prose().lines().last().map(str::to_string)
 }
 
@@ -1557,25 +1557,9 @@ fn codex_hook_artifact_exists(project_root: &Path, global: bool, hook: &crate::h
         );
     }
 
-    codex_agent_has_expected_prose(&root, hook)
-}
-
-fn codex_agent_has_expected_prose(codex_root: &Path, hook: &crate::hook::Hook) -> bool {
-    let agents_dir = codex_root.join("agents");
-    let Ok(entries) = std::fs::read_dir(&agents_dir) else {
-        return false;
-    };
-    let marker = format!("## Safety: {}", hook.name);
-    let Some(action_line) = generated_safety_action_line(hook) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        let path = entry.path();
-        path.extension().is_some_and(|ex| ex == "toml")
-            && std::fs::read_to_string(&path)
-                .map(|content| generated_safety_text_matches(&content, &marker, &action_line))
-                .unwrap_or(false)
-    })
+    // The prose fallback's presence is answered beside the install that
+    // writes it, so the two can never read different bytes.
+    crate::installer::codex_agent_carries_hook_prose(&root, hook)
 }
 
 fn opencode_hook_artifact_exists(

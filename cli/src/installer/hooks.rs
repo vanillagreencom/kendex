@@ -12,8 +12,12 @@ pub(crate) use opencode::{opencode_hook_instruction_contents, opencode_hook_inst
 
 mod codex;
 
+/// The block itself is written here and read back only by tests.
+#[cfg(test)]
+pub(crate) use codex::codex_hook_safety_block;
 pub(crate) use codex::{
-    codex_event_for, codex_hook_safety_block, codex_native_hook_gaps, codex_root,
+    codex_agent_carries_hook_prose, codex_agent_prose_section, codex_event_for,
+    codex_native_hook_gaps, codex_root,
 };
 pub use codex::{install_codex_fallback_hooks_for_agents, migrate_codex_config};
 use codex::{install_hook_codex, remove_hook_from_codex_json, strip_hook_prose_from_codex_agents};

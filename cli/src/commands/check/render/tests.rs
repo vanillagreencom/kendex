@@ -812,6 +812,115 @@ fn the_quiet_report_is_bounded_per_section_while_counts_stay_exact() {
     assert!(!full.contains("and 15 more"), "{full}");
 }
 
+/// Per-section caps bound each section; only this bounds their SUM. A project
+/// with dozens of broken sources renders a header plus a detail list per
+/// source, and every line of it is relayed verbatim into an agent's context by
+/// both session adapters.
+#[test]
+fn the_whole_quiet_report_is_bounded_and_names_what_it_left_out() {
+    let broken_source = |n: usize| SourceIssue {
+        source: format!("/sources/{n:02}"),
+        problem: SourceProblem::Unreadable {
+            entries: (0..4).map(|i| format!("item-{n:02}-{i}")).collect(),
+            reasons: (0..4).map(|i| format!("reason {n:02}-{i}")).collect(),
+        },
+    };
+    let scope = |scope: &'static str| ScopeReport {
+        scope,
+        installed: 40,
+        source_issues: (0..20).map(broken_source).collect(),
+        available: (0..20)
+            .map(|n| AvailableItem {
+                name: format!("offer-{n:02}"),
+                kind: ItemKind::Skill,
+                source: format!("/sources/{n:02}"),
+            })
+            .collect(),
+        ..ScopeReport::default()
+    };
+    let report = CheckReport {
+        version: 1,
+        cli_version: "0.0.0",
+        cli_hash: "abc",
+        drift: true,
+        background_refresh_error: None,
+        cache_refresh_failures: Vec::new(),
+        scopes: vec![scope("project"), scope("global")],
+    };
+
+    let quiet = render_report(&report, true);
+    // What the per-section caps alone produce: bounded per section, unbounded
+    // in total.
+    let mut unbudgeted = String::new();
+    render_scope(&mut unbudgeted, &report.scopes[0], true);
+    render_scope(&mut unbudgeted, &report.scopes[1], true);
+    let rendered = quiet.lines().count();
+    assert!(
+        rendered <= QUIET_REPORT_LINE_BUDGET + 1 && rendered < unbudgeted.lines().count(),
+        "the whole quiet report must fit the budget plus its summary, saw {rendered}:\n{quiet}"
+    );
+
+    // The summary's count is the truth: what was rendered plus what it names
+    // is the whole per-section-capped report.
+    let summary = quiet
+        .lines()
+        .last()
+        .expect("a trimmed report closes with its summary");
+    let omitted: usize = summary
+        .split_whitespace()
+        .find_map(|word| word.parse().ok())
+        .expect("the summary names a count");
+    assert!(
+        summary.contains("run `vstack check` for the full report"),
+        "the summary must name the way to the full report: {summary}"
+    );
+    assert_eq!(
+        rendered - 1 + omitted,
+        unbudgeted.lines().count(),
+        "the omitted count must be the real remainder: {quiet}"
+    );
+
+    // Drift claims the budget first: with suggestions and drift competing,
+    // the drift headers survive and the offers are what goes.
+    assert!(quiet.contains("cannot be inventoried"), "{quiet}");
+    assert!(
+        !quiet.contains("available in source but not installed"),
+        "suggestions must give up their lines before drift does: {quiet}"
+    );
+
+    // Control: the interactive report of the same thing is complete.
+    let full = render_report(&report, false);
+    assert_eq!(
+        full.matches("cannot be inventoried").count(),
+        40,
+        "the interactive report is never budgeted"
+    );
+    assert!(
+        full.lines().count() > QUIET_REPORT_LINE_BUDGET * 2,
+        "{full}"
+    );
+
+    // Control: an ordinary report is byte-identical to the unbudgeted
+    // rendering — the budget only ever cuts.
+    let small = CheckReport {
+        scopes: vec![ScopeReport {
+            scope: "project",
+            installed: 2,
+            outdated: vec![Item::new("alpha", ItemKind::Skill)],
+            available: vec![AvailableItem {
+                name: "beta".into(),
+                kind: ItemKind::Skill,
+                source: "owner/repo".into(),
+            }],
+            ..ScopeReport::default()
+        }],
+        ..report.clone()
+    };
+    let mut expected = String::new();
+    render_scope(&mut expected, &small.scopes[0], true);
+    assert_eq!(render_report(&small, true), expected);
+}
+
 #[test]
 fn each_offering_source_keeps_its_own_suggestion_line() {
     with_sandbox("available-sources", |project, source| {

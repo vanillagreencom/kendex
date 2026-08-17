@@ -82,30 +82,102 @@ fn display_bounded(text: &str, limit: usize) -> String {
 /// Human report. `quiet` drops headers and per-item listings and prints
 /// nothing at all when no scope has drift; suggestions and cache warnings
 /// then ride along only with real drift, so a clean session stays silent.
+///
+/// The quiet rendering is assembled as budgetable blocks and then trimmed to
+/// [`QUIET_REPORT_LINE_BUDGET`]; the interactive one is complete and never
+/// trimmed.
 pub(super) fn render_report(report: &CheckReport, quiet: bool) -> String {
-    let mut out = String::new();
     if quiet && !report.drift {
-        return out;
+        return String::new();
     }
+    let mut blocks: Vec<(BlockPriority, String)> = Vec::new();
     for scope in &report.scopes {
-        render_scope(&mut out, scope, quiet);
+        let mut drift = String::new();
+        let mut suggestions = String::new();
+        render_scope_parts(&mut drift, &mut suggestions, scope, quiet);
+        blocks.push((BlockPriority::Drift, drift));
+        blocks.push((BlockPriority::Suggestion, suggestions));
     }
+
+    let mut caches = String::new();
     if let Some(error) = &report.background_refresh_error {
-        out.push_str(&format!(
+        caches.push_str(&format!(
             "\n  source caches could not be refreshed in the background ({error}); run `vstack refresh` to update them\n"
         ));
     }
     if !report.cache_refresh_failures.is_empty() {
-        out.push('\n');
+        caches.push('\n');
         let shown = shown_count(quiet, report.cache_refresh_failures.len());
         for failure in &report.cache_refresh_failures[..shown] {
-            out.push_str(&format!(
+            caches.push_str(&format!(
                 "  source cache {} is not up to date — {}; results may be stale — run `vstack refresh` to retry it now\n",
                 display_text(&failure.source),
                 failure.reason
             ));
         }
-        overflow_line(&mut out, "  ", shown, report.cache_refresh_failures.len());
+        overflow_line(
+            &mut caches,
+            "  ",
+            shown,
+            report.cache_refresh_failures.len(),
+        );
+    }
+    // A cache that cannot refresh is a state to act on, not an offer.
+    blocks.push((BlockPriority::Drift, caches));
+
+    if !quiet {
+        return blocks.into_iter().map(|(_, text)| text).collect();
+    }
+    spend_line_budget(&blocks, QUIET_REPORT_LINE_BUDGET)
+}
+
+/// What a block of the report is for, and therefore the order in which it
+/// claims lines from the quiet budget: what an agent has to act on comes
+/// before what it may optionally add. Within a priority, blocks claim in
+/// report order — so the same report always omits the same lines, and drift
+/// never appears or vanishes because a suggestion list grew.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockPriority {
+    Drift,
+    Suggestion,
+}
+
+/// Concatenate `blocks` in report order, keeping the whole rendering inside
+/// `budget` lines and closing with one line naming everything left out.
+///
+/// Under budget this is a plain concatenation — byte for byte what the report
+/// was before there was a budget at all.
+fn spend_line_budget(blocks: &[(BlockPriority, String)], budget: usize) -> String {
+    let lines = |text: &str| text.split_inclusive('\n').count();
+    let total: usize = blocks.iter().map(|(_, text)| lines(text)).sum();
+    if total <= budget {
+        return blocks.iter().map(|(_, text)| text.as_str()).collect();
+    }
+
+    let mut kept = vec![0usize; blocks.len()];
+    let mut left = budget;
+    for priority in [BlockPriority::Drift, BlockPriority::Suggestion] {
+        for (index, (block_priority, text)) in blocks.iter().enumerate() {
+            if *block_priority != priority {
+                continue;
+            }
+            kept[index] = lines(text).min(left);
+            left -= kept[index];
+        }
+    }
+
+    let mut out = String::new();
+    for (index, (_, text)) in blocks.iter().enumerate() {
+        out.extend(text.split_inclusive('\n').take(kept[index]));
+    }
+    let omitted = total - kept.iter().sum::<usize>();
+    if omitted > 0 {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "  … and {omitted} more report line(s) (run `vstack check` for the full report)\n"
+        ));
     }
     out
 }
@@ -124,6 +196,14 @@ pub(super) fn humanize_age(secs: u64) -> String {
 /// an inventory happens to be. Headers keep the true counts; the full listing
 /// is one `vstack check` away.
 const QUIET_SECTION_LIMIT: usize = 10;
+
+/// How many lines the WHOLE quiet report may spend, before its closing
+/// summary. [`QUIET_SECTION_LIMIT`] bounds each section; nothing bounded their
+/// sum, and a project with dozens of unreachable sources renders a header and
+/// a detail list per source — hundreds of lines into an agent's context
+/// through both session adapters. Wide enough for several fully capped
+/// sections across both scopes, and a hard ceiling past that.
+const QUIET_REPORT_LINE_BUDGET: usize = 60;
 
 /// How many of `total` entries this mode renders.
 fn shown_count(quiet: bool, total: usize) -> usize {
@@ -194,15 +274,35 @@ fn scope_flag(scope: &str) -> &'static str {
     }
 }
 
+/// One scope's rendering, whole — drift followed by the suggestions that
+/// close it, exactly as the report prints them.
 pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) {
+    let mut suggestions = String::new();
+    render_scope_parts(out, &mut suggestions, report, quiet);
+    out.push_str(&suggestions);
+}
+
+/// [`render_scope`] with its two halves kept apart, so the quiet budget can
+/// tell what an agent must act on from what it is merely offered.
+fn render_scope_parts(
+    drift: &mut String,
+    suggestions: &mut String,
+    report: &ScopeReport,
+    quiet: bool,
+) {
+    if quiet && !report.has_drift() {
+        return;
+    }
+    render_scope_drift(drift, report, quiet);
+    render_available(suggestions, report, quiet);
+}
+
+fn render_scope_drift(out: &mut String, report: &ScopeReport, quiet: bool) {
     use std::fmt::Write as _;
 
     let g = scope_flag(report.scope);
 
     if quiet {
-        if !report.has_drift() {
-            return;
-        }
         let _ = writeln!(out, "vstack drift — {} scope:", report.scope);
     } else {
         let _ = writeln!(
@@ -345,7 +445,14 @@ pub(super) fn render_scope(out: &mut String, report: &ScopeReport, quiet: bool) 
         }
         overflow_line(out, "    ", shown, report.invalid_names.len());
     }
+}
 
+/// The "available in source but not installed" offers — suggestions, never
+/// drift, and the first thing the quiet budget gives up.
+fn render_available(out: &mut String, report: &ScopeReport, quiet: bool) {
+    use std::fmt::Write as _;
+
+    let g = scope_flag(report.scope);
     if !report.available.is_empty() {
         let _ = writeln!(
             out,

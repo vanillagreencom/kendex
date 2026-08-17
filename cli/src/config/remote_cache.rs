@@ -19,8 +19,8 @@ mod fetch;
 mod test_support;
 
 pub use fetch::{
-    FetchBound, fetch_remote_cache, refresh_remote_caches, refresh_remote_caches_older_than,
-    spawn_detached_cache_refresh,
+    CacheAccess, FetchBound, fetch_remote_cache, refresh_remote_caches,
+    refresh_remote_caches_older_than, spawn_detached_cache_refresh,
 };
 use fetch::{GuardAcquire, RemoteCacheFetchGuard};
 

@@ -466,6 +466,77 @@ fn codex_prose_install_fails_on_an_agent_it_cannot_write_and_names_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The marker only counts where the prose has to live. Text carrying it in a
+/// comment or an unrelated field made the install skip its write, and the
+/// presence read — the same whole-file search — then called the missing
+/// fallback installed: both wrong, and agreeing with each other.
+#[test]
+fn marker_text_outside_developer_instructions_is_not_the_prose_fallback() {
+    let dir = tmpdir("codex_prose_scope");
+    let agents_dir = dir.join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    let hook = hook_fixture("post-edit-lint", "TaskCompleted", None);
+    let marker = super::codex::codex_hook_safety_marker(&hook.name);
+    // The whole block, verbatim — in a comment and in another field. Every
+    // line the old whole-file search matched on is here; none of it is prose
+    // Codex will ever hand the agent.
+    let decoy = format!(
+        "# {marker}\nname = \"rust\"\nnotes = '''\n{}\n'''\ndeveloper_instructions = '''\nBody\n'''\n",
+        crate::installer::codex_hook_safety_block(&hook)
+    );
+    let toml = agents_dir.join("rust.toml");
+    std::fs::write(&toml, &decoy).unwrap();
+    let agents = [agent_fixture("rust")];
+
+    // Presence, before anything is installed: the decoy is not the block.
+    assert!(
+        crate::installer::codex_agent_prose_section(&decoy, &hook.name).is_none(),
+        "marker text outside developer_instructions must not read as installed"
+    );
+
+    // …so the install writes the block instead of skipping it.
+    crate::test_util::with_codex_home(&dir, || {
+        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
+            .unwrap();
+    });
+    let written = std::fs::read_to_string(&toml).unwrap();
+    let section = crate::installer::codex_agent_prose_section(&written, &hook.name)
+        .expect("the install must write the block the presence read looks for");
+    assert!(
+        section.contains("the agent should verify this constraint is met"),
+        "the section carries the hook's own prose: {section}"
+    );
+    assert!(
+        written.starts_with(&format!("# {marker}\n")),
+        "the decoy comment is left exactly as it was: {written}"
+    );
+
+    // Control: a rerun sees its own block and writes no second copy.
+    crate::test_util::with_codex_home(&dir, || {
+        install_codex_fallback_hooks_for_agents(std::slice::from_ref(&hook), true, &agents)
+            .unwrap();
+    });
+    let reread = std::fs::read_to_string(&toml).unwrap();
+    assert_eq!(reread, written, "a second run must change nothing");
+
+    // Control: a longer-named hook's block is not this hook's. A substring
+    // reading answered yes and skipped the install for good.
+    let sibling = hook_fixture("post-edit-lint-extra", "TaskCompleted", None);
+    let sibling_only = format!(
+        "developer_instructions = '''\n{}\n'''\n",
+        crate::installer::codex_hook_safety_block(&sibling)
+    );
+    assert!(
+        crate::installer::codex_agent_prose_section(&sibling_only, &hook.name).is_none(),
+        "`## Safety: x-extra` must not answer for `## Safety: x`: {sibling_only}"
+    );
+    assert!(
+        crate::installer::codex_agent_prose_section(&sibling_only, &sibling.name).is_some(),
+        "…while its own name still finds it: {sibling_only}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn remove_hook_install_codex_strips_script_json_and_legacy_prose() {
     let dir = tmpdir("codex_remove_strip");

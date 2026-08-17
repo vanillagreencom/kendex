@@ -263,6 +263,56 @@ fn take_over_stale_lock(path: &Path, stale_after: std::time::Duration) -> bool {
     }
 }
 
+/// What the caller does with the cache once this call returns, and therefore
+/// what another process holding the guard means for it.
+///
+/// Every call site states it, because the two answers are opposites and the
+/// permissive one is not safe to inherit: a caller that goes on to install
+/// from a tree being `reset --hard` copies whatever bytes it happened to
+/// catch and records them as the source's content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheAccess {
+    /// The caller READS the cache after this returns — discovers it, hashes
+    /// it, copies out of it. A tree another process is rewriting is not a
+    /// source to install from, so contention is waited out for
+    /// [`INSTALL_GUARD_WAIT`] and then refused. Freshness does not short-
+    /// circuit this caller either: a holder writes its `pending` stamp before
+    /// it starts, which reads as fresh to everyone else.
+    Install,
+    /// Nothing reads the tree after this call — it exists only to bring the
+    /// cache up to date. Another process already doing that is exactly the
+    /// outcome this caller wanted, so it stands down.
+    RefreshOnly,
+}
+
+/// How long an installing caller waits for an in-flight refresh before it
+/// refuses. A refresh of a catalog repo is seconds; the bound is what stops a
+/// wedged holder from owning a terminal for the whole fetch deadline. Past it
+/// the install fails and says to retry, which is recoverable — installing from
+/// a half-reset tree is not.
+const INSTALL_GUARD_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Take the guard on `access`'s terms.
+///
+/// An installing caller waits, because the alternative is reading a tree
+/// mid-`reset`; a refresher does not, because standing down is exactly what it
+/// should do when somebody else is already refreshing.
+fn acquire_fetch_guard(
+    cache_dir: &Path,
+    access: CacheAccess,
+) -> GuardAcquire<RemoteCacheFetchGuard> {
+    let mut acquired = RemoteCacheFetchGuard::acquire(cache_dir);
+    if access == CacheAccess::RefreshOnly {
+        return acquired;
+    }
+    let started = std::time::Instant::now();
+    while matches!(acquired, GuardAcquire::Busy) && started.elapsed() < INSTALL_GUARD_WAIT {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        acquired = RemoteCacheFetchGuard::acquire(cache_dir);
+    }
+    acquired
+}
+
 /// How long a fetch may run. `Bounded` carries its own deadline because the
 /// two bounded callers want very different ones: the detached background
 /// child can afford a full minute since nobody is waiting on it, while an
@@ -347,23 +397,42 @@ impl FetchAttempt {
 /// `max_age` is checked before the ownership proof — a cache still inside its
 /// TTL costs no git process at all — and again INSIDE the guard, so a second
 /// caller that queued behind a fetch sees its fresh stamp and skips instead of
-/// fetching again.
+/// fetching again. A [`CacheAccess::Install`] caller skips the cheap first
+/// check: it is about to READ this tree, and freshness says nothing about
+/// whether somebody is rewriting it right now.
+///
+/// What an installing caller gets is a tree no other process was rewriting
+/// when this returned, plus a stamp written under the guard — and a fresh
+/// stamp stands every TTL-gated refresher down for the rest of the install.
+/// The one writer that ignores the TTL is another install, which now waits
+/// here too.
 pub fn fetch_remote_cache(
     remote: &RemoteSource,
     max_age: Option<std::time::Duration>,
     bound: FetchBound,
+    access: CacheAccess,
 ) -> anyhow::Result<FetchAttempt> {
     let cache_dir = remote.cache_dir.as_path();
-    if !remote_cache_fetch_due(cache_dir, max_age) {
+    if access == CacheAccess::RefreshOnly && !remote_cache_fetch_due(cache_dir, max_age) {
         return Ok(FetchAttempt::Fresh);
     }
     // Before anything is written: this entry must be vstack's own clone of
     // THIS repository. Reads only, and it refuses rather than repairs.
     ensure_cache_entry_is_owned(remote)?;
 
-    let guard = match RemoteCacheFetchGuard::acquire(cache_dir) {
+    let guard = match acquire_fetch_guard(cache_dir, access) {
         GuardAcquire::Held(guard) => guard,
-        GuardAcquire::Busy => return Ok(FetchAttempt::Busy),
+        GuardAcquire::Busy => match access {
+            CacheAccess::RefreshOnly => return Ok(FetchAttempt::Busy),
+            // The caller installs from this tree next. Another process is
+            // still fetching and resetting it, so there is no revision to
+            // install: refuse, name the contention, and leave the project
+            // exactly as it was.
+            CacheAccess::Install => anyhow::bail!(
+                "another vstack process is refreshing cached source {} — refusing to install from a cache being rewritten; retry once it finishes",
+                remote.display
+            ),
+        },
         GuardAcquire::Unusable(reason) => return Ok(FetchAttempt::Unwritable(reason)),
     };
     if !remote_cache_fetch_due(cache_dir, max_age) {
@@ -580,12 +649,21 @@ fn kill_process_group(child: &mut std::process::Child) {
 /// Refresh cached repos for all remote sources found in installed lock
 /// entries. Called at TUI startup so staleness checks see the latest content;
 /// bounded, because the user is waiting on a UI, not on this.
+///
+/// [`CacheAccess::RefreshOnly`]: this brings caches up to date and reads none
+/// of them. Everything the TUI later installs from re-resolves through the
+/// install path, which takes the guard on its own terms.
 pub fn refresh_remote_caches(lock: &LockFile) -> Vec<RemoteCacheProblem> {
     // TTL-bounded like every other caller: without it the TUI re-fetched every
     // remote source on every launch — twice, once per scope — and a user
     // offline or behind a dead VPN watched a blank terminal until each fetch
     // hit its deadline.
-    refresh_remote_caches_older_than(lock, Some(REMOTE_CACHE_TTL), FetchBound::INTERACTIVE)
+    refresh_remote_caches_older_than(
+        lock,
+        Some(REMOTE_CACHE_TTL),
+        FetchBound::INTERACTIVE,
+        CacheAccess::RefreshOnly,
+    )
 }
 
 /// [`refresh_remote_caches`] with a freshness bound: a cache fetched (or
@@ -597,10 +675,11 @@ pub fn refresh_remote_caches_older_than(
     lock: &LockFile,
     max_age: Option<std::time::Duration>,
     bound: FetchBound,
+    access: CacheAccess,
 ) -> Vec<RemoteCacheProblem> {
     let mut problems = Vec::new();
     for (source, remote) in cached_remote_sources(lock) {
-        let kind = match fetch_remote_cache(&remote, max_age, bound) {
+        let kind = match fetch_remote_cache(&remote, max_age, bound, access) {
             // A cache entry that is not vstack's own, an origin that cannot be
             // written, a reset that did not land: the entry is not known to
             // hold this source, and no later run repairs itself.
