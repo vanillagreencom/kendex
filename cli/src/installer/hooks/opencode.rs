@@ -110,7 +110,8 @@ pub(crate) fn opencode_hook_registration(global: bool, name: &str) -> super::Hoo
 /// registration is an entry the remover must not delete. Removal used to split
 /// the hook's name on `-` and drop any entry whose text contained every
 /// fragment, so removing `block-bare-cd` also deleted the user's own
-/// `docs/block-a-bare-cdn.md` — a raw-text match standing in for a path.
+/// instructions whose names merely spelled the same words — a raw-text match
+/// standing in for a path.
 struct InstructionTarget {
     /// The config file's own directory: a relative entry resolves against it.
     base: PathBuf,
