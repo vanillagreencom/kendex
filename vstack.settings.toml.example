@@ -94,9 +94,9 @@ PR_REVIEW_QUORUM = ""
 # unresolved threads — a real comment is never bypassed.
 PR_REVIEW_ON_TIMEOUT = "block"
 
-# BOT / COMMIT IDENTITY — used by worktree. Leave ALL of them empty to act
-# as the logged-in user; the fallback is not per-key (a partly-empty set
-# writes the empty values verbatim).
+# BOT / COMMIT IDENTITY — used by worktree. BOT_NAME is the gate: empty
+# BOT_NAME = the logged-in user, and the other keys are ignored; once it is
+# set the rest are written verbatim, empty values included.
 
 BOT_NAME = "automation-bot"
 
