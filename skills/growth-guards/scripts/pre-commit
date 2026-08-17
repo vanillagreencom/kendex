@@ -80,60 +80,36 @@ SIZE_RATCHET="$SIZE_RATCHET_SKILL/scripts/size-ratchet"
 if [ -e "$SIZE_RATCHET_SKILL" ] || [ -L "$SIZE_RATCHET_SKILL" ]; then
   [ -x "$SIZE_RATCHET" ] || gg_config_error "the size-ratchet skill is installed at $SIZE_RATCHET_SKILL but $SIZE_RATCHET is missing or not executable — reinstall it"
   # A consuming repo may replace the vendored script with its own gate — a
-  # fork without the --staged interface, wired through its own hooks. This
-  # chain owns only the vstack-shape script, so probe the interface: --help
-  # advertising --staged is the contract. A working CLI without it is the
-  # repo's own gate (stated skip); a script whose --help produces no usage
-  # at all is a broken install, and a lost gate must never pass silently.
-  sr_help_status=0
-  sr_help="$("$SIZE_RATCHET" --help 2>&1)" || sr_help_status=$?
-  if [ "$sr_help_status" -ne 0 ]; then
-    # A --help that cannot even print usage is a broken script, whatever its
-    # error text mentions — never a replacement to defer to.
-    gg_config_error "size-ratchet at $SIZE_RATCHET failed on --help (exit $sr_help_status) — broken install; reinstall it or remove the skill"
+  # fork without the --staged interface, wired through its own hooks (the
+  # drovr shape). This chain owns only the vstack-shape script, and the ONE
+  # deterministic signal is the run itself: an argument parser that rejects
+  # --staged says so in its own first line. No help-prose inference — two
+  # reviewers proved usage-shape detection cannot converge.
+  echo "=== pre-commit: size-ratchet"
+  sr_run_status=0
+  sr_run_out="$("$SIZE_RATCHET" --staged 2>&1)" || sr_run_status=$?
+  [ -n "$sr_run_out" ] && printf '%s\n' "$sr_run_out"
+  # The rejection is a PARSER diagnostic: the whole first line, in the
+  # tool-prefixed shapes an argument parser emits. A config diagnostic that
+  # merely ECHOES the phrase inside a longer line never matches.
+  sr_first_line="${sr_run_out%%$'\n'*}"
+  sr_rejects_staged=0
+  if [ "$sr_run_status" -eq 2 ]; then
+    case "$sr_first_line" in
+      "size-ratchet: unknown argument '--staged'"*|"size-ratchet: unrecognized option '--staged'"*|"size-ratchet: unrecognized option: --staged"*|"size-ratchet: invalid option: --staged"*|"size-ratchet: invalid option -- staged"*)
+        sr_rejects_staged=1
+        ;;
+    esac
   fi
-  case "$sr_help" in
-    *--staged*)
-      # --staged: judge the blobs the commit records, not the worktree
-      # copies. Help text can NAME the flag while refusing it ("unknown
-      # argument '--staged'"), so an explicit runtime rejection is still the
-      # replacement skip, never a blocked commit.
-      echo "=== pre-commit: size-ratchet"
-      sr_run_status=0
-      sr_run_out="$("$SIZE_RATCHET" --staged 2>&1)" || sr_run_status=$?
-      [ -n "$sr_run_out" ] && printf '%s
-' "$sr_run_out"
-      # The rejection is a PARSER diagnostic: the whole first line, in the
-      # tool-prefixed shapes an argument parser emits. A config diagnostic
-      # that merely ECHOES the phrase inside a longer line never matches.
-      sr_first_line="${sr_run_out%%$'\n'*}"
-      sr_rejects_staged=0
-      if [ "$sr_run_status" -eq 2 ]; then
-        case "$sr_first_line" in
-          "size-ratchet: unknown argument '--staged'"*|"size-ratchet: unrecognized option '--staged'"*|"size-ratchet: unrecognized option: --staged"*|"size-ratchet: invalid option: --staged"*|"size-ratchet: invalid option -- staged"*)
-            sr_rejects_staged=1
-            ;;
-        esac
-      fi
-      case "$sr_run_status:$sr_rejects_staged" in
-        0:*) ;;
-        1:*) had_violations=1 ;;
-        2:1)
-          echo "=== pre-commit: size-ratchet at $SIZE_RATCHET rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
-          ;;
-        *)
-          had_errors=1
-          echo "pre-commit: step 'size-ratchet' did not complete (exit $sr_run_status)"
-          ;;
-      esac
-      ;;
-    *[Uu]sage*)
-      # USAGE evidence required: a working CLI documents itself. A banner or
-      # diagnostic that merely names the tool is not a replacement to defer to.
-      echo "=== pre-commit: size-ratchet at $SIZE_RATCHET does not support --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
+  case "$sr_run_status:$sr_rejects_staged" in
+    0:*) ;;
+    1:*) had_violations=1 ;;
+    2:1)
+      echo "=== pre-commit: size-ratchet at $SIZE_RATCHET rejects --staged (repo-local replacement) — skipped; this repo's own wiring owns that gate"
       ;;
     *)
-      gg_config_error "size-ratchet at $SIZE_RATCHET produced no usage text on --help — broken install; reinstall it or remove the skill"
+      had_errors=1
+      echo "pre-commit: step 'size-ratchet' did not complete (exit $sr_run_status)"
       ;;
   esac
 else

@@ -51,10 +51,10 @@ file from a gate.
 `scripts/install-git-hooks [--repo PATH]` writes real `.git/hooks` shims —
 `pre-commit` runs the chain (`size-ratchet --staged` and `preflight --staged`
 when those skills are installed beside this one — a first commit skips
-preflight with a note, having no base to diff, and a size-ratchet whose
-`--help` does not advertise `--staged` is a repo-local replacement whose own
-wiring owns that gate: stated skip, while a script with no usage output at
-all still blocks as a broken install — the batch over staged
+preflight with a note, having no base to diff, and a size-ratchet that
+rejects `--staged` in its own first-line parser diagnostic is a repo-local
+replacement whose own wiring owns that gate: stated skip — any other
+failure blocks as usual — the batch over staged
 content, then the repo-root-relative executable named by
 `GROWTH_GUARDS_PRE_COMMIT_LOCAL`),
 `commit-msg` runs this family's message gate. They BLOCK on the family's exit
