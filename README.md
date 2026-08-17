@@ -85,7 +85,7 @@ extras = ["theme-packs"]
 
 Each path is relative to the source repo. A path may point at a container directory; skills, Pi extensions, and extras may name one specific item directory, while agents and hooks may also name one specific `.md` or `.sh` file. `*` is supported on the final path segment only. Omitted keys keep the default directory for that item kind, and an empty list (`skills = []`) declares that the source ships no items of that kind.
 
-`vstack check` only calls an installed item removed upstream when every configured root for its kind is there, is the right kind of thing, and every item under it was readable. A configured root that has gone missing is reported as a source layout problem to investigate, never as a `vstack remove` to run — and so is one that exists but is the wrong sort of entry (a regular file where a container belongs, a globbed parent that is not a directory), named with what was found there.
+`vstack check` only calls an installed item removed upstream when every configured root for its kind is there, is the right kind of thing, and every item under it was readable. A configured root that has gone missing is reported as a source layout problem to investigate, never as a `vstack remove` to run — and so is one that exists but is the wrong sort of entry, named with what was found there. Every root is judged by that rule, whether the path was written out, matched by a `*`, or defaulted: a regular file where a container belongs, a globbed parent that is not a directory, and a glob match of the wrong entry type are one answer.
 
 ### Customizing With `vstack.toml`
 
@@ -296,8 +296,12 @@ refused at install: no harness column could be filled in for it.
 
 A level is a claim about what vstack installed and what the harness does with
 it, downgraded to `unsupported` when any artifact behind it is gone, the
-`harnesses:` allowlist excludes the harness, or Pi's carrier package is not
-installed. It is not a probe of harness runtime state — whether Codex has been
+`harnesses:` allowlist excludes the harness, Pi's carrier package is not
+installed, or the harness is configured not to run it — `disableAllHooks`,
+`[features] hooks`, a rule's `alwaysApply`. The level names the same fault in
+the same words `check` and `verify` report, off the same readers, so the three
+commands cannot disagree about one install. It is not a probe of harness
+runtime state — whether Codex has been
 told to trust the project's `.codex/` layer, or which hooks are toggled on in
 pi-extension-manager, is the harness's to answer. `vstack verify` re-checks
 every installed artifact against its source and names the exact gap.

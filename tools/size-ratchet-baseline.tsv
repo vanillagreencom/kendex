@@ -46,7 +46,7 @@ cli/src/tui/render.rs	3496
 cli/src/tui/state.rs	810
 cli/src/vscode_apply.rs	535
 cli/src/vsix.rs	637
-cli/tests/hook_contract.rs	1548
+cli/tests/hook_contract.rs	1080
 cli/tests/hook_lifecycle.rs	1545
 hooks/block-repo-copy.sh	511
 pi-extensions/pi-agents-tmux/extensions/subagent/browser.ts	637

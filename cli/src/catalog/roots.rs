@@ -38,14 +38,69 @@ pub(super) struct ExpandedRoots {
     /// concluded from such a root — not even that it is empty — so a caller
     /// that classifies removals must report these instead.
     pub(super) unusable: Vec<String>,
+    /// Roots already admitted, lexically normalized: two configured entries
+    /// naming one directory are one root.
+    seen: std::collections::HashSet<PathBuf>,
 }
 
 impl ExpandedRoots {
-    fn empty() -> Self {
+    pub(super) fn empty() -> Self {
         Self {
             paths: Vec::new(),
             all_roots_present: true,
             unusable: Vec::new(),
+            seen: std::collections::HashSet::new(),
+        }
+    }
+
+    /// The ONE way a path becomes a root discovery reads.
+    ///
+    /// Every producer arrives here — the literal entry, each match a glob
+    /// yields, and the default root an absent `[catalog]` key expands to — so
+    /// the entry-type rule cannot be skipped by a new source of roots the way
+    /// glob matches once skipped it: nothing else can reach `paths`.
+    fn admit(&mut self, path: PathBuf, kind: CatalogKind) {
+        match classify_root(&path, RootShape::Root(kind)) {
+            RootEntry::Usable => self.push_path(path),
+            // Nothing at this path. It stays in `paths` — discovery skips what
+            // is not there — and the kind reports a moved layout rather than
+            // an empty inventory. A glob match that vanished between the
+            // listing and this read, or one that is a dangling symlink,
+            // lands here for the same reason and takes the same answer.
+            RootEntry::Missing => {
+                self.all_roots_present = false;
+                self.push_path(path);
+            }
+            // Present and unreadable as a root of this kind. It contributes no
+            // path and no evidence: the kind is unverifiable, never empty.
+            RootEntry::Unusable(reason) => self.unusable.push(reason),
+        }
+    }
+
+    /// The container a glob reads its matches out of. Not a root itself — it
+    /// contributes no path — but judged by the same classifier, so a glob
+    /// parent that is a regular file is unreadable rather than a glob that
+    /// matched nothing. `false` when nothing may be read from it.
+    fn admit_glob_parent(&mut self, parent: &Path) -> bool {
+        match classify_root(parent, RootShape::GlobParent) {
+            RootEntry::Usable => true,
+            RootEntry::Missing => {
+                self.all_roots_present = false;
+                false
+            }
+            RootEntry::Unusable(reason) => {
+                self.unusable.push(reason);
+                false
+            }
+        }
+    }
+
+    fn push_path(&mut self, path: PathBuf) {
+        if self
+            .seen
+            .insert(crate::config::normalize_path_lexical(&path))
+        {
+            self.paths.push(path);
         }
     }
 }
@@ -56,17 +111,8 @@ pub(super) fn expand_configured_paths(
     catalog: &crate::mapping::CatalogConfig,
 ) -> Result<ExpandedRoots> {
     let mut out = ExpandedRoots::empty();
-    let mut seen = std::collections::HashSet::new();
     for raw in catalog.paths_for(kind) {
-        let expanded = expand_catalog_entry(source_root, &raw, kind)?;
-        out.all_roots_present &= expanded.all_roots_present;
-        out.unusable.extend(expanded.unusable);
-        for path in expanded.paths {
-            let key = crate::config::normalize_path_lexical(&path);
-            if seen.insert(key) {
-                out.paths.push(path);
-            }
-        }
+        expand_catalog_entry(&mut out, source_root, &raw, kind)?;
     }
     Ok(out)
 }
@@ -88,11 +134,15 @@ pub(super) fn expand_paths_forgiving(
     .paths)
 }
 
+/// Expand one configured entry into `out`. Every root it produces is admitted
+/// through [`ExpandedRoots::admit`]; the `Err` return is for a MALFORMED entry
+/// alone, which is a configuration fault rather than a fact about the source.
 pub(super) fn expand_catalog_entry(
+    out: &mut ExpandedRoots,
     source_root: &Path,
     raw: &str,
     kind: CatalogKind,
-) -> Result<ExpandedRoots> {
+) -> Result<()> {
     let trimmed = raw.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         anyhow::bail!("catalog path must not be empty");
@@ -125,44 +175,14 @@ pub(super) fn expand_catalog_entry(
 
     let last = parts.last().expect("non-empty parts");
     if !last.contains('*') {
-        let path = source_root.join(parts.iter().collect::<PathBuf>());
-        return Ok(match classify_root(&path, RootShape::Root(kind)) {
-            RootEntry::Usable => ExpandedRoots {
-                paths: vec![path],
-                all_roots_present: true,
-                unusable: Vec::new(),
-            },
-            RootEntry::Missing => ExpandedRoots {
-                paths: vec![path],
-                all_roots_present: false,
-                unusable: Vec::new(),
-            },
-            RootEntry::Unusable(reason) => ExpandedRoots {
-                paths: Vec::new(),
-                all_roots_present: true,
-                unusable: vec![reason],
-            },
-        });
+        out.admit(source_root.join(parts.iter().collect::<PathBuf>()), kind);
+        return Ok(());
     }
 
     let parent_rel: PathBuf = parts[..parts.len() - 1].iter().collect();
     let parent = source_root.join(parent_rel);
-    match classify_root(&parent, RootShape::GlobParent) {
-        RootEntry::Usable => {}
-        RootEntry::Missing => {
-            return Ok(ExpandedRoots {
-                paths: Vec::new(),
-                all_roots_present: false,
-                unusable: Vec::new(),
-            });
-        }
-        RootEntry::Unusable(reason) => {
-            return Ok(ExpandedRoots {
-                paths: Vec::new(),
-                all_roots_present: true,
-                unusable: vec![reason],
-            });
-        }
+    if !out.admit_glob_parent(&parent) {
+        return Ok(());
     }
     let mut matches = Vec::new();
     for entry in std::fs::read_dir(&parent)
@@ -177,12 +197,13 @@ pub(super) fn expand_catalog_entry(
             matches.push(path);
         }
     }
+    // Sorted before admission so the roots, the reports and the inventory all
+    // read in one order whatever the directory hands back.
     matches.sort();
-    Ok(ExpandedRoots {
-        paths: matches,
-        all_roots_present: true,
-        unusable: Vec::new(),
-    })
+    for path in matches {
+        out.admit(path, kind);
+    }
+    Ok(())
 }
 
 /// Which configured path is being classified, and therefore what it is allowed

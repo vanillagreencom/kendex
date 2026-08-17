@@ -2,7 +2,7 @@
 //! problems that must never read as an item removed upstream.
 
 use super::*;
-use roots::{expand_catalog_entry, wildcard_match};
+use roots::{ExpandedRoots, expand_catalog_entry, wildcard_match};
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -502,7 +502,13 @@ fn a_package_renamed_in_its_manifest_is_removed_under_its_old_name() {
 #[test]
 fn glob_is_restricted_to_last_segment() {
     let root = sandbox("bad-glob");
-    let err = expand_catalog_entry(&root, "*/skills", CatalogKind::Skills).unwrap_err();
+    let err = expand_catalog_entry(
+        &mut ExpandedRoots::empty(),
+        &root,
+        "*/skills",
+        CatalogKind::Skills,
+    )
+    .unwrap_err();
     assert!(
         err.to_string()
             .contains("only supported on the last path segment")
@@ -638,6 +644,79 @@ fn a_glob_parent_of_the_wrong_entry_type_is_unverifiable() {
             && reason.contains("catalog glob parent must be a directory"),
         "the report names the path and what it must be: {reason}"
     );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A glob MATCH is a root, and the rule the glob's parent passes is the rule
+/// each match has to pass too. A match of the wrong entry type is skipped by
+/// discovery, so leaving it unvalidated left a complete, failure-free
+/// inventory behind — and every skill locked against that path reported
+/// removed upstream, `vstack remove` beside it.
+#[test]
+fn a_glob_match_of_the_wrong_entry_type_is_unverifiable_never_a_removal() {
+    let root = sandbox("glob-match-type");
+    let globbed = crate::mapping::CatalogConfig {
+        skills: Some(vec!["pkgs/*".into()]),
+        ..Default::default()
+    };
+
+    // Control: a match that IS an item directory is readable and named.
+    skill_at(&root, "pkgs/keeper", "keeper");
+    assert!(matches!(
+        inv(&root, &globbed),
+        KindInventory::Readable(inv) if inv.names == ["keeper".to_string()]
+    ));
+
+    // A second match is a regular file — a packaged kind reads items from
+    // directories, so nothing can be concluded from it.
+    fs::write(root.join("pkgs").join("stray"), "not a directory\n").unwrap();
+    let file_match = inv(&root, &globbed);
+    assert!(
+        file_match.readable().is_none(),
+        "a wrong-type glob match offers no names to call anything removed: {file_match:?}"
+    );
+    let reason = file_match
+        .unverifiable(crate::config::ItemKind::Skill)
+        .expect("a wrong-type glob match is unverifiable");
+    assert!(
+        reason.contains(&root.join("pkgs/stray").display().to_string())
+            && reason.contains("catalog root must be a directory")
+            && reason.contains("found a regular file"),
+        "the report names the path and what was found: {reason}"
+    );
+
+    // Control: with the stray file gone the inventory reads exactly as before.
+    fs::remove_file(root.join("pkgs").join("stray")).unwrap();
+    assert!(matches!(
+        inv(&root, &globbed),
+        KindInventory::Readable(inv) if inv.names == ["keeper".to_string()]
+    ));
+
+    // Control: a glob matching nothing stays readable-and-empty — positive
+    // evidence the source ships no such skill, not a layout that moved.
+    fs::remove_dir_all(root.join("pkgs/keeper")).unwrap();
+    assert!(matches!(
+        inv(&root, &globbed),
+        KindInventory::Readable(inv) if inv.names.is_empty()
+    ));
+
+    // A match the file kinds DO read from is usable at the same rule: a hook
+    // root may be one `.sh` file, so a `hooks/*` match that is one is a root.
+    fs::create_dir_all(root.join("automation")).unwrap();
+    fs::write(
+        root.join("automation").join("guard.sh"),
+        "# ---\n# name: guard\n# event: PreToolUse\n# description: guard\n# ---\nexit 0\n",
+    )
+    .unwrap();
+    let globbed_hooks = crate::mapping::CatalogConfig {
+        hooks: Some(vec!["automation/*".into()]),
+        ..Default::default()
+    };
+    assert!(matches!(
+        inventory(&root, crate::config::ItemKind::Hook, &globbed_hooks),
+        KindInventory::Readable(inv) if inv.names == ["guard".to_string()]
+    ));
 
     let _ = fs::remove_dir_all(root);
 }

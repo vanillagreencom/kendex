@@ -19,11 +19,99 @@ fn resolved_path(path: &Path) -> PathBuf {
 /// the same path in some other program's argument list is data.
 const SCRIPT_INTERPRETERS: &[&str] = &["sh", "bash", "dash", "ksh", "zsh", "ash"];
 
-/// Programs that exec the command following their own arguments, with the
-/// count of their own non-flag operands first (`timeout 30 bash …`). `env` is
-/// not here: it also takes `NAME=VALUE` assignments, so it is walked
-/// separately.
-const EXEC_PREFIXES: &[(&str, usize)] = &[("nohup", 0), ("setsid", 0), ("timeout", 1)];
+/// A program that execs the command following its own arguments, and the
+/// options that program actually defines.
+///
+/// The options are declared PER PREFIX because they are not a shared
+/// vocabulary: `--foreground` and `--preserve-status` belong to `timeout`
+/// alone — `nohup` takes no option but `--help`/`--version`, which print and
+/// exit, and `setsid` defines neither — so one permissive branch across all of
+/// them read `nohup --foreground <script>` as a command that runs the script
+/// when it is a nohup that exits 125 having run nothing. An option a prefix
+/// does not define means the script is not reached, and that reads as
+/// unregistered like every other unprovable command here.
+struct ExecPrefix {
+    /// Program name, as [`program_name`] reads it.
+    name: &'static str,
+    /// Its own non-flag operands before the command (`timeout 30 bash …`).
+    operands: usize,
+    /// Options taking no value of their own.
+    flags: &'static [&'static str],
+    /// Options taking the next token — or `--name=value` — as their value.
+    value_flags: &'static [&'static str],
+    /// Whether `NAME=VALUE` assignments may precede the command, as `env`
+    /// takes them.
+    assignments: bool,
+}
+
+impl ExecPrefix {
+    /// How many tokens this option consumes, or `None` when the prefix does
+    /// not define it — an option a program refuses is a program that never
+    /// execs anything.
+    fn consume(&self, token: &str) -> Option<usize> {
+        if self.assignments && is_env_assignment(token) {
+            return Some(1);
+        }
+        if self.flags.contains(&token) {
+            return Some(1);
+        }
+        if self.value_flags.contains(&token) {
+            return Some(2);
+        }
+        // `--kill-after=30` carries its value in the same token.
+        let (long, _) = token.split_once('=')?;
+        self.value_flags.contains(&long).then_some(1)
+    }
+}
+
+/// Every program whose arguments are walked to find the command it execs.
+/// `env` is one of them: its `NAME=VALUE` run is the only thing that sets it
+/// apart, and that is a field here rather than a branch of its own.
+///
+/// Each list is the portable set — an option one implementation grew and
+/// another rejects would exec nothing there, which is the fail-open again — and
+/// options that make the command unknowable are deliberately absent, so they
+/// resolve to unregistered: `env -S`/`--split-string` builds the command out
+/// of its own value, and `env`'s `--block-signal`-family options take an
+/// OPTIONAL value, so nothing can say whether the next token is theirs or the
+/// command. `env -0`/`--null` is refused by `env` itself alongside a command.
+const EXEC_PREFIXES: &[ExecPrefix] = &[
+    ExecPrefix {
+        name: "nohup",
+        operands: 0,
+        flags: &[],
+        value_flags: &[],
+        assignments: false,
+    },
+    ExecPrefix {
+        name: "setsid",
+        operands: 0,
+        flags: &["-c", "--ctty", "-f", "--fork", "-w", "--wait"],
+        value_flags: &[],
+        assignments: false,
+    },
+    ExecPrefix {
+        name: "timeout",
+        operands: 1,
+        flags: &[
+            "-f",
+            "--foreground",
+            "-p",
+            "--preserve-status",
+            "-v",
+            "--verbose",
+        ],
+        value_flags: &["-k", "--kill-after", "-s", "--signal"],
+        assignments: false,
+    },
+    ExecPrefix {
+        name: "env",
+        operands: 0,
+        flags: &["-i", "--ignore-environment"],
+        value_flags: &["-u", "--unset"],
+        assignments: true,
+    },
+];
 
 /// The program a token names, ignoring the directory it lives in, so
 /// `/bin/bash` and `bash` read alike.
@@ -79,46 +167,22 @@ fn executed_token(tokens: &[String]) -> Option<&str> {
     loop {
         let word = tokens.get(index)?.as_str();
         let name = program_name(word)?;
-        if name == "env" {
+        if let Some(prefix) = EXEC_PREFIXES.iter().find(|prefix| prefix.name == name) {
             index += 1;
-            // `env` execs the first operand that is neither an assignment nor
-            // one of the flags that take no argument of their own.
+            // Its own options, each judged against what THIS program defines.
             while let Some(token) = tokens.get(index) {
                 if token == "--" {
                     index += 1;
                     break;
                 }
-                if is_env_assignment(token)
-                    || matches!(token.as_str(), "-i" | "--ignore-environment")
-                {
-                    index += 1;
-                    continue;
-                }
-                if token.starts_with('-') {
-                    return None;
-                }
-                break;
-            }
-            continue;
-        }
-        if let Some((_, operands)) = EXEC_PREFIXES.iter().find(|(prefix, _)| *prefix == name) {
-            index += 1;
-            while let Some(token) = tokens.get(index) {
-                if token == "--" {
-                    index += 1;
+                let assignment = prefix.assignments && is_env_assignment(token);
+                if !token.starts_with('-') && !assignment {
                     break;
                 }
-                if matches!(token.as_str(), "--foreground" | "--preserve-status") {
-                    index += 1;
-                    continue;
-                }
-                if token.starts_with('-') {
-                    return None;
-                }
-                break;
+                index += prefix.consume(token)?;
             }
             // Past its own operands — a `timeout` duration — sits the command.
-            index += operands;
+            index += prefix.operands;
             continue;
         }
         if SCRIPT_INTERPRETERS.contains(&name) {
@@ -275,111 +339,4 @@ pub(super) fn shell_quote(s: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn targets(command: &str, script: &str) -> bool {
-        command_targets_hook_script(command, Path::new(script), None)
-    }
-
-    /// The command vstack WRITES has to read back as the command vstack wrote.
-    /// `shell_quote` quotes any path that is not plain, and the whitespace
-    /// split that used to read it back cut a quoted path with a space into
-    /// three words — so every claude and codex hook on a machine whose install
-    /// path contains a space reported "script present but not registered",
-    /// forever, because the reinstall the report prescribed wrote the same
-    /// command back.
-    #[test]
-    fn a_quoted_path_round_trips_through_the_command_vstack_writes() {
-        for script in [
-            "/home/my user/.claude/hooks/guard.sh",
-            "/home/o'brien/.claude/hooks/guard.sh",
-            "/srv/a b/c d/hooks/guard.sh",
-            // Control: the plain path `shell_quote` leaves unquoted.
-            "/home/user/.claude/hooks/guard.sh",
-        ] {
-            let command = format!("bash {}", shell_quote(script));
-            assert!(targets(&command, script), "{command}");
-            // …and it is still THIS script, not any other.
-            assert!(
-                !targets(&command, "/home/user/.claude/hooks/other.sh"),
-                "{command}"
-            );
-        }
-    }
-
-    /// Quoting decides word boundaries, so the same characters mean different
-    /// things in and out of quotes.
-    #[test]
-    fn words_are_split_the_way_a_shell_splits_them() {
-        for (command, expected) in [
-            ("bash /a/b.sh", vec!["bash", "/a/b.sh"]),
-            ("  bash   /a/b.sh  ", vec!["bash", "/a/b.sh"]),
-            ("bash '/a b/c.sh'", vec!["bash", "/a b/c.sh"]),
-            ("bash \"/a b/c.sh\"", vec!["bash", "/a b/c.sh"]),
-            ("bash /a\\ b/c.sh", vec!["bash", "/a b/c.sh"]),
-            // Adjacent quoted and bare runs are ONE word.
-            ("bash /a' b'/c.sh", vec!["bash", "/a b/c.sh"]),
-            // An empty quoted word is a word.
-            ("bash ''", vec!["bash", ""]),
-            // Operators are ordinary characters inside quotes.
-            ("bash '/a;b|c/d.sh'", vec!["bash", "/a;b|c/d.sh"]),
-            ("bash \"/a*b/c.sh\"", vec!["bash", "/a*b/c.sh"]),
-            // A backslash escapes only the four characters that need it
-            // inside double quotes, and stands for itself before the rest.
-            ("bash \"/a\\\"b/c.sh\"", vec!["bash", "/a\"b/c.sh"]),
-            ("bash \"/a\\nb/c.sh\"", vec!["bash", "/a\\nb/c.sh"]),
-        ] {
-            assert_eq!(
-                shell_words(command),
-                Some(expected.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
-                "{command}"
-            );
-        }
-    }
-
-    /// A line whose words cannot be settled is refused outright, so no caller
-    /// can read a half-parsed command as a registration.
-    #[test]
-    fn a_command_that_cannot_be_settled_is_refused_not_guessed() {
-        for command in [
-            // Unterminated quoting.
-            "bash '/a/b.sh",
-            "bash \"/a/b.sh",
-            "bash /a/b.sh\\",
-            // Expansions and substitutions.
-            "bash $HOOK/guard.sh",
-            "bash \"$HOOK/guard.sh\"",
-            "bash `which guard.sh`",
-            "bash \"$(dirname x)/guard.sh\"",
-            // More than one simple command, or output going elsewhere.
-            "bash /a/b.sh; rm -rf /",
-            "bash /a/b.sh | tee log",
-            "bash /a/b.sh && other",
-            "bash /a/b.sh > out",
-            "(bash /a/b.sh)",
-            // Pathname expansion this cannot resolve without the filesystem.
-            "bash /a/*/guard.sh",
-            "bash /a/guard?.sh",
-        ] {
-            assert_eq!(shell_words(command), None, "{command}");
-            assert!(!targets(command, "/a/b.sh"), "{command}");
-        }
-    }
-
-    /// The deferred placeholder is expanded BEFORE the split, so the one
-    /// substitution vstack itself writes is the only one that survives.
-    #[test]
-    fn the_deferred_root_placeholder_is_expanded_before_the_split() {
-        let root = Path::new("/srv/my project");
-        let script = root.join(".claude/hooks/guard.sh");
-        let command = "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.sh\"";
-        assert!(command_targets_hook_script(
-            command,
-            &script,
-            Some(("$CLAUDE_PROJECT_DIR", root))
-        ));
-        // Without the expansion the `$` is an expansion like any other.
-        assert!(!command_targets_hook_script(command, &script, None));
-    }
-}
+mod tests;

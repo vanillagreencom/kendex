@@ -3,7 +3,13 @@
 //!
 //! The matrix in [`super::contract`] is the only source of levels; this module
 //! applies the facts of one install on top of it — the hook's `harnesses:`
-//! allowlist, and whether the Pi package that carries Pi behavior is present.
+//! allowlist, whether the Pi package that carries Pi behavior is present,
+//! whether every artifact the mechanism installs is there, and whether the
+//! harness is configured to run any of it.
+//!
+//! Every one of those facts is read through the reader `verify` reports it
+//! from, so the level `list` prints and the drift line `check` prints cannot
+//! disagree about one install.
 
 use super::contract::{self, Cell, Mechanism, PI_HOOKS_PACKAGE};
 use crate::config::{ItemKind, LockEntry};
@@ -13,16 +19,50 @@ use crate::harness::Harness;
 pub struct Resolved {
     pub cell: Cell,
     /// Why the contract cell was downgraded, when it was.
-    pub note: Option<&'static str>,
+    pub note: Option<String>,
 }
 
 impl Resolved {
     /// `enforced` / `advisory` / `unsupported`, plus the reason for a
     /// downgrade.
     pub fn label(&self) -> String {
-        match self.note {
+        match &self.note {
             Some(note) => format!("{} ({note})", self.cell.level()),
             None => self.cell.level().to_string(),
+        }
+    }
+
+    /// The downgrade every gap lands on: a level is a claim about what runs,
+    /// and nothing runs.
+    fn unsupported(note: String) -> Self {
+        Self {
+            cell: Cell::Unsupported,
+            note: Some(note),
+        }
+    }
+}
+
+/// Why a harness is not running an installed hook, in the same three-way
+/// vocabulary `verify` reports in — something a reinstall re-creates, something
+/// only repairing a named file answers, something only a setting changes — so a
+/// level and a drift line name one fault in one wording.
+enum Backing {
+    /// Every artifact is in place and the harness will act on it.
+    Live,
+    /// Something a reinstall re-creates is not there.
+    Missing(String),
+    /// Something that would have decided it could not be read.
+    Unverifiable(String),
+    /// Every artifact is in place and the harness is configured not to run it.
+    Disabled(String),
+}
+
+impl Backing {
+    /// The note to downgrade with, or `None` when nothing stands in the way.
+    fn note(self) -> Option<String> {
+        match self {
+            Self::Live => None,
+            Self::Missing(note) | Self::Unverifiable(note) | Self::Disabled(note) => Some(note),
         }
     }
 }
@@ -85,9 +125,9 @@ pub fn pi_carrier_state(global: bool) -> PiCarrier {
 /// facts of this install.
 ///
 /// A level is a claim about this scope right now, so it is never stronger than
-/// the artifact backing it: a hook the allowlist excludes, a Pi carrier package
-/// that is not installed, and an artifact that has been deleted all report
-/// `unsupported` with the reason.
+/// what backs it: a hook the allowlist excludes, a Pi carrier package that is
+/// not installed, an artifact that has been deleted, and a harness switched off
+/// all report `unsupported` with the reason.
 pub fn resolve(
     hook: &crate::hook::Hook,
     harness: Harness,
@@ -96,10 +136,7 @@ pub fn resolve(
 ) -> Option<Resolved> {
     let cell = contract::cell(&hook.event, harness)?;
     if !hook.applies_to(harness.id()) {
-        return Some(Resolved {
-            cell: Cell::Unsupported,
-            note: Some("excluded by harnesses:"),
-        });
+        return Some(Resolved::unsupported("excluded by harnesses:".to_string()));
     }
     if let Some(Mechanism::PiHooksExtension) = cell.mechanism() {
         let downgrade = match pi_hooks {
@@ -109,79 +146,151 @@ pub fn resolve(
             PiCarrier::Unknown(_) => Some("pi-hooks registration unreadable"),
         };
         if let Some(note) = downgrade {
-            return Some(Resolved {
-                cell: Cell::Unsupported,
-                note: Some(note),
-            });
+            return Some(Resolved::unsupported(note.to_string()));
         }
     }
-    if cell
-        .mechanism()
-        .is_some_and(|mechanism| !artifact_present(mechanism, hook, global))
-    {
-        return Some(Resolved {
-            cell: Cell::Unsupported,
-            note: Some("artifact missing"),
-        });
+    if let Some(mechanism) = cell.mechanism() {
+        if let Some(note) = artifact_backing(mechanism, hook, global).note() {
+            return Some(Resolved::unsupported(note));
+        }
+        // Whether the harness will ACT on an install that is whole — the
+        // question this reader used to skip, so `list` called a hook enforced
+        // while `check` and `verify` called the same install disabled. Asked
+        // through [`super::hook_switch`], the one entry point they read it
+        // from, and asked OUTSIDE the per-mechanism match, so a mechanism
+        // added to that match inherits it instead of having to remember it.
+        if let Some(note) = switch_backing(harness, global, &hook.name).note() {
+            return Some(Resolved::unsupported(note));
+        }
     }
     Some(Resolved { cell, note: None })
 }
 
-/// Whether everything a mechanism installs is in place — the script AND the
-/// registration, in the slot the hook declares, that makes a harness invoke
-/// it, because a script nothing invokes (or that fires at another time)
-/// enforces nothing. `PiHooksExtension` has no per-hook artifact; its carrier
-/// package is checked by the caller.
+/// What stands between a mechanism's artifacts and the harness invoking them —
+/// the script AND the registration, in the slot the hook declares, because a
+/// script nothing invokes (or that fires at another time) enforces nothing.
+/// `PiHooksExtension` has no per-hook artifact; its carrier package is checked
+/// by the caller.
 ///
 /// Asked through the same readers `verify` reports from, so a level and a
 /// drift line can never disagree about what is installed. A level is a claim,
 /// and a registration nothing could read backs none — an unreadable config
 /// resolves to `unsupported` here while `verify` names the file to repair.
-fn artifact_present(mechanism: Mechanism, hook: &crate::hook::Hook, global: bool) -> bool {
+fn artifact_backing(mechanism: Mechanism, hook: &crate::hook::Hook, global: bool) -> Backing {
     let name = hook.name.as_str();
-    let registered = |registration| matches!(registration, super::HookRegistration::Registered);
     match mechanism {
         Mechanism::ClaudeSettingsHook => {
-            Harness::ClaudeCode
+            if !Harness::ClaudeCode
                 .hooks_dir(global)
                 .is_some_and(|dir| dir.join(format!("{name}.sh")).is_file())
-                && registered(super::claude_hook_registration(
+            {
+                return Backing::Missing("script missing".to_string());
+            }
+            registration_backing(
+                super::claude_hook_registration(
                     global,
                     name,
                     Some(super::RegistrationSlot {
                         event: &hook.event,
                         matcher: hook.matcher.as_deref(),
                     }),
-                ))
+                ),
+                "script present but not registered",
+            )
         }
         Mechanism::CodexHooksJson => {
             let Some(codex_event) = super::codex_event_for(&hook.event) else {
-                return false;
+                return Backing::Missing("no native codex event".to_string());
             };
-            super::codex_root(global)
+            if !super::codex_root(global)
                 .join("hooks")
                 .join(format!("{name}.sh"))
                 .is_file()
-                && super::codex_native_hook_gaps(
-                    global,
-                    name,
-                    super::RegistrationSlot {
-                        event: codex_event,
-                        matcher: hook.matcher.as_deref(),
-                    },
-                )
-                .is_empty()
+            {
+                return Backing::Missing("script missing".to_string());
+            }
+            // Registration and `[features] hooks` arrive classified together:
+            // codex's switch is inseparable from the config it shares.
+            let gaps = super::codex_native_hook_gaps(
+                global,
+                name,
+                super::RegistrationSlot {
+                    event: codex_event,
+                    matcher: hook.matcher.as_deref(),
+                },
+            );
+            let note = gaps
+                .iter()
+                .map(|gap| gap.describe())
+                .collect::<Vec<_>>()
+                .join("; ");
+            if gaps.iter().any(|gap| gap.is_unreadable()) {
+                Backing::Unverifiable(note)
+            } else if gaps.iter().any(|gap| !gap.is_disabled()) {
+                Backing::Missing(note)
+            } else if !gaps.is_empty() {
+                Backing::Disabled(note)
+            } else {
+                Backing::Live
+            }
         }
-        Mechanism::CursorRule => super::cursor_hook_rule_path(global, name).is_file(),
+        Mechanism::CursorRule => {
+            if super::cursor_hook_rule_path(global, name).is_file() {
+                Backing::Live
+            } else {
+                Backing::Missing("rule missing".to_string())
+            }
+        }
         Mechanism::OpenCodeInstruction => {
-            super::opencode_hook_instruction_path(global, name).is_file()
-                && registered(super::opencode_hook_registration(global, name))
+            if !super::opencode_hook_instruction_path(global, name).is_file() {
+                return Backing::Missing("instruction missing".to_string());
+            }
+            registration_backing(
+                super::opencode_hook_registration(global, name),
+                "instruction present but not referenced",
+            )
         }
-        Mechanism::CodexInstructions => matches!(
-            super::codex_hook_prose(&super::codex_root(global), hook),
-            super::CodexProse::Carried
-        ),
-        Mechanism::PiHooksExtension => true,
+        Mechanism::CodexInstructions => {
+            match super::codex_hook_prose(&super::codex_root(global), hook) {
+                super::CodexProse::Carried => Backing::Live,
+                // Nothing carries the prose because there is nothing to carry
+                // it: reconciliation writes the block into the first codex
+                // agent installed. Still nothing enforcing, and naming that
+                // beats prescribing a reinstall that writes no file.
+                super::CodexProse::NoAgents => {
+                    Backing::Missing("no codex agent carries it".to_string())
+                }
+                super::CodexProse::Absent => Backing::Missing("prose missing".to_string()),
+                super::CodexProse::Unreadable(reason) => {
+                    Backing::Unverifiable(format!("prose unverifiable — {reason}"))
+                }
+            }
+        }
+        Mechanism::PiHooksExtension => Backing::Live,
+    }
+}
+
+/// A registration read, in the vocabulary above: absent is a reinstall,
+/// unreadable is a file to repair, and the two must not be told alike.
+fn registration_backing(registration: super::HookRegistration, absent: &str) -> Backing {
+    match registration {
+        super::HookRegistration::Registered => Backing::Live,
+        super::HookRegistration::Absent => Backing::Missing(absent.to_string()),
+        super::HookRegistration::Unreadable(reason) => {
+            Backing::Unverifiable(format!("registration unverifiable — {reason}"))
+        }
+    }
+}
+
+/// The harness's own switch over an install that is whole, in the one wording
+/// every command shares — what is off, and the file that turns it back on.
+fn switch_backing(harness: Harness, global: bool, name: &str) -> Backing {
+    match super::hook_switch(harness, global, name) {
+        super::HookSwitch::On => Backing::Live,
+        super::HookSwitch::Off(note) => Backing::Disabled(format!("switched off — {note}")),
+        super::HookSwitch::Unreadable(reason) => {
+            Backing::Unverifiable(format!("switch unverifiable — {reason}"))
+        }
     }
 }
 
