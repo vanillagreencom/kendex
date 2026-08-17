@@ -710,8 +710,20 @@ if [ "$MODE" = "seed" ]; then
     LC_ALL=C sort -o "$TMP/baseline.new" "$TMP/baseline.new" || collection_error "could not sort the seeded baseline — nothing written"
     rows=$((rows + 1))
   fi
+  base_parent="."
   case "$BASELINE_FILE" in
-    */*) mkdir -p "${BASELINE_FILE%/*}" || collection_error "could not create the baseline directory for $BASELINE_FILE" ;;
+    */*)
+      base_parent="${BASELINE_FILE%/*}"
+      mkdir -p "$base_parent" || collection_error "could not create the baseline directory for $BASELINE_FILE"
+      ;;
+  esac
+  # The write stays inside the repository: a symlinked parent physically
+  # resolving elsewhere must not receive the seeded file.
+  parent_phys="$(cd "$base_parent" 2>/dev/null && pwd -P)" || config_error "--seed cannot resolve the baseline directory for $BASELINE_FILE"
+  repo_phys="$(pwd -P)" || collection_error "could not resolve the repository root"
+  case "$parent_phys/" in
+    "$repo_phys"/*) ;;
+    *) config_error "--seed refuses: $BASELINE_FILE resolves outside the repository ($parent_phys) — nothing written" ;;
   esac
   mv -- "$TMP/baseline.new" "$BASELINE_FILE" || collection_error "could not write the baseline at $BASELINE_FILE (mv failed)"
   cp -- "$BASELINE_FILE" "$TMP/baseline.tsv" || collection_error "could not re-read the seeded baseline at $BASELINE_FILE — the file WAS written; rerun size-ratchet to verify it"

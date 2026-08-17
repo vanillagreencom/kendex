@@ -134,6 +134,22 @@ else
   ok "no self-row for an excluded baseline"
 fi
 
+echo "=== the seeded write stays inside the repository ==="
+R="$TMP/contained"
+mkdir -p "$R" "$TMP/outside-target"
+git -C "$R" -c init.defaultBranch=main init -q
+git -C "$R" config user.email test@example.com
+git -C "$R" config user.name test
+mkfile big.txt 15
+ln -s "$TMP/outside-target" "$R/policy"
+git -C "$R" add -A
+OUT=""; RC=0
+OUT="$(cd "$R" && SIZE_RATCHET_THRESHOLD=10 "$SR" --seed --baseline policy/base.tsv 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && case "$OUT" in *"outside the repository"*) true ;; *) false ;; esac \
+  && ok "--seed refuses a baseline path resolving outside the repo" \
+  || bad "containment refusal" "rc=$RC out=$OUT"
+[ ! -e "$TMP/outside-target/base.tsv" ] && ok "nothing was written outside" || bad "outside write" "$(ls "$TMP/outside-target")"
+
 echo "=== mode exclusivity ==="
 run_sr --seed --update
 [ "$RC" -eq 2 ] && ok "--seed with --update is a config error" || bad "exclusivity" "rc=$RC out=$OUT"
